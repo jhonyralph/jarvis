@@ -106,8 +106,9 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async send(sessionId: string, text: string, cwd: string): Promise<AgentReply> {
-    const args = ["exec", "--sandbox", "workspace-write"];
-    if (this.started.has(sessionId)) args.splice(1, 0, "resume", "--last");
+    // --cd sets the working root; bypass = autonomous (codex analog of Claude's
+    // bypassPermissions). Session continuity (exec resume --last) is a TODO.
+    const args = ["exec", "--cd", cwd, "--dangerously-bypass-approvals-and-sandbox"];
     const out = await run("codex", args, cwd, text, true);
     this.started.add(sessionId);
     return { text: out.trim() };
