@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Jarvis</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#0b0d10; --panel:#14181d; --me:#2563eb; --bot:#232a31; --text:#e6e9ec; --mut:#8b98a5; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:15px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); height:100dvh; display:flex; flex-direction:column; }
+    header { padding:12px 16px; border-bottom:1px solid #ffffff14; display:flex; align-items:center; gap:10px; }
+    header b { font-size:16px; } header .dot { width:8px;height:8px;border-radius:50%;background:#f43f5e; }
+    header .dot.on { background:#22c55e; }
+    header .agent { margin-left:auto; color:var(--mut); font-size:12px; }
+    #log { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
+    .msg { max-width:min(85%,680px); padding:9px 13px; border-radius:14px; white-space:pre-wrap; word-wrap:break-word; }
+    .me { align-self:flex-end; background:var(--me); }
+    .bot { align-self:flex-start; background:var(--bot); }
+    .err { align-self:center; color:#fca5a5; font-size:13px; }
+    form { display:flex; gap:8px; padding:12px; border-top:1px solid #ffffff14; }
+    textarea { flex:1; resize:none; background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:12px; padding:10px 12px; font:inherit; max-height:120px; }
+    button { border:0; border-radius:12px; padding:0 16px; background:var(--me); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+    button.ghost { background:var(--panel); color:var(--text); border:1px solid #ffffff1f; }
+    button.on { background:#22c55e; color:#04210f; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="dot" id="dot"></span><b>Jarvis</b>
+    <button class="ghost" id="speak" title="Ouvir as respostas (listener)">🔇 Voz</button>
+    <span class="agent" id="agent"></span>
+  </header>
+  <div id="log"></div>
+  <form id="form">
+    <textarea id="input" rows="1" placeholder="Fale com o Jarvis…" autocomplete="off"></textarea>
+    <button type="submit">Enviar</button>
+  </form>
+
+  <script>
+    const log = document.getElementById('log'), dot = document.getElementById('dot'),
+          agentEl = document.getElementById('agent'), speakBtn = document.getElementById('speak'),
+          form = document.getElementById('form'), input = document.getElementById('input');
+    let speak = false, ws;
+
+    function add(text, cls) {
+      const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
+      log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+    }
+    function playWav(b64) {
+      const bin = atob(b64), buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))).play().catch(() => {});
+    }
+    function connect() {
+      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+      ws.onopen = () => dot.classList.add('on');
+      ws.onclose = () => { dot.classList.remove('on'); setTimeout(connect, 1500); };
+      ws.onmessage = (e) => {
+        const m = JSON.parse(e.data);
+        if (m.t === 'hello') agentEl.textContent = 'agente: ' + m.agent;
+        else if (m.t === 'message' && m.message.role === 'assistant') add(m.message.text, 'bot');
+        else if (m.t === 'tts') playWav(m.audio);
+        else if (m.t === 'error') add('erro: ' + m.message, 'err');
+      };
+    }
+    speakBtn.onclick = () => { speak = !speak; speakBtn.classList.toggle('on', speak); speakBtn.textContent = (speak ? '🔊' : '🔇') + ' Voz'; };
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const text = input.value.trim(); if (!text || !ws || ws.readyState !== 1) return;
+      add(text, 'me'); ws.send(JSON.stringify({ t: 'send', text, speak }));
+      input.value = ''; input.style.height = 'auto';
+    };
+    input.oninput = () => { input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; };
+    input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } };
+    connect();
+  </script>
+</body>
+</html>
