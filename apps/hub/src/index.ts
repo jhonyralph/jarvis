@@ -74,7 +74,7 @@ function broadcastAll(obj: unknown): void {
 }
 
 wss.on("connection", (ws: WebSocket) => {
-  send(ws, { t: "hello", agents: agents.names(), default: agents.default });
+  send(ws, { t: "hello", agents: agents.describe(), default: agents.default });
   send(ws, { t: "sessions", sessions: store.list() });
   ws.on("close", () => subs.delete(ws));
 
@@ -124,6 +124,16 @@ wss.on("connection", (ws: WebSocket) => {
     }
     if (!text) return;
 
+    // Attachments: what we SEND to the agent includes file contents; what we SHOW
+    // stays the user's text + a small chip (files are viewable in the chat).
+    const attachments: Array<{ name: string; content: string }> = Array.isArray(msg.attachments) ? msg.attachments : [];
+    let agentText = text;
+    if (attachments.length) {
+      const block = attachments.map((a) => `--- arquivo anexado: ${a.name} ---\n${a.content}`).join("\n\n");
+      agentText = `${block}\n\n${text}`;
+      text = `${text}\n\n📎 ${attachments.map((a) => a.name).join(", ")}`;
+    }
+
     const now = Date.now();
     // User message -> store + broadcast to everyone on this session (so all UIs show it).
     store.add(sid, { role: "user", text, ts: now, agent: agent.name });
@@ -131,10 +141,12 @@ wss.on("connection", (ws: WebSocket) => {
     broadcastAll({ t: "sessions", sessions: store.list() });
 
     try {
-      const reply = await agent.send(sid, text, CWD);
+      const opts = { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined };
+      const reply = await agent.send(sid, agentText, CWD, opts);
       const rt = Date.now();
       store.add(sid, { role: "assistant", text: reply.text, ts: rt, agent: agent.name });
       broadcast(sid, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: rt, agent: agent.name } });
+      if (reply.usage) broadcast(sid, { t: "usage", sessionId: sid, usage: reply.usage });
       broadcastAll({ t: "sessions", sessions: store.list() });
 
       if (msg.speak) {
@@ -145,7 +157,9 @@ wss.on("connection", (ws: WebSocket) => {
         }
       }
     } catch (e: any) {
-      send(ws, { t: "error", message: String(e?.message ?? e) });
+      const message = String(e?.message ?? e);
+      const limit = /limit|rate|quota|exceeded|usage/i.test(message);
+      send(ws, { t: "error", message, limit });
     }
   });
 });

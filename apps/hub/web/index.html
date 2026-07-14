@@ -5,123 +5,266 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis</title>
   <style>
-    :root { color-scheme: light dark; --bg:#0b0d10; --panel:#14181d; --me:#2563eb; --bot:#232a31; --text:#e6e9ec; --mut:#8b98a5; }
+    :root { color-scheme: light dark; --bg:#0b0d10; --side:#0e1216; --panel:#161b21; --me:#2563eb; --bot:#1b2127; --text:#e6e9ec; --mut:#8b98a5; --line:#ffffff14; --code:#0d1117; }
     * { box-sizing: border-box; }
-    body { margin:0; font:15px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); height:100dvh; display:flex; flex-direction:column; }
-    header { padding:10px 12px; border-bottom:1px solid #ffffff14; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-    header .dot { width:9px;height:9px;border-radius:50%;background:#f43f5e; flex:none; }
-    header .dot.on { background:#22c55e; }
-    header select, header button.ghost { background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:7px 9px; font:inherit; font-size:13px; cursor:pointer; }
-    #sessSel { flex:1; min-width:130px; }
-    #log { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
-    .msg { max-width:min(85%,680px); padding:9px 13px; border-radius:14px; white-space:pre-wrap; word-wrap:break-word; }
-    .me { align-self:flex-end; background:var(--me); }
-    .bot { align-self:flex-start; background:var(--bot); }
-    .err { align-self:center; color:#fca5a5; font-size:13px; }
-    form { display:flex; gap:8px; padding:12px; border-top:1px solid #ffffff14; }
-    textarea { flex:1; resize:none; background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:12px; padding:10px 12px; font:inherit; max-height:120px; }
-    button { border:0; border-radius:12px; padding:0 16px; background:var(--me); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
-    button.ghost { background:var(--panel); color:var(--text); border:1px solid #ffffff1f; }
+    body { margin:0; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); height:100dvh; overflow:hidden; }
+    #app { display:flex; height:100dvh; }
+    /* sidebar */
+    #side { width:260px; flex:none; background:var(--side); border-right:1px solid var(--line); display:flex; flex-direction:column; padding:12px; gap:6px; overflow:auto; }
+    #side .sec { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin:12px 4px 4px; }
+    #recents .item, #files .item { padding:8px 10px; border-radius:9px; cursor:pointer; font-size:13.5px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #recents .item:hover, #files .item:hover { background:#ffffff0d; }
+    #recents .item.active { background:#ffffff14; }
+    #files .item { color:var(--mut); font-size:12.5px; }
+    .spacer { flex:1; }
+    /* main */
+    main { flex:1; display:flex; flex-direction:column; min-width:0; }
+    header { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+    header #title { font-weight:600; margin-right:auto; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .dot { width:9px;height:9px;border-radius:50%;background:#f43f5e; flex:none; }
+    .dot.on { background:#22c55e; }
+    select, button.ghost, .chip { background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:9px; padding:7px 9px; font:inherit; font-size:13px; cursor:pointer; }
+    button { border:0; border-radius:10px; padding:9px 14px; background:var(--me); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+    button.ghost { background:var(--panel); color:var(--text); border:1px solid #ffffff1f; font-weight:500; }
     button.on { background:#22c55e; color:#04210f; }
+    #newConv { width:100%; }
+    #limit { padding:10px 14px; background:#7c2d12; color:#fed7aa; font-size:13px; }
+    /* chat */
+    #log { flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:14px; }
+    .msg { max-width:min(88%,760px); }
+    .msg.me { align-self:flex-end; background:var(--me); color:#fff; padding:9px 13px; border-radius:14px; white-space:pre-wrap; }
+    .msg.bot { align-self:flex-start; background:var(--bot); padding:2px 15px; border-radius:14px; }
+    .msg.err { align-self:center; color:#fca5a5; font-size:13px; }
+    .msg.bot p { margin:.55em 0; } .msg.bot h4 { margin:.7em 0 .3em; font-size:15px; }
+    .msg.bot ul, .msg.bot ol { margin:.4em 0; padding-left:1.3em; }
+    .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; }
+    .msg.bot pre { position:relative; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; }
+    .msg.bot pre code { background:none; padding:0; display:block; }
+    .msg.bot pre .copy { position:absolute; top:6px; right:6px; padding:3px 8px; font-size:11px; }
+    .msg.bot table { border-collapse:collapse; margin:.5em 0; display:block; overflow-x:auto; }
+    .msg.bot th, .msg.bot td { border:1px solid var(--line); padding:5px 10px; text-align:left; font-size:13.5px; }
+    .msg.bot th { background:#ffffff0d; }
+    .msg.bot img { max-width:100%; border-radius:8px; margin:.4em 0; display:block; }
+    .msg.bot a { color:#7cc0ff; }
+    .msg.bot blockquote { border-left:3px solid #ffffff2f; margin:.5em 0; padding:.1em .8em; color:var(--mut); }
+    /* composer */
+    #composer { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; }
+    #input { flex:1; min-width:180px; resize:none; background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:12px; padding:10px 12px; font:inherit; max-height:140px; }
+    #attachRow { flex-basis:100%; display:flex; gap:6px; flex-wrap:wrap; order:-1; }
+    #attachRow .chip { font-size:12px; padding:4px 8px; }
+    .usage { flex-basis:100%; color:var(--mut); font-size:11.5px; }
+    /* settings modal */
+    .modal { position:fixed; inset:0; background:#000a; display:flex; align-items:center; justify-content:center; padding:16px; }
+    .modal .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; width:min(420px,100%); display:flex; flex-direction:column; gap:12px; }
+    .modal label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--mut); }
+    .hidden { display:none !important; }
+    #menuBtn { display:none; }
+    @media (max-width:760px) {
+      #side { position:fixed; z-index:20; height:100dvh; transform:translateX(-100%); transition:transform .2s; }
+      #side.open { transform:none; }
+      #menuBtn { display:inline-block; }
+      header #title { max-width:none; }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <span class="dot" id="dot"></span>
-    <select id="sessSel" title="Conversas"></select>
-    <button class="ghost" id="newBtn" title="Nova conversa">+</button>
-    <button class="ghost" id="speak" title="Ouvir as respostas (listener)">🔇</button>
-    <select id="agentSel" title="Agente"></select>
-  </header>
-  <div id="log"></div>
-  <form id="form">
-    <textarea id="input" rows="1" placeholder="Fale ou digite…" autocomplete="off"></textarea>
-    <button type="button" class="ghost" id="mic" title="Falar (clique p/ gravar, clique p/ parar)">🎤</button>
-    <button type="submit">Enviar</button>
-  </form>
+  <div id="app">
+    <aside id="side">
+      <button id="newConv">＋ Nova conversa</button>
+      <div class="sec">Recentes</div>
+      <div id="recents"></div>
+      <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
+      <div class="sec">Arquivos & imagens</div>
+      <div id="files"></div>
+      <div class="spacer"></div>
+      <button id="settingsBtn" class="ghost">⚙ Configurações</button>
+    </aside>
+    <main>
+      <header>
+        <button id="menuBtn" class="ghost">☰</button>
+        <span class="dot" id="dot"></span>
+        <span id="title">Jarvis</span>
+        <select id="agentSel" title="Agente"></select>
+        <select id="modelSel" title="Modelo"></select>
+        <select id="effortSel" title="Esforço"></select>
+        <button id="speak" class="ghost" title="Ouvir respostas">🔇</button>
+      </header>
+      <div id="limit" class="hidden"></div>
+      <div id="log"></div>
+      <form id="composer">
+        <div id="attachRow"></div>
+        <button type="button" id="attach" class="ghost" title="Anexar arquivos">＋</button>
+        <input type="file" id="file" multiple hidden>
+        <textarea id="input" rows="1" placeholder="Fale ou digite…" autocomplete="off"></textarea>
+        <button type="button" id="mic" class="ghost" title="Falar">🎤</button>
+        <button type="submit">Enviar</button>
+        <span class="usage" id="usage"></span>
+      </form>
+    </main>
+  </div>
+
+  <div id="settings" class="modal hidden">
+    <div class="card">
+      <b>Configurações</b>
+      <label>Agente padrão <select id="setAgent"></select></label>
+      <label>Modelo padrão <select id="setModel"></select></label>
+      <label>Esforço padrão <select id="setEffort"></select></label>
+      <label><span><input type="checkbox" id="setVoice"> Falar as respostas por padrão</span></label>
+      <button id="setClose">Fechar</button>
+    </div>
+  </div>
 
   <script>
     const $ = (id) => document.getElementById(id);
-    const log = $('log'), dot = $('dot'), agentSel = $('agentSel'), sessSel = $('sessSel'),
-          newBtn = $('newBtn'), speakBtn = $('speak'), form = $('form'), input = $('input'), micBtn = $('mic');
-    let speak = false, ws, currentSession = null;
+    const els = ['log','dot','title','agentSel','modelSel','effortSel','speak','recents','moreBtn','files','newConv',
+      'settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setClose','composer','input','mic',
+      'attach','file','attachRow','usage','limit','menuBtn','side'].reduce((o,k)=>(o[k]=$(k),o),{});
 
-    function add(text, cls) {
-      const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
-      log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
-    }
-    function render(m) { add(m.text, m.role === 'user' ? 'me' : 'bot'); }
-    function playWav(b64) {
-      const bin = atob(b64), buf = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-      new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))).play().catch(() => {});
-    }
-    function tx(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
-    function openSession(id) { if (id) tx({ t: 'open', sessionId: id }); }
+    let ws, currentSession=null, caps=[], sessions=[], shown=8, speak=false, attachments=[];
+    const cfg = JSON.parse(localStorage.getItem('jarvis')||'{}');
+    speak = !!cfg.voice;
 
-    function fillSessions(sessions) {
-      sessSel.innerHTML = '';
-      sessions.forEach(s => {
-        const o = document.createElement('option'); o.value = s.id;
-        o.textContent = s.title || 'Conversa'; if (s.id === currentSession) o.selected = true;
-        sessSel.appendChild(o);
-      });
-      if (!currentSession) {
-        if (sessions.length) openSession(sessions[0].id);   // open most recent
-        else tx({ t: 'new' });                              // none yet -> create one
+    // ---------- markdown render (see = rich; voice already speaks a clean version) ----------
+    const esc = s => s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    function inl(s){ // s already escaped
+      return s
+        .replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g,(_,a,u)=>`<img alt="${a}" src="${u}">`)
+        .replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g,(_,t,u)=>`<a href="${u}" target="_blank" rel="noopener">${t}</a>`)
+        .replace(/`([^`]+)`/g,'<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+        .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<em>$2</em>');
+    }
+    function tableHtml(rows){
+      const cells=r=>r.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(c=>inl(esc(c.trim())));
+      const head=cells(rows[0]); const body=rows.slice(2).map(cells);
+      return `<table><thead><tr>${head.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>`+
+        body.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')+`</tbody></table>`;
+    }
+    function md(text){
+      const codes=[]; text=text.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>{codes.push(c);return ` C${codes.length-1} `;});
+      const L=text.split(/\r?\n/); let h=''; let i=0;
+      while(i<L.length){
+        let m; const line=L[i];
+        if(m=line.match(/^ C(\d+) $/)){ h+=`<pre><button type="button" class="copy ghost">copiar</button><code>${esc(codes[+m[1]])}</code></pre>`; i++; continue; }
+        if(/\|/.test(line)&&i+1<L.length&&/^\s*\|?[\s:|-]+\|/.test(L[i+1])){ const r=[]; while(i<L.length&&/\|/.test(L[i])){r.push(L[i]);i++;} h+=tableHtml(r); continue; }
+        if(m=line.match(/^\s*(#{1,6})\s+(.*)/)){ h+=`<h4>${inl(esc(m[2]))}</h4>`; i++; continue; }
+        if(/^\s*>\s?/.test(line)){ h+=`<blockquote>${inl(esc(line.replace(/^\s*>\s?/,'')))}</blockquote>`; i++; continue; }
+        if(/^\s*([-*_]\s*){3,}$/.test(line)){ h+='<hr>'; i++; continue; }
+        if(/^\s*[-*+]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*[-*+]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*[-*+]\s+/,''))));i++;} h+=`<ul>${it.map(x=>`<li>${x}</li>`).join('')}</ul>`; continue; }
+        if(/^\s*\d+[.)]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*\d+[.)]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*\d+[.)]\s+/,''))));i++;} h+=`<ol>${it.map(x=>`<li>${x}</li>`).join('')}</ol>`; continue; }
+        if(line.trim()===''){ i++; continue; }
+        h+=`<p>${inl(esc(line))}</p>`; i++;
       }
+      return h;
     }
 
-    function connect() {
-      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
-      ws.onopen = () => dot.classList.add('on');
-      ws.onclose = () => { dot.classList.remove('on'); setTimeout(connect, 1500); };
-      ws.onmessage = (e) => {
-        const m = JSON.parse(e.data);
-        if (m.t === 'hello') {
-          agentSel.innerHTML = '';
-          (m.agents || []).forEach(a => { const o = document.createElement('option'); o.value = o.textContent = a; if (a === m.default) o.selected = true; agentSel.appendChild(o); });
-        }
-        else if (m.t === 'sessions') fillSessions(m.sessions || []);
-        else if (m.t === 'history') { currentSession = m.sessionId; sessSel.value = currentSession; log.innerHTML = ''; (m.messages || []).forEach(render); }
-        else if (m.t === 'message') { if (m.message.sessionId === currentSession) render(m.message); }
-        else if (m.t === 'tts') { if (m.sessionId === currentSession) playWav(m.audio); }
-        else if (m.t === 'error') add('erro: ' + m.message, 'err');
+    function addMsg(m){
+      const d=document.createElement('div');
+      if(m.role==='user'){ d.className='msg me'; d.textContent=m.text; }
+      else { d.className='msg bot'; d.innerHTML=md(m.text); }
+      els.log.appendChild(d); els.log.scrollTop=els.log.scrollHeight;
+    }
+    function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; els.log.appendChild(d); }
+
+    // ---------- files/images panel (from current conversation) ----------
+    function refreshFiles(msgs){
+      els.files.innerHTML='';
+      const found=[];
+      msgs.forEach(m=>{ if(m.role!=='assistant')return; const t=m.text;
+        (t.match(/!\[[^\]]*\]\([^)]+\)/g)||[]).forEach(x=>found.push({t:'🖼 '+(x.match(/!\[([^\]]*)\]/)?.[1]||'imagem')}));
+        (t.match(/\b[\w./-]+\.(ts|js|py|json|md|html|css|tsx|yml|yaml|sh)\b/g)||[]).slice(0,6).forEach(f=>found.push({t:'📄 '+f}));
+      });
+      [...new Map(found.map(f=>[f.t,f])).values()].slice(0,20).forEach(f=>{ const d=document.createElement('div'); d.className='item'; d.textContent=f.t; els.files.appendChild(d); });
+    }
+
+    // ---------- sessions sidebar (recentes + mostrar mais) ----------
+    function renderRecents(){
+      els.recents.innerHTML='';
+      sessions.slice(0,shown).forEach(s=>{
+        const d=document.createElement('div'); d.className='item'+(s.id===currentSession?' active':''); d.textContent=s.title||'Conversa';
+        d.onclick=()=>{ tx({t:'open',sessionId:s.id}); els.side.classList.remove('open'); };
+        els.recents.appendChild(d);
+      });
+      els.moreBtn.classList.toggle('hidden', sessions.length<=shown);
+    }
+    els.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
+
+    // ---------- agent / model / effort ----------
+    function capsFor(name){ return caps.find(c=>c.name===name)||{models:[],efforts:[]}; }
+    function fillSelect(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option');o.value=o.textContent=x;if(x===val)o.selected=true;sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
+    function syncModelEffort(){
+      const c=capsFor(els.agentSel.value);
+      fillSelect(els.modelSel,c.models, cfg.model||c.defaultModel||c.models[0]);
+      fillSelect(els.effortSel,c.efforts, cfg.effort||c.defaultEffort||c.efforts[0]);
+    }
+    els.agentSel.onchange=syncModelEffort;
+
+    // ---------- settings ----------
+    function openSettings(){
+      fillSelect(els.setAgent, caps.map(c=>c.name), cfg.agent||els.agentSel.value);
+      const c=capsFor(els.setAgent.value);
+      fillSelect(els.setModel,c.models,cfg.model||c.defaultModel); fillSelect(els.setEffort,c.efforts,cfg.effort||c.defaultEffort);
+      els.setVoice.checked=!!cfg.voice; els.settings.classList.remove('hidden');
+    }
+    els.setAgent.onchange=()=>{ const c=capsFor(els.setAgent.value); fillSelect(els.setModel,c.models,c.defaultModel); fillSelect(els.setEffort,c.efforts,c.defaultEffort); };
+    els.settingsBtn.onclick=openSettings;
+    els.setClose.onclick=()=>{
+      Object.assign(cfg,{agent:els.setAgent.value,model:els.setModel.value,effort:els.setEffort.value,voice:els.setVoice.checked});
+      localStorage.setItem('jarvis',JSON.stringify(cfg));
+      // apply defaults to the composer selectors
+      if([...els.agentSel.options].some(o=>o.value===cfg.agent)) els.agentSel.value=cfg.agent;
+      syncModelEffort(); speak=cfg.voice; els.speak.classList.toggle('on',speak); els.speak.textContent=speak?'🔊':'🔇';
+      els.settings.classList.add('hidden');
+    };
+
+    // ---------- ws ----------
+    function tx(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+    function connect(){
+      ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+      ws.onopen=()=>els.dot.classList.add('on');
+      ws.onclose=()=>{ els.dot.classList.remove('on'); setTimeout(connect,1500); };
+      ws.onmessage=(e)=>{
+        const m=JSON.parse(e.data);
+        if(m.t==='hello'){ caps=m.agents||[]; fillSelect(els.agentSel,caps.map(c=>c.name), cfg.agent||m.default); syncModelEffort(); }
+        else if(m.t==='sessions'){ sessions=m.sessions||[]; renderRecents(); if(!currentSession){ sessions.length?tx({t:'open',sessionId:sessions[0].id}):tx({t:'new'}); } }
+        else if(m.t==='history'){ currentSession=m.sessionId; els.title.textContent=(sessions.find(s=>s.id===currentSession)||{}).title||'Conversa'; els.log.innerHTML=''; (m.messages||[]).forEach(addMsg); refreshFiles(m.messages||[]); renderRecents(); }
+        else if(m.t==='message'){ if(m.message.sessionId===currentSession){ addMsg(m.message); if(m.message.role==='assistant') refreshFiles([...document.querySelectorAll('.msg.bot')].map(()=>({}))); } }
+        else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) els.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
+        else if(m.t==='tts'){ if(m.sessionId===currentSession) playWav(m.audio); }
+        else if(m.t==='error'){ addErr('erro: '+m.message); if(m.limit){ els.limit.textContent='⚠ Limite de uso atingido: '+m.message; els.limit.classList.remove('hidden'); } }
       };
     }
+    function playWav(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))).play().catch(()=>{}); }
 
-    sessSel.onchange = () => openSession(sessSel.value);
-    newBtn.onclick = () => tx({ t: 'new' });
-    speakBtn.onclick = () => { speak = !speak; speakBtn.classList.toggle('on', speak); speakBtn.textContent = speak ? '🔊' : '🔇'; };
+    // ---------- composer ----------
+    els.newConv.onclick=()=>{ currentSession=null; tx({t:'new'}); };
+    els.speak.onclick=()=>{ speak=!speak; els.speak.classList.toggle('on',speak); els.speak.textContent=speak?'🔊':'🔇'; };
+    els.menuBtn.onclick=()=>els.side.classList.toggle('open');
+    els.log.addEventListener('click',(e)=>{ if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200);} });
 
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      const text = input.value.trim(); if (!text) return;
-      tx({ t: 'send', text, speak, agent: agentSel.value, sessionId: currentSession });  // server echoes it back
-      input.value = ''; input.style.height = 'auto';
+    els.attach.onclick=()=>els.file.click();
+    els.file.onchange=async()=>{ for(const f of els.file.files){ attachments.push({name:f.name,content:await f.text()}); } els.file.value=''; renderAttach(); };
+    function renderAttach(){ els.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='📎 '+a.name+' ✕'; c.onclick=()=>{attachments.splice(i,1);renderAttach();}; els.attachRow.appendChild(c); }); }
+
+    els.composer.onsubmit=(e)=>{ e.preventDefault(); const text=els.input.value.trim(); if(!text&&!attachments.length)return;
+      tx({t:'send',text:text||'(anexo)',speak,agent:els.agentSel.value,model:els.modelSel.value,effort:els.effortSel.value,sessionId:currentSession,attachments});
+      els.input.value=''; els.input.style.height='auto'; attachments=[]; renderAttach();
     };
-    input.oninput = () => { input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; };
-    input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } };
+    els.input.oninput=()=>{ els.input.style.height='auto'; els.input.style.height=els.input.scrollHeight+'px'; };
+    els.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); els.composer.requestSubmit(); } };
 
-    // push-to-talk: click to record, click to stop -> local STT on the Hub
-    let recorder = null, chunks = [];
-    micBtn.onclick = async () => {
-      if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        recorder = new MediaRecorder(stream); chunks = [];
-        recorder.ondataavailable = (e) => chunks.push(e.data);
-        recorder.onstop = async () => {
-          stream.getTracks().forEach(t => t.stop());
-          micBtn.classList.remove('on'); micBtn.textContent = '🎤';
-          const blob = new Blob(chunks, { type: 'audio/webm' });
-          const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(',')[1]); fr.readAsDataURL(blob); });
-          tx({ t: 'voice', audio: b64, ext: 'webm', speak, agent: agentSel.value, sessionId: currentSession });
-        };
-        recorder.start(); micBtn.classList.add('on'); micBtn.textContent = '⏺';
-      } catch (e) { add('mic erro: ' + e.message, 'err'); }
-    };
+    // mic (push-to-talk)
+    let rec=null,chunks=[];
+    els.mic.onclick=async()=>{ if(rec&&rec.state==='recording'){rec.stop();return;}
+      try{ const st=await navigator.mediaDevices.getUserMedia({audio:true}); rec=new MediaRecorder(st); chunks=[];
+        rec.ondataavailable=(e)=>chunks.push(e.data);
+        rec.onstop=async()=>{ st.getTracks().forEach(t=>t.stop()); els.mic.classList.remove('on'); els.mic.textContent='🎤';
+          const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
+          tx({t:'voice',audio:b64,ext:'webm',speak,agent:els.agentSel.value,model:els.modelSel.value,effort:els.effortSel.value,sessionId:currentSession}); };
+        rec.start(); els.mic.classList.add('on'); els.mic.textContent='⏺';
+      }catch(e){ addErr('mic erro: '+e.message); } };
 
+    if(speak){ els.speak.classList.add('on'); els.speak.textContent='🔊'; }
     connect();
   </script>
 </body>
