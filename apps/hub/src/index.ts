@@ -11,6 +11,7 @@
  *   JARVIS_AGENT  "claude" to use native Claude Code; anything else => mock
  */
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,8 +56,28 @@ const server = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
+// Which session each client is currently viewing — for broadcast + listener mode.
+const subs = new Map<WebSocket, string>();
+
+function send(ws: WebSocket, obj: unknown): void {
+  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+}
+/** to every client currently viewing `sessionId` (keeps desktop + phone in sync) */
+function broadcast(sessionId: string, obj: unknown): void {
+  const s = JSON.stringify(obj);
+  for (const c of wss.clients) if (c.readyState === c.OPEN && subs.get(c as WebSocket) === sessionId) c.send(s);
+}
+/** to everyone (e.g. the session list changed) */
+function broadcastAll(obj: unknown): void {
+  const s = JSON.stringify(obj);
+  for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(s);
+}
+
 wss.on("connection", (ws: WebSocket) => {
   send(ws, { t: "hello", agents: agents.names(), default: agents.default });
+  send(ws, { t: "sessions", sessions: store.list() });
+  ws.on("close", () => subs.delete(ws));
+
   ws.on("message", async (raw) => {
     let msg: any;
     try {
@@ -65,17 +86,37 @@ wss.on("connection", (ws: WebSocket) => {
       return;
     }
 
-    const sid = typeof msg.sessionId === "string" ? msg.sessionId : "default";
+    // --- session management (shared across every client) ---
+    if (msg.t === "list") {
+      send(ws, { t: "sessions", sessions: store.list() });
+      return;
+    }
+    if (msg.t === "open" && typeof msg.sessionId === "string") {
+      subs.set(ws, msg.sessionId);
+      store.ensure(msg.sessionId);
+      send(ws, { t: "history", sessionId: msg.sessionId, messages: store.history(msg.sessionId) });
+      return;
+    }
+    if (msg.t === "new") {
+      const id = randomUUID();
+      store.ensure(id, "Nova conversa");
+      subs.set(ws, id);
+      send(ws, { t: "history", sessionId: id, messages: [] });
+      broadcastAll({ t: "sessions", sessions: store.list() });
+      return;
+    }
+
+    // --- conversation (text or voice) ---
+    const sid = subs.get(ws) || (typeof msg.sessionId === "string" ? msg.sessionId : "default");
+    subs.set(ws, sid);
     const agent = agents.get(typeof msg.agent === "string" ? msg.agent : undefined);
 
-    // Resolve the user's text — typed ("send") or spoken ("voice" → local STT).
     let text: string | null = null;
     if (msg.t === "send" && typeof msg.text === "string") {
       text = msg.text;
     } else if (msg.t === "voice" && typeof msg.audio === "string") {
       try {
         text = await transcribe(Buffer.from(msg.audio, "base64"), msg.lang, msg.ext);
-        send(ws, { t: "transcript", sessionId: sid, text });
       } catch (e: any) {
         send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) });
         return;
@@ -84,19 +125,23 @@ wss.on("connection", (ws: WebSocket) => {
     if (!text) return;
 
     const now = Date.now();
-    store.add(sid, { role: "user", text, ts: now });
-    send(ws, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name } });
+    // User message -> store + broadcast to everyone on this session (so all UIs show it).
+    store.add(sid, { role: "user", text, ts: now, agent: agent.name });
+    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name } });
+    broadcastAll({ t: "sessions", sessions: store.list() });
 
     try {
       const reply = await agent.send(sid, text, CWD);
-      store.add(sid, { role: "assistant", text: reply.text, ts: Date.now() });
-      send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: Date.now() } });
+      const rt = Date.now();
+      store.add(sid, { role: "assistant", text: reply.text, ts: rt, agent: agent.name });
+      broadcast(sid, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: rt, agent: agent.name } });
+      broadcastAll({ t: "sessions", sessions: store.list() });
 
       if (msg.speak) {
-        const spoken = speechifyCapped(reply.text); // speak clean text, not raw markdown
+        const spoken = speechifyCapped(reply.text); // clean text, not raw markdown
         if (spoken) {
           const wav = await synthesize(spoken, VOICE);
-          send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken });
+          broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken });
         }
       }
     } catch (e: any) {
@@ -104,10 +149,6 @@ wss.on("connection", (ws: WebSocket) => {
     }
   });
 });
-
-function send(ws: WebSocket, obj: unknown): void {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
-}
 
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
