@@ -11,7 +11,7 @@
     header { padding:12px 16px; border-bottom:1px solid #ffffff14; display:flex; align-items:center; gap:10px; }
     header b { font-size:16px; } header .dot { width:8px;height:8px;border-radius:50%;background:#f43f5e; }
     header .dot.on { background:#22c55e; }
-    header .agent { margin-left:auto; color:var(--mut); font-size:12px; }
+    header select { margin-left:auto; background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:6px 8px; font:inherit; font-size:13px; }
     #log { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
     .msg { max-width:min(85%,680px); padding:9px 13px; border-radius:14px; white-space:pre-wrap; word-wrap:break-word; }
     .me { align-self:flex-end; background:var(--me); }
@@ -28,7 +28,7 @@
   <header>
     <span class="dot" id="dot"></span><b>Jarvis</b>
     <button class="ghost" id="speak" title="Ouvir as respostas (listener)">🔇 Voz</button>
-    <span class="agent" id="agent"></span>
+    <select id="agentSel" title="Agente"></select>
   </header>
   <div id="log"></div>
   <form id="form">
@@ -38,7 +38,7 @@
 
   <script>
     const log = document.getElementById('log'), dot = document.getElementById('dot'),
-          agentEl = document.getElementById('agent'), speakBtn = document.getElementById('speak'),
+          agentSel = document.getElementById('agentSel'), speakBtn = document.getElementById('speak'),
           form = document.getElementById('form'), input = document.getElementById('input');
     let speak = false, ws;
 
@@ -57,7 +57,13 @@
       ws.onclose = () => { dot.classList.remove('on'); setTimeout(connect, 1500); };
       ws.onmessage = (e) => {
         const m = JSON.parse(e.data);
-        if (m.t === 'hello') agentEl.textContent = 'agente: ' + m.agent;
+        if (m.t === 'hello') {
+          agentSel.innerHTML = '';
+          (m.agents || []).forEach(a => {
+            const o = document.createElement('option'); o.value = o.textContent = a;
+            if (a === m.default) o.selected = true; agentSel.appendChild(o);
+          });
+        }
         else if (m.t === 'message' && m.message.role === 'assistant') add(m.message.text, 'bot');
         else if (m.t === 'tts') playWav(m.audio);
         else if (m.t === 'error') add('erro: ' + m.message, 'err');
@@ -67,7 +73,7 @@
     form.onsubmit = (e) => {
       e.preventDefault();
       const text = input.value.trim(); if (!text || !ws || ws.readyState !== 1) return;
-      add(text, 'me'); ws.send(JSON.stringify({ t: 'send', text, speak }));
+      add(text, 'me'); ws.send(JSON.stringify({ t: 'send', text, speak, agent: agentSel.value }));
       input.value = ''; input.style.height = 'auto';
     };
     input.oninput = () => { input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; };

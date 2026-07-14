@@ -15,7 +15,7 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
-import { MockAgentAdapter, ClaudeCodeAdapter, type AgentAdapter } from "./agents.js";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter } from "./agents.js";
 import { synthesize } from "./tts.js";
 import { Store } from "./store.js";
 
@@ -23,7 +23,13 @@ const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
 const CWD = process.env.JARVIS_CWD || process.cwd();
 const VOICE = process.env.JARVIS_VOICE || "en_GB-alan-medium";
-const agent: AgentAdapter = process.env.JARVIS_AGENT === "claude" ? new ClaudeCodeAdapter() : new MockAgentAdapter();
+
+// Agnostic registry — every agent is registered; clients pick per message.
+const DEFAULT_AGENT = process.env.JARVIS_AGENT || "mock";
+const agents = new AgentRegistry(DEFAULT_AGENT)
+  .register(new ClaudeCodeAdapter())
+  .register(new CodexAdapter())
+  .register(new MockAgentAdapter());
 const store = new Store();
 
 const MIME: Record<string, string> = {
@@ -48,7 +54,7 @@ const server = createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws: WebSocket) => {
-  send(ws, { t: "hello", agent: agent.name });
+  send(ws, { t: "hello", agents: agents.names(), default: agents.default });
   ws.on("message", async (raw) => {
     let msg: any;
     try {
@@ -59,9 +65,10 @@ wss.on("connection", (ws: WebSocket) => {
     if (msg.t !== "send" || typeof msg.text !== "string") return;
 
     const sid = typeof msg.sessionId === "string" ? msg.sessionId : "default";
+    const agent = agents.get(typeof msg.agent === "string" ? msg.agent : undefined);
     const now = Date.now();
     store.add(sid, { role: "user", text: msg.text, ts: now });
-    send(ws, { t: "message", message: { sessionId: sid, role: "user", text: msg.text, ts: now } });
+    send(ws, { t: "message", message: { sessionId: sid, role: "user", text: msg.text, ts: now, agent: agent.name } });
 
     try {
       const reply = await agent.send(sid, msg.text, CWD);
@@ -84,6 +91,5 @@ function send(ws: WebSocket, obj: unknown): void {
 
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
-  console.log(`[hub] agent=${agent.name}  cwd=${CWD}  voice=${VOICE}`);
-  if (agent.name === "mock") console.log(`[hub] (mock agent — set JARVIS_AGENT=claude after 'claude /login' for real replies)`);
+  console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
 });
