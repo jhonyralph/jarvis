@@ -1,4 +1,4 @@
 # Local voice service — everything runs offline on this machine.
 piper-tts>=1.4.0        # TTS (working)
-# faster-whisper>=1.0   # STT (next phase; also needs ffmpeg on PATH)
+faster-whisper>=1.2.0   # STT (working; bundles PyAV, no system ffmpeg needed; runs on CPU)
 # openwakeword          # wake word ("Jarvis") (later)

@@ -32,7 +32,8 @@
   </header>
   <div id="log"></div>
   <form id="form">
-    <textarea id="input" rows="1" placeholder="Fale com o Jarvis…" autocomplete="off"></textarea>
+    <textarea id="input" rows="1" placeholder="Fale ou digite…" autocomplete="off"></textarea>
+    <button type="button" class="ghost" id="mic" title="Falar (clique p/ gravar, clique p/ parar)">🎤</button>
     <button type="submit">Enviar</button>
   </form>
 
@@ -64,6 +65,7 @@
             if (a === m.default) o.selected = true; agentSel.appendChild(o);
           });
         }
+        else if (m.t === 'transcript') add(m.text, 'me');
         else if (m.t === 'message' && m.message.role === 'assistant') add(m.message.text, 'bot');
         else if (m.t === 'tts') playWav(m.audio);
         else if (m.t === 'error') add('erro: ' + m.message, 'err');
@@ -78,6 +80,27 @@
     };
     input.oninput = () => { input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; };
     input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } };
+
+    // push-to-talk: click to record, click to stop -> send audio for local STT
+    const micBtn = document.getElementById('mic');
+    let recorder = null, chunks = [];
+    micBtn.onclick = async () => {
+      if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        recorder = new MediaRecorder(stream); chunks = [];
+        recorder.ondataavailable = (e) => chunks.push(e.data);
+        recorder.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop());
+          micBtn.classList.remove('on'); micBtn.textContent = '🎤';
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(',')[1]); fr.readAsDataURL(blob); });
+          if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'voice', audio: b64, ext: 'webm', speak, agent: agentSel.value }));
+        };
+        recorder.start(); micBtn.classList.add('on'); micBtn.textContent = '⏺';
+      } catch (e) { add('mic erro: ' + e.message, 'err'); }
+    };
+
     connect();
   </script>
 </body>

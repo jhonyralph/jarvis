@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter } from "./agents.js";
 import { synthesize } from "./tts.js";
+import { transcribe } from "./stt.js";
 import { Store } from "./store.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
@@ -62,16 +63,31 @@ wss.on("connection", (ws: WebSocket) => {
     } catch {
       return;
     }
-    if (msg.t !== "send" || typeof msg.text !== "string") return;
 
     const sid = typeof msg.sessionId === "string" ? msg.sessionId : "default";
     const agent = agents.get(typeof msg.agent === "string" ? msg.agent : undefined);
+
+    // Resolve the user's text — typed ("send") or spoken ("voice" → local STT).
+    let text: string | null = null;
+    if (msg.t === "send" && typeof msg.text === "string") {
+      text = msg.text;
+    } else if (msg.t === "voice" && typeof msg.audio === "string") {
+      try {
+        text = await transcribe(Buffer.from(msg.audio, "base64"), msg.lang, msg.ext);
+        send(ws, { t: "transcript", sessionId: sid, text });
+      } catch (e: any) {
+        send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) });
+        return;
+      }
+    }
+    if (!text) return;
+
     const now = Date.now();
-    store.add(sid, { role: "user", text: msg.text, ts: now });
-    send(ws, { t: "message", message: { sessionId: sid, role: "user", text: msg.text, ts: now, agent: agent.name } });
+    store.add(sid, { role: "user", text, ts: now });
+    send(ws, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name } });
 
     try {
-      const reply = await agent.send(sid, msg.text, CWD);
+      const reply = await agent.send(sid, text, CWD);
       store.add(sid, { role: "assistant", text: reply.text, ts: Date.now() });
       send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: Date.now() } });
 
