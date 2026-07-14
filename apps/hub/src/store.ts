@@ -1,7 +1,7 @@
 /**
- * Local store (v1) — the single source of truth. All sessions/messages live here
- * (on the Hub machine), so EVERY client (desktop + phone) sees the same list and
- * the same conversation. JSON for now; SQLite later.
+ * Local store (v1) — single source of truth. Each session is bound at creation to
+ * an **agent** and a **working folder**, both **locked** once it exists (only the
+ * model/effort change per message). All data lives on the Hub machine.
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -17,6 +17,8 @@ export interface StoredMessage {
 export interface SessionMeta {
   id: string;
   title: string;
+  agent: string;
+  cwd: string;
   createdAt: number;
   updatedAt: number;
   lastMessage: string;
@@ -26,6 +28,8 @@ export interface SessionMeta {
 interface SessionData {
   id: string;
   title: string;
+  agent: string;
+  cwd: string;
   createdAt: number;
   updatedAt: number;
   messages: StoredMessage[];
@@ -37,37 +41,48 @@ const FILE = join(DIR, "sessions.json");
 export class Store {
   private data: Record<string, SessionData> = {};
 
-  constructor() {
+  constructor(private defaults: { agent: string; cwd: string }) {
     if (!existsSync(FILE)) return;
     try {
       const raw = JSON.parse(readFileSync(FILE, "utf8"));
       for (const [id, v] of Object.entries(raw)) {
-        if (Array.isArray(v)) {
-          // migrate v0 format (id -> message[])
-          const msgs = v as StoredMessage[];
-          this.data[id] = {
-            id,
-            title: msgs.find((m) => m.role === "user")?.text.slice(0, 48) || "Conversa",
-            createdAt: msgs[0]?.ts ?? Date.now(),
-            updatedAt: msgs.at(-1)?.ts ?? Date.now(),
-            messages: msgs,
-          };
-        } else {
-          this.data[id] = v as SessionData;
-        }
+        if (Array.isArray(v)) continue; // drop v0 test data
+        const s = v as Partial<SessionData>;
+        this.data[id] = {
+          id,
+          title: s.title || "Conversa",
+          agent: s.agent || defaults.agent,
+          cwd: s.cwd || defaults.cwd,
+          createdAt: s.createdAt ?? Date.now(),
+          updatedAt: s.updatedAt ?? Date.now(),
+          messages: s.messages ?? [],
+        };
       }
     } catch {
       this.data = {};
     }
   }
 
-  ensure(id: string, title?: string): SessionData {
+  /** Create if missing. agent + cwd are set here and never change afterwards. */
+  ensure(id: string, opts?: { title?: string; agent?: string; cwd?: string }): SessionData {
     let s = this.data[id];
     if (!s) {
-      s = this.data[id] = { id, title: title || "Nova conversa", createdAt: Date.now(), updatedAt: Date.now(), messages: [] };
+      s = this.data[id] = {
+        id,
+        title: opts?.title || "Nova conversa",
+        agent: opts?.agent || this.defaults.agent,
+        cwd: opts?.cwd || this.defaults.cwd,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [],
+      };
       this.flush();
     }
     return s;
+  }
+
+  get(id: string): SessionData | undefined {
+    return this.data[id];
   }
 
   add(id: string, msg: StoredMessage): void {
@@ -88,6 +103,8 @@ export class Store {
       .map((s) => ({
         id: s.id,
         title: s.title,
+        agent: s.agent,
+        cwd: s.cwd,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
         lastMessage: s.messages.at(-1)?.text.slice(0, 60) ?? "",

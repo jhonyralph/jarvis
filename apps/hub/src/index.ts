@@ -12,8 +12,9 @@
  */
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { readFileSync, existsSync, statSync } from "node:fs";
-import { join, normalize } from "node:path";
+import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, normalize, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter } from "./agents.js";
@@ -33,7 +34,7 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new ClaudeCodeAdapter())
   .register(new CodexAdapter())
   .register(new MockAgentAdapter());
-const store = new Store();
+const store = new Store({ agent: agents.default, cwd: CWD });
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -91,17 +92,33 @@ wss.on("connection", (ws: WebSocket) => {
       send(ws, { t: "sessions", sessions: store.list() });
       return;
     }
+    // folder browser for the "new conversation" dialog (Hub machine)
+    if (msg.t === "listdir") {
+      const base = typeof msg.path === "string" && msg.path ? msg.path : homedir();
+      try {
+        const entries = readdirSync(base, { withFileTypes: true })
+          .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+          .map((e) => e.name)
+          .sort((a, b) => a.localeCompare(b));
+        send(ws, { t: "dirs", path: base, parent: dirname(base), entries });
+      } catch (e: any) {
+        send(ws, { t: "error", message: "listdir: " + String(e?.message ?? e) });
+      }
+      return;
+    }
     if (msg.t === "open" && typeof msg.sessionId === "string") {
       subs.set(ws, msg.sessionId);
-      store.ensure(msg.sessionId);
-      send(ws, { t: "history", sessionId: msg.sessionId, messages: store.history(msg.sessionId) });
+      const s = store.ensure(msg.sessionId);
+      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: store.history(s.id) });
       return;
     }
     if (msg.t === "new") {
       const id = randomUUID();
-      store.ensure(id, "Nova conversa");
+      const agentName = agents.names().includes(msg.agent) ? msg.agent : agents.default;
+      const cwd = typeof msg.cwd === "string" && existsSync(msg.cwd) ? msg.cwd : CWD;
+      const s = store.ensure(id, { agent: agentName, cwd });
       subs.set(ws, id);
-      send(ws, { t: "history", sessionId: id, messages: [] });
+      send(ws, { t: "history", sessionId: id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
       broadcastAll({ t: "sessions", sessions: store.list() });
       return;
     }
@@ -109,7 +126,8 @@ wss.on("connection", (ws: WebSocket) => {
     // --- conversation (text or voice) ---
     const sid = subs.get(ws) || (typeof msg.sessionId === "string" ? msg.sessionId : "default");
     subs.set(ws, sid);
-    const agent = agents.get(typeof msg.agent === "string" ? msg.agent : undefined);
+    const session = store.ensure(sid); // agent + cwd are LOCKED to the session (chosen at creation)
+    const agent = agents.get(session.agent);
 
     let text: string | null = null;
     if (msg.t === "send" && typeof msg.text === "string") {
@@ -142,7 +160,7 @@ wss.on("connection", (ws: WebSocket) => {
 
     try {
       const opts = { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined };
-      const reply = await agent.send(sid, agentText, CWD, opts);
+      const reply = await agent.send(sid, agentText, session.cwd, opts);
       const rt = Date.now();
       store.add(sid, { role: "assistant", text: reply.text, ts: rt, agent: agent.name });
       broadcast(sid, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: rt, agent: agent.name } });
