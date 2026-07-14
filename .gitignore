@@ -1,0 +1,30 @@
+# deps
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# build
+dist/
+build/
+*.tsbuildinfo
+
+# local runtime data / models / audio (never commit — huge, and local-only by design)
+*.wav
+*.onnx
+*.onnx.json
+*.pt
+*.bin
+models/
+data/
+
+# env / secrets
+.env
+.env.*
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
