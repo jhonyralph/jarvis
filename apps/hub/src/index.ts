@@ -18,6 +18,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter } from "./agents.js";
 import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
+import { speechifyCapped } from "./speechify.js";
 import { Store } from "./store.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
@@ -92,8 +93,11 @@ wss.on("connection", (ws: WebSocket) => {
       send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: Date.now() } });
 
       if (msg.speak) {
-        const wav = await synthesize(reply.text.slice(0, 600), VOICE);
-        send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64") });
+        const spoken = speechifyCapped(reply.text); // speak clean text, not raw markdown
+        if (spoken) {
+          const wav = await synthesize(spoken, VOICE);
+          send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken });
+        }
       }
     } catch (e: any) {
       send(ws, { t: "error", message: String(e?.message ?? e) });
