@@ -231,7 +231,7 @@
     // ---------- mic (manual + continuação, com checagem simples de fala/ruído) ----------
     let rec=null,chunks=[],recording=false,contTimer=null;
     async function startRec(auto){ if(recording) return;
-      try{ const st=await navigator.mediaDevices.getUserMedia({audio:true}); rec=new MediaRecorder(st); chunks=[]; recording=true;
+      try{ const st=await navigator.mediaDevices.getUserMedia({audio:{noiseSuppression:cfg.noise,echoCancellation:true,autoGainControl:true}}); rec=new MediaRecorder(st); chunks=[]; recording=true;
         // detector simples de fala (pico de amplitude) p/ anti-ruído / descartar silêncio
         const ac=new AudioContext(); const src=ac.createMediaStreamSource(st); const an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
         const buf=new Uint8Array(an.fftSize); let peak=0; const poll=setInterval(()=>{ an.getByteTimeDomainData(buf); let mx=0; for(const v of buf) mx=Math.max(mx,Math.abs(v-128)); peak=Math.max(peak,mx); },100);
