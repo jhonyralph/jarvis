@@ -93,7 +93,9 @@ locally for convenience, or not (re-enter each page load). Recovery if forgotten
 
 ## Residual risks / not done
 
-- **No runner sandboxing / restricted-no-bypass mode** yet — containment is
-  per-machine sharing + audit only; run guest runners in a container/VM.
+- **No in-app restricted-no-bypass mode** — headless agents need
+  `bypassPermissions` to run tools, so containment is per-machine sharing + audit,
+  plus **sandboxed runners** (container/VM) for guests: see
+  [runner-sandbox.md](runner-sandbox.md) (`Dockerfile.runner`).
 - **CSP still allows inline styles** (`style-src 'unsafe-inline'`) — the UI uses
   `style="…"` attributes; low risk, could be tightened with hashed styles.

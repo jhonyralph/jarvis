@@ -1,0 +1,33 @@
+# Sandboxed Jarvis runner — agents run INSIDE this container, not on the host.
+# Use this to share a machine with someone without giving them a shell on your
+# real box: the blast radius of `bypassPermissions` is the container + its mounted
+# /workspace volume. Build context is the repo ROOT.
+#
+#   docker build -f Dockerfile.runner -t jarvis-runner .
+#   docker run -d --name jarvis-guest --restart unless-stopped \
+#     -e JARVIS_HUB="wss://<hub>/" -e JARVIS_TOKEN="<token>" -e JARVIS_LABEL="Sandbox" \
+#     -v jarvis-guest-work:/workspace -v jarvis-guest-agent:/root/.claude \
+#     jarvis-runner
+#
+# IMPORTANT: install + authenticate the agent CLI you want inside the sandbox, and
+# give it its OWN credentials (not the host's). See docs/runner-sandbox.md.
+FROM node:22-slim
+
+# --- agent CLI (customize for your agent) -----------------------------------
+# The runner drives whatever agent CLI is present. Uncomment/adjust for yours,
+# e.g. Claude Code:
+#   RUN npm install -g @anthropic-ai/claude-code
+# Authentication is interactive and must NOT be baked into the image — do it once
+# into a mounted volume (see docs), or provide an API key via env at run time.
+# ----------------------------------------------------------------------------
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY packages ./packages
+COPY apps/runner ./apps/runner
+RUN npm install
+
+ENV JARVIS_CWD=/workspace
+RUN mkdir -p /workspace
+# The runner reads JARVIS_HUB / JARVIS_TOKEN / JARVIS_LABEL from the environment.
+CMD ["npm", "--prefix", "apps/runner", "start"]
