@@ -777,6 +777,39 @@ wss.on("connection", (ws: WebSocket, req: any) => {
   if (!auth.AUTH_ENABLED) void sendInitialState(ws);
 });
 
+// --- loopback-only admin API (host recovery) --------------------------------
+// Mint pairing codes / manage devices WITHOUT a logged-in device. Bound to
+// 127.0.0.1 so only host-local processes reach it (a reverse proxy forwards to
+// PORT, never here). This is the answer to "no devices left — how do I get a
+// code?": run scripts/jarvis.ps1 on the host. See docs/multi-runner.md (4a).
+const ADMIN_PORT = Number(process.env.JARVIS_ADMIN_PORT || 4578);
+const PUBLIC_URL = (process.env.JARVIS_PUBLIC_URL || "").replace(/\/+$/, "");
+function inviteLink(code: string): string | undefined { return PUBLIC_URL ? `${PUBLIC_URL}/#invite=${encodeURIComponent(code)}` : undefined; }
+const adminServer = createServer((req, res) => {
+  const ra = String(req.socket.remoteAddress || "");
+  if (!/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(ra)) { res.writeHead(403, { "content-type": "application/json" }).end('{"error":"loopback only"}'); return; }
+  const url = (req.url || "/").split("?")[0];
+  const json = (code: number, obj: unknown) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
+  const body = () => new Promise<any>((resolve) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve({}); } }); });
+  (async () => {
+    try {
+      if (req.method === "GET" && url === "/admin/status") return json(200, { claimed: auth.isClaimed(), authEnabled: auth.AUTH_ENABLED, devices: auth.listDevices(), invites: auth.listInvites() });
+      if (req.method === "GET" && url === "/admin/claimcode") return json(200, { claimed: auth.isClaimed(), code: auth.isClaimed() ? null : auth.ensureClaimCode() });
+      if (req.method === "POST" && url === "/admin/invite") {
+        const b = await body();
+        const role = b.role === "owner" ? "owner" : "member";
+        const ttlSec = Math.min(Math.max(Number(b.ttlSec) || 86400, 60), 30 * 86400);
+        const { code, invite } = auth.mintInvite("cli", { role, runners: [], ttlSec });
+        return json(200, { code, link: inviteLink(code), invite });
+      }
+      if (req.method === "POST" && url === "/admin/revoke") { const b = await body(); const ok = typeof b.deviceId === "string" && auth.revokeDevice(b.deviceId); dropRevoked(); return json(200, { ok: !!ok }); }
+      if (req.method === "POST" && url === "/admin/revoke-all") { const n = auth.listDevices().length; for (const d of auth.listDevices()) auth.revokeDevice(d.id); dropRevoked(); return json(200, { revoked: n }); }
+      json(404, { error: "not found" });
+    } catch (e: any) { json(500, { error: String(e?.message ?? e) }); }
+  })();
+});
+adminServer.listen(ADMIN_PORT, "127.0.0.1", () => console.log(`[hub] admin (loopback) http://127.0.0.1:${ADMIN_PORT}  — recovery: scripts/jarvis.ps1`));
+
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);

@@ -58,6 +58,12 @@ itself) runs a **Runner** that executes agents locally and streams back.
      to `~/.jarvis/claim-code.txt` (and logs it). The first device redeems it to
      become **owner**. No loopback auto-trust (unsafe behind a reverse proxy,
      where every client appears as 127.0.0.1). Escape hatch: `JARVIS_AUTH=off`.
+   - **Recovery (no devices left):** the Hub exposes a **loopback-only admin API**
+     (`127.0.0.1:JARVIS_ADMIN_PORT`, default 4578) — never routed by a proxy, so
+     host access == authorization. `scripts/jarvis.ps1 owner` mints an owner
+     pairing code even with zero logged-in devices; also `invite` / `status` /
+     `revoke` / `revoke-all`. This is the answer to "how do I generate a code if
+     I have no device?".
 4b. **Authorization:** roles **owner** (admin) and **member**; access is granted
    **per-runner (allowlist)**. Owner sees all runners; members only the machines
    the owner shared. Since each runner is a shell, this grain is the security

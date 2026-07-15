@@ -25,6 +25,8 @@ $env:JARVIS_AGENT        = 'claude-code'
 $env:JARVIS_VOICE        = 'pt_BR-faber-medium'
 $env:JARVIS_CWD          = $root
 $env:JARVIS_SEARCH_MODEL = 'haiku'
+# URL pública (Tailscale) — usada só para montar links de convite completos.
+$env:JARVIS_PUBLIC_URL   = 'https://desktop-gaggr8d.tail251e83.ts.net'
 # Autenticação por pareamento de dispositivo LIGADA (padrão). O primeiro dispositivo
 # reivindica o dono com o claim-code que aparece no log e em ~/.jarvis/claim-code.txt.
 # Para desligar em emergência (rede privada): $env:JARVIS_AUTH = 'off'
