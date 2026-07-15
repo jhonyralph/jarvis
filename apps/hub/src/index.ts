@@ -23,7 +23,7 @@ import { transcribe } from "./stt.js";
 import { speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeLine } from "./native.js";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents } from "./native.js";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store } from "./store.js";
 
@@ -123,8 +123,10 @@ function pollTail(sid: string): void {
   t.buf = parts.pop() || ""; // keep the last (possibly partial) line
   for (const line of parts) {
     if (!line.trim()) continue;
-    const m = parseNativeLine(line, t.claude);
-    if (m) broadcast(sid, { t: "message", message: { sessionId: sid, role: m.role, text: m.text, ts: m.ts, agent: t.claude ? "claude-code" : "codex" } });
+    for (const e of parseNativeEvents(line, t.claude)) {
+      if (e.kind === "message") broadcast(sid, { t: "message", message: { sessionId: sid, role: e.role, text: e.text, ts: e.ts, agent: t.claude ? "claude-code" : "codex" } });
+      else broadcast(sid, { t: "activity", sessionId: sid, name: e.name, summary: e.summary });
+    }
   }
 }
 function startTail(sid: string): void {

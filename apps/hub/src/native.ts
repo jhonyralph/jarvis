@@ -201,23 +201,52 @@ export function nativeFilePath(id: string): { path: string; claude: boolean } | 
   return isNativeId(id) ? findFileById(id) : null;
 }
 
-/** Parse ONE jsonl line into a displayable message (or null for tool/system/empty lines). */
-export function parseNativeLine(line: string, claude: boolean): { role: string; text: string; ts: number } | null {
+export type NativeEvent =
+  | { kind: "message"; role: string; text: string; ts: number }
+  | { kind: "tool"; name: string; summary: string };
+
+function toolSummary(name: string, input: any): string {
+  const base = (p: string) => (p || "").split(/[\\/]/).pop() || p;
+  try {
+    switch (name) {
+      case "Bash": return "Bash: " + String(input?.command || "").replace(/\s+/g, " ").slice(0, 90);
+      case "Read": return "Lendo " + base(input?.file_path);
+      case "Edit": case "Write": case "NotebookEdit": case "MultiEdit": return "Editando " + base(input?.file_path);
+      case "Grep": return "Buscando /" + String(input?.pattern || "").slice(0, 40) + "/";
+      case "Glob": return "Listando " + String(input?.pattern || "");
+      case "Task": case "Agent": return "Subagente: " + String(input?.description || input?.subagent_type || "").slice(0, 60);
+      case "WebFetch": return "Abrindo " + String(input?.url || "").slice(0, 60);
+      case "WebSearch": return "Pesquisando: " + String(input?.query || "").slice(0, 60);
+      default: { const s = JSON.stringify(input || {}); return name + (s && s !== "{}" ? " " + s.slice(0, 60) : ""); }
+    }
+  } catch { return name; }
+}
+
+/** Parse ONE jsonl line into displayable events: text turns AND tool activity (for live tailing). */
+export function parseNativeEvents(line: string, claude: boolean): NativeEvent[] {
   let o: any;
-  try { o = JSON.parse(line); } catch { return null; }
+  try { o = JSON.parse(line); } catch { return []; }
+  const out: NativeEvent[] = [];
   if (claude) {
-    if (o.type !== "user" && o.type !== "assistant") return null;
-    let t = contentText(o.message?.content);
-    if (o.type === "user" && isInjected(t)) return null;
-    t = cleanText(t);
-    return t ? { role: o.type, text: t, ts: Date.parse(o.timestamp) || 0 } : null;
+    if (o.type === "assistant") {
+      for (const b of o.message?.content || []) {
+        if (b.type === "text" && b.text?.trim()) { const t = cleanText(b.text); if (t) out.push({ kind: "message", role: "assistant", text: t, ts: Date.parse(o.timestamp) || 0 }); }
+        else if (b.type === "tool_use") out.push({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input) });
+      }
+    } else if (o.type === "user") {
+      const t = cleanText(contentText(o.message?.content));
+      if (t && !isInjected(t)) out.push({ kind: "message", role: "user", text: t, ts: Date.parse(o.timestamp) || 0 });
+    }
+    return out;
   }
-  if (o.type !== "response_item" || o.payload?.type !== "message") return null;
-  const role = o.payload.role;
-  if (role !== "user" && role !== "assistant") return null;
-  const t = contentText(o.payload.content);
-  if (!t || (role === "user" && isInjected(t))) return null;
-  return { role, text: t, ts: Date.parse(o.timestamp) || 0 };
+  if (o.type === "response_item" && o.payload?.type === "message") {
+    const role = o.payload.role;
+    if (role === "user" || role === "assistant") {
+      const t = contentText(o.payload.content);
+      if (t && !(role === "user" && isInjected(t))) out.push({ kind: "message", role, text: t, ts: Date.parse(o.timestamp) || 0 });
+    }
+  }
+  return out;
 }
 
 /** Cheap agent+cwd lookup (head read only) — used to continue a native session. */

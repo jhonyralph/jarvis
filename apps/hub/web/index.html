@@ -43,6 +43,7 @@
     .strhead { display:inline-flex; align-items:center; gap:8px; color:var(--mut); font-size:12.5px; }
     .strtools { display:flex; flex-direction:column; gap:4px; }
     .strtool { display:flex; align-items:center; gap:7px; font-size:12.5px; color:#cbd5e1; background:#ffffff0d; border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow-wrap:anywhere; }
+    .strtool.act { align-self:flex-start; max-width:min(88%,760px); }
     .strtext { white-space:pre-wrap; } .strtext.done { white-space:normal; }
     .msg.bot .usage { margin-top:4px; }
     .msg.bot p { margin:.55em 0; } .msg.bot h4 { margin:.7em 0 .3em; font-size:15px; }
@@ -474,6 +475,9 @@
           else if(ev.kind==='text') streamText(ev.text||'');
           else if(ev.kind==='done') streamDone(ev.text, m.usage);
           else if(ev.kind==='error') streamErr(); }
+        else if(m.t==='activity'){ if(m.sessionId!==currentSession)return; const d=document.createElement('div'); d.className='strtool act';
+          d.innerHTML=`<span>${toolIcon(m.name)}</span><span>${esc(m.summary||m.name||'')}</span>`;
+          if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
         else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
