@@ -12,6 +12,7 @@ export interface StoredMessage {
   text: string;
   ts: number;
   agent?: string;
+  speaker?: string; // identified enrolled speaker (voice messages only)
 }
 
 export interface SessionMeta {

@@ -4,3 +4,5 @@ faster-whisper>=1.2.0   # STT (working; bundles PyAV, no system ffmpeg needed; r
 openwakeword>=0.6.0     # wake word "Hey Jarvis" (wake_listener.py; pretrained onnx)
 sounddevice>=0.4.6      # machine mic + speaker for the wake listener
 websocket-client>=1.7.0 # wake listener's WS client to the Hub
+resemblyzer>=0.1.4      # speaker embedding for voice identification (voice_cli.py; pulls torch CPU)
+setuptools<81           # webrtcvad (a resemblyzer dep) imports pkg_resources, removed in setuptools 81+

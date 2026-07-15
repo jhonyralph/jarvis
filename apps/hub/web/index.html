@@ -133,8 +133,10 @@
     <div class="sec">Escuta avançada <span class="soon">em desenvolvimento</span></div>
     <label class="row"><input type="checkbox" id="setWake"> Wake word "Hey Jarvis" (na máquina) <span class="soon">requer wake_listener.py</span></label>
     <label class="row"><input type="checkbox" id="setNoise"> Filtro anti-ruído / detecção de fala (VAD)</label>
-    <label class="row"><input type="checkbox" id="setMulti"> Permitir múltiplos usuários <span class="soon">em breve</span></label>
-    <div class="row"><button id="setEnroll" class="ghost">🎙 Cadastrar minha voz (identificação) <span class="soon">em breve</span></button></div>
+    <div class="sec">Identificação de voz (multiusuário)</div>
+    <label class="row"><input type="checkbox" id="setGate"> Exigir voz cadastrada (bloquear vozes desconhecidas)</label>
+    <div id="spkList" class="mut" style="font-size:12px;margin:4px 0"></div>
+    <div class="row"><button id="setEnroll" class="ghost" type="button">🎙 Cadastrar / atualizar minha voz</button></div>
     <button id="setClose">Salvar</button>
   </div></div>
 
@@ -142,16 +144,16 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','agentChip','cwdChip','modelSel','effortSel','speak','recents','moreBtn','files',
       'newSess','chooseFolder','searchBtn','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
-      'setWake','setNoise','setMulti','setEnroll','setClose','composer','input','mic','attach','file','attachRow','usage','limit',
+      'setWake','setNoise','setGate','spkList','setEnroll','setClose','composer','input','mic','attach','file','attachRow','usage','limit',
       'menuBtn','side','newModal','newAgent','newPath','dirList','newUp','newCreate','newCancel','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
 
     let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='';
     // ---- config (persisted; refresh não perde estado) ----
-    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, multi:false, lastCwd:'' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, lastCwd:'' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
-    let speak = cfg.voice;
+    let speak = cfg.voice, speakers = [];
 
     // ---------- markdown ----------
     const esc = s => s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -170,7 +172,10 @@
         if(/^\s*[-*+]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*[-*+]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*[-*+]\s+/,''))));i++;} h+=`<ul>${it.map(x=>`<li>${x}</li>`).join('')}</ul>`; continue; }
         if(/^\s*\d+[.)]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*\d+[.)]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*\d+[.)]\s+/,''))));i++;} h+=`<ol>${it.map(x=>`<li>${x}</li>`).join('')}</ol>`; continue; }
         if(line.trim()===''){ i++; continue; } h+=`<p>${inl(esc(line))}</p>`; i++; } return h; }
-    function addMsg(m){ const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me'; d.textContent=m.text; } else { d.className='msg bot'; d.innerHTML=md(m.text); } E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+    function addMsg(m){ const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
+        if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
+        d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); } E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+    function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function addSearchCard(m){ const d=document.createElement('div'); d.className='msg bot';
       let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
@@ -209,14 +214,29 @@
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
       fillSel(E.setModel,c.models,cfg.model||c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
-      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setMulti.checked=cfg.multi;
+      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       E.settings.classList.remove('hidden'); };
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.models,c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     E.setModel.onchange=()=>fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value);
-    E.setEnroll.onclick=()=>addErr('Identificação de voz: em desenvolvimento (ver plano).');
-    E.setClose.onclick=()=>{ Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
-      continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,multi:E.setMulti.checked});
-      saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); E.settings.classList.add('hidden'); };
+    E.setEnroll.onclick=()=>enrollFlow();
+    E.setClose.onclick=()=>{
+      if(E.setGate.checked && !speakers.length){ addErr('Cadastre sua voz antes de exigir voz cadastrada (senão o modo voz fica bloqueado).'); E.setGate.checked=false; }
+      Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
+      continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked});
+      saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate}); E.settings.classList.add('hidden'); };
+    // ---------- voice enrollment / speaker list ----------
+    function renderSpk(){ if(!E.spkList)return; E.spkList.innerHTML = speakers.length ? 'Vozes cadastradas: ' : 'Nenhuma voz cadastrada ainda.';
+      speakers.forEach(n=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='🗣 '+n+' ✕'; c.style.cursor='pointer';
+        c.onclick=()=>{ if(confirm('Remover a voz "'+n+'"?')) tx({t:'delspk',name:n}); }; E.spkList.appendChild(c); }); }
+    function recordClip(ms){ return new Promise((res,rej)=>{ navigator.mediaDevices.getUserMedia({audio:{noiseSuppression:cfg.noise,echoCancellation:true,autoGainControl:true}})
+      .then(st=>{ const r=new MediaRecorder(st),ch=[]; r.ondataavailable=e=>ch.push(e.data);
+        r.onstop=()=>{ st.getTracks().forEach(t=>t.stop()); const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.readAsDataURL(new Blob(ch,{type:'audio/webm'})); };
+        r.start(); setTimeout(()=>r.stop(), ms); }).catch(rej); }); }
+    async function enrollFlow(){ const name=(prompt('Seu nome para identificação de voz:')||'').trim(); if(!name)return;
+      const N=3, samples=[]; for(let i=0;i<N;i++){ status('listening',`Cadastro ${i+1}/${N}: fale uma frase (3s)…`);
+        try{ samples.push(await recordClip(3000)); }catch(e){ addErr('mic erro: '+e.message); status(''); return; }
+        status(''); await new Promise(r=>setTimeout(r,500)); }
+      note('Enviando cadastro de voz de "'+name+'"…'); tx({t:'enroll',name,samples,ext:'webm'}); }
 
     // ---------- status indicator ----------
     function status(mode,txt){ E.status.className=mode||''; E.status.innerHTML = mode ? `<span class="pulse"></span>${txt}` : ''; }
@@ -240,6 +260,8 @@
         else if(m.t==='searchResult'){ addSearchCard(m); }
         else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
+        else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }
+        else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
         else if(m.t==='error'){ addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);

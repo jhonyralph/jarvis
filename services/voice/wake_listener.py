@@ -35,6 +35,7 @@ WAKE_NAME = os.environ.get("JARVIS_WAKE_MODEL", "hey_jarvis")
 WAKE_FILE = os.environ.get("JARVIS_WAKE_MODEL_FILE")  # optional custom .onnx (e.g. bare "Jarvis")
 THRESHOLD = float(os.environ.get("JARVIS_WAKE_THRESHOLD", "0.5"))
 LANG = os.environ.get("JARVIS_WAKE_LANG", "pt")
+GATE = os.environ.get("JARVIS_WAKE_GATE", "0") == "1"  # reject utterances from unknown voices
 SR = 16000
 FRAME = 1280  # 80 ms @ 16 kHz — openWakeWord's expected frame
 
@@ -123,6 +124,20 @@ def pcm_to_wav(pcm: np.ndarray) -> str:
     return path
 
 
+def identify_speaker(wav_path: str):
+    """Best-effort local speaker id; returns the enrolled name (or None). Never raises.
+
+    Cheap when no one is enrolled (voiceprints.identify short-circuits before loading
+    torch), so this is zero-overhead until the user enrolls a voice.
+    """
+    try:
+        from voiceprints import identify
+        return identify(wav_path).get("name")
+    except Exception as e:
+        print("[wake] speaker-id skipped:", e, flush=True)
+        return None
+
+
 # ----------------------------- main loop -----------------------------------
 def main():
     from openwakeword.model import Model
@@ -154,10 +169,15 @@ def main():
             pcm = capture_utterance(stream)
             if pcm.size < SR // 2:  # < 0.5 s -> noise, ignore
                 continue
-            text = transcribe(pcm_to_wav(pcm), LANG).strip()
-            print(f"[wake] heard: {text!r}", flush=True)
+            wav_path = pcm_to_wav(pcm)
+            speaker = identify_speaker(wav_path)  # None if unknown / no one enrolled
+            if GATE and speaker is None:
+                print("[wake] voice not recognized -> ignoring", flush=True)
+                continue
+            text = transcribe(wav_path, LANG).strip()
+            print(f"[wake] heard ({speaker or '?'}): {text!r}", flush=True)
             if text and ws.ws:
-                ws.ws.send(json.dumps({"t": "send", "text": text, "speak": True, "sessionId": SESSION}))
+                ws.ws.send(json.dumps({"t": "send", "text": text, "speak": True, "sessionId": SESSION, "speaker": speaker}))
     except KeyboardInterrupt:
         pass
     finally:

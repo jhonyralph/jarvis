@@ -22,6 +22,7 @@ import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
+import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { Store } from "./store.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
@@ -66,6 +67,10 @@ const subs = new Map<WebSocket, string>();
 // machine wake-word listener sockets + whether "Hey Jarvis" is armed.
 const wakeClients = new Set<WebSocket>();
 let wakeEnabled = process.env.JARVIS_WAKE !== "0";
+// speaker-id: label voice messages with the enrolled speaker; optionally reject
+// unknown voices (gate). Off by default so an un-enrolled user is never locked out.
+let voiceGate = process.env.JARVIS_VOICE_GATE === "1";
+let voiceThreshold: number | undefined = process.env.JARVIS_VOICE_THRESHOLD ? Number(process.env.JARVIS_VOICE_THRESHOLD) : undefined;
 
 function send(ws: WebSocket, obj: unknown): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -90,10 +95,20 @@ async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): P
   }
   send(ws, { t: "searchResult", query, answer: r.answer, matches: r.matches, action: r.action, audio });
 }
+/** Current speaker-id config + enrolled voiceprints (listing is cheap — no torch). */
+async function sendVoiceState(ws: WebSocket): Promise<void> {
+  send(ws, { t: "voice_state", gate: voiceGate, threshold: voiceThreshold ?? null, speakers: await listSpeakers() });
+}
+async function broadcastVoiceState(): Promise<void> {
+  const speakers = await listSpeakers();
+  broadcastAll({ t: "voice_state", gate: voiceGate, threshold: voiceThreshold ?? null, speakers });
+}
 
-wss.on("connection", async (ws: WebSocket) => {
-  send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
-  send(ws, { t: "sessions", sessions: store.list() });
+wss.on("connection", (ws: WebSocket) => {
+  // Attach listeners SYNCHRONOUSLY (before any await) so a client message sent
+  // right after connect is never dropped. The initial state below is async
+  // (agent caps + speaker list, which spawns Python), so pushing it before the
+  // message listener was attached created a window where "open" etc. were lost.
   ws.on("close", () => {
     subs.delete(ws);
     wakeClients.delete(ws);
@@ -116,6 +131,31 @@ wss.on("connection", async (ws: WebSocket) => {
     if (msg.t === "wake_hello") { wakeClients.add(ws); send(ws, { t: "wake_state", enabled: wakeEnabled }); return; }
     if (msg.t === "wake") { wakeEnabled = !!msg.enabled; for (const c of wakeClients) send(c, { t: "wake_state", enabled: wakeEnabled }); broadcastAll({ t: "wake_state", enabled: wakeEnabled }); return; }
     if (msg.t === "wake_event") { broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return; }
+    // speaker identification: enroll voiceprints, list them, toggle the unknown-voice gate
+    if (msg.t === "speakers") { await sendVoiceState(ws); return; }
+    if (msg.t === "voicecfg") {
+      if (typeof msg.gate === "boolean") voiceGate = msg.gate;
+      if (typeof msg.threshold === "number") voiceThreshold = msg.threshold;
+      await broadcastVoiceState();
+      return;
+    }
+    if (msg.t === "enroll" && typeof msg.name === "string" && Array.isArray(msg.samples)) {
+      try {
+        const bufs = msg.samples.filter((s: any) => typeof s === "string").map((s: string) => Buffer.from(s, "base64"));
+        if (!bufs.length) { send(ws, { t: "error", message: "enroll: nenhum áudio recebido" }); return; }
+        const r = await enrollSpeaker(msg.name, bufs, typeof msg.ext === "string" ? msg.ext : "webm");
+        send(ws, { t: "enrolled", name: r.name, samples: r.samples });
+        await broadcastVoiceState();
+      } catch (e: any) {
+        send(ws, { t: "error", message: "enroll: " + String(e?.message ?? e) });
+      }
+      return;
+    }
+    if (msg.t === "delspk" && typeof msg.name === "string") {
+      await deleteSpeaker(msg.name);
+      await broadcastVoiceState();
+      return;
+    }
     // folder browser for the "new conversation" dialog (Hub machine)
     if (msg.t === "listdir") {
       const base = typeof msg.path === "string" && msg.path ? msg.path : homedir();
@@ -179,14 +219,32 @@ wss.on("connection", async (ws: WebSocket) => {
     const agent = agents.get(session.agent);
 
     let text: string | null = null;
+    let speaker: string | undefined; // enrolled speaker for voice messages (or wake-injected)
     if (msg.t === "send" && typeof msg.text === "string") {
       text = msg.text;
+      if (typeof msg.speaker === "string") speaker = msg.speaker; // wake listener already identified it
     } else if (msg.t === "voice" && typeof msg.audio === "string") {
+      const audio = Buffer.from(msg.audio, "base64");
       try {
-        text = await transcribe(Buffer.from(msg.audio, "base64"), msg.lang, msg.ext);
+        text = await transcribe(audio, msg.lang, msg.ext);
       } catch (e: any) {
         send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) });
         return;
+      }
+      // who spoke? label the message and, if the gate is on, reject unknown voices.
+      try {
+        const id = await identifySpeaker(audio, msg.ext || "webm", voiceThreshold);
+        if (id.known && id.name) speaker = id.name;
+        if (voiceGate && !id.known) {
+          send(ws, { t: "error", message: "voz não reconhecida", denied: true, score: id.score });
+          if (msg.speak) {
+            const wav = await synthesize("Desculpe, não reconheci a sua voz.", VOICE);
+            send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: "Desculpe, não reconheci a sua voz." });
+          }
+          return;
+        }
+      } catch (e: any) {
+        console.error("[speaker]", String(e?.message ?? e)); // speaker-id must never block the conversation
       }
     }
     if (!text) return;
@@ -209,8 +267,8 @@ wss.on("connection", async (ws: WebSocket) => {
 
     const now = Date.now();
     // User message -> store + broadcast to everyone on this session (so all UIs show it).
-    store.add(sid, { role: "user", text, ts: now, agent: agent.name });
-    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name } });
+    store.add(sid, { role: "user", text, ts: now, agent: agent.name, speaker });
+    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name, speaker } });
     broadcastAll({ t: "sessions", sessions: store.list() });
 
     try {
@@ -235,6 +293,14 @@ wss.on("connection", async (ws: WebSocket) => {
       send(ws, { t: "error", message, limit });
     }
   });
+
+  // Initial state — pushed AFTER the message listener is attached (async: agent
+  // capabilities + speaker list). Any client message that races in is now handled.
+  void (async () => {
+    send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
+    send(ws, { t: "sessions", sessions: store.list() });
+    await sendVoiceState(ws);
+  })();
 });
 
 server.listen(PORT, () => {

@@ -51,10 +51,39 @@ Env: `JARVIS_HUB_WS`, `JARVIS_WAKE_SESSION` (=voice), `JARVIS_WAKE_MODEL`
 > The pretrained phrase is "Hey Jarvis". A bare "Jarvis" needs a custom-trained
 > `.onnx` (openWakeWord's training notebook) pointed at via `JARVIS_WAKE_MODEL_FILE`.
 
+## Voice identification — Resemblyzer (working, multi-user)
+
+Local speaker verification. Each user enrolls a **voiceprint** (a 256-d embedding
+averaged over a few short clips), stored under `~/.jarvis/voiceprints/` — nothing
+leaves the machine. Every voice utterance is then matched (cosine similarity) to
+the enrolled voiceprints: the message is labelled with who spoke, and — if the
+gate is on — utterances from **unknown** voices are rejected.
+
+- `speaker_id.py` — Resemblyzer embedding (audio decoded via faster-whisper).
+- `voiceprints.py` — enroll / identify / list / delete against the local store.
+- `voice_cli.py` — CLI the Hub shells out to (JSON on stdout).
+
+```bash
+python voice_cli.py enroll --name jonathan a.wav b.wav c.wav
+python voice_cli.py identify utterance.webm      # -> {"name": ..., "score": ...}
+python voice_cli.py list
+```
+
+Enroll from the web UI: **Configurações → Identificação de voz → Cadastrar minha
+voz** (records 3 clips). Toggle "Exigir voz cadastrada" to gate unknown voices.
+
+Env: `JARVIS_VOICEPRINTS` (store dir), `JARVIS_VOICE_THRESHOLD` (=0.75). The wake
+listener honours `JARVIS_WAKE_GATE=1` to ignore unrecognized voices.
+
+> Resemblyzer pulls torch (CPU). v1 spawns Python per utterance (~2–4 s cold on
+> first call while torch loads); the planned persistent voice service loads the
+> model once and makes this near-instant. `webrtcvad` (a Resemblyzer dep) needs
+> `pkg_resources`, so setuptools is pinned `<81`.
+
 ## Roadmap
 
 - [x] TTS (Piper)
 - [x] STT (faster-whisper)
 - [x] wake word (openWakeWord, "Hey Jarvis")
-- [ ] voice identification (speaker verification, multi-user)
-- [ ] wrap as a local WS service the Hub calls (STTAdapter / TTSAdapter)
+- [x] voice identification (Resemblyzer, multi-user, optional gate)
+- [ ] wrap as a persistent local WS service the Hub calls (load models once)
