@@ -106,6 +106,10 @@
     #recents .item { display:flex; align-items:center; gap:6px; }
     #recents .rtitle { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #recents .rbadge { flex:none; font-size:11px; } #recents .rnat { flex:none; font-size:9px; color:var(--mut); background:#ffffff12; border-radius:5px; padding:1px 4px; }
+    #recents .runhdr { color:#22c55e; font-size:11px; font-weight:600; padding:2px 6px 5px; }
+    #recents .rdot { flex:none; width:7px; height:7px; border-radius:50%; background:transparent; }
+    #recents .item.running .rdot { background:#22c55e; animation:p 1s infinite; }
+    #recents .item.unread .rdot { background:#f59e0b; }
     #recents .rsum { flex:none; background:none; border:0; cursor:pointer; font-size:14px; padding:2px 5px; opacity:.5; border-radius:6px; line-height:1; }
     #recents .rsum:hover { opacity:1; background:#ffffff14; }
     .toast { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; cursor:pointer; }
@@ -150,6 +154,7 @@
       <button id="sideClose" class="ghost" title="Fechar menu">✕</button>
       <button id="newSess">＋ Nova sessão</button>
       <div class="link" id="searchBtn">🔎 buscar entre sessões</div>
+      <div class="link" id="digestBtn">🎧 o que está rolando</div>
       <div class="sec">Recentes</div>
       <div id="recents"></div>
       <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
@@ -229,7 +234,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'newSess','searchBtn','digestBtn','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
@@ -238,6 +243,7 @@
     let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false;
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
+    let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
     // ---- config (persisted; refresh não perde estado) ----
     const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, lastCwd:'' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
@@ -307,9 +313,12 @@
       (t.match(/\b[\w./-]+\.(ts|tsx|js|py|json|md|html|css|yml|yaml|sh)\b/g)||[]).forEach(x=>f.push('📄 '+x)); });
       [...new Set(f)].slice(0,25).forEach(x=>{ const d=document.createElement('div'); d.className='item'; d.textContent=x; E.files.appendChild(d); }); }
 
-    function renderRecents(){ E.recents.innerHTML=''; sessions.slice(0,shown).forEach(s=>{ const d=document.createElement('div'); d.className='item'+(s.id===currentSession?' active':'');
+    function renderRecents(){ E.recents.innerHTML='';
+      if(activeRuns.length){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+activeRuns.length+' rodando agora'; E.recents.appendChild(h); }
+      sessions.slice(0,shown).forEach(s=>{ const run=activeRuns.includes(s.id), un=unread.has(s.id)&&!run&&s.id!==currentSession;
+      const d=document.createElement('div'); d.className='item'+(s.id===currentSession?' active':'')+(run?' running':'')+(un?' unread':'');
       const nat=isNative(s.id);
-      d.innerHTML=`<span class="rbadge" title="${esc(s.agent||'')}">${agentIcon(s.agent)}</span><span class="rtitle">${esc(s.title||'Sessão')}</span>`+(nat?'<span class="rnat">nativo</span>':'');
+      d.innerHTML=`<span class="rdot"></span><span class="rbadge" title="${esc(s.agent||'')}">${agentIcon(s.agent)}</span><span class="rtitle">${esc(s.title||'Sessão')}</span>`+(nat?'<span class="rnat">nativo</span>':'');
       const sum=document.createElement('button'); sum.type='button'; sum.className='rsum'; sum.title='Resumir e falar (não entra no histórico)'; sum.textContent='🔊';
       sum.onclick=(e)=>{ e.stopPropagation(); status('speaking','Resumindo…'); tx({t:'summarize',sessionId:s.id,speak:true}); }; d.appendChild(sum);
       d.title=`${s.agent||''}${nat?' · nativo (somente leitura)':''}\n${s.cwd||''}`; d.onclick=()=>{ tx({t:'open',sessionId:s.id}); closeSide(); }; E.recents.appendChild(d); });
@@ -348,6 +357,7 @@
 
     // ---------- search (input com foco imediato; sem prompt) ----------
     E.searchBtn.onclick=()=>openSearch();
+    E.digestBtn.onclick=()=>{ status('speaking','Resumindo…'); tx({t:'digest',speak:true}); closeSide(); };
     function openSearch(){ E.searchResults.innerHTML=''; E.searchInput.value=''; E.searchModal.classList.remove('hidden'); closeSide(); setTimeout(()=>E.searchInput.focus(),30); }
     function runSearch(){ const q=E.searchInput.value.trim(); if(!q)return; E.searchResults.innerHTML='<div class="mut">Buscando…</div>'; tx({t:'search',query:q,speak}); }
     E.searchGo.onclick=runSearch;
@@ -462,7 +472,7 @@
         else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){ const h=hashSession();
           if(h&&(isNative(h)||sessions.some(s=>s.id===h))) tx({t:'open',sessionId:h});
           else { const own=sessions.find(s=>!isNative(s.id)); if(own) tx({t:'open',sessionId:own.id}); else E.newSess.onclick(); } } }
-        else if(m.t==='history'){ currentSession=m.sessionId; currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
+        else if(m.t==='history'){ currentSession=m.sessionId; unread.delete(m.sessionId); currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
           if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
           E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
           const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
@@ -487,6 +497,7 @@
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
         else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
         else if(m.t==='summary'){ status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
+        else if(m.t==='runs'){ const now=m.active||[]; activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; renderRecents(); }
         else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }

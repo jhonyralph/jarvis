@@ -101,6 +101,10 @@ function broadcastAll(obj: unknown): void {
   for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(s);
 }
 
+// sessions with an in-flight Jarvis-driven turn — powers the "rodando agora" panel.
+const activeRuns = new Set<string>();
+function broadcastRuns(): void { broadcastAll({ t: "runs", active: [...activeRuns] }); }
+
 // Live mirror of native CLI sessions: tail the jsonl and broadcast new turns as they're
 // appended by an EXTERNAL Claude Code (or by us), so viewers update without refreshing.
 interface Tail { path: string; claude: boolean; offset: number; buf: string; paused: boolean; timer: ReturnType<typeof setInterval>; }
@@ -254,6 +258,7 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
  *  Returns the final reply. The stream 'done' event carries the final text + usage, so
  *  callers must NOT also broadcast a {t:message} assistant (they only persist it). */
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply> {
+  activeRuns.add(sid); broadcastRuns();
   broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "start" } });
   try {
     const reply = await agent.send(sid, agentText, cwd, opts, (ev) => broadcast(sid, { t: "stream", sessionId: sid, ev }));
@@ -262,6 +267,8 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   } catch (e) {
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "error" } });
     throw e;
+  } finally {
+    activeRuns.delete(sid); broadcastRuns();
   }
 }
 /** Continue a NATIVE CLI session (claude:<uuid>) by resuming the real claude session.
@@ -328,6 +335,32 @@ async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Pr
   let audio: string | undefined;
   if (speak && text) { const spoken = speechifyCapped(text); if (spoken) audio = (await synthesize(spoken, VOICE)).toString("base64"); }
   send(ws, { t: "summary", sessionId: sid, text, audio });
+}
+/** Cross-agent digest ("what's happening across your sessions") — cheap, spoken, not stored. */
+async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
+  const own = store.digest(10, 200);
+  const nat = listNative(8).map((n) => ({ id: n.id, agent: n.agent, title: n.title, updatedAt: n.updatedAt, lastAssistant: "", lastUser: "" }));
+  const all = [...own, ...nat].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
+  const lines = all
+    .map((s) => `- ${s.title}${activeRuns.has(s.id) ? " [RODANDO]" : ""} (${s.agent}): ${(s.lastAssistant || s.lastUser || "").slice(0, 160)}`)
+    .join("\n") || "(nenhuma sessão)";
+  const prompt =
+    `Você é o painel de status do Jarvis. Em português do Brasil, 2 a 4 frases FALADAS (sem markdown, sem listas), ` +
+    `diga rapidamente o que está acontecendo entre as sessões de trabalho — quais estão rodando agora e o que cada uma fez por último. Seja direto.\n\n` +
+    `SESSÕES (mais recentes primeiro):\n${lines}`;
+  const agent = agents.searchAgent();
+  const sendOpts = { model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
+  let text = "";
+  try {
+    const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__digest__", prompt, process.cwd(), sendOpts);
+    text = (reply.text || "").trim();
+  } catch (e: any) {
+    send(ws, { t: "error", message: "digest: " + String(e?.message ?? e) });
+    return;
+  }
+  let audio: string | undefined;
+  if (speak && text) { const spoken = speechifyCapped(text); if (spoken) audio = (await synthesize(spoken, VOICE)).toString("base64"); }
+  send(ws, { t: "summary", sessionId: "__digest__", text, audio });
 }
 /** Current speaker-id config + enrolled voiceprints (listing is cheap — no torch). */
 async function sendVoiceState(ws: WebSocket): Promise<void> {
@@ -464,6 +497,8 @@ wss.on("connection", (ws: WebSocket) => {
       await summarizeAndSpeak(ws, msg.sessionId, msg.speak !== false);
       return;
     }
+    // cross-agent digest ("o que está rolando entre as sessões")
+    if (msg.t === "digest") { await digestAndSpeak(ws, msg.speak !== false); return; }
     if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
@@ -582,6 +617,7 @@ wss.on("connection", (ws: WebSocket) => {
   void (async () => {
     send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
     sendSessions(ws);
+    send(ws, { t: "runs", active: [...activeRuns] });
     await sendVoiceState(ws);
   })();
 });
