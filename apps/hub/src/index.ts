@@ -11,7 +11,7 @@
  *   JARVIS_AGENT  "claude" to use native Claude Code; anything else => mock
  */
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join, normalize, dirname } from "node:path";
@@ -84,27 +84,42 @@ const MIME: Record<string, string> = {
 };
 
 // Hardening headers on every response — clickjacking, sniffing, referrer leak,
-// and a CSP that keeps the self-hosted single-origin app locked to itself.
-const SEC_HEADERS: Record<string, string> = {
-  "x-content-type-options": "nosniff",
-  "x-frame-options": "DENY",
-  "referrer-policy": "no-referrer",
-  "permissions-policy": "microphone=(self), camera=(), geolocation=()",
-  "content-security-policy":
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+// and a CSP that keeps the self-hosted single-origin app locked to itself. The
+// HTML's single inline <script> runs under a per-response NONCE (no 'unsafe-inline'
+// for scripts), so an injected inline script can't execute — real XSS mitigation,
+// which matters because a device token lives in the page's localStorage.
+function csp(nonce?: string): string {
+  const script = nonce ? `script-src 'self' 'nonce-${nonce}'` : "script-src 'self'";
+  return `default-src 'self'; ${script}; style-src 'self' 'unsafe-inline'; ` +
     "connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self' blob: data:; " +
-    "font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
-};
+    "font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+}
+function secHeaders(nonce?: string): Record<string, string> {
+  return {
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "no-referrer",
+    "permissions-policy": "microphone=(self), camera=(), geolocation=()",
+    "content-security-policy": csp(nonce),
+  };
+}
 const server = createServer((req, res) => {
   const urlPath = (req.url || "/").split("?")[0];
   const file = normalize(join(WEB, urlPath === "/" ? "index.html" : urlPath));
   if (!file.startsWith(WEB) || !existsSync(file) || !statSync(file).isFile()) {
-    res.writeHead(404, SEC_HEADERS).end("not found");
+    res.writeHead(404, secHeaders()).end("not found");
     return;
   }
   const ext = file.slice(file.lastIndexOf("."));
-  // no-cache: clients (esp. mobile) must always get the latest UI, never a stale index.html
-  res.writeHead(200, { ...SEC_HEADERS, "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-cache, must-revalidate" });
+  if (ext === ".html") {
+    const nonce = randomBytes(16).toString("base64");
+    const html = readFileSync(file, "utf8").replace(/<script(?![^>]*\bsrc=)/gi, `<script nonce="${nonce}"`);
+    res.writeHead(200, { ...secHeaders(nonce), "content-type": MIME[ext], "cache-control": "no-cache, must-revalidate" });
+    res.end(html);
+    return;
+  }
+  // no-cache: clients (esp. mobile) must always get the latest UI, never a stale file
+  res.writeHead(200, { ...secHeaders(), "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-cache, must-revalidate" });
   res.end(readFileSync(file));
 });
 
@@ -586,6 +601,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
   if (String(req?.url || "").startsWith("/runner")) { handleRunnerConnection(ws, ip); return; }
   // Optional Origin allowlist (public deployments); no-op unless JARVIS_ALLOWED_ORIGINS set.
   if (!guard.originAllowed(req)) { try { ws.close(1008, "origin not allowed"); } catch { /* ignore */ } return; }
+  // Fail-closed on plaintext when JARVIS_REQUIRE_TLS=on (public deployments).
+  if (guard.tlsRequiredButMissing(req)) { try { send(ws, { t: "unauth", reason: "conexão exige HTTPS/WSS" }); ws.close(1008, "tls required"); } catch { /* ignore */ } return; }
   maybeWarnInsecure(req);
   // Drop connections that never authenticate (idle unauth hoarding). Cleared on auth.
   if (auth.AUTH_ENABLED) {
@@ -943,6 +960,12 @@ function inviteLink(code: string): string | undefined { return PUBLIC_URL ? `${P
 const adminServer = createServer((req, res) => {
   const ra = String(req.socket.remoteAddress || "");
   if (!/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(ra)) { res.writeHead(403, { "content-type": "application/json" }).end('{"error":"loopback only"}'); return; }
+  // anti-CSRF + anti-DNS-rebinding: the recovery CLI never sets Origin/Referer, and always
+  // uses a localhost Host. A browser page (even via DNS rebinding) sets Origin and/or a
+  // rebound Host — reject those so a visited web page can't drive the admin API.
+  if (req.headers.origin || req.headers.referer) { res.writeHead(403, { "content-type": "application/json" }).end('{"error":"browser requests not allowed"}'); return; }
+  const host = String(req.headers.host || "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+  if (host && !/^(127\.0\.0\.1|localhost|::1)$/.test(host)) { res.writeHead(403, { "content-type": "application/json" }).end('{"error":"bad host"}'); return; }
   const url = (req.url || "/").split("?")[0];
   const json = (code: number, obj: unknown) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
   const body = () => new Promise<any>((resolve) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve({}); } }); });

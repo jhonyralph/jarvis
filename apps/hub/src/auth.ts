@@ -37,6 +37,8 @@ export function readAudit(limit = 100): any[] {
 try { mkdirSync(DIR, { recursive: true }); } catch { /* ignore */ }
 
 export const AUTH_ENABLED = (process.env.JARVIS_AUTH || "on").toLowerCase() !== "off";
+// Opt-in: auto-revoke a device token unused for this many days (0 = never expire).
+const DEVICE_TTL_MS = Math.max(0, Number(process.env.JARVIS_DEVICE_TTL_DAYS || 0)) * 86400000;
 
 export type Role = "owner" | "member";
 export interface User { id: string; role: Role; name: string; createdAt: number; }
@@ -172,6 +174,11 @@ export function authenticate(token: string, meta?: { ip?: string; ua?: string })
   const h = sha(token);
   const device = data.devices.find((d) => hashEq(d.tokenHash, h));
   if (!device) return null;
+  if (DEVICE_TTL_MS && Date.now() - device.lastSeen > DEVICE_TTL_MS) {
+    data.devices = data.devices.filter((d) => d.id !== device.id); save(data);
+    audit("device_expired", { deviceId: device.id, ip: meta?.ip, detail: `ocioso > ${process.env.JARVIS_DEVICE_TTL_DAYS}d` });
+    return null;
+  }
   const user = data.users.find((u) => u.id === device.userId);
   if (!user) return null;
   device.lastSeen = Date.now();

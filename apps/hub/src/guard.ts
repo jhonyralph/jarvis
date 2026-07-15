@@ -12,6 +12,7 @@
  *   JARVIS_ALLOWED_ORIGINS    comma-separated Origin allowlist for UI clients (default: any)
  */
 const TRUST_PROXY = /^(on|1|true)$/i.test(process.env.JARVIS_TRUST_PROXY || "");
+const REQUIRE_TLS = /^(on|1|true)$/i.test(process.env.JARVIS_REQUIRE_TLS || "");
 export const MAX_PAYLOAD = Math.max(1, Number(process.env.JARVIS_MAX_PAYLOAD_MB || 20)) * 1024 * 1024;
 const MAX_PER_IP = Number(process.env.JARVIS_MAX_CONN_PER_IP || 40);
 const MAX_TOTAL = Number(process.env.JARVIS_MAX_CONN || 800);
@@ -33,6 +34,8 @@ export function isInsecurePublic(req: any): boolean {
   const proto = String(req?.headers?.["x-forwarded-proto"] || "").toLowerCase();
   return proto !== "https"; // behind TLS-terminating proxy this header is https
 }
+/** With JARVIS_REQUIRE_TLS=on, non-loopback plaintext connections are refused (fail-closed). */
+export function tlsRequiredButMissing(req: any): boolean { return REQUIRE_TLS && isInsecurePublic(req); }
 
 /** Origin allowlist for UI clients (no-op unless JARVIS_ALLOWED_ORIGINS is set). */
 export function originAllowed(req: any): boolean {

@@ -36,10 +36,13 @@ Trust boundaries:
 | Connection caps | per-IP + global concurrent-connection limits | `guard.ts` |
 | Payload cap | oversized WS frames rejected (default 20 MB) without crashing | `guard.ts` |
 | Crash resilience | per-connection + process-level error nets — a stray error can't DoS the hub | `index.ts` |
-| Security headers | CSP, `X-Frame-Options: DENY`, `nosniff`, referrer/permissions policy | `index.ts` |
+| Security headers | nonce-based CSP (no script `unsafe-inline`), `X-Frame-Options: DENY`, `nosniff`, referrer/permissions policy | `index.ts` |
+| CSP nonce | the one inline `<script>` runs under a per-response nonce → injected inline scripts can't execute (XSS → token theft mitigation) | `index.ts` |
 | Origin allowlist | optional Origin check for UI clients | `guard.ts` |
+| Require-TLS | optional fail-closed: refuse non-loopback plaintext connections | `guard.ts` |
+| Device TTL | optional auto-revoke of a device token unused for N days | `auth.ts` |
 | Audit log | append-only attribution incl. failed/blocked auth with IP | `auth.ts` |
-| Loopback admin | recovery/mint API bound to 127.0.0.1 only (never proxied) | `index.ts` |
+| Loopback admin | recovery/mint API bound to 127.0.0.1 only; rejects browser-origin/rebound-Host requests (anti-CSRF / DNS-rebinding) | `index.ts` |
 | Recovery | mint a pairing code from the host with zero logged-in devices | `jarvis.ps1` |
 
 Tokens/codes are high-entropy (pairing codes ~144-bit, device tokens 256-bit),
@@ -73,17 +76,16 @@ access to a runner can make the agent do anything on that machine. So:
 
 ## Tunables (env)
 
-`JARVIS_AUTH` (on/off) · `JARVIS_TRUST_PROXY` · `JARVIS_MAX_CONN_PER_IP` (40) ·
-`JARVIS_MAX_CONN` (800) · `JARVIS_MAX_PAYLOAD_MB` (20) · `JARVIS_ALLOWED_ORIGINS` ·
+`JARVIS_AUTH` (on/off) · `JARVIS_TRUST_PROXY` · `JARVIS_REQUIRE_TLS` ·
+`JARVIS_MAX_CONN_PER_IP` (40) · `JARVIS_MAX_CONN` (800) · `JARVIS_MAX_PAYLOAD_MB` (20) ·
+`JARVIS_ALLOWED_ORIGINS` · `JARVIS_DEVICE_TTL_DAYS` (0 = never) ·
 `JARVIS_ADMIN_PORT` (4578, loopback).
 
 ## Residual risks / not done
 
-- **CSP uses `'unsafe-inline'` for scripts** (the UI is one inline script). XSS
-  surface is limited (single origin, no 3rd-party scripts, user content escaped),
-  but a nonce-based CSP would be stronger.
-- **No MFA / password second factor** (device pairing only) — planned optional.
+- **No MFA / password second factor** (device pairing only) — a possible next
+  layer: an owner passphrase required at pairing and/or for privileged actions.
 - **No runner sandboxing / restricted-no-bypass mode** yet — containment is
-  per-machine sharing + audit only.
-- **No TLS enforcement** at the app layer (by design — TLS is the proxy's job);
-  the app only warns.
+  per-machine sharing + audit only; run guest runners in a container/VM.
+- **CSP still allows inline styles** (`style-src 'unsafe-inline'`) — the UI uses
+  `style="…"` attributes; low risk, could be tightened with hashed styles.
