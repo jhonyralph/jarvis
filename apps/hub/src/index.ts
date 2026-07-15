@@ -24,6 +24,7 @@ import { speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId } from "./native.js";
+import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store } from "./store.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
@@ -72,6 +73,16 @@ let wakeEnabled = process.env.JARVIS_WAKE !== "0";
 // unknown voices (gate). Off by default so an un-enrolled user is never locked out.
 let voiceGate = process.env.JARVIS_VOICE_GATE === "1";
 let voiceThreshold: number | undefined = process.env.JARVIS_VOICE_THRESHOLD ? Number(process.env.JARVIS_VOICE_THRESHOLD) : undefined;
+// proactive-voice session setup: which agent/model/effort/folder the wake session
+// uses, and a task held while we ask the user "continuar ou nova sessão?".
+const voiceConfig: { agent: string; model?: string; effort?: string; cwd: string } = {
+  agent: process.env.JARVIS_WAKE_AGENT || DEFAULT_AGENT,
+  cwd: process.env.JARVIS_WAKE_CWD || CWD,
+};
+let voicePending: { task: string } | null = null;
+// cheap gate: only spend an LLM intent pass when the utterance plausibly carries a command
+const VOICE_HINT = /\b(codex|claude|gpt|opus|sonnet|haiku|fable|terra|luna|sol|modelo|model|esfor[çc]o|effort|pasta|diret[óo]rio|folder|sess[ãa]o|nov[ao]|continu|seguir|trocar|usar?|use|come[çc]ar)\b/i;
+const PT_EFFORT: Record<string, string> = { minimal: "mínimo", low: "baixo", medium: "médio", high: "alto", xhigh: "muito alto", max: "máximo", ultra: "ultra", ultracode: "ultracode" };
 
 function send(ws: WebSocket, obj: unknown): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -95,19 +106,102 @@ function allSessions(): any[] {
     .map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, createdAt: n.updatedAt, updatedAt: n.updatedAt, lastMessage: "", count: n.count }));
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
 }
-/** The N most-recently-used distinct working folders (across all sessions) — for the folder picker. */
-function sessionsPayload(): unknown {
-  const list = allSessions();
+/** The N most-recently-used distinct working folders (across all sessions) — for the folder picker + voice. */
+function recentDirsList(n = 10): string[] {
   const seen = new Set<string>();
-  const recentDirs: string[] = [];
-  for (const s of list) {
+  const out: string[] = [];
+  for (const s of allSessions()) {
     const d = (s.cwd || "").trim();
-    if (d && !seen.has(d)) { seen.add(d); recentDirs.push(d); if (recentDirs.length >= 10) break; }
+    if (d && !seen.has(d)) { seen.add(d); out.push(d); if (out.length >= n) break; }
   }
-  return { t: "sessions", sessions: list, recentDirs };
+  return out;
 }
+function sessionsPayload(): unknown { return { t: "sessions", sessions: allSessions(), recentDirs: recentDirsList() }; }
 function pushSessions(): void { broadcastAll(sessionsPayload()); }
 function sendSessions(ws: WebSocket): void { send(ws, sessionsPayload()); }
+
+/** One full turn against a session's agent: store+broadcast the user msg, get the reply, speak if asked. */
+async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; speak?: boolean; speaker?: string }): Promise<void> {
+  const session = store.ensure(sid);
+  const agent = agents.get(session.agent);
+  const now = Date.now();
+  store.add(sid, { role: "user", text: opts.showText, ts: now, agent: agent.name, speaker: opts.speaker });
+  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: opts.showText, ts: now, agent: agent.name, speaker: opts.speaker } });
+  pushSessions();
+  try {
+    const reply = await agent.send(sid, opts.agentText ?? opts.showText, session.cwd, { model: opts.model, effort: opts.effort });
+    const rt = Date.now();
+    store.add(sid, { role: "assistant", text: reply.text, ts: rt, agent: agent.name });
+    broadcast(sid, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: rt, agent: agent.name } });
+    if (reply.usage) broadcast(sid, { t: "usage", sessionId: sid, usage: reply.usage });
+    pushSessions();
+    if (opts.speak) {
+      const spoken = speechifyCapped(reply.text);
+      if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
+    }
+  } catch (e: any) {
+    const message = String(e?.message ?? e);
+    broadcast(sid, { t: "error", message, limit: /limit|rate|quota|exceeded|usage/i.test(message) });
+  }
+}
+
+/** Jarvis speaks a short control line into the voice session (not from the agent). */
+async function voiceSay(text: string): Promise<void> {
+  broadcast(WAKE_SESSION, { t: "message", message: { sessionId: WAKE_SESSION, role: "assistant", text, ts: Date.now(), agent: "jarvis" } });
+  try { const wav = await synthesize(text, VOICE); broadcast(WAKE_SESSION, { t: "tts", sessionId: WAKE_SESSION, audio: wav.toString("base64"), text }); } catch { /* tts optional */ }
+}
+function resetVoiceSession(): void {
+  const s = store.reset(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd, title: "Voz (Jarvis)" });
+  broadcast(WAKE_SESSION, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
+  pushSessions();
+}
+async function runVoiceTask(task: string, speak: boolean, speaker?: string): Promise<void> {
+  const s = store.ensure(WAKE_SESSION);
+  if (s.messages.length === 0) store.reconfigure(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd });
+  await deliverTurn(WAKE_SESSION, { showText: task, model: voiceConfig.model, effort: voiceConfig.effort, speak, speaker });
+}
+
+/** Proactive-voice router: pick agent/model/effort/folder from speech, and confirm
+ *  new-vs-continue when a conversation is already in progress. */
+async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): Promise<void> {
+  const inProgress = store.ensure(WAKE_SESSION).messages.length > 0;
+  // answering a pending "continuar ou nova?" (cheap, no LLM)
+  if (voicePending) {
+    const t = voicePending.task;
+    if (/\bnov[ao]\b|come[çc]ar|do zero|outra/i.test(text)) { voicePending = null; resetVoiceSession(); await runVoiceTask(t, speak, speaker); return; }
+    if (/\bcontinu|\bsegu|\bmesm[ao]\b|manter/i.test(text)) { voicePending = null; await runVoiceTask(t, speak, speaker); return; }
+    voicePending = { task: text }; await voiceSay("Não entendi. Diga 'continuar' para seguir, ou 'nova' para começar do zero."); return;
+  }
+  // plain task, fresh session -> run directly (no LLM)
+  if (!inProgress && !VOICE_HINT.test(text)) { await runVoiceTask(text, speak, speaker); return; }
+  // plain task, in progress -> ask new-vs-continue
+  if (inProgress && !VOICE_HINT.test(text)) { voicePending = { task: text }; await voiceSay("Já tenho uma conversa em andamento. Quer continuar ou começar uma nova?"); return; }
+  // command-ish utterance -> one LLM intent pass
+  const desc = await agents.describe();
+  const catalog = desc.map((a) => `${a.name} — modelos: ${a.models.map((m) => m.id).join(", ")} — esforços: ${[...new Set(a.models.flatMap((m) => m.efforts))].join(", ")}`).join("\n");
+  const intent = await parseVoiceIntent({ text, catalog, recent: recentDirsList(20), inProgress, config: voiceConfig, agents });
+  const empty = store.ensure(WAKE_SESSION).messages.length === 0;
+  if (intent.agent && desc.some((a) => a.name === intent.agent) && empty) voiceConfig.agent = intent.agent;
+  const acaps = desc.find((a) => a.name === voiceConfig.agent);
+  if (intent.model && acaps?.models.some((m) => m.id === intent.model)) voiceConfig.model = intent.model;
+  const efs = acaps?.models.find((m) => m.id === voiceConfig.model)?.efforts ?? acaps?.models.flatMap((m) => m.efforts) ?? [];
+  if (intent.effort && efs.includes(intent.effort)) voiceConfig.effort = intent.effort;
+  if (intent.folder && recentDirsList(20).includes(intent.folder) && empty) voiceConfig.cwd = intent.folder;
+  const action = intent.sessionAction;
+  const task = (intent.task || "").trim();
+  if (!task) {
+    if (action === "new") resetVoiceSession();
+    const parts = [`Ok, ${voiceConfig.agent}`];
+    if (voiceConfig.model) parts.push(`modelo ${voiceConfig.model}`);
+    if (voiceConfig.effort) parts.push(`esforço ${PT_EFFORT[voiceConfig.effort] || voiceConfig.effort}`);
+    if (voiceConfig.cwd) parts.push(`pasta ${voiceConfig.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop()}`);
+    await voiceSay(parts.join(", ") + ". Pode falar.");
+    return;
+  }
+  if (action === "new") { resetVoiceSession(); await runVoiceTask(task, speak, speaker); return; }
+  if (inProgress && action !== "continue") { voicePending = { task }; await voiceSay("Já tenho uma conversa em andamento. Quer continuar ou começar uma nova?"); return; }
+  await runVoiceTask(task, speak, speaker);
+}
 /** Cross-session search: reason over recent sessions, reply only to the asker (optionally spoken). */
 async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): Promise<void> {
   const r = await runSessionSearch({ query, store, agents });
@@ -307,6 +401,13 @@ wss.on("connection", (ws: WebSocket) => {
     // Meta-question about other sessions? -> cross-session search (typed or spoken).
     if (looksLikeCrossSessionQuery(text)) {
       await runAndSendSearch(ws, text, !!msg.speak);
+      return;
+    }
+
+    // Proactive-voice router: the wake session lets the user pick the agent/model/effort/
+    // folder by speech, and asks new-vs-continue when a conversation is already going.
+    if (sid === WAKE_SESSION) {
+      await handleVoiceTurn(text, !!msg.speak, speaker);
       return;
     }
 

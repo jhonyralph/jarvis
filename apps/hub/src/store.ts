@@ -86,6 +86,19 @@ export class Store {
     return this.data[id];
   }
 
+  /** Clear a session's messages and (re)bind its agent/cwd — used by the voice
+   *  "nova sessão" flow to start the fixed voice session fresh. */
+  reset(id: string, opts?: { agent?: string; cwd?: string; title?: string }): SessionData {
+    const s = this.ensure(id);
+    s.messages = [];
+    if (opts?.agent) s.agent = opts.agent;
+    if (opts?.cwd) s.cwd = opts.cwd;
+    s.title = opts?.title || s.title;
+    s.updatedAt = Date.now();
+    this.flush();
+    return s;
+  }
+
   /** Change agent/cwd — allowed ONLY while the session has no messages (still "new").
    *  Enforces the locked-session rule server-side: once a conversation starts, the
    *  agent and folder are frozen; only model/effort vary per message. */
