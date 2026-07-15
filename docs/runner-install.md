@@ -60,5 +60,6 @@ The machine then appears in the Hub's machine selector. Pick it to run agents th
 - The runner is **headless** — no voice/UI there; the single UI is the Hub.
 - Sharing a machine = giving a shell on it (agents run with `bypassPermissions`).
   For guests, run the runner in a container/VM. See docs/security.md.
-- New-session folder picking on a remote machine isn't wired yet (uses the
-  runner's default cwd); native sessions and existing managed sessions work.
+- Full parity with the local machine: browse folders, pick agent/cwd for new
+  sessions, open native CLI sessions, and watch them update live. **Voice (STT/TTS)
+  stays Hub-only by design** — you drive a remote machine by text/typing.
