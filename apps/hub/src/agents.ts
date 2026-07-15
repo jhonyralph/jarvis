@@ -144,7 +144,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async send(sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
-    const prev = this.sessions.get(sessionId);
+    // native imported sessions ("claude:<uuid>") resume the underlying real claude session
+    const prev = this.sessions.get(sessionId) || (sessionId.startsWith("claude:") ? sessionId.slice("claude:".length) : undefined);
     const args = ["-p", text, "--output-format", "json", "--permission-mode", "bypassPermissions"];
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort); // ultracode -> xhigh

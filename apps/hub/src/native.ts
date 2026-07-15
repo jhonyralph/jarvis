@@ -196,6 +196,15 @@ export function isNativeId(id: string): boolean {
   return typeof id === "string" && (id.startsWith("claude:") || id.startsWith("codex:"));
 }
 
+/** Cheap agent+cwd lookup (head read only) — used to continue a native session. */
+export function nativeInfo(id: string): { agent: string; cwd: string } | null {
+  if (!isNativeId(id)) return null;
+  const f = findFileById(id);
+  if (!f) return null;
+  const meta = f.claude ? parseClaude(f.path) : parseCodex(f.path);
+  return meta ? { agent: meta.agent, cwd: meta.cwd } : null;
+}
+
 function findFileById(id: string): { path: string; claude: boolean } | null {
   const claude = id.startsWith("claude:");
   const uuid = id.slice(id.indexOf(":") + 1);

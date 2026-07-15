@@ -23,7 +23,7 @@ import { transcribe } from "./stt.js";
 import { speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId } from "./native.js";
+import { listNative, nativeHistory, isNativeId, nativeInfo } from "./native.js";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store } from "./store.js";
 
@@ -205,6 +205,29 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
   if (inProgress && action !== "continue") { voicePending = { task }; await voiceSay("Já tenho uma conversa em andamento. Quer continuar ou começar uma nova?"); return; }
   await runVoiceTask(task, speak, speaker);
 }
+/** Continue a NATIVE CLI session (claude:<uuid>) by resuming the real claude session.
+ *  Persists in the CLI's own jsonl (same file), so re-opening shows the new turns. */
+async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string }): Promise<void> {
+  const info = nativeInfo(sid);
+  if (!info) { send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
+  if (info.agent !== "claude-code") { send(ws, { t: "error", message: "continuar sessão nativa só é suportado no claude-code por enquanto" }); return; }
+  const agent = agents.get(info.agent);
+  const now = Date.now();
+  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: info.agent, speaker: opts.speaker } });
+  try {
+    const reply = await agent.send(sid, text, info.cwd || CWD, { model: opts.model, effort: opts.effort });
+    const rt = Date.now();
+    broadcast(sid, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: rt, agent: info.agent } });
+    if (reply.usage) broadcast(sid, { t: "usage", sessionId: sid, usage: reply.usage });
+    if (opts.speak) {
+      const spoken = speechifyCapped(reply.text);
+      if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
+    }
+  } catch (e: any) {
+    const message = String(e?.message ?? e);
+    send(ws, { t: "error", message, limit: /limit|rate|quota|exceeded|usage/i.test(message) });
+  }
+}
 /** Cross-session search: reason over recent sessions, reply only to the asker (optionally spoken). */
 async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): Promise<void> {
   const r = await runSessionSearch({ query, store, agents });
@@ -297,7 +320,7 @@ wss.on("connection", (ws: WebSocket) => {
       send(ws, {
         t: "history",
         sessionId: msg.sessionId,
-        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true },
+        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" },
         total: h.messages.length,
         messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent })),
       });
@@ -364,14 +387,9 @@ wss.on("connection", (ws: WebSocket) => {
     // --- conversation (text or voice) ---
     const sid = subs.get(ws) || (typeof msg.sessionId === "string" ? msg.sessionId : "default");
     subs.set(ws, sid);
-    if (isNativeId(sid)) {
-      // imported native CLI session — read-only in Jarvis for now (no write-back bridge yet)
-      send(ws, { t: "error", message: "Sessão nativa (somente leitura). Crie uma sessão do Jarvis para conversar." });
-      return;
-    }
-    const session = store.ensure(sid); // agent + cwd are LOCKED to the session (chosen at creation)
-    const agent = agents.get(session.agent);
 
+    // Resolve the utterance first — routing (search / voice / native / normal) depends on it,
+    // and native ids aren't in the store so we must NOT store.ensure() them here.
     let text: string | null = null;
     let speaker: string | undefined; // enrolled speaker for voice messages (or wake-injected)
     if (msg.t === "send" && typeof msg.text === "string") {
@@ -415,6 +433,15 @@ wss.on("connection", (ws: WebSocket) => {
       await handleVoiceTurn(text, !!msg.speak, speaker);
       return;
     }
+    // Continue an imported native CLI session (resumes the real claude session; persists in its jsonl).
+    if (isNativeId(sid)) {
+      await deliverNativeTurn(ws, sid, text, { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, speak: !!msg.speak, speaker });
+      return;
+    }
+
+    // --- normal Jarvis session (agent + cwd locked at creation) ---
+    const session = store.ensure(sid);
+    const agent = agents.get(session.agent);
 
     // Attachments: what we SEND to the agent includes file contents; what we SHOW
     // stays the user's text + a small chip (files are viewable in the chat).

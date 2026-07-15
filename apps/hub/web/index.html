@@ -224,7 +224,7 @@
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
 
-    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='', recentDirs=[], curNative=false;
+    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false;
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     // ---- config (persisted; refresh não perde estado) ----
@@ -432,7 +432,10 @@
           if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
           msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); E.log.scrollTop=E.log.scrollHeight;
           refreshFiles(msgs); renderRecents(); closePop();
-          E.roBanner.classList.toggle('hidden',!curNative); E.input.disabled=curNative; E.sendBtn.disabled=curNative; E.mic.disabled=curNative; E.input.placeholder=curNative?'Sessão nativa — somente leitura':'Fale ou digite…'; }
+          curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
+          E.roBanner.classList.toggle('hidden',!curNative);
+          E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
+          E.input.disabled=ro; E.sendBtn.disabled=ro; E.mic.disabled=ro; E.input.placeholder=ro?'Sessão nativa — somente leitura':'Fale ou digite…'; }
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
@@ -479,7 +482,7 @@
     E.attach.onclick=()=>E.file.click();
     E.file.onchange=async()=>{ for(const f of E.file.files){ attachments.push({name:f.name,content:await f.text()}); } E.file.value=''; renderAttach(); };
     function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='📎 '+a.name+' ✕'; c.onclick=()=>{attachments.splice(i,1);renderAttach();}; E.attachRow.appendChild(c); }); }
-    E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
+    E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
       tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments}); showPending();
       E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach(); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; };
