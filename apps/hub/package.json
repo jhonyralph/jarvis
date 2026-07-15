@@ -8,11 +8,13 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
+    "web-push": "^3.6.7",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "tsx": "^4.19.2",
     "@types/node": "^22.10.0",
-    "@types/ws": "^8.5.13"
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2"
   }
 }

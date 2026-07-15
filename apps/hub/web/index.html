@@ -155,6 +155,7 @@
       <button id="newSess">＋ Nova sessão</button>
       <div class="link" id="searchBtn">🔎 buscar entre sessões</div>
       <div class="link" id="digestBtn">🎧 o que está rolando</div>
+      <div class="link" id="qrBtn">📱 abrir no celular</div>
       <div class="sec">Recentes</div>
       <div id="recents"></div>
       <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
@@ -204,6 +205,14 @@
     <div class="row" style="justify-content:flex-end"><button id="dlgCancel" class="ghost" type="button">Cancelar</button><button id="dlgOk" type="button">OK</button></div>
   </div></div>
 
+  <div id="qrModal" class="modal hidden"><div class="card">
+    <b>📱 Abrir no celular</b>
+    <div class="mut">Aponte a câmera do celular (com Tailscale ligado) para o QR:</div>
+    <img id="qrImg" alt="QR code" style="align-self:center;max-width:300px;width:100%;border-radius:12px;background:#fff">
+    <div class="mut" id="qrUrl" style="text-align:center;word-break:break-all"></div>
+    <div class="row" style="justify-content:flex-end"><button id="qrClose" class="ghost" type="button">Fechar</button></div>
+  </div></div>
+
   <div id="searchModal" class="modal hidden"><div class="card">
     <b>🔎 Buscar entre sessões</b>
     <input id="searchInput" type="text" placeholder="Ex.: como está o progresso da sessão de SLA?" autocomplete="off">
@@ -224,6 +233,8 @@
     <div class="sec">Escuta avançada <span class="soon">em desenvolvimento</span></div>
     <label class="row"><input type="checkbox" id="setWake"> Wake word "Hey Jarvis" (na máquina) <span class="soon">requer wake_listener.py</span></label>
     <label class="row"><input type="checkbox" id="setNoise"> Filtro anti-ruído / detecção de fala (VAD)</label>
+    <div class="sec">Notificações</div>
+    <label class="row"><input type="checkbox" id="setPush"> Notificar no aparelho quando a resposta terminar (Web Push)</label>
     <div class="sec">Identificação de voz (multiusuário)</div>
     <label class="row"><input type="checkbox" id="setGate"> Exigir voz cadastrada (bloquear vozes desconhecidas)</label>
     <div id="spkList" class="mut" style="font-size:12px;margin:4px 0"></div>
@@ -234,8 +245,8 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
-      'setWake','setNoise','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
+      'newSess','searchBtn','digestBtn','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
@@ -245,7 +256,7 @@
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
     // ---- config (persisted; refresh não perde estado) ----
-    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, lastCwd:'' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, lastCwd:'' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
     let speak = cfg.voice, speakers = [];
 
@@ -358,6 +369,20 @@
     // ---------- search (input com foco imediato; sem prompt) ----------
     E.searchBtn.onclick=()=>openSearch();
     E.digestBtn.onclick=()=>{ status('speaking','Resumindo…'); tx({t:'digest',speak:true}); closeSide(); };
+    E.qrBtn.onclick=()=>{ tx({t:'qr',url:location.origin}); closeSide(); };
+    E.qrClose.onclick=()=>E.qrModal.classList.add('hidden');
+    // ---------- Web Push (notificação no aparelho quando termina) ----------
+    let pushKeyResolve=null;
+    function urlB64ToUint8(b64){ const pad='='.repeat((4-b64.length%4)%4); const s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/'); const raw=atob(s); const arr=new Uint8Array(raw.length); for(let i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i); return arr; }
+    async function enablePush(){ if(!('serviceWorker'in navigator)||!('PushManager'in window)){ toast('Notificações não suportadas neste navegador.'); return false; }
+      try{ const reg=await navigator.serviceWorker.register('/sw.js');
+        if(Notification.permission!=='granted'){ if((await Notification.requestPermission())!=='granted'){ toast('Permissão de notificação negada.'); return false; } }
+        const key=await new Promise(res=>{ pushKeyResolve=res; tx({t:'pushkey'}); setTimeout(()=>res(null),5000); });
+        if(!key){ toast('Servidor sem chave de push.'); return false; }
+        let sub=await reg.pushManager.getSubscription(); if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToUint8(key)});
+        tx({t:'subscribe', sub:sub.toJSON()}); cfg.push=true; saveCfg(); return true;
+      }catch(e){ toast('Falha ao ativar notificações: '+(e.message||e)); return false; } }
+    async function disablePush(){ cfg.push=false; saveCfg(); try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription(); if(sub){ tx({t:'unsubscribe',endpoint:sub.endpoint}); await sub.unsubscribe(); } }catch(e){} }
     function openSearch(){ E.searchResults.innerHTML=''; E.searchInput.value=''; E.searchModal.classList.remove('hidden'); closeSide(); setTimeout(()=>E.searchInput.focus(),30); }
     function runSearch(){ const q=E.searchInput.value.trim(); if(!q)return; E.searchResults.innerHTML='<div class="mut">Buscando…</div>'; tx({t:'search',query:q,speak}); }
     E.searchGo.onclick=runSearch;
@@ -414,7 +439,7 @@
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
       fillSel(E.setModel,c.models,cfg.model||c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
-      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
+      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setPush.checked=!!cfg.push; E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       E.settings.classList.remove('hidden'); };
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.models,c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     E.setModel.onchange=()=>fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value);
@@ -423,7 +448,9 @@
       if(E.setGate.checked && !speakers.length){ addErr('Cadastre sua voz antes de exigir voz cadastrada (senão o modo voz fica bloqueado).'); E.setGate.checked=false; }
       Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
       continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked});
-      saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate}); E.settings.classList.add('hidden'); };
+      saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate});
+      const wantPush=E.setPush.checked; if(wantPush&&!cfg.push) enablePush(); else if(!wantPush&&cfg.push) disablePush();
+      E.settings.classList.add('hidden'); };
     E.setCancel.onclick=()=>E.settings.classList.add('hidden'); // fecha sem salvar
 
     // ---------- generic dialog (substitui alert/confirm/prompt nativos) ----------
@@ -463,7 +490,7 @@
     let reconnectT=null;
     function scheduleReconnect(){ if(reconnectT)return; reconnectT=setTimeout(()=>{ reconnectT=null; connect(); },1200); }
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
-      ws.onopen=()=>{ E.dot.classList.add('on'); tx({t:'wake',enabled:cfg.wake}); if(currentSession) tx({t:'open',sessionId:currentSession}); }; // re-inscreve p/ voltar a receber ao vivo
+      ws.onopen=()=>{ E.dot.classList.add('on'); tx({t:'wake',enabled:cfg.wake}); if(currentSession) tx({t:'open',sessionId:currentSession}); if(cfg.push) enablePush(); }; // re-inscreve (sessão + push)
       ws.onclose=()=>{ E.dot.classList.remove('on'); scheduleReconnect(); };
       ws.onmessage=(e)=>{ const m=JSON.parse(e.data);
         if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} }
@@ -498,6 +525,8 @@
         else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
         else if(m.t==='summary'){ status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='runs'){ const now=m.active||[]; activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; renderRecents(); }
+        else if(m.t==='qr'){ E.qrImg.src=m.dataUri; E.qrUrl.textContent=m.url; E.qrModal.classList.remove('hidden'); }
+        else if(m.t==='pushkey'){ if(pushKeyResolve){ const r=pushKeyResolve; pushKeyResolve=null; r(m.key); } }
         else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }

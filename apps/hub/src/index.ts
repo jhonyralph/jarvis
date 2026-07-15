@@ -12,9 +12,11 @@
  */
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, dirname } from "node:path";
+import QRCode from "qrcode";
+import webpush from "web-push";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, type AgentAdapter, type AgentReply, type SendOpts } from "./agents.js";
@@ -44,6 +46,32 @@ const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });
 // dedicated, locked-agent/cwd session that the machine wake listener injects into
 store.ensure(WAKE_SESSION, { agent: process.env.JARVIS_WAKE_AGENT || agents.default, cwd: process.env.JARVIS_WAKE_CWD || CWD, title: "Voz (Jarvis)" });
+
+// ---- Web Push: notify when a turn finishes (works on a locked Android). VAPID keys
+// + subscriptions live locally; the push protocol relays via the browser's FCM/APNs
+// (payload is encrypted). ----
+const JARVIS_DIR = join(homedir(), ".jarvis");
+const VAPID_FILE = join(JARVIS_DIR, "vapid.json");
+const SUBS_FILE = join(JARVIS_DIR, "push-subs.json");
+let vapid: { publicKey: string; privateKey: string };
+try {
+  vapid = JSON.parse(readFileSync(VAPID_FILE, "utf8"));
+} catch {
+  vapid = webpush.generateVAPIDKeys();
+  try { mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(VAPID_FILE, JSON.stringify(vapid)); } catch { /* ignore */ }
+}
+webpush.setVapidDetails("mailto:jarvis@localhost", vapid.publicKey, vapid.privateKey);
+let pushSubs: any[] = [];
+try { pushSubs = JSON.parse(readFileSync(SUBS_FILE, "utf8")); } catch { pushSubs = []; }
+function saveSubs(): void { try { mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(SUBS_FILE, JSON.stringify(pushSubs)); } catch { /* ignore */ } }
+function addSub(sub: any): void { if (sub?.endpoint && !pushSubs.some((s) => s.endpoint === sub.endpoint)) { pushSubs.push(sub); saveSubs(); } }
+function removeSub(endpoint: string): void { const n = pushSubs.length; pushSubs = pushSubs.filter((s) => s.endpoint !== endpoint); if (pushSubs.length !== n) saveSubs(); }
+async function pushNotify(sid: string, text: string): Promise<void> {
+  if (!pushSubs.length) return;
+  const title = store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis");
+  const payload = JSON.stringify({ title: "Jarvis · " + title, body: (text || "").replace(/[#*`>_~]/g, "").replace(/\s+/g, " ").trim().slice(0, 140), sid, tag: sid });
+  await Promise.all(pushSubs.map((sub) => webpush.sendNotification(sub, payload).catch((err: any) => { if (err?.statusCode === 404 || err?.statusCode === 410) removeSub(sub.endpoint); })));
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -263,6 +291,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   try {
     const reply = await agent.send(sid, agentText, cwd, opts, (ev) => broadcast(sid, { t: "stream", sessionId: sid, ev }));
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage });
+    void pushNotify(sid, reply.text); // notifica quando termina (SW suprime se a aba estiver focada)
     return reply;
   } catch (e) {
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "error" } });
@@ -499,6 +528,16 @@ wss.on("connection", (ws: WebSocket) => {
     }
     // cross-agent digest ("o que está rolando entre as sessões")
     if (msg.t === "digest") { await digestAndSpeak(ws, msg.speak !== false); return; }
+    // QR code of the URL to open on the phone
+    if (msg.t === "qr" && typeof msg.url === "string") {
+      try { send(ws, { t: "qr", url: msg.url, dataUri: await QRCode.toDataURL(msg.url, { width: 300, margin: 1 }) }); }
+      catch (e: any) { send(ws, { t: "error", message: "qr: " + String(e?.message ?? e) }); }
+      return;
+    }
+    // Web Push subscribe/unsubscribe + VAPID public key
+    if (msg.t === "pushkey") { send(ws, { t: "pushkey", key: vapid.publicKey }); return; }
+    if (msg.t === "subscribe" && msg.sub) { addSub(msg.sub); send(ws, { t: "pushok" }); return; }
+    if (msg.t === "unsubscribe" && typeof msg.endpoint === "string") { removeSub(msg.endpoint); return; }
     if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
