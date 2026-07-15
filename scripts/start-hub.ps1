@@ -20,17 +20,20 @@ if (Get-NetTCPConnection -LocalPort 4577 -State Listen -ErrorAction SilentlyCont
   return
 }
 
-# configuração padrão do Hub (ajuste aqui se quiser outro agente/voz)
-$env:JARVIS_AGENT        = 'claude-code'
-$env:JARVIS_VOICE        = 'pt_BR-faber-medium'
-$env:JARVIS_CWD          = $root
-$env:JARVIS_SEARCH_MODEL = 'haiku'
-# URL pública (Tailscale) — usada só para montar links de convite completos.
-$env:JARVIS_PUBLIC_URL   = 'https://desktop-gaggr8d.tail251e83.ts.net'
-# Autenticação por pareamento de dispositivo LIGADA (padrão). O primeiro dispositivo
-# reivindica o dono com o claim-code que aparece no log e em ~/.jarvis/claim-code.txt.
-# Para desligar em emergência (rede privada): $env:JARVIS_AUTH = 'off'
-$env:JARVIS_AUTH         = 'on'
+# Config LOCAL opcional (gitignored) — valores pessoais/da máquina vão aqui, ex.:
+#   JARVIS_PUBLIC_URL=https://<seu-host>   (para links de convite completos)
+$hubEnv = Join-Path $env:USERPROFILE '.jarvis\hub.env'
+if (Test-Path $hubEnv) {
+  Get-Content $hubEnv | ForEach-Object { if ($_ -match '^\s*([A-Z_]+)\s*=\s*(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim().Trim('"'), 'Process') } }
+}
+# padrões do Hub (não sobrescreve o que veio do hub.env)
+if (-not $env:JARVIS_AGENT)        { $env:JARVIS_AGENT = 'claude-code' }
+if (-not $env:JARVIS_VOICE)        { $env:JARVIS_VOICE = 'pt_BR-faber-medium' }
+if (-not $env:JARVIS_SEARCH_MODEL) { $env:JARVIS_SEARCH_MODEL = 'haiku' }
+# Auth por pareamento LIGADA (padrão). 1º dispositivo reivindica com o claim-code
+# (log + ~/.jarvis/claim-code.txt). Emergência (rede privada): defina JARVIS_AUTH=off no hub.env.
+if (-not $env:JARVIS_AUTH)         { $env:JARVIS_AUTH = 'on' }
+$env:JARVIS_CWD = $root
 
 # aquece o token do Claude (best-effort, com teto de tempo para nunca travar o boot)
 try {
