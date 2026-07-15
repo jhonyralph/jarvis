@@ -30,6 +30,7 @@ import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
+import * as guard from "./guard.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
@@ -82,20 +83,37 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
 };
 
+// Hardening headers on every response — clickjacking, sniffing, referrer leak,
+// and a CSP that keeps the self-hosted single-origin app locked to itself.
+const SEC_HEADERS: Record<string, string> = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
+  "permissions-policy": "microphone=(self), camera=(), geolocation=()",
+  "content-security-policy":
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+    "connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self' blob: data:; " +
+    "font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+};
 const server = createServer((req, res) => {
   const urlPath = (req.url || "/").split("?")[0];
   const file = normalize(join(WEB, urlPath === "/" ? "index.html" : urlPath));
   if (!file.startsWith(WEB) || !existsSync(file) || !statSync(file).isFile()) {
-    res.writeHead(404).end("not found");
+    res.writeHead(404, SEC_HEADERS).end("not found");
     return;
   }
   const ext = file.slice(file.lastIndexOf("."));
   // no-cache: clients (esp. mobile) must always get the latest UI, never a stale index.html
-  res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-cache, must-revalidate" });
+  res.writeHead(200, { ...SEC_HEADERS, "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-cache, must-revalidate" });
   res.end(readFileSync(file));
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: guard.MAX_PAYLOAD });
+wss.on("error", (e: any) => console.error("[hub] wss error:", e?.message ?? e));
+// Last-resort safety net: a stray socket/parse error must not take the hub down
+// (a crash is a denial-of-service). Log loudly and keep serving.
+process.on("uncaughtException", (e: any) => console.error("[hub] uncaughtException (mantendo no ar):", e?.stack ?? e));
+process.on("unhandledRejection", (e: any) => console.error("[hub] unhandledRejection:", e));
 
 // Which session each client is currently viewing — for broadcast + listener mode.
 const subs = new Map<WebSocket, string>();
@@ -142,12 +160,18 @@ let voiceOpBusy = false;
 // --- auth: per-connection principal (device pairing; see auth.ts). JARVIS_AUTH=off bypasses. ---
 type Conn = { userId: string; role: auth.Role; name: string; deviceId: string | null };
 const principals = new WeakMap<WebSocket, Conn>();
+const unauthTimers = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
 function isAuthed(ws: WebSocket): boolean { return !auth.AUTH_ENABLED || principals.has(ws); }
 function principalOf(ws: WebSocket): Conn | undefined { return principals.get(ws); }
-function clientMeta(req: any): { ip?: string; ua?: string } {
-  const ip = String(req?.socket?.remoteAddress || "").replace(/^::ffff:/, "");
-  const ua = req?.headers?.["user-agent"];
-  return { ip: ip || undefined, ua: typeof ua === "string" ? ua : undefined };
+function clearUnauthTimer(ws: WebSocket): void { const t = unauthTimers.get(ws); if (t) { clearTimeout(t); unauthTimers.delete(ws); } }
+function uaOf(req: any): string | undefined { const ua = req?.headers?.["user-agent"]; return typeof ua === "string" ? ua.slice(0, 200) : undefined; }
+function clientMeta(req: any): { ip: string; ua?: string } { return { ip: guard.clientIp(req), ua: uaOf(req) }; }
+let warnedInsecure = false;
+function maybeWarnInsecure(req: any): void {
+  if (!warnedInsecure && auth.AUTH_ENABLED && guard.isInsecurePublic(req)) {
+    warnedInsecure = true;
+    console.warn(`[hub] AVISO: conexão não-loopback sem TLS (${guard.clientIp(req)}). Em servidor público use HTTPS/WSS via proxy — tokens não devem trafegar em texto puro.`);
+  }
 }
 /** Owner-only gate for the security/admin messages. Returns the principal or null (and errors). */
 function requireOwner(ws: WebSocket): Conn | null {
@@ -208,16 +232,20 @@ function relayRunner(rc: RunnerConn, m: any): void {
 }
 
 /** A remote runner connected on /runner: register (token) then relay its stream to clients. */
-function handleRunnerConnection(ws: WebSocket): void {
+function handleRunnerConnection(ws: WebSocket, ip: string): void {
   runnerSockets.add(ws);
   let rid: string | null = null;
   const ping = setInterval(() => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "ping" }); else clearInterval(ping); }, 20000);
-  ws.on("close", () => { clearInterval(ping); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; console.log(`[hub] runner offline: ${rid}`); broadcastMachines(); } } });
+  // drop runners that never register (token) within 20s
+  const regTimer = setTimeout(() => { if (!rid) { try { ws.close(1008, "no register"); } catch { /* ignore */ } } }, 20000);
+  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; console.log(`[hub] runner offline: ${rid}`); broadcastMachines(); } } });
   ws.on("error", () => { /* close handles cleanup */ });
   ws.on("message", (raw) => {
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
     if (m.t === "register") {
-      if (auth.AUTH_ENABLED) { const rt = auth.authenticateRunner(m.token); if (!rt) { send(ws, { t: "reject", reason: "token de runner inválido" }); try { ws.close(); } catch { /* ignore */ } return; } }
+      if (guard.blockedFor(ip) > 0) { send(ws, { t: "reject", reason: "muitas tentativas" }); try { ws.close(); } catch { /* ignore */ } return; }
+      if (auth.AUTH_ENABLED) { const rt = auth.authenticateRunner(m.token); if (!rt) { const r = guard.recordFail(ip); auth.audit(r.blocked ? "auth_blocked" : "runner_reject", { ip, detail: `runner token${r.blocked ? " — bloqueado" : ""}` }); send(ws, { t: "reject", reason: "token de runner inválido" }); try { ws.close(); } catch { /* ignore */ } return; } }
+      clearTimeout(regTimer); guard.recordSuccess(ip);
       const info: RunnerInfo = m.info || {}; rid = info.runnerId || null;
       if (!rid) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
       runners.set(rid, { id: rid, ws, local: false, lastSeen: Date.now(), info });
@@ -513,41 +541,69 @@ async function sendInitialState(ws: WebSocket): Promise<void> {
 /** Auth handshake — the ONLY messages a connection may send before it is authenticated.
  *  Device pairing: authinfo (claim state) / claim (owner bootstrap) / redeem (invite) / auth (token). */
 async function handleAuth(ws: WebSocket, msg: any, req: any): Promise<void> {
+  const { ip, ua } = clientMeta(req);
+  if (msg.t === "authinfo") { send(ws, { t: "authinfo", claimed: auth.isClaimed() }); return; }
+  const isAttempt = msg.t === "claim" || msg.t === "redeem" || msg.t === "auth";
+  if (!isAttempt) { send(ws, { t: "unauth", claimed: auth.isClaimed() }); return; }
+  // brute-force throttle (per IP) — the auth gate is the ONLY wall on a public server.
+  const blk = guard.blockedFor(ip);
+  if (blk > 0) { send(ws, { t: "unauth", reason: `muitas tentativas — aguarde ${Math.ceil(blk / 1000)}s`, claimed: auth.isClaimed() }); return; }
+  const fail = (why: string) => {
+    const r = guard.recordFail(ip);
+    auth.audit(r.blocked ? "auth_blocked" : "auth_fail", { ip, detail: `${msg.t}: ${why}${r.blocked ? ` — bloqueado (${r.fails} tentativas)` : ""}` });
+    send(ws, { t: "unauth", reason: r.blocked ? "muitas tentativas — tente mais tarde" : why, claimed: auth.isClaimed() });
+  };
+  const win = (payload: any) => { guard.recordSuccess(ip); clearUnauthTimer(ws); send(ws, payload); };
   try {
-    if (msg.t === "authinfo") { send(ws, { t: "authinfo", claimed: auth.isClaimed() }); return; }
-    if ((msg.t === "claim" || msg.t === "redeem") && typeof msg.code === "string") {
+    if (msg.t === "claim" || msg.t === "redeem") {
+      if (typeof msg.code !== "string" || !msg.code) return fail("sem código");
       const r = msg.t === "claim"
-        ? auth.claim(msg.code, msg.label || "Dispositivo", clientMeta(req))
-        : auth.redeem(msg.code, msg.label || "Dispositivo", clientMeta(req));
+        ? auth.claim(msg.code, msg.label || "Dispositivo", { ip, ua })
+        : auth.redeem(msg.code, msg.label || "Dispositivo", { ip, ua });
       principals.set(ws, { userId: r.user.id, role: r.user.role, name: r.user.name, deviceId: r.deviceId });
-      send(ws, { t: "authed", token: r.token, user: r.user });
+      win({ t: "authed", token: r.token, user: r.user });
       await sendInitialState(ws);
       return;
     }
-    if (msg.t === "auth" && typeof msg.token === "string") {
-      const p = auth.authenticate(msg.token, clientMeta(req));
-      if (!p) { send(ws, { t: "unauth", reason: "token inválido", claimed: auth.isClaimed() }); return; }
-      principals.set(ws, { userId: p.user.id, role: p.user.role, name: p.user.name, deviceId: p.device.id });
-      send(ws, { t: "authed", user: { id: p.user.id, role: p.user.role, name: p.user.name } });
-      await sendInitialState(ws);
-      return;
-    }
-    send(ws, { t: "unauth", claimed: auth.isClaimed() });
+    // msg.t === "auth"
+    if (typeof msg.token !== "string" || !msg.token) return fail("sem token");
+    const p = auth.authenticate(msg.token, { ip, ua });
+    if (!p) return fail("token inválido");
+    principals.set(ws, { userId: p.user.id, role: p.user.role, name: p.user.name, deviceId: p.device.id });
+    win({ t: "authed", user: { id: p.user.id, role: p.user.role, name: p.user.name } });
+    await sendInitialState(ws);
   } catch (e: any) {
-    send(ws, { t: "unauth", error: String(e?.message ?? e), claimed: auth.isClaimed() });
+    fail(String(e?.message ?? e));
   }
 }
 
 wss.on("connection", (ws: WebSocket, req: any) => {
+  const ip = guard.clientIp(req);
+  // connection cap (per IP + global) — blunts connection-flood DoS.
+  if (!guard.connOpen(ip)) { try { ws.close(1013, "too many connections"); } catch { /* ignore */ } return; }
+  ws.once("close", () => guard.connClose(ip));
   // Remote runners dial the "/runner" path; everything else is a UI client.
-  if (String(req?.url || "").startsWith("/runner")) { handleRunnerConnection(ws); return; }
+  if (String(req?.url || "").startsWith("/runner")) { handleRunnerConnection(ws, ip); return; }
+  // Optional Origin allowlist (public deployments); no-op unless JARVIS_ALLOWED_ORIGINS set.
+  if (!guard.originAllowed(req)) { try { ws.close(1008, "origin not allowed"); } catch { /* ignore */ } return; }
+  maybeWarnInsecure(req);
+  // Drop connections that never authenticate (idle unauth hoarding). Cleared on auth.
+  if (auth.AUTH_ENABLED) {
+    unauthTimers.set(ws, setTimeout(() => {
+      if (!principals.has(ws)) { try { send(ws, { t: "unauth", reason: "tempo de autenticação esgotado", claimed: auth.isClaimed() }); ws.close(); } catch { /* ignore */ } }
+    }, 20000));
+  }
   // Attach listeners SYNCHRONOUSLY (before any await) so a client message sent
   // right after connect is never dropped. The initial state below is async
   // (agent caps + speaker list, which spawns Python), so pushing it before the
   // message listener was attached created a window where "open" etc. were lost.
+  // A per-connection socket error (e.g. oversized frame rejected by maxPayload) must
+  // NEVER crash the hub — an unhandled 'error' event would take the whole process down.
+  ws.on("error", () => { try { ws.close(); } catch { /* ignore */ } });
   ws.on("close", () => {
     subs.delete(ws);
     wakeClients.delete(ws);
+    clearUnauthTimer(ws);
     syncTails();
   });
 
@@ -892,7 +948,7 @@ const adminServer = createServer((req, res) => {
   const body = () => new Promise<any>((resolve) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve({}); } }); });
   (async () => {
     try {
-      if (req.method === "GET" && url === "/admin/status") return json(200, { claimed: auth.isClaimed(), authEnabled: auth.AUTH_ENABLED, devices: auth.listDevices(), invites: auth.listInvites() });
+      if (req.method === "GET" && url === "/admin/status") return json(200, { claimed: auth.isClaimed(), authEnabled: auth.AUTH_ENABLED, devices: auth.listDevices(), invites: auth.listInvites(), guard: guard.stats() });
       if (req.method === "GET" && url === "/admin/claimcode") return json(200, { claimed: auth.isClaimed(), code: auth.isClaimed() ? null : auth.ensureClaimCode() });
       if (req.method === "GET" && url === "/admin/audit") { const n = Number((req.url || "").split("n=")[1]) || 100; return json(200, { audit: auth.readAudit(n) }); }
       if (req.method === "POST" && url === "/admin/invite") {
@@ -921,8 +977,9 @@ adminServer.listen(ADMIN_PORT, "127.0.0.1", () => console.log(`[hub] admin (loop
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
+  console.log(`[hub] guard: rate-limit + conn caps + ${Math.round(guard.MAX_PAYLOAD / 1024 / 1024)}MB payload cap active${/^(on|1|true)$/i.test(process.env.JARVIS_TRUST_PROXY || "") ? " (trust-proxy on)" : ""}`);
   if (!auth.AUTH_ENABLED) {
-    console.log(`[hub] AUTH DISABLED (JARVIS_AUTH=off) — every connection is trusted. Use only on a private network.`);
+    console.log(`[hub] AUTH DISABLED (JARVIS_AUTH=off) — every connection is trusted. Use ONLY on a private network (never a public server).`);
   } else if (!auth.isClaimed()) {
     const code = auth.ensureClaimCode();
     console.log(`[hub] UNCLAIMED. Claim ownership on your first device with this code:\n\n      ${code}\n\n      (also saved to ~/.jarvis/claim-code.txt)`);
