@@ -168,6 +168,7 @@
       <div class="link" id="searchBtn">🔎 buscar entre sessões</div>
       <div class="link" id="digestBtn">🎧 o que está rolando</div>
       <div class="link" id="qrBtn">📱 abrir no celular</div>
+      <div class="link hidden" id="secBtn">🔐 dispositivos &amp; convites</div>
       <div class="sec">Recentes</div>
       <div id="recents"></div>
       <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
@@ -254,11 +255,27 @@
     <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="setCancel" class="ghost" type="button">Fechar</button><button id="setClose" type="button">Salvar</button></div>
   </div></div>
 
+  <div id="secModal" class="modal hidden"><div class="card">
+    <b>🔐 Dispositivos &amp; convites</b>
+    <div class="sec">Gerar convite</div>
+    <div class="mut" style="font-size:12px;margin-bottom:6px">Crie um convite e compartilhe o link/código. Quem abrir vira um dispositivo conectado (revogável).</div>
+    <label>Papel <select id="secRole"><option value="member">Membro</option><option value="owner">Dono</option></select></label>
+    <label>Validade <select id="secTtl"><option value="3600">1 hora</option><option value="86400" selected>1 dia</option><option value="604800">7 dias</option></select></label>
+    <div class="row"><button id="secGen" type="button">Gerar convite</button></div>
+    <div id="secOut" class="hidden" style="margin-top:6px"></div>
+    <div class="sec">Convites pendentes</div>
+    <div id="secInvites" class="mut" style="font-size:12px">—</div>
+    <div class="sec">Dispositivos conectados</div>
+    <div id="secDevices" class="mut" style="font-size:12px">—</div>
+    <div class="row" style="justify-content:space-between;margin-top:8px"><button id="secRevokeAll" class="ghost" type="button">Revogar todos os outros</button><button id="secClose" type="button">Fechar</button></div>
+  </div></div>
+
   <script>
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
+      'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
@@ -384,6 +401,38 @@
     E.digestBtn.onclick=()=>{ if(!startVoiceOp('digest',E.digestBtn,'⏳ gerando…'))return; status('speaking','Analisando sessões…'); tx({t:'digest',speak:true}); };
     E.qrBtn.onclick=()=>{ tx({t:'qr',url:location.origin}); closeSide(); };
     E.qrClose.onclick=()=>E.qrModal.classList.add('hidden');
+
+    // ---- segurança: dispositivos & convites (dono) ----
+    function updateOwnerUI(){ if(authUser&&authUser.role==='owner') E.secBtn.classList.remove('hidden'); else E.secBtn.classList.add('hidden'); }
+    E.secBtn.onclick=()=>{ tx({t:'sec_state'}); E.secOut.classList.add('hidden'); E.secModal.classList.remove('hidden'); closeSide(); };
+    E.secClose.onclick=()=>E.secModal.classList.add('hidden');
+    E.secGen.onclick=()=>{ tx({t:'sec_invite', role:E.secRole.value, ttlSec:Number(E.secTtl.value)}); };
+    let revokeAllArmed=0;
+    E.secRevokeAll.onclick=()=>{ const now=Date.now(); if(now-revokeAllArmed<4000){ revokeAllArmed=0; E.secRevokeAll.textContent='Revogar todos os outros'; tx({t:'sec_revoke_all'}); }
+      else { revokeAllArmed=now; E.secRevokeAll.textContent='Confirmar? (toque de novo)'; setTimeout(()=>{ if(Date.now()-revokeAllArmed>=4000) E.secRevokeAll.textContent='Revogar todos os outros'; },4200); } };
+    function fmtAgo(ts){ if(!ts)return'—'; const s=Math.floor((Date.now()-ts)/1000); if(s<60)return'agora'; if(s<3600)return Math.floor(s/60)+'min'; if(s<86400)return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d'; }
+    function fmtIn(ts){ const s=Math.floor((ts-Date.now())/1000); if(s<=0)return'expirado'; if(s<3600)return Math.floor(s/60)+'min'; if(s<86400)return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d'; }
+    function secRow(html){ const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #ffffff12'; const i=document.createElement('div'); i.style.cssText='flex:1;min-width:0'; i.innerHTML=html; r.appendChild(i); return r; }
+    function renderSec(m){
+      const devs=m.devices||[], me=m.me;
+      E.secDevices.innerHTML = devs.length ? '' : 'Nenhum dispositivo.';
+      devs.forEach(d=>{ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(d.label||'Dispositivo')+(d.id===me?' <span style="opacity:.6">(este)</span>':'')+' · '+esc(d.role||'')+'</div><div style="opacity:.55">'+esc(d.userName||'')+' · visto '+fmtAgo(d.lastSeen)+(d.ip?(' · '+esc(d.ip)):'')+'</div>');
+        if(d.id!==me){ const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_device',deviceId:d.id}); row.appendChild(b); }
+        E.secDevices.appendChild(row); });
+      const inv=m.invites||[];
+      E.secInvites.innerHTML = inv.length ? '' : 'Nenhum convite pendente.';
+      inv.forEach(i=>{ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(i.role)+' · expira em '+fmtIn(i.expiresAt)+'</div>');
+        const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_invite',inviteId:i.id}); row.appendChild(b);
+        E.secInvites.appendChild(row); });
+    }
+    function showInvite(code){ const link=location.origin+'/#invite='+encodeURIComponent(code);
+      E.secOut.classList.remove('hidden');
+      E.secOut.innerHTML='<div class="sec">Convite criado — compartilhe o link</div><div style="word-break:break-all;background:#131a22;border:1px solid #2a3542;border-radius:8px;padding:8px;font-size:12px;color:#e8eef5">'+esc(link)+'</div>';
+      const mk=(txt,val,ghost)=>{ const b=document.createElement('button'); b.type='button'; if(ghost)b.className='ghost'; b.textContent=txt; b.style.marginTop='6px'; if(ghost)b.style.marginLeft='6px';
+        b.onclick=()=>{ (navigator.clipboard?navigator.clipboard.writeText(val):Promise.reject()).then(()=>{ const o=b.textContent; b.textContent='Copiado ✓'; setTimeout(()=>b.textContent=o,1500); }).catch(()=>toast(txt+': '+val)); }; return b; };
+      E.secOut.appendChild(mk('Copiar link',link,false));
+      E.secOut.appendChild(mk('Copiar só o código',code,true));
+    }
     // ---------- Web Push (notificação no aparelho quando termina) ----------
     let pushKeyResolve=null;
     function urlB64ToUint8(b64){ const pad='='.repeat((4-b64.length%4)%4); const s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/'); const raw=atob(s); const arr=new Uint8Array(raw.length); for(let i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i); return arr; }
@@ -529,20 +578,23 @@
       gateEl.querySelector('#gateCode').placeholder=claimed?'Código do convite':'Código de claim (do servidor)';
       gateEl.querySelector('#gateGo').textContent=claimed?'Entrar':'Reivindicar';
       gateEl.querySelector('#gateHint').textContent=claimed?'Peça um convite ao dono do Jarvis.':'O código apareceu no log do servidor e em ~/.jarvis/claim-code.txt';
-      const c=gateEl.querySelector('#gateCode'); try{ if(document.activeElement!==c)c.focus(); }catch(e){} }
+      const c=gateEl.querySelector('#gateCode'); const hv=(location.hash||'').match(/invite=([^&]+)/); if(claimed&&hv&&!c.value)c.value=decodeURIComponent(hv[1]);
+      try{ if(document.activeElement!==c)c.focus(); }catch(e){} }
     function hideGate(){ if(gateEl)gateEl.style.display='none'; }
     function gateError(t){ if(gateEl)gateEl.querySelector('#gateErr').textContent=t||''; }
     function submitGate(){ if(!gateEl)return; const code=gateEl.querySelector('#gateCode').value.trim(), label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
       if(!code){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code, label }); }
     function postAuth(){ tx({t:'wake',enabled:cfg.wake}); if(currentSession) tx({t:'open',sessionId:currentSession}); if(cfg.push) enablePush(); }
-    function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); postAuth(); }
+    function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); }
 
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
       ws.onopen=()=>{ E.dot.classList.add('on'); enteredConn=false; if(authToken) tx({t:'auth',token:authToken}); else tx({t:'authinfo'}); }; // autentica antes de tudo
       ws.onclose=()=>{ E.dot.classList.remove('on'); scheduleReconnect(); };
       ws.onmessage=(e)=>{ const m=JSON.parse(e.data);
         if(m.t==='authinfo'){ showGate(m.claimed); }
-        else if(m.t==='authed'){ if(m.token){ authToken=m.token; localStorage.setItem('jarvis_token',authToken); } authUser=m.user||authUser; enter(); }
+        else if(m.t==='authed'){ if(m.token){ authToken=m.token; localStorage.setItem('jarvis_token',authToken); } authUser=m.user||authUser; updateOwnerUI(); enter(); }
+        else if(m.t==='sec_state'){ renderSec(m); }
+        else if(m.t==='sec_invite_created'){ showInvite(m.code); }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');

@@ -115,6 +115,17 @@ export function mintInvite(byUserId: string, opts: { role?: Role; runners?: stri
   return { code, invite: pub };
 }
 
+export function listInvites(): Array<Omit<Invite, "codeHash">> {
+  const now = Date.now();
+  return data.invites.filter((i) => !i.usedAt && i.expiresAt > now).map(({ codeHash, ...pub }) => pub);
+}
+export function revokeInvite(id: string): boolean {
+  const before = data.invites.length;
+  data.invites = data.invites.filter((i) => i.id !== id);
+  if (data.invites.length !== before) { save(data); return true; }
+  return false;
+}
+
 export function redeem(code: string, label: string, meta?: { ip?: string; ua?: string }): AuthResult {
   const h = sha(code);
   const inv = data.invites.find((i) => !i.usedAt && i.expiresAt > Date.now() && hashEq(i.codeHash, h));

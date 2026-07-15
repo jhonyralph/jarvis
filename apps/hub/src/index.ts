@@ -141,10 +141,33 @@ let voiceOpBusy = false;
 type Conn = { userId: string; role: auth.Role; name: string; deviceId: string | null };
 const principals = new WeakMap<WebSocket, Conn>();
 function isAuthed(ws: WebSocket): boolean { return !auth.AUTH_ENABLED || principals.has(ws); }
+function principalOf(ws: WebSocket): Conn | undefined { return principals.get(ws); }
 function clientMeta(req: any): { ip?: string; ua?: string } {
   const ip = String(req?.socket?.remoteAddress || "").replace(/^::ffff:/, "");
   const ua = req?.headers?.["user-agent"];
   return { ip: ip || undefined, ua: typeof ua === "string" ? ua : undefined };
+}
+/** Owner-only gate for the security/admin messages. Returns the principal or null (and errors). */
+function requireOwner(ws: WebSocket): Conn | null {
+  if (!auth.AUTH_ENABLED) return { userId: "local", role: "owner", name: "Local", deviceId: null };
+  const p = principalOf(ws);
+  if (!p || p.role !== "owner") { send(ws, { t: "error", message: "apenas o dono pode gerenciar dispositivos" }); return null; }
+  return p;
+}
+/** Current devices + pending invites, marking THIS connection's device as "me". */
+function secState(ws: WebSocket): void {
+  const p = principalOf(ws);
+  send(ws, { t: "sec_state", devices: auth.listDevices(), invites: auth.listInvites(), me: p?.deviceId || null, role: p?.role || (auth.AUTH_ENABLED ? "member" : "owner") });
+}
+/** Boot any currently-connected device whose token was just revoked. */
+function dropRevoked(): void {
+  const valid = new Set(auth.listDevices().map((d) => d.id));
+  for (const client of wss.clients) {
+    const pr = principals.get(client as WebSocket);
+    if (pr && pr.deviceId && !valid.has(pr.deviceId)) {
+      try { send(client as WebSocket, { t: "unauth", reason: "revogado", claimed: true }); (client as WebSocket).close(); } catch { /* ignore */ }
+    }
+  }
 }
 
 // Live mirror of native CLI sessions: tail the jsonl and broadcast new turns as they're
@@ -590,6 +613,38 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (voiceOpBusy) { send(ws, { t: "busy", message: "Já estou gerando um áudio — aguarde terminar." }); return; }
       voiceOpBusy = true;
       try { await digestAndSpeak(ws, msg.speak !== false); } finally { voiceOpBusy = false; }
+      return;
+    }
+    // --- security admin (owner-only): connected devices + invites + revoke ---
+    if (msg.t === "sec_state") { if (!requireOwner(ws)) return; secState(ws); return; }
+    if (msg.t === "sec_invite") {
+      const p = requireOwner(ws); if (!p) return;
+      const role = msg.role === "owner" ? "owner" : "member";
+      const ttlSec = Math.min(Math.max(Number(msg.ttlSec) || 86400, 60), 30 * 86400);
+      const runners = Array.isArray(msg.runners) ? msg.runners.filter((x: any) => typeof x === "string") : [];
+      const { code, invite } = auth.mintInvite(p.userId, { role, runners, ttlSec });
+      send(ws, { t: "sec_invite_created", code, invite });
+      secState(ws);
+      return;
+    }
+    if (msg.t === "sec_revoke_device" && typeof msg.deviceId === "string") {
+      if (!requireOwner(ws)) return;
+      auth.revokeDevice(msg.deviceId);
+      dropRevoked();
+      secState(ws);
+      return;
+    }
+    if (msg.t === "sec_revoke_all") {
+      const p = requireOwner(ws); if (!p) return;
+      if (p.deviceId) auth.revokeAllExcept(p.deviceId);
+      dropRevoked();
+      secState(ws);
+      return;
+    }
+    if (msg.t === "sec_revoke_invite" && typeof msg.inviteId === "string") {
+      if (!requireOwner(ws)) return;
+      auth.revokeInvite(msg.inviteId);
+      secState(ws);
       return;
     }
     // QR code of the URL to open on the phone
