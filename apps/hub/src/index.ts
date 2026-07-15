@@ -343,14 +343,13 @@ async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Pr
   if (isNativeId(sid)) { const h = nativeHistory(sid); if (h) { msgs = h.messages; title = h.title; } }
   else { const s = store.get(sid); if (s) { msgs = store.history(sid); title = s.title; } }
   if (!msgs.length) { send(ws, { t: "summary", sessionId: sid, text: "Conversa vazia." }); return; }
-  const recent = msgs
-    .slice(-30)
-    .map((m) => `${m.role === "user" ? "Usuário" : "Assistente"}: ${(m.text || "").slice(0, 500)}`)
-    .join("\n");
+  // foca na ÚLTIMA resposta (referente ao último comando) — resumo curto, não a conversa toda
+  const lastA = [...msgs].reverse().find((m) => m.role === "assistant")?.text || "";
+  const lastU = [...msgs].reverse().find((m) => m.role === "user")?.text || "";
   const prompt =
-    `Resuma a conversa abaixo em português do Brasil, CURTO e natural para ser FALADO em voz alta ` +
-    `(2 a 4 frases, sem markdown, sem listas). Foque no que foi feito/decidido e no estado atual.\n\n` +
-    `Título: ${title}\n\n${recent}`;
+    `Resuma em 1 a 3 frases CURTAS e faladas (português do Brasil, sem markdown, sem listas) a ÚLTIMA resposta desta conversa — ` +
+    `referente ao último comando enviado. Vá direto ao ponto; NÃO resuma a conversa inteira.\n\n` +
+    `Título: ${title}\n\nÚltimo comando: ${lastU.slice(0, 800)}\n\nÚltima resposta: ${lastA.slice(0, 2500)}`;
   const agent = agents.searchAgent();
   const sendOpts = { model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
   let text = "";

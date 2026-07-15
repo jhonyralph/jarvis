@@ -104,7 +104,7 @@
     button.danger { background:#dc2626; }
     /* recents: agent badge + native tag */
     #recents .item { display:flex; align-items:center; gap:6px; }
-    #recents .rtitle { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #recents .rtitle { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #recents .rbadge { flex:none; font-size:11px; } #recents .rnat { flex:none; font-size:9px; color:var(--mut); background:#ffffff12; border-radius:5px; padding:1px 4px; }
     #recents .runhdr { color:#22c55e; font-size:11px; font-weight:600; padding:2px 6px 5px; }
     #recents .rdot { flex:none; width:7px; height:7px; border-radius:50%; background:transparent; }
@@ -129,6 +129,7 @@
       #backdrop { display:block; position:fixed; inset:0; background:#0009; z-index:25; }
       #side .sec { font-size:12px; margin:14px 4px 6px; }
       #recents .item, #files .item { padding:12px; font-size:15px; }
+      #recents .rsum { opacity:.85; font-size:18px; padding:6px 8px; }
       #newSess, #settingsBtn, #moreBtn { padding:13px; font-size:15px; }
       .link { font-size:14.5px; padding:10px 6px; }
       #log { padding:14px; gap:12px; } .msg.me, .msg.bot { max-width:92%; }
