@@ -42,6 +42,8 @@ export interface AgentAdapter {
   capabilities(): Promise<AgentCaps>;
   available(): Promise<boolean>;
   send(sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply>;
+  /** Stateless one-off prompt (no session, no context) — used by cross-session search. */
+  oneShot?(text: string, opts?: SendOpts): Promise<AgentReply>;
 }
 
 export class AgentRegistry {
@@ -58,6 +60,12 @@ export class AgentRegistry {
   }
   names(): string[] {
     return [...this.byName.keys()];
+  }
+  /** Agent used for cross-session search reasoning (JARVIS_SEARCH_AGENT, else claude-code, else default). */
+  searchAgent(): AgentAdapter {
+    const pref = process.env.JARVIS_SEARCH_AGENT;
+    if (pref && this.byName.has(pref)) return this.byName.get(pref)!;
+    return this.byName.get("claude-code") || this.get();
   }
   /** [{ name, models:[{id,label,efforts,defaultEffort}], defaultModel }] for the UI pickers */
   async describe(): Promise<Array<{ name: string } & AgentCaps>> {
@@ -83,6 +91,9 @@ export class MockAgentAdapter implements AgentAdapter {
   }
   async send(_sid: string, text: string): Promise<AgentReply> {
     return { text: `Recebi: "${text}". (agente mock — Hub/chat/voz OK.)` };
+  }
+  async oneShot(): Promise<AgentReply> {
+    return { text: '{"answer":"(busca mock — defina JARVIS_SEARCH_AGENT=claude-code para busca real)","matches":[],"action":null}' };
   }
 }
 
@@ -147,6 +158,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       usage: { costUsd: json.total_cost_usd, inputTokens: json.usage?.input_tokens, outputTokens: json.usage?.output_tokens },
     };
   }
+
+  async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
+    const args = ["-p", text, "--output-format", "json", "--permission-mode", "bypassPermissions"];
+    if (opts?.model) args.push("--model", opts.model);
+    if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
+    const raw = await run(this.bin, args, homedir(), "", false); // stateless: no --resume, no this.sessions write
+    const json = JSON.parse(raw);
+    if (json.is_error) throw new Error(json.result || "claude error");
+    return { text: json.result ?? "" };
+  }
 }
 
 /** Native OpenAI Codex, headless (`codex exec`). Requires `codex login`. */
@@ -198,6 +219,14 @@ export class CodexAdapter implements AgentAdapter {
     if (opts?.effort) args.push("-c", `model_reasoning_effort=${opts.effort}`);
     const out = await run("codex", args, cwd, text, true);
     this.started.add(sessionId);
+    return { text: out.trim() };
+  }
+
+  async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
+    const args = ["exec", "--cd", homedir(), "--dangerously-bypass-approvals-and-sandbox"];
+    if (opts?.model) args.push("-m", opts.model);
+    if (opts?.effort) args.push("-c", `model_reasoning_effort=${opts.effort}`);
+    const out = await run("codex", args, homedir(), text, true); // stateless: no this.started
     return { text: out.trim() };
   }
 }

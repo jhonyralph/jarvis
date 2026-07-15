@@ -21,6 +21,7 @@ import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter } from
 import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechifyCapped } from "./speechify.js";
+import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { Store } from "./store.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
@@ -73,6 +74,16 @@ function broadcastAll(obj: unknown): void {
   const s = JSON.stringify(obj);
   for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(s);
 }
+/** Cross-session search: reason over recent sessions, reply only to the asker (optionally spoken). */
+async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): Promise<void> {
+  const r = await runSessionSearch({ query, store, agents });
+  let audio: string | undefined;
+  if (speak) {
+    const spoken = speechifyCapped(r.answer);
+    if (spoken) audio = (await synthesize(spoken, VOICE)).toString("base64");
+  }
+  send(ws, { t: "searchResult", query, answer: r.answer, matches: r.matches, action: r.action, audio });
+}
 
 wss.on("connection", async (ws: WebSocket) => {
   send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
@@ -123,6 +134,31 @@ wss.on("connection", async (ws: WebSocket) => {
       return;
     }
 
+    // cross-session search (explicit) + execute-in-a-specific-session
+    if (msg.t === "search" && typeof msg.query === "string") {
+      await runAndSendSearch(ws, msg.query, !!msg.speak);
+      return;
+    }
+    if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
+      const s = store.get(msg.sessionId);
+      if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
+      const ag = agents.get(s.agent);
+      const now = Date.now();
+      store.add(s.id, { role: "user", text: msg.text, ts: now, agent: s.agent });
+      broadcast(s.id, { t: "message", message: { sessionId: s.id, role: "user", text: msg.text, ts: now, agent: s.agent } });
+      broadcastAll({ t: "sessions", sessions: store.list() });
+      try {
+        const reply = await ag.send(s.id, msg.text, s.cwd, { model: msg.model, effort: msg.effort });
+        const rt = Date.now();
+        store.add(s.id, { role: "assistant", text: reply.text, ts: rt, agent: s.agent });
+        broadcast(s.id, { t: "message", message: { sessionId: s.id, role: "assistant", text: reply.text, ts: rt, agent: s.agent } });
+        broadcastAll({ t: "sessions", sessions: store.list() });
+      } catch (e: any) {
+        send(ws, { t: "error", message: String(e?.message ?? e) });
+      }
+      return;
+    }
+
     // --- conversation (text or voice) ---
     const sid = subs.get(ws) || (typeof msg.sessionId === "string" ? msg.sessionId : "default");
     subs.set(ws, sid);
@@ -141,6 +177,12 @@ wss.on("connection", async (ws: WebSocket) => {
       }
     }
     if (!text) return;
+
+    // Meta-question about other sessions? -> cross-session search (typed or spoken).
+    if (looksLikeCrossSessionQuery(text)) {
+      await runAndSendSearch(ws, text, !!msg.speak);
+      return;
+    }
 
     // Attachments: what we SEND to the agent includes file contents; what we SHOW
     // stays the user's text + a small chip (files are viewable in the chat).

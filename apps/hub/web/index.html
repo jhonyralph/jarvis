@@ -43,6 +43,8 @@
     .msg.bot th,.msg.bot td { border:1px solid var(--line); padding:5px 10px; text-align:left; font-size:13.5px; } .msg.bot th { background:#ffffff0d; }
     .msg.bot img { max-width:100%; border-radius:8px; margin:.4em 0; display:block; } .msg.bot a { color:#7cc0ff; }
     .msg.bot blockquote { border-left:3px solid #ffffff2f; margin:.5em 0; padding:.1em .8em; color:var(--mut); }
+    .msg.bot .match { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:.4em 0; cursor:pointer; }
+    .msg.bot .match:hover { background:#ffffff0d; } .msg.bot .exec { padding:3px 8px; font-size:11px; margin-top:5px; }
     /* composer: input on top, controls BELOW it */
     #composer { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
     #attachRow { display:flex; gap:6px; flex-wrap:wrap; }
@@ -73,6 +75,7 @@
     <aside id="side">
       <button id="newSess">＋ Nova sessão</button>
       <div class="link" id="chooseFolder">📁 escolher pasta / agente…</div>
+      <div class="link" id="searchBtn">🔎 buscar entre sessões</div>
       <div class="sec">Recentes</div>
       <div id="recents"></div>
       <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
@@ -138,7 +141,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','agentChip','cwdChip','modelSel','effortSel','speak','recents','moreBtn','files',
-      'newSess','chooseFolder','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'newSess','chooseFolder','searchBtn','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setMulti','setEnroll','setClose','composer','input','mic','attach','file','attachRow','usage','limit',
       'menuBtn','side','newModal','newAgent','newPath','dirList','newUp','newCreate','newCancel','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
@@ -169,6 +172,12 @@
         if(line.trim()===''){ i++; continue; } h+=`<p>${inl(esc(line))}</p>`; i++; } return h; }
     function addMsg(m){ const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me'; d.textContent=m.text; } else { d.className='msg bot'; d.innerHTML=md(m.text); } E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
+    function addSearchCard(m){ const d=document.createElement('div'); d.className='msg bot';
+      let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
+      (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
+        (x.why||x.progress?`<br><span class="mut">${esc(x.why||x.progress||'')}</span>`:'')+
+        (m.action?`<br><button type="button" class="exec ghost" data-id="${esc(x.id)}" data-action="${esc(m.action)}">▶ executar ação</button>`:'')+`</div>`; });
+      d.innerHTML=h; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; if(m.audio) playTTS(m.audio); }
     function refreshFiles(msgs){ E.files.innerHTML=''; const f=[]; msgs.forEach(m=>{ if(m.role!=='assistant')return; const t=m.text;
       (t.match(/!\[[^\]]*\]/g)||[]).forEach(x=>f.push('🖼 '+(x.match(/!\[([^\]]*)\]/)?.[1]||'imagem')));
       (t.match(/\b[\w./-]+\.(ts|tsx|js|py|json|md|html|css|yml|yaml|sh)\b/g)||[]).forEach(x=>f.push('📄 '+x)); });
@@ -192,6 +201,7 @@
     E.newSess.onclick=()=>{ // instant: last used dir + default agent (sem escolher pasta)
       const agent=cfg.agent||currentAgent||(caps[0]||{}).name; const cwd=cfg.lastCwd||''; tx({t:'new',agent,cwd}); E.side.classList.remove('open'); };
     E.chooseFolder.onclick=()=>{ fillSel(E.newAgent,caps.map(c=>c.name),cfg.agent||currentAgent||(caps[0]||{}).name); tx({t:'listdir',path:cfg.lastCwd||''}); E.newModal.classList.remove('hidden'); };
+    E.searchBtn.onclick=()=>{ const q=prompt('Buscar entre sessões (ex.: como está o progresso da sessão X?):'); if(q&&q.trim()){ tx({t:'search',query:q.trim(),speak}); E.side.classList.remove('open'); } };
     E.newUp.onclick=()=>tx({t:'listdir',path:E.newUp.dataset.parent||''});
     E.newCancel.onclick=()=>E.newModal.classList.add('hidden');
     E.newCreate.onclick=()=>{ tx({t:'new',agent:E.newAgent.value,cwd:browsePath}); E.newModal.classList.add('hidden'); E.side.classList.remove('open'); };
@@ -227,6 +237,7 @@
         else if(m.t==='message'){ if(m.message.sessionId===currentSession) addMsg(m.message); }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
+        else if(m.t==='searchResult'){ addSearchCard(m); }
         else if(m.t==='error'){ addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
@@ -254,7 +265,11 @@
     // ---------- composer / misc ----------
     E.speak.onclick=()=>{ speak=!speak; cfg.voice=speak; saveCfg(); setSpeakBtn(); };
     E.menuBtn.onclick=()=>E.side.classList.toggle('open');
-    E.log.addEventListener('click',(e)=>{ if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200);} });
+    E.log.addEventListener('click',(e)=>{
+      if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
+      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:E.modelSel.value,effort:E.effortSel.value}); tx({t:'open',sessionId:exec.dataset.id}); return; }
+      const match=e.target.closest('.match'); if(match){ tx({t:'open',sessionId:match.dataset.id}); }
+    });
     E.attach.onclick=()=>E.file.click();
     E.file.onchange=async()=>{ for(const f of E.file.files){ attachments.push({name:f.name,content:await f.text()}); } E.file.value=''; renderAttach(); };
     function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='📎 '+a.name+' ✕'; c.onclick=()=>{attachments.splice(i,1);renderAttach();}; E.attachRow.appendChild(c); }); }

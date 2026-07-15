@@ -97,6 +97,23 @@ export class Store {
     return this.data[id]?.messages ?? [];
   }
 
+  /** Cheap cross-session context: the last N sessions (any agent) with title +
+   *  last user/assistant message (truncated). Used by cross-session search. */
+  digest(n = 8, cap = 220): Array<{ id: string; agent: string; cwd: string; title: string; updatedAt: number; lastUser: string; lastAssistant: string }> {
+    return Object.values(this.data)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, n)
+      .map((s) => ({
+        id: s.id,
+        agent: s.agent,
+        cwd: s.cwd,
+        title: s.title,
+        updatedAt: s.updatedAt,
+        lastUser: [...s.messages].reverse().find((m) => m.role === "user")?.text.slice(0, cap) ?? "",
+        lastAssistant: [...s.messages].reverse().find((m) => m.role === "assistant")?.text.slice(0, cap) ?? "",
+      }));
+  }
+
   list(): SessionMeta[] {
     return Object.values(this.data)
       .sort((a, b) => b.updatedAt - a.updatedAt)
