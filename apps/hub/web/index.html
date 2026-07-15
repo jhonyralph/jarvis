@@ -290,7 +290,7 @@
       E.modelName.textContent=modelLabel(currentAgent,curModel);
       E.effortName.textContent=effLabel(curEffort);
       E.agentBtn.classList.toggle('lock',curStarted||curNative); E.cwdBtn.classList.toggle('lock',curStarted||curNative);
-      E.modelBtn.classList.toggle('lock',curNative); E.effortBtn.classList.toggle('lock',curNative);
+      E.modelBtn.classList.remove('lock'); E.effortBtn.classList.remove('lock'); // modelo/esforço: sempre trocáveis (por mensagem)
       E.agentBtn.title=(curStarted||curNative)?'Agente (travado)':'Agente / IA — clique para trocar (só em sessão nova)';
       E.cwdBtn.title=(curStarted||curNative)?((curCwd||'')+' — travada'):((curCwd||'')+' — clique para escolher (só em sessão nova)'); }
 
@@ -350,8 +350,8 @@
 
     E.agentBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.agentBtn,buildAgentPop); };
     E.cwdBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.cwdBtn,buildFolderPop); };
-    E.modelBtn.onclick=()=>{ if(curNative)return; togglePop(E.modelBtn,buildModelPop); };
-    E.effortBtn.onclick=()=>{ if(curNative)return; togglePop(E.effortBtn,buildEffortPop); };
+    E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
+    E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
 
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
