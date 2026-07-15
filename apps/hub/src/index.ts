@@ -23,6 +23,7 @@ import { transcribe } from "./stt.js";
 import { speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
+import { listNative, nativeHistory, isNativeId } from "./native.js";
 import { Store } from "./store.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
@@ -85,6 +86,28 @@ function broadcastAll(obj: unknown): void {
   const s = JSON.stringify(obj);
   for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(s);
 }
+/** Jarvis's own sessions merged with imported native Claude/Codex sessions (agent-tagged, newest first). */
+function allSessions(): any[] {
+  const own = store.list();
+  const ownIds = new Set(own.map((s) => s.id));
+  const native = listNative()
+    .filter((n) => !ownIds.has(n.id))
+    .map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, createdAt: n.updatedAt, updatedAt: n.updatedAt, lastMessage: "", count: n.count }));
+  return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+/** The N most-recently-used distinct working folders (across all sessions) — for the folder picker. */
+function sessionsPayload(): unknown {
+  const list = allSessions();
+  const seen = new Set<string>();
+  const recentDirs: string[] = [];
+  for (const s of list) {
+    const d = (s.cwd || "").trim();
+    if (d && !seen.has(d)) { seen.add(d); recentDirs.push(d); if (recentDirs.length >= 10) break; }
+  }
+  return { t: "sessions", sessions: list, recentDirs };
+}
+function pushSessions(): void { broadcastAll(sessionsPayload()); }
+function sendSessions(ws: WebSocket): void { send(ws, sessionsPayload()); }
 /** Cross-session search: reason over recent sessions, reply only to the asker (optionally spoken). */
 async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): Promise<void> {
   const r = await runSessionSearch({ query, store, agents });
@@ -124,7 +147,7 @@ wss.on("connection", (ws: WebSocket) => {
 
     // --- session management (shared across every client) ---
     if (msg.t === "list") {
-      send(ws, { t: "sessions", sessions: store.list() });
+      sendSessions(ws);
       return;
     }
     // wake-word control (machine listener <-> browsers)
@@ -170,6 +193,18 @@ wss.on("connection", (ws: WebSocket) => {
       }
       return;
     }
+    if (msg.t === "open" && typeof msg.sessionId === "string" && isNativeId(msg.sessionId)) {
+      subs.set(ws, msg.sessionId);
+      const h = nativeHistory(msg.sessionId);
+      if (!h) { send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
+      send(ws, {
+        t: "history",
+        sessionId: msg.sessionId,
+        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true },
+        messages: h.messages.map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent })),
+      });
+      return;
+    }
     if (msg.t === "open" && typeof msg.sessionId === "string") {
       subs.set(ws, msg.sessionId);
       const s = store.ensure(msg.sessionId);
@@ -183,7 +218,7 @@ wss.on("connection", (ws: WebSocket) => {
       const s = store.ensure(id, { agent: agentName, cwd });
       subs.set(ws, id);
       send(ws, { t: "history", sessionId: id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
-      broadcastAll({ t: "sessions", sessions: store.list() });
+      pushSessions();
       return;
     }
     // Change agent/folder of a session that has not started yet (locked-session rule).
@@ -198,7 +233,7 @@ wss.on("connection", (ws: WebSocket) => {
       }
       const ns = store.get(s.id)!;
       send(ws, { t: "history", sessionId: ns.id, session: { agent: ns.agent, cwd: ns.cwd, title: ns.title }, messages: store.history(ns.id) });
-      broadcastAll({ t: "sessions", sessions: store.list() });
+      pushSessions();
       return;
     }
 
@@ -214,13 +249,13 @@ wss.on("connection", (ws: WebSocket) => {
       const now = Date.now();
       store.add(s.id, { role: "user", text: msg.text, ts: now, agent: s.agent });
       broadcast(s.id, { t: "message", message: { sessionId: s.id, role: "user", text: msg.text, ts: now, agent: s.agent } });
-      broadcastAll({ t: "sessions", sessions: store.list() });
+      pushSessions();
       try {
         const reply = await ag.send(s.id, msg.text, s.cwd, { model: msg.model, effort: msg.effort });
         const rt = Date.now();
         store.add(s.id, { role: "assistant", text: reply.text, ts: rt, agent: s.agent });
         broadcast(s.id, { t: "message", message: { sessionId: s.id, role: "assistant", text: reply.text, ts: rt, agent: s.agent } });
-        broadcastAll({ t: "sessions", sessions: store.list() });
+        pushSessions();
       } catch (e: any) {
         send(ws, { t: "error", message: String(e?.message ?? e) });
       }
@@ -230,6 +265,11 @@ wss.on("connection", (ws: WebSocket) => {
     // --- conversation (text or voice) ---
     const sid = subs.get(ws) || (typeof msg.sessionId === "string" ? msg.sessionId : "default");
     subs.set(ws, sid);
+    if (isNativeId(sid)) {
+      // imported native CLI session — read-only in Jarvis for now (no write-back bridge yet)
+      send(ws, { t: "error", message: "Sessão nativa (somente leitura). Crie uma sessão do Jarvis para conversar." });
+      return;
+    }
     const session = store.ensure(sid); // agent + cwd are LOCKED to the session (chosen at creation)
     const agent = agents.get(session.agent);
 
@@ -284,7 +324,7 @@ wss.on("connection", (ws: WebSocket) => {
     // User message -> store + broadcast to everyone on this session (so all UIs show it).
     store.add(sid, { role: "user", text, ts: now, agent: agent.name, speaker });
     broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name, speaker } });
-    broadcastAll({ t: "sessions", sessions: store.list() });
+    pushSessions();
 
     try {
       const opts = { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined };
@@ -293,7 +333,7 @@ wss.on("connection", (ws: WebSocket) => {
       store.add(sid, { role: "assistant", text: reply.text, ts: rt, agent: agent.name });
       broadcast(sid, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: rt, agent: agent.name } });
       if (reply.usage) broadcast(sid, { t: "usage", sessionId: sid, usage: reply.usage });
-      broadcastAll({ t: "sessions", sessions: store.list() });
+      pushSessions();
 
       if (msg.speak) {
         const spoken = speechifyCapped(reply.text); // clean text, not raw markdown
@@ -313,7 +353,7 @@ wss.on("connection", (ws: WebSocket) => {
   // capabilities + speaker list). Any client message that races in is now handled.
   void (async () => {
     send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
-    send(ws, { t: "sessions", sessions: store.list() });
+    sendSessions(ws);
     await sendVoiceState(ws);
   })();
 });

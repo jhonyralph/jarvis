@@ -87,6 +87,13 @@
     .pop .flist div:last-child { border-bottom:0; } .pop .flist div:hover { background:#ffffff0d; }
     .pop .frow { display:flex; gap:6px; margin-top:8px; } .pop .frow button { flex:1; font-size:12px; padding:7px 8px; }
     .modal input[type=text] { background:var(--bg); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:11px 13px; font:inherit; }
+    .pop { max-height:70vh; overflow:auto; }
+    button.danger { background:#dc2626; }
+    /* recents: agent badge + native tag */
+    #recents .item { display:flex; align-items:center; gap:6px; }
+    #recents .rtitle { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #recents .rbadge { flex:none; font-size:11px; } #recents .rnat { flex:none; font-size:9px; color:var(--mut); background:#ffffff12; border-radius:5px; padding:1px 4px; }
+    #roBanner { padding:8px 14px; background:#1e293b; color:#cbd5e1; font-size:12.5px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px; }
     .hidden { display:none !important; } #menuBtn { display:none; }
     @media (max-width:760px) { #side { position:fixed; z-index:20; height:100dvh; transform:translateX(-100%); transition:transform .2s; } #side.open { transform:none; } #menuBtn { display:inline-block; } }
   </style>
@@ -111,6 +118,7 @@
         <span id="title">Jarvis</span>
       </header>
       <div id="limit" class="hidden"></div>
+      <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
       <div id="log"></div>
       <form id="composer">
         <div id="attachRow"></div>
@@ -125,7 +133,7 @@
           <button type="button" id="modelBtn" class="pill" title="Modelo"><span class="cap" id="modelName">—</span></button>
           <button type="button" id="effortBtn" class="pill" title="Esforço / capacidade">⚡ <span class="cap" id="effortName">—</span></button>
           <button type="button" id="speak" class="ghost" title="Falar respostas (voz)">🔇</button>
-          <button type="submit">Enviar</button>
+          <button type="submit" id="sendBtn">Enviar</button>
         </div>
         <span class="usage" id="usage"></span>
       </form>
@@ -134,6 +142,13 @@
 
   <!-- floating popover for the footer pills (agent / folder / model / effort) -->
   <div id="pop" class="pop hidden"></div>
+
+  <!-- generic dialog (replaces native alert/confirm/prompt) -->
+  <div id="dlg" class="modal hidden"><div class="card">
+    <b id="dlgTitle"></b>
+    <input id="dlgInput" type="text" class="hidden" autocomplete="off">
+    <div class="row" style="justify-content:flex-end"><button id="dlgCancel" class="ghost" type="button">Cancelar</button><button id="dlgOk" type="button">OK</button></div>
+  </div></div>
 
   <div id="searchModal" class="modal hidden"><div class="card">
     <b>🔎 Buscar entre sessões</b>
@@ -159,19 +174,21 @@
     <label class="row"><input type="checkbox" id="setGate"> Exigir voz cadastrada (bloquear vozes desconhecidas)</label>
     <div id="spkList" class="mut" style="font-size:12px;margin:4px 0"></div>
     <div class="row"><button id="setEnroll" class="ghost" type="button">🎙 Cadastrar / atualizar minha voz</button></div>
-    <button id="setClose">Salvar</button>
+    <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="setCancel" class="ghost" type="button">Fechar</button><button id="setClose" type="button">Salvar</button></div>
   </div></div>
 
   <script>
     const $ = (id) => document.getElementById(id);
-    const E = ['log','dot','title','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','pop','speak','recents','moreBtn','files',
+    const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
-      'setWake','setNoise','setGate','spkList','setEnroll','setClose','composer','input','mic','attach','file','attachRow','usage','limit',
-      'menuBtn','side','status'].reduce((o,k)=>(o[k]=$(k),o),{});
+      'setWake','setNoise','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
+      'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
 
-    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='';
+    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='', recentDirs=[], curNative=false;
+    const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
+    const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     // ---- config (persisted; refresh não perde estado) ----
     const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, lastCwd:'' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
@@ -212,7 +229,9 @@
       [...new Set(f)].slice(0,25).forEach(x=>{ const d=document.createElement('div'); d.className='item'; d.textContent=x; E.files.appendChild(d); }); }
 
     function renderRecents(){ E.recents.innerHTML=''; sessions.slice(0,shown).forEach(s=>{ const d=document.createElement('div'); d.className='item'+(s.id===currentSession?' active':'');
-      d.textContent=s.title||'Sessão'; d.title=`${s.agent} · ${s.cwd}`; d.onclick=()=>{ tx({t:'open',sessionId:s.id}); E.side.classList.remove('open'); }; E.recents.appendChild(d); });
+      const nat=isNative(s.id);
+      d.innerHTML=`<span class="rbadge" title="${esc(s.agent||'')}">${agentIcon(s.agent)}</span><span class="rtitle">${esc(s.title||'Sessão')}</span>`+(nat?'<span class="rnat">nativo</span>':'');
+      d.title=`${s.agent||''}${nat?' · nativo (somente leitura)':''}\n${s.cwd||''}`; d.onclick=()=>{ tx({t:'open',sessionId:s.id}); E.side.classList.remove('open'); }; E.recents.appendChild(d); });
       E.moreBtn.classList.toggle('hidden', sessions.length<=shown); }
     E.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
 
@@ -237,9 +256,10 @@
       E.cwdName.textContent=base(curCwd)||'—';
       E.modelName.textContent=modelLabel(currentAgent,curModel);
       E.effortName.textContent=effLabel(curEffort);
-      E.agentBtn.classList.toggle('lock',curStarted); E.cwdBtn.classList.toggle('lock',curStarted);
-      E.agentBtn.title=curStarted?'Agente (travado — sessão já iniciada)':'Agente / IA — clique para trocar (só em sessão nova)';
-      E.cwdBtn.title=curStarted?((curCwd||'')+' — travada'):((curCwd||'')+' — clique para escolher (só em sessão nova)'); }
+      E.agentBtn.classList.toggle('lock',curStarted||curNative); E.cwdBtn.classList.toggle('lock',curStarted||curNative);
+      E.modelBtn.classList.toggle('lock',curNative); E.effortBtn.classList.toggle('lock',curNative);
+      E.agentBtn.title=(curStarted||curNative)?'Agente (travado)':'Agente / IA — clique para trocar (só em sessão nova)';
+      E.cwdBtn.title=(curStarted||curNative)?((curCwd||'')+' — travada'):((curCwd||'')+' — clique para escolher (só em sessão nova)'); }
 
     // ---------- new session ----------
     E.newSess.onclick=()=>{ // cria sessão vazia (agente/pasta ajustáveis pelos pills até a 1ª msg)
@@ -285,18 +305,20 @@
       rng.onchange=()=>{ curEffort=efs[+rng.value]; cfg.effort=curEffort; saveCfg(); renderControls(); }; }
 
     function buildFolderPop(p){ popMode='folder'; p.appendChild(ph('Pasta de trabalho'));
+      if(recentDirs.length){ p.appendChild(ph('Recentes')); const rl=document.createElement('div'); rl.className='flist'; rl.style.maxHeight='140px'; rl.style.marginBottom='8px';
+        recentDirs.forEach(d=>{ const it=document.createElement('div'); it.textContent='🕘 '+base(d); it.title=d; it.onclick=()=>{ closePop(); tx({t:'configure',sessionId:currentSession,cwd:d}); }; rl.appendChild(it); }); p.appendChild(rl); p.appendChild(ph('Navegar')); }
       const path=document.createElement('div'); path.className='fpath'; path.id='popPath'; path.textContent='carregando…'; p.appendChild(path);
-      const list=document.createElement('div'); list.className='flist'; list.id='popList'; list.style.height='210px'; p.appendChild(list);
+      const list=document.createElement('div'); list.className='flist'; list.id='popList'; list.style.height='190px'; p.appendChild(list);
       const row=document.createElement('div'); row.className='frow';
       const up=document.createElement('button'); up.className='ghost'; up.id='popUp'; up.textContent='⬆ acima'; up.onclick=()=>tx({t:'listdir',path:up.dataset.parent||''});
       const use=document.createElement('button'); use.id='popUse'; use.textContent='Usar esta pasta'; use.onclick=()=>{ const b=browsePath; closePop(); tx({t:'configure',sessionId:currentSession,cwd:b}); };
       row.appendChild(up); row.appendChild(use); p.appendChild(row);
       tx({t:'listdir',path:curCwd||cfg.lastCwd||''}); }
 
-    E.agentBtn.onclick=()=>{ if(curStarted)return; togglePop(E.agentBtn,buildAgentPop); };
-    E.cwdBtn.onclick=()=>{ if(curStarted)return; togglePop(E.cwdBtn,buildFolderPop); };
-    E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
-    E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
+    E.agentBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.agentBtn,buildAgentPop); };
+    E.cwdBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.cwdBtn,buildFolderPop); };
+    E.modelBtn.onclick=()=>{ if(curNative)return; togglePop(E.modelBtn,buildModelPop); };
+    E.effortBtn.onclick=()=>{ if(curNative)return; togglePop(E.effortBtn,buildEffortPop); };
 
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
@@ -311,15 +333,27 @@
       Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
       continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked});
       saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate}); E.settings.classList.add('hidden'); };
+    E.setCancel.onclick=()=>E.settings.classList.add('hidden'); // fecha sem salvar
+
+    // ---------- generic dialog (substitui alert/confirm/prompt nativos) ----------
+    let dlgResolve=null;
+    function dialog({title,input=false,placeholder='',value='',okText='OK',cancelText='Cancelar',danger=false}){
+      return new Promise(res=>{ dlgResolve=res; E.dlgTitle.textContent=title; E.dlgInput.classList.toggle('hidden',!input); E.dlgInput.value=value; E.dlgInput.placeholder=placeholder;
+        E.dlgOk.textContent=okText; E.dlgCancel.textContent=cancelText; E.dlgOk.classList.toggle('danger',!!danger); E.dlg.classList.remove('hidden');
+        if(input) setTimeout(()=>{E.dlgInput.focus();E.dlgInput.select();},30); }); }
+    function dlgClose(val){ E.dlg.classList.add('hidden'); const r=dlgResolve; dlgResolve=null; if(r) r(val); }
+    E.dlgOk.onclick=()=>dlgClose(E.dlgInput.classList.contains('hidden')?true:E.dlgInput.value.trim());
+    E.dlgCancel.onclick=()=>dlgClose(null);
+    E.dlgInput.onkeydown=(e)=>{ if(e.key==='Enter'){e.preventDefault();E.dlgOk.click();} else if(e.key==='Escape'){e.preventDefault();E.dlgCancel.click();} };
     // ---------- voice enrollment / speaker list ----------
     function renderSpk(){ if(!E.spkList)return; E.spkList.innerHTML = speakers.length ? 'Vozes cadastradas: ' : 'Nenhuma voz cadastrada ainda.';
       speakers.forEach(n=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='🗣 '+n+' ✕'; c.style.cursor='pointer';
-        c.onclick=()=>{ if(confirm('Remover a voz "'+n+'"?')) tx({t:'delspk',name:n}); }; E.spkList.appendChild(c); }); }
+        c.onclick=async()=>{ if(await dialog({title:`Remover a voz "${n}"?`,okText:'Remover',danger:true})) tx({t:'delspk',name:n}); }; E.spkList.appendChild(c); }); }
     function recordClip(ms){ return new Promise((res,rej)=>{ navigator.mediaDevices.getUserMedia({audio:{noiseSuppression:cfg.noise,echoCancellation:true,autoGainControl:true}})
       .then(st=>{ const r=new MediaRecorder(st),ch=[]; r.ondataavailable=e=>ch.push(e.data);
         r.onstop=()=>{ st.getTracks().forEach(t=>t.stop()); const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.readAsDataURL(new Blob(ch,{type:'audio/webm'})); };
         r.start(); setTimeout(()=>r.stop(), ms); }).catch(rej); }); }
-    async function enrollFlow(){ const name=(prompt('Seu nome para identificação de voz:')||'').trim(); if(!name)return;
+    async function enrollFlow(){ const name=(await dialog({title:'Seu nome para identificação de voz:',input:true,placeholder:'ex.: Jonathan',okText:'Continuar'})||'').trim(); if(!name)return;
       const N=3, samples=[]; for(let i=0;i<N;i++){ status('listening',`Cadastro ${i+1}/${N}: fale uma frase (3s)…`);
         try{ samples.push(await recordClip(3000)); }catch(e){ addErr('mic erro: '+e.message); status(''); return; }
         status(''); await new Promise(r=>setTimeout(r,500)); }
@@ -337,10 +371,11 @@
         if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
           if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
-        else if(m.t==='sessions'){ sessions=m.sessions||[]; renderRecents(); if(!currentSession){ if(sessions.length) tx({t:'open',sessionId:sessions[0].id}); else E.newSess.onclick(); } }
-        else if(m.t==='history'){ currentSession=m.sessionId; currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||'';
-          if(curCwd){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
-          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); E.log.innerHTML=''; (m.messages||[]).forEach(addMsg); refreshFiles(m.messages||[]); renderRecents(); closePop(); }
+        else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){ const own=sessions.find(s=>!isNative(s.id)); if(own) tx({t:'open',sessionId:own.id}); else E.newSess.onclick(); } }
+        else if(m.t==='history'){ currentSession=m.sessionId; currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
+          if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
+          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); E.log.innerHTML=''; (m.messages||[]).forEach(addMsg); refreshFiles(m.messages||[]); renderRecents(); closePop();
+          E.roBanner.classList.toggle('hidden',!curNative); E.input.disabled=curNative; E.sendBtn.disabled=curNative; E.mic.disabled=curNative; E.input.placeholder=curNative?'Sessão nativa — somente leitura':'Fale ou digite…'; }
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
