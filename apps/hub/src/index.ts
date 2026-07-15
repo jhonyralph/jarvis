@@ -56,6 +56,14 @@ store.ensure(WAKE_SESSION, { agent: process.env.JARVIS_WAKE_AGENT || agents.defa
 const JARVIS_DIR = join(homedir(), ".jarvis");
 const VAPID_FILE = join(JARVIS_DIR, "vapid.json");
 const SUBS_FILE = join(JARVIS_DIR, "push-subs.json");
+
+// Summary/digest one-shot config — cheap by default (it's a light task), user-tunable in Settings.
+const SUMMARY_FILE = join(JARVIS_DIR, "summary.json");
+const summaryCfg: { agent: string; model: string; effort: string } = (() => {
+  const d = { agent: process.env.JARVIS_SEARCH_AGENT || "claude-code", model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
+  try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(SUMMARY_FILE, "utf8")) }; } catch { return d; }
+})();
+function saveSummaryCfg(): void { try { mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(SUMMARY_FILE, JSON.stringify(summaryCfg, null, 2)); } catch { /* ignore */ } }
 let vapid: { publicKey: string; privateKey: string };
 try {
   vapid = JSON.parse(readFileSync(VAPID_FILE, "utf8"));
@@ -223,8 +231,19 @@ const runnerSockets = new Set<WebSocket>();
 const LOCAL_ID = "local";
 runners.set(LOCAL_ID, { id: LOCAL_ID, ws: null, local: true, lastSeen: Date.now(), info: { runnerId: LOCAL_ID, host: hostname(), os: process.platform, agents: agents.names(), local: true } });
 const clientRunner = new WeakMap<WebSocket, string>();
+const runnerActive = new Map<string, Set<string>>(); // runnerId -> session ids running there
 const pendingReq = new Map<string, WebSocket>();
 let reqSeq = 0;
+// which agents are actually usable on THIS (local) machine — probes availability, so the
+// UI can disable agents that aren't installed/authenticated here.
+let localAgents: string[] = agents.names();
+async function refreshLocalAgents(): Promise<void> {
+  const out: string[] = [];
+  for (const n of agents.names()) { try { if (await agents.get(n).available()) out.push(n); } catch { /* skip */ } }
+  const next = out.length ? out : agents.names();
+  if (next.join() !== localAgents.join()) { localAgents = next; broadcastMachines(); }
+  else localAgents = next;
+}
 function activeRunner(ws: WebSocket): string { return clientRunner.get(ws) || LOCAL_ID; }
 /** Client sockets (not runner sockets) currently viewing a given machine. */
 function clientsOn(runnerId: string): WebSocket[] {
@@ -233,7 +252,7 @@ function clientsOn(runnerId: string): WebSocket[] {
   return out;
 }
 function machineList(): any[] {
-  return [...runners.values()].map((r) => ({ id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os, agents: r.info.agents || [], online: r.local || (!!r.ws && r.ws.readyState === WebSocket.OPEN), local: !!r.local }));
+  return [...runners.values()].map((r) => ({ id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os, agents: r.local ? localAgents : (r.info.agents || []), online: r.local || (!!r.ws && r.ws.readyState === WebSocket.OPEN), local: !!r.local }));
 }
 function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList() }); } }
 function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.ws.readyState === WebSocket.OPEN) { rc.ws.send(JSON.stringify(obj)); return true; } return false; }
@@ -245,7 +264,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "stream") { for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary }); return; }
-  if (m.t === "runs") { for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
+  if (m.t === "runs") { runnerActive.set(rc.id, new Set(m.active || [])); for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
   if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries }); } return; }
   if (m.t === "error") { const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return; }
 }
@@ -498,8 +517,8 @@ async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Pr
     `Resuma em 1 a 3 frases CURTAS e faladas (português do Brasil, sem markdown, sem listas) a ÚLTIMA resposta desta conversa — ` +
     `referente ao último comando enviado. Vá direto ao ponto; NÃO resuma a conversa inteira.\n\n` +
     `Título: ${title}\n\nÚltimo comando: ${lastU.slice(0, 800)}\n\nÚltima resposta: ${lastA.slice(0, 2500)}`;
-  const agent = agents.searchAgent();
-  const sendOpts = { model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
+  const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+  const sendOpts = { model: summaryCfg.model, effort: summaryCfg.effort };
   let text = "";
   try {
     const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__summary__", prompt, process.cwd(), sendOpts);
@@ -517,16 +536,27 @@ async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
   const own = store.digest(10, 200);
   const nat = listNative(8).map((n) => ({ id: n.id, agent: n.agent, title: n.title, updatedAt: n.updatedAt, lastAssistant: "", lastUser: "" }));
   const all = [...own, ...nat].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
+  // "active now" = a Jarvis-driven turn in flight OR a native session whose jsonl was
+  // just written (an EXTERNAL claude/codex working in a terminal shows up here too).
+  const ACTIVE_MS = 120_000;
+  const isActive = (s: any) => activeRuns.has(s.id) || (isNativeId(s.id) && Date.now() - (s.updatedAt || 0) < ACTIVE_MS);
+  const activeCount = all.filter(isActive).length;
   const lines = all
-    .map((s) => `- ${s.title}${activeRuns.has(s.id) ? " [RODANDO]" : ""} (${s.agent}): ${(s.lastAssistant || s.lastUser || "").slice(0, 160)}`)
+    .map((s) => `- ${s.title}${isActive(s) ? " [ATIVA AGORA]" : ""} (${s.agent}): ${(s.lastAssistant || s.lastUser || "").slice(0, 160)}`)
     .join("\n") || "(nenhuma sessão)";
+  // remote machines' running counts (from their {t:runs})
+  const remoteLines = [...runners.values()]
+    .filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN)
+    .map((r) => { const n = (runnerActive.get(r.id) || new Set()).size; return `- Máquina "${runnerLabels[r.id] || r.info.host || r.id}": ${n} sessão(ões) em execução`; })
+    .join("\n");
   const prompt =
     `Você é o painel de status do Jarvis. Em português do Brasil, 2 a 4 frases FALADAS (sem markdown, sem listas), ` +
-    `diga rapidamente o que está acontecendo entre as sessões de trabalho — quais estão rodando agora e sobre o que são. ` +
-    `SEMPRE produza um status com base nos títulos abaixo; NUNCA diga que faltam informações. Seja direto.\n\n` +
-    `SESSÕES (título · agente · [RODANDO] se em execução):\n${lines}`;
-  const agent = agents.searchAgent();
-  const sendOpts = { model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
+    `diga rapidamente o que está acontecendo. Há ${activeCount} sessão(ões) marcada(s) [ATIVA AGORA] (em execução/atividade neste momento) — ` +
+    `destaque-as primeiro se houver; depois um resumo do resto. SEMPRE produza um status com base nos dados abaixo; NUNCA diga que faltam informações. Seja direto.\n\n` +
+    `SESSÕES DESTA MÁQUINA (título · agente · [ATIVA AGORA] se em execução):\n${lines}` +
+    (remoteLines ? `\n\nOUTRAS MÁQUINAS:\n${remoteLines}` : "");
+  const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+  const sendOpts = { model: summaryCfg.model, effort: summaryCfg.effort };
   let text = "";
   try {
     const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__digest__", prompt, process.cwd(), sendOpts);
@@ -824,6 +854,16 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       try { await digestAndSpeak(ws, msg.speak !== false); } finally { voiceOpBusy = false; }
       return;
     }
+    // summary/digest one-shot config (which agent/model/effort — cheap by default)
+    if (msg.t === "summary_cfg") { send(ws, { t: "summary_cfg", cfg: summaryCfg, agents: await agents.describe() }); return; }
+    if (msg.t === "set_summary_cfg") {
+      if (typeof msg.agent === "string" && agents.names().includes(msg.agent)) summaryCfg.agent = msg.agent;
+      if (typeof msg.model === "string" && msg.model) summaryCfg.model = msg.model;
+      if (typeof msg.effort === "string" && msg.effort) summaryCfg.effort = msg.effort;
+      saveSummaryCfg();
+      send(ws, { t: "summary_cfg", cfg: summaryCfg, agents: await agents.describe() });
+      return;
+    }
     // --- security admin (owner-only): connected devices + invites + revoke ---
     if (msg.t === "sec_state") { if (!requireOwner(ws)) return; secState(ws); return; }
     if (msg.t === "sec_invite") {
@@ -1058,6 +1098,8 @@ const adminServer = createServer((req, res) => {
 });
 adminServer.listen(ADMIN_PORT, "127.0.0.1", () => console.log(`[hub] admin (loopback) http://127.0.0.1:${ADMIN_PORT}  — recovery: scripts/jarvis.ps1`));
 
+void refreshLocalAgents();
+setInterval(() => void refreshLocalAgents(), 60_000);
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);

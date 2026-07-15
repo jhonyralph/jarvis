@@ -90,6 +90,7 @@
     .pop .ph { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin:0 2px 8px; }
     .pop .opt { padding:8px 9px; border-radius:8px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:8px; }
     .pop .opt:hover { background:#ffffff0d; } .pop .opt.sel { background:#ffffff17; }
+    .pop .opt.disabled { opacity:.4; cursor:not-allowed; } .pop .opt.disabled:hover { background:none; }
     .pop .opt .r { margin-left:auto; color:var(--mut); font-size:11px; }
     .pop .slbl { display:flex; justify-content:space-between; font-size:11px; color:var(--mut); margin:2px 2px 10px; }
     .pop input[type=range] { width:100%; accent-color:var(--me); }
@@ -268,6 +269,11 @@
     <label class="row"><input type="checkbox" id="setGate"> Exigir voz cadastrada (bloquear vozes desconhecidas)</label>
     <div id="spkList" class="mut" style="font-size:12px;margin:4px 0"></div>
     <div class="row"><button id="setEnroll" class="ghost" type="button">🎙 Cadastrar / atualizar minha voz</button></div>
+    <div class="sec">Resumo / status falado ("o que está rolando" e o 🔊 das conversas)</div>
+    <div class="mut" style="font-size:12px;margin-bottom:4px">É uma tarefa leve — <b>recomendado modelo barato + esforço baixo</b> (padrão). Roda sempre nesta máquina (Hub).</div>
+    <label>IA <select id="setSumAgent"></select></label>
+    <label>Modelo <select id="setSumModel"></select></label>
+    <label>Esforço <select id="setSumEffort"></select></label>
     <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="setCancel" class="ghost" type="button">Fechar</button><button id="setClose" type="button">Salvar</button></div>
   </div></div>
 
@@ -299,6 +305,7 @@
       'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
+      'setSumAgent','setSumModel','setSumEffort',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
@@ -442,7 +449,8 @@
 
     // ---------- new session ----------
     E.newSess.onclick=()=>{ // cria sessão vazia (agente/pasta ajustáveis pelos pills até a 1ª msg)
-      const agent=cfg.agent||currentAgent||(caps[0]||{}).name; const cwd=currentMachine==='local'?(cfg.lastCwd||''):''; tx({t:'new',agent,cwd}); closeSide(); };
+      const avail=machineAgents(); let agent=cfg.agent||currentAgent||(caps[0]||{}).name; if(!avail.includes(agent)) agent=avail[0]||agent;
+      const cwd=currentMachine==='local'?(cfg.lastCwd||''):''; tx({t:'new',agent,cwd}); closeSide(); };
 
     // ---------- search (input com foco imediato; sem prompt) ----------
     E.searchBtn.onclick=()=>openSearch();
@@ -519,9 +527,12 @@
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape') closePop(); });
     const ph=(t)=>{ const d=document.createElement('div'); d.className='ph'; d.textContent=t; return d; };
 
-    function buildAgentPop(p){ p.appendChild(ph('Agente / IA')); caps.forEach(c=>{ const o=document.createElement('div'); o.className='opt'+(c.name===currentAgent?' sel':'');
-      o.innerHTML='🤖 '+esc(c.name)+(c.name===currentAgent?'<span class="r">atual</span>':'');
-      o.onclick=()=>{ closePop(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); }; p.appendChild(o); }); }
+    function machineAgents(){ const m=machines.find(x=>x.id===currentMachine); return (m&&Array.isArray(m.agents)&&m.agents.length)?m.agents:caps.map(c=>c.name); }
+    function buildAgentPop(p){ p.appendChild(ph('Agente / IA')); const avail=machineAgents();
+      caps.forEach(c=>{ const ok=avail.includes(c.name); const o=document.createElement('div'); o.className='opt'+(c.name===currentAgent?' sel':'')+(ok?'':' disabled');
+        o.innerHTML='🤖 '+esc(c.name)+(c.name===currentAgent?'<span class="r">atual</span>':(ok?'':'<span class="r">indisponível</span>'));
+        if(ok) o.onclick=()=>{ closePop(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); };
+        p.appendChild(o); }); }
 
     function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); (c.models||[]).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
@@ -555,9 +566,17 @@
     E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
       fillSel(E.setModel,c.models,cfg.model||c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setPush.checked=!!cfg.push; E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
+      fillSumSelects(); tx({t:'summary_cfg'});
       E.settings.classList.remove('hidden'); };
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.models,c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     E.setModel.onchange=()=>fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value);
+    // resumo/digest one-shot config (roda no Hub; barato por padrão)
+    let sumCfg={agent:'claude-code',model:'haiku',effort:'low'};
+    function fillSumSelects(){ if(!E.setSumAgent||!caps.length)return; fillSel(E.setSumAgent,caps.map(c=>c.name),sumCfg.agent); const c=capsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,sumCfg.model); fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value,sumCfg.effort); }
+    function saveSum(){ tx({t:'set_summary_cfg',agent:E.setSumAgent.value,model:E.setSumModel.value,effort:E.setSumEffort.value}); }
+    E.setSumAgent.onchange=()=>{ const c=capsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,c.defaultModel); fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); saveSum(); };
+    E.setSumModel.onchange=()=>{ fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); saveSum(); };
+    E.setSumEffort.onchange=saveSum;
     E.setEnroll.onclick=()=>enrollFlow();
     E.setClose.onclick=()=>{
       if(E.setGate.checked && !speakers.length){ addErr('Cadastre sua voz antes de exigir voz cadastrada (senão o modo voz fica bloqueado).'); E.setGate.checked=false; }
@@ -663,6 +682,7 @@
         else if(m.t==='sec_state'){ renderSec(m); }
         else if(m.t==='sec_invite_created'){ showInvite(m.code); }
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
+        else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
         else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); }
