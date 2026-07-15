@@ -14,12 +14,12 @@
  */
 import WebSocket from "ws";
 import { hostname, homedir, platform } from "node:os";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter,
-  listNative, nativeHistory, nativeInfo, isNativeId, Store,
+  listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, Store,
   type AgentAdapter, type SendOpts,
 } from "@jarvis/core";
 import type { RunnerInfo, RunnerSession, RunnerToHub } from "@jarvis/protocol";
@@ -51,6 +51,36 @@ const activeRuns = new Set<string>();
 let ws: WebSocket | null = null;
 function send(m: RunnerToHub): void { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); }
 
+// --- live mirror of native CLI sessions: tail the jsonl and push new turns as an
+//     EXTERNAL Claude Code (or us) appends them, so the Hub UI updates without refresh. ---
+interface Tail { path: string; claude: boolean; offset: number; buf: string; paused: boolean; timer: ReturnType<typeof setInterval>; }
+const tails = new Map<string, Tail>();
+const MAX_TAILS = 4;
+function pollTail(sid: string): void {
+  const t = tails.get(sid); if (!t || t.paused) return;
+  let size = 0; try { size = statSync(t.path).size; } catch { return; }
+  if (size <= t.offset) return;
+  const len = size - t.offset; const fd = openSync(t.path, "r"); const b = Buffer.alloc(len);
+  try { readSync(fd, b, 0, len, t.offset); } finally { closeSync(fd); }
+  t.offset = size; t.buf += b.toString("utf8");
+  const lines = t.buf.split("\n"); t.buf = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    for (const e of parseNativeEvents(line, t.claude)) {
+      if (e.kind === "message") send({ t: "message", sessionId: sid, message: { role: e.role, text: e.text, ts: e.ts } });
+      else send({ t: "activity", sessionId: sid, name: e.name, summary: e.summary });
+    }
+  }
+}
+function startTail(sid: string): void {
+  if (tails.has(sid)) return;
+  const f = nativeFilePath(sid); if (!f) return;
+  if (tails.size >= MAX_TAILS) { const oldest = tails.keys().next().value; if (oldest) stopTail(oldest); }
+  let size = 0; try { size = statSync(f.path).size; } catch { /* new file */ }
+  tails.set(sid, { path: f.path, claude: f.claude, offset: size, buf: "", paused: false, timer: setInterval(() => pollTail(sid), 1000) });
+}
+function stopTail(sid: string): void { const t = tails.get(sid); if (t) { clearInterval(t.timer); tails.delete(sid); } }
+
 async function availableAgents(): Promise<string[]> {
   const out: string[] = [];
   for (const n of agents.names()) { try { if (await agents.get(n).available()) out.push(n); } catch { /* skip */ } }
@@ -71,6 +101,7 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
     send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code", total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts })) });
+    startTail(sessionId); // live-mirror new turns (external CLI) to the Hub
   } else {
     const s = store.ensure(sessionId);
     const all = store.history(s.id);
@@ -81,6 +112,9 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
 async function doSend(sessionId: string, text: string, agentName?: string, cwd?: string, opts?: SendOpts): Promise<void> {
   activeRuns.add(sessionId); pushRuns();
   send({ t: "stream", sessionId, ev: { kind: "start" } });
+  // pause the native tail so our own turn isn't double-broadcast (already streamed below)
+  const tail = isNativeId(sessionId) ? tails.get(sessionId) : undefined;
+  if (tail) tail.paused = true;
   try {
     let agent: AgentAdapter, useCwd: string;
     if (isNativeId(sessionId)) {
@@ -103,6 +137,7 @@ async function doSend(sessionId: string, text: string, agentName?: string, cwd?:
     send({ t: "error", message: String(e?.message ?? e) });
   } finally {
     activeRuns.delete(sessionId); pushRuns();
+    if (tail) { try { tail.offset = statSync(tail.path).size; tail.buf = ""; } catch { /* ignore */ } tail.paused = false; }
   }
 }
 
@@ -131,6 +166,26 @@ function connect(): void {
         return;
       }
       if (m.t === "open" && typeof m.sessionId === "string") { await doHistory(m.reqId, m.sessionId); return; }
+      if (m.t === "listdir") {
+        const base = (typeof m.path === "string" && m.path) ? m.path : homedir();
+        try {
+          const entries = readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name).sort((a, b) => a.localeCompare(b));
+          send({ t: "dirs", reqId: m.reqId, path: base, parent: dirname(base), entries });
+        } catch (e: any) { send({ t: "error", reqId: m.reqId, message: "listdir: " + String(e?.message ?? e) }); }
+        return;
+      }
+      if (m.t === "configure" && typeof m.sessionId === "string") {
+        const s = store.get(m.sessionId);
+        if (!s) { send({ t: "error", reqId: m.reqId, message: "sessão não encontrada" }); return; }
+        const agentName = agents.names().includes(m.agent) ? m.agent : undefined;
+        const cwd = (typeof m.cwd === "string" && m.cwd && existsSync(m.cwd)) ? m.cwd : undefined;
+        if (!store.reconfigure(s.id, { agent: agentName, cwd })) { send({ t: "error", reqId: m.reqId, message: "sessão já iniciada — agente e pasta travados" }); return; }
+        const ns = store.get(s.id)!;
+        const all = store.history(ns.id);
+        send({ t: "history", reqId: m.reqId, sessionId: ns.id, title: ns.title, agent: ns.agent, cwd: ns.cwd, writable: true, total: all.length, messages: all.map((x: any) => ({ role: x.role, text: x.text, ts: x.ts })) });
+        pushSessions();
+        return;
+      }
       if (m.t === "send" && typeof m.sessionId === "string") { await doSend(m.sessionId, String(m.text ?? ""), m.agent, m.cwd, m.opts); return; }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }
       if (m.t === "stop") { /* adapter kill not wired yet */ return; }

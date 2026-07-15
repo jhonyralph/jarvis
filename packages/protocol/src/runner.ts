@@ -71,6 +71,7 @@ export type RunnerToHub =
     }
   | { t: "stream"; sessionId: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
+  | { t: "activity"; sessionId: string; name?: string; summary?: string }
   | { t: "runs"; active: string[] }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" };
