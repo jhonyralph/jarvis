@@ -106,6 +106,15 @@ function codexFiles(): Array<{ path: string; mtime: number }> {
 
 // ------------------------------- parsing -------------------------------
 const isInjected = (t: string) => !t || t.startsWith("<") || t.startsWith("#") || /^\s*\[[^\]]+\]\s*$/.test(t);
+/** Strip tooling/system blocks that leak into message text (subagent notifications, usage, reminders). */
+function cleanText(t: string): string {
+  return (t || "")
+    .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, "")
+    .replace(/<usage>[\s\S]*?<\/usage>/g, "")
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .replace(/<local-command-[\s\S]*?<\/local-command-[a-z]*>/g, "")
+    .trim();
+}
 
 function contentText(c: any): string {
   if (typeof c === "string") return c;
@@ -125,7 +134,7 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
       if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
       if (!firstUser && o.type === "user" && typeof o.message?.content === "string") {
         const t = o.message.content.trim();
-        if (t) firstUser = t;
+        if (t && !isInjected(t)) firstUser = t;
       }
     }
   });
@@ -214,7 +223,9 @@ export function nativeHistory(id: string): { agent: string; cwd: string; title: 
       else if (o.type === "ai-title" && o.aiTitle) title = title || o.aiTitle;
       else if (o.type === "user" || o.type === "assistant") {
         if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
-        const t = contentText(o.message?.content);
+        let t = contentText(o.message?.content);
+        if (o.type === "user" && isInjected(t)) return; // tool-results/notifications injected as "user" — not a human turn
+        t = cleanText(t);
         if (t) messages.push({ role: o.type, text: t, ts: Date.parse(o.timestamp) || 0 });
       }
     } else {

@@ -34,10 +34,10 @@
     .msg.me { align-self:flex-end; background:var(--me); color:#fff; padding:9px 13px; border-radius:14px; white-space:pre-wrap; max-width:min(88%,760px); overflow-wrap:anywhere; }
     .msg.bot { align-self:flex-start; background:var(--bot); padding:2px 15px; border-radius:14px; max-width:min(88%,760px); overflow-wrap:anywhere; min-width:0; }
     .msg.err { align-self:center; color:#fca5a5; font-size:13px; }
-    .msg.bot.pending { padding:11px 15px; } .typing { display:inline-flex; gap:5px; align-items:center; }
-    .typing i { width:7px; height:7px; border-radius:50%; background:var(--mut); animation:blink 1.2s infinite both; }
-    .typing i:nth-child(2){ animation-delay:.2s; } .typing i:nth-child(3){ animation-delay:.4s; }
-    @keyframes blink { 0%,80%,100%{ opacity:.25 } 40%{ opacity:1 } }
+    .msg.bot.pending { padding:11px 15px; }
+    .work { display:inline-flex; align-items:center; gap:9px; color:var(--mut); font-size:14px; }
+    .work .spin { width:13px; height:13px; border:2px solid #ffffff26; border-top-color:var(--me); border-radius:50%; animation:spin .8s linear infinite; flex:none; }
+    @keyframes spin { to { transform:rotate(360deg) } }
     .msg.bot p { margin:.55em 0; } .msg.bot h4 { margin:.7em 0 .3em; font-size:15px; }
     .msg.bot ul,.msg.bot ol { margin:.4em 0; padding-left:1.3em; }
     .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; overflow-wrap:anywhere; }
@@ -258,10 +258,13 @@
         d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
     function addMsg(m){ const d=buildMsgEl(m); if(pendingEl) E.log.insertBefore(d,pendingEl); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
-    // "processando…" indicator so the user knows a request is in flight
-    let pendingEl=null;
-    function showPending(){ if(pendingEl)return; pendingEl=document.createElement('div'); pendingEl.className='msg bot pending'; pendingEl.innerHTML='<span class="typing"><i></i><i></i><i></i></span>'; E.log.appendChild(pendingEl); E.log.scrollTop=E.log.scrollHeight; }
-    function clearPending(){ if(pendingEl){ pendingEl.remove(); pendingEl=null; } }
+    // indicador AO VIVO com cronômetro — deixa claro que há algo executando
+    let pendingEl=null, pendingTimer=null, pendingStart=0;
+    function showPending(){ if(pendingEl)return; pendingStart=Date.now(); pendingEl=document.createElement('div'); pendingEl.className='msg bot pending';
+      const upd=()=>{ if(!pendingEl)return; const s=Math.floor((Date.now()-pendingStart)/1000); const t=s>=60?`${Math.floor(s/60)}m ${s%60}s`:`${s}s`;
+        pendingEl.innerHTML=`<span class="work"><span class="spin"></span>Jarvis trabalhando… ${t}</span>`; };
+      upd(); pendingTimer=setInterval(upd,1000); E.log.appendChild(pendingEl); E.log.scrollTop=E.log.scrollHeight; }
+    function clearPending(){ if(pendingTimer){ clearInterval(pendingTimer); pendingTimer=null; } if(pendingEl){ pendingEl.remove(); pendingEl=null; } }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
       (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
