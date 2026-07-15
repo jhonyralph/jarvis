@@ -31,8 +31,8 @@
     #newSess { width:100%; }
     #limit { padding:10px 14px; background:#7c2d12; color:#fed7aa; font-size:13px; }
     #log { flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:14px; }
-    .msg.me { align-self:flex-end; background:var(--me); color:#fff; padding:9px 13px; border-radius:14px; white-space:pre-wrap; max-width:min(88%,760px); }
-    .msg.bot { align-self:flex-start; background:var(--bot); padding:2px 15px; border-radius:14px; max-width:min(88%,760px); }
+    .msg.me { align-self:flex-end; background:var(--me); color:#fff; padding:9px 13px; border-radius:14px; white-space:pre-wrap; max-width:min(88%,760px); overflow-wrap:anywhere; }
+    .msg.bot { align-self:flex-start; background:var(--bot); padding:2px 15px; border-radius:14px; max-width:min(88%,760px); overflow-wrap:anywhere; min-width:0; }
     .msg.err { align-self:center; color:#fca5a5; font-size:13px; }
     .msg.bot.pending { padding:11px 15px; } .typing { display:inline-flex; gap:5px; align-items:center; }
     .typing i { width:7px; height:7px; border-radius:50%; background:var(--mut); animation:blink 1.2s infinite both; }
@@ -40,8 +40,9 @@
     @keyframes blink { 0%,80%,100%{ opacity:.25 } 40%{ opacity:1 } }
     .msg.bot p { margin:.55em 0; } .msg.bot h4 { margin:.7em 0 .3em; font-size:15px; }
     .msg.bot ul,.msg.bot ol { margin:.4em 0; padding-left:1.3em; }
-    .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; }
-    .msg.bot pre { position:relative; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; }
+    .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; overflow-wrap:anywhere; }
+    .msg.bot pre { position:relative; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; max-width:100%; }
+    .msg.bot pre code { overflow-wrap:normal; white-space:pre; }
     .msg.bot pre code { background:none; padding:0; display:block; } .msg.bot pre .copy { position:absolute; top:6px; right:6px; padding:3px 8px; font-size:11px; }
     .msg.bot table { border-collapse:collapse; margin:.5em 0; display:block; overflow-x:auto; }
     .msg.bot th,.msg.bot td { border:1px solid var(--line); padding:5px 10px; text-align:left; font-size:13.5px; } .msg.bot th { background:#ffffff0d; }
@@ -252,10 +253,10 @@
         if(/^\s*[-*+]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*[-*+]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*[-*+]\s+/,''))).replace(/^\[([ xX])\]\s+/,(_,c)=>/x/i.test(c)?'☑ ':'☐ '));i++;} h+=`<ul>${it.map(x=>`<li>${x}</li>`).join('')}</ul>`; continue; }
         if(/^\s*\d+[.)]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*\d+[.)]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*\d+[.)]\s+/,''))));i++;} h+=`<ol>${it.map(x=>`<li>${x}</li>`).join('')}</ol>`; continue; }
         if(line.trim()===''){ i++; continue; } h+=`<p>${inl(esc(line))}</p>`; i++; } return h; }
-    function addMsg(m){ const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
+    function buildMsgEl(m){ const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
         if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
-        d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); }
-      if(pendingEl) E.log.insertBefore(d,pendingEl); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+        d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
+    function addMsg(m){ const d=buildMsgEl(m); if(pendingEl) E.log.insertBefore(d,pendingEl); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     // "processando…" indicator so the user knows a request is in flight
     let pendingEl=null;
@@ -411,8 +412,11 @@
 
     // ---------- ws ----------
     function tx(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+    let reconnectT=null;
+    function scheduleReconnect(){ if(reconnectT)return; reconnectT=setTimeout(()=>{ reconnectT=null; connect(); },1200); }
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
-      ws.onopen=()=>{ E.dot.classList.add('on'); tx({t:'wake',enabled:cfg.wake}); }; ws.onclose=()=>{ E.dot.classList.remove('on'); setTimeout(connect,1500); };
+      ws.onopen=()=>{ E.dot.classList.add('on'); tx({t:'wake',enabled:cfg.wake}); if(currentSession) tx({t:'open',sessionId:currentSession}); }; // re-inscreve p/ voltar a receber ao vivo
+      ws.onclose=()=>{ E.dot.classList.remove('on'); scheduleReconnect(); };
       ws.onmessage=(e)=>{ const m=JSON.parse(e.data);
         if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
@@ -420,7 +424,11 @@
         else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){ const own=sessions.find(s=>!isNative(s.id)); if(own) tx({t:'open',sessionId:own.id}); else E.newSess.onclick(); } }
         else if(m.t==='history'){ currentSession=m.sessionId; currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
           if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
-          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); E.log.innerHTML=''; (m.messages||[]).forEach(addMsg); refreshFiles(m.messages||[]); renderRecents(); closePop();
+          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); E.log.innerHTML='';
+          const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
+          if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
+          msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); E.log.scrollTop=E.log.scrollHeight;
+          refreshFiles(msgs); renderRecents(); closePop();
           E.roBanner.classList.toggle('hidden',!curNative); E.input.disabled=curNative; E.sendBtn.disabled=curNative; E.mic.disabled=curNative; E.input.placeholder=curNative?'Sessão nativa — somente leitura':'Fale ou digite…'; }
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
@@ -473,6 +481,8 @@
       E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach(); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
+    // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
+    document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && (!ws||ws.readyState>1)){ if(reconnectT){clearTimeout(reconnectT);reconnectT=null;} connect(); } });
     setSpeakBtn(); connect();
   </script>
 </body>

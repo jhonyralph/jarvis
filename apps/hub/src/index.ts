@@ -31,6 +31,8 @@ const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
 const CWD = process.env.JARVIS_CWD || process.cwd();
 const VOICE = process.env.JARVIS_VOICE || "en_GB-alan-medium";
+// cap how many messages we send/render on open — long sessions were heavy on mobile
+const HISTORY_CAP = Number(process.env.JARVIS_HISTORY_CAP || 120);
 
 // Agnostic registry — every agent is registered; clients pick per message.
 const DEFAULT_AGENT = process.env.JARVIS_AGENT || "mock";
@@ -296,14 +298,16 @@ wss.on("connection", (ws: WebSocket) => {
         t: "history",
         sessionId: msg.sessionId,
         session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true },
-        messages: h.messages.map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent })),
+        total: h.messages.length,
+        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent })),
       });
       return;
     }
     if (msg.t === "open" && typeof msg.sessionId === "string") {
       subs.set(ws, msg.sessionId);
       const s = store.ensure(msg.sessionId);
-      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: store.history(s.id) });
+      const all = store.history(s.id);
+      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, total: all.length, messages: all.slice(-HISTORY_CAP) });
       return;
     }
     if (msg.t === "new") {
