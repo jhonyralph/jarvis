@@ -14,7 +14,7 @@
  * Storage: ~/.jarvis/auth.json (hashes only). Escape hatch: JARVIS_AUTH=off.
  */
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -22,6 +22,18 @@ const HOME = process.env.JARVIS_HOME || homedir();
 const DIR = join(HOME, ".jarvis");
 const AUTH_FILE = join(DIR, "auth.json");
 const CLAIM_FILE = join(DIR, "claim-code.txt");
+const AUDIT_FILE = join(DIR, "audit.log");
+
+// ---- audit (append-only attribution; see docs/multi-runner.md 4d) ----
+export function audit(event: string, info: { userId?: string; deviceId?: string; runnerId?: string; ip?: string; detail?: string } = {}): void {
+  try { appendFileSync(AUDIT_FILE, JSON.stringify({ ts: Date.now(), event, ...info }) + "\n"); } catch { /* never block on audit */ }
+}
+export function readAudit(limit = 100): any[] {
+  try {
+    const lines = readFileSync(AUDIT_FILE, "utf8").trim().split("\n").filter(Boolean);
+    return lines.slice(-Math.max(1, Math.min(limit, 1000))).map((l) => { try { return JSON.parse(l); } catch { return { raw: l }; } });
+  } catch { return []; }
+}
 try { mkdirSync(DIR, { recursive: true }); } catch { /* ignore */ }
 
 export const AUTH_ENABLED = (process.env.JARVIS_AUTH || "on").toLowerCase() !== "off";
@@ -94,6 +106,7 @@ export function claim(code: string, label: string, meta?: { ip?: string; ua?: st
   data.users.push(user);
   save(data);
   try { rmSync(CLAIM_FILE, { force: true }); } catch { /* ignore */ }
+  audit("claim", { userId: user.id, deviceId: res.deviceId, ip: meta?.ip, detail: `owner "${label}"` });
   return res;
 }
 
@@ -111,6 +124,7 @@ export function mintInvite(byUserId: string, opts: { role?: Role; runners?: stri
   };
   data.invites.push(inv);
   save(data);
+  audit("mint_invite", { userId: byUserId, detail: `${inv.role} · ttl ${Math.round((inv.expiresAt - inv.createdAt) / 1000)}s` });
   const { codeHash, ...pub } = inv;
   return { code, invite: pub };
 }
@@ -137,6 +151,7 @@ export function redeem(code: string, label: string, meta?: { ip?: string; ua?: s
   inv.usedBy = user.id;
   data.users.push(user);
   save(data);
+  audit("redeem", { userId: user.id, deviceId: res.deviceId, ip: meta?.ip, detail: `${inv.role} "${label}"` });
   return res;
 }
 
@@ -175,9 +190,10 @@ export function listDevices(): Array<Omit<Device, "tokenHash"> & { role: Role; u
   });
 }
 export function revokeDevice(deviceId: string): boolean {
+  const dev = data.devices.find((d) => d.id === deviceId);
   const before = data.devices.length;
   data.devices = data.devices.filter((d) => d.id !== deviceId);
-  if (data.devices.length !== before) { save(data); return true; }
+  if (data.devices.length !== before) { save(data); audit("revoke_device", { deviceId, detail: dev?.label }); return true; }
   return false;
 }
 export function revokeAllExcept(deviceId: string): number {

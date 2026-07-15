@@ -711,6 +711,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
     }
     if (!text) return;
+    { const _p = principalOf(ws); auth.audit("send", { userId: _p?.userId, deviceId: _p?.deviceId, detail: `${sid}: ${String(text).slice(0, 80)}` }); }
 
     // Meta-question about other sessions? -> cross-session search (typed or spoken).
     if (looksLikeCrossSessionQuery(text)) {
@@ -795,6 +796,7 @@ const adminServer = createServer((req, res) => {
     try {
       if (req.method === "GET" && url === "/admin/status") return json(200, { claimed: auth.isClaimed(), authEnabled: auth.AUTH_ENABLED, devices: auth.listDevices(), invites: auth.listInvites() });
       if (req.method === "GET" && url === "/admin/claimcode") return json(200, { claimed: auth.isClaimed(), code: auth.isClaimed() ? null : auth.ensureClaimCode() });
+      if (req.method === "GET" && url === "/admin/audit") { const n = Number((req.url || "").split("n=")[1]) || 100; return json(200, { audit: auth.readAudit(n) }); }
       if (req.method === "POST" && url === "/admin/invite") {
         const b = await body();
         const role = b.role === "owner" ? "owner" : "member";

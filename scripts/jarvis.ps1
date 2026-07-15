@@ -10,6 +10,7 @@
     .\scripts\jarvis.ps1 invite           # gera convite de MEMBRO
     .\scripts\jarvis.ps1 invite -ttl 3600 # convite de membro válido por 1h
     .\scripts\jarvis.ps1 status           # dispositivos + convites pendentes
+    .\scripts\jarvis.ps1 audit            # últimas ações (quem fez o quê)
     .\scripts\jarvis.ps1 claimcode        # mostra o código de claim (se ainda sem dono)
     .\scripts\jarvis.ps1 revoke -deviceId <id>
     .\scripts\jarvis.ps1 revoke-all       # revoga TODOS os dispositivos (reset)
@@ -39,6 +40,7 @@ try {
     'owner'      { Show-Invite (Invoke-RestMethod -Method Post "$base/admin/invite" -Body (@{ role = 'owner'; ttlSec = $ttl } | ConvertTo-Json) -ContentType 'application/json') }
     'invite'     { Show-Invite (Invoke-RestMethod -Method Post "$base/admin/invite" -Body (@{ role = 'member'; ttlSec = $ttl } | ConvertTo-Json) -ContentType 'application/json') }
     'status'     { Invoke-RestMethod "$base/admin/status" | ConvertTo-Json -Depth 6 }
+    'audit'      { $n = if ($ttl -eq 86400) { 100 } else { $ttl }; (Invoke-RestMethod "$base/admin/audit?n=$n").audit | ForEach-Object { $t = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$_.ts).LocalDateTime.ToString('MM-dd HH:mm'); "{0}  {1,-14} {2}" -f $t, $_.event, $_.detail } }
     'claimcode'  { $r = Invoke-RestMethod "$base/admin/claimcode"; if ($r.claimed) { Write-Host 'Já reivindicado. Use "owner" para gerar um convite de dono.' } else { Write-Host "Claim code: $($r.code)" -ForegroundColor Cyan } }
     'revoke'     { if (-not $deviceId) { Write-Host 'Informe -deviceId <id> (veja em status).' -ForegroundColor Yellow } else { Invoke-RestMethod -Method Post "$base/admin/revoke" -Body (@{ deviceId = $deviceId } | ConvertTo-Json) -ContentType 'application/json' | ConvertTo-Json } }
     'revoke-all' { Invoke-RestMethod -Method Post "$base/admin/revoke-all" | ConvertTo-Json }
