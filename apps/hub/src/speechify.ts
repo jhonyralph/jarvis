@@ -15,15 +15,22 @@ const EMOJI =
 
 function cleanInline(s: string): string {
   return s
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_m, a) => (a ? `imagem: ${a}, no chat` : "imagem no chat"))
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_m, a) => (a ? `imagem ${a}, no chat` : "imagem no chat"))
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // links -> text only
     .replace(/`([^`]+)`/g, (_m, c) => (c.length > 40 ? "código no chat" : c)) // inline code
-    .replace(/^#{1,6}\s+/, "") // headers
-    .replace(/^\s{0,3}(?:[>\-*+]|\d+[.)])\s+/, "") // list / quote markers
-    .replace(/^\s*(?:[-*_]\s*){3,}\s*$/, "") // horizontal rule
-    .replace(/(\*\*|__|\*|_|~~|`)/g, "") // emphasis / stray backticks
     .replace(/https?:\/\/\S+/g, "link") // don't read full URLs
     .replace(EMOJI, "")
+    .replace(/^#{1,6}\s+/, "") // headers
+    .replace(/^\s{0,3}(?:[>\-*+•·]|\d+[.)])\s+/, "") // leading list / quote markers
+    .replace(/^\s*(?:[-*_]\s*){3,}\s*$/, "") // horizontal rule
+    .replace(/[*_~`#>|]/g, "") // stray markdown symbols (bold/italic/strike/quote/pipes)
+    .replace(/[•·▪◦‣∙►▸▶◄→←⇒⇐↔»«]/g, " ") // bullets / arrows / chevrons
+    .replace(/[—–]/g, ", ") // em / en dash -> a natural pause (fixes reading "—")
+    .replace(/\s-\s/g, ", ") // spaced hyphen -> pause (keeps intra-word hyphens)
+    .replace(/…/g, ".") // ellipsis
+    .replace(/\s*([,.;:!?])(?:\s*[,.;:!?])+/g, "$1") // collapse punctuation runs
+    .replace(/,\s*,/g, ",")
+    .replace(/\s+([,.;:!?])/g, "$1") // no space before punctuation
     .replace(/[ \t]{2,}/g, " ")
     .trimEnd();
 }
