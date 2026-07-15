@@ -94,13 +94,44 @@
     #recents .rtitle { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #recents .rbadge { flex:none; font-size:11px; } #recents .rnat { flex:none; font-size:9px; color:var(--mut); background:#ffffff12; border-radius:5px; padding:1px 4px; }
     #roBanner { padding:8px 14px; background:#1e293b; color:#cbd5e1; font-size:12.5px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px; }
+    .ctlpills { display:contents; } /* desktop: children flow into .controls flex */
+    #sideClose, #backdrop { display:none; }
     .hidden { display:none !important; } #menuBtn { display:none; }
-    @media (max-width:760px) { #side { position:fixed; z-index:20; height:100dvh; transform:translateX(-100%); transition:transform .2s; } #side.open { transform:none; } #menuBtn { display:inline-block; } }
+    /* ---------------- mobile ---------------- */
+    @media (max-width:760px) {
+      body { font-size:16px; }
+      header { padding:12px 14px; gap:10px; } header #title { font-size:16px; }
+      #menuBtn { display:inline-flex; align-items:center; justify-content:center; min-width:42px; min-height:42px; font-size:19px; }
+      /* off-canvas sidebar with backdrop + close button */
+      #side { position:fixed; z-index:30; height:100dvh; width:86vw; max-width:340px; transform:translateX(-100%); transition:transform .22s ease; padding:14px; gap:8px; box-shadow:2px 0 28px #0008; }
+      #side.open { transform:none; }
+      #sideClose { display:flex; align-self:flex-end; min-width:40px; min-height:40px; align-items:center; justify-content:center; font-size:18px; margin-bottom:2px; }
+      #backdrop { display:block; position:fixed; inset:0; background:#0009; z-index:25; }
+      #side .sec { font-size:12px; margin:14px 4px 6px; }
+      #recents .item, #files .item { padding:12px; font-size:15px; }
+      #newSess, #settingsBtn, #moreBtn { padding:13px; font-size:15px; }
+      .link { font-size:14.5px; padding:10px 6px; }
+      #log { padding:14px; gap:12px; } .msg.me, .msg.bot { max-width:92%; }
+      .msg.me { font-size:15.5px; } .msg.bot { font-size:15.5px; }
+      /* composer: bigger targets; pills in one scrollable row; send full width */
+      #composer { padding:10px 12px calc(10px + env(safe-area-inset-bottom)); gap:10px; }
+      #input { font-size:16px; padding:13px 14px; } /* 16px avoids iOS focus-zoom */
+      .controls { flex-wrap:wrap; gap:8px; }
+      .ctlpills { display:flex; gap:8px; overflow-x:auto; flex:1 1 100%; padding-bottom:3px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+      .ctlpills::-webkit-scrollbar { display:none; } .ctlpills .spacer { display:none; }
+      .pill, .controls button.ghost { min-height:42px; font-size:13.5px; padding:10px 13px; flex:none; }
+      .pill { max-width:none; }
+      #sendBtn { flex:1 1 100%; min-height:48px; font-size:16px; }
+      #status { flex:none; white-space:nowrap; }
+      .modal .card { width:100%; } .pop { max-width:92vw; }
+    }
   </style>
 </head>
 <body>
   <div id="app">
+    <div id="backdrop" class="hidden"></div>
     <aside id="side">
+      <button id="sideClose" class="ghost" title="Fechar menu">✕</button>
       <button id="newSess">＋ Nova sessão</button>
       <div class="link" id="searchBtn">🔎 buscar entre sessões</div>
       <div class="sec">Recentes</div>
@@ -124,15 +155,17 @@
         <div id="attachRow"></div>
         <textarea id="input" rows="1" placeholder="Fale ou digite…" autocomplete="off"></textarea>
         <div class="controls">
-          <button type="button" id="attach" class="ghost" title="Anexar">＋</button>
-          <button type="button" id="mic" class="ghost" title="Falar">🎤</button>
-          <span id="status"></span>
-          <span class="spacer"></span>
-          <button type="button" id="agentBtn" class="pill" title="Agente / IA">🤖 <span class="cap" id="agentName">—</span></button>
-          <button type="button" id="cwdBtn" class="pill" title="Pasta de trabalho">📁 <span class="cap" id="cwdName">—</span></button>
-          <button type="button" id="modelBtn" class="pill" title="Modelo"><span class="cap" id="modelName">—</span></button>
-          <button type="button" id="effortBtn" class="pill" title="Esforço / capacidade">⚡ <span class="cap" id="effortName">—</span></button>
-          <button type="button" id="speak" class="ghost" title="Falar respostas (voz)">🔇</button>
+          <div class="ctlpills">
+            <button type="button" id="attach" class="ghost" title="Anexar">＋</button>
+            <button type="button" id="mic" class="ghost" title="Falar">🎤</button>
+            <span id="status"></span>
+            <span class="spacer"></span>
+            <button type="button" id="agentBtn" class="pill" title="Agente / IA">🤖 <span class="cap" id="agentName">—</span></button>
+            <button type="button" id="cwdBtn" class="pill" title="Pasta de trabalho">📁 <span class="cap" id="cwdName">—</span></button>
+            <button type="button" id="modelBtn" class="pill" title="Modelo"><span class="cap" id="modelName">—</span></button>
+            <button type="button" id="effortBtn" class="pill" title="Esforço / capacidade">⚡ <span class="cap" id="effortName">—</span></button>
+            <button type="button" id="speak" class="ghost" title="Falar respostas (voz)">🔇</button>
+          </div>
           <button type="submit" id="sendBtn">Enviar</button>
         </div>
         <span class="usage" id="usage"></span>
@@ -182,7 +215,7 @@
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
-      'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','status'].reduce((o,k)=>(o[k]=$(k),o),{});
+      'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
 
@@ -231,7 +264,7 @@
     function renderRecents(){ E.recents.innerHTML=''; sessions.slice(0,shown).forEach(s=>{ const d=document.createElement('div'); d.className='item'+(s.id===currentSession?' active':'');
       const nat=isNative(s.id);
       d.innerHTML=`<span class="rbadge" title="${esc(s.agent||'')}">${agentIcon(s.agent)}</span><span class="rtitle">${esc(s.title||'Sessão')}</span>`+(nat?'<span class="rnat">nativo</span>':'');
-      d.title=`${s.agent||''}${nat?' · nativo (somente leitura)':''}\n${s.cwd||''}`; d.onclick=()=>{ tx({t:'open',sessionId:s.id}); E.side.classList.remove('open'); }; E.recents.appendChild(d); });
+      d.title=`${s.agent||''}${nat?' · nativo (somente leitura)':''}\n${s.cwd||''}`; d.onclick=()=>{ tx({t:'open',sessionId:s.id}); closeSide(); }; E.recents.appendChild(d); });
       E.moreBtn.classList.toggle('hidden', sessions.length<=shown); }
     E.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
 
@@ -263,11 +296,11 @@
 
     // ---------- new session ----------
     E.newSess.onclick=()=>{ // cria sessão vazia (agente/pasta ajustáveis pelos pills até a 1ª msg)
-      const agent=cfg.agent||currentAgent||(caps[0]||{}).name; const cwd=cfg.lastCwd||''; tx({t:'new',agent,cwd}); E.side.classList.remove('open'); };
+      const agent=cfg.agent||currentAgent||(caps[0]||{}).name; const cwd=cfg.lastCwd||''; tx({t:'new',agent,cwd}); closeSide(); };
 
     // ---------- search (input com foco imediato; sem prompt) ----------
     E.searchBtn.onclick=()=>openSearch();
-    function openSearch(){ E.searchResults.innerHTML=''; E.searchInput.value=''; E.searchModal.classList.remove('hidden'); E.side.classList.remove('open'); setTimeout(()=>E.searchInput.focus(),30); }
+    function openSearch(){ E.searchResults.innerHTML=''; E.searchInput.value=''; E.searchModal.classList.remove('hidden'); closeSide(); setTimeout(()=>E.searchInput.focus(),30); }
     function runSearch(){ const q=E.searchInput.value.trim(); if(!q)return; E.searchResults.innerHTML='<div class="mut">Buscando…</div>'; tx({t:'search',query:q,speak}); }
     E.searchGo.onclick=runSearch;
     E.searchClose.onclick=()=>E.searchModal.classList.add('hidden');
@@ -410,7 +443,10 @@
 
     // ---------- composer / misc ----------
     E.speak.onclick=()=>{ speak=!speak; cfg.voice=speak; saveCfg(); setSpeakBtn(); };
-    E.menuBtn.onclick=()=>E.side.classList.toggle('open');
+    function setSide(o){ E.side.classList.toggle('open',o); E.backdrop.classList.toggle('hidden',!o); }
+    const closeSide=()=>setSide(false);
+    E.menuBtn.onclick=()=>setSide(!E.side.classList.contains('open'));
+    E.backdrop.onclick=closeSide; E.sideClose.onclick=closeSide;
     E.log.addEventListener('click',(e)=>{
       if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
       const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort}); tx({t:'open',sessionId:exec.dataset.id}); return; }
