@@ -5,10 +5,12 @@ venv/
 __pycache__/
 *.pyc
 
-# build
+# build / distributables
 dist/
 build/
 *.tsbuildinfo
+jarvis-dist.tgz
+*.tgz
 
 # local runtime data / models / audio (never commit — huge, and local-only by design)
 *.wav
