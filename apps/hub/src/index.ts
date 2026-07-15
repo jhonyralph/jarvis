@@ -689,13 +689,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // when viewing a REMOTE machine, session ops are forwarded to that runner
     {
       const ar = activeRunner(ws);
-      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send")) {
+      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new")) {
         const rc = runners.get(ar);
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
         if (msg.t === "list") { sendToRunner(rc, { t: "list" }); return; }
+        if (msg.t === "new") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "new", reqId, agent: msg.agent, cwd: msg.cwd }); return; }
         if (msg.t === "open" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); subs.set(ws, msg.sessionId); sendToRunner(rc, { t: "open", reqId, sessionId: msg.sessionId }); return; }
         if (msg.t === "send" && typeof msg.text === "string") {
-          const sid = subs.get(ws) || (typeof msg.sessionId === "string" ? msg.sessionId : "default");
+          const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || "default");
           auth.audit("send", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: ar, detail: `${sid}: ${String(msg.text).slice(0, 80)}` });
           sendToRunner(rc, { t: "send", sessionId: sid, text: msg.text, opts: { model: msg.model, effort: msg.effort } });
           return;

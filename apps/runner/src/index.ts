@@ -122,6 +122,14 @@ function connect(): void {
       if (m.t === "reject") { console.error(`[runner] rejected by hub: ${m.reason}`); sock.close(); return; }
       if (m.t === "ping") { send({ t: "pong" }); return; }
       if (m.t === "list") { pushSessions(); return; }
+      if (m.t === "new") {
+        const id = randomUUID();
+        const agentName = agents.names().includes(m.agent) ? m.agent : agents.default;
+        const s = store.ensure(id, { agent: agentName, cwd: (typeof m.cwd === "string" && m.cwd) ? m.cwd : CWD });
+        send({ t: "history", reqId: m.reqId, sessionId: id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: 0, messages: [] });
+        pushSessions();
+        return;
+      }
       if (m.t === "open" && typeof m.sessionId === "string") { await doHistory(m.reqId, m.sessionId); return; }
       if (m.t === "send" && typeof m.sessionId === "string") { await doSend(m.sessionId, String(m.text ?? ""), m.agent, m.cwd, m.opts); return; }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }

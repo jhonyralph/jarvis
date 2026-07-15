@@ -123,6 +123,21 @@
     #gate button:active { opacity:.85; }
     #gate .gateerr { color:#ff6b6b; font-size:14px; min-height:18px; }
     #gate .gatehint { opacity:.55; font-size:12.5px; line-height:1.4; }
+    /* machine selector */
+    #machineBar { position:relative; margin-bottom:8px; }
+    #machineBar .mbcur { display:flex; align-items:center; gap:8px; padding:9px 11px; border:1px solid #2a3542; border-radius:10px; background:#131a22; cursor:pointer; }
+    #machineBar .mbcur:hover { border-color:#3a4756; }
+    #machineBar .mname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
+    #machineBar .mcaret { opacity:.5; font-size:12px; }
+    #machineBar .mdot { flex:none; width:8px; height:8px; border-radius:50%; background:#5a6b7b; }
+    #machineBar .mdot.on { background:#3fb950; } #machineBar .mdot.off { background:#6e7681; }
+    #machineBar .mmenu { position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:50; background:#0f151c; border:1px solid #2a3542; border-radius:10px; padding:4px; box-shadow:0 8px 24px #0009; }
+    #machineBar .mmenu.hidden { display:none; }
+    #machineBar .mitem { display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:8px; cursor:pointer; }
+    #machineBar .mitem:hover { background:#ffffff10; } #machineBar .mitem.active { background:#2f81f722; }
+    #machineBar .mtag { flex:none; font-size:10px; opacity:.6; border:1px solid #ffffff22; border-radius:6px; padding:1px 5px; }
+    #machineBar .mpen { flex:none; background:none; border:0; color:inherit; opacity:.5; cursor:pointer; font-size:13px; padding:2px 4px; }
+    #machineBar .mpen:hover { opacity:1; }
     .toast { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; cursor:pointer; }
     #roBanner { padding:8px 14px; background:#1e293b; color:#cbd5e1; font-size:12.5px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px; }
     .ctlpills { display:contents; } /* desktop: children flow into .controls flex */
@@ -164,6 +179,7 @@
     <div id="backdrop" class="hidden"></div>
     <aside id="side">
       <button id="sideClose" class="ghost" title="Fechar menu">✕</button>
+      <div id="machineBar" style="display:none"></div>
       <button id="newSess">＋ Nova sessão</button>
       <div class="link" id="searchBtn">🔎 buscar entre sessões</div>
       <div class="link" id="digestBtn">🎧 o que está rolando</div>
@@ -282,12 +298,13 @@
       'newSess','searchBtn','digestBtn','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
-      'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear',
+      'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
 
     let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false;
+    let machines=[], currentMachine='local';
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
@@ -373,6 +390,30 @@
       E.moreBtn.classList.toggle('hidden', sessions.length<=shown); }
     E.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
 
+    // ---------- seletor de máquina (runners) ----------
+    function renderMachines(){
+      if(!E.machineBar) return;
+      if(machines.length<=1){ E.machineBar.style.display='none'; return; }
+      if(!machines.some(m=>m.id===currentMachine)) currentMachine='local';
+      E.machineBar.style.display=''; E.machineBar.innerHTML='';
+      const cur=machines.find(m=>m.id===currentMachine)||machines[0];
+      const bar=document.createElement('div'); bar.className='mbcur';
+      bar.innerHTML='<span class="mdot '+(cur.online?'on':'off')+'"></span><span class="mname">'+esc(cur.label)+'</span><span class="mcaret">▾</span>';
+      bar.onclick=()=>{ const mm=document.getElementById('mmenu'); if(mm) mm.classList.toggle('hidden'); };
+      E.machineBar.appendChild(bar);
+      const menu=document.createElement('div'); menu.className='mmenu hidden'; menu.id='mmenu';
+      machines.forEach(m=>{ const it=document.createElement('div'); it.className='mitem'+(m.id===currentMachine?' active':'');
+        it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+(m.local?'<span class="mtag">esta</span>':(m.online?'':'<span class="mtag">offline</span>'));
+        it.onclick=(e)=>{ e.stopPropagation(); selectMachine(m.id); };
+        if(authUser&&authUser.role==='owner'){ const pen=document.createElement('button'); pen.className='mpen'; pen.textContent='✏'; pen.title='Renomear';
+          pen.onclick=async(e)=>{ e.stopPropagation(); const v=await dialog({title:'Renomear máquina',input:true,value:m.label,placeholder:'Nome da máquina'}); if(v&&v.trim()) tx({t:'rename_runner',runnerId:m.id,label:v.trim()}); };
+          it.appendChild(pen); }
+        menu.appendChild(it); });
+      E.machineBar.appendChild(menu);
+    }
+    function selectMachine(id){ const mm=document.getElementById('mmenu'); if(mm)mm.classList.add('hidden'); if(id===currentMachine) return;
+      currentMachine=id; currentSession=null; curStarted=false; E.log.innerHTML=''; E.title.textContent='—'; setHash(''); tx({t:'runner',runnerId:id}); }
+
     const capsFor = n => caps.find(c=>c.name===n)||{models:[],defaultModel:null};
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
     const modelObj=(agent,id)=>{ const ms=capsFor(agent).models; return ms.find(m=>m.id===id)||ms[0]; };
@@ -401,7 +442,7 @@
 
     // ---------- new session ----------
     E.newSess.onclick=()=>{ // cria sessão vazia (agente/pasta ajustáveis pelos pills até a 1ª msg)
-      const agent=cfg.agent||currentAgent||(caps[0]||{}).name; const cwd=cfg.lastCwd||''; tx({t:'new',agent,cwd}); closeSide(); };
+      const agent=cfg.agent||currentAgent||(caps[0]||{}).name; const cwd=currentMachine==='local'?(cfg.lastCwd||''):''; tx({t:'new',agent,cwd}); closeSide(); };
 
     // ---------- search (input com foco imediato; sem prompt) ----------
     E.searchBtn.onclick=()=>openSearch();
@@ -624,11 +665,12 @@
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
+        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
           if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
         else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){ const h=hashSession();
           if(h&&(isNative(h)||sessions.some(s=>s.id===h))) tx({t:'open',sessionId:h});
-          else { const own=sessions.find(s=>!isNative(s.id)); if(own) tx({t:'open',sessionId:own.id}); else E.newSess.onclick(); } } }
+          else { const own=sessions.find(s=>!isNative(s.id)); if(own) tx({t:'open',sessionId:own.id}); else if(currentMachine==='local') E.newSess.onclick(); } } }
         else if(m.t==='history'){ currentSession=m.sessionId; unread.delete(m.sessionId); currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
           if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
           E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
