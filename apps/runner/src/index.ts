@@ -112,7 +112,7 @@ function connect(): void {
   ws = sock;
   sock.on("open", async () => {
     reconnectDelay = 1000;
-    const info: RunnerInfo = { runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: await availableAgents(), version: "0.1.0" };
+    const info: RunnerInfo = { runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: await availableAgents(), version: "0.1.0", label: process.env.JARVIS_LABEL || undefined };
     send({ t: "register", token: TOKEN, info });
   });
   sock.on("message", async (data) => {

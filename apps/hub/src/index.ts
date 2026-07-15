@@ -266,7 +266,7 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       const info: RunnerInfo = m.info || {}; rid = info.runnerId || null;
       if (!rid) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
       runners.set(rid, { id: rid, ws, local: false, lastSeen: Date.now(), info });
-      if (!runnerLabels[rid]) { runnerLabels[rid] = info.host || rid; saveRunnerLabels(); }
+      if (!runnerLabels[rid]) { runnerLabels[rid] = info.label || info.host || rid; saveRunnerLabels(); }
       send(ws, { t: "welcome", runnerId: rid });
       auth.audit("runner_online", { runnerId: rid, detail: info.host });
       console.log(`[hub] runner online: ${rid} (${info.host})`);

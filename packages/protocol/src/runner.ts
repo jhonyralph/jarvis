@@ -20,6 +20,8 @@ export interface RunnerInfo {
   os: RunnerOS;
   agents: string[]; // available adapter names, e.g. ["claude-code","codex","mock"]
   version?: string;
+  /** friendly name set at install (JARVIS_LABEL); the Hub uses it as the initial label */
+  label?: string;
   /** true for the Hub's own embedded runner ("machine 0") */
   local?: boolean;
 }

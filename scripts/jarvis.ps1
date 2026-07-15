@@ -50,9 +50,10 @@ try {
       Write-Host '  Hub:' -ForegroundColor Cyan
       Write-Host "    $($r.hub)" -ForegroundColor White
       Write-Host ''
-      Write-Host '  Na máquina nova (com o repo clonado), rode o runner assim:' -ForegroundColor DarkGray
-      Write-Host "    Windows:  `$env:JARVIS_HUB='$($r.hub)'; `$env:JARVIS_TOKEN='$($r.token)'; npm --prefix apps/runner start" -ForegroundColor DarkGray
-      Write-Host "    Mac/Linux: JARVIS_HUB='$($r.hub)' JARVIS_TOKEN='$($r.token)' npm --prefix apps/runner start" -ForegroundColor DarkGray
+      Write-Host '  Na máquina nova (com o repo jarvis clonado), instale como serviço:' -ForegroundColor DarkGray
+      Write-Host "    Windows:   .\scripts\install-runner.ps1 -Hub '$($r.hub)' -Token '$($r.token)' -Label '$lbl'" -ForegroundColor White
+      Write-Host "    Mac/Linux: ./scripts/install-runner.sh -h '$($r.hub)' -t '$($r.token)' -l '$lbl'" -ForegroundColor White
+      Write-Host '  (autostart via Task Scheduler / launchd / systemd; a máquina aparece no seletor do Hub)' -ForegroundColor DarkGray
     }
     'status'     { Invoke-RestMethod "$base/admin/status" | ConvertTo-Json -Depth 6 }
     'audit'      { $n = if ($ttl -eq 86400) { 100 } else { $ttl }; (Invoke-RestMethod "$base/admin/audit?n=$n").audit | ForEach-Object { $t = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$_.ts).LocalDateTime.ToString('MM-dd HH:mm'); "{0}  {1,-14} {2}" -f $t, $_.event, $_.detail } }
