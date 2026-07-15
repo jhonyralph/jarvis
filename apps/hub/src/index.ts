@@ -13,7 +13,7 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join, normalize, dirname } from "node:path";
 import QRCode from "qrcode";
 import webpush from "web-push";
@@ -28,6 +28,7 @@ import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./s
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store } from "@jarvis/core";
+import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
@@ -124,15 +125,16 @@ function broadcast(sessionId: string, obj: unknown): void {
   const s = JSON.stringify(obj);
   for (const c of wss.clients) if (c.readyState === c.OPEN && subs.get(c as WebSocket) === sessionId) c.send(s);
 }
-/** to everyone (e.g. the session list changed) */
+/** to every UI client (skips runner sockets) */
 function broadcastAll(obj: unknown): void {
   const s = JSON.stringify(obj);
-  for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(s);
+  for (const c of wss.clients) if (c.readyState === c.OPEN && !runnerSockets.has(c as WebSocket)) c.send(s);
 }
 
 // sessions with an in-flight Jarvis-driven turn — powers the "rodando agora" panel.
 const activeRuns = new Set<string>();
-function broadcastRuns(): void { broadcastAll({ t: "runs", active: [...activeRuns] }); }
+// runs/sessions are per-machine: only clients viewing the LOCAL machine get local ones.
+function broadcastRuns(): void { const s = JSON.stringify({ t: "runs", active: [...activeRuns] }); for (const c of clientsOn(LOCAL_ID)) if (c.readyState === c.OPEN) c.send(s); }
 // single-flight global para operações de voz (resumo/digest): só 1 por vez em toda a instância,
 // independente de qual chat/cliente pediu. Guard no servidor complementa a trava de UI (multi-device).
 let voiceOpBusy = false;
@@ -168,6 +170,68 @@ function dropRevoked(): void {
       try { send(client as WebSocket, { t: "unauth", reason: "revogado", claimed: true }); (client as WebSocket).close(); } catch { /* ignore */ }
     }
   }
+}
+
+// ---- runner registry: machine 0 (this host, in-process) + remote runners (dial /runner) ----
+const RUNNERS_FILE = join(JARVIS_DIR, "runners.json");
+const runnerLabels: Record<string, string> = (() => { try { return JSON.parse(readFileSync(RUNNERS_FILE, "utf8")); } catch { return {}; } })();
+function saveRunnerLabels(): void { try { writeFileSync(RUNNERS_FILE, JSON.stringify(runnerLabels, null, 2)); } catch { /* ignore */ } }
+interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastSeen: number; local: boolean; }
+const runners = new Map<string, RunnerConn>();
+const runnerSockets = new Set<WebSocket>();
+const LOCAL_ID = "local";
+runners.set(LOCAL_ID, { id: LOCAL_ID, ws: null, local: true, lastSeen: Date.now(), info: { runnerId: LOCAL_ID, host: hostname(), os: process.platform, agents: agents.names(), local: true } });
+const clientRunner = new WeakMap<WebSocket, string>();
+const pendingReq = new Map<string, WebSocket>();
+let reqSeq = 0;
+function activeRunner(ws: WebSocket): string { return clientRunner.get(ws) || LOCAL_ID; }
+/** Client sockets (not runner sockets) currently viewing a given machine. */
+function clientsOn(runnerId: string): WebSocket[] {
+  const out: WebSocket[] = [];
+  for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w) && activeRunner(w) === runnerId) out.push(w); }
+  return out;
+}
+function machineList(): any[] {
+  return [...runners.values()].map((r) => ({ id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os, agents: r.info.agents || [], online: r.local || (!!r.ws && r.ws.readyState === WebSocket.OPEN), local: !!r.local }));
+}
+function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList() }); } }
+function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.ws.readyState === WebSocket.OPEN) { rc.ws.send(JSON.stringify(obj)); return true; } return false; }
+
+/** Relay a message from a remote runner to the clients currently viewing that machine. */
+function relayRunner(rc: RunnerConn, m: any): void {
+  if (m.t === "sessions") { for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [] }); return; }
+  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent })) }); } return; }
+  if (m.t === "stream") { for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage }); return; }
+  if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
+  if (m.t === "runs") { for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
+  if (m.t === "error") { const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return; }
+}
+
+/** A remote runner connected on /runner: register (token) then relay its stream to clients. */
+function handleRunnerConnection(ws: WebSocket): void {
+  runnerSockets.add(ws);
+  let rid: string | null = null;
+  const ping = setInterval(() => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "ping" }); else clearInterval(ping); }, 20000);
+  ws.on("close", () => { clearInterval(ping); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; console.log(`[hub] runner offline: ${rid}`); broadcastMachines(); } } });
+  ws.on("error", () => { /* close handles cleanup */ });
+  ws.on("message", (raw) => {
+    let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
+    if (m.t === "register") {
+      if (auth.AUTH_ENABLED) { const rt = auth.authenticateRunner(m.token); if (!rt) { send(ws, { t: "reject", reason: "token de runner inválido" }); try { ws.close(); } catch { /* ignore */ } return; } }
+      const info: RunnerInfo = m.info || {}; rid = info.runnerId || null;
+      if (!rid) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
+      runners.set(rid, { id: rid, ws, local: false, lastSeen: Date.now(), info });
+      if (!runnerLabels[rid]) { runnerLabels[rid] = info.host || rid; saveRunnerLabels(); }
+      send(ws, { t: "welcome", runnerId: rid });
+      auth.audit("runner_online", { runnerId: rid, detail: info.host });
+      console.log(`[hub] runner online: ${rid} (${info.host})`);
+      broadcastMachines();
+      return;
+    }
+    if (!rid) return;
+    const rc = runners.get(rid); if (!rc) return; rc.lastSeen = Date.now();
+    relayRunner(rc, m);
+  });
 }
 
 // Live mirror of native CLI sessions: tail the jsonl and broadcast new turns as they're
@@ -237,7 +301,7 @@ function recentDirsList(n = 10): string[] {
   return out;
 }
 function sessionsPayload(): unknown { return { t: "sessions", sessions: allSessions(), recentDirs: recentDirsList() }; }
-function pushSessions(): void { broadcastAll(sessionsPayload()); }
+function pushSessions(): void { const p = sessionsPayload(); for (const c of clientsOn(LOCAL_ID)) send(c, p); }
 function sendSessions(ws: WebSocket): void { send(ws, sessionsPayload()); }
 
 /** One full turn against a session's agent: store+broadcast the user msg, get the reply, speak if asked. */
@@ -440,6 +504,7 @@ async function broadcastVoiceState(): Promise<void> {
 /** Push the app's initial state to a (now authenticated) client. */
 async function sendInitialState(ws: WebSocket): Promise<void> {
   send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
+  send(ws, { t: "machines", machines: machineList() });
   sendSessions(ws);
   send(ws, { t: "runs", active: [...activeRuns] });
   await sendVoiceState(ws);
@@ -474,6 +539,8 @@ async function handleAuth(ws: WebSocket, msg: any, req: any): Promise<void> {
 }
 
 wss.on("connection", (ws: WebSocket, req: any) => {
+  // Remote runners dial the "/runner" path; everything else is a UI client.
+  if (String(req?.url || "").startsWith("/runner")) { handleRunnerConnection(ws); return; }
   // Attach listeners SYNCHRONOUSLY (before any await) so a client message sent
   // right after connect is never dropped. The initial state below is async
   // (agent caps + speaker list, which spawns Python), so pushing it before the
@@ -497,6 +564,37 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (auth.AUTH_ENABLED && !principals.has(ws)) {
       await handleAuth(ws, msg, req);
       return;
+    }
+
+    // --- machine selection + routing to remote runners -----------------------
+    if (msg.t === "machines") { send(ws, { t: "machines", machines: machineList() }); return; }
+    if (msg.t === "runner" && typeof msg.runnerId === "string") {
+      const target = runners.has(msg.runnerId) ? msg.runnerId : LOCAL_ID;
+      clientRunner.set(ws, target); subs.delete(ws);
+      send(ws, { t: "machines", machines: machineList() });
+      if (target === LOCAL_ID) sendSessions(ws);
+      else { const rc = runners.get(target); if (!rc || !sendToRunner(rc, { t: "list" })) send(ws, { t: "sessions", sessions: [], recentDirs: [] }); }
+      return;
+    }
+    if (msg.t === "rename_runner" && typeof msg.runnerId === "string" && typeof msg.label === "string") {
+      if (!requireOwner(ws)) return;
+      runnerLabels[msg.runnerId] = msg.label.slice(0, 40); saveRunnerLabels(); broadcastMachines(); return;
+    }
+    // when viewing a REMOTE machine, session ops are forwarded to that runner
+    {
+      const ar = activeRunner(ws);
+      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send")) {
+        const rc = runners.get(ar);
+        if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
+        if (msg.t === "list") { sendToRunner(rc, { t: "list" }); return; }
+        if (msg.t === "open" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); subs.set(ws, msg.sessionId); sendToRunner(rc, { t: "open", reqId, sessionId: msg.sessionId }); return; }
+        if (msg.t === "send" && typeof msg.text === "string") {
+          const sid = subs.get(ws) || (typeof msg.sessionId === "string" ? msg.sessionId : "default");
+          auth.audit("send", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: ar, detail: `${sid}: ${String(msg.text).slice(0, 80)}` });
+          sendToRunner(rc, { t: "send", sessionId: sid, text: msg.text, opts: { model: msg.model, effort: msg.effort } });
+          return;
+        }
+      }
     }
 
     // --- session management (shared across every client) ---
@@ -803,6 +901,14 @@ const adminServer = createServer((req, res) => {
         const ttlSec = Math.min(Math.max(Number(b.ttlSec) || 86400, 60), 30 * 86400);
         const { code, invite } = auth.mintInvite("cli", { role, runners: [], ttlSec });
         return json(200, { code, link: inviteLink(code), invite });
+      }
+      if (req.method === "POST" && url === "/admin/runner-token") {
+        const b = await body();
+        const label = (typeof b.label === "string" && b.label) ? b.label : "runner";
+        const rid = (typeof b.runnerId === "string" && b.runnerId) ? b.runnerId : ("m-" + randomUUID().slice(0, 8));
+        const token = auth.mintRunnerToken(rid, label);
+        const hubWs = PUBLIC_URL ? PUBLIC_URL.replace(/^http/, "ws") : `ws://<este-host>:${PORT}`;
+        return json(200, { runnerId: rid, label, token, hub: hubWs });
       }
       if (req.method === "POST" && url === "/admin/revoke") { const b = await body(); const ok = typeof b.deviceId === "string" && auth.revokeDevice(b.deviceId); dropRevoked(); return json(200, { ok: !!ok }); }
       if (req.method === "POST" && url === "/admin/revoke-all") { const n = auth.listDevices().length; for (const d of auth.listDevices()) auth.revokeDevice(d.id); dropRevoked(); return json(200, { revoked: n }); }
