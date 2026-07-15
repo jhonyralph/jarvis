@@ -1,4 +1,6 @@
 # Local voice service — everything runs offline on this machine.
 piper-tts>=1.4.0        # TTS (working)
 faster-whisper>=1.2.0   # STT (working; bundles PyAV, no system ffmpeg needed; runs on CPU)
-# openwakeword          # wake word ("Jarvis") (later)
+openwakeword>=0.6.0     # wake word "Hey Jarvis" (wake_listener.py; pretrained onnx)
+sounddevice>=0.4.6      # machine mic + speaker for the wake listener
+websocket-client>=1.7.0 # wake listener's WS client to the Hub

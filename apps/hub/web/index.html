@@ -131,7 +131,7 @@
     <label class="row"><input type="checkbox" id="setContinue"> Após responder, continuar escutando follow-up</label>
     <label>Janela de escuta de continuação (segundos)<input type="number" id="setContinueSec" min="5" max="120" step="5"></label>
     <div class="sec">Escuta avançada <span class="soon">em desenvolvimento</span></div>
-    <label class="row"><input type="checkbox" id="setWake"> Wake word "Jarvis" (escuta contínua) <span class="soon">em breve</span></label>
+    <label class="row"><input type="checkbox" id="setWake"> Wake word "Hey Jarvis" (na máquina) <span class="soon">requer wake_listener.py</span></label>
     <label class="row"><input type="checkbox" id="setNoise"> Filtro anti-ruído / detecção de fala (VAD)</label>
     <label class="row"><input type="checkbox" id="setMulti"> Permitir múltiplos usuários <span class="soon">em breve</span></label>
     <div class="row"><button id="setEnroll" class="ghost">🎙 Cadastrar minha voz (identificação) <span class="soon">em breve</span></button></div>
@@ -216,7 +216,7 @@
     E.setEnroll.onclick=()=>addErr('Identificação de voz: em desenvolvimento (ver plano).');
     E.setClose.onclick=()=>{ Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
       continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,multi:E.setMulti.checked});
-      saveCfg(); speak=cfg.voice; setSpeakBtn(); E.settings.classList.add('hidden'); };
+      saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); E.settings.classList.add('hidden'); };
 
     // ---------- status indicator ----------
     function status(mode,txt){ E.status.className=mode||''; E.status.innerHTML = mode ? `<span class="pulse"></span>${txt}` : ''; }
@@ -225,7 +225,7 @@
     // ---------- ws ----------
     function tx(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
-      ws.onopen=()=>E.dot.classList.add('on'); ws.onclose=()=>{ E.dot.classList.remove('on'); setTimeout(connect,1500); };
+      ws.onopen=()=>{ E.dot.classList.add('on'); tx({t:'wake',enabled:cfg.wake}); }; ws.onclose=()=>{ E.dot.classList.remove('on'); setTimeout(connect,1500); };
       ws.onmessage=(e)=>{ const m=JSON.parse(e.data);
         if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} }
         else if(m.t==='dirs'){ browsePath=m.path; E.newPath.textContent=m.path; E.newUp.dataset.parent=m.parent||'';
@@ -238,6 +238,8 @@
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
         else if(m.t==='searchResult'){ addSearchCard(m); }
+        else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
+        else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='error'){ addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);

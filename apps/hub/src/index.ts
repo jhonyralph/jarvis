@@ -35,7 +35,10 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new ClaudeCodeAdapter())
   .register(new CodexAdapter())
   .register(new MockAgentAdapter());
+const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });
+// dedicated, locked-agent/cwd session that the machine wake listener injects into
+store.ensure(WAKE_SESSION, { agent: process.env.JARVIS_WAKE_AGENT || agents.default, cwd: process.env.JARVIS_WAKE_CWD || CWD, title: "Voz (Jarvis)" });
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -60,6 +63,9 @@ const wss = new WebSocketServer({ server });
 
 // Which session each client is currently viewing — for broadcast + listener mode.
 const subs = new Map<WebSocket, string>();
+// machine wake-word listener sockets + whether "Hey Jarvis" is armed.
+const wakeClients = new Set<WebSocket>();
+let wakeEnabled = process.env.JARVIS_WAKE !== "0";
 
 function send(ws: WebSocket, obj: unknown): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -88,7 +94,10 @@ async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): P
 wss.on("connection", async (ws: WebSocket) => {
   send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
   send(ws, { t: "sessions", sessions: store.list() });
-  ws.on("close", () => subs.delete(ws));
+  ws.on("close", () => {
+    subs.delete(ws);
+    wakeClients.delete(ws);
+  });
 
   ws.on("message", async (raw) => {
     let msg: any;
@@ -103,6 +112,10 @@ wss.on("connection", async (ws: WebSocket) => {
       send(ws, { t: "sessions", sessions: store.list() });
       return;
     }
+    // wake-word control (machine listener <-> browsers)
+    if (msg.t === "wake_hello") { wakeClients.add(ws); send(ws, { t: "wake_state", enabled: wakeEnabled }); return; }
+    if (msg.t === "wake") { wakeEnabled = !!msg.enabled; for (const c of wakeClients) send(c, { t: "wake_state", enabled: wakeEnabled }); broadcastAll({ t: "wake_state", enabled: wakeEnabled }); return; }
+    if (msg.t === "wake_event") { broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return; }
     // folder browser for the "new conversation" dialog (Hub machine)
     if (msg.t === "listdir") {
       const base = typeof msg.path === "string" && msg.path ? msg.path : homedir();
