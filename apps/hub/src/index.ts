@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { join, normalize, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
-import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter } from "./agents.js";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, type AgentAdapter, type AgentReply, type SendOpts } from "./agents.js";
 import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechifyCapped } from "./speechify.js";
@@ -132,11 +132,8 @@ async function deliverTurn(sid: string, opts: { showText: string; agentText?: st
   broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: opts.showText, ts: now, agent: agent.name, speaker: opts.speaker } });
   pushSessions();
   try {
-    const reply = await agent.send(sid, opts.agentText ?? opts.showText, session.cwd, { model: opts.model, effort: opts.effort });
-    const rt = Date.now();
-    store.add(sid, { role: "assistant", text: reply.text, ts: rt, agent: agent.name });
-    broadcast(sid, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: rt, agent: agent.name } });
-    if (reply.usage) broadcast(sid, { t: "usage", sessionId: sid, usage: reply.usage });
+    const reply = await agentTurn(sid, agent, opts.agentText ?? opts.showText, session.cwd, { model: opts.model, effort: opts.effort });
+    store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name });
     pushSessions();
     if (opts.speak) {
       const spoken = speechifyCapped(reply.text);
@@ -205,6 +202,20 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
   if (inProgress && action !== "continue") { voicePending = { task }; await voiceSay("Já tenho uma conversa em andamento. Quer continuar ou começar uma nova?"); return; }
   await runVoiceTask(task, speak, speaker);
 }
+/** One agent turn with LIVE streaming (tool activity + text) broadcast to session viewers.
+ *  Returns the final reply. The stream 'done' event carries the final text + usage, so
+ *  callers must NOT also broadcast a {t:message} assistant (they only persist it). */
+async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply> {
+  broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "start" } });
+  try {
+    const reply = await agent.send(sid, agentText, cwd, opts, (ev) => broadcast(sid, { t: "stream", sessionId: sid, ev }));
+    broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage });
+    return reply;
+  } catch (e) {
+    broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "error" } });
+    throw e;
+  }
+}
 /** Continue a NATIVE CLI session (claude:<uuid>) by resuming the real claude session.
  *  Persists in the CLI's own jsonl (same file), so re-opening shows the new turns. */
 async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string }): Promise<void> {
@@ -215,10 +226,7 @@ async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts:
   const now = Date.now();
   broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: info.agent, speaker: opts.speaker } });
   try {
-    const reply = await agent.send(sid, text, info.cwd || CWD, { model: opts.model, effort: opts.effort });
-    const rt = Date.now();
-    broadcast(sid, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: rt, agent: info.agent } });
-    if (reply.usage) broadcast(sid, { t: "usage", sessionId: sid, usage: reply.usage });
+    const reply = await agentTurn(sid, agent, text, info.cwd || CWD, { model: opts.model, effort: opts.effort });
     if (opts.speak) {
       const spoken = speechifyCapped(reply.text);
       if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
@@ -373,10 +381,8 @@ wss.on("connection", (ws: WebSocket) => {
       broadcast(s.id, { t: "message", message: { sessionId: s.id, role: "user", text: msg.text, ts: now, agent: s.agent } });
       pushSessions();
       try {
-        const reply = await ag.send(s.id, msg.text, s.cwd, { model: msg.model, effort: msg.effort });
-        const rt = Date.now();
-        store.add(s.id, { role: "assistant", text: reply.text, ts: rt, agent: s.agent });
-        broadcast(s.id, { t: "message", message: { sessionId: s.id, role: "assistant", text: reply.text, ts: rt, agent: s.agent } });
+        const reply = await agentTurn(s.id, ag, msg.text, s.cwd, { model: msg.model, effort: msg.effort });
+        store.add(s.id, { role: "assistant", text: reply.text, ts: Date.now(), agent: s.agent });
         pushSessions();
       } catch (e: any) {
         send(ws, { t: "error", message: String(e?.message ?? e) });
@@ -461,11 +467,8 @@ wss.on("connection", (ws: WebSocket) => {
 
     try {
       const opts = { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined };
-      const reply = await agent.send(sid, agentText, session.cwd, opts);
-      const rt = Date.now();
-      store.add(sid, { role: "assistant", text: reply.text, ts: rt, agent: agent.name });
-      broadcast(sid, { t: "message", message: { sessionId: sid, role: "assistant", text: reply.text, ts: rt, agent: agent.name } });
-      if (reply.usage) broadcast(sid, { t: "usage", sessionId: sid, usage: reply.usage });
+      const reply = await agentTurn(sid, agent, agentText, session.cwd, opts);
+      store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name });
       pushSessions();
 
       if (msg.speak) {

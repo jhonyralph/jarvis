@@ -36,8 +36,15 @@
     .msg.err { align-self:center; color:#fca5a5; font-size:13px; }
     .msg.bot.pending { padding:11px 15px; }
     .work { display:inline-flex; align-items:center; gap:9px; color:var(--mut); font-size:14px; }
-    .work .spin { width:13px; height:13px; border:2px solid #ffffff26; border-top-color:var(--me); border-radius:50%; animation:spin .8s linear infinite; flex:none; }
+    .spin { width:13px; height:13px; border:2px solid #ffffff26; border-top-color:var(--me); border-radius:50%; animation:spin .8s linear infinite; flex:none; display:inline-block; }
     @keyframes spin { to { transform:rotate(360deg) } }
+    /* live streaming bubble: activity blocks + growing text */
+    .msg.bot.streaming { display:flex; flex-direction:column; gap:7px; }
+    .strhead { display:inline-flex; align-items:center; gap:8px; color:var(--mut); font-size:12.5px; }
+    .strtools { display:flex; flex-direction:column; gap:4px; }
+    .strtool { display:flex; align-items:center; gap:7px; font-size:12.5px; color:#cbd5e1; background:#ffffff0d; border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow-wrap:anywhere; }
+    .strtext { white-space:pre-wrap; } .strtext.done { white-space:normal; }
+    .msg.bot .usage { margin-top:4px; }
     .msg.bot p { margin:.55em 0; } .msg.bot h4 { margin:.7em 0 .3em; font-size:15px; }
     .msg.bot ul,.msg.bot ol { margin:.4em 0; padding-left:1.3em; }
     .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; overflow-wrap:anywhere; }
@@ -265,6 +272,24 @@
         pendingEl.innerHTML=`<span class="work"><span class="spin"></span>Jarvis trabalhando… ${t}</span>`; };
       upd(); pendingTimer=setInterval(upd,1000); E.log.appendChild(pendingEl); E.log.scrollTop=E.log.scrollHeight; }
     function clearPending(){ if(pendingTimer){ clearInterval(pendingTimer); pendingTimer=null; } if(pendingEl){ pendingEl.remove(); pendingEl=null; } }
+    // ---- streaming (atividade ao vivo: ferramentas + texto) ----
+    const toolIcon = n => ({Bash:'🖥',Read:'📄',Edit:'✏️',Write:'✏️',NotebookEdit:'✏️',MultiEdit:'✏️',Grep:'🔎',Glob:'📁',Task:'🤖',Agent:'🤖',WebFetch:'🌐',WebSearch:'🌐'}[n]||'🔧');
+    let strEl=null, strText='', strTimer=null, strStart=0, strTextEl=null, strToolsEl=null, strTimeEl=null;
+    function streamStartUI(){ clearPending(); strText=''; strStart=Date.now();
+      strEl=document.createElement('div'); strEl.className='msg bot streaming';
+      strEl.innerHTML='<div class="strhead"><span class="spin"></span><span class="strtime">0s</span></div><div class="strtools"></div><div class="strtext"></div>';
+      strTimeEl=strEl.querySelector('.strtime'); strToolsEl=strEl.querySelector('.strtools'); strTextEl=strEl.querySelector('.strtext');
+      strTimer=setInterval(()=>{ if(!strTimeEl)return; const s=Math.floor((Date.now()-strStart)/1000); strTimeEl.textContent=(s>=60?`${Math.floor(s/60)}m ${s%60}s`:`${s}s`); },1000);
+      E.log.appendChild(strEl); E.log.scrollTop=E.log.scrollHeight; }
+    function streamTool(name,summary){ if(!strToolsEl)streamStartUI(); const d=document.createElement('div'); d.className='strtool'; d.innerHTML=`<span>${toolIcon(name)}</span><span>${esc(summary||name||'')}</span>`; strToolsEl.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+    function streamText(t){ if(!strTextEl)streamStartUI(); strText+=t; strTextEl.textContent=strText; E.log.scrollTop=E.log.scrollHeight; }
+    function streamDone(finalText,usage){ if(strTimer){clearInterval(strTimer);strTimer=null;}
+      if(!strEl){ addMsg({role:'assistant',text:finalText||''}); return; }
+      const head=strEl.querySelector('.strhead'); if(head) head.remove();
+      const ft=finalText||strText; if(strTextEl){ strTextEl.innerHTML=md(ft); strTextEl.classList.add('done'); }
+      if(usage){ const u=document.createElement('div'); u.className='usage'; u.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; strEl.appendChild(u); E.usage.textContent=u.textContent; }
+      strEl=strTextEl=strToolsEl=strTimeEl=null; E.log.scrollTop=E.log.scrollHeight; }
+    function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); strEl=strTextEl=strToolsEl=strTimeEl=null; }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
       (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
@@ -427,7 +452,7 @@
         else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){ const own=sessions.find(s=>!isNative(s.id)); if(own) tx({t:'open',sessionId:own.id}); else E.newSess.onclick(); } }
         else if(m.t==='history'){ currentSession=m.sessionId; currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
           if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
-          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); E.log.innerHTML='';
+          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
           const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
           if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
           msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); E.log.scrollTop=E.log.scrollHeight;
@@ -437,6 +462,12 @@
           E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
           E.input.disabled=ro; E.sendBtn.disabled=ro; E.mic.disabled=ro; E.input.placeholder=ro?'Sessão nativa — somente leitura':'Fale ou digite…'; }
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
+        else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
+          if(ev.kind==='start') streamStartUI();
+          else if(ev.kind==='tool') streamTool(ev.name,ev.summary);
+          else if(ev.kind==='text') streamText(ev.text||'');
+          else if(ev.kind==='done') streamDone(ev.text, m.usage);
+          else if(ev.kind==='error') streamErr(); }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
         else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }

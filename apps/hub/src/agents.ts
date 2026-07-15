@@ -37,11 +37,20 @@ export interface SendOpts {
   effort?: string;
 }
 
+/** Live activity while an agent works (for the streaming UI). */
+export interface StreamEvent {
+  kind: "text" | "tool" | "thinking";
+  text?: string; // for kind:"text" — a chunk of the reply
+  name?: string; // for kind:"tool" — the tool name (Bash, Edit, Read…)
+  summary?: string; // for kind:"tool" — a human one-liner (e.g. "Editando foo.ts")
+}
+export type OnEvent = (ev: StreamEvent) => void;
+
 export interface AgentAdapter {
   readonly name: string;
   capabilities(): Promise<AgentCaps>;
   available(): Promise<boolean>;
-  send(sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply>;
+  send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply>;
   /** Stateless one-off prompt (no session, no context) — used by cross-session search. */
   oneShot?(text: string, opts?: SendOpts): Promise<AgentReply>;
 }
@@ -143,13 +152,43 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
   }
 
-  async send(sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
+  async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
     // native imported sessions ("claude:<uuid>") resume the underlying real claude session
     const prev = this.sessions.get(sessionId) || (sessionId.startsWith("claude:") ? sessionId.slice("claude:".length) : undefined);
-    const args = ["-p", text, "--output-format", "json", "--permission-mode", "bypassPermissions"];
+    const fmt = onEvent ? ["--output-format", "stream-json", "--verbose"] : ["--output-format", "json"];
+    const args = ["-p", text, ...fmt, "--permission-mode", "bypassPermissions"];
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort); // ultracode -> xhigh
     if (prev) args.unshift("--resume", prev);
+
+    if (onEvent) {
+      // streaming: emit tool/text activity live; accumulate the final reply + usage.
+      let finalText = "";
+      let sessionOut = "";
+      let streamError = "";
+      let usage: AgentReply["usage"];
+      await runStream(this.bin, args, cwd, (line) => {
+        let o: any;
+        try { o = JSON.parse(line); } catch { return; }
+        if (o.type === "system" && o.subtype === "init" && o.session_id) sessionOut = o.session_id;
+        else if (o.type === "assistant") {
+          for (const b of o.message?.content || []) {
+            if (b.type === "text" && b.text) { finalText += b.text; onEvent({ kind: "text", text: b.text }); }
+            else if (b.type === "tool_use") onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input) });
+            else if (b.type === "thinking") onEvent({ kind: "thinking" });
+          }
+        } else if (o.type === "result") {
+          if (o.session_id) sessionOut = o.session_id;
+          if (o.result && !finalText) finalText = o.result;
+          if (o.is_error) streamError = o.result || "claude error";
+          usage = { costUsd: o.total_cost_usd, inputTokens: o.usage?.input_tokens, outputTokens: o.usage?.output_tokens };
+        }
+      });
+      if (streamError) throw new Error(streamError);
+      if (sessionOut) this.sessions.set(sessionId, sessionOut);
+      return { text: finalText, usage };
+    }
+
     const raw = await run(this.bin, args, cwd, "", false);
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
@@ -249,4 +288,50 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, useShell: 
       else reject(new Error(err.trim() || `${cmd} exited with ${code}`));
     });
   });
+}
+
+/** Like run(), but calls onLine for each complete stdout line as it arrives (NDJSON stream). */
+function runStream(cmd: string, args: string[], cwd: string, onLine: (line: string) => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, { cwd, windowsHide: true, shell: false });
+    let out = "";
+    let buf = "";
+    let err = "";
+    p.stdout.on("data", (d) => {
+      buf += d.toString();
+      let i: number;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        out += line + "\n";
+        if (line.trim()) onLine(line);
+      }
+    });
+    p.stderr.on("data", (d) => (err += d.toString()));
+    p.on("error", reject);
+    p.stdin.end();
+    p.on("close", (code) => {
+      if (buf.trim()) onLine(buf);
+      if (code === 0 || out.trim()) resolve(out);
+      else reject(new Error(err.trim() || `${cmd} exited with ${code}`));
+    });
+  });
+}
+
+/** Human one-liner for a tool_use (shown as a collapsible activity block). */
+function toolSummary(name: string, input: any): string {
+  const base = (p: string) => (p || "").split(/[\\/]/).pop() || p;
+  try {
+    switch (name) {
+      case "Bash": return "Bash: " + String(input?.command || "").replace(/\s+/g, " ").slice(0, 90);
+      case "Read": return "Lendo " + base(input?.file_path);
+      case "Edit": case "Write": case "NotebookEdit": return "Editando " + base(input?.file_path);
+      case "Grep": return "Buscando /" + String(input?.pattern || "").slice(0, 40) + "/";
+      case "Glob": return "Listando " + String(input?.pattern || "");
+      case "Task": case "Agent": return "Subagente: " + String(input?.description || input?.subagent_type || "").slice(0, 60);
+      case "WebFetch": return "Abrindo " + String(input?.url || "").slice(0, 60);
+      case "WebSearch": return "Pesquisando: " + String(input?.query || "").slice(0, 60);
+      default: { const s = JSON.stringify(input || {}); return name + (s && s !== "{}" ? " " + s.slice(0, 60) : ""); }
+    }
+  } catch { return name; }
 }
