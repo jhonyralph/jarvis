@@ -196,6 +196,30 @@ export function isNativeId(id: string): boolean {
   return typeof id === "string" && (id.startsWith("claude:") || id.startsWith("codex:"));
 }
 
+/** The on-disk jsonl for a native id (+ whether it's a claude session) — for live tailing. */
+export function nativeFilePath(id: string): { path: string; claude: boolean } | null {
+  return isNativeId(id) ? findFileById(id) : null;
+}
+
+/** Parse ONE jsonl line into a displayable message (or null for tool/system/empty lines). */
+export function parseNativeLine(line: string, claude: boolean): { role: string; text: string; ts: number } | null {
+  let o: any;
+  try { o = JSON.parse(line); } catch { return null; }
+  if (claude) {
+    if (o.type !== "user" && o.type !== "assistant") return null;
+    let t = contentText(o.message?.content);
+    if (o.type === "user" && isInjected(t)) return null;
+    t = cleanText(t);
+    return t ? { role: o.type, text: t, ts: Date.parse(o.timestamp) || 0 } : null;
+  }
+  if (o.type !== "response_item" || o.payload?.type !== "message") return null;
+  const role = o.payload.role;
+  if (role !== "user" && role !== "assistant") return null;
+  const t = contentText(o.payload.content);
+  if (!t || (role === "user" && isInjected(t))) return null;
+  return { role, text: t, ts: Date.parse(o.timestamp) || 0 };
+}
+
 /** Cheap agent+cwd lookup (head read only) — used to continue a native session. */
 export function nativeInfo(id: string): { agent: string; cwd: string } | null {
   if (!isNativeId(id)) return null;

@@ -12,7 +12,7 @@
  */
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,7 +23,7 @@ import { transcribe } from "./stt.js";
 import { speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo } from "./native.js";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeLine } from "./native.js";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store } from "./store.js";
 
@@ -99,6 +99,52 @@ function broadcast(sessionId: string, obj: unknown): void {
 function broadcastAll(obj: unknown): void {
   const s = JSON.stringify(obj);
   for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(s);
+}
+
+// Live mirror of native CLI sessions: tail the jsonl and broadcast new turns as they're
+// appended by an EXTERNAL Claude Code (or by us), so viewers update without refreshing.
+interface Tail { path: string; claude: boolean; offset: number; buf: string; paused: boolean; timer: ReturnType<typeof setInterval>; }
+const nativeTails = new Map<string, Tail>();
+function pollTail(sid: string): void {
+  const t = nativeTails.get(sid);
+  if (!t || t.paused) return;
+  let size: number;
+  try { size = statSync(t.path).size; } catch { return; }
+  if (size <= t.offset) return;
+  let chunk: Buffer;
+  try {
+    const fd = openSync(t.path, "r");
+    chunk = Buffer.alloc(size - t.offset);
+    readSync(fd, chunk, 0, chunk.length, t.offset);
+    closeSync(fd);
+  } catch { return; }
+  t.offset = size;
+  const parts = (t.buf + chunk.toString("utf8")).split("\n");
+  t.buf = parts.pop() || ""; // keep the last (possibly partial) line
+  for (const line of parts) {
+    if (!line.trim()) continue;
+    const m = parseNativeLine(line, t.claude);
+    if (m) broadcast(sid, { t: "message", message: { sessionId: sid, role: m.role, text: m.text, ts: m.ts, agent: t.claude ? "claude-code" : "codex" } });
+  }
+}
+function startTail(sid: string): void {
+  if (nativeTails.has(sid)) return;
+  const f = nativeFilePath(sid);
+  if (!f) return;
+  let size = 0;
+  try { size = statSync(f.path).size; } catch { /* new file */ }
+  nativeTails.set(sid, { path: f.path, claude: f.claude, offset: size, buf: "", paused: false, timer: setInterval(() => pollTail(sid), 900) });
+}
+function stopTail(sid: string): void {
+  const t = nativeTails.get(sid);
+  if (t) { clearInterval(t.timer); nativeTails.delete(sid); }
+}
+/** Keep a tail running for every native session at least one client is currently viewing. */
+function syncTails(): void {
+  const viewed = new Set<string>();
+  for (const s of subs.values()) if (isNativeId(s)) viewed.add(s);
+  for (const sid of [...nativeTails.keys()]) if (!viewed.has(sid)) stopTail(sid);
+  for (const sid of viewed) startTail(sid);
 }
 /** Jarvis's own sessions merged with imported native Claude/Codex sessions (agent-tagged, newest first). */
 function allSessions(): any[] {
@@ -224,6 +270,9 @@ async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts:
   if (info.agent !== "claude-code") { send(ws, { t: "error", message: "continuar sessão nativa só é suportado no claude-code por enquanto" }); return; }
   const agent = agents.get(info.agent);
   const now = Date.now();
+  // pause the live tail so it doesn't re-broadcast our own turn (already shown via streaming)
+  const tail = nativeTails.get(sid);
+  if (tail) tail.paused = true;
   broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: info.agent, speaker: opts.speaker } });
   try {
     const reply = await agentTurn(sid, agent, text, info.cwd || CWD, { model: opts.model, effort: opts.effort });
@@ -234,6 +283,8 @@ async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts:
   } catch (e: any) {
     const message = String(e?.message ?? e);
     send(ws, { t: "error", message, limit: /limit|rate|quota|exceeded|usage/i.test(message) });
+  } finally {
+    if (tail) { try { tail.offset = statSync(tail.path).size; tail.buf = ""; } catch { /* ignore */ } tail.paused = false; }
   }
 }
 /** Cross-session search: reason over recent sessions, reply only to the asker (optionally spoken). */
@@ -263,6 +314,7 @@ wss.on("connection", (ws: WebSocket) => {
   ws.on("close", () => {
     subs.delete(ws);
     wakeClients.delete(ws);
+    syncTails();
   });
 
   ws.on("message", async (raw) => {
@@ -323,6 +375,7 @@ wss.on("connection", (ws: WebSocket) => {
     }
     if (msg.t === "open" && typeof msg.sessionId === "string" && isNativeId(msg.sessionId)) {
       subs.set(ws, msg.sessionId);
+      syncTails();
       const h = nativeHistory(msg.sessionId);
       if (!h) { send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
       send(ws, {
@@ -336,6 +389,7 @@ wss.on("connection", (ws: WebSocket) => {
     }
     if (msg.t === "open" && typeof msg.sessionId === "string") {
       subs.set(ws, msg.sessionId);
+      syncTails();
       const s = store.ensure(msg.sessionId);
       const all = store.history(s.id);
       send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, total: all.length, messages: all.slice(-HISTORY_CAP) });
@@ -347,6 +401,7 @@ wss.on("connection", (ws: WebSocket) => {
       const cwd = typeof msg.cwd === "string" && existsSync(msg.cwd) ? msg.cwd : CWD;
       const s = store.ensure(id, { agent: agentName, cwd });
       subs.set(ws, id);
+      syncTails();
       send(ws, { t: "history", sessionId: id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
       pushSessions();
       return;
