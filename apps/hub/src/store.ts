@@ -86,6 +86,18 @@ export class Store {
     return this.data[id];
   }
 
+  /** Change agent/cwd — allowed ONLY while the session has no messages (still "new").
+   *  Enforces the locked-session rule server-side: once a conversation starts, the
+   *  agent and folder are frozen; only model/effort vary per message. */
+  reconfigure(id: string, opts: { agent?: string; cwd?: string }): boolean {
+    const s = this.data[id];
+    if (!s || s.messages.length > 0) return false;
+    if (opts.agent) s.agent = opts.agent;
+    if (opts.cwd) s.cwd = opts.cwd;
+    this.flush();
+    return true;
+  }
+
   add(id: string, msg: StoredMessage): void {
     const s = this.ensure(id);
     s.messages.push(msg);

@@ -186,6 +186,21 @@ wss.on("connection", (ws: WebSocket) => {
       broadcastAll({ t: "sessions", sessions: store.list() });
       return;
     }
+    // Change agent/folder of a session that has not started yet (locked-session rule).
+    if (msg.t === "configure" && typeof msg.sessionId === "string") {
+      const s = store.get(msg.sessionId);
+      if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
+      const agent = agents.names().includes(msg.agent) ? msg.agent : undefined;
+      const cwd = typeof msg.cwd === "string" && existsSync(msg.cwd) ? msg.cwd : undefined;
+      if (!store.reconfigure(s.id, { agent, cwd })) {
+        send(ws, { t: "error", message: "sessão já iniciada — agente e pasta estão travados" });
+        return;
+      }
+      const ns = store.get(s.id)!;
+      send(ws, { t: "history", sessionId: ns.id, session: { agent: ns.agent, cwd: ns.cwd, title: ns.title }, messages: store.history(ns.id) });
+      broadcastAll({ t: "sessions", sessions: store.list() });
+      return;
+    }
 
     // cross-session search (explicit) + execute-in-a-specific-session
     if (msg.t === "search" && typeof msg.query === "string") {

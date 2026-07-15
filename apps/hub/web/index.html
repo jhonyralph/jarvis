@@ -66,6 +66,27 @@
     .soon { font-size:10px; background:#ffffff14; border-radius:6px; padding:1px 5px; color:var(--mut); }
     .dirlist { border:1px solid var(--line); border-radius:10px; overflow:auto; max-height:240px; }
     .dirlist div { padding:8px 12px; cursor:pointer; font-size:13.5px; border-bottom:1px solid var(--line); } .dirlist div:hover { background:#ffffff0d; }
+    /* clickable footer pills (agent / folder / model / effort) */
+    .pill { background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:9px; padding:6px 10px; font:inherit; font-size:12.5px; font-weight:500; cursor:pointer; display:inline-flex; align-items:center; gap:5px; max-width:190px; }
+    .pill:hover { border-color:#ffffff40; background:#1c232b; }
+    .pill .cap { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #modelName { text-transform:capitalize; }
+    .pill.lock { color:var(--mut); cursor:default; opacity:.75; } .pill.lock:hover { border-color:#ffffff1f; background:var(--panel); }
+    /* popover anchored above a pill */
+    .pop { position:fixed; z-index:40; background:var(--panel); border:1px solid #ffffff2b; border-radius:12px; padding:10px; box-shadow:0 14px 44px #000b; min-width:230px; max-width:340px; }
+    .pop .ph { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin:0 2px 8px; }
+    .pop .opt { padding:8px 9px; border-radius:8px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:8px; }
+    .pop .opt:hover { background:#ffffff0d; } .pop .opt.sel { background:#ffffff17; }
+    .pop .opt .r { margin-left:auto; color:var(--mut); font-size:11px; }
+    .pop .slbl { display:flex; justify-content:space-between; font-size:11px; color:var(--mut); margin:2px 2px 10px; }
+    .pop input[type=range] { width:100%; accent-color:var(--me); }
+    .pop .sval { text-align:center; font-size:13.5px; margin-top:10px; font-weight:600; }
+    .pop .fpath { font-size:12px; color:var(--mut); margin-bottom:6px; word-break:break-all; }
+    .pop .flist { max-height:220px; overflow:auto; border:1px solid var(--line); border-radius:9px; }
+    .pop .flist div { padding:7px 10px; cursor:pointer; font-size:13px; border-bottom:1px solid var(--line); }
+    .pop .flist div:last-child { border-bottom:0; } .pop .flist div:hover { background:#ffffff0d; }
+    .pop .frow { display:flex; gap:6px; margin-top:8px; } .pop .frow button { flex:1; font-size:12px; padding:7px 8px; }
+    .modal input[type=text] { background:var(--bg); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:11px 13px; font:inherit; }
     .hidden { display:none !important; } #menuBtn { display:none; }
     @media (max-width:760px) { #side { position:fixed; z-index:20; height:100dvh; transform:translateX(-100%); transition:transform .2s; } #side.open { transform:none; } #menuBtn { display:inline-block; } }
   </style>
@@ -74,7 +95,6 @@
   <div id="app">
     <aside id="side">
       <button id="newSess">＋ Nova sessão</button>
-      <div class="link" id="chooseFolder">📁 escolher pasta / agente…</div>
       <div class="link" id="searchBtn">🔎 buscar entre sessões</div>
       <div class="sec">Recentes</div>
       <div id="recents"></div>
@@ -100,10 +120,10 @@
           <button type="button" id="mic" class="ghost" title="Falar">🎤</button>
           <span id="status"></span>
           <span class="spacer"></span>
-          <span id="agentChip" class="chip lock" title="Agente (travado)">—</span>
-          <span id="cwdChip" class="chip lock" title="Pasta (travada)"></span>
-          <select id="modelSel" title="Modelo"></select>
-          <select id="effortSel" title="Esforço / capacidade"></select>
+          <button type="button" id="agentBtn" class="pill" title="Agente / IA">🤖 <span class="cap" id="agentName">—</span></button>
+          <button type="button" id="cwdBtn" class="pill" title="Pasta de trabalho">📁 <span class="cap" id="cwdName">—</span></button>
+          <button type="button" id="modelBtn" class="pill" title="Modelo"><span class="cap" id="modelName">—</span></button>
+          <button type="button" id="effortBtn" class="pill" title="Esforço / capacidade">⚡ <span class="cap" id="effortName">—</span></button>
           <button type="button" id="speak" class="ghost" title="Falar respostas (voz)">🔇</button>
           <button type="submit">Enviar</button>
         </div>
@@ -112,12 +132,14 @@
     </main>
   </div>
 
-  <div id="newModal" class="modal hidden"><div class="card">
-    <b>Nova sessão</b>
-    <label>Agente (travado nesta sessão)<select id="newAgent"></select></label>
-    <div>Pasta de trabalho: <span id="newPath" class="mut"></span></div>
-    <div class="dirlist" id="dirList"></div>
-    <div class="row"><button id="newUp" class="ghost">⬆ acima</button><button id="newCreate">Criar nesta pasta</button><button id="newCancel" class="ghost">Cancelar</button></div>
+  <!-- floating popover for the footer pills (agent / folder / model / effort) -->
+  <div id="pop" class="pop hidden"></div>
+
+  <div id="searchModal" class="modal hidden"><div class="card">
+    <b>🔎 Buscar entre sessões</b>
+    <input id="searchInput" type="text" placeholder="Ex.: como está o progresso da sessão de SLA?" autocomplete="off">
+    <div id="searchResults"></div>
+    <div class="row"><button id="searchGo">Buscar</button><button id="searchClose" class="ghost">Fechar</button></div>
   </div></div>
 
   <div id="settings" class="modal hidden"><div class="card">
@@ -142,10 +164,10 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
-    const E = ['log','dot','title','agentChip','cwdChip','modelSel','effortSel','speak','recents','moreBtn','files',
-      'newSess','chooseFolder','searchBtn','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+    const E = ['log','dot','title','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','pop','speak','recents','moreBtn','files',
+      'newSess','searchBtn','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setGate','spkList','setEnroll','setClose','composer','input','mic','attach','file','attachRow','usage','limit',
-      'menuBtn','side','newModal','newAgent','newPath','dirList','newUp','newCreate','newCancel','status'].reduce((o,k)=>(o[k]=$(k),o),{});
+      'menuBtn','side','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
 
@@ -177,12 +199,13 @@
         d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); } E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
-    function addSearchCard(m){ const d=document.createElement('div'); d.className='msg bot';
-      let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
+    function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
       (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
         (x.why||x.progress?`<br><span class="mut">${esc(x.why||x.progress||'')}</span>`:'')+
         (m.action?`<br><button type="button" class="exec ghost" data-id="${esc(x.id)}" data-action="${esc(m.action)}">▶ executar ação</button>`:'')+`</div>`; });
-      d.innerHTML=h; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; if(m.audio) playTTS(m.audio); }
+      return h; }
+    function addSearchCard(m){ const d=document.createElement('div'); d.className='msg bot'; d.innerHTML=searchCardHtml(m); E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; if(m.audio) playTTS(m.audio); }
+    function renderSearchInto(c,m){ c.innerHTML=searchCardHtml(m); if(m.audio) playTTS(m.audio); }
     function refreshFiles(msgs){ E.files.innerHTML=''; const f=[]; msgs.forEach(m=>{ if(m.role!=='assistant')return; const t=m.text;
       (t.match(/!\[[^\]]*\]/g)||[]).forEach(x=>f.push('🖼 '+(x.match(/!\[([^\]]*)\]/)?.[1]||'imagem')));
       (t.match(/\b[\w./-]+\.(ts|tsx|js|py|json|md|html|css|yml|yaml|sh)\b/g)||[]).forEach(x=>f.push('📄 '+x)); });
@@ -197,19 +220,83 @@
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
     const modelObj=(agent,id)=>{ const ms=capsFor(agent).models; return ms.find(m=>m.id===id)||ms[0]; };
     function fillEfforts(effSel,agent,modelId,val){ const m=modelObj(agent,modelId); const efs=(m&&m.efforts)||[]; fillSel(effSel,efs, (efs.includes(val)&&val)||(m&&m.defaultEffort)||efs[0]); }
-    function syncModelEffort(){ const c=capsFor(currentAgent); const model=(cfg.model&&c.models.some(m=>m.id===cfg.model))?cfg.model:(c.defaultModel||(c.models[0]||{}).id);
-      fillSel(E.modelSel,c.models,model); fillEfforts(E.effortSel,currentAgent,E.modelSel.value,cfg.effort); }
-    E.modelSel.onchange=()=>fillEfforts(E.effortSel,currentAgent,E.modelSel.value,cfg.effort);
+    // footer pill state: model/effort vary per-message; agent/folder lock once the session starts
+    let curModel=null, curEffort=null, curCwd='', curStarted=false;
+    const modelLabel=(agent,id)=>{ const m=modelObj(agent,id); return m?(m.label||m.id):(id||'—'); };
+    const effortsFor=(agent,id)=>{ const m=modelObj(agent,id); return (m&&m.efforts)||[]; };
+    const EFF_PT={minimal:'Mínimo',low:'Baixo',medium:'Médio',high:'Alto',xhigh:'Muito alto',max:'Máximo',ultra:'Ultra',ultracode:'Ultracode'};
+    const effLabel=v=>v?(EFF_PT[v]||v):'—';
     const base = p => (p||'').replace(/[\\/]$/,'').split(/[\\/]/).pop()||p;
+    function syncModelEffort(){ const c=capsFor(currentAgent);
+      curModel=(cfg.model&&c.models.some(m=>m.id===cfg.model))?cfg.model:(c.defaultModel||(c.models[0]||{}).id||null);
+      const efs=effortsFor(currentAgent,curModel);
+      curEffort=(cfg.effort&&efs.includes(cfg.effort))?cfg.effort:((modelObj(currentAgent,curModel)||{}).defaultEffort||efs[efs.length-1]||null);
+      renderControls(); }
+    function renderControls(){
+      E.agentName.textContent=currentAgent||'—';
+      E.cwdName.textContent=base(curCwd)||'—';
+      E.modelName.textContent=modelLabel(currentAgent,curModel);
+      E.effortName.textContent=effLabel(curEffort);
+      E.agentBtn.classList.toggle('lock',curStarted); E.cwdBtn.classList.toggle('lock',curStarted);
+      E.agentBtn.title=curStarted?'Agente (travado — sessão já iniciada)':'Agente / IA — clique para trocar (só em sessão nova)';
+      E.cwdBtn.title=curStarted?((curCwd||'')+' — travada'):((curCwd||'')+' — clique para escolher (só em sessão nova)'); }
 
     // ---------- new session ----------
-    E.newSess.onclick=()=>{ // instant: last used dir + default agent (sem escolher pasta)
+    E.newSess.onclick=()=>{ // cria sessão vazia (agente/pasta ajustáveis pelos pills até a 1ª msg)
       const agent=cfg.agent||currentAgent||(caps[0]||{}).name; const cwd=cfg.lastCwd||''; tx({t:'new',agent,cwd}); E.side.classList.remove('open'); };
-    E.chooseFolder.onclick=()=>{ fillSel(E.newAgent,caps.map(c=>c.name),cfg.agent||currentAgent||(caps[0]||{}).name); tx({t:'listdir',path:cfg.lastCwd||''}); E.newModal.classList.remove('hidden'); };
-    E.searchBtn.onclick=()=>{ const q=prompt('Buscar entre sessões (ex.: como está o progresso da sessão X?):'); if(q&&q.trim()){ tx({t:'search',query:q.trim(),speak}); E.side.classList.remove('open'); } };
-    E.newUp.onclick=()=>tx({t:'listdir',path:E.newUp.dataset.parent||''});
-    E.newCancel.onclick=()=>E.newModal.classList.add('hidden');
-    E.newCreate.onclick=()=>{ tx({t:'new',agent:E.newAgent.value,cwd:browsePath}); E.newModal.classList.add('hidden'); E.side.classList.remove('open'); };
+
+    // ---------- search (input com foco imediato; sem prompt) ----------
+    E.searchBtn.onclick=()=>openSearch();
+    function openSearch(){ E.searchResults.innerHTML=''; E.searchInput.value=''; E.searchModal.classList.remove('hidden'); E.side.classList.remove('open'); setTimeout(()=>E.searchInput.focus(),30); }
+    function runSearch(){ const q=E.searchInput.value.trim(); if(!q)return; E.searchResults.innerHTML='<div class="mut">Buscando…</div>'; tx({t:'search',query:q,speak}); }
+    E.searchGo.onclick=runSearch;
+    E.searchClose.onclick=()=>E.searchModal.classList.add('hidden');
+    E.searchInput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); runSearch(); } };
+    E.searchResults.addEventListener('click',(e)=>{
+      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort}); tx({t:'open',sessionId:exec.dataset.id}); E.searchModal.classList.add('hidden'); return; }
+      const match=e.target.closest('.match'); if(match){ tx({t:'open',sessionId:match.dataset.id}); E.searchModal.classList.add('hidden'); } });
+
+    // ---------- footer popovers (pills clicáveis) ----------
+    let popMode=null;
+    function closePop(){ E.pop.classList.add('hidden'); E.pop.innerHTML=''; E.pop._anchor=null; popMode=null; }
+    function openPop(anchor,build){ closePop(); build(E.pop); E.pop.classList.remove('hidden'); E.pop._anchor=anchor;
+      const r=anchor.getBoundingClientRect(), pr=E.pop.getBoundingClientRect();
+      const left=Math.max(8,Math.min(r.left, innerWidth-pr.width-8)); let top=r.top-pr.height-8; if(top<8) top=r.bottom+8;
+      E.pop.style.left=left+'px'; E.pop.style.top=top+'px'; }
+    function togglePop(anchor,build){ if(!E.pop.classList.contains('hidden') && E.pop._anchor===anchor) closePop(); else openPop(anchor,build); }
+    document.addEventListener('click',(e)=>{ if(E.pop.classList.contains('hidden'))return; if(E.pop.contains(e.target)||e.target.closest('.pill'))return; closePop(); });
+    document.addEventListener('keydown',(e)=>{ if(e.key==='Escape') closePop(); });
+    const ph=(t)=>{ const d=document.createElement('div'); d.className='ph'; d.textContent=t; return d; };
+
+    function buildAgentPop(p){ p.appendChild(ph('Agente / IA')); caps.forEach(c=>{ const o=document.createElement('div'); o.className='opt'+(c.name===currentAgent?' sel':'');
+      o.innerHTML='🤖 '+esc(c.name)+(c.name===currentAgent?'<span class="r">atual</span>':'');
+      o.onclick=()=>{ closePop(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); }; p.appendChild(o); }); }
+
+    function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); (c.models||[]).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
+      o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
+      o.onclick=()=>{ closePop(); curModel=mm.id; cfg.model=mm.id; const efs=effortsFor(currentAgent,mm.id); if(!efs.includes(curEffort)) curEffort=((modelObj(currentAgent,mm.id)||{}).defaultEffort||efs[efs.length-1]||null); cfg.effort=curEffort; saveCfg(); renderControls(); }; p.appendChild(o); }); }
+
+    function buildEffortPop(p){ const efs=effortsFor(currentAgent,curModel); p.appendChild(ph('Esforço · '+(currentAgent||'')));
+      if(!efs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='sem níveis para este modelo'; p.appendChild(d); return; }
+      const lbl=document.createElement('div'); lbl.className='slbl'; lbl.innerHTML='<span>Mais rápido</span><span>Mais inteligente</span>'; p.appendChild(lbl);
+      const rng=document.createElement('input'); rng.type='range'; rng.min=0; rng.max=efs.length-1; rng.step=1; let idx=efs.indexOf(curEffort); if(idx<0) idx=efs.length-1; rng.value=idx; p.appendChild(rng);
+      const val=document.createElement('div'); val.className='sval'; val.textContent=effLabel(efs[idx]); p.appendChild(val);
+      rng.oninput=()=>{ val.textContent=effLabel(efs[+rng.value]); };
+      rng.onchange=()=>{ curEffort=efs[+rng.value]; cfg.effort=curEffort; saveCfg(); renderControls(); }; }
+
+    function buildFolderPop(p){ popMode='folder'; p.appendChild(ph('Pasta de trabalho'));
+      const path=document.createElement('div'); path.className='fpath'; path.id='popPath'; path.textContent='carregando…'; p.appendChild(path);
+      const list=document.createElement('div'); list.className='flist'; list.id='popList'; list.style.height='210px'; p.appendChild(list);
+      const row=document.createElement('div'); row.className='frow';
+      const up=document.createElement('button'); up.className='ghost'; up.id='popUp'; up.textContent='⬆ acima'; up.onclick=()=>tx({t:'listdir',path:up.dataset.parent||''});
+      const use=document.createElement('button'); use.id='popUse'; use.textContent='Usar esta pasta'; use.onclick=()=>{ const b=browsePath; closePop(); tx({t:'configure',sessionId:currentSession,cwd:b}); };
+      row.appendChild(up); row.appendChild(use); p.appendChild(row);
+      tx({t:'listdir',path:curCwd||cfg.lastCwd||''}); }
+
+    E.agentBtn.onclick=()=>{ if(curStarted)return; togglePop(E.agentBtn,buildAgentPop); };
+    E.cwdBtn.onclick=()=>{ if(curStarted)return; togglePop(E.cwdBtn,buildFolderPop); };
+    E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
+    E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
 
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
@@ -248,16 +335,16 @@
       ws.onopen=()=>{ E.dot.classList.add('on'); tx({t:'wake',enabled:cfg.wake}); }; ws.onclose=()=>{ E.dot.classList.remove('on'); setTimeout(connect,1500); };
       ws.onmessage=(e)=>{ const m=JSON.parse(e.data);
         if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} }
-        else if(m.t==='dirs'){ browsePath=m.path; E.newPath.textContent=m.path; E.newUp.dataset.parent=m.parent||'';
-          E.dirList.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); E.dirList.appendChild(d); }); }
+        else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
+          if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
         else if(m.t==='sessions'){ sessions=m.sessions||[]; renderRecents(); if(!currentSession){ if(sessions.length) tx({t:'open',sessionId:sessions[0].id}); else E.newSess.onclick(); } }
-        else if(m.t==='history'){ currentSession=m.sessionId; currentAgent=(m.session||{}).agent||caps[0]?.name; const cwd=(m.session||{}).cwd||'';
-          if(cwd){cfg.lastCwd=cwd;saveCfg();} E.agentChip.textContent='🤖 '+currentAgent; E.cwdChip.textContent='📁 '+base(cwd); E.cwdChip.title=cwd;
-          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); E.log.innerHTML=''; (m.messages||[]).forEach(addMsg); refreshFiles(m.messages||[]); renderRecents(); }
-        else if(m.t==='message'){ if(m.message.sessionId===currentSession) addMsg(m.message); }
+        else if(m.t==='history'){ currentSession=m.sessionId; currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||'';
+          if(curCwd){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
+          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); E.log.innerHTML=''; (m.messages||[]).forEach(addMsg); refreshFiles(m.messages||[]); renderRecents(); closePop(); }
+        else if(m.t==='message'){ if(m.message.sessionId===currentSession){ addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
-        else if(m.t==='searchResult'){ addSearchCard(m); }
+        else if(m.t==='searchResult'){ if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
         else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }
@@ -280,7 +367,7 @@
           const spoke = !cfg.noise || peak>8; // limiar simples de fala
           if(auto && !spoke) return; // continuação: silêncio -> ignora
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
-          tx({t:'voice',audio:b64,ext:'webm',speak,model:E.modelSel.value,effort:E.effortSel.value,sessionId:currentSession}); };
+          tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); };
         rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; status('listening', auto?`escutando follow-up… (${cfg.continueSec}s)`:'escutando…');
         if(auto) contTimer=setTimeout(()=>{ if(recording) rec.stop(); }, cfg.continueSec*1000);
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
@@ -291,14 +378,14 @@
     E.menuBtn.onclick=()=>E.side.classList.toggle('open');
     E.log.addEventListener('click',(e)=>{
       if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
-      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:E.modelSel.value,effort:E.effortSel.value}); tx({t:'open',sessionId:exec.dataset.id}); return; }
+      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort}); tx({t:'open',sessionId:exec.dataset.id}); return; }
       const match=e.target.closest('.match'); if(match){ tx({t:'open',sessionId:match.dataset.id}); }
     });
     E.attach.onclick=()=>E.file.click();
     E.file.onchange=async()=>{ for(const f of E.file.files){ attachments.push({name:f.name,content:await f.text()}); } E.file.value=''; renderAttach(); };
     function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='📎 '+a.name+' ✕'; c.onclick=()=>{attachments.splice(i,1);renderAttach();}; E.attachRow.appendChild(c); }); }
     E.composer.onsubmit=(e)=>{ e.preventDefault(); const text=E.input.value.trim(); if(!text&&!attachments.length)return;
-      tx({t:'send',text:text||'(anexo)',speak,model:E.modelSel.value,effort:E.effortSel.value,sessionId:currentSession,attachments});
+      tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments});
       E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach(); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
