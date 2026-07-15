@@ -32,7 +32,7 @@ export async function transcribe(audio: Buffer, lang?: string, ext = "webm"): Pr
 
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { windowsHide: true });
+    const p = spawn(cmd, args, { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } }); // UTF-8: acentos pt-BR na transcrição
     let out = "";
     let err = "";
     p.stdout.on("data", (d) => (out += d.toString()));

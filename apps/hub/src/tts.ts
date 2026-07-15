@@ -20,7 +20,7 @@ export async function synthesize(text: string, voice = "en_GB-alan-medium"): Pro
   if (!existsSync(model)) throw new Error(`voice model not found: ${model}`);
   const out = join(tmpdir(), `jarvis_tts_${Date.now()}.wav`);
   await new Promise<void>((resolve, reject) => {
-    const p = spawn(PY, ["-m", "piper", "-m", model, "-f", out, "--length-scale", LENGTH, "--sentence-silence", SILENCE, "--noise-w-scale", NOISEW], { windowsHide: true });
+    const p = spawn(PY, ["-m", "piper", "-m", model, "-f", out, "--length-scale", LENGTH, "--sentence-silence", SILENCE, "--noise-w-scale", NOISEW], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } }); // UTF-8: acentos no texto falado
     p.stdin.write(text);
     p.stdin.end();
     let err = "";

@@ -24,7 +24,7 @@ export interface SpeakerId {
 
 function run(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const p = spawn(PY, [SCRIPT, ...args], { windowsHide: true });
+    const p = spawn(PY, [SCRIPT, ...args], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
     let out = "";
     let err = "";
     p.stdout.on("data", (d) => (out += d.toString()));
