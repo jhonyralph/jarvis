@@ -489,23 +489,27 @@
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
       const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…');
-      a.onended=()=>{ status(''); if(cfg.continue && !recording) startRec(true); }; a.play().catch(()=>status('')); }
+      a.onended=()=>{ status(''); if((cfg.continue || lastWasVoice) && !recording) startRec(true); }; a.play().catch(()=>status('')); }
 
-    // ---------- mic (manual + continuação, com checagem simples de fala/ruído) ----------
-    let rec=null,chunks=[],recording=false,contTimer=null;
+    // ---------- mic (manual + continuação hands-free com VAD) ----------
+    let rec=null,chunks=[],recording=false,contTimer=null,lastWasVoice=false;
     async function startRec(auto){ if(recording) return;
       try{ const st=await navigator.mediaDevices.getUserMedia({audio:{noiseSuppression:cfg.noise,echoCancellation:true,autoGainControl:true}}); rec=new MediaRecorder(st); chunks=[]; recording=true;
-        // detector simples de fala (pico de amplitude) p/ anti-ruído / descartar silêncio
+        // VAD: detecta fala e fim de fala (silêncio após falar) para não gravar o tempo todo
         const ac=new AudioContext(); const src=ac.createMediaStreamSource(st); const an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
-        const buf=new Uint8Array(an.fftSize); let peak=0; const poll=setInterval(()=>{ an.getByteTimeDomainData(buf); let mx=0; for(const v of buf) mx=Math.max(mx,Math.abs(v-128)); peak=Math.max(peak,mx); },100);
+        const buf=new Uint8Array(an.fftSize); let spoke=false,silence=0,elapsed=0; const TH=cfg.noise?10:6;
+        const poll=setInterval(()=>{ an.getByteTimeDomainData(buf); let mx=0; for(const v of buf) mx=Math.max(mx,Math.abs(v-128)); elapsed+=100;
+          if(mx>TH){ spoke=true; silence=0; } else if(spoke){ silence+=100; }
+          if(auto && rec.state==='recording'){ if(spoke&&silence>=1100){ rec.stop(); }   // parou de falar -> encerra
+                    else if(!spoke&&elapsed>=6000){ rec.stop(); } }                        // ninguém falou em 6s -> desiste
+        },100);
         rec.ondataavailable=(e)=>chunks.push(e.data);
         rec.onstop=async()=>{ clearInterval(poll); clearTimeout(contTimer); ac.close(); st.getTracks().forEach(t=>t.stop()); recording=false; E.mic.classList.remove('on'); E.mic.textContent='🎤'; status('');
-          const spoke = !cfg.noise || peak>8; // limiar simples de fala
-          if(auto && !spoke) return; // continuação: silêncio -> ignora
+          if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
-          tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); };
-        rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; status('listening', auto?`escutando follow-up… (${cfg.continueSec}s)`:'escutando…');
-        if(auto) contTimer=setTimeout(()=>{ if(recording) rec.stop(); }, cfg.continueSec*1000);
+          lastWasVoice=true; tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); };
+        rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; status('listening', auto?'escutando resposta…':'escutando…');
+        if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
     E.mic.onclick=()=>{ if(recording){ rec.stop(); } else startRec(false); };
 
@@ -524,7 +528,7 @@
     E.file.onchange=async()=>{ for(const f of E.file.files){ attachments.push({name:f.name,content:await f.text()}); } E.file.value=''; renderAttach(); };
     function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='📎 '+a.name+' ✕'; c.onclick=()=>{attachments.splice(i,1);renderAttach();}; E.attachRow.appendChild(c); }); }
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
-      tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments}); showPending();
+      lastWasVoice=false; tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments}); showPending();
       E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach(); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
