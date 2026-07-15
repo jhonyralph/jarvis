@@ -179,9 +179,13 @@
       E.moreBtn.classList.toggle('hidden', sessions.length<=shown); }
     E.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
 
-    const capsFor = n => caps.find(c=>c.name===n)||{models:[],efforts:[]};
-    function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option');o.value=o.textContent=x;if(x===val)o.selected=true;sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
-    function syncModelEffort(){ const c=capsFor(currentAgent); fillSel(E.modelSel,c.models,cfg.model||c.defaultModel||c.models[0]); fillSel(E.effortSel,c.efforts,cfg.effort||c.defaultEffort||c.efforts[0]); }
+    const capsFor = n => caps.find(c=>c.name===n)||{models:[],defaultModel:null};
+    function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
+    const modelObj=(agent,id)=>{ const ms=capsFor(agent).models; return ms.find(m=>m.id===id)||ms[0]; };
+    function fillEfforts(effSel,agent,modelId,val){ const m=modelObj(agent,modelId); const efs=(m&&m.efforts)||[]; fillSel(effSel,efs, (efs.includes(val)&&val)||(m&&m.defaultEffort)||efs[0]); }
+    function syncModelEffort(){ const c=capsFor(currentAgent); const model=(cfg.model&&c.models.some(m=>m.id===cfg.model))?cfg.model:(c.defaultModel||(c.models[0]||{}).id);
+      fillSel(E.modelSel,c.models,model); fillEfforts(E.effortSel,currentAgent,E.modelSel.value,cfg.effort); }
+    E.modelSel.onchange=()=>fillEfforts(E.effortSel,currentAgent,E.modelSel.value,cfg.effort);
     const base = p => (p||'').replace(/[\\/]$/,'').split(/[\\/]/).pop()||p;
 
     // ---------- new session ----------
@@ -194,10 +198,11 @@
 
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
-      fillSel(E.setModel,c.models,cfg.model||c.defaultModel); fillSel(E.setEffort,c.efforts,cfg.effort||c.defaultEffort);
+      fillSel(E.setModel,c.models,cfg.model||c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setMulti.checked=cfg.multi;
       E.settings.classList.remove('hidden'); };
-    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.models,c.defaultModel); fillSel(E.setEffort,c.efforts,c.defaultEffort); };
+    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.models,c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
+    E.setModel.onchange=()=>fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value);
     E.setEnroll.onclick=()=>addErr('Identificação de voz: em desenvolvimento (ver plano).');
     E.setClose.onclick=()=>{ Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
       continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,multi:E.setMulti.checked});

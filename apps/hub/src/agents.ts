@@ -1,11 +1,16 @@
 /**
  * Agnostic agent layer. Adding an agent = one adapter + register it; routing never
- * changes. Each adapter exposes capabilities() (models + effort levels) so the UI
- * can offer a searchable model/effort picker per agent — dynamic, not hardcoded in
- * the client. (Today the lists live in the adapter; can be made API-backed later.)
+ * changes. capabilities() is DISCOVERED AT RUNTIME (no hardcoded lists):
+ *   - claude-code: GET https://api.anthropic.com/v1/models (OAuth token from
+ *     ~/.claude/.credentials.json). Efforts = the --effort ladder (low..max) plus
+ *     "ultracode" (a Claude-Code menu mode = xhigh + orchestration; mapped to
+ *     --effort xhigh when sent). Models are PER-family; efforts shared.
+ *   - codex: `codex debug models` (JSON catalog); efforts are PER-MODEL
+ *     (supported_reasoning_levels); falls back to ~/.codex/models_cache.json.
+ * Results cache ~1h; on any failure we fall back to a small pinned list.
  */
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -14,11 +19,17 @@ export interface AgentReply {
   usage?: { costUsd?: number; inputTokens?: number; outputTokens?: number };
 }
 
-export interface AgentCaps {
-  models: string[];
+/** A model + the effort levels IT supports (efforts can differ per model). */
+export interface ModelInfo {
+  id: string;
+  label?: string;
   efforts: string[];
-  defaultModel?: string;
   defaultEffort?: string;
+}
+
+export interface AgentCaps {
+  models: ModelInfo[];
+  defaultModel?: string;
 }
 
 export interface SendOpts {
@@ -28,7 +39,7 @@ export interface SendOpts {
 
 export interface AgentAdapter {
   readonly name: string;
-  capabilities(): AgentCaps;
+  capabilities(): Promise<AgentCaps>;
   available(): Promise<boolean>;
   send(sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply>;
 }
@@ -48,9 +59,9 @@ export class AgentRegistry {
   names(): string[] {
     return [...this.byName.keys()];
   }
-  /** [{ name, models, efforts, ... }] for the UI's agent + model + effort pickers */
-  describe(): Array<{ name: string } & AgentCaps> {
-    return [...this.byName.values()].map((a) => ({ name: a.name, ...a.capabilities() }));
+  /** [{ name, models:[{id,label,efforts,defaultEffort}], defaultModel }] for the UI pickers */
+  async describe(): Promise<Array<{ name: string } & AgentCaps>> {
+    return Promise.all([...this.byName.values()].map(async (a) => ({ name: a.name, ...(await a.capabilities()) })));
   }
   setDefault(name: string): void {
     if (this.byName.has(name)) this.defaultName = name;
@@ -64,8 +75,8 @@ export class AgentRegistry {
 
 export class MockAgentAdapter implements AgentAdapter {
   readonly name = "mock";
-  capabilities(): AgentCaps {
-    return { models: [], efforts: [] };
+  async capabilities(): Promise<AgentCaps> {
+    return { models: [] };
   }
   async available(): Promise<boolean> {
     return true;
@@ -75,27 +86,41 @@ export class MockAgentAdapter implements AgentAdapter {
   }
 }
 
-/** Native Claude Code, headless. Requires `claude` logged in (claude /login). */
+/** Native Claude Code, headless. Requires `claude` logged in. */
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly name = "claude-code";
   private sessions = new Map<string, string>();
+  private capsCache?: { at: number; caps: AgentCaps };
   private bin =
     existsSync(join(homedir(), ".local", "bin", process.platform === "win32" ? "claude.exe" : "claude"))
       ? join(homedir(), ".local", "bin", process.platform === "win32" ? "claude.exe" : "claude")
       : "claude";
 
-  capabilities(): AgentCaps {
-    return {
-      models: ["opus", "sonnet", "haiku"],
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-      defaultModel: "opus",
-      defaultEffort: "high",
-    };
-  }
-
-  /** the native claude session id backing a Jarvis session (for a future "open in native Claude") */
-  claudeSessionId(sessionId: string): string | undefined {
-    return this.sessions.get(sessionId);
+  async capabilities(): Promise<AgentCaps> {
+    if (this.capsCache && Date.now() - this.capsCache.at < 3_600_000) return this.capsCache.caps;
+    // --effort ladder (low..max) + Claude-Code "ultracode" pseudo-level.
+    const efforts = ["low", "medium", "high", "xhigh", "max", "ultracode"];
+    let models: ModelInfo[];
+    try {
+      const token = JSON.parse(readFileSync(join(homedir(), ".claude", ".credentials.json"), "utf8"))?.claudeAiOauth?.accessToken;
+      if (!token) throw new Error("no token");
+      const res = await fetch("https://api.anthropic.com/v1/models?limit=1000", {
+        headers: { authorization: `Bearer ${token}`, "anthropic-version": "2023-06-01", "anthropic-beta": "oauth-2025-04-20" },
+      });
+      const json: any = await res.json();
+      models = (json?.data || []).map((m: any) => ({ id: m.id, label: m.display_name, efforts, defaultEffort: "high" }));
+      // family aliases up front (opus/sonnet/haiku/fable resolve to the newest of each)
+      models = [
+        ...["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high" })),
+        ...models,
+      ];
+      if (models.length <= 4) throw new Error("empty models");
+    } catch {
+      models = ["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high" }));
+    }
+    const caps: AgentCaps = { models, defaultModel: process.env.ANTHROPIC_MODEL || "opus" };
+    this.capsCache = { at: Date.now(), caps };
+    return caps;
   }
 
   async available(): Promise<boolean> {
@@ -111,7 +136,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const prev = this.sessions.get(sessionId);
     const args = ["-p", text, "--output-format", "json", "--permission-mode", "bypassPermissions"];
     if (opts?.model) args.push("--model", opts.model);
-    if (opts?.effort) args.push("--effort", opts.effort);
+    if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort); // ultracode -> xhigh
     if (prev) args.unshift("--resume", prev);
     const raw = await run(this.bin, args, cwd, "", false);
     const json = JSON.parse(raw);
@@ -124,17 +149,38 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 }
 
-/** Native OpenAI Codex, headless (`codex exec`). Requires `codex login` once. */
+/** Native OpenAI Codex, headless (`codex exec`). Requires `codex login`. */
 export class CodexAdapter implements AgentAdapter {
   readonly name = "codex";
   private started = new Set<string>();
+  private capsCache?: { at: number; caps: AgentCaps };
 
-  capabilities(): AgentCaps {
-    return {
-      models: ["gpt-5-codex", "gpt-5", "o3"],
-      efforts: ["low", "medium", "high"],
-      defaultEffort: "medium",
-    };
+  async capabilities(): Promise<AgentCaps> {
+    if (this.capsCache && Date.now() - this.capsCache.at < 3_600_000) return this.capsCache.caps;
+    const mapModels = (arr: any[]): ModelInfo[] =>
+      (arr || [])
+        .filter((m) => m.visibility === "list")
+        .map((m) => ({ id: m.slug, label: m.display_name, efforts: (m.supported_reasoning_levels || []).map((e: any) => e.effort), defaultEffort: m.default_reasoning_level }));
+    let models: ModelInfo[] = [];
+    try {
+      const out = await run("codex", ["debug", "models"], homedir(), "", true);
+      models = mapModels(JSON.parse(out.slice(out.indexOf("{"))).models);
+    } catch {
+      try {
+        const cache = JSON.parse(readFileSync(join(homedir(), ".codex", "models_cache.json"), "utf8"));
+        models = mapModels(cache.models);
+      } catch {
+        const eff = ["low", "medium", "high", "xhigh"];
+        models = [
+          { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: [...eff, "max"], defaultEffort: "medium" },
+          { id: "gpt-5.6-terra", label: "GPT-5.6-Terra", efforts: [...eff, "max", "ultra"], defaultEffort: "medium" },
+          { id: "gpt-5.6-luna", label: "GPT-5.6-Luna", efforts: [...eff, "max"], defaultEffort: "medium" },
+        ];
+      }
+    }
+    const caps: AgentCaps = { models, defaultModel: models[0]?.id };
+    this.capsCache = { at: Date.now(), caps };
+    return caps;
   }
 
   async available(): Promise<boolean> {

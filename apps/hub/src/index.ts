@@ -74,8 +74,8 @@ function broadcastAll(obj: unknown): void {
   for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(s);
 }
 
-wss.on("connection", (ws: WebSocket) => {
-  send(ws, { t: "hello", agents: agents.describe(), default: agents.default });
+wss.on("connection", async (ws: WebSocket) => {
+  send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
   send(ws, { t: "sessions", sessions: store.list() });
   ws.on("close", () => subs.delete(ws));
 
