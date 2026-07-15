@@ -38,15 +38,40 @@ itself) runs a **Runner** that executes agents locally and streams back.
    today keeps working unchanged; remote machines are additive.
 4. **Auth lives in the app, transport-agnostic.** Tailscale is *an operator's*
    deployment choice, not an app dependency — others may install without it.
-   - **Runner↔Hub: app token, always on.** Generated on the Hub
-     (`~/.jarvis/hub-token`), embedded into the runner install. The Hub rejects
-     runners without it. Zero UX cost (machine-to-machine).
-   - **Client↔Hub (UI): optional token, off by default.** Env `JARVIS_UI_TOKEN`;
-     when set, the UI requires it. For deployments exposed without a private
-     network. On by default would add friction to the private (Tailscale) setup.
-   - The app only binds a port; how you reach it (Tailscale / VPN / tunnel /
-     LAN) is external. **Never expose the UI publicly without `JARVIS_UI_TOKEN`
-     set** — the Hub runs agents with `bypassPermissions` (unauth = RCE).
+   The app only binds a port; how you reach it (Tailscale / VPN / Cloudflare
+   Tunnel / reverse proxy / LAN) is external, but must carry TLS for any non-
+   loopback access. Credentials never travel over a non-loopback `ws://`.
+4a. **Authentication is MANDATORY (not optional).** The moment Jarvis may be
+   shared with other people, "no auth" is untenable: the Hub runs agents with
+   `bypassPermissions`, so access == a shell on the target machine. Auth makes
+   that access *accountable and revocable*; it does NOT sandbox it (see 4d).
+   - **Auth primitive: device pairing by invite.** Per-device tokens, revocable.
+     The owner mints a one-time **invite** (code/link, TTL, role, allowed
+     runners); a new device redeems it and receives its own long-lived token.
+     No password management; sharing = sending an invite. Optional password can
+     be layered later as a 2nd factor.
+   - **Token storage:** high-entropy random tokens; the Hub stores only a SHA-256
+     **hash** (`~/.jarvis/auth.json`), never plaintext. Client keeps the plaintext
+     (localStorage); every WS/HTTP call carries it; WS is gated on a first-message
+     `auth`. Static shell (HTML/JS, no data) may load unauthenticated.
+   - **Bootstrap:** first run is *unclaimed*; the Hub writes a one-time claim code
+     to `~/.jarvis/claim-code.txt` (and logs it). The first device redeems it to
+     become **owner**. No loopback auto-trust (unsafe behind a reverse proxy,
+     where every client appears as 127.0.0.1). Escape hatch: `JARVIS_AUTH=off`.
+4b. **Authorization:** roles **owner** (admin) and **member**; access is granted
+   **per-runner (allowlist)**. Owner sees all runners; members only the machines
+   the owner shared. Since each runner is a shell, this grain is the security
+   boundary for sharing.
+4c. **Connected devices:** the owner sees every device (label, last-seen, IP,
+   user-agent) and can revoke one or all; revoking kills that token immediately.
+4d. **Containment (the honest limit):** sharing a runner = giving a shell on that
+   machine. Chosen posture: **per-machine, explicit + audited** — share only what
+   you accept giving shell to; every action is attributed in an append-only audit
+   log (`~/.jarvis/audit.log`). (Sandbox-runner / restricted-no-bypass modes are
+   possible later but out of scope now.)
+4e. **Runner↔Hub auth (infra, separate from users):** per-runner token, minted by
+   the owner via "Add machine" and baked into the installer (`runner.env`).
+   Revocable per machine. Hub stores only the hash.
 5. **Machine identity:** auto from `os.hostname()` at `register`; the Hub stores
    an editable **label** per runner (fallback: hostname) so the user can tell
    machines apart.
@@ -60,10 +85,19 @@ itself) runs a **Runner** that executes agents locally and streams back.
   contract (`runner.ts`). No behavior change.
 - **B — `@jarvis/core`**: extract `agents.ts` / `native.ts` / `store.ts` (no heavy
   deps) into a shared package the Hub and Runner both import. Hub keeps working.
+- **S — Security / auth** (before routing, per decision 4a–4e). Built in slices:
+  - **S1 — auth core + WS gate:** `apps/hub/src/auth.ts` (users/devices/invites/
+    runner-tokens, all hashed), claim bootstrap, first-message WS auth gate, and
+    the client claim/login handshake. `JARVIS_AUTH=off` escape hatch. Tested so
+    the owner cannot be locked out.
+  - **S2 — invites + devices UI:** mint/redeem invites, device list + revoke,
+    per-runner grant model, minimal settings panel.
+  - **S3 — audit log:** append-only attribution of actions per device/user.
 - **C — `apps/runner`**: headless process, dials the Hub, registers with
-  hostname/OS, answers open/send/stream/list/native/stop. Token auth.
-- **D — Hub routing**: accept runner connections, registry + labels, embedded
-  local runner "machine 0", route client ops to the selected runner.
+  hostname/OS + per-runner token, answers open/send/stream/list/native/stop.
+- **D — Hub routing (identity-aware)**: accept runner connections, registry +
+  labels, embedded local runner "machine 0", enforce per-user runner grants,
+  route client ops to the selected runner.
 - **E — UI**: machine selector, online/offline dots, edit-label, settings
   view-mode (per-machine / unified + filter).
 - **F — Installers**: `install-runner.sh` (Linux/macOS) + `install-runner.ps1`
@@ -76,5 +110,6 @@ itself) runs a **Runner** that executes agents locally and streams back.
 
 ## Negative scope (not in this work)
 - No cross-runner session migration or file sync between machines.
-- No auth beyond the app token + optional UI token (no user accounts / SSO).
+- No SSO / OAuth; no password accounts in v1 (device-pairing + optional password
+  later). No runner sandboxing / restricted-no-bypass mode yet (see 4d).
 - Voice / STT / TTS / push stay Hub-only; runners are headless.

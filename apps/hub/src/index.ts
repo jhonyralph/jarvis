@@ -28,6 +28,7 @@ import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./s
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store } from "@jarvis/core";
+import * as auth from "./auth.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
@@ -135,6 +136,16 @@ function broadcastRuns(): void { broadcastAll({ t: "runs", active: [...activeRun
 // single-flight global para operações de voz (resumo/digest): só 1 por vez em toda a instância,
 // independente de qual chat/cliente pediu. Guard no servidor complementa a trava de UI (multi-device).
 let voiceOpBusy = false;
+
+// --- auth: per-connection principal (device pairing; see auth.ts). JARVIS_AUTH=off bypasses. ---
+type Conn = { userId: string; role: auth.Role; name: string; deviceId: string | null };
+const principals = new WeakMap<WebSocket, Conn>();
+function isAuthed(ws: WebSocket): boolean { return !auth.AUTH_ENABLED || principals.has(ws); }
+function clientMeta(req: any): { ip?: string; ua?: string } {
+  const ip = String(req?.socket?.remoteAddress || "").replace(/^::ffff:/, "");
+  const ua = req?.headers?.["user-agent"];
+  return { ip: ip || undefined, ua: typeof ua === "string" ? ua : undefined };
+}
 
 // Live mirror of native CLI sessions: tail the jsonl and broadcast new turns as they're
 // appended by an EXTERNAL Claude Code (or by us), so viewers update without refreshing.
@@ -403,7 +414,43 @@ async function broadcastVoiceState(): Promise<void> {
   broadcastAll({ t: "voice_state", gate: voiceGate, threshold: voiceThreshold ?? null, speakers });
 }
 
-wss.on("connection", (ws: WebSocket) => {
+/** Push the app's initial state to a (now authenticated) client. */
+async function sendInitialState(ws: WebSocket): Promise<void> {
+  send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
+  sendSessions(ws);
+  send(ws, { t: "runs", active: [...activeRuns] });
+  await sendVoiceState(ws);
+}
+
+/** Auth handshake — the ONLY messages a connection may send before it is authenticated.
+ *  Device pairing: authinfo (claim state) / claim (owner bootstrap) / redeem (invite) / auth (token). */
+async function handleAuth(ws: WebSocket, msg: any, req: any): Promise<void> {
+  try {
+    if (msg.t === "authinfo") { send(ws, { t: "authinfo", claimed: auth.isClaimed() }); return; }
+    if ((msg.t === "claim" || msg.t === "redeem") && typeof msg.code === "string") {
+      const r = msg.t === "claim"
+        ? auth.claim(msg.code, msg.label || "Dispositivo", clientMeta(req))
+        : auth.redeem(msg.code, msg.label || "Dispositivo", clientMeta(req));
+      principals.set(ws, { userId: r.user.id, role: r.user.role, name: r.user.name, deviceId: r.deviceId });
+      send(ws, { t: "authed", token: r.token, user: r.user });
+      await sendInitialState(ws);
+      return;
+    }
+    if (msg.t === "auth" && typeof msg.token === "string") {
+      const p = auth.authenticate(msg.token, clientMeta(req));
+      if (!p) { send(ws, { t: "unauth", reason: "token inválido", claimed: auth.isClaimed() }); return; }
+      principals.set(ws, { userId: p.user.id, role: p.user.role, name: p.user.name, deviceId: p.device.id });
+      send(ws, { t: "authed", user: { id: p.user.id, role: p.user.role, name: p.user.name } });
+      await sendInitialState(ws);
+      return;
+    }
+    send(ws, { t: "unauth", claimed: auth.isClaimed() });
+  } catch (e: any) {
+    send(ws, { t: "unauth", error: String(e?.message ?? e), claimed: auth.isClaimed() });
+  }
+}
+
+wss.on("connection", (ws: WebSocket, req: any) => {
   // Attach listeners SYNCHRONOUSLY (before any await) so a client message sent
   // right after connect is never dropped. The initial state below is async
   // (agent caps + speaker list, which spawns Python), so pushing it before the
@@ -419,6 +466,13 @@ wss.on("connection", (ws: WebSocket) => {
     try {
       msg = JSON.parse(raw.toString());
     } catch {
+      return;
+    }
+
+    // --- auth gate: until this connection is authenticated, ONLY the auth
+    //     handshake is processed; every other message is dropped. ---
+    if (auth.AUTH_ENABLED && !principals.has(ws)) {
+      await handleAuth(ws, msg, req);
       return;
     }
 
@@ -661,17 +715,22 @@ wss.on("connection", (ws: WebSocket) => {
     }
   });
 
-  // Initial state — pushed AFTER the message listener is attached (async: agent
-  // capabilities + speaker list). Any client message that races in is now handled.
-  void (async () => {
-    send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
-    sendSessions(ws);
-    send(ws, { t: "runs", active: [...activeRuns] });
-    await sendVoiceState(ws);
-  })();
+  // Initial state — pushed AFTER the message listener is attached. With auth ON,
+  // it is deferred until the client completes the handshake (see handleAuth ->
+  // sendInitialState); the client drives with authinfo/auth on connect. With auth
+  // OFF (JARVIS_AUTH=off), push immediately as before.
+  if (!auth.AUTH_ENABLED) void sendInitialState(ws);
 });
 
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
+  if (!auth.AUTH_ENABLED) {
+    console.log(`[hub] AUTH DISABLED (JARVIS_AUTH=off) — every connection is trusted. Use only on a private network.`);
+  } else if (!auth.isClaimed()) {
+    const code = auth.ensureClaimCode();
+    console.log(`[hub] UNCLAIMED. Claim ownership on your first device with this code:\n\n      ${code}\n\n      (also saved to ~/.jarvis/claim-code.txt)`);
+  } else {
+    console.log(`[hub] auth on — ${auth.listDevices().length} device(s) paired.`);
+  }
 });
