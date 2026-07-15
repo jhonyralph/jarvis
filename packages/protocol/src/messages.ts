@@ -1,8 +1,12 @@
 /**
- * Normalized WebSocket protocol between Clients, the Hub, and Runners.
- * All three speak these messages; the Hub is the router and source of truth.
+ * Client <-> Hub protocol (legacy sketch).
+ *
+ * NOTE: the as-built Client<->Hub protocol is currently defined inline in the Hub
+ * (apps/hub) and is richer than this sketch. The Runner<->Hub contract has moved to
+ * ./runner.ts (the real, implemented one). These Client types are kept for reference.
  */
 import type { AgentSession, AgentMessage } from "./adapters.js";
+import type { RunnerToHub, HubToRunner } from "./runner.js";
 
 // --- Client  ->  Hub ---
 export type ClientToHub =
@@ -25,17 +29,7 @@ export type HubToClient =
   | { t: "tts"; sessionId: string; audio: string; final?: boolean }
   | { t: "error"; message: string };
 
-// --- Runner  ->  Hub ---
-export type RunnerToHub =
-  | { t: "register"; runnerId: string; host: string; agents: string[] }
-  | { t: "session"; session: AgentSession }
-  | { t: "output"; message: AgentMessage };
-
-// --- Hub  ->  Runner ---
-export type HubToRunner =
-  | { t: "start"; sessionId: string; agent: string; cwd: string }
-  | { t: "send"; sessionId: string; text: string }
-  | { t: "stop"; sessionId: string };
+// Runner<->Hub types now live in ./runner.ts (the real contract).
 
 export type AnyMessage =
   | ClientToHub
