@@ -58,7 +58,8 @@ const server = createServer((req, res) => {
     return;
   }
   const ext = file.slice(file.lastIndexOf("."));
-  res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream" });
+  // no-cache: clients (esp. mobile) must always get the latest UI, never a stale index.html
+  res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-cache, must-revalidate" });
   res.end(readFileSync(file));
 });
 

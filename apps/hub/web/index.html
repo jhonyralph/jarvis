@@ -34,6 +34,10 @@
     .msg.me { align-self:flex-end; background:var(--me); color:#fff; padding:9px 13px; border-radius:14px; white-space:pre-wrap; max-width:min(88%,760px); }
     .msg.bot { align-self:flex-start; background:var(--bot); padding:2px 15px; border-radius:14px; max-width:min(88%,760px); }
     .msg.err { align-self:center; color:#fca5a5; font-size:13px; }
+    .msg.bot.pending { padding:11px 15px; } .typing { display:inline-flex; gap:5px; align-items:center; }
+    .typing i { width:7px; height:7px; border-radius:50%; background:var(--mut); animation:blink 1.2s infinite both; }
+    .typing i:nth-child(2){ animation-delay:.2s; } .typing i:nth-child(3){ animation-delay:.4s; }
+    @keyframes blink { 0%,80%,100%{ opacity:.25 } 40%{ opacity:1 } }
     .msg.bot p { margin:.55em 0; } .msg.bot h4 { margin:.7em 0 .3em; font-size:15px; }
     .msg.bot ul,.msg.bot ol { margin:.4em 0; padding-left:1.3em; }
     .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; }
@@ -231,7 +235,11 @@
     const esc = s => s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
     function inl(s){ return s.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g,(_,a,u)=>`<img alt="${a}" src="${u}">`)
       .replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g,(_,t,u)=>`<a href="${u}" target="_blank" rel="noopener">${t}</a>`)
-      .replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<em>$2</em>'); }
+      .replace(/`([^`]+)`/g,'<code>$1</code>')
+      .replace(/\*\*\*([^*]+)\*\*\*/g,'<strong><em>$1</em></strong>')
+      .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<em>$2</em>')
+      .replace(/~~([^~]+)~~/g,'<del>$1</del>'); }
     function tableHtml(rows){ const cells=r=>r.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(c=>inl(esc(c.trim())));
       const head=cells(rows[0]),body=rows.slice(2).map(cells); return `<table><thead><tr>${head.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${body.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }
     function md(text){ const codes=[]; text=text.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>{codes.push(c);return ` C${codes.length-1} `;});
@@ -241,13 +249,18 @@
         if(m=line.match(/^\s*(#{1,6})\s+(.*)/)){ h+=`<h4>${inl(esc(m[2]))}</h4>`; i++; continue; }
         if(/^\s*>\s?/.test(line)){ h+=`<blockquote>${inl(esc(line.replace(/^\s*>\s?/,'')))}</blockquote>`; i++; continue; }
         if(/^\s*([-*_]\s*){3,}$/.test(line)){ h+='<hr>'; i++; continue; }
-        if(/^\s*[-*+]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*[-*+]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*[-*+]\s+/,''))));i++;} h+=`<ul>${it.map(x=>`<li>${x}</li>`).join('')}</ul>`; continue; }
+        if(/^\s*[-*+]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*[-*+]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*[-*+]\s+/,''))).replace(/^\[([ xX])\]\s+/,(_,c)=>/x/i.test(c)?'☑ ':'☐ '));i++;} h+=`<ul>${it.map(x=>`<li>${x}</li>`).join('')}</ul>`; continue; }
         if(/^\s*\d+[.)]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*\d+[.)]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*\d+[.)]\s+/,''))));i++;} h+=`<ol>${it.map(x=>`<li>${x}</li>`).join('')}</ol>`; continue; }
         if(line.trim()===''){ i++; continue; } h+=`<p>${inl(esc(line))}</p>`; i++; } return h; }
     function addMsg(m){ const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
         if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
-        d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); } E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+        d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); }
+      if(pendingEl) E.log.insertBefore(d,pendingEl); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+    // "processando…" indicator so the user knows a request is in flight
+    let pendingEl=null;
+    function showPending(){ if(pendingEl)return; pendingEl=document.createElement('div'); pendingEl.className='msg bot pending'; pendingEl.innerHTML='<span class="typing"><i></i><i></i><i></i></span>'; E.log.appendChild(pendingEl); E.log.scrollTop=E.log.scrollHeight; }
+    function clearPending(){ if(pendingEl){ pendingEl.remove(); pendingEl=null; } }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
       (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
@@ -407,17 +420,17 @@
         else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){ const own=sessions.find(s=>!isNative(s.id)); if(own) tx({t:'open',sessionId:own.id}); else E.newSess.onclick(); } }
         else if(m.t==='history'){ currentSession=m.sessionId; currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
           if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
-          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); E.log.innerHTML=''; (m.messages||[]).forEach(addMsg); refreshFiles(m.messages||[]); renderRecents(); closePop();
+          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); E.log.innerHTML=''; (m.messages||[]).forEach(addMsg); refreshFiles(m.messages||[]); renderRecents(); closePop();
           E.roBanner.classList.toggle('hidden',!curNative); E.input.disabled=curNative; E.sendBtn.disabled=curNative; E.mic.disabled=curNative; E.input.placeholder=curNative?'Sessão nativa — somente leitura':'Fale ou digite…'; }
-        else if(m.t==='message'){ if(m.message.sessionId===currentSession){ addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
+        else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
-        else if(m.t==='searchResult'){ if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
+        else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
         else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }
         else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
-        else if(m.t==='error'){ addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
+        else if(m.t==='error'){ clearPending(); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
       const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…');
@@ -435,7 +448,7 @@
           const spoke = !cfg.noise || peak>8; // limiar simples de fala
           if(auto && !spoke) return; // continuação: silêncio -> ignora
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
-          tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); };
+          tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); };
         rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; status('listening', auto?`escutando follow-up… (${cfg.continueSec}s)`:'escutando…');
         if(auto) contTimer=setTimeout(()=>{ if(recording) rec.stop(); }, cfg.continueSec*1000);
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
@@ -455,8 +468,8 @@
     E.attach.onclick=()=>E.file.click();
     E.file.onchange=async()=>{ for(const f of E.file.files){ attachments.push({name:f.name,content:await f.text()}); } E.file.value=''; renderAttach(); };
     function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='📎 '+a.name+' ✕'; c.onclick=()=>{attachments.splice(i,1);renderAttach();}; E.attachRow.appendChild(c); }); }
-    E.composer.onsubmit=(e)=>{ e.preventDefault(); const text=E.input.value.trim(); if(!text&&!attachments.length)return;
-      tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments});
+    E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
+      tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments}); showPending();
       E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach(); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
