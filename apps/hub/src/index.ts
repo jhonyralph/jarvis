@@ -299,6 +299,36 @@ async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): P
   }
   send(ws, { t: "searchResult", query, answer: r.answer, matches: r.matches, action: r.action, audio });
 }
+/** Summarize ONE session with the cheapest model + lowest effort, speak it, and reply
+ *  only to the asker. NOT stored in history — it's a standalone "read it to me" action. */
+async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Promise<void> {
+  let msgs: Array<{ role: string; text: string }> = [];
+  let title = "";
+  if (isNativeId(sid)) { const h = nativeHistory(sid); if (h) { msgs = h.messages; title = h.title; } }
+  else { const s = store.get(sid); if (s) { msgs = store.history(sid); title = s.title; } }
+  if (!msgs.length) { send(ws, { t: "summary", sessionId: sid, text: "Conversa vazia." }); return; }
+  const recent = msgs
+    .slice(-30)
+    .map((m) => `${m.role === "user" ? "Usuário" : "Assistente"}: ${(m.text || "").slice(0, 500)}`)
+    .join("\n");
+  const prompt =
+    `Resuma a conversa abaixo em português do Brasil, CURTO e natural para ser FALADO em voz alta ` +
+    `(2 a 4 frases, sem markdown, sem listas). Foque no que foi feito/decidido e no estado atual.\n\n` +
+    `Título: ${title}\n\n${recent}`;
+  const agent = agents.searchAgent();
+  const sendOpts = { model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
+  let text = "";
+  try {
+    const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__summary__", prompt, process.cwd(), sendOpts);
+    text = (reply.text || "").trim();
+  } catch (e: any) {
+    send(ws, { t: "error", message: "resumo: " + String(e?.message ?? e) });
+    return;
+  }
+  let audio: string | undefined;
+  if (speak && text) { const spoken = speechifyCapped(text); if (spoken) audio = (await synthesize(spoken, VOICE)).toString("base64"); }
+  send(ws, { t: "summary", sessionId: sid, text, audio });
+}
 /** Current speaker-id config + enrolled voiceprints (listing is cheap — no torch). */
 async function sendVoiceState(ws: WebSocket): Promise<void> {
   send(ws, { t: "voice_state", gate: voiceGate, threshold: voiceThreshold ?? null, speakers: await listSpeakers() });
@@ -427,6 +457,11 @@ wss.on("connection", (ws: WebSocket) => {
     // cross-session search (explicit) + execute-in-a-specific-session
     if (msg.t === "search" && typeof msg.query === "string") {
       await runAndSendSearch(ws, msg.query, !!msg.speak);
+      return;
+    }
+    // per-session "resumir e falar" — cheap one-shot, spoken, not stored in history
+    if (msg.t === "summarize" && typeof msg.sessionId === "string") {
+      await summarizeAndSpeak(ws, msg.sessionId, msg.speak !== false);
       return;
     }
     if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
