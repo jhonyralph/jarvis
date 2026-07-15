@@ -267,6 +267,12 @@
     <div id="secInvites" class="mut" style="font-size:12px">—</div>
     <div class="sec">Dispositivos conectados</div>
     <div id="secDevices" class="mut" style="font-size:12px">—</div>
+    <div class="sec">🔒 Senha do dono (2º fator)</div>
+    <div class="mut" style="font-size:12px;margin-bottom:6px">Com senha, um token vazado não basta — todo login novo pede a senha também.</div>
+    <div id="secPassStatus" class="mut" style="font-size:12px;margin-bottom:4px">—</div>
+    <label>Nova senha <input id="secPass" type="password" placeholder="mín. 4 caracteres" autocomplete="new-password"></label>
+    <label class="row"><input type="checkbox" id="secPassRemember" checked> Lembrar neste dispositivo</label>
+    <div class="row"><button id="secPassSet" type="button">Definir / trocar</button><button id="secPassClear" class="ghost" type="button">Remover</button></div>
     <div class="row" style="justify-content:space-between;margin-top:8px"><button id="secRevokeAll" class="ghost" type="button">Revogar todos os outros</button><button id="secClose" type="button">Fechar</button></div>
   </div></div>
 
@@ -276,6 +282,7 @@
       'newSess','searchBtn','digestBtn','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
+      'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
@@ -407,6 +414,10 @@
     E.secBtn.onclick=()=>{ tx({t:'sec_state'}); E.secOut.classList.add('hidden'); E.secModal.classList.remove('hidden'); closeSide(); };
     E.secClose.onclick=()=>E.secModal.classList.add('hidden');
     E.secGen.onclick=()=>{ tx({t:'sec_invite', role:E.secRole.value, ttlSec:Number(E.secTtl.value)}); };
+    E.secPassSet.onclick=()=>{ const v=E.secPass.value.trim(); if(v.length<4){ toast('Senha muito curta (mín. 4).'); return; }
+      authPass=v; if(E.secPassRemember.checked) localStorage.setItem('jarvis_pass',v); else localStorage.removeItem('jarvis_pass');
+      tx({t:'set_pass',new:v}); E.secPass.value=''; };
+    E.secPassClear.onclick=()=>{ authPass=''; localStorage.removeItem('jarvis_pass'); tx({t:'clear_pass'}); };
     let revokeAllArmed=0;
     E.secRevokeAll.onclick=()=>{ const now=Date.now(); if(now-revokeAllArmed<4000){ revokeAllArmed=0; E.secRevokeAll.textContent='Revogar todos os outros'; tx({t:'sec_revoke_all'}); }
       else { revokeAllArmed=now; E.secRevokeAll.textContent='Confirmar? (toque de novo)'; setTimeout(()=>{ if(Date.now()-revokeAllArmed>=4000) E.secRevokeAll.textContent='Revogar todos os outros'; },4200); } };
@@ -424,6 +435,7 @@
       inv.forEach(i=>{ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(i.role)+' · expira em '+fmtIn(i.expiresAt)+'</div>');
         const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_invite',inviteId:i.id}); row.appendChild(b);
         E.secInvites.appendChild(row); });
+      if(E.secPassStatus) E.secPassStatus.textContent = m.hasPass ? '✅ Configurada — pedida em novos logins.' : '⚪ Não configurada.';
     }
     function showInvite(code){ const link=location.origin+'/#invite='+encodeURIComponent(code);
       E.secOut.classList.remove('hidden');
@@ -566,24 +578,37 @@
     addEventListener('hashchange',()=>{ const h=hashSession(); if(h&&h!==currentSession&&(isNative(h)||sessions.some(s=>s.id===h))) tx({t:'open',sessionId:h}); });
     let reconnectT=null;
     function scheduleReconnect(){ if(reconnectT)return; reconnectT=setTimeout(()=>{ reconnectT=null; connect(); },1200); }
-    // ---------- auth gate (device pairing; see auth.ts) ----------
+    // ---------- auth gate (device pairing + optional 2nd factor; see auth.ts) ----------
     let authToken=localStorage.getItem('jarvis_token')||'', authUser=null, authed=false, enteredConn=false, gateEl=null, gateClaimed=false;
+    let gateMode='pair', authPass=localStorage.getItem('jarvis_pass')||''; // pass kept only if user opted to remember
     function deviceLabelGuess(){ const u=navigator.userAgent; if(/android/i.test(u))return'Android'; if(/iphone|ipad|ipod/i.test(u))return'iPhone'; if(/mac/i.test(u))return'Mac'; if(/windows/i.test(u))return'Windows'; if(/linux/i.test(u))return'Linux'; return'Dispositivo'; }
     function buildGate(){ const g=document.createElement('div'); g.id='gate';
       g.innerHTML='<div class="gatebox"><div class="gatelogo">🧠 Jarvis</div><div id="gateTitle"></div><input id="gateCode" autocomplete="off" autocapitalize="off" spellcheck="false"><input id="gateLabel" placeholder="Nome deste dispositivo"><button id="gateGo"></button><div id="gateErr" class="gateerr"></div><div id="gateHint" class="gatehint"></div></div>';
       document.body.appendChild(g); g.querySelector('#gateLabel').value=deviceLabelGuess();
       g.querySelector('#gateGo').onclick=submitGate; g.querySelector('#gateCode').addEventListener('keydown',e=>{ if(e.key==='Enter')submitGate(); }); return g; }
-    function showGate(claimed){ authed=false; gateClaimed=!!claimed; if(!gateEl)gateEl=buildGate(); gateEl.style.display='flex';
+    function showGate(claimed){ authed=false; gateMode='pair'; gateClaimed=!!claimed; if(!gateEl)gateEl=buildGate(); gateEl.style.display='flex';
       gateEl.querySelector('#gateTitle').textContent=claimed?'Entre com um código de convite':'Primeiro acesso — torne-se o dono desta instância';
-      gateEl.querySelector('#gateCode').placeholder=claimed?'Código do convite':'Código de claim (do servidor)';
+      const c=gateEl.querySelector('#gateCode'); c.type='text'; c.placeholder=claimed?'Código do convite':'Código de claim (do servidor)';
+      gateEl.querySelector('#gateLabel').style.display='';
       gateEl.querySelector('#gateGo').textContent=claimed?'Entrar':'Reivindicar';
       gateEl.querySelector('#gateHint').textContent=claimed?'Peça um convite ao dono do Jarvis.':'O código apareceu no log do servidor e em ~/.jarvis/claim-code.txt';
-      const c=gateEl.querySelector('#gateCode'); const hv=(location.hash||'').match(/invite=([^&]+)/); if(claimed&&hv&&!c.value)c.value=decodeURIComponent(hv[1]);
+      const hv=(location.hash||'').match(/invite=([^&]+)/); if(claimed&&hv&&!c.value)c.value=decodeURIComponent(hv[1]);
+      gateEl.querySelector('#gateErr').textContent='';
       try{ if(document.activeElement!==c)c.focus(); }catch(e){} }
+    function showVerify(err){ authed=false; gateMode='verify'; if(!gateEl)gateEl=buildGate(); gateEl.style.display='flex';
+      gateEl.querySelector('#gateTitle').textContent='Senha do dono (2º fator)';
+      const c=gateEl.querySelector('#gateCode'); c.type='password'; c.placeholder='Senha'; c.value='';
+      gateEl.querySelector('#gateLabel').style.display='none';
+      gateEl.querySelector('#gateGo').textContent='Entrar';
+      gateEl.querySelector('#gateHint').textContent='Este Jarvis exige a senha do dono além do dispositivo.';
+      gateEl.querySelector('#gateErr').textContent=err||'';
+      try{ c.focus(); }catch(e){} }
     function hideGate(){ if(gateEl)gateEl.style.display='none'; }
     function gateError(t){ if(gateEl)gateEl.querySelector('#gateErr').textContent=t||''; }
-    function submitGate(){ if(!gateEl)return; const code=gateEl.querySelector('#gateCode').value.trim(), label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
-      if(!code){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code, label }); }
+    function submitGate(){ if(!gateEl)return; const val=gateEl.querySelector('#gateCode').value.trim();
+      if(gateMode==='verify'){ if(!val){ gateError('Informe a senha.'); return; } authPass=val; gateError(''); tx({t:'verify',pass:val}); return; }
+      const label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
+      if(!val){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code:val, label }); }
     function postAuth(){ tx({t:'wake',enabled:cfg.wake}); if(currentSession) tx({t:'open',sessionId:currentSession}); if(cfg.push) enablePush(); }
     function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); }
 
@@ -593,8 +618,10 @@
       ws.onmessage=(e)=>{ const m=JSON.parse(e.data);
         if(m.t==='authinfo'){ showGate(m.claimed); }
         else if(m.t==='authed'){ if(m.token){ authToken=m.token; localStorage.setItem('jarvis_token',authToken); } authUser=m.user||authUser; updateOwnerUI(); enter(); }
+        else if(m.t==='need_pass'){ if(m.error){ authPass=''; localStorage.removeItem('jarvis_pass'); showVerify(m.error); } else if(authPass){ tx({t:'verify',pass:authPass}); } else { showVerify(''); } }
         else if(m.t==='sec_state'){ renderSec(m); }
         else if(m.t==='sec_invite_created'){ showInvite(m.code); }
+        else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');

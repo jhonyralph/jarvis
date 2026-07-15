@@ -28,7 +28,8 @@ Trust boundaries:
 | Layer | What it does | Where |
 |-------|--------------|-------|
 | Device-pairing auth | per-device tokens, SHA-256 hashed at rest, `timingSafeEqual` compare | `auth.ts` |
-| WS auth gate | until authed, only `authinfo/claim/redeem/auth` are processed | `index.ts` |
+| Owner passphrase (2FA) | optional 2nd factor: a scrypt-hashed passphrase required after the token on every new login; a leaked token alone can't get in | `auth.ts` |
+| WS auth gate | until authed, only `authinfo/claim/redeem/auth` are processed; then a `verify` step if a passphrase is set | `index.ts` |
 | Per-runner authz | owner/member roles; members limited to allow-listed machines | `auth.ts` |
 | Runner token | per-machine token to register a runner; hashed | `auth.ts` |
 | Brute-force throttle | per-IP failed-attempt limiter (10/min → exp backoff, ≤15 min) | `guard.ts` |
@@ -81,10 +82,17 @@ access to a runner can make the agent do anything on that machine. So:
 `JARVIS_ALLOWED_ORIGINS` · `JARVIS_DEVICE_TTL_DAYS` (0 = never) ·
 `JARVIS_ADMIN_PORT` (4578, loopback).
 
+## Owner passphrase (2FA)
+
+Optional. Set it in the UI (🔐 panel) or `jarvis.ps1 passphrase-set -pass "…"`.
+Once set, every new login (and reconnect from a fresh page) must present the
+passphrase after the device token — so a stolen token alone is useless. Verify
+attempts are per-IP rate-limited (low-entropy secret). The device may remember it
+locally for convenience, or not (re-enter each page load). Recovery if forgotten:
+`jarvis.ps1 passphrase-clear` from the host (loopback, no lockout).
+
 ## Residual risks / not done
 
-- **No MFA / password second factor** (device pairing only) — a possible next
-  layer: an owner passphrase required at pairing and/or for privileged actions.
 - **No runner sandboxing / restricted-no-bypass mode** yet — containment is
   per-machine sharing + audit only; run guest runners in a container/VM.
 - **CSP still allows inline styles** (`style-src 'unsafe-inline'`) — the UI uses

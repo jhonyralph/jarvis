@@ -173,11 +173,13 @@ function broadcastRuns(): void { const s = JSON.stringify({ t: "runs", active: [
 let voiceOpBusy = false;
 
 // --- auth: per-connection principal (device pairing; see auth.ts). JARVIS_AUTH=off bypasses. ---
-type Conn = { userId: string; role: auth.Role; name: string; deviceId: string | null };
+type Conn = { userId: string; role: auth.Role; name: string; deviceId: string | null; verified: boolean };
 const principals = new WeakMap<WebSocket, Conn>();
 const unauthTimers = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
 function isAuthed(ws: WebSocket): boolean { return !auth.AUTH_ENABLED || principals.has(ws); }
 function principalOf(ws: WebSocket): Conn | undefined { return principals.get(ws); }
+/** Fully authed = token accepted AND (no owner passphrase OR this session verified it). */
+function fullyAuthed(ws: WebSocket): boolean { if (!auth.AUTH_ENABLED) return true; const p = principals.get(ws); return !!p && (!auth.hasPassphrase() || p.verified); }
 function clearUnauthTimer(ws: WebSocket): void { const t = unauthTimers.get(ws); if (t) { clearTimeout(t); unauthTimers.delete(ws); } }
 function uaOf(req: any): string | undefined { const ua = req?.headers?.["user-agent"]; return typeof ua === "string" ? ua.slice(0, 200) : undefined; }
 function clientMeta(req: any): { ip: string; ua?: string } { return { ip: guard.clientIp(req), ua: uaOf(req) }; }
@@ -198,7 +200,7 @@ function requireOwner(ws: WebSocket): Conn | null {
 /** Current devices + pending invites, marking THIS connection's device as "me". */
 function secState(ws: WebSocket): void {
   const p = principalOf(ws);
-  send(ws, { t: "sec_state", devices: auth.listDevices(), invites: auth.listInvites(), me: p?.deviceId || null, role: p?.role || (auth.AUTH_ENABLED ? "member" : "owner") });
+  send(ws, { t: "sec_state", devices: auth.listDevices(), invites: auth.listInvites(), me: p?.deviceId || null, role: p?.role || (auth.AUTH_ENABLED ? "member" : "owner"), hasPass: auth.hasPassphrase() });
 }
 /** Boot any currently-connected device whose token was just revoked. */
 function dropRevoked(): void {
@@ -568,28 +570,53 @@ async function handleAuth(ws: WebSocket, msg: any, req: any): Promise<void> {
     auth.audit(r.blocked ? "auth_blocked" : "auth_fail", { ip, detail: `${msg.t}: ${why}${r.blocked ? ` — bloqueado (${r.fails} tentativas)` : ""}` });
     send(ws, { t: "unauth", reason: r.blocked ? "muitas tentativas — tente mais tarde" : why, claimed: auth.isClaimed() });
   };
-  const win = (payload: any) => { guard.recordSuccess(ip); clearUnauthTimer(ws); send(ws, payload); };
+  // After a valid token, if an owner passphrase is set the session is authed but
+  // NOT verified — hold back app state until the 2nd factor is entered.
+  const enterAuthed = async (payload: any, conn: Conn) => {
+    guard.recordSuccess(ip); clearUnauthTimer(ws);
+    principals.set(ws, conn);
+    if (auth.hasPassphrase() && !conn.verified) { send(ws, { t: "need_pass" }); armVerifyTimer(ws); }
+    else { send(ws, payload); await sendInitialState(ws); }
+  };
   try {
     if (msg.t === "claim" || msg.t === "redeem") {
       if (typeof msg.code !== "string" || !msg.code) return fail("sem código");
       const r = msg.t === "claim"
         ? auth.claim(msg.code, msg.label || "Dispositivo", { ip, ua })
         : auth.redeem(msg.code, msg.label || "Dispositivo", { ip, ua });
-      principals.set(ws, { userId: r.user.id, role: r.user.role, name: r.user.name, deviceId: r.deviceId });
-      win({ t: "authed", token: r.token, user: r.user });
-      await sendInitialState(ws);
+      // a device that just paired via a code is inherently 2FA (had the code) -> verified
+      await enterAuthed({ t: "authed", token: r.token, user: r.user }, { userId: r.user.id, role: r.user.role, name: r.user.name, deviceId: r.deviceId, verified: true });
       return;
     }
     // msg.t === "auth"
     if (typeof msg.token !== "string" || !msg.token) return fail("sem token");
     const p = auth.authenticate(msg.token, { ip, ua });
     if (!p) return fail("token inválido");
-    principals.set(ws, { userId: p.user.id, role: p.user.role, name: p.user.name, deviceId: p.device.id });
-    win({ t: "authed", user: { id: p.user.id, role: p.user.role, name: p.user.name } });
-    await sendInitialState(ws);
+    await enterAuthed({ t: "authed", user: { id: p.user.id, role: p.user.role, name: p.user.name } }, { userId: p.user.id, role: p.user.role, name: p.user.name, deviceId: p.device.id, verified: false });
   } catch (e: any) {
     fail(String(e?.message ?? e));
   }
+}
+function armVerifyTimer(ws: WebSocket): void {
+  clearUnauthTimer(ws);
+  unauthTimers.set(ws, setTimeout(() => { if (!fullyAuthed(ws)) { try { send(ws, { t: "need_pass", error: "tempo esgotado" }); ws.close(); } catch { /* ignore */ } } }, 90000));
+}
+/** 2nd factor: verify the owner passphrase for a token-authed-but-unverified session. */
+async function handleVerify(ws: WebSocket, msg: any, req: any): Promise<void> {
+  const { ip } = clientMeta(req);
+  const p = principalOf(ws);
+  if (!p) return;
+  if (guard.blockedFor(ip) > 0) { send(ws, { t: "need_pass", error: "muitas tentativas — aguarde" }); return; }
+  if (typeof msg.pass !== "string" || !auth.verifyPassphrase(msg.pass)) {
+    const r = guard.recordFail(ip);
+    auth.audit(r.blocked ? "auth_blocked" : "pass_fail", { ip, deviceId: p.deviceId, detail: r.blocked ? "senha — bloqueado" : "senha incorreta" });
+    send(ws, { t: "need_pass", error: r.blocked ? "muitas tentativas — tente mais tarde" : "senha incorreta" });
+    return;
+  }
+  guard.recordSuccess(ip); clearUnauthTimer(ws);
+  p.verified = true;
+  send(ws, { t: "authed", user: { id: p.userId, role: p.role, name: p.name }, verified: true });
+  await sendInitialState(ws);
 }
 
 wss.on("connection", (ws: WebSocket, req: any) => {
@@ -607,7 +634,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
   // Drop connections that never authenticate (idle unauth hoarding). Cleared on auth.
   if (auth.AUTH_ENABLED) {
     unauthTimers.set(ws, setTimeout(() => {
-      if (!principals.has(ws)) { try { send(ws, { t: "unauth", reason: "tempo de autenticação esgotado", claimed: auth.isClaimed() }); ws.close(); } catch { /* ignore */ } }
+      if (!fullyAuthed(ws)) { try { send(ws, { t: "unauth", reason: "tempo de autenticação esgotado", claimed: auth.isClaimed() }); ws.close(); } catch { /* ignore */ } }
     }, 20000));
   }
   // Attach listeners SYNCHRONOUSLY (before any await) so a client message sent
@@ -636,6 +663,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     //     handshake is processed; every other message is dropped. ---
     if (auth.AUTH_ENABLED && !principals.has(ws)) {
       await handleAuth(ws, msg, req);
+      return;
+    }
+    // --- 2nd factor gate: token accepted but owner passphrase not yet verified. ---
+    if (auth.AUTH_ENABLED && !fullyAuthed(ws)) {
+      if (msg.t === "verify") await handleVerify(ws, msg, req);
+      else send(ws, { t: "need_pass" });
       return;
     }
 
@@ -818,6 +851,23 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       secState(ws);
       return;
     }
+    // owner passphrase (2nd factor): set/change/clear
+    if (msg.t === "set_pass" && typeof msg.new === "string") {
+      if (!requireOwner(ws)) return;
+      try { auth.setPassphrase(msg.new); } catch (e: any) { send(ws, { t: "error", message: String(e?.message ?? e) }); return; }
+      // don't kick sessions that are already in — only future/reconnecting ones need the passphrase
+      for (const c of wss.clients) { const pr = principals.get(c as WebSocket); if (pr) pr.verified = true; }
+      send(ws, { t: "pass_set", enabled: true });
+      secState(ws);
+      return;
+    }
+    if (msg.t === "clear_pass") {
+      if (!requireOwner(ws)) return;
+      auth.clearPassphrase();
+      send(ws, { t: "pass_set", enabled: false });
+      secState(ws);
+      return;
+    }
     // QR code of the URL to open on the phone
     if (msg.t === "qr" && typeof msg.url === "string") {
       try { send(ws, { t: "qr", url: msg.url, dataUri: await QRCode.toDataURL(msg.url, { width: 300, margin: 1 }) }); }
@@ -988,6 +1038,12 @@ const adminServer = createServer((req, res) => {
         const token = auth.mintRunnerToken(rid, label);
         const hubWs = PUBLIC_URL ? PUBLIC_URL.replace(/^http/, "ws") : `ws://<este-host>:${PORT}`;
         return json(200, { runnerId: rid, label, token, hub: hubWs });
+      }
+      if (req.method === "POST" && url === "/admin/passphrase") {
+        const b = await body();
+        if (b.clear) { auth.clearPassphrase(); return json(200, { ok: true, enabled: false }); }
+        if (typeof b.new === "string") { try { auth.setPassphrase(b.new); return json(200, { ok: true, enabled: true }); } catch (e: any) { return json(400, { error: String(e?.message ?? e) }); } }
+        return json(200, { enabled: auth.hasPassphrase() });
       }
       if (req.method === "POST" && url === "/admin/revoke") { const b = await body(); const ok = typeof b.deviceId === "string" && auth.revokeDevice(b.deviceId); dropRevoked(); return json(200, { ok: !!ok }); }
       if (req.method === "POST" && url === "/admin/revoke-all") { const n = auth.listDevices().length; for (const d of auth.listDevices()) auth.revokeDevice(d.id); dropRevoked(); return json(200, { revoked: n }); }

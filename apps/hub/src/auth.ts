@@ -13,7 +13,7 @@
  *
  * Storage: ~/.jarvis/auth.json (hashes only). Escape hatch: JARVIS_AUTH=off.
  */
-import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
+import { randomBytes, createHash, timingSafeEqual, scryptSync } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -54,6 +54,8 @@ interface AuthData {
   invites: Invite[];
   runnerTokens: RunnerToken[];
   grants: Record<string, string[]>; // userId -> allowed runnerIds (members only)
+  passSalt?: string; // owner passphrase (2nd factor), scrypt
+  passHash?: string;
 }
 
 function fresh(): AuthData {
@@ -246,6 +248,24 @@ export function revokeRunnerToken(runnerId: string): boolean {
   data.runnerTokens = data.runnerTokens.filter((r) => r.runnerId !== runnerId);
   if (data.runnerTokens.length !== before) { save(data); return true; }
   return false;
+}
+
+// ---- owner passphrase (optional 2nd factor) ----
+export function hasPassphrase(): boolean { return !!(data.passHash && data.passSalt); }
+export function setPassphrase(pass: string): void {
+  if (!pass || pass.length < 4) throw new Error("senha muito curta (mín. 4)");
+  const salt = randomBytes(16).toString("hex");
+  data.passSalt = salt;
+  data.passHash = scryptSync(pass, salt, 64).toString("hex");
+  save(data);
+  audit("passphrase_set", {});
+}
+export function clearPassphrase(): void { delete data.passSalt; delete data.passHash; save(data); audit("passphrase_clear", {}); }
+export function verifyPassphrase(pass: string): boolean {
+  if (!hasPassphrase()) return true; // no 2nd factor configured
+  if (typeof pass !== "string" || !pass) return false;
+  const h = scryptSync(pass, data.passSalt!, 64).toString("hex");
+  return hashEq(h, data.passHash!);
 }
 
 /** Force a reload from disk (tests). */
