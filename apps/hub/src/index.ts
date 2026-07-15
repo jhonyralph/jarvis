@@ -132,6 +132,9 @@ function broadcastAll(obj: unknown): void {
 // sessions with an in-flight Jarvis-driven turn — powers the "rodando agora" panel.
 const activeRuns = new Set<string>();
 function broadcastRuns(): void { broadcastAll({ t: "runs", active: [...activeRuns] }); }
+// single-flight global para operações de voz (resumo/digest): só 1 por vez em toda a instância,
+// independente de qual chat/cliente pediu. Guard no servidor complementa a trava de UI (multi-device).
+let voiceOpBusy = false;
 
 // Live mirror of native CLI sessions: tail the jsonl and broadcast new turns as they're
 // appended by an EXTERNAL Claude Code (or by us), so viewers update without refreshing.
@@ -523,11 +526,18 @@ wss.on("connection", (ws: WebSocket) => {
     }
     // per-session "resumir e falar" — cheap one-shot, spoken, not stored in history
     if (msg.t === "summarize" && typeof msg.sessionId === "string") {
-      await summarizeAndSpeak(ws, msg.sessionId, msg.speak !== false);
+      if (voiceOpBusy) { send(ws, { t: "busy", message: "Já estou gerando um áudio — aguarde terminar." }); return; }
+      voiceOpBusy = true;
+      try { await summarizeAndSpeak(ws, msg.sessionId, msg.speak !== false); } finally { voiceOpBusy = false; }
       return;
     }
     // cross-agent digest ("o que está rolando entre as sessões")
-    if (msg.t === "digest") { await digestAndSpeak(ws, msg.speak !== false); return; }
+    if (msg.t === "digest") {
+      if (voiceOpBusy) { send(ws, { t: "busy", message: "Já estou gerando um áudio — aguarde terminar." }); return; }
+      voiceOpBusy = true;
+      try { await digestAndSpeak(ws, msg.speak !== false); } finally { voiceOpBusy = false; }
+      return;
+    }
     // QR code of the URL to open on the phone
     if (msg.t === "qr" && typeof msg.url === "string") {
       try { send(ws, { t: "qr", url: msg.url, dataUri: await QRCode.toDataURL(msg.url, { width: 300, margin: 1 }) }); }
