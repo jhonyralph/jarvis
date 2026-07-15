@@ -374,8 +374,9 @@ async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
     .join("\n") || "(nenhuma sessão)";
   const prompt =
     `Você é o painel de status do Jarvis. Em português do Brasil, 2 a 4 frases FALADAS (sem markdown, sem listas), ` +
-    `diga rapidamente o que está acontecendo entre as sessões de trabalho — quais estão rodando agora e o que cada uma fez por último. Seja direto.\n\n` +
-    `SESSÕES (mais recentes primeiro):\n${lines}`;
+    `diga rapidamente o que está acontecendo entre as sessões de trabalho — quais estão rodando agora e sobre o que são. ` +
+    `SEMPRE produza um status com base nos títulos abaixo; NUNCA diga que faltam informações. Seja direto.\n\n` +
+    `SESSÕES (título · agente · [RODANDO] se em execução):\n${lines}`;
   const agent = agents.searchAgent();
   const sendOpts = { model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
   let text = "";

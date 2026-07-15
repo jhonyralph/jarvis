@@ -138,6 +138,7 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
       }
     }
   });
+  if (cwd && /[\\/]\.jarvis[\\/]oneshot/i.test(cwd)) return null; // Jarvis's own one-shot (search/summary/digest) — not a real session
   const title = customTitle || aiTitle || firstUser.slice(0, 60) || "Sessão Claude";
   return { id: "claude:" + id, title, agent: "claude-code", cwd, count: 0, source: "native" };
 }

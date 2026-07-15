@@ -10,9 +10,15 @@
  * Results cache ~1h; on any failure we fall back to a small pinned list.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+// one-shot prompts (search / summary / digest / voice-intent) run in this dir so their
+// throwaway `claude -p` sessions land somewhere the native-session import excludes —
+// otherwise every digest/summary/warmup shows up as a "ping"/"Painel de status" session.
+const ONESHOT_CWD = join(homedir(), ".jarvis", "oneshot");
+try { mkdirSync(ONESHOT_CWD, { recursive: true }); } catch { /* ignore */ }
 
 export interface AgentReply {
   text: string;
@@ -203,7 +209,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const args = ["-p", text, "--output-format", "json", "--permission-mode", "bypassPermissions"];
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
-    const raw = await run(this.bin, args, homedir(), "", false); // stateless: no --resume, no this.sessions write
+    const raw = await run(this.bin, args, ONESHOT_CWD, "", false); // stateless + isolated cwd (excluded from native list)
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
     return { text: json.result ?? "" };

@@ -29,7 +29,8 @@ $env:JARVIS_SEARCH_MODEL = 'haiku'
 # aquece o token do Claude (best-effort, com teto de tempo para nunca travar o boot)
 try {
   Log 'aquecendo token do Claude...'
-  $j = Start-Job { 'ping' | & claude -p --model haiku 2>&1 }
+  $osdir = Join-Path $env:USERPROFILE '.jarvis\oneshot'; New-Item -ItemType Directory -Force $osdir | Out-Null
+  $j = Start-Job { param($d) Set-Location $d; 'ping' | & claude -p --model haiku 2>&1 } -ArgumentList $osdir
   if (Wait-Job $j -Timeout 90) { Log ('warmup ok: ' + (((Receive-Job $j) -join ' ').Trim())) }
   else { Stop-Job $j; Log 'warmup atingiu o teto de tempo (segue mesmo assim)' }
   Remove-Job $j -Force -ErrorAction SilentlyContinue
