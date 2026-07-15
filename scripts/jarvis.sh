@@ -18,7 +18,10 @@ case "$cmd" in
   status)           get  /admin/status;;
   claimcode)        get  /admin/claimcode;;
   audit)            get  "/admin/audit?n=${2:-100}";;
+  update)           get  /admin/update;;
+  update-apply)     echo "Atualizando o Hub (vai reiniciar)..."; post /admin/update '{}';;
+  update-rollback)  echo "Revertendo (vai reiniciar)..."; post /admin/update/rollback '{}';;
   passphrase-clear) post /admin/passphrase '{"clear":true}';;
   revoke)           post /admin/revoke "{\"deviceId\":\"$2\"}";;
-  *) echo "uso: jarvis.sh {owner|invite|machine|status|claimcode|audit|passphrase-clear|revoke <id>}";;
+  *) echo "uso: jarvis.sh {owner|invite|machine|status|claimcode|audit|update|update-apply|update-rollback|passphrase-clear|revoke <id>}";;
 esac

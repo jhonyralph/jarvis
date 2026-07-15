@@ -17,11 +17,15 @@ import { hostname, homedir, platform } from "node:os";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, Store,
+  updateApply, restartService,
   type AgentAdapter, type SendOpts,
 } from "@jarvis/core";
+
+const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
 import type { RunnerInfo, RunnerSession, RunnerToHub } from "@jarvis/protocol";
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/+$/, "");
@@ -188,6 +192,13 @@ function connect(): void {
       }
       if (m.t === "send" && typeof m.sessionId === "string") { await doSend(m.sessionId, String(m.text ?? ""), m.agent, m.cwd, m.opts); return; }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }
+      if (m.t === "update") {
+        console.log("[runner] update solicitado pelo Hub...");
+        const r = await updateApply(RUNNER_ROOT);
+        console.log("[runner] update:", r.ok ? "ok" : "falhou", "-", r.log.replace(/\n/g, " ").slice(0, 160));
+        if (r.ok && (r.behind ?? 0) > 0) { setTimeout(() => { try { restartService("runner"); } catch { /* ignore */ } process.exit(0); }, 500); }
+        return;
+      }
       if (m.t === "stop") { /* adapter kill not wired yet */ return; }
     } catch (e: any) { send({ t: "error", reqId: m?.reqId, message: String(e?.message ?? e) }); }
   });

@@ -57,6 +57,9 @@ try {
     }
     'status'     { Invoke-RestMethod "$base/admin/status" | ConvertTo-Json -Depth 6 }
     'audit'      { $n = if ($ttl -eq 86400) { 100 } else { $ttl }; (Invoke-RestMethod "$base/admin/audit?n=$n").audit | ForEach-Object { $t = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$_.ts).LocalDateTime.ToString('MM-dd HH:mm'); "{0}  {1,-14} {2}" -f $t, $_.event, $_.detail } }
+    'update'           { Invoke-RestMethod "$base/admin/update" | ConvertTo-Json -Depth 5 }
+    'update-apply'     { Write-Host 'Atualizando o Hub (vai reiniciar)...' -ForegroundColor Cyan; Invoke-RestMethod -Method Post "$base/admin/update" | ConvertTo-Json -Depth 5 }
+    'update-rollback'  { Write-Host 'Revertendo para a versão anterior (vai reiniciar)...' -ForegroundColor Yellow; Invoke-RestMethod -Method Post "$base/admin/update/rollback" | ConvertTo-Json -Depth 5 }
     'passphrase-clear' { Invoke-RestMethod -Method Post "$base/admin/passphrase" -Body (@{ clear = $true } | ConvertTo-Json) -ContentType 'application/json' | ConvertTo-Json; Write-Host 'Senha do dono removida.' }
     'passphrase-set'   { if (-not $pass) { Write-Host 'Informe -pass "<senha>".' -ForegroundColor Yellow } else { Invoke-RestMethod -Method Post "$base/admin/passphrase" -Body (@{ new = $pass } | ConvertTo-Json) -ContentType 'application/json' | ConvertTo-Json; Write-Host 'Senha do dono definida.' } }
     'claimcode'  { $r = Invoke-RestMethod "$base/admin/claimcode"; if ($r.claimed) { Write-Host 'Já reivindicado. Use "owner" para gerar um convite de dono.' } else { Write-Host "Claim code: $($r.code)" -ForegroundColor Cyan } }

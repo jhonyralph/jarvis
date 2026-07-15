@@ -252,6 +252,13 @@
 
   <div id="settings" class="modal hidden"><div class="card">
     <b>Configurações</b>
+    <div class="sec">Atualização</div>
+    <div id="updStatus" class="mut" style="font-size:12px">—</div>
+    <div id="updActions" class="row hidden" style="margin-top:4px">
+      <label class="row" style="margin:0;flex:1"><input type="checkbox" id="updAll"> aplicar em todas as máquinas</label>
+      <button id="updApply" type="button">Atualizar</button>
+    </div>
+    <div class="row" style="margin-top:4px"><button id="updCheck" class="ghost" type="button">Verificar agora</button></div>
     <div class="sec">Padrões</div>
     <label>Agente padrão <select id="setAgent"></select></label>
     <label>Modelo padrão <select id="setModel"></select></label>
@@ -305,7 +312,7 @@
       'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
-      'setSumAgent','setSumModel','setSumEffort',
+      'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
@@ -567,6 +574,7 @@
       fillSel(E.setModel,c.models,cfg.model||c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setPush.checked=!!cfg.push; E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
+      renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
       E.settings.classList.remove('hidden'); };
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.models,c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     E.setModel.onchange=()=>fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value);
@@ -577,6 +585,18 @@
     E.setSumAgent.onchange=()=>{ const c=capsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,c.defaultModel); fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); saveSum(); };
     E.setSumModel.onchange=()=>{ fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); saveSum(); };
     E.setSumEffort.onchange=saveSum;
+    // ---- atualização do sistema (git) ----
+    let updState=null;
+    function renderUpdate(){ if(!E.updStatus)return; const s=updState; const owner=authUser&&authUser.role==='owner';
+      if(!s){ E.updStatus.textContent='—'; E.updActions.classList.add('hidden'); return; }
+      if(s.error||s.supported===false){ E.updStatus.textContent='ℹ '+(s.error||'auto-update indisponível (instale via git clone)'); E.updActions.classList.add('hidden'); return; }
+      if((s.behind||0)>0){ const l=s.latest||{}; E.updStatus.innerHTML='🔄 <b>Nova versão</b> ('+s.behind+' commit'+(s.behind>1?'s':'')+'): '+esc((l.subject||'').slice(0,80));
+        E.updActions.classList.toggle('hidden',!owner); if(!owner) E.updStatus.innerHTML+=' <span style="opacity:.6">(peça ao dono para atualizar)</span>'; }
+      else { E.updStatus.textContent='✓ Na última versão ('+(s.current||'')+')'; E.updActions.classList.add('hidden'); } }
+    E.updCheck.onclick=()=>{ E.updStatus.textContent='Verificando…'; tx({t:'update_check'}); };
+    let updArmed=0;
+    E.updApply.onclick=()=>{ const now=Date.now(); if(now-updArmed<4000){ updArmed=0; E.updApply.textContent='Atualizar'; E.updStatus.textContent='Atualizando… (o Hub vai reiniciar)'; E.updActions.classList.add('hidden'); tx({t:'update_apply',allMachines:E.updAll.checked}); }
+      else { updArmed=now; E.updApply.textContent='Confirmar?'; setTimeout(()=>{ if(Date.now()-updArmed>=4000) E.updApply.textContent='Atualizar'; },4200); } };
     E.setEnroll.onclick=()=>enrollFlow();
     E.setClose.onclick=()=>{
       if(E.setGate.checked && !speakers.length){ addErr('Cadastre sua voz antes de exigir voz cadastrada (senão o modo voz fica bloqueado).'); E.setGate.checked=false; }
@@ -683,6 +703,9 @@
         else if(m.t==='sec_invite_created'){ showInvite(m.code); }
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
+        else if(m.t==='update_status'){ updState=m.status; renderUpdate(); }
+        else if(m.t==='update_progress'){ if(E.updStatus) E.updStatus.textContent='… '+(m.message||'atualizando'); toast('🔄 '+(m.message||'')); }
+        else if(m.t==='update_result'){ if(m.ok){ toast('✅ '+((m.log||'atualizado').split('\n').pop()||'').slice(0,80)); } else { toast('⚠ Falha: '+(m.log||'').slice(0,120)); if(E.updStatus) E.updStatus.textContent='⚠ '+(m.log||'').slice(0,140); E.updActions.classList.remove('hidden'); } }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
         else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); }

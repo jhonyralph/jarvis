@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
@@ -244,6 +244,16 @@ async function refreshLocalAgents(): Promise<void> {
   if (next.join() !== localAgents.join()) { localAgents = next; broadcastMachines(); }
   else localAgents = next;
 }
+
+// --- self-update (git): "new version" = new commits on origin/<branch>. ---
+const UPDATE_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/hub/src
+let updateStatus: any = { supported: true, behind: 0 };
+async function refreshUpdate(doBroadcast = true): Promise<void> {
+  try { updateStatus = await updateCheck(UPDATE_ROOT, true); } catch (e: any) { updateStatus = { supported: false, error: String(e?.message ?? e) }; }
+  if (doBroadcast) broadcastAll({ t: "update_status", status: updateStatus });
+}
+/** Apply the Hub update and restart (via the service manager) so the new code takes effect. */
+function scheduleRestart(): void { broadcastAll({ t: "update_progress", message: "Nova versão aplicada — reiniciando." }); setTimeout(() => { try { restartService("hub"); } catch { /* ignore */ } process.exit(0); }, 900); }
 function activeRunner(ws: WebSocket): string { return clientRunner.get(ws) || LOCAL_ID; }
 /** Client sockets (not runner sockets) currently viewing a given machine. */
 function clientsOn(runnerId: string): WebSocket[] {
@@ -582,6 +592,7 @@ async function broadcastVoiceState(): Promise<void> {
 async function sendInitialState(ws: WebSocket): Promise<void> {
   send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
   send(ws, { t: "machines", machines: machineList() });
+  send(ws, { t: "update_status", status: updateStatus });
   sendSessions(ws);
   send(ws, { t: "runs", active: [...activeRuns] });
   await sendVoiceState(ws);
@@ -864,6 +875,28 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, { t: "summary_cfg", cfg: summaryCfg, agents: await agents.describe() });
       return;
     }
+    // --- self-update (git) ---
+    if (msg.t === "update_check") { await refreshUpdate(false); send(ws, { t: "update_status", status: updateStatus }); return; }
+    if (msg.t === "update_apply") {
+      if (!requireOwner(ws)) return;
+      const all = !!msg.allMachines;
+      let sent = 0;
+      if (all) for (const rc of runners.values()) if (!rc.local && rc.ws && rc.ws.readyState === WebSocket.OPEN) { if (sendToRunner(rc, { t: "update" })) sent++; }
+      auth.audit("update_apply", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: all ? `hub + ${sent} máquina(s)` : "hub" });
+      send(ws, { t: "update_progress", message: all ? `Atualizando o Hub e ${sent} máquina(s)…` : "Atualizando o Hub…" });
+      const r = await updateApply(UPDATE_ROOT);
+      send(ws, { t: "update_result", ok: r.ok, log: r.log });
+      if (r.ok && (r.behind ?? 0) > 0) scheduleRestart();
+      else await refreshUpdate(true);
+      return;
+    }
+    if (msg.t === "update_rollback") {
+      if (!requireOwner(ws)) return;
+      const r = await updateRollback(UPDATE_ROOT);
+      send(ws, { t: "update_result", ok: r.ok, log: r.log });
+      if (r.ok) scheduleRestart();
+      return;
+    }
     // --- security admin (owner-only): connected devices + invites + revoke ---
     if (msg.t === "sec_state") { if (!requireOwner(ws)) return; secState(ws); return; }
     if (msg.t === "sec_invite") {
@@ -1069,6 +1102,9 @@ const adminServer = createServer((req, res) => {
       if (req.method === "GET" && url === "/admin/status") return json(200, { claimed: auth.isClaimed(), authEnabled: auth.AUTH_ENABLED, devices: auth.listDevices(), invites: auth.listInvites(), guard: guard.stats() });
       if (req.method === "GET" && url === "/admin/claimcode") return json(200, { claimed: auth.isClaimed(), code: auth.isClaimed() ? null : auth.ensureClaimCode() });
       if (req.method === "GET" && url === "/admin/audit") { const n = Number((req.url || "").split("n=")[1]) || 100; return json(200, { audit: auth.readAudit(n) }); }
+      if (req.method === "GET" && url === "/admin/update") { return json(200, await updateCheck(UPDATE_ROOT, true)); }
+      if (req.method === "POST" && url === "/admin/update") { const r = await updateApply(UPDATE_ROOT); if (r.ok && (r.behind ?? 0) > 0) scheduleRestart(); return json(200, r); }
+      if (req.method === "POST" && url === "/admin/update/rollback") { const r = await updateRollback(UPDATE_ROOT); if (r.ok) scheduleRestart(); return json(200, r); }
       if (req.method === "POST" && url === "/admin/invite") {
         const b = await body();
         const role = b.role === "owner" ? "owner" : "member";
@@ -1100,6 +1136,8 @@ adminServer.listen(ADMIN_PORT, "127.0.0.1", () => console.log(`[hub] admin (loop
 
 void refreshLocalAgents();
 setInterval(() => void refreshLocalAgents(), 60_000);
+setTimeout(() => void refreshUpdate(true), 8_000); // first update check shortly after boot
+setInterval(() => void refreshUpdate(true), 6 * 3600_000); // then every 6h
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);

@@ -92,6 +92,7 @@ export type HubToRunner =
   | { t: "list" }
   | { t: "caps"; agent?: string }
   | { t: "stop"; sessionId: string }
+  | { t: "update" }
   | { t: "ping" };
 
 export type RunnerProtocol = RunnerToHub | HubToRunner;
