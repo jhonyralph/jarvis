@@ -3,8 +3,7 @@
  * progresso?") by reasoning ONCE over a cheap digest of the last N sessions
  * (any agent) — never opening each session's agent. Bounded token cost.
  */
-import type { Store } from "./store.js";
-import type { AgentRegistry } from "./agents.js";
+import type { Store, AgentRegistry } from "@jarvis/core";
 
 // Conservative pt-BR triggers — must mention "sess" so normal chat is never hijacked.
 const TRIGGERS = [

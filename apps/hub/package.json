@@ -8,6 +8,8 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
+    "@jarvis/core": "*",
+    "@jarvis/protocol": "*",
     "qrcode": "^1.5.4",
     "web-push": "^3.6.7",
     "ws": "^8.18.0"

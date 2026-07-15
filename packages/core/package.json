@@ -1,0 +1,12 @@
+{
+  "name": "@jarvis/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "description": "Agent + native-session core shared by the Hub and Runners (no heavy deps)",
+  "dependencies": {
+    "@jarvis/protocol": "*"
+  }
+}

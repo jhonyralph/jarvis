@@ -5,7 +5,7 @@
  * start a new session or continue the current one. Deterministic dialog logic lives
  * in the Hub; this only EXTRACTS. Falls back to "the whole utterance is the task".
  */
-import type { AgentRegistry } from "./agents.js";
+import type { AgentRegistry } from "@jarvis/core";
 
 export interface VoiceIntent {
   agent: string | null; // exact agent name, only if the user asked to switch AI
