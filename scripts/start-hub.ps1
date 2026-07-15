@@ -25,11 +25,10 @@ $env:JARVIS_AGENT        = 'claude-code'
 $env:JARVIS_VOICE        = 'pt_BR-faber-medium'
 $env:JARVIS_CWD          = $root
 $env:JARVIS_SEARCH_MODEL = 'haiku'
-# TEMPORÁRIO (transição de auth): mantém o mesmo nível de hoje (rede privada Tailscale)
-# enquanto o gate de pareamento por dispositivo não é validado num celular real.
-# Para LIGAR a autenticação: remova a linha abaixo (ou troque para 'on'), reinicie o hub
-# e reivindique o dono com o claim-code que aparece no log / ~/.jarvis/claim-code.txt.
-$env:JARVIS_AUTH         = 'off'
+# Autenticação por pareamento de dispositivo LIGADA (padrão). O primeiro dispositivo
+# reivindica o dono com o claim-code que aparece no log e em ~/.jarvis/claim-code.txt.
+# Para desligar em emergência (rede privada): $env:JARVIS_AUTH = 'off'
+$env:JARVIS_AUTH         = 'on'
 
 # aquece o token do Claude (best-effort, com teto de tempo para nunca travar o boot)
 try {
