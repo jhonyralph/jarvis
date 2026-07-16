@@ -580,7 +580,7 @@
     // o cache acelera, nunca decide o que é verdade.
     function openSession(id){ if(!id)return; const c=histCache.get(id); if(c&&id!==currentSession) applyHistory(c); tx({t:'open',sessionId:id}); }
     function applyHistory(m){
-      if(currentSession&&currentSession!==m.sessionId)clearQueue();
+      // NÃO limpar a fila da sessão anterior — ela continua válida quando o turno dela terminar.
       currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId);
       currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
@@ -593,7 +593,7 @@
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
       E.input.disabled=ro; E.sendBtn.disabled=ro; E.mic.disabled=ro; E.input.placeholder=ro?'Sessão nativa — somente leitura':'Fale ou digite…';
-      curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession);
+      curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession); refreshComposer();
     }
     // Anchor: a user message must never land under an open reply bubble, even if the echo arrives
     // after the stream started (remote runners emit over the network, order isn't guaranteed).
@@ -638,15 +638,15 @@
       strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone); // editando… → editado
       const ft=finalText||strText; if(strTextEl){ strTextEl.innerHTML=md(ft); strTextEl.classList.add('done'); }
       if(usage){ const u=document.createElement('div'); u.className='usage'; u.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; strEl.appendChild(u); E.usage.textContent=u.textContent; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
-      strEl=strTextEl=strToolsEl=strTimeEl=null; E.log.scrollTop=E.log.scrollHeight; if(typeof flushQueue==='function')flushQueue(); }
+      strEl=strTextEl=strToolsEl=strTimeEl=null; E.log.scrollTop=E.log.scrollHeight; }
     function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
       if(strEl){ const head=strEl.querySelector('.strhead'); if(head) head.remove();
         strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone);
         if(strTextEl){ strTextEl.innerHTML=md(strText); strTextEl.classList.add('done'); }
         const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ interrompido'; strEl.appendChild(n);
         strEl=strTextEl=strToolsEl=strTimeEl=null; }
-      else addErr('⏹ interrompido'); E.log.scrollTop=E.log.scrollHeight; if(typeof flushQueue==='function')flushQueue(); }
-    function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); strEl=strTextEl=strToolsEl=strTimeEl=null; if(typeof flushQueue==='function')flushQueue(); }
+      else addErr('⏹ interrompido'); E.log.scrollTop=E.log.scrollHeight; }
+    function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); strEl=strTextEl=strToolsEl=strTimeEl=null; }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
       (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
@@ -1177,9 +1177,9 @@
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
           else if(ev.kind==='text') streamText(ev.text||'',ev.parentId);
-          else if(ev.kind==='done'){ streamDone(ev.text, m.usage); setBusy(false); }
-          else if(ev.kind==='cancelled'){ streamCancelled(); setBusy(false); }
-          else if(ev.kind==='error'){ streamErr(); setBusy(false); } }
+          else if(ev.kind==='done'){ streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
+          else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
+          else if(ev.kind==='error'){ streamErr(); onTurnEnd(m.sessionId); } }
         else if(m.t==='activity'){ if(m.sessionId!==currentSession)return; const d=document.createElement('div'); d.className='strtool act';
           d.innerHTML=`<span>${toolIcon(m.name)}</span><span>${esc(m.summary||m.name||'')}</span>`;
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
@@ -1193,14 +1193,14 @@
         else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
-        else if(m.t==='runs'){ const now=m.active||[]; activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; renderRecents(); }
+        else if(m.t==='runs'){ const now=m.active||[]; const finished=[...new Set([...activeRuns,...justSent])].filter(id=>!now.includes(id)); activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; now.forEach(id=>justSent.delete(id)); finished.forEach(id=>onTurnEnd(id)); renderRecents(); refreshComposer(); }
         else if(m.t==='qr'){ E.qrImg.src=m.dataUri; E.qrUrl.textContent=m.url; E.qrModal.classList.remove('hidden'); }
         else if(m.t==='pushkey'){ if(pushKeyResolve){ const r=pushKeyResolve; pushKeyResolve=null; r(m.key); } }
         else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }
         else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
-        else if(m.t==='error'){ endVoiceOp(); clearPending(); setBusy(false); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
+        else if(m.t==='error'){ endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
       const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…');
@@ -1227,8 +1227,8 @@
           if(discardRec){ discardRec=false; return; }   // descartado pelo usuário -> nao envia
           if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
-          if(curBusy){ toast('⏳ Aguarde o término do que está em andamento.'); return; }   // um turno por sessão
-          lastWasVoice=true; tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); setBusy(true); };
+          if(busy(currentSession)){ toast('⏳ Sessão ocupada — envie o áudio quando terminar.'); return; }   // voz não entra na fila (a fila envia texto)
+          lastWasVoice=true; justSent.add(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?'escutando resposta…':'escutando…');
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
@@ -1278,22 +1278,41 @@
     // enviadas JUNTAS (como uma só) quando o turno atual termina. Cancelável (✕ / limpar).
     // auto-reload: só recarrega quando ocioso (nada rodando, nada na fila, sem gravar áudio)
     let myVer=null, needReload=false;
-    function maybeReload(){ if(!needReload)return; if(curBusy||msgQueue.length||recording)return; toast('🔄 Nova versão — atualizando…'); setTimeout(()=>location.reload(),700); }
-    let msgQueue=[], curBusy=false;
-    // Um turno em andamento mostra "Parar"; parar mata o processo do agente (nao so a UI).
-    function setBusy(b){ curBusy=b; if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!b); if(E.sendBtn) E.sendBtn.classList.toggle('hidden',!!b); if(!b) maybeReload(); }
-    function sendMsg(text,atts){ lastWasVoice=false; tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments:atts||[]}); showPending(); setBusy(true); }
-    function flushQueue(){ setBusy(false); if(!msgQueue.length)return; const text=msgQueue.map(q=>q.text).join('\n\n'); const atts=msgQueue.flatMap(q=>q.atts||[]); msgQueue=[]; renderQueue(); sendMsg(text,atts); }
-    function clearQueue(){ msgQueue=[]; setBusy(false); renderQueue(); }
-    function renderQueue(){ if(!E.queueRow)return; E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!msgQueue.length); if(!msgQueue.length)return;
-      const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+msgQueue.length+' na fila — enviadas juntas quando terminar'; hdr.appendChild(s);
-      const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ msgQueue=[]; renderQueue(); }; hdr.appendChild(clr); E.queueRow.appendChild(hdr);
-      msgQueue.forEach((q,i)=>{ const it=document.createElement('div'); it.className='qitem'; const t=document.createElement('span'); t.className='qtext'; t.textContent=q.text; const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=()=>{ msgQueue.splice(i,1); renderQueue(); }; it.appendChild(t); it.appendChild(x); E.queueRow.appendChild(it); }); }
+    function maybeReload(){ if(!needReload)return;
+      if(activeRuns.length||justSent.size||recording)return;
+      if(Object.values(queueBySession).some(q=>q&&q.length))return;
+      toast('🔄 Nova versão — atualizando…'); setTimeout(()=>location.reload(),700); }
+    // Fila e "ocupado" são POR SESSÃO. A verdade de quem está rodando é o servidor (activeRuns, via
+    // {t:runs}); justSent cobre a janela entre eu enviar e o servidor confirmar. Enfileirar numa
+    // sessão NUNCA bloqueia outra: cada uma tem sua fila e seu estado.
+    const queueBySession={}, justSent=new Set();
+    function queueOf(sid){ return queueBySession[sid] || (queueBySession[sid]=[]); }
+    function busy(sid){ return !!sid && (activeRuns.includes(sid) || justSent.has(sid)); }
+    let curBusy=false;   // reflete busy(currentSession); mantido p/ auto-reload
+    function refreshComposer(){ curBusy=busy(currentSession);
+      if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!curBusy);
+      if(E.sendBtn) E.sendBtn.classList.toggle('hidden',!!curBusy);
+      renderQueue(); maybeReload(); }
+    function sendMsgTo(sid,text,atts){ if(!sid)return; lastWasVoice=false; justSent.add(sid);
+      tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:sid,attachments:atts||[]});
+      if(sid===currentSession){ showPending(); } refreshComposer(); }
+    function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
+    // Turno de uma sessão terminou -> envia a fila DELA (juntas), se houver e se não estiver mais ocupada.
+    function flushSession(sid){ const q=queueOf(sid); if(!q.length||busy(sid))return;
+      const text=q.map(x=>x.text).join('\n\n'); const atts=q.flatMap(x=>x.atts||[]); queueBySession[sid]=[];
+      if(sid===currentSession) renderQueue(); sendMsgTo(sid,text,atts); }
+    // Fim de turno de uma sessão (por done/erro/cancel OU por {t:runs} deixar de listá-la).
+    function onTurnEnd(sid){ if(!sid)return; justSent.delete(sid); flushSession(sid); refreshComposer(); }
+    function clearQueue(){ if(currentSession) queueBySession[currentSession]=[]; refreshComposer(); }
+    function renderQueue(){ if(!E.queueRow)return; const q=queueOf(currentSession); E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!q.length); if(!q.length)return;
+      const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — enviadas juntas quando terminar'; hdr.appendChild(s);
+      const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[currentSession]=[]; renderQueue(); }; hdr.appendChild(clr); E.queueRow.appendChild(hdr);
+      q.forEach((it0,i)=>{ const it=document.createElement('div'); it.className='qitem'; const t=document.createElement('span'); t.className='qtext'; t.textContent=it0.text; const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=()=>{ q.splice(i,1); renderQueue(); }; it.appendChild(t); it.appendChild(x); E.queueRow.appendChild(it); }); }
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
-      if(curBusy){ msgQueue.push({text:text||'(anexo)',atts}); renderQueue(); return; }
-      sendMsg(text||'(anexo)',atts); };
-    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); msgQueue=[]; renderQueue(); status('parando…'); };
+      if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); return; }
+      sendMsgTo(currentSession,text||'(anexo)',atts); };
+    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; refreshComposer(); status('parando…'); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
