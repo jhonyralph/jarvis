@@ -135,6 +135,8 @@
     /* fila de mensagens */
     #queueRow { display:flex; flex-direction:column; gap:5px; margin-bottom:6px; }
     #queueRow.hidden { display:none; }
+    /* a fila pode crescer: cabeçalho fixo, itens rolam. Limite pensado pra mobile (vh) e desktop (px). */
+    #queueRow .qlist { display:flex; flex-direction:column; gap:5px; max-height:min(42vh,280px); overflow-y:auto; padding-right:2px; }
     #queueRow .qhdr { display:flex; align-items:center; justify-content:space-between; font-size:11.5px; color:var(--mut); }
     #queueRow .qclr { background:none; border:0; color:#f0883e; cursor:pointer; font-size:11.5px; padding:2px 4px; }
     #queueRow .qitem { display:flex; align-items:center; gap:8px; background:#ffffff0d; border:1px dashed var(--line); border-radius:9px; padding:6px 9px; }
@@ -302,7 +304,8 @@
       /* por ultimo: mesma altura do input (mesma especificidade que as regras acima). */
       .inputrow .micbtn { flex:none; min-height:0; min-width:44px; padding:var(--ipad) 14px; line-height:var(--ilh); font-size:17px; }
       .pill { max-width:none; }
-      #sendBtn, #stopBtn { flex:1 1 100%; min-height:48px; font-size:16px; }
+      #sendBtn { flex:1 1 auto; min-height:48px; font-size:16px; }
+      #stopBtn { flex:0 0 auto; min-width:56px; min-height:48px; font-size:20px; }  /* só ícone, ao lado do Enviar */
       #status { flex:none; white-space:nowrap; }
       .modal .card { width:100%; } .pop { max-width:92vw; }
     }
@@ -369,7 +372,7 @@
             <button type="button" id="usageBtn" class="pill" title="Uso: contexto + limites do plano">◔ <span class="cap" id="usageName">—</span></button>
             <button type="button" id="speak" class="ghost" title="Falar respostas (voz)">🔇</button>
           </div>
-          <button type="button" id="stopBtn" class="hidden danger" title="Parar o que está em andamento">⏹ Parar</button>
+          <button type="button" id="stopBtn" class="hidden danger" title="Parar o que está em andamento">⏹</button>
           <button type="submit" id="sendBtn">Enviar</button>
         </div>
         <span class="usage" id="usage"></span>
@@ -1290,8 +1293,9 @@
     function busy(sid){ return !!sid && (activeRuns.includes(sid) || justSent.has(sid)); }
     let curBusy=false;   // reflete busy(currentSession); mantido p/ auto-reload
     function refreshComposer(){ curBusy=busy(currentSession);
+      // Parar aparece AO LADO do Enviar (não o substitui): mesmo rodando, você pode digitar e
+      // enfileirar. Parar é só o ícone, vermelho; Enviar continua sempre disponível.
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!curBusy);
-      if(E.sendBtn) E.sendBtn.classList.toggle('hidden',!!curBusy);
       renderQueue(); maybeReload(); }
     function sendMsgTo(sid,text,atts){ if(!sid)return; lastWasVoice=false; justSent.add(sid);
       tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:sid,attachments:atts||[]});
@@ -1307,7 +1311,9 @@
     function renderQueue(){ if(!E.queueRow)return; const q=queueOf(currentSession); E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!q.length); if(!q.length)return;
       const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — enviadas juntas quando terminar'; hdr.appendChild(s);
       const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[currentSession]=[]; renderQueue(); }; hdr.appendChild(clr); E.queueRow.appendChild(hdr);
-      q.forEach((it0,i)=>{ const it=document.createElement('div'); it.className='qitem'; const t=document.createElement('span'); t.className='qtext'; t.textContent=it0.text; const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=()=>{ q.splice(i,1); renderQueue(); }; it.appendChild(t); it.appendChild(x); E.queueRow.appendChild(it); }); }
+      const list=document.createElement('div'); list.className='qlist';
+      q.forEach((it0,i)=>{ const it=document.createElement('div'); it.className='qitem'; const t=document.createElement('span'); t.className='qtext'; t.textContent=it0.text; const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=()=>{ q.splice(i,1); renderQueue(); }; it.appendChild(t); it.appendChild(x); list.appendChild(it); });
+      E.queueRow.appendChild(list); }
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); return; }

@@ -415,10 +415,22 @@ export interface HistMsg { role: string; text: string; ts: number; name?: string
 // LCS diff, and the caller only ever renders the tail of the history — computing stats for every
 // tool_use in a long session meant hundreds of diffs built and then thrown away on the slice,
 // which is what made switching sessions crawl. Stats are filled for the last N tool items only.
-export function nativeHistory(id: string, diffLimit = 120): { agent: string; cwd: string; title: string; messages: HistMsg[] } | null {
+// Parsing a session's history means reading and JSON-parsing its whole jsonl — ~120ms on a 30MB
+// session, and it's on the critical path of every open (the file list rides along in the same
+// response, which is why "os arquivos demoram a aparecer"). Cache the PARSED VIEW keyed on the
+// jsonl's mtime+size (not the file bytes): an idle session re-opens instantly, a live one whose
+// jsonl just grew re-parses. Bounded so memory can't run away.
+type NativeHist = { agent: string; cwd: string; title: string; messages: HistMsg[] };
+const histCache = new Map<string, { key: string; data: NativeHist }>();
+export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   if (!isNativeId(id)) return null;
   const f = findFileById(id);
   if (!f) return null;
+  let stamp = "";
+  try { const s = statSync(f.path); stamp = `${diffLimit}:${s.mtimeMs}:${s.size}`; } catch { /* fall through */ }
+  const ckey = f.path;
+  const hit = histCache.get(ckey);
+  if (hit && stamp && hit.key === stamp) return hit.data;
   let raw: string;
   try {
     raw = readFileSync(f.path, "utf8");
@@ -460,5 +472,7 @@ export function nativeHistory(id: string, diffLimit = 120): { agent: string; cwd
     const st = toolFileStat(r.name, r.input);
     r.m.path = st.path; r.m.adds = st.adds; r.m.dels = st.dels; r.m.rows = st.rows;
   }
-  return { agent: f.claude ? "claude-code" : "codex", cwd, title: title || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão", messages };
+  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: title || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão", messages };
+  if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
+  return data;
 }
