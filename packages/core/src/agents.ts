@@ -319,10 +319,12 @@ export class CodexAdapter implements AgentAdapter {
 
   async available(): Promise<boolean> {
     try {
-      const out = await run("codex", ["login", "status"], homedir(), "", true);
-      return /logged in|authenticated|active/i.test(out);
+      // Measured (codex-cli 0.144.4): `login status` exits 0 with an EMPTY stdout and prints
+      // "Logged in using ChatGPT" to stderr. Read both, and trust the exit code for success.
+      const r = await runRaw("codex", ["login", "status"], homedir(), "", true);
+      return r.code === 0 && /logged in|authenticated|active/i.test(r.stdout + r.stderr);
     } catch {
-      return false;
+      return false; // binary not installed / not on PATH
     }
   }
 
@@ -347,6 +349,36 @@ export class CodexAdapter implements AgentAdapter {
 
 // ---------------------------------------------------------------------------
 
+export interface RunResult { code: number; stdout: string; stderr: string }
+/**
+ * Raw spawn: resolves with the outcome and lets the caller judge it. Rejects only when the
+ * process could not run at all (missing binary), never for a non-zero exit.
+ *
+ * Use this when the two streams mean different things to you — e.g. `codex login status` exits 0
+ * and prints its answer to STDERR, while `codex exec` prints the reply to STDOUT and a banner to
+ * STDERR. A helper that collapses both into one string cannot serve both.
+ */
+function runRaw(cmd: string, args: string[], cwd: string, stdin: string, useShell: boolean): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, { cwd, windowsHide: true, shell: useShell });
+    let out = "";
+    let err = "";
+    p.stdout.on("data", (d) => (out += d.toString()));
+    p.stderr.on("data", (d) => (err += d.toString()));
+    p.on("error", reject);
+    if (stdin) p.stdin.write(stdin);
+    p.stdin.end();
+    p.on("close", (code) => resolve({ code: code ?? -1, stdout: out, stderr: err }));
+  });
+}
+/**
+ * Success is the EXIT CODE — not whether anything reached stdout. The old rule ("resolve if
+ * stdout is non-empty, otherwise reject") was wrong in both directions: it called a successful
+ * command that reports on stderr a failure (which is why `codex login status` never registered
+ * and codex therefore never showed as available, on any machine), and it called a failing command
+ * that had printed to stdout a success. Returns stdout, because that is where a CLI puts its
+ * output; callers that need stderr use runRaw and say so.
+ */
 function run(cmd: string, args: string[], cwd: string, stdin: string, useShell: boolean): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { cwd, windowsHide: true, shell: useShell });
@@ -358,8 +390,8 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, useShell: 
     if (stdin) p.stdin.write(stdin);
     p.stdin.end();
     p.on("close", (code) => {
-      if (out.trim()) resolve(out);
-      else reject(new Error(err.trim() || `${cmd} exited with ${code}`));
+      if (code === 0) resolve(out);
+      else reject(new Error(err.trim() || out.trim() || `${cmd} exited with ${code}`));
     });
   });
 }
