@@ -34,7 +34,9 @@ Write-Host "Config gravada em $envFile"
 $startPs = Join-Path $root 'scripts\start-runner.ps1'
 $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startPs`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+# RestartCount é backstop caso o supervisor (start-runner.ps1) morra; o self-heal do node
+# fica no loop do launcher. IgnoreNew evita instância dupla quando o logon dispara de novo.
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName 'JarvisRunner' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName 'JarvisRunner'
 Write-Host 'Runner instalado e iniciado (task JarvisRunner). Deve aparecer no seletor de máquina do Hub.' -ForegroundColor Green

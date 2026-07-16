@@ -4,9 +4,11 @@ $script  = Join-Path $PSScriptRoot 'start-hub.ps1'
 $action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
   -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $script)
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+# RestartCount é backstop caso o próprio supervisor (start-hub.ps1) morra — o self-heal
+# do node fica no loop do launcher. ExecutionTimeLimit=0 porque é servidor (roda sem fim).
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) `
-  -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
+  -RestartCount 30 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
 
 Register-ScheduledTask -TaskName 'JarvisHub' `
   -Description 'Sobe o Jarvis Hub no logon (com warmup do token do Claude).' `

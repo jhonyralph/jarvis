@@ -1,10 +1,13 @@
-# Jarvis Hub launcher — usado pela tarefa agendada "JarvisHub" (roda no logon).
+# Jarvis Hub launcher — tarefa agendada "JarvisHub" (roda no logon).
 #
-# Por que existe: no boot o token OAuth do Claude pode estar expirado. O Hub faz um
-# GET /v1/models direto e NÃO sabe renovar o token; só o CLI `claude` renova (via
-# refresh token). Então aqui a gente "aquece" o token com uma chamada trivial do CLI
-# ANTES de subir o Hub — assim a lista de modelos vem completa e as chamadas de
-# agente já saem funcionando. Instância única; log em ~/.jarvis/hub.log.
+# SUPERVISOR: mantém o Hub SEMPRE de pé. Se o node cair — crash, ou o auto-update
+# matando a porta 4577 pra aplicar código novo — o loop ressuscita em segundos.
+# Como tsx roda direto do source, o restart já pega o código atualizado. Instância
+# única garantida pelo teste da porta 4577. Log em ~/.jarvis/hub.log.
+#
+# Por que o warmup: no boot o token OAuth do Claude pode estar expirado. O Hub faz um
+# GET /v1/models direto e NÃO sabe renovar o token; só o CLI `claude` renova (refresh
+# token). Então "aquecemos" o token com uma chamada trivial ANTES de subir o Hub.
 $ErrorActionPreference = 'Continue'
 $root = Split-Path $PSScriptRoot -Parent            # ...\jarvis
 $hub  = Join-Path $root 'apps\hub'
@@ -15,8 +18,10 @@ function Log($m) { Add-Content -Path $log -Value ("[launcher] {0} {1}" -f (Get-D
 # garante que node/npm/claude resolvem, independente do PATH da tarefa
 $env:PATH = "C:\Program Files\nodejs;$env:USERPROFILE\.local\bin;$env:PATH"
 
+# instância única: se já há um Hub na 4577 (ex.: o logon dispara de novo com o supervisor
+# já rodando), este launcher encerra em vez de duplicar.
 if (Get-NetTCPConnection -LocalPort 4577 -State Listen -ErrorAction SilentlyContinue) {
-  Log 'hub já rodando na 4577 — nada a fazer'
+  Log 'hub já rodando na 4577 — este launcher encerra (evita instância dupla)'
   return
 }
 
@@ -36,16 +41,26 @@ if (-not $env:JARVIS_AUTH)         { $env:JARVIS_AUTH = 'on' }
 $env:JARVIS_CWD = $root
 
 # aquece o token do Claude (best-effort, com teto de tempo para nunca travar o boot)
-try {
-  Log 'aquecendo token do Claude...'
-  $osdir = Join-Path $env:USERPROFILE '.jarvis\oneshot'; New-Item -ItemType Directory -Force $osdir | Out-Null
-  $j = Start-Job { param($d) Set-Location $d; 'ping' | & claude -p --model haiku 2>&1 } -ArgumentList $osdir
-  if (Wait-Job $j -Timeout 90) { Log ('warmup ok: ' + (((Receive-Job $j) -join ' ').Trim())) }
-  else { Stop-Job $j; Log 'warmup atingiu o teto de tempo (segue mesmo assim)' }
-  Remove-Job $j -Force -ErrorAction SilentlyContinue
-} catch { Log "warmup falhou (segue mesmo assim): $_" }
+function Warm-Token {
+  try {
+    Log 'aquecendo token do Claude...'
+    $osdir = Join-Path $env:USERPROFILE '.jarvis\oneshot'; New-Item -ItemType Directory -Force $osdir | Out-Null
+    $j = Start-Job { param($d) Set-Location $d; 'ping' | & claude -p --model haiku 2>&1 } -ArgumentList $osdir
+    if (Wait-Job $j -Timeout 90) { Log ('warmup ok: ' + (((Receive-Job $j) -join ' ').Trim())) }
+    else { Stop-Job $j; Log 'warmup atingiu o teto de tempo (segue mesmo assim)' }
+    Remove-Job $j -Force -ErrorAction SilentlyContinue
+  } catch { Log "warmup falhou (segue mesmo assim): $_" }
+}
 
-Log 'iniciando hub...'
 Set-Location $hub
-& npm.cmd start *>> $log
-Log 'hub encerrou'
+$lastWarm = [datetime]::MinValue
+# Loop de supervisão: NUNCA sai. Cada iteração garante token fresco (reaquece se passou
+# de 30min desde a última vez) e (re)sobe o Hub em foreground. Quando o node encerra,
+# registra e reinicia após um pequeno backoff.
+while ($true) {
+  if (((Get-Date) - $lastWarm).TotalMinutes -ge 30) { Warm-Token; $lastWarm = Get-Date }
+  Log 'iniciando hub...'
+  & npm.cmd start *>> $log
+  Log 'hub encerrou — reiniciando em 3s'
+  Start-Sleep -Seconds 3
+}

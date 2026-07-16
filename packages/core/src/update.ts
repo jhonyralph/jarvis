@@ -96,8 +96,13 @@ export function restartService(kind: "hub" | "runner"): void {
   const p = process.platform;
   if (p === "win32") {
     const task = kind === "hub" ? "JarvisHub" : "JarvisRunner";
-    const killPort = kind === "hub" ? "$c=Get-NetTCPConnection -LocalPort 4577 -State Listen -EA SilentlyContinue; if($c){Stop-Process -Id $c.OwningProcess -Force -EA SilentlyContinue};" : "";
-    const cmd = `Start-Sleep 3; ${killPort} Stop-ScheduledTask -TaskName '${task}' -EA SilentlyContinue; Start-Sleep 1; Start-ScheduledTask -TaskName '${task}'`;
+    // Hub: the launcher is a supervisor loop — just kill the node process and the loop
+    // relaunches with the new code (tsx runs from source). Start-ScheduledTask is only a
+    // fallback for the rare case the supervisor itself died; IgnoreNew makes it a no-op
+    // when the supervisor is alive. This avoids the old Stop/Start race that left it down.
+    const cmd = kind === "hub"
+      ? `Start-Sleep 3; $c=Get-NetTCPConnection -LocalPort 4577 -State Listen -EA SilentlyContinue; if($c){Stop-Process -Id $c.OwningProcess -Force -EA SilentlyContinue}; Start-ScheduledTask -TaskName '${task}' -EA SilentlyContinue`
+      : `Start-Sleep 3; Stop-ScheduledTask -TaskName '${task}' -EA SilentlyContinue; Start-Sleep 1; Start-ScheduledTask -TaskName '${task}'`;
     spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", cmd], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } else if (p === "darwin") {
     const label = kind === "hub" ? "com.jarvis.hub" : "com.jarvis.runner";
