@@ -335,6 +335,11 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       clearTimeout(regTimer); guard.recordSuccess(ip);
       const info: RunnerInfo = m.info || {}; rid = info.runnerId || null;
       if (!rid) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
+      // Same id registering again = a second instance on that machine (e.g. the service plus a
+      // hand-started one). The map would just be overwritten and the old socket left live but
+      // orphaned — a zombie that keeps tailing and probing. Evict it explicitly.
+      const prevRc = runners.get(rid);
+      if (prevRc?.ws && prevRc.ws !== ws) { console.warn(`[hub] runner ${rid} registrou de novo — encerrando instância anterior`); try { prevRc.ws.close(); } catch { /* ignore */ } }
       runners.set(rid, { id: rid, ws, local: false, lastSeen: Date.now(), info });
       if (!runnerLabels[rid]) { runnerLabels[rid] = info.label || info.host || rid; saveRunnerLabels(); }
       // align the auth token with the runner's real id so the machines list reconciles
