@@ -226,7 +226,13 @@ function requireOwner(ws: WebSocket): Conn | null {
 function secState(ws: WebSocket): void {
   const p = principalOf(ws);
   const onlineRunners = new Set([...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN).map((r) => r.id));
-  send(ws, { t: "sec_state", devices: auth.listDevices(), invites: auth.listInvites(), me: p?.deviceId || null, role: p?.role || (auth.AUTH_ENABLED ? "member" : "owner"), hasPass: auth.hasPassphrase(), runnerTokens: auth.listRunnerTokens(), onlineRunners: [...onlineRunners], repoUrl });
+  // Show the runner's REGISTERED/renamed label (runnerLabels), not the stale mint-time token
+  // label — otherwise a machine that connected as "Luby" still reads "nova máquina" here.
+  const runnerTokens = auth.listRunnerTokens().map((rt) => ({ ...rt, label: runnerLabels[rt.runnerId] || rt.label, online: onlineRunners.has(rt.runnerId) }));
+  // The main machine (the Hub itself, "machine 0") — always shown, never removable.
+  const lr = runners.get(LOCAL_ID);
+  const localMachine = { id: LOCAL_ID, label: runnerLabels[LOCAL_ID] || lr?.info.host || "Servidor (esta máquina)", host: lr?.info.host };
+  send(ws, { t: "sec_state", devices: auth.listDevices(), invites: auth.listInvites(), me: p?.deviceId || null, role: p?.role || (auth.AUTH_ENABLED ? "member" : "owner"), hasPass: auth.hasPassphrase(), runnerTokens, localMachine, onlineRunners: [...onlineRunners], repoUrl });
 }
 /** Update the live role of any connected session for this device (so the owner UI
  *  appears/disappears without a reconnect). */
@@ -786,7 +792,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (msg.t === "rename_runner" && typeof msg.runnerId === "string" && typeof msg.label === "string") {
       if (!requireOwner(ws)) return;
-      runnerLabels[msg.runnerId] = msg.label.slice(0, 40); saveRunnerLabels(); broadcastMachines(); return;
+      runnerLabels[msg.runnerId] = msg.label.slice(0, 40); saveRunnerLabels(); broadcastMachines(); secState(ws); return;
     }
     // when viewing a REMOTE machine, session ops are forwarded to that runner
     {

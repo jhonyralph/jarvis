@@ -722,9 +722,14 @@
         E.secInvites.appendChild(row); });
       if(E.secPassStatus) E.secPassStatus.textContent = m.hasPass ? '✅ Configurada — pedida em novos logins.' : '⚪ Não configurada.';
       if(m.repoUrl) secRepoUrl=m.repoUrl;
-      const runs=m.runnerTokens||[], online=new Set(m.onlineRunners||[]);
-      if(E.secRunners){ E.secRunners.innerHTML = runs.length ? '' : 'Nenhuma máquina adicionada ainda.';
-        runs.forEach(rt=>{ const on=online.has(rt.runnerId); const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(rt.label||rt.runnerId)+' · '+(on?'<span style="color:#3fb950">online</span>':'<span style="opacity:.5">offline</span>')+'</div>');
+      const runs=m.runnerTokens||[], online=new Set(m.onlineRunners||[]), loc=m.localMachine;
+      const renameBtn=(id,label)=>{ const b=document.createElement('button'); b.className='ghost'; b.style.flex='none'; b.textContent='Renomear'; b.onclick=async()=>{ const v=await dialog({title:'Renomear máquina',input:true,value:label||'',placeholder:'Nome da máquina'}); if(v&&v.trim()) tx({t:'rename_runner',runnerId:id,label:v.trim()}); }; return b; };
+      if(E.secRunners){ E.secRunners.innerHTML = (runs.length||loc) ? '' : 'Nenhuma máquina adicionada ainda.';
+        // máquina principal (o servidor) — sempre listada, sem "Revogar"
+        if(loc){ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(loc.label||'Servidor')+' <span style="opacity:.6">(esta máquina · servidor)</span> · <span style="color:#3fb950">online</span></div>');
+          row.appendChild(renameBtn(loc.id,loc.label)); E.secRunners.appendChild(row); }
+        runs.forEach(rt=>{ const on=rt.online||online.has(rt.runnerId); const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(rt.label||rt.runnerId)+' · '+(on?'<span style="color:#3fb950">online</span>':'<span style="opacity:.5">offline</span>')+'</div>');
+          row.appendChild(renameBtn(rt.runnerId,rt.label));
           const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_runner',runnerId:rt.runnerId}); row.appendChild(b);
           E.secRunners.appendChild(row); }); }
     }
