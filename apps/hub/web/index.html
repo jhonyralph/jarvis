@@ -169,6 +169,9 @@
     #filePanel .fpname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:13.5px; }
     #filePanel .fpstat { flex:none; font-size:11.5px; font-family:ui-monospace,Menlo,Consolas,monospace; }
     #filePanel .fpstat .add { color:#3fb950; } #filePanel .fpstat .del { color:#f85149; }
+    #filePanel .fpview { flex:none; display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; } #filePanel .fpview.hidden { display:none; }
+    #filePanel .fpview button { background:none; border:0; color:var(--mut); cursor:pointer; font-size:11.5px; padding:4px 9px; }
+    #filePanel .fpview button.on { background:#2563eb; color:#fff; }
     #filePanel .fpmeta { padding:5px 12px; font-size:11px; color:var(--mut); border-bottom:1px solid var(--line); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .filebody { flex:1; background:var(--code); margin:0; overflow:auto; padding:10px 0; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.5; white-space:pre; color:var(--text); }
     .filebody.plain { white-space:pre; padding:12px; }
@@ -400,6 +403,7 @@
       <div class="fphead">
         <span id="fileName" class="fpname">—</span>
         <span id="fileStat" class="fpstat"></span>
+        <span id="fileView" class="fpview hidden"><button type="button" data-v="diff">Diff</button><button type="button" data-v="full">Arquivo</button></span>
         <button id="fileCopy" class="ghost" type="button" title="Copiar">Copiar</button>
         <button id="fileClose" class="ghost" type="button" title="Fechar">✕</button>
       </div>
@@ -518,7 +522,7 @@
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
-      'filePanel','fileName','fileMeta','fileBody','fileStat','fileCopy','fileClose','nativeChip',
+      'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileCopy','fileClose','nativeChip',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
@@ -715,9 +719,18 @@
       if(!f){ f={path,action:action||'read',adds:adds||0,dels:dels||0}; curFiles.unshift(f); }
       else { if(action==='edit') f.action='edit'; if(adds!=null)f.adds=(f.adds||0)+adds; if(dels!=null)f.dels=(f.dels||0)+dels; }
       renderFiles(); }
+    // Painel de arquivo com DOIS modos: diff (só a alteração) e arquivo completo (igual no chat).
+    // curFileDiffable = há um diff pra mostrar (aberto por uma edição, numa sessão). Guardado pra
+    // o toggle poder recarregar o outro modo sem reabrir.
+    let curFilePath='', curFileView='full', curFileDiffable=false;
     function openFile(path,action){ E.filePanel.classList.remove('hidden'); E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
-      E.fileStat.textContent=''; E.fileMeta.textContent=path; E.fileBody.className='filebody plain'; E.fileBody.textContent='Carregando…';
-      if(action==='edit'){ tx({t:'readdiff',sessionId:currentSession,path}); } else { tx({t:'readfile',path,cwd:curCwd}); } }
+      curFilePath=path; curFileDiffable=(action==='edit' && !!currentSession); curFileView=curFileDiffable?'diff':'full';
+      renderFileViewBtns(); loadFileView(); }
+    function loadFileView(){ E.fileStat.textContent=''; E.fileMeta.textContent=curFilePath; E.fileBody.className='filebody plain'; E.fileBody.textContent='Carregando…';
+      if(curFileView==='diff' && curFileDiffable){ tx({t:'readdiff',sessionId:currentSession,path:curFilePath}); } else { tx({t:'readfile',path:curFilePath,cwd:curCwd}); } }
+    function renderFileViewBtns(){ if(!E.fileView)return; E.fileView.classList.toggle('hidden',!curFileDiffable); // sem diff → sem toggle (só arquivo)
+      E.fileView.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===curFileView)); }
+    if(E.fileView) E.fileView.querySelectorAll('button').forEach(b=>b.onclick=()=>{ if(curFileView===b.dataset.v)return; curFileView=b.dataset.v; renderFileViewBtns(); loadFileView(); });
     // Shows the underlying native session id (real claude/codex session) bound to this UI session,
     // so the user can see it "aparecer" and resume it in a terminal. Click = copy the resume command.
     function renderNativeChip(){ const c=E.nativeChip; if(!c)return; if(!curNativeId){ c.classList.add('hidden'); c.textContent=''; return; }
