@@ -58,18 +58,37 @@ export async function updateCheck(root: string, fetch = true): Promise<UpdateSta
   return { supported: true, current, branch, behind, clean, latest, checkedAt: Date.now() };
 }
 
-export interface UpdateResult { ok: boolean; log: string; prev?: string; behind?: number; }
+export interface UpdateResult { ok: boolean; log: string; prev?: string; behind?: number; dirty?: boolean; }
 
-export async function updateApply(root: string): Promise<UpdateResult> {
+/**
+ * `force` DISCARDS local changes (`git reset --hard origin/<branch>`) before pulling.
+ *
+ * Refusing a dirty tree is the right default — it's someone's unsaved work. But a runner is not a
+ * workstation: its tree goes dirty on its own (a stray npm install, line-ending churn), and then
+ * every update aborts forever and the machine silently rots on old code. Without a way to say
+ * "this one is disposable, take the latest", the only fix is physically going to the machine —
+ * which defeats the point of remote updates. So: still refuses by default, obeys when forced.
+ *
+ * `dirty` is reported back so the caller can offer forcing instead of guessing from a log string.
+ */
+export async function updateApply(root: string, opts?: { force?: boolean }): Promise<UpdateResult> {
   const st = await updateCheck(root, true);
   if (!st.supported) return { ok: false, log: st.error || "auto-update não suportado neste install" };
   if (st.error) return { ok: false, log: st.error };
-  if (!st.clean) return { ok: false, log: "há alterações locais não commitadas — abortando por segurança (rode `git status`)" };
-  if (st.behind === 0) return { ok: true, log: "já está na última versão", behind: 0 };
+  if (!st.clean && !opts?.force) return { ok: false, dirty: true, log: "há alterações locais não commitadas — abortando por segurança (rode `git status`)" };
+  if (st.behind === 0 && st.clean) return { ok: true, log: "já está na última versão", behind: 0 };
   try { mkdirSync(join(homedir(), ".jarvis"), { recursive: true }); writeFileSync(PREV_FILE, st.current); } catch { /* ignore */ }
   let log = "";
   try {
-    log += "git pull:\n" + (await git(root, ["pull", "--ff-only", "origin", st.branch], 60000)) + "\n";
+    if (opts?.force && !st.clean) {
+      // reset (not pull): a pull can't move a dirty tree. updateCheck already fetched, so
+      // origin/<branch> is current. This is the line that throws away local work — only ever
+      // reached because the caller explicitly asked for it.
+      log += "descartando alterações locais (git reset --hard origin/" + st.branch + "):\n";
+      log += (await git(root, ["reset", "--hard", `origin/${st.branch}`], 30000)) + "\n";
+    } else {
+      log += "git pull:\n" + (await git(root, ["pull", "--ff-only", "origin", st.branch], 60000)) + "\n";
+    }
     // exec (shell) — Node 22 rejects execFile on npm.cmd (.cmd security change)
     const { stdout } = await pExec(`${NPM} install`, { cwd: root, timeout: 300000, windowsHide: true });
     log += "npm install: ok (" + (String(stdout).trim().split("\n").slice(-1)[0] || "done") + ")";

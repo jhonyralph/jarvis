@@ -78,6 +78,9 @@ export interface DiffRowMeta { t: " " | "+" | "-" | "@" | string; s: string; }
 // --- Runner -> Hub ---
 export type RunnerToHub =
   | { t: "register"; token: string; info: RunnerInfo }
+  /** Resultado do update NESTA máquina. Sem isso o Hub só sabia que enviou o pedido, e um
+   *  update abortado (repo sujo) ficava invisível — o dono achava que tinha atualizado. */
+  | { t: "update_done"; ok: boolean; dirty?: boolean; behind?: number; log?: string }
   | { t: "sessions"; sessions: RunnerSession[] }
   | { t: "caps"; agent: string; caps: unknown }
   | {
@@ -123,7 +126,8 @@ export type HubToRunner =
   | { t: "readdiff"; reqId: string; sessionId: string; path: string }
   | { t: "caps"; agent?: string }
   | { t: "stop"; sessionId: string }
-  | { t: "update" }
+  /** force: descarta alterações locais (git reset --hard) antes de atualizar — só sob pedido explícito do dono. */
+  | { t: "update"; force?: boolean }
   | { t: "ping" };
 
 export type RunnerProtocol = RunnerToHub | HubToRunner;

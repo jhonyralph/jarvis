@@ -277,6 +277,9 @@ const LOCAL_ID = "local";
 runners.set(LOCAL_ID, { id: LOCAL_ID, ws: null, local: true, lastSeen: Date.now(), info: { runnerId: LOCAL_ID, host: hostname(), os: process.platform, agents: agents.names(), local: true } });
 const clientRunner = new WeakMap<WebSocket, string>();
 const runnerActive = new Map<string, Set<string>>(); // runnerId -> session ids running there
+// Clients with the update panel open. A machine's result arrives asynchronously (it may be busy,
+// or restarting), long after the request returned — this is who gets told.
+const updateWatchers = new Set<WebSocket>();
 const pendingReq = new Map<string, WebSocket>();
 let reqSeq = 0;
 // which agents are actually usable on THIS (local) machine — probes availability, so the
@@ -347,6 +350,15 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary }); return; }
   if (m.t === "runs") { runnerActive.set(rc.id, new Set(m.active || [])); for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
+  // Update outcome of a machine. Goes to whoever asked (any owner watching the update panel),
+  // not just clients on that machine — you fire the update from the Hub's own screen.
+  if (m.t === "update_done") {
+    const label = runnerLabels[rc.id] || rc.info.host || rc.id;
+    auth.audit("update_machine", { runnerId: rc.id, detail: `${label}: ${m.ok ? "ok" : "falhou"}${m.dirty ? " (repo sujo)" : ""}` });
+    console.log(`[hub] update ${label}: ${m.ok ? "ok" : "falhou"} — ${String(m.log || "").split("\n")[0]}`);
+    for (const c of updateWatchers) send(c, { t: "update_machine", runnerId: rc.id, label, ok: !!m.ok, dirty: !!m.dirty, behind: m.behind ?? 0, log: String(m.log || "").slice(0, 600) });
+    return;
+  }
   if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries }); } return; }
   if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, truncated: m.truncated, error: m.error }); } return; }
   if (m.t === "error") { const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return; }
@@ -832,6 +844,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
   ws.on("close", () => {
     subs.delete(ws);
     wakeClients.delete(ws);
+    updateWatchers.delete(ws);
     clearUnauthTimer(ws);
     syncTails();
   });
@@ -1067,11 +1080,31 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "update_apply") {
       if (!requireOwner(ws)) return;
       const all = !!msg.allMachines;
+      const force = !!msg.force;
+      updateWatchers.add(ws);
+      // Targeted retry (the per-machine "forçar" button). Forcing discards that machine's local
+      // work, so it must hit exactly the machine the owner clicked — never fan out, never the Hub.
+      if (typeof msg.runnerId === "string" && msg.runnerId) {
+        const rc = runners.get(msg.runnerId);
+        const label = rc ? (runnerLabels[rc.id] || rc.info.host || rc.id) : msg.runnerId;
+        if (!rc || rc.local || !rc.ws || rc.ws.readyState !== WebSocket.OPEN) { send(ws, { t: "update_machine", runnerId: msg.runnerId, label, ok: false, dirty: false, log: "máquina offline" }); return; }
+        auth.audit("update_apply", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: rc.id, detail: `${label}${force ? " (forçado — descarta local)" : ""}` });
+        sendToRunner(rc, { t: "update", force });
+        return;
+      }
       let sent = 0;
-      if (all) for (const rc of runners.values()) if (!rc.local && rc.ws && rc.ws.readyState === WebSocket.OPEN) { if (sendToRunner(rc, { t: "update" })) sent++; }
-      auth.audit("update_apply", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: all ? `hub + ${sent} máquina(s)` : "hub" });
-      send(ws, { t: "update_progress", message: all ? `Atualizando o Hub e ${sent} máquina(s)…` : "Atualizando o Hub…" });
-      const r = await updateApply(UPDATE_ROOT);
+      const skipped: string[] = [];
+      if (all) for (const rc of runners.values()) {
+        if (rc.local) continue;
+        const label = runnerLabels[rc.id] || rc.info.host || rc.id;
+        // An offline machine is neither updated nor queued — say so instead of counting it out
+        // of existence, otherwise "N máquinas" silently means "N of the ones that happened to be up".
+        if (!rc.ws || rc.ws.readyState !== WebSocket.OPEN) { skipped.push(label); continue; }
+        if (sendToRunner(rc, { t: "update", force })) sent++; else skipped.push(label);
+      }
+      auth.audit("update_apply", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: (all ? `hub + ${sent} máquina(s)` : "hub") + (force ? " (forçado)" : "") });
+      send(ws, { t: "update_progress", message: all ? `Atualizando o Hub e ${sent} máquina(s)…` : "Atualizando o Hub…", pending: sent, skipped });
+      const r = await updateApply(UPDATE_ROOT, { force });
       send(ws, { t: "update_result", ok: r.ok, log: r.log });
       if (r.ok && (r.behind ?? 0) > 0) scheduleRestart();
       else await refreshUpdate(true);

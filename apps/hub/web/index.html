@@ -227,6 +227,15 @@
     #machineBar .mitem { display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:8px; cursor:pointer; }
     #machineBar .mitem:hover { background:#ffffff10; } #machineBar .mitem.active { background:#2f81f722; }
     #machineBar .mtag { flex:none; font-size:10px; opacity:.6; border:1px solid #ffffff22; border-radius:6px; padding:1px 5px; }
+    /* resultado do update por maquina: o botao dizia "enviado" e voce lia "atualizado" */
+    #updMachines { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
+    .updm { display:flex; align-items:center; gap:6px; font-size:12px; padding:5px 7px; border:1px solid var(--line); border-radius:8px; }
+    .updm .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .updm.ok { border-color:#3fb95055; background:#3fb9501a; }
+    .updm.fail { border-color:#e3b34155; background:#e3b3411a; }
+    .updm.wait { opacity:.6; }
+    .updm .why { font-size:11px; opacity:.75; }
+    .updm button { font-size:11px; padding:3px 7px; }
     #machineBar .mtag.warn { opacity:1; color:#e3b341; border-color:#e3b34155; background:#e3b3411a; }
     #machineBar .mpen { flex:none; background:none; border:0; color:inherit; opacity:.5; cursor:pointer; font-size:13px; padding:2px 4px; }
     #machineBar .mpen:hover { opacity:1; }
@@ -376,6 +385,7 @@
       <label class="row" style="margin:0;flex:1"><input type="checkbox" id="updAll"> aplicar em todas as máquinas</label>
       <button id="updApply" type="button">Atualizar</button>
     </div>
+    <div id="updMachines"></div>
     <div class="row" style="margin-top:4px"><button id="updCheck" class="ghost" type="button">Verificar agora</button></div>
     <div class="sec">Padrões</div>
     <label>Agente padrão <select id="setAgent"></select></label>
@@ -437,7 +447,7 @@
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
-      'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck',
+      'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
       'filePanel','fileName','fileMeta','fileBody','fileStat','fileCopy','fileClose','nativeChip',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
@@ -927,6 +937,21 @@
     E.setSumEffort.onchange=saveSum;
     // ---- atualização do sistema (git) ----
     let updState=null;
+    // Uma maquina responde quando responde (pode estar ocupada, ou reiniciando). Guardamos por
+    // runnerId e desenhamos conforme chega, em vez de fingir sucesso no envio.
+    let updMach = {};
+    function renderUpdMachines(){ if(!E.updMachines)return; const ids=Object.keys(updMach); E.updMachines.innerHTML='';
+      for(const id of ids){ const m=updMach[id]; const d=document.createElement('div');
+        d.className='updm '+(m.state==='ok'?'ok':m.state==='fail'?'fail':'wait');
+        const icon=m.state==='ok'?'✓':m.state==='fail'?'✗':m.state==='skip'?'—':'⏳';
+        d.innerHTML='<span>'+icon+'</span><span class="nm">'+esc(m.label||id)+'</span>'+(m.why?'<span class="why">'+esc(m.why)+'</span>':'');
+        // Forçar so aparece quando o motivo E repo sujo — e descarta o trabalho local daquela maquina.
+        if(m.state==='fail'&&m.dirty){ const b=document.createElement('button'); b.type='button'; b.textContent='forçar';
+          b.title='Descarta as alterações locais dessa máquina (git reset --hard) e pega a última versão';
+          b.onclick=()=>{ if(!confirm('Descartar alterações locais em "'+(m.label||id)+'" e atualizar? Isso APAGA o que não estiver commitado NAQUELA máquina.'))return;
+            updMach[id]={...m,state:'wait',why:'forçando…',dirty:false}; renderUpdMachines(); tx({t:'update_apply',runnerId:id,force:true}); };
+          d.appendChild(b); }
+        E.updMachines.appendChild(d); } }
     function renderUpdate(){ if(!E.updStatus)return; const s=updState; const owner=authUser&&authUser.role==='owner';
       if(!s){ E.updStatus.textContent='—'; E.updActions.classList.add('hidden'); return; }
       if(s.error||s.supported===false){ E.updStatus.textContent='ℹ '+(s.error||'auto-update indisponível (instale via git clone)'); E.updActions.classList.add('hidden'); return; }
@@ -1045,7 +1070,12 @@
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
         else if(m.t==='update_status'){ updState=m.status; renderUpdate(); }
-        else if(m.t==='update_progress'){ if(E.updStatus) E.updStatus.textContent='… '+(m.message||'atualizando'); toast('🔄 '+(m.message||'')); }
+        else if(m.t==='update_progress'){ if(E.updStatus) E.updStatus.textContent='… '+(m.message||'atualizando'); toast('🔄 '+(m.message||''));
+          updMach={}; (m.skipped||[]).forEach(lb=>{ updMach['sk:'+lb]={label:lb,state:'skip',why:'offline — não atualizada'}; }); renderUpdMachines(); }
+        else if(m.t==='update_machine'){ updMach[m.runnerId]={label:m.label,dirty:m.dirty,
+            state:m.ok?'ok':'fail',
+            why:m.ok?(m.behind?'atualizada, reiniciando':'já estava atualizada'):(m.dirty?'repo sujo':(m.log||'').split(String.fromCharCode(10))[0].slice(0,60))};
+          renderUpdMachines(); }
         else if(m.t==='update_result'){ if(m.ok){ toast('✅ '+((m.log||'atualizado').split('\n').pop()||'').slice(0,80)); } else { toast('⚠ Falha: '+(m.log||'').slice(0,120)); if(E.updStatus) E.updStatus.textContent='⚠ '+(m.log||'').slice(0,140); E.updActions.classList.remove('hidden'); } }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }

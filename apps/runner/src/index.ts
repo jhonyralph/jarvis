@@ -233,10 +233,13 @@ function connect(): void {
       if (m.t === "send" && typeof m.sessionId === "string") { await doSend(m.sessionId, String(m.text ?? ""), m.agent, m.cwd, m.opts); return; }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }
       if (m.t === "update") {
-        console.log("[runner] update solicitado pelo Hub...");
-        const r = await updateApply(RUNNER_ROOT);
+        console.log("[runner] update solicitado pelo Hub...", m.force ? "(forçado)" : "");
+        const r = await updateApply(RUNNER_ROOT, { force: !!m.force });
         console.log("[runner] update:", r.ok ? "ok" : "falhou", "-", r.log.replace(/\n/g, " ").slice(0, 160));
-        if (r.ok && (r.behind ?? 0) > 0) { setTimeout(() => { try { restartService("runner"); } catch { /* ignore */ } process.exit(0); }, 500); }
+        // Report back: this used to land only in THIS machine's console, so the Hub said
+        // "atualizando N máquinas" and an abort here was invisible — you'd find out days later.
+        send({ t: "update_done", ok: r.ok, dirty: !!r.dirty, behind: r.behind ?? 0, log: r.log.slice(0, 600) });
+        if (r.ok && ((r.behind ?? 0) > 0 || m.force)) { setTimeout(() => { try { restartService("runner"); } catch { /* ignore */ } process.exit(0); }, 500); }
         return;
       }
       if (m.t === "stop") { /* adapter kill not wired yet */ return; }
