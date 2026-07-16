@@ -51,6 +51,10 @@ export interface RunnerStreamEvent {
   name?: string; // tool name (Bash, Edit, Read…)
   summary?: string; // tool one-liner ("Editando foo.ts")
   usage?: { costUsd?: number; inputTokens?: number; outputTokens?: number };
+  /** tool_use id — lets sub-agent (Task) activity be correlated to a parent block */
+  toolId?: string;
+  /** parent_tool_use_id — set when this event happens INSIDE a spawned sub-agent (Task) */
+  parentId?: string;
 }
 
 // --- Runner -> Hub ---
@@ -68,6 +72,8 @@ export type RunnerToHub =
       writable: boolean;
       messages: RunnerMsg[];
       total: number;
+      /** underlying native session id (e.g. the real claude session, for `claude --resume`) */
+      nativeId?: string;
     }
   | { t: "stream"; sessionId: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }

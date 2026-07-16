@@ -109,7 +109,7 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
   } else {
     const s = store.ensure(sessionId);
     const all = store.history(s.id);
-    send({ t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: all.length, messages: all.map((m: any) => ({ role: m.role, text: m.text, ts: m.ts })) });
+    send({ t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: all.length, nativeId: agents.get(s.agent).nativeSessionId?.(s.id), messages: all.map((m: any) => ({ role: m.role, text: m.text, ts: m.ts })) });
   }
 }
 

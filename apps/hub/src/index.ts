@@ -281,7 +281,7 @@ function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.w
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "sessions") { for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [] }); return; }
-  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent })) }); } return; }
+  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent })) }); } return; }
   if (m.t === "stream") { for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary }); return; }
@@ -480,6 +480,9 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   try {
     const reply = await agent.send(sid, agentText, cwd, opts, (ev) => broadcast(sid, { t: "stream", sessionId: sid, ev }));
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage });
+    // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
+    const nativeId = agent.nativeSessionId?.(sid);
+    if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
     void pushNotify(sid, reply.text); // notifica quando termina (SW suprime se a aba estiver focada)
     return reply;
   } catch (e) {
@@ -834,7 +837,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       syncTails();
       const s = store.ensure(msg.sessionId);
       const all = store.history(s.id);
-      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, total: all.length, messages: all.slice(-HISTORY_CAP) });
+      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: agents.get(s.agent).nativeSessionId?.(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP) });
       return;
     }
     if (msg.t === "new") {

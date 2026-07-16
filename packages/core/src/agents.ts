@@ -10,7 +10,7 @@
  * Results cache ~1h; on any failure we fall back to a small pinned list.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -59,6 +59,8 @@ export interface AgentAdapter {
   send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply>;
   /** Stateless one-off prompt (no session, no context) — used by cross-session search. */
   oneShot?(text: string, opts?: SendOpts): Promise<AgentReply>;
+  /** The underlying native session id (e.g. the real claude session), if bound. */
+  nativeSessionId?(sessionId: string): string | undefined;
 }
 
 export class AgentRegistry {
@@ -115,7 +117,20 @@ export class MockAgentAdapter implements AgentAdapter {
 /** Native Claude Code, headless. Requires `claude` logged in. */
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly name = "claude-code";
-  private sessions = new Map<string, string>();
+  // jarvis sessionId -> real claude session_id. Persisted so a UI-created session keeps
+  // resuming the SAME underlying claude session across Hub restarts (no orphans; and it
+  // shows up under `claude --resume`).
+  private sessionsFile = join(homedir(), ".jarvis", "claude-sessions.json");
+  private sessions = this.loadSessions();
+  private loadSessions(): Map<string, string> {
+    try { return new Map(Object.entries(JSON.parse(readFileSync(this.sessionsFile, "utf8")))); } catch { return new Map(); }
+  }
+  private saveSessions(): void {
+    try { mkdirSync(join(homedir(), ".jarvis"), { recursive: true }); writeFileSync(this.sessionsFile, JSON.stringify(Object.fromEntries(this.sessions))); } catch { /* ignore */ }
+  }
+  nativeSessionId(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId);
+  }
   private capsCache?: { at: number; caps: AgentCaps };
   private bin =
     existsSync(join(homedir(), ".local", "bin", process.platform === "win32" ? "claude.exe" : "claude"))
@@ -178,10 +193,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         try { o = JSON.parse(line); } catch { return; }
         if (o.type === "system" && o.subtype === "init" && o.session_id) sessionOut = o.session_id;
         else if (o.type === "assistant") {
+          // Sub-agent (Task) turns carry a top-level parent_tool_use_id; their text is the
+          // sub-agent's own reasoning, NOT the parent answer — surface it but don't accumulate it.
+          const parentId = o.parent_tool_use_id || undefined;
           for (const b of o.message?.content || []) {
-            if (b.type === "text" && b.text) { finalText += b.text; onEvent({ kind: "text", text: b.text }); }
-            else if (b.type === "tool_use") onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input) });
-            else if (b.type === "thinking") onEvent({ kind: "thinking" });
+            if (b.type === "text" && b.text) { if (!parentId) finalText += b.text; onEvent({ kind: "text", text: b.text, parentId }); }
+            else if (b.type === "tool_use") onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), toolId: b.id, parentId });
+            else if (b.type === "thinking") onEvent({ kind: "thinking", parentId });
           }
         } else if (o.type === "result") {
           if (o.session_id) sessionOut = o.session_id;
@@ -191,14 +209,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         }
       });
       if (streamError) throw new Error(streamError);
-      if (sessionOut) this.sessions.set(sessionId, sessionOut);
+      if (sessionOut) { this.sessions.set(sessionId, sessionOut); this.saveSessions(); }
       return { text: finalText, usage };
     }
 
     const raw = await run(this.bin, args, cwd, "", false);
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
-    if (json.session_id) this.sessions.set(sessionId, json.session_id);
+    if (json.session_id) { this.sessions.set(sessionId, json.session_id); this.saveSessions(); }
     return {
       text: json.result ?? "",
       usage: { costUsd: json.total_cost_usd, inputTokens: json.usage?.input_tokens, outputTokens: json.usage?.output_tokens },
