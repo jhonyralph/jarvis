@@ -194,6 +194,27 @@ export function listNative(limit = Number(process.env.JARVIS_NATIVE_LIMIT || 25)
   return list;
 }
 
+/** One-time cleanup of the availability-probe litter: native claude sessions whose whole
+ *  content is the "ok" ping the OLD probe left in the home dir. The signature is very specific
+ *  (title "ok" + tiny file + first user message exactly "ok") so it can never touch a real
+ *  conversation. Runs at Hub/Runner startup on each machine. Returns how many were removed. */
+export function purgeProbeJunk(): number {
+  let n = 0;
+  for (const { path } of claudeFiles()) {
+    try {
+      if (statSync(path).size > 30000) continue;
+      const meta = parseClaude(path);
+      if (!meta || meta.title.trim().toLowerCase() !== "ok") continue;
+      let firstUser = "";
+      eachLine(readHead(path, 8000), (o) => { if (!firstUser && o.type === "user" && typeof o.message?.content === "string") firstUser = o.message.content.trim(); });
+      if (firstUser.toLowerCase() !== "ok") continue;
+      unlinkSync(path); n++;
+    } catch { /* skip */ }
+  }
+  if (n) listCache = null;
+  return n;
+}
+
 export function isNativeId(id: string): boolean {
   return typeof id === "string" && (id.startsWith("claude:") || id.startsWith("codex:"));
 }

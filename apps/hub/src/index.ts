@@ -25,7 +25,7 @@ import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff } from "@jarvis/core";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, readProjectFile } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
@@ -1288,6 +1288,7 @@ void refreshLocalAgents();
 setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min — availability rarely changes; each probe spawns a real `claude -p`
 setTimeout(() => void refreshUpdate(true), 8_000); // first update check shortly after boot
 setInterval(() => void refreshUpdate(true), 6 * 3600_000); // then every 6h
+try { const purged = purgeProbeJunk(); if (purged) console.log(`[hub] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);

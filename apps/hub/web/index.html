@@ -163,10 +163,10 @@
     .pop .flist div { padding:7px 10px; cursor:pointer; font-size:13px; border-bottom:1px solid var(--line); }
     .pop .flist div:last-child { border-bottom:0; } .pop .flist div:hover { background:#ffffff0d; }
     .pop .frow { display:flex; gap:6px; margin-top:8px; } .pop .frow button { flex:1; font-size:12px; padding:7px 8px; }
-    .modal label > input[type=text], .modal label > select { width:100%; background:var(--bg); color:var(--text); border:1px solid #ffffff26; border-radius:10px; padding:11px 13px; font:inherit; font-size:14px; box-sizing:border-box; transition:border-color .15s, box-shadow .15s; }
+    .modal label > input:not([type=checkbox]), .modal label > select, #gate .gatebox input { width:100%; background:var(--bg); color:var(--text); border:1px solid #ffffff26; border-radius:10px; padding:11px 13px; font:inherit; font-size:14px; box-sizing:border-box; transition:border-color .15s, box-shadow .15s; }
     .modal label > select { appearance:none; -webkit-appearance:none; cursor:pointer; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2394a3b8' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>"); background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; }
-    .modal label > input[type=text]:focus, .modal label > select:focus { outline:none; border-color:var(--me); box-shadow:0 0 0 3px #2563eb33; }
-    .modal label > input[type=text]::placeholder { color:#64748b; }
+    .modal label > input:not([type=checkbox]):focus, .modal label > select:focus, #gate .gatebox input:focus { outline:none; border-color:var(--me); box-shadow:0 0 0 3px #2563eb33; }
+    .modal label > input::placeholder, #gate .gatebox input::placeholder { color:#64748b; }
     .modal input[type=text] { background:var(--bg); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:11px 13px; font:inherit; }
     .pop { max-height:70vh; overflow:auto; }
     button.danger { background:#dc2626; }
