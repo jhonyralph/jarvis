@@ -73,8 +73,8 @@
     #composer { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
     #attachRow { display:flex; gap:6px; flex-wrap:wrap; }
     #attachRow .chip { font-size:12px; padding:4px 8px; cursor:pointer; }
-    #attachRow .imgchip { padding:3px; max-width:none; position:relative; } #attachRow .imgchip img { height:40px; width:auto; max-width:120px; border-radius:6px; display:block; object-fit:cover; }
-    #attachRow .imgchip span { position:absolute; top:1px; right:1px; background:#000a; border-radius:50%; width:16px; height:16px; display:flex; align-items:center; justify-content:center; font-size:11px; }
+    #attachRow .imgchip { padding:3px; max-width:none; position:relative; cursor:default; } #attachRow .imgchip img { height:40px; width:auto; max-width:120px; border-radius:6px; display:block; object-fit:cover; cursor:default; }
+    #attachRow .imgchip .rmx { position:absolute; top:1px; right:1px; background:#000c; border-radius:50%; width:17px; height:17px; display:flex; align-items:center; justify-content:center; font-size:11px; cursor:pointer; } #attachRow .imgchip .rmx:hover { background:#ef4444; }
     #input { width:100%; resize:none; background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:12px; padding:10px 12px; font:inherit; max-height:160px; }
     .controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .controls .spacer { flex:1; min-width:8px; }
@@ -1041,8 +1041,10 @@
       for(const it of its){ if(it.kind==='file'&&it.type.startsWith('image/')){ const b=it.getAsFile(); if(b){ got=true; await addFile(b); } } }
       if(got){ e.preventDefault(); renderAttach(); } });
     function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'+(a.image?' imgchip':'');
-      if(a.image&&a.preview){ c.innerHTML=`<img src="${a.preview}" alt=""><span>✕</span>`; } else { c.textContent='📎 '+a.name+' ✕'; }
-      c.onclick=()=>{attachments.splice(i,1);renderAttach();}; E.attachRow.appendChild(c); }); }
+      const rm=()=>{ attachments.splice(i,1); renderAttach(); };
+      if(a.image&&a.preview){ c.innerHTML=`<img src="${a.preview}" alt="">`; const x=document.createElement('span'); x.className='rmx'; x.textContent='✕'; x.title='Remover'; x.onclick=(e)=>{ e.stopPropagation(); rm(); }; c.appendChild(x); }
+      else { c.textContent='📎 '+a.name+' ✕'; c.onclick=rm; }
+      E.attachRow.appendChild(c); }); }
     // fila de mensagens: enquanto um turno roda, novas mensagens ficam na fila e são
     // enviadas JUNTAS (como uma só) quando o turno atual termina. Cancelável (✕ / limpar).
     let msgQueue=[], curBusy=false;
