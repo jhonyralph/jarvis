@@ -325,7 +325,7 @@
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
 
     let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false;
-    let machines=[], currentMachine='local';
+    let machines=[], currentMachine='local', lastByMachine={};
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
@@ -680,7 +680,7 @@
     // ---------- ws ----------
     function tx(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
     // deep-link: a sessão atual fica na URL (#id) para o refresh voltar na mesma conversa
-    function setHash(id){ if(!id)return; const h='#'+encodeURIComponent(id); if(location.hash!==h) history.replaceState(null,'',h); }
+    function setHash(id){ if(!id){ if(location.hash) history.replaceState(null,'',location.pathname+location.search); return; } const h='#'+encodeURIComponent(id); if(location.hash!==h) history.replaceState(null,'',h); }
     const hashSession = () => location.hash ? decodeURIComponent(location.hash.slice(1)) : '';
     addEventListener('hashchange',()=>{ const h=hashSession(); if(h&&h!==currentSession&&(isNative(h)||sessions.some(s=>s.id===h))) tx({t:'open',sessionId:h}); });
     let reconnectT=null;
@@ -739,10 +739,13 @@
         else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
           if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
-        else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){ const h=hashSession();
-          if(h&&(isNative(h)||sessions.some(s=>s.id===h))) tx({t:'open',sessionId:h});
-          else { const own=sessions.find(s=>!isNative(s.id)); if(own) tx({t:'open',sessionId:own.id}); else if(currentMachine==='local') E.newSess.onclick(); } } }
-        else if(m.t==='history'){ currentSession=m.sessionId; unread.delete(m.sessionId); currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
+        else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){
+          const exists=(id)=> !!id && (isNative(id)||sessions.some(s=>s.id===id));
+          const last=lastByMachine[currentMachine], h=hashSession();
+          const pick = exists(last)?last : (exists(h)?h : (sessions.find(s=>!isNative(s.id))||{}).id);
+          if(pick) tx({t:'open',sessionId:pick});
+          else if(currentMachine==='local') E.newSess.onclick(); } }
+        else if(m.t==='history'){ currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId); currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
           if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
           E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
           const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
