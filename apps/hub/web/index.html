@@ -437,17 +437,23 @@
         if(/^\s*[-*+]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*[-*+]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*[-*+]\s+/,''))).replace(/^\[([ xX])\]\s+/,(_,c)=>/x/i.test(c)?'☑ ':'☐ '));i++;} h+=`<ul>${it.map(x=>`<li>${x}</li>`).join('')}</ul>`; continue; }
         if(/^\s*\d+[.)]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*\d+[.)]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*\d+[.)]\s+/,''))));i++;} h+=`<ol>${it.map(x=>`<li>${x}</li>`).join('')}</ol>`; continue; }
         if(line.trim()===''){ i++; continue; } h+=`<p>${inl(esc(line))}</p>`; i++; } return h; }
+    // present-tense verb → past-tense, once the action has finished
+    const pastVerb={Read:'Lido',Edit:'Editado',Write:'Criado',NotebookEdit:'Editado',MultiEdit:'Editado',Grep:'Buscado',Glob:'Listado',WebFetch:'Aberto',WebSearch:'Pesquisado',Bash:'Executado'};
+    function pastify(name,summary){ const pv=pastVerb[name]; return pv?String(summary||'').replace(/^\S+/,pv):summary; }
     // A tool-activity block (icon + summary + optional +/- counts). File tools are clickable
-    // → open the viewer/diff panel. Reused by streaming AND by rebuilt history (persists refresh).
-    function toolRowEl(name,summary,path,adds,dels){
-      const d=document.createElement('div'); d.className='strtool';
+    // → open the viewer/diff panel. done=true shows past tense ("Editado"); reused by streaming
+    // (present tense while running, flipped on done) AND by rebuilt history (already done).
+    function toolRowEl(name,summary,path,adds,dels,done){
+      const d=document.createElement('div'); d.className='strtool'; d.dataset.name=name||''; d.dataset.sum=summary||'';
       const cnt=(adds||dels)?` <span class="fadd">+${adds||0}</span> <span class="fdel">-${dels||0}</span>`:'';
-      d.innerHTML=`<span>${toolIcon(name)}</span><span class="ttl">${esc(summary||name||'')}</span>${cnt}`;
+      d.innerHTML=`<span>${toolIcon(name)}</span><span class="ttl">${esc((done?pastify(name,summary):summary)||name||'')}</span>${cnt}`;
       const act=/Edit$/.test(name||'')?'edit':(name==='Write'?'write':(name==='Read'?'read':''));
       if(path&&act){ d.classList.add('clk'); d.title='Ver '+path; d.onclick=(e)=>{ e.stopPropagation(); openFile(path,act); }; }
       return d; }
+    // flip a live tool block to past tense when its turn finishes
+    function setToolDone(block){ const nm=block.dataset.name, ttl=block.querySelector('.ttl'); if(ttl&&nm) ttl.textContent=pastify(nm,block.dataset.sum); }
     function buildMsgEl(m){
-      if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels);
+      if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels,true);
       const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
         if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
         d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
@@ -489,6 +495,7 @@
     function streamDone(finalText,usage){ if(strTimer){clearInterval(strTimer);strTimer=null;}
       if(!strEl){ addMsg({role:'assistant',text:finalText||''}); return; }
       const head=strEl.querySelector('.strhead'); if(head) head.remove();
+      strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone); // editando… → editado
       const ft=finalText||strText; if(strTextEl){ strTextEl.innerHTML=md(ft); strTextEl.classList.add('done'); }
       if(usage){ const u=document.createElement('div'); u.className='usage'; u.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; strEl.appendChild(u); E.usage.textContent=u.textContent; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
       strEl=strTextEl=strToolsEl=strTimeEl=null; E.log.scrollTop=E.log.scrollHeight; if(typeof flushQueue==='function')flushQueue(); }
