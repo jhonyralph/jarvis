@@ -75,6 +75,23 @@
     .modal label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--mut); }
     .modal label.row { flex-direction:row; align-items:center; gap:8px; }
     .modal .row { display:flex; gap:8px; } .modal .sec { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin-top:6px; }
+    /* checkbox -> toggle switch (visual mais limpo nas Configurações) */
+    .modal label.row { color:var(--text); font-size:13.5px; cursor:pointer; padding:3px 0; }
+    .modal label.row > input[type=checkbox] { order:-1; }
+    .modal label.row input[type=checkbox] { appearance:none; -webkit-appearance:none; position:relative; flex:none; width:42px; height:24px; border-radius:24px; background:#3a4553; cursor:pointer; margin:0; transition:background .16s; }
+    .modal label.row input[type=checkbox]::before { content:''; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 2px #0006; transition:transform .16s; }
+    .modal label.row input[type=checkbox]:checked { background:var(--me); }
+    .modal label.row input[type=checkbox]:checked::before { transform:translateX(18px); }
+    .modal label.row .soon { align-self:center; }
+    /* fila de mensagens */
+    #queueRow { display:flex; flex-direction:column; gap:5px; margin-bottom:6px; }
+    #queueRow.hidden { display:none; }
+    #queueRow .qhdr { display:flex; align-items:center; justify-content:space-between; font-size:11.5px; color:var(--mut); }
+    #queueRow .qclr { background:none; border:0; color:#f0883e; cursor:pointer; font-size:11.5px; padding:2px 4px; }
+    #queueRow .qitem { display:flex; align-items:center; gap:8px; background:#ffffff0d; border:1px dashed var(--line); border-radius:9px; padding:6px 9px; }
+    #queueRow .qtext { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+    #queueRow .qx { flex:none; background:none; border:0; color:var(--mut); cursor:pointer; font-size:14px; padding:0 2px; }
+    #queueRow .qx:hover { color:#ff6b6b; }
     .mut { color:var(--mut); font-size:12.5px; word-break:break-all; }
     .soon { font-size:10px; background:#ffffff14; border-radius:6px; padding:1px 5px; color:var(--mut); }
     .dirlist { border:1px solid var(--line); border-radius:10px; overflow:auto; max-height:240px; }
@@ -204,6 +221,7 @@
       <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
       <div id="log"></div>
       <form id="composer">
+        <div id="queueRow" class="hidden"></div>
         <div id="attachRow"></div>
         <textarea id="input" rows="1" placeholder="Fale ou digite…" autocomplete="off"></textarea>
         <div class="controls">
@@ -315,7 +333,7 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
-      'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
+      'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','queueRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -383,8 +401,8 @@
       const head=strEl.querySelector('.strhead'); if(head) head.remove();
       const ft=finalText||strText; if(strTextEl){ strTextEl.innerHTML=md(ft); strTextEl.classList.add('done'); }
       if(usage){ const u=document.createElement('div'); u.className='usage'; u.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; strEl.appendChild(u); E.usage.textContent=u.textContent; }
-      strEl=strTextEl=strToolsEl=strTimeEl=null; E.log.scrollTop=E.log.scrollHeight; }
-    function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); strEl=strTextEl=strToolsEl=strTimeEl=null; }
+      strEl=strTextEl=strToolsEl=strTimeEl=null; E.log.scrollTop=E.log.scrollHeight; if(typeof flushQueue==='function')flushQueue(); }
+    function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); strEl=strTextEl=strToolsEl=strTimeEl=null; if(typeof flushQueue==='function')flushQueue(); }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
       (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
@@ -433,7 +451,7 @@
       E.machineBar.appendChild(menu);
     }
     function selectMachine(id){ const mm=document.getElementById('mmenu'); if(mm)mm.classList.add('hidden'); if(id===currentMachine) return;
-      currentMachine=id; currentSession=null; curStarted=false; E.log.innerHTML=''; E.title.textContent='—'; setHash(''); tx({t:'runner',runnerId:id}); }
+      currentMachine=id; currentSession=null; curStarted=false; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; setHash(''); tx({t:'runner',runnerId:id}); }
 
     const capsFor = n => caps.find(c=>c.name===n)||{models:[],defaultModel:null};
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
@@ -745,7 +763,7 @@
           const pick = exists(last)?last : (exists(h)?h : (sessions.find(s=>!isNative(s.id))||{}).id);
           if(pick) tx({t:'open',sessionId:pick});
           else if(currentMachine==='local') E.newSess.onclick(); } }
-        else if(m.t==='history'){ currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId); currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
+        else if(m.t==='history'){ if(currentSession&&currentSession!==m.sessionId)clearQueue(); currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId); currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
           if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
           E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
           const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
@@ -778,7 +796,7 @@
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }
         else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
-        else if(m.t==='error'){ endVoiceOp(); clearPending(); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
+        else if(m.t==='error'){ endVoiceOp(); clearPending(); curBusy=false; addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
       const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…');
@@ -824,9 +842,20 @@
     E.attach.onclick=()=>E.file.click();
     E.file.onchange=async()=>{ for(const f of E.file.files){ attachments.push({name:f.name,content:await f.text()}); } E.file.value=''; renderAttach(); };
     function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='📎 '+a.name+' ✕'; c.onclick=()=>{attachments.splice(i,1);renderAttach();}; E.attachRow.appendChild(c); }); }
+    // fila de mensagens: enquanto um turno roda, novas mensagens ficam na fila e são
+    // enviadas JUNTAS (como uma só) quando o turno atual termina. Cancelável (✕ / limpar).
+    let msgQueue=[], curBusy=false;
+    function sendMsg(text,atts){ lastWasVoice=false; tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments:atts||[]}); showPending(); curBusy=true; }
+    function flushQueue(){ curBusy=false; if(!msgQueue.length)return; const text=msgQueue.map(q=>q.text).join('\n\n'); const atts=msgQueue.flatMap(q=>q.atts||[]); msgQueue=[]; renderQueue(); sendMsg(text,atts); }
+    function clearQueue(){ msgQueue=[]; curBusy=false; renderQueue(); }
+    function renderQueue(){ if(!E.queueRow)return; E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!msgQueue.length); if(!msgQueue.length)return;
+      const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+msgQueue.length+' na fila — enviadas juntas quando terminar'; hdr.appendChild(s);
+      const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ msgQueue=[]; renderQueue(); }; hdr.appendChild(clr); E.queueRow.appendChild(hdr);
+      msgQueue.forEach((q,i)=>{ const it=document.createElement('div'); it.className='qitem'; const t=document.createElement('span'); t.className='qtext'; t.textContent=q.text; const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=()=>{ msgQueue.splice(i,1); renderQueue(); }; it.appendChild(t); it.appendChild(x); E.queueRow.appendChild(it); }); }
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
-      lastWasVoice=false; tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments}); showPending();
-      E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach(); };
+      const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
+      if(curBusy){ msgQueue.push({text:text||'(anexo)',atts}); renderQueue(); return; }
+      sendMsg(text||'(anexo)',atts); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
