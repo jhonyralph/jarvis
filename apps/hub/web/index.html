@@ -280,14 +280,20 @@
       .msg.me { font-size:15.5px; } .msg.bot { font-size:15.5px; }
       /* composer: bigger targets; pills in one scrollable row; send full width */
       #composer { padding:10px 12px calc(10px + env(safe-area-inset-bottom)); gap:10px; }
-      #input { font-size:16px; padding:13px 14px; } /* 16px avoids iOS focus-zoom */
+      /* O mic tem que ter a MESMA altura do input (media: input 52px, mic 47.5px = 4.5px de
+         desalinho visível). As duas caixas passam a derivar das mesmas medidas, para não
+         voltarem a divergir se o padding do input mudar. Altura = lh + 2*pad + 2*borda. */
+      .inputrow { --ipad:13px; --ilh:24px; }
+      #input { font-size:16px; padding:var(--ipad) 14px; line-height:var(--ilh); } /* 16px avoids iOS focus-zoom */
       .controls { flex-wrap:wrap; gap:8px; }
       .ctlpills { display:flex; gap:8px; overflow-x:auto; flex:1 1 100%; padding-bottom:3px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
       .ctlpills::-webkit-scrollbar { display:none; } .ctlpills .spacer { display:none; }
       /* alvo de toque: vale pro mic (agora fora de .controls, ao lado do input) e pros botoes de
          voz do header — sem isso eles ficariam com o tamanho de desktop justo no mobile. */
-      .pill, .controls button.ghost, .inputrow .micbtn, header button.ghost { min-height:42px; font-size:13.5px; padding:10px 13px; flex:none; }
-      .inputrow .micbtn, header #sumHdr, header #digestHdr { min-width:44px; font-size:17px; }
+      .pill, .controls button.ghost, header button.ghost { min-height:42px; font-size:13.5px; padding:10px 13px; flex:none; }
+      header #sumHdr, header #digestHdr { min-width:44px; font-size:17px; }
+      /* por ultimo: mesma altura do input (mesma especificidade que as regras acima). */
+      .inputrow .micbtn { flex:none; min-height:0; min-width:44px; padding:var(--ipad) 14px; line-height:var(--ilh); font-size:17px; }
       .pill { max-width:none; }
       #sendBtn { flex:1 1 100%; min-height:48px; font-size:16px; }
       #status { flex:none; white-space:nowrap; }
