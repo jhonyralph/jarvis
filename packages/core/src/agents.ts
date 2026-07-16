@@ -61,6 +61,8 @@ export interface AgentAdapter {
   oneShot?(text: string, opts?: SendOpts): Promise<AgentReply>;
   /** The underlying native session id (e.g. the real claude session), if bound. */
   nativeSessionId?(sessionId: string): string | undefined;
+  /** Forget a session's native binding (on delete), so a reused id won't resume it. */
+  forgetSession?(sessionId: string): void;
 }
 
 export class AgentRegistry {
@@ -130,6 +132,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
   nativeSessionId(sessionId: string): string | undefined {
     return this.sessions.get(sessionId);
+  }
+  forgetSession(sessionId: string): void {
+    if (this.sessions.delete(sessionId)) this.saveSessions();
   }
   private capsCache?: { at: number; caps: AgentCaps };
   private bin =

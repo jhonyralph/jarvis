@@ -25,7 +25,7 @@ import { transcribe } from "./stt.js";
 import { speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents } from "@jarvis/core";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, readProjectFile } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
@@ -747,10 +747,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // when viewing a REMOTE machine, session ops are forwarded to that runner
     {
       const ar = activeRunner(ws);
-      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile")) {
+      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "delete")) {
         const rc = runners.get(ar);
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
         if (msg.t === "list") { sendToRunner(rc, { t: "list" }); return; }
+        if (msg.t === "delete" && typeof msg.sessionId === "string") { sendToRunner(rc, { t: "delete", sessionId: msg.sessionId, alsoNative: !!msg.alsoNative }); send(ws, { t: "deleted", sessionId: msg.sessionId, ok: true }); return; }
         if (msg.t === "new") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "new", reqId, agent: msg.agent, cwd: msg.cwd }); return; }
         if (msg.t === "readfile" && typeof msg.path === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readfile", reqId, path: msg.path, cwd: msg.cwd }); return; }
         if (msg.t === "listdir") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "listdir", reqId, path: msg.path }); return; }
@@ -768,6 +769,29 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // --- session management (shared across every client) ---
     if (msg.t === "list") {
       sendSessions(ws);
+      return;
+    }
+    // Delete a conversation on THIS (local) machine — and, if asked, the underlying
+    // native claude/codex session it maps to. Irreversible.
+    if (msg.t === "delete" && typeof msg.sessionId === "string") {
+      const sid = msg.sessionId;
+      let ok = false;
+      if (isNativeId(sid)) {
+        stopTail(sid);
+        ok = deleteNative(sid); // a read-only native session shown in the list
+      } else {
+        const s = store.get(sid);
+        if (s) {
+          const ag = agents.get(s.agent);
+          if (msg.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); if (nid) deleteNative("claude:" + nid); }
+          ag.forgetSession?.(sid);
+          auth.audit("delete", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${sid}: ${s.title}` });
+        }
+        ok = store.delete(sid);
+      }
+      if (subs.get(ws) === sid) subs.delete(ws);
+      send(ws, { t: "deleted", sessionId: sid, ok });
+      pushSessions();
       return;
     }
     // wake-word control (machine listener <-> browsers)

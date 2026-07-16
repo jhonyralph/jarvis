@@ -141,6 +141,8 @@
     #recents .item.unread .rdot { background:#f59e0b; }
     #recents .rsum { flex:none; background:none; border:0; cursor:pointer; font-size:14px; padding:2px 5px; opacity:.5; border-radius:6px; line-height:1; }
     #recents .rsum:hover { opacity:1; background:#ffffff14; }
+    #recents .rdel { flex:none; background:none; border:0; cursor:pointer; font-size:13px; padding:2px 5px; opacity:.4; border-radius:6px; line-height:1; }
+    #recents .rdel:hover { opacity:1; background:#ef444422; }
     .busy { opacity:.55 !important; cursor:progress !important; pointer-events:none; }
     /* auth gate (device pairing) */
     #gate { display:none; position:fixed; inset:0; z-index:9999; background:#0b0f14; align-items:center; justify-content:center; padding:20px; }
@@ -187,6 +189,7 @@
       #side .sec { font-size:12px; margin:14px 4px 6px; }
       #recents .item, #files .item { padding:12px; font-size:15px; }
       #recents .rsum { opacity:.85; font-size:18px; padding:6px 8px; }
+      #recents .rdel { opacity:.85; font-size:16px; padding:6px 8px; }
       #newSess, #settingsBtn, #moreBtn { padding:13px; font-size:15px; }
       .link { font-size:14.5px; padding:10px 6px; }
       #log { padding:14px; gap:12px; } .msg.me, .msg.bot { max-width:92%; }
@@ -474,6 +477,17 @@
       const sum=document.createElement('button'); sum.type='button'; sum.className='rsum'; sum.title='Resumir e falar (não entra no histórico)';
       const busySum=voiceOp==='summarize'&&voiceOpSid===s.id; sum.textContent=busySum?'⏳':'🔊'; if(busySum){ sum.disabled=true; sum.classList.add('busy'); voiceOpBtn=sum; }
       sum.onclick=(e)=>{ e.stopPropagation(); if(!startVoiceOp('summarize',sum,'⏳',s.id))return; status('speaking','Gerando resumo…'); tx({t:'summarize',sessionId:s.id,speak:true}); }; d.appendChild(sum);
+      const del=document.createElement('button'); del.type='button'; del.className='rdel'; del.title='Remover conversa'; del.textContent='🗑';
+      del.onclick=async(e)=>{ e.stopPropagation(); const ia=(s.agent==='codex')?'codex':'claude';
+        const ok=await dialog({title:`Remover "${s.title||'conversa'}"? Apaga no Jarvis e a sessão no ${ia} — não dá pra desfazer.`, okText:'Remover', danger:true});
+        if(!ok) return;
+        // NÃO remove da lista aqui — só marca "removendo" e espera o servidor confirmar.
+        // A lista só some quando o servidor apaga de fato e reenvia as sessões (evita
+        // "sumiço fantasma": esconder na tela sem ter apagado no servidor).
+        del.textContent='⏳'; del.disabled=true;
+        tx({t:'delete',sessionId:s.id,alsoNative:true});
+        setTimeout(()=>{ if(del.isConnected){ del.textContent='🗑'; del.disabled=false; toast('Sem resposta do servidor — a conversa NÃO foi removida.'); } }, 6000); };
+      d.appendChild(del);
       d.title=`${s.agent||''}${nat?' · nativo (somente leitura)':''}\n${s.cwd||''}`; d.onclick=()=>{ tx({t:'open',sessionId:s.id}); closeSide(); }; E.recents.appendChild(d); });
       E.moreBtn.classList.toggle('hidden', sessions.length<=shown); }
     E.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
@@ -839,6 +853,8 @@
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage) E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; }
         else if(m.t==='session'){ if(m.sessionId===currentSession && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
+        else if(m.t==='deleted'){ if(m.ok){ if(m.sessionId===currentSession){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); } }
+          else toast('Não consegui remover a conversa (talvez já não exista).'); }
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
         else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }

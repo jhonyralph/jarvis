@@ -111,6 +111,14 @@ export class Store {
     return true;
   }
 
+  /** Permanently drop a session (its messages go with it). Irreversible. */
+  delete(id: string): boolean {
+    if (!this.data[id]) return false;
+    delete this.data[id];
+    this.flush();
+    return true;
+  }
+
   add(id: string, msg: StoredMessage): void {
     const s = this.ensure(id);
     s.messages.push(msg);

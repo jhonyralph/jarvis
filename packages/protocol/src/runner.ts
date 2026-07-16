@@ -97,6 +97,7 @@ export type HubToRunner =
       opts?: { model?: string; effort?: string };
     }
   | { t: "list" }
+  | { t: "delete"; sessionId: string; alsoNative?: boolean }
   | { t: "readfile"; reqId: string; path: string; cwd?: string }
   | { t: "caps"; agent?: string }
   | { t: "stop"; sessionId: string }

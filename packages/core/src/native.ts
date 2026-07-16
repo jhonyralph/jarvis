@@ -10,7 +10,7 @@
  * Ids are prefixed ("claude:"/"codex:") so they never collide with Jarvis's own
  * session UUIDs and the open handler can route them here. Nothing is written back.
  */
-import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
+import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 
@@ -200,6 +200,17 @@ export function isNativeId(id: string): boolean {
 /** The on-disk jsonl for a native id (+ whether it's a claude session) — for live tailing. */
 export function nativeFilePath(id: string): { path: string; claude: boolean } | null {
   return isNativeId(id) ? findFileById(id) : null;
+}
+
+/** Permanently delete a native session's jsonl (claude:<id> / codex:<id>). Irreversible.
+ *  A managed session's bound claude session is deleted by passing "claude:" + session_id. */
+export function deleteNative(id: string): boolean {
+  const f = isNativeId(id) ? findFileById(id) : null;
+  if (!f) return false;
+  try { unlinkSync(f.path); } catch { return false; }
+  pcache.delete(f.path);
+  listCache = null; // force the next listNative() to re-scan
+  return true;
 }
 
 export type NativeEvent =
