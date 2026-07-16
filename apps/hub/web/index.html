@@ -32,6 +32,9 @@
     #limit { padding:10px 14px; background:#7c2d12; color:#fed7aa; font-size:13px; }
     #log { flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:14px; }
     .msg.me { align-self:flex-end; background:var(--me); color:#fff; padding:9px 13px; border-radius:14px; white-space:pre-wrap; max-width:min(88%,760px); overflow-wrap:anywhere; }
+    .msg.me .msgimgs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+    .msg.me .msgimgs:last-child { margin-bottom:0; }
+    .msg.me .msgimg { max-width:220px; max-height:260px; width:auto; border-radius:10px; cursor:zoom-in; display:block; }
     .msg.bot { align-self:flex-start; background:var(--bot); padding:2px 15px; border-radius:14px; max-width:min(88%,760px); overflow-wrap:anywhere; min-width:0; }
     .msg.err { align-self:center; color:#fca5a5; font-size:13px; }
     .msg.bot.pending { padding:11px 15px; }
@@ -456,7 +459,9 @@
       if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels,true);
       const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
         if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
-        d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
+        if(m.images&&m.images.length){ const w=document.createElement('div'); w.className='msgimgs'; m.images.forEach(u=>{ const im=document.createElement('img'); im.className='msgimg'; im.src=u; im.loading='lazy'; im.onclick=()=>window.open(u,'_blank'); w.appendChild(im); }); d.appendChild(w); }
+        const showTxt=m.text&&!(m.images&&m.images.length&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); }
+      else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
     function addMsg(m){ const d=buildMsgEl(m); if(pendingEl) E.log.insertBefore(d,pendingEl); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     // indicador AO VIVO com cronômetro — deixa claro que há algo executando

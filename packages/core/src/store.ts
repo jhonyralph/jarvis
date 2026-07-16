@@ -13,6 +13,7 @@ export interface StoredMessage {
   ts: number;
   agent?: string;
   speaker?: string; // identified enrolled speaker (voice messages only)
+  images?: string[]; // served URLs (/pasted/<file>) of pasted/attached images, shown inline
 }
 
 export interface SessionMeta {

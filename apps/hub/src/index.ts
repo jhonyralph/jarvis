@@ -14,7 +14,7 @@ import { createServer } from "node:http";
 import { randomUUID, randomBytes } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { join, normalize, dirname } from "node:path";
+import { join, normalize, dirname, basename } from "node:path";
 import QRCode from "qrcode";
 import webpush from "web-push";
 import { fileURLToPath } from "node:url";
@@ -89,6 +89,11 @@ const MIME: Record<string, string> = {
   ".js": "text/javascript",
   ".css": "text/css",
   ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
 };
 
 // Hardening headers on every response — clickjacking, sniffing, referrer leak,
@@ -111,8 +116,20 @@ function secHeaders(nonce?: string): Record<string, string> {
     "content-security-policy": csp(nonce),
   };
 }
+const PASTED_DIR = join(homedir(), ".jarvis", "pasted");
 const server = createServer((req, res) => {
   const urlPath = (req.url || "/").split("?")[0];
+  // pasted/attached images, served for the in-chat preview — basename only (no traversal)
+  if (urlPath.startsWith("/pasted/")) {
+    const name = basename(decodeURIComponent(urlPath.slice("/pasted/".length)));
+    const pf = join(PASTED_DIR, name);
+    if (name && pf.startsWith(PASTED_DIR) && existsSync(pf) && statSync(pf).isFile()) {
+      const pext = pf.slice(pf.lastIndexOf(".")).toLowerCase();
+      res.writeHead(200, { ...secHeaders(), "content-type": MIME[pext] || "application/octet-stream", "cache-control": "max-age=86400" });
+      res.end(readFileSync(pf));
+    } else res.writeHead(404, secHeaders()).end("not found");
+    return;
+  }
   const file = normalize(join(WEB, urlPath === "/" ? "index.html" : urlPath));
   if (!file.startsWith(WEB) || !existsSync(file) || !statSync(file).isFile()) {
     res.writeHead(404, secHeaders()).end("not found");
@@ -1125,33 +1142,36 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // stays the user's text + a small chip (files are viewable in the chat).
     const attachments: Array<{ name: string; content: string; image?: boolean }> = Array.isArray(msg.attachments) ? msg.attachments : [];
     let agentText = text;
+    const imageUrls: string[] = [];
     if (attachments.length) {
-      // images (pasted/uploaded) are decoded to a temp file and referenced by path so the
-      // agent can Read them; text files are inlined into the prompt.
+      // images (pasted/uploaded) are decoded to a temp file — referenced by path so the agent
+      // can Read them, and served at /pasted/<file> so the chat shows a real preview;
+      // text files are inlined into the prompt.
       const parts: string[] = [];
       const imgPaths: string[] = [];
       for (const a of attachments) {
         if (a.image) {
           try {
-            const dir = join(homedir(), ".jarvis", "pasted");
-            mkdirSync(dir, { recursive: true });
-            const p = join(dir, `${Date.now()}-${String(a.name || "img").replace(/[^\w.-]/g, "_")}`);
+            mkdirSync(PASTED_DIR, { recursive: true });
+            const p = join(PASTED_DIR, `${Date.now()}-${String(a.name || "img").replace(/[^\w.-]/g, "_")}`);
             writeFileSync(p, Buffer.from(a.content, "base64"));
             imgPaths.push(p);
+            imageUrls.push("/pasted/" + basename(p));
           } catch { /* skip */ }
         } else {
           parts.push(`--- arquivo anexado: ${a.name} ---\n${a.content}`);
         }
       }
       if (imgPaths.length) parts.push(`Imagens anexadas — use a ferramenta Read para vê-las:\n${imgPaths.join("\n")}`);
-      agentText = `${parts.join("\n\n")}\n\n${text}`;
-      text = `${text}\n\n📎 ${attachments.map((a) => a.name).join(", ")}`;
+      agentText = parts.length ? `${parts.join("\n\n")}\n\n${text}` : text;
+      const txtNames = attachments.filter((a) => !a.image).map((a) => a.name);
+      if (txtNames.length) text = `${text}\n\n📎 ${txtNames.join(", ")}`;
     }
 
     const now = Date.now();
     // User message -> store + broadcast to everyone on this session (so all UIs show it).
-    store.add(sid, { role: "user", text, ts: now, agent: agent.name, speaker });
-    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name, speaker } });
+    store.add(sid, { role: "user", text, ts: now, agent: agent.name, speaker, images: imageUrls.length ? imageUrls : undefined });
+    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name, speaker, images: imageUrls.length ? imageUrls : undefined } });
     pushSessions();
 
     try {
