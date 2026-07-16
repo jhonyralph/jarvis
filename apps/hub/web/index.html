@@ -9,8 +9,22 @@
     * { box-sizing: border-box; }
     body { margin:0; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); height:100dvh; overflow:hidden; }
     #app { display:flex; height:100dvh; }
-    #side { width:260px; flex:none; background:var(--side); border-right:1px solid var(--line); display:flex; flex-direction:column; padding:12px; gap:6px; overflow:auto; }
+    /* A lateral era UMA coluna rolável: com 25 recentes + 60 arquivos dava 3328px num viewport de
+       800 — pra ver Arquivos você rolava por cima dos Recentes, e o ⚙ ficava a 2500px de scroll.
+       Agora a lateral não rola: cada lista rola dentro de si, e as duas ficam visíveis juntas. */
+    #side { width:260px; flex:none; background:var(--side); border-right:1px solid var(--line); display:flex; flex-direction:column; padding:12px; gap:6px; overflow:hidden; }
+    #side > :not(#recents):not(#files):not(.spacer) { flex:none; }  /* .spacer segue empurrando o ⚙ pro rodapé quando as duas seções estão fechadas */
+    #recents, #files { overflow-y:auto; overflow-x:hidden; min-height:0; flex:1 1 auto; }
+    #recents { flex-grow:1.4; }                 /* recentes é o que mais se usa */
+    #recents.collapsed, #files.collapsed { display:none; }
     #side .sec { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin:12px 4px 4px; }
+    /* cabeçalho vira controle: clicar minimiza a seção e devolve o espaço pra outra */
+    #side .sec.tog { display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; margin-bottom:2px; }
+    #side .sec.tog:hover { color:var(--text); }
+    #side .sec.tog .caret { font-size:9px; width:9px; flex:none; transition:transform .15s ease; }
+    #side .sec.tog.closed .caret { transform:rotate(-90deg); }
+    #side .sec.tog .lbl { flex:1; }
+    #side .sec.tog .cnt { font-size:10px; opacity:.65; font-variant-numeric:tabular-nums; }
     #recents .item, #files .item { padding:8px 10px; border-radius:9px; cursor:pointer; font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #recents .item:hover { background:#ffffff0d; } #recents .item.active { background:#ffffff14; }
     #files .item { color:var(--mut); font-size:12.5px; cursor:default; }
@@ -293,11 +307,11 @@
       <div class="link" id="digestBtn">🎧 o que está rolando</div>
       <div class="link" id="qrBtn">📱 abrir no celular</div>
       <div class="link hidden" id="secBtn">🔐 dispositivos &amp; convites</div>
-      <div class="sec rsec">Recentes <button id="selBtn" class="sellink" type="button">selecionar</button></div>
+      <div class="sec rsec tog" id="recSec" title="Clique para minimizar"><span class="caret">▾</span><span class="lbl">Recentes</span><span class="cnt" id="recCnt"></span><button id="selBtn" class="sellink" type="button">selecionar</button></div>
       <div id="selBar" class="hidden"><button id="selDel" type="button" class="danger">🗑 Remover (0)</button><button id="selCancel" type="button" class="ghost">cancelar</button></div>
       <div id="recents"></div>
       <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
-      <div class="sec">Arquivos & imagens</div>
+      <div class="sec tog" id="filesSec" title="Clique para minimizar"><span class="caret">▾</span><span class="lbl">Arquivos & imagens</span><span class="cnt" id="filesCnt"></span></div>
       <div id="files"></div>
       <div class="spacer"></div>
       <button id="settingsBtn" class="ghost">⚙ Configurações</button>
@@ -455,7 +469,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','selBtn','selBar','selDel','selCancel','searchBtn','digestBtn','sumHdr','digestHdr','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'newSess','selBtn','selBar','selDel','selCancel','searchBtn','digestBtn','sumHdr','digestHdr','recSec','filesSec','recCnt','filesCnt','moreBtn','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','queueRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -472,7 +486,7 @@
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
     // ---- config (persisted; refresh não perde estado) ----
-    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', recOpen:true, filesOpen:true }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
     let speak = cfg.voice, speakers = [];
 
@@ -616,7 +630,17 @@
     // sent by the server from the session's claude jsonl. Clicking opens the side panel.
     let curFiles=[];
     const fileActIcon = a => a==='edit'?'✏️':a==='write'?'➕':'📄';
-    function renderFiles(){ E.files.innerHTML='';
+    // Minimizar devolve o espaco pra outra secao (as duas dividem a altura da lateral).
+    function applySecs(){
+      E.recents.classList.toggle('collapsed', !cfg.recOpen); E.recSec.classList.toggle('closed', !cfg.recOpen);
+      E.files.classList.toggle('collapsed', !cfg.filesOpen); E.filesSec.classList.toggle('closed', !cfg.filesOpen);
+      // "Mostrar mais" pertence aos recentes: com a secao fechada ele fica orfao na tela
+      if(E.moreBtn && !cfg.recOpen) E.moreBtn.classList.add('hidden');
+      if(E.selBar && !cfg.recOpen) E.selBar.classList.add('hidden');
+    }
+    function secCounts(){ if(E.recCnt) E.recCnt.textContent = sessions.length ? String(sessions.length) : '';
+      if(E.filesCnt) E.filesCnt.textContent = curFiles.length ? String(curFiles.length) : ''; }
+    function renderFiles(){ E.files.innerHTML=''; secCounts();
       curFiles.slice(0,80).forEach(f=>{ const d=document.createElement('div'); d.className='item readable'; d.title=f.path;
         const nm=(f.path||'').split(/[\\/]/).pop()||f.path;
         const cnt=(f.action==='edit'&&(f.adds||f.dels))?` <span class="fadd">+${f.adds||0}</span> <span class="fdel">-${f.dels||0}</span>`:'';
@@ -671,6 +695,7 @@
 
     function renderRecents(){ E.recents.innerHTML='';
       if(activeRuns.length){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+activeRuns.length+' rodando agora'; E.recents.appendChild(h); }
+      secCounts();
       sessions.slice(0,shown).forEach(s=>{ const run=activeRuns.includes(s.id), un=unread.has(s.id)&&!run&&s.id!==currentSession;
       const d=document.createElement('div'); d.className='item'+(s.id===currentSession?' active':'')+(run?' running':'')+(un?' unread':'');
       const nat=isNative(s.id);
@@ -768,6 +793,11 @@
 
     // ---------- search (input com foco imediato; sem prompt) ----------
     E.searchBtn.onclick=()=>openSearch();
+    // O clique no cabecalho minimiza — mas "selecionar" vive dentro dele: sem o guard abaixo,
+    // clicar em selecionar fecharia a secao inteira que voce acabou de pedir pra usar.
+    E.recSec.onclick=(e)=>{ if(e.target.closest('#selBtn'))return; cfg.recOpen=!cfg.recOpen; saveCfg(); applySecs(); };
+    E.filesSec.onclick=()=>{ cfg.filesOpen=!cfg.filesOpen; saveCfg(); applySecs(); };
+    applySecs();
     E.digestBtn.onclick=()=>{ if(!startVoiceOp('digest',E.digestBtn,'⏳ gerando…'))return; status('speaking','Analisando sessões…'); tx({t:'digest',speak:true}); };
     // Mesmas ações de voz, agora no header: resumir a sessão ATUAL exigia abrir a barra lateral e
     // achar a sessão na lista — no celular, onde a lateral é overlay, isso é o caminho todo.
