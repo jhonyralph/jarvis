@@ -239,7 +239,9 @@ export function deleteNative(id: string): boolean {
 
 export type NativeEvent =
   | { kind: "message"; role: string; text: string; ts: number }
-  | { kind: "tool"; name: string; summary: string };
+  // path/adds/dels/rows so a LIVE-mirrored tool block matches what a page refresh shows:
+  // clickable file, +/- counts, expandable diff. Without them the tail rendered a bare "Editando".
+  | { kind: "tool"; name: string; summary: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[] };
 
 function toolSummary(name: string, input: any): string {
   const base = (p: string) => (p || "").split(/[\\/]/).pop() || p;
@@ -286,7 +288,7 @@ export function parseNativeEvents(line: string, claude: boolean): NativeEvent[] 
     if (o.type === "assistant") {
       for (const b of o.message?.content || []) {
         if (b.type === "text" && b.text?.trim()) { const t = cleanText(b.text); if (t) out.push({ kind: "message", role: "assistant", text: t, ts: Date.parse(o.timestamp) || 0 }); }
-        else if (b.type === "tool_use") out.push({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input) });
+        else if (b.type === "tool_use") { const st = toolFileStat(b.name, b.input); out.push({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), path: st.path, adds: st.adds, dels: st.dels, rows: st.rows }); }
       }
     } else if (o.type === "user") {
       const t = cleanText(contentText(o.message?.content));

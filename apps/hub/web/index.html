@@ -73,8 +73,8 @@
     /* comando/ação muito grande: recolhe em 2 linhas e oferece expandir */
     .strtool.clamp .ttl { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
     .strtool.clamp.expanded .ttl { -webkit-line-clamp:unset; overflow:visible; white-space:pre-wrap; }
-    .strtool .xpand { background:none; border:0; color:#7aa2f7; cursor:pointer; font-size:11px; padding:2px 0 0; align-self:flex-start; }
-    .strtool .xpand:hover { text-decoration:underline; }
+    .strtool .xpand { background:none; border:0; color:#7aa2f7; cursor:pointer; font-size:13px; line-height:1; padding:2px 6px 0 0; align-self:flex-start; }
+    .strtool .xpand:hover { color:#a9c4ff; }
     .strtool .ttl { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .strtool .ttl.clk { cursor:pointer; } .strtool .ttl.clk:hover { color:#fff; text-decoration:underline; }
     .strtool .tcnt { flex:none; font-family:ui-monospace,Menlo,Consolas,monospace; border-radius:5px; padding:1px 4px; }
@@ -147,11 +147,19 @@
     #queueRow .qlist { display:flex; flex-direction:column; gap:5px; max-height:min(42vh,280px); overflow-y:auto; padding-right:2px; }
     #queueRow .qhdr { display:flex; align-items:center; justify-content:space-between; font-size:11.5px; color:var(--mut); }
     #queueRow .qclr { background:none; border:0; color:#f0883e; cursor:pointer; font-size:11.5px; padding:2px 4px; }
-    #queueRow .qitem { display:flex; align-items:center; gap:8px; background:#ffffff0d; border:1px dashed var(--line); border-radius:9px; padding:6px 9px; }
+    #queueRow .qitem { background:#ffffff0d; border:1px dashed var(--line); border-radius:9px; padding:6px 9px; }
+    #queueRow .qhead { display:flex; align-items:center; gap:6px; }
+    #queueRow .qtog { flex:none; background:none; border:0; color:#7aa2f7; cursor:pointer; font-size:12px; line-height:1; width:14px; padding:0; }
     #queueRow .qtext { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+    #queueRow .qitem.open .qtext { white-space:normal; overflow:visible; }
     #queueRow .qatt { flex:none; font-size:11px; color:#7aa2f7; background:#7aa2f71a; border-radius:6px; padding:1px 6px; white-space:nowrap; }
     #queueRow .qx { flex:none; background:none; border:0; color:var(--mut); cursor:pointer; font-size:14px; padding:0 2px; }
     #queueRow .qx:hover { color:#ff6b6b; }
+    #queueRow .qbody { margin:6px 0 2px 20px; display:flex; flex-direction:column; gap:6px; } #queueRow .qbody.hidden { display:none; }
+    #queueRow .qfull { font-size:12.5px; white-space:pre-wrap; word-break:break-word; color:var(--text); opacity:.9; }
+    #queueRow .qatts { display:flex; flex-wrap:wrap; gap:6px; }
+    #queueRow .qthumb { width:46px; height:46px; object-fit:cover; border-radius:6px; border:1px solid var(--line); }
+    #queueRow .qchip { font-size:11.5px; color:#7aa2f7; background:#7aa2f71a; border-radius:6px; padding:2px 7px; }
     .mut { color:var(--mut); font-size:12.5px; word-break:break-all; }
     .soon { font-size:10px; background:#ffffff14; border-radius:6px; padding:1px 5px; color:var(--mut); }
     /* file viewer / diff — right-side panel (desktop), full overlay (mobile) */
@@ -569,8 +577,8 @@
     // Comando/ação longa: recolhe em 2 linhas e adiciona "expandir/recolher". Aplica-se tanto às
     // linhas de tool do stream quanto ao bloco de atividade ao vivo.
     function addExpand(block,text){ if((text||'').length<=90 && !/\n/.test(text||''))return;
-      block.classList.add('clamp'); const b=document.createElement('button'); b.type='button'; b.className='xpand'; b.textContent='expandir';
-      b.onclick=(e)=>{ e.stopPropagation(); const ex=block.classList.toggle('expanded'); b.textContent=ex?'recolher':'expandir'; }; block.appendChild(b); }
+      block.classList.add('clamp'); const b=document.createElement('button'); b.type='button'; b.className='xpand'; b.title='Expandir'; b.textContent='▸';
+      b.onclick=(e)=>{ e.stopPropagation(); const ex=block.classList.toggle('expanded'); b.textContent=ex?'▾':'▸'; b.title=ex?'Recolher':'Expandir'; }; block.appendChild(b); }
     // expande/colapsa o diff da alteração DENTRO do próprio chat
     function toggleInlineDiff(block,rows,adds,dels){
       const ex=block.querySelector('.tdiff'); if(ex){ ex.remove(); return; }
@@ -1209,10 +1217,11 @@
           else if(ev.kind==='done'){ streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
           else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
           else if(ev.kind==='error'){ streamErr(); onTurnEnd(m.sessionId); } }
-        else if(m.t==='activity'){ if(m.sessionId!==currentSession)return; const d=document.createElement('div'); d.className='strtool act';
-          const txt=m.summary||m.name||'';
-          d.innerHTML=`<div class="strtoolhead"><span>${toolIcon(m.name)}</span><span class="ttl">${esc(txt)}</span></div>`;  // ícone ao LADO do texto (não acima)
-          addExpand(d,txt);
+        else if(m.t==='activity'){ if(m.sessionId!==currentSession)return;
+          // espelho ao vivo de uma sessão nativa: o evento já é uma ação CONCLUÍDA (o tail lê o que
+          // foi escrito) → tool row completo (done): "Editado", contagem +/-, abrir arquivo, diff.
+          const d=toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows);
+          if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; if(m.usage.inputTokens){lastInputTokens=m.usage.inputTokens; updUsagePill();} } }
         else if(m.t==='usage_info'){ planUsage=m.plan||null; if(popMode==='usage') renderPlan(planUsage); }
@@ -1340,11 +1349,26 @@
       const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — enviadas juntas quando terminar'; hdr.appendChild(s);
       const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[currentSession]=[]; renderQueue(); }; hdr.appendChild(clr); E.queueRow.appendChild(hdr);
       const list=document.createElement('div'); list.className='qlist';
-      q.forEach((it0,i)=>{ const it=document.createElement('div'); it.className='qitem'; const t=document.createElement('span'); t.className='qtext'; t.textContent=it0.text; it.appendChild(t);
-        // indica que a mensagem enfileirada leva anexo(s) — antes nada avisava
-        if(it0.atts&&it0.atts.length){ const imgs=it0.atts.filter(a=>a.image).length, files=it0.atts.length-imgs;
-          const a=document.createElement('span'); a.className='qatt'; a.textContent=(imgs?'🖼️ '+imgs+' ':'')+(files?'📎 '+files:'').trim(); a.title=it0.atts.map(a=>a.name).filter(Boolean).join(', '); it.appendChild(a); }
-        const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=()=>{ q.splice(i,1); renderQueue(); }; it.appendChild(x); list.appendChild(it); });
+      q.forEach((it0,i)=>{ const it=document.createElement('div'); it.className='qitem';
+        const atts=it0.atts||[]; const imgs=atts.filter(a=>a.image).length, files=atts.length-imgs;
+        const long=(it0.text||'').length>60 || /\n/.test(it0.text||'') || atts.length>0;
+        const head=document.createElement('div'); head.className='qhead';
+        const tog=document.createElement('button'); tog.type='button'; tog.className='qtog'; tog.textContent=long?'▸':''; tog.title='Expandir'; if(!long)tog.style.visibility='hidden'; head.appendChild(tog);
+        const t=document.createElement('span'); t.className='qtext'; t.textContent=it0.text||'(anexo)'; head.appendChild(t);
+        if(atts.length){ const a=document.createElement('span'); a.className='qatt'; a.textContent=((imgs?'🖼️ '+imgs+' ':'')+(files?'📎 '+files:'')).trim(); head.appendChild(a); }
+        const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=(e)=>{ e.stopPropagation(); q.splice(i,1); renderQueue(); }; head.appendChild(x);
+        it.appendChild(head);
+        // corpo expansível: texto completo + os anexos que vão junto (imagem com miniatura)
+        const body=document.createElement('div'); body.className='qbody hidden';
+        if(it0.text){ const ft=document.createElement('div'); ft.className='qfull'; ft.textContent=it0.text; body.appendChild(ft); }
+        if(atts.length){ const w=document.createElement('div'); w.className='qatts'; atts.forEach(a=>{
+          if(a.image && a.content){ const im=document.createElement('img'); im.className='qthumb'; im.src=(a.content.startsWith('data:')?a.content:'data:image/*;base64,'+a.content); im.title=a.name||''; w.appendChild(im); }
+          else { const c=document.createElement('span'); c.className='qchip'; c.textContent='📎 '+(a.name||'arquivo'); w.appendChild(c); } });
+          body.appendChild(w); }
+        it.appendChild(body);
+        if(long){ const toggle=(e)=>{ e.stopPropagation(); const op=it.classList.toggle('open'); body.classList.toggle('hidden',!op); tog.textContent=op?'▾':'▸'; tog.title=op?'Recolher':'Expandir'; };
+          tog.onclick=toggle; t.onclick=toggle; t.style.cursor='pointer'; }
+        list.appendChild(it); });
       E.queueRow.appendChild(list); }
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();

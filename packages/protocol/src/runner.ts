@@ -105,7 +105,7 @@ export type RunnerToHub =
   | { t: "filediff"; reqId: string; path: string; name: string; rows?: DiffRowMeta[]; adds?: number; dels?: number; error?: string }
   | { t: "stream"; sessionId: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
-  | { t: "activity"; sessionId: string; name?: string; summary?: string }
+  | { t: "activity"; sessionId: string; name?: string; summary?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[] }
   | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; truncated?: boolean; error?: string }
   | { t: "runs"; active: string[] }
   | { t: "error"; reqId?: string; message: string }

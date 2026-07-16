@@ -72,7 +72,7 @@ function pollTail(sid: string): void {
     if (!line.trim()) continue;
     for (const e of parseNativeEvents(line, t.claude)) {
       if (e.kind === "message") send({ t: "message", sessionId: sid, message: { role: e.role, text: e.text, ts: e.ts } });
-      else send({ t: "activity", sessionId: sid, name: e.name, summary: e.summary });
+      else send({ t: "activity", sessionId: sid, name: e.name, summary: e.summary, path: e.path, adds: e.adds, dels: e.dels, rows: e.rows });
     }
   }
 }

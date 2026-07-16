@@ -422,7 +422,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
   }
   if (m.t === "busy") { for (const c of clientsOn(rc.id)) send(c, { t: "busy", message: m.message }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
-  if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary }); return; }
+  if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows }); return; }
   if (m.t === "runs") { runnerActive.set(rc.id, new Set(m.active || [])); for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
   // Update outcome of a machine. Goes to whoever asked (any owner watching the update panel),
   // not just clients on that machine — you fire the update from the Hub's own screen.
@@ -498,9 +498,9 @@ function pollTail(sid: string): void {
   t.buf = parts.pop() || ""; // keep the last (possibly partial) line
   for (const line of parts) {
     if (!line.trim()) continue;
-    for (const e of parseNativeEvents(line, t.claude)) {
+    for (const e of parseNativeEvents(line, t.claude) as any[]) {
       if (e.kind === "message") broadcast(sid, { t: "message", message: { sessionId: sid, role: e.role, text: e.text, ts: e.ts, agent: t.claude ? "claude-code" : "codex" } });
-      else broadcast(sid, { t: "activity", sessionId: sid, name: e.name, summary: e.summary });
+      else broadcast(sid, { t: "activity", sessionId: sid, name: e.name, summary: e.summary, path: e.path, adds: e.adds, dels: e.dels, rows: e.rows });
     }
   }
 }
