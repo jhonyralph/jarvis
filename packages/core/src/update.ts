@@ -26,6 +26,17 @@ export async function repoRemoteUrl(root: string): Promise<string> {
   try { return (await git(root, ["remote", "get-url", "origin"])).replace(/\.git$/, ""); } catch { return ""; }
 }
 
+/** Short HEAD sha of a checkout, "+dirty" if the tree has uncommitted changes. "" if not a git repo.
+ *  Used so runners can report which build they're actually running, to catch version drift. */
+export async function repoCommit(root: string): Promise<string> {
+  try {
+    const sha = await git(root, ["rev-parse", "--short", "HEAD"]);
+    let dirty = false;
+    try { dirty = (await git(root, ["status", "--porcelain"])) !== ""; } catch { /* treat as clean */ }
+    return sha + (dirty ? "+dirty" : "");
+  } catch { return ""; }
+}
+
 export interface UpdateStatus {
   supported: boolean;      // git clone with a remote?
   current: string;         // short sha of HEAD

@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, readProjectFile } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
@@ -351,6 +351,12 @@ async function refreshLocalAgents(): Promise<void> {
 const UPDATE_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/hub/src
 let repoUrl = "";
 void repoRemoteUrl(UPDATE_ROOT).then((u) => { repoUrl = u; });
+// The Hub's own build, so machineList can flag runners that drifted from it. Re-read after an
+// update restart is automatic (the process restarts). Refresh periodically for a live commit.
+let hubCommit = "";
+void repoCommit(UPDATE_ROOT).then((c) => { hubCommit = c; });
+setInterval(() => { void repoCommit(UPDATE_ROOT).then((c) => { hubCommit = c; }); }, 60_000).unref?.();
+const sameBuild = (a: string, b: string) => !!a && !!b && a.replace("+dirty", "") === b.replace("+dirty", "");
 let updateStatus: any = { supported: true, behind: 0 };
 async function refreshUpdate(doBroadcast = true): Promise<void> {
   try { updateStatus = await updateCheck(UPDATE_ROOT, true); } catch (e: any) { updateStatus = { supported: false, error: String(e?.message ?? e) }; }
@@ -366,7 +372,13 @@ function clientsOn(runnerId: string): WebSocket[] {
   return out;
 }
 function machineList(): any[] {
-  return [...runners.values()].map((r) => ({ id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os, agents: r.local ? localAgents : (r.info.agents || []), online: r.local || (!!r.ws && r.ws.readyState === WebSocket.OPEN), local: !!r.local }));
+  return [...runners.values()].map((r) => {
+    const commit = r.local ? hubCommit : (r.info.commit || "");
+    // "stale" = an online remote runner whose build differs from the Hub's (drift you can act on).
+    const online = r.local || (!!r.ws && r.ws.readyState === WebSocket.OPEN);
+    const stale = !r.local && online && !!commit && !!hubCommit && !sameBuild(commit, hubCommit);
+    return { id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os, agents: r.local ? localAgents : (r.info.agents || []), online, local: !!r.local, commit, hubCommit, stale };
+  });
 }
 function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList() }); } }
 function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.ws.readyState === WebSocket.OPEN) { rc.ws.send(JSON.stringify(obj)); return true; } return false; }

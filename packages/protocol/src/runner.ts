@@ -20,6 +20,9 @@ export interface RunnerInfo {
   os: RunnerOS;
   agents: string[]; // available adapter names, e.g. ["claude-code","codex","mock"]
   version?: string;
+  /** short git HEAD sha of the runner's checkout ("+dirty" suffix if uncommitted) — lets the Hub
+   *  spot a runner drifting behind (or ahead of) the Hub's own build. */
+  commit?: string;
   /** friendly name set at install (JARVIS_LABEL); the Hub uses it as the initial label */
   label?: string;
   /** true for the Hub's own embedded runner ("machine 0") */

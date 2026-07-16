@@ -248,6 +248,7 @@
     #machineBar .mitem { display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:8px; cursor:pointer; }
     #machineBar .mitem:hover { background:#ffffff10; } #machineBar .mitem.active { background:#2f81f722; }
     #machineBar .mtag { flex:none; font-size:10px; opacity:.6; border:1px solid #ffffff22; border-radius:6px; padding:1px 5px; }
+    #machineBar .mver { flex:none; font-size:10px; font-family:ui-monospace,Menlo,Consolas,monospace; color:var(--mut); opacity:.75; }
     /* resultado do update por maquina: o botao dizia "enviado" e voce lia "atualizado" */
     #updMachines { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
     .updm { display:flex; align-items:center; gap:6px; font-size:12px; padding:5px 7px; border:1px solid var(--line); border-radius:8px; }
@@ -790,7 +791,10 @@
       machines.forEach(m=>{ const it=document.createElement('div'); it.className='mitem'+(m.id===currentMachine?' active':'');
         // online mas sem nenhuma IA utilizável (ex.: claude sem login / token expirado → 401)
         const noAI = m.online && Array.isArray(m.agents) && !m.agents.length;
-        it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+(m.local?'<span class="mtag">servidor</span>':(m.online?'':'<span class="mtag">offline</span>'))+(noAI?'<span class="mtag warn" title="Nenhuma IA autenticada nesta máquina — rode `claude login` nela">⚠ sem IA</span>':'');
+        // versão (commit git) da máquina + aviso de disparidade com o servidor
+        const ver = m.commit ? '<span class="mver" title="Build desta máquina'+(m.hubCommit?' · servidor: '+esc(m.hubCommit):'')+'">'+esc(m.commit)+'</span>' : '';
+        const drift = m.stale ? '<span class="mtag warn" title="Versão diferente do servidor ('+esc(m.hubCommit||'?')+') — atualize esta máquina">⚠ desatualizada</span>' : '';
+        it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+ver+(m.local?'<span class="mtag">servidor</span>':(m.online?'':'<span class="mtag">offline</span>'))+drift+(noAI?'<span class="mtag warn" title="Nenhuma IA autenticada nesta máquina — rode `claude login` nela">⚠ sem IA</span>':'');
         it.onclick=(e)=>{ e.stopPropagation(); selectMachine(m.id); };
         if(authUser&&authUser.role==='owner'){ const pen=document.createElement('button'); pen.className='mpen'; pen.textContent='✏'; pen.title='Renomear';
           pen.onclick=async(e)=>{ e.stopPropagation(); const v=await dialog({title:'Renomear máquina',input:true,value:m.label,placeholder:'Nome da máquina'}); if(v&&v.trim()) tx({t:'rename_runner',runnerId:m.id,label:v.trim()}); };
