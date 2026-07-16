@@ -120,6 +120,9 @@
     #filePanel .fpmeta { padding:5px 12px; font-size:11px; color:var(--mut); border-bottom:1px solid var(--line); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .filebody { flex:1; background:var(--code); margin:0; overflow:auto; padding:10px 0; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.5; white-space:pre; color:var(--text); }
     .filebody.plain { white-space:pre; padding:12px; }
+    .filebody.code { white-space:pre; padding:12px; tab-size:2; }
+    .filebody .hl-com { color:#7c8797; font-style:italic; } .filebody .hl-str { color:#98c379; } .filebody .hl-num { color:#d19a66; }
+    .filebody .hl-kw { color:#c678dd; } .filebody .hl-lit { color:#56b6c2; } .filebody .hl-type { color:#e5c07b; } .filebody .hl-fn { color:#61afef; }
     .filebody .dline { display:block; padding:0 12px; white-space:pre-wrap; overflow-wrap:anywhere; }
     .filebody .dline.add { background:#2ea04326; } .filebody .dline.add::before { content:'+ '; color:#3fb950; }
     .filebody .dline.del { background:#f8514926; } .filebody .dline.del::before { content:'- '; color:#f85149; }
@@ -537,10 +540,32 @@
       const cli=(currentAgent==='codex')?'codex':'claude'; const short=curNativeId.length>10?curNativeId.slice(0,8)+'…':curNativeId;
       c.textContent='🔗 '+short; c.dataset.cmd=cli+' --resume '+curNativeId; c.title='No terminal: '+c.dataset.cmd+' — clique para copiar'; c.classList.remove('hidden'); }
     E.nativeChip.onclick=()=>{ const cmd=E.nativeChip.dataset.cmd||''; if(!cmd)return; (navigator.clipboard?navigator.clipboard.writeText(cmd):Promise.reject()).then(()=>{ const o=E.nativeChip.textContent; E.nativeChip.textContent='copiado ✓'; setTimeout(()=>E.nativeChip.textContent=o,1400); }).catch(()=>toast(cmd)); };
+    // ---- lightweight, self-contained syntax highlighter (no external deps) ----
+    const HL_KW={ ts:'abstract as async await break case catch class const continue declare default delete do else enum export extends false finally for from function get if implements import in infer instanceof interface keyof let namespace new null of private protected public readonly return satisfies set static super switch this throw true try type typeof undefined var void while yield',
+      py:'and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield False None True',
+      sh:'if then elif else fi for while until do done case esac in function return local export readonly echo cd exit set unset source',
+      sql:'select from where insert into update delete create table alter drop join left right inner outer on group order by having limit offset union values set distinct as and or not null primary key foreign references default' };
+    const HL_LIT=new Set(['true','false','null','undefined','None','True','False','nil','NaN','Infinity']);
+    function hlLang(name){ const e=(String(name||'').split('.').pop()||'').toLowerCase();
+      if(['ts','tsx','js','jsx','mjs','cjs','json','jsonc','css','scss','less','go','rs','java','c','cc','cpp','h','hpp','cs','php','kt','swift','dart','proto'].includes(e)) return 'ts';
+      if(['py','rb'].includes(e)) return 'py';
+      if(['sh','bash','zsh','env','ps1','yml','yaml','toml','ini','conf','dockerfile'].includes(e)) return 'sh';
+      if(e==='sql') return 'sql'; return null; }
+    function hlEsc(s){ return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+    const HL_RX={ ts:/(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(`(?:\\[\s\S]|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b\d[\w.]*\b)|([A-Za-z_$][\w$]*)/g,
+      hash:/(#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b\d[\w.]*\b)|([A-Za-z_$][\w$]*)/g };
+    function highlight(code,name){ const lang=hlLang(name); if(!lang||!code||code.length>300000) return null;
+      const kw=new Set((HL_KW[lang]||HL_KW.ts).split(' ')); const rx=(lang==='py'||lang==='sh')?HL_RX.hash:HL_RX.ts; rx.lastIndex=0;
+      let out='',last=0,m; while((m=rx.exec(code))){ out+=hlEsc(code.slice(last,m.index)); last=rx.lastIndex;
+        if(m[1]) out+='<span class="hl-com">'+hlEsc(m[1])+'</span>';
+        else if(m[2]) out+='<span class="hl-str">'+hlEsc(m[2])+'</span>';
+        else if(m[3]) out+='<span class="hl-num">'+hlEsc(m[3])+'</span>';
+        else { const w=m[4]; out+= kw.has(w)?'<span class="hl-kw">'+w+'</span>' : HL_LIT.has(w)?'<span class="hl-lit">'+w+'</span>' : /^[A-Z]/.test(w)?'<span class="hl-type">'+w+'</span>' : code[rx.lastIndex]==='('?'<span class="hl-fn">'+w+'</span>':hlEsc(w); } }
+      return out+hlEsc(code.slice(last)); }
     function showFile(m){ if(E.filePanel.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileStat.textContent=''; E.fileBody.className='filebody plain';
       if(m.error){ E.fileMeta.textContent=m.path||''; E.fileBody.textContent='⚠ '+m.error; return; }
       const kb=m.size?(m.size<1024?m.size+' B':(m.size/1024).toFixed(1)+' KB'):''; E.fileMeta.textContent=(m.path||'')+(kb?' · '+kb:'')+(m.truncated?' · (primeiros 512KB)':'');
-      E.fileBody.textContent=m.content||''; E.fileBody.scrollTop=0; }
+      const hl=highlight(m.content||'',m.name||m.path); if(hl!=null){ E.fileBody.classList.add('code'); E.fileBody.innerHTML=hl; } else E.fileBody.textContent=m.content||''; E.fileBody.scrollTop=0; }
     function showDiff(m){ if(E.filePanel.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileMeta.textContent=m.path||'';
       if(m.error){ E.fileStat.textContent=''; E.fileBody.className='filebody plain'; E.fileBody.textContent='⚠ '+m.error; return; }
       E.fileStat.innerHTML=`<span class="add">+${m.adds||0}</span> <span class="del">-${m.dels||0}</span>`;
