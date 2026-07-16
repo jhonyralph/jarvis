@@ -496,6 +496,33 @@
         if(m.images&&m.images.length){ const w=document.createElement('div'); w.className='msgimgs'; m.images.forEach(u=>{ const im=document.createElement('img'); im.className='msgimg'; im.src=u; im.loading='lazy'; im.onclick=()=>window.open(u,'_blank'); w.appendChild(im); }); d.appendChild(w); }
         const showTxt=m.text&&!(m.images&&m.images.length&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); }
       else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
+    // Trocar de sessão custa DUAS travessias de rede quando ela vive em outra máquina
+    // (browser → hub → runner → hub → browser), e esse enlace pode ser um relay: medido entre
+    // Luby e o Desktop, o RTT oscila de 28ms a 621ms via DERP. O payload, porém, é o mesmo que
+    // já desenhamos — então guardamos: revisitar pinta na hora e a cópia fresca só substitui
+    // quando chega. Limitado a poucas sessões porque isso também roda no celular.
+    const histCache=new Map(); const HIST_CACHE_MAX=12;
+    function cacheHist(m){ if(!m||!m.sessionId)return; histCache.delete(m.sessionId); histCache.set(m.sessionId,m);
+      if(histCache.size>HIST_CACHE_MAX) histCache.delete(histCache.keys().next().value); }
+    // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
+    // o cache acelera, nunca decide o que é verdade.
+    function openSession(id){ if(!id)return; const c=histCache.get(id); if(c&&id!==currentSession) applyHistory(c); tx({t:'open',sessionId:id}); }
+    function applyHistory(m){
+      if(currentSession&&currentSession!==m.sessionId)clearQueue();
+      currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId);
+      currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
+      if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
+      E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
+      const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
+      if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
+      msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); E.log.scrollTop=E.log.scrollHeight;
+      curFiles=(m.files||[]).slice(); renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=0; updUsagePill(); renderRecents(); closePop();
+      curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
+      E.roBanner.classList.toggle('hidden',!curNative);
+      E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
+      E.input.disabled=ro; E.sendBtn.disabled=ro; E.mic.disabled=ro; E.input.placeholder=ro?'Sessão nativa — somente leitura':'Fale ou digite…';
+      curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession);
+    }
     // Anchor: a user message must never land under an open reply bubble, even if the echo arrives
     // after the stream started (remote runners emit over the network, order isn't guaranteed).
     function addMsg(m){ const d=buildMsgEl(m); const anchor=pendingEl||(m.role==='user'?strEl:null); if(anchor) E.log.insertBefore(d,anchor); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
@@ -628,7 +655,7 @@
       d.appendChild(del);
       d.title=`${s.agent||''}${nat?' · nativo (somente leitura)':''}\n${s.cwd||''}`;
       if(selMode){ d.classList.toggle('picked',selIds.has(s.id)); const cb=document.createElement('input'); cb.type='checkbox'; cb.className='rchk'; cb.checked=selIds.has(s.id); d.insertBefore(cb,d.firstChild); d.onclick=(e)=>{ e.stopPropagation(); toggleSel(s.id); }; }
-      else d.onclick=()=>{ tx({t:'open',sessionId:s.id}); closeSide(); };
+      else d.onclick=()=>{ openSession(s.id); closeSide(); };
       E.recents.appendChild(d); });
       E.moreBtn.classList.toggle('hidden', sessions.length<=shown); }
     E.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
@@ -791,8 +818,8 @@
     E.searchClose.onclick=()=>E.searchModal.classList.add('hidden');
     E.searchInput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); runSearch(); } };
     E.searchResults.addEventListener('click',(e)=>{
-      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort}); tx({t:'open',sessionId:exec.dataset.id}); E.searchModal.classList.add('hidden'); return; }
-      const match=e.target.closest('.match'); if(match){ tx({t:'open',sessionId:match.dataset.id}); E.searchModal.classList.add('hidden'); } });
+      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort}); openSession(exec.dataset.id); E.searchModal.classList.add('hidden'); return; }
+      const match=e.target.closest('.match'); if(match){ openSession(match.dataset.id); E.searchModal.classList.add('hidden'); } });
 
     // ---------- footer popovers (pills clicáveis) ----------
     let popMode=null;
@@ -950,7 +977,7 @@
     // deep-link: a sessão atual fica na URL (#id) para o refresh voltar na mesma conversa
     function setHash(id){ if(!id){ if(location.hash) history.replaceState(null,'',location.pathname+location.search); return; } const h='#'+encodeURIComponent(id); if(location.hash!==h) history.replaceState(null,'',h); }
     const hashSession = () => location.hash ? decodeURIComponent(location.hash.slice(1)) : '';
-    addEventListener('hashchange',()=>{ const h=hashSession(); if(h&&h!==currentSession&&(isNative(h)||sessions.some(s=>s.id===h))) tx({t:'open',sessionId:h}); });
+    addEventListener('hashchange',()=>{ const h=hashSession(); if(h&&h!==currentSession&&(isNative(h)||sessions.some(s=>s.id===h))) openSession(h); });
     let reconnectT=null;
     function scheduleReconnect(){ if(reconnectT)return; reconnectT=setTimeout(()=>{ reconnectT=null; connect(); },1200); }
     // ---------- auth gate (device pairing + optional 2nd factor; see auth.ts) ----------
@@ -984,7 +1011,7 @@
       if(gateMode==='verify'){ if(!val){ gateError('Informe a senha.'); return; } authPass=val; gateError(''); tx({t:'verify',pass:val}); return; }
       const label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
       if(!val){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code:val, label }); }
-    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) tx({t:'open',sessionId:currentSession}); if(cfg.push) enablePush(); }
+    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) openSession(currentSession); if(cfg.push) enablePush(); }
     function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); }
 
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
@@ -1016,20 +1043,9 @@
           const exists=(id)=> !!id && sessions.some(s=>s.id===id);
           const last=lastByMachine[currentMachine], h=hashSession();
           const pick = exists(last)?last : (exists(h)?h : (sessions.find(s=>!isNative(s.id))||{}).id);
-          if(pick) tx({t:'open',sessionId:pick});
+          if(pick) openSession(pick);
           else if(currentMachine==='local' && !hashSession()) E.newSess.onclick(); } }
-        else if(m.t==='history'){ if(currentSession&&currentSession!==m.sessionId)clearQueue(); currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId); currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
-          if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
-          E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
-          const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
-          if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
-          msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); E.log.scrollTop=E.log.scrollHeight;
-          curFiles=(m.files||[]).slice(); renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=0; updUsagePill(); renderRecents(); closePop();
-          curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
-          E.roBanner.classList.toggle('hidden',!curNative);
-          E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
-          E.input.disabled=ro; E.sendBtn.disabled=ro; E.mic.disabled=ro; E.input.placeholder=ro?'Sessão nativa — somente leitura':'Fale ou digite…';
-          curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession); }
+        else if(m.t==='history'){ cacheHist(m); applyHistory(m); }
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
@@ -1097,8 +1113,8 @@
     E.backdrop.onclick=closeSide; E.sideClose.onclick=closeSide;
     E.log.addEventListener('click',(e)=>{
       if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
-      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort}); tx({t:'open',sessionId:exec.dataset.id}); return; }
-      const match=e.target.closest('.match'); if(match){ tx({t:'open',sessionId:match.dataset.id}); return; }
+      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort}); openSession(exec.dataset.id); return; }
+      const match=e.target.closest('.match'); if(match){ openSession(match.dataset.id); return; }
       // file references in the chat (markdown links) must NOT navigate away — open in the panel.
       const a=e.target.closest && e.target.closest('a'); if(a){ const href=a.getAttribute('href')||'';
         if(/^(https?:|mailto:|tel:|#)/i.test(href)) return; // real links pass through
