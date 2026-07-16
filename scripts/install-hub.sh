@@ -24,6 +24,12 @@ JARVIS_SEARCH_MODEL=haiku
 # JARVIS_REQUIRE_TLS=on JARVIS_TRUST_PROXY=on   # se expor publicamente atrás de proxy TLS
 EOF
 
+# Mesma garantia do runner: o serviço tem que ser a única instância. launchctl/systemd só
+# substituem o que gerenciam; um `npm start` esquecido num terminal seguiria segurando a porta.
+if pkill -f 'apps/hub/src/index.ts' 2>/dev/null; then
+  echo "Encerrando hub ja em execucao — o servico assume a partir de agora."
+fi
+
 OS="$(uname -s)"
 if [ "$OS" = "Darwin" ]; then
   PLIST="$HOME/Library/LaunchAgents/com.jarvis.hub.plist"; mkdir -p "$HOME/Library/LaunchAgents"

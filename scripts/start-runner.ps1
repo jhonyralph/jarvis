@@ -19,12 +19,19 @@ if (Test-Path $envFile) {
     if ($_ -match '^\s*([A-Z_]+)\s*=\s*(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim().Trim('"'), 'Process') }
   }
 }
-Set-Location $root
+# `npm start` aqui seria `npm.cmd`, um batch — e chamar batch faz nascer um cmd.exe intermediário
+# só pra encadear o node. É um console a mais que a task precisa manter escondido; se qualquer
+# elo perder o -WindowStyle Hidden, ele vira janela na cara do usuário. Chamamos o tsx direto pelo
+# node (mesmo comando que o `npm start` roda: `tsx src/index.ts`), sem camada nenhuma no meio.
+# Fallback pro npm se o tsx não estiver hoisted na raiz.
+$tsx = Join-Path $root 'node_modules\tsx\dist\cli.mjs'
+Set-Location "$root\apps\runner"
 # Loop de supervisão: NUNCA sai. (Re)sobe o runner em foreground; quando o node encerra,
 # registra e reinicia após um pequeno backoff.
 while ($true) {
   Log 'iniciando runner...'
-  & npm.cmd --prefix "$root\apps\runner" start *>> $log
+  if (Test-Path $tsx) { & node.exe $tsx 'src/index.ts' *>> $log }
+  else { Log 'tsx nao encontrado na raiz — caindo pro npm'; & npm.cmd --prefix "$root\apps\runner" start *>> $log }
   Log 'runner encerrou — reiniciando em 3s'
   Start-Sleep -Seconds 3
 }

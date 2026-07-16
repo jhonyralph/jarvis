@@ -31,6 +31,18 @@ $envFile = Join-Path $dir 'runner.env'
 "JARVIS_HUB=$Hub`r`nJARVIS_TOKEN=$Token`r`nJARVIS_LABEL=`"$Label`"" | Set-Content -Encoding UTF8 $envFile
 Write-Host "Config gravada em $envFile"
 
+# O serviço tem que ser a ÚNICA instância. -MultipleInstances IgnoreNew só impede a *task* de
+# duplicar; um `npm start` deixado num terminal continua vivo e registra com o mesmo runnerId —
+# vira um zumbi que segue tailando sessões e sondando os agentes (é assim que uma máquina se
+# enche de sessões descartáveis). Encerra a task e qualquer runner solto antes de registrar.
+try { Stop-ScheduledTask -TaskName 'JarvisRunner' -ErrorAction Stop } catch { <# nao instalada ainda #> }
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -and $_.CommandLine -match 'apps[\\/]runner[\\/]src[\\/]index\.ts' } |
+  ForEach-Object {
+    Write-Host "Encerrando runner já em execução (pid $($_.ProcessId)) — o serviço assume a partir de agora." -ForegroundColor Yellow
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+
 $startPs = Join-Path $root 'scripts\start-runner.ps1'
 $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startPs`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn

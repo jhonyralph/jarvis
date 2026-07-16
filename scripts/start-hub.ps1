@@ -53,6 +53,10 @@ function Warm-Token {
 }
 
 Set-Location $hub
+# Chama o tsx direto pelo node em vez de `npm.cmd start`: npm no Windows é batch, e batch faz
+# nascer um cmd.exe intermediário — um console a mais pra manter escondido, por nada. Fallback
+# pro npm se o tsx não estiver hoisted na raiz.
+$tsx = Join-Path $root 'node_modules\tsx\dist\cli.mjs'
 $lastWarm = [datetime]::MinValue
 # Loop de supervisão: NUNCA sai. Cada iteração garante token fresco (reaquece se passou
 # de 30min desde a última vez) e (re)sobe o Hub em foreground. Quando o node encerra,
@@ -60,7 +64,8 @@ $lastWarm = [datetime]::MinValue
 while ($true) {
   if (((Get-Date) - $lastWarm).TotalMinutes -ge 30) { Warm-Token; $lastWarm = Get-Date }
   Log 'iniciando hub...'
-  & npm.cmd start *>> $log
+  if (Test-Path $tsx) { & node.exe $tsx 'src/index.ts' *>> $log }
+  else { Log 'tsx nao encontrado na raiz — caindo pro npm'; & npm.cmd start *>> $log }
   Log 'hub encerrou — reiniciando em 3s'
   Start-Sleep -Seconds 3
 }

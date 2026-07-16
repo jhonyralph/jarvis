@@ -33,6 +33,13 @@ mkdir -p "$HOME/.jarvis"
 printf 'JARVIS_HUB=%s\nJARVIS_TOKEN=%s\nJARVIS_LABEL="%s"\n' "$HUB" "$TOKEN" "$LABEL" > "$HOME/.jarvis/runner.env"
 chmod +x "$ROOT/scripts/start-runner.sh"
 
+# O serviço tem que ser a ÚNICA instância. launchctl/systemd só substituem o que eles mesmos
+# gerenciam; um `npm start` deixado num terminal segue vivo e registra com o mesmo runnerId,
+# virando um zumbi que continua tailando sessões e sondando os agentes. Encerra antes.
+if pkill -f 'apps/runner/src/index.ts' 2>/dev/null; then
+  echo "Encerrando runner ja em execucao — o servico assume a partir de agora."
+fi
+
 OS="$(uname -s)"
 if [ "$OS" = "Darwin" ]; then
   PLIST="$HOME/Library/LaunchAgents/com.jarvis.runner.plist"
