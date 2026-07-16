@@ -303,11 +303,32 @@ function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.w
 
 // admin: waiters for a runner's next session list (used by the remote "ok" purge)
 const pendingRunnerList = new Map<string, (sessions: any[]) => void>();
+// Voice features (resumir/digest) run ON THE HUB, so for a session that lives on another machine
+// they need to pull it over the wire — the hub keeps no copy of a runner's sessions. Keyed by
+// reqId, resolved by the runner's {t:history}/{t:sessions} reply, and always timed out so a
+// silent runner degrades instead of hanging the single-flight voice lock.
+const pendingRunnerHist = new Map<string, (h: any) => void>();
+function askRunner<T>(map: Map<string, (v: any) => void>, key: string, sendIt: () => boolean, empty: T, ms = 8000): Promise<T> {
+  return new Promise<T>((resolve) => {
+    map.set(key, resolve as (v: any) => void);
+    if (!sendIt()) { map.delete(key); resolve(empty); return; }
+    setTimeout(() => { if (map.delete(key)) resolve(empty); }, ms);
+  });
+}
+/** History of a session that lives on `rc` (remote). null if the runner doesn't answer. */
+function runnerHistory(rc: RunnerConn, sessionId: string): Promise<any> {
+  const reqId = "hub-" + randomUUID().slice(0, 8);
+  return askRunner(pendingRunnerHist, reqId, () => sendToRunner(rc, { t: "open", reqId, sessionId }), null);
+}
+/** Session list of a remote machine. [] if the runner doesn't answer. */
+function runnerSessions(rc: RunnerConn): Promise<any[]> {
+  return askRunner<any[]>(pendingRunnerList, rc.id, () => sendToRunner(rc, { t: "list" }), [], 6000);
+}
 
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "sessions") { const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
-  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows })), files: m.files }); } return; }
+  if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows })), files: m.files }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "stream") { for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
@@ -608,7 +629,15 @@ async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): P
 async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Promise<void> {
   let msgs: Array<{ role: string; text: string }> = [];
   let title = "";
-  if (isNativeId(sid)) { const h = nativeHistory(sid); if (h) { msgs = h.messages; title = h.title; } }
+  // The session may live on another machine — looking it up locally would always come back empty
+  // and report a perfectly full conversation as "Conversa vazia."
+  const rid = activeRunner(ws);
+  const rc = rid !== LOCAL_ID ? runners.get(rid) : undefined;
+  if (rc?.ws) {
+    const h = await runnerHistory(rc, sid);
+    if (!h) { send(ws, { t: "error", message: `resumo: a máquina "${runnerLabels[rid] || rid}" não respondeu` }); return; }
+    msgs = h.messages || []; title = h.title || "";
+  } else if (isNativeId(sid)) { const h = nativeHistory(sid); if (h) { msgs = h.messages; title = h.title; } }
   else { const s = store.get(sid); if (s) { msgs = store.history(sid); title = s.title; } }
   if (!msgs.length) { send(ws, { t: "summary", sessionId: sid, text: "Conversa vazia." }); return; }
   // foca na ÚLTIMA resposta (referente ao último comando) — resumo curto, não a conversa toda
@@ -645,17 +674,26 @@ async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
   const lines = all
     .map((s) => `- ${s.title}${isActive(s) ? " [ATIVA AGORA]" : ""} (${s.agent}): ${(s.lastAssistant || s.lastUser || "").slice(0, 160)}`)
     .join("\n") || "(nenhuma sessão)";
-  // remote machines' running counts (from their {t:runs})
-  const remoteLines = [...runners.values()]
-    .filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN)
-    .map((r) => { const n = (runnerActive.get(r.id) || new Set()).size; return `- Máquina "${runnerLabels[r.id] || r.info.host || r.id}": ${n} sessão(ões) em execução`; })
-    .join("\n");
+  // Remote machines: pull their real sessions. Sending only a running count left the model
+  // describing an online machine with a dozen idle sessions as "inativa" — nothing in flight is
+  // not the same as offline, and the machine's own sessions were invisible here entirely.
+  const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN);
+  const remoteLines = (await Promise.all(remotes.map(async (r) => {
+    const label = runnerLabels[r.id] || r.info.host || r.id;
+    const running = runnerActive.get(r.id) || new Set<string>();
+    const ss = (await runnerSessions(r)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const top = ss.slice(0, 5).map((s) => `  - ${s.title}${running.has(s.id) ? " [ATIVA AGORA]" : ""}`).join("\n");
+    return `- Máquina "${label}": ONLINE e conectada, ${running.size} em execução agora, ${ss.length} sessão(ões) no total.` + (top ? `\n${top}` : "");
+  }))).join("\n");
   const prompt =
     `Você é o painel de status do Jarvis. Em português do Brasil, 2 a 4 frases FALADAS (sem markdown, sem listas), ` +
     `diga rapidamente o que está acontecendo. Há ${activeCount} sessão(ões) marcada(s) [ATIVA AGORA] (em execução/atividade neste momento) — ` +
     `destaque-as primeiro se houver; depois um resumo do resto. SEMPRE produza um status com base nos dados abaixo; NUNCA diga que faltam informações. Seja direto.\n\n` +
     `SESSÕES DESTA MÁQUINA (título · agente · [ATIVA AGORA] se em execução):\n${lines}` +
-    (remoteLines ? `\n\nOUTRAS MÁQUINAS:\n${remoteLines}` : "");
+    (remoteLines
+      ? `\n\nOUTRAS MÁQUINAS (todas as listadas abaixo estão ONLINE e conectadas neste momento; ` +
+        `"0 em execução" significa apenas que nada está rodando agora — NUNCA diga que estão inativas, offline ou desconectadas):\n${remoteLines}`
+      : "");
   const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
   const sendOpts = { model: summaryCfg.model, effort: summaryCfg.effort };
   let text = "";
