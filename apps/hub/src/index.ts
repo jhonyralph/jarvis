@@ -22,7 +22,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
 import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
-import { speechifyCapped } from "./speechify.js";
+import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff } from "@jarvis/core";
@@ -418,6 +418,21 @@ function sessionsPayload(): unknown { return { t: "sessions", sessions: allSessi
 function pushSessions(): void { const p = sessionsPayload(); for (const c of clientsOn(LOCAL_ID)) send(c, p); }
 function sendSessions(ws: WebSocket): void { send(ws, sessionsPayload()); }
 
+/** What to SPEAK for an agent reply: short answers are read verbatim (cleaned); long ones are
+ *  condensed to a 1–3 sentence spoken summary (cheap model) so the audio doesn't drag on. */
+async function speechForReply(replyText: string): Promise<string> {
+  const spoken = speechify(replyText || "");
+  if (spoken.length <= 600) return spoken; // already short when spoken → read as-is
+  const prompt = `Resuma em 1 a 3 frases CURTAS e faladas (português do Brasil, sem markdown, sem listas, sem código) o texto abaixo — como quem conta o resultado em voz alta, direto ao ponto:\n\n${(replyText || "").slice(0, 4000)}`;
+  try {
+    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    const opts = { model: summaryCfg.model, effort: summaryCfg.effort };
+    const reply = agent.oneShot ? await agent.oneShot(prompt, opts) : await agent.send("__speaksum__", prompt, process.cwd(), opts);
+    const s = speechify((reply.text || "").trim());
+    return s || speechifyCapped(replyText);
+  } catch { return speechifyCapped(replyText); }
+}
+
 /** One full turn against a session's agent: store+broadcast the user msg, get the reply, speak if asked. */
 async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; speak?: boolean; speaker?: string }): Promise<void> {
   const session = store.ensure(sid);
@@ -431,7 +446,7 @@ async function deliverTurn(sid: string, opts: { showText: string; agentText?: st
     store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name });
     pushSessions();
     if (opts.speak) {
-      const spoken = speechifyCapped(reply.text);
+      const spoken = await speechForReply(reply.text);
       if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
     }
   } catch (e: any) {
@@ -559,7 +574,7 @@ async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts:
   try {
     const reply = await agentTurn(sid, agent, agentText, info.cwd || CWD, { model: opts.model, effort: opts.effort });
     if (opts.speak) {
-      const spoken = speechifyCapped(reply.text);
+      const spoken = await speechForReply(reply.text);
       if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
     }
   } catch (e: any) {
@@ -1191,7 +1206,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       pushSessions();
 
       if (msg.speak) {
-        const spoken = speechifyCapped(reply.text); // clean text, not raw markdown
+        const spoken = await speechForReply(reply.text); // clean text, not raw markdown
         if (spoken) {
           const wav = await synthesize(spoken, VOICE);
           broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken });
