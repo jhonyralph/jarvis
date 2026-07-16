@@ -313,6 +313,7 @@
       <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
       <div class="sec tog" id="filesSec" title="Clique para minimizar"><span class="caret">▾</span><span class="lbl">Arquivos & imagens</span><span class="cnt" id="filesCnt"></span></div>
       <div id="files"></div>
+      <button id="filesMore" class="ghost hidden">Mostrar mais</button>
       <div class="spacer"></div>
       <button id="settingsBtn" class="ghost">⚙ Configurações</button>
     </aside>
@@ -469,7 +470,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','selBtn','selBar','selDel','selCancel','searchBtn','digestBtn','sumHdr','digestHdr','recSec','filesSec','recCnt','filesCnt','moreBtn','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'newSess','selBtn','selBar','selDel','selCancel','searchBtn','digestBtn','sumHdr','digestHdr','recSec','filesSec','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','queueRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -480,7 +481,7 @@
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
 
-    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
+    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, filesShown=12, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
     let machines=[], currentMachine=localStorage.getItem('jarvis_machine')||'local', lastByMachine={}, restoringMachine=currentMachine!=='local';
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
@@ -566,7 +567,7 @@
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
       msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); E.log.scrollTop=E.log.scrollHeight;
-      curFiles=(m.files||[]).slice(); renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=0; updUsagePill(); renderRecents(); closePop();
+      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=0; updUsagePill(); renderRecents(); closePop();
       curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
@@ -636,16 +637,22 @@
       E.files.classList.toggle('collapsed', !cfg.filesOpen); E.filesSec.classList.toggle('closed', !cfg.filesOpen);
       // "Mostrar mais" pertence aos recentes: com a secao fechada ele fica orfao na tela
       if(E.moreBtn && !cfg.recOpen) E.moreBtn.classList.add('hidden');
+      if(E.filesMore && !cfg.filesOpen) E.filesMore.classList.add('hidden');
+      if(E.filesMore && cfg.filesOpen) E.filesMore.classList.toggle('hidden', curFiles.length<=filesShown);
       if(E.selBar && !cfg.recOpen) E.selBar.classList.add('hidden');
     }
     function secCounts(){ if(E.recCnt) E.recCnt.textContent = sessions.length ? String(sessions.length) : '';
       if(E.filesCnt) E.filesCnt.textContent = curFiles.length ? String(curFiles.length) : ''; }
     function renderFiles(){ E.files.innerHTML=''; secCounts();
-      curFiles.slice(0,80).forEach(f=>{ const d=document.createElement('div'); d.className='item readable'; d.title=f.path;
+      curFiles.slice(0,filesShown).forEach(f=>{ const d=document.createElement('div'); d.className='item readable'; d.title=f.path;
         const nm=(f.path||'').split(/[\\/]/).pop()||f.path;
         const cnt=(f.action==='edit'&&(f.adds||f.dels))?` <span class="fadd">+${f.adds||0}</span> <span class="fdel">-${f.dels||0}</span>`:'';
         d.innerHTML=`<span class="rbadge">${fileActIcon(f.action)}</span><span class="rtitle">${esc(nm)}</span>${cnt}`;
-        d.onclick=()=>openFile(f.path,f.action); E.files.appendChild(d); }); }
+        d.onclick=()=>openFile(f.path,f.action); E.files.appendChild(d); });
+      if(E.filesMore){ const resta=curFiles.length-filesShown;
+        E.filesMore.textContent = resta>0 ? `Mostrar mais (${resta})` : 'Mostrar mais';
+        E.filesMore.classList.toggle('hidden', resta<=0 || !cfg.filesOpen); } }
+    E.filesMore.onclick=()=>{ filesShown+=20; renderFiles(); };
     // Upsert a file touched during a LIVE turn (from the stream tool events).
     function touchFile(path,action,adds,dels){ if(!path)return; let f=curFiles.find(x=>x.path===path);
       if(!f){ f={path,action:action||'read',adds:adds||0,dels:dels||0}; curFiles.unshift(f); }
