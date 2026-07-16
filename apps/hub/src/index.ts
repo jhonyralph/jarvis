@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
@@ -208,7 +208,8 @@ function requireOwner(ws: WebSocket): Conn | null {
 /** Current devices + pending invites, marking THIS connection's device as "me". */
 function secState(ws: WebSocket): void {
   const p = principalOf(ws);
-  send(ws, { t: "sec_state", devices: auth.listDevices(), invites: auth.listInvites(), me: p?.deviceId || null, role: p?.role || (auth.AUTH_ENABLED ? "member" : "owner"), hasPass: auth.hasPassphrase() });
+  const onlineRunners = new Set([...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN).map((r) => r.id));
+  send(ws, { t: "sec_state", devices: auth.listDevices(), invites: auth.listInvites(), me: p?.deviceId || null, role: p?.role || (auth.AUTH_ENABLED ? "member" : "owner"), hasPass: auth.hasPassphrase(), runnerTokens: auth.listRunnerTokens(), onlineRunners: [...onlineRunners], repoUrl });
 }
 /** Boot any currently-connected device whose token was just revoked. */
 function dropRevoked(): void {
@@ -247,6 +248,8 @@ async function refreshLocalAgents(): Promise<void> {
 
 // --- self-update (git): "new version" = new commits on origin/<branch>. ---
 const UPDATE_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/hub/src
+let repoUrl = "";
+void repoRemoteUrl(UPDATE_ROOT).then((u) => { repoUrl = u; });
 let updateStatus: any = { supported: true, behind: 0 };
 async function refreshUpdate(doBroadcast = true): Promise<void> {
   try { updateStatus = await updateCheck(UPDATE_ROOT, true); } catch (e: any) { updateStatus = { supported: false, error: String(e?.message ?? e) }; }
@@ -927,6 +930,25 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       auth.revokeInvite(msg.inviteId);
       secState(ws);
+      return;
+    }
+    // --- machines (runners): mint a per-machine token / revoke one (owner) ---
+    if (msg.t === "mint_runner") {
+      const p = requireOwner(ws); if (!p) return;
+      const label = (typeof msg.label === "string" && msg.label.trim()) ? msg.label.trim().slice(0, 40) : "Nova máquina";
+      const rid = "m-" + randomUUID().slice(0, 8);
+      const token = auth.mintRunnerToken(rid, label);
+      auth.audit("mint_runner", { userId: p.userId, detail: label });
+      send(ws, { t: "runner_token", runnerId: rid, label, token });
+      secState(ws);
+      return;
+    }
+    if (msg.t === "sec_revoke_runner" && typeof msg.runnerId === "string") {
+      if (!requireOwner(ws)) return;
+      auth.revokeRunnerToken(msg.runnerId);
+      const rc = runners.get(msg.runnerId); if (rc && rc.ws) { try { rc.ws.close(); } catch { /* ignore */ } }
+      runners.delete(msg.runnerId); if (runnerLabels[msg.runnerId]) { delete runnerLabels[msg.runnerId]; saveRunnerLabels(); }
+      broadcastMachines(); secState(ws);
       return;
     }
     // owner passphrase (2nd factor): set/change/clear

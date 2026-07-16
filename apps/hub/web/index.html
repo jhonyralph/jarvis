@@ -286,7 +286,13 @@
 
   <div id="secModal" class="modal hidden"><div class="card">
     <b>🔐 Dispositivos &amp; convites</b>
-    <div class="sec">Gerar convite</div>
+    <div class="sec">🖥 Máquinas (runners)</div>
+    <div class="mut" style="font-size:12px;margin-bottom:6px">Adicione outro computador (Windows/Mac/Linux) para rodar agentes. Gera o token e o comando pronto de instalação.</div>
+    <label>Nome da máquina <input id="secRunLabel" placeholder="ex.: MacBook, PC do escritório" autocomplete="off"></label>
+    <div class="row"><button id="secRunGen" type="button">＋ Adicionar máquina</button></div>
+    <div id="secRunOut" class="hidden" style="margin-top:6px"></div>
+    <div id="secRunners" class="mut" style="font-size:12px">—</div>
+    <div class="sec">Gerar convite (pessoa / navegador)</div>
     <div class="mut" style="font-size:12px;margin-bottom:6px">Crie um convite e compartilhe o link/código. Quem abrir vira um dispositivo conectado (revogável).</div>
     <label>Papel <select id="secRole"><option value="member">Membro</option><option value="owner">Dono</option></select></label>
     <label>Validade <select id="secTtl"><option value="3600">1 hora</option><option value="86400" selected>1 dia</option><option value="604800">7 dias</option></select></label>
@@ -311,6 +317,7 @@
       'newSess','searchBtn','digestBtn','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
+      'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
@@ -470,6 +477,19 @@
     E.secBtn.onclick=()=>{ tx({t:'sec_state'}); E.secOut.classList.add('hidden'); E.secModal.classList.remove('hidden'); closeSide(); };
     E.secClose.onclick=()=>E.secModal.classList.add('hidden');
     E.secGen.onclick=()=>{ tx({t:'sec_invite', role:E.secRole.value, ttlSec:Number(E.secTtl.value)}); };
+    let secRepoUrl='';
+    E.secRunGen.onclick=()=>{ tx({t:'mint_runner', label:E.secRunLabel.value.trim()}); E.secRunLabel.value=''; };
+    function copyBox(caption,text){ const w=document.createElement('div'); w.style.marginBottom='8px';
+      const c=document.createElement('div'); c.className='sec'; c.style.marginTop='2px'; c.textContent=caption; w.appendChild(c);
+      const pre=document.createElement('div'); pre.style.cssText='word-break:break-all;background:#131a22;border:1px solid #2a3542;border-radius:8px;padding:8px;font-family:monospace;font-size:11.5px;color:#e8eef5'; pre.textContent=text; w.appendChild(pre);
+      const b=document.createElement('button'); b.type='button'; b.className='ghost'; b.textContent='Copiar'; b.style.marginTop='4px';
+      b.onclick=()=>{ (navigator.clipboard?navigator.clipboard.writeText(text):Promise.reject()).then(()=>{b.textContent='Copiado ✓';setTimeout(()=>b.textContent='Copiar',1500);}).catch(()=>toast(text)); };
+      w.appendChild(b); return w; }
+    function showRunnerCmd(token,label){ const hub=location.origin.replace(/^http/,'ws'); const repo=secRepoUrl||'<url-do-seu-repo>';
+      E.secRunOut.classList.remove('hidden'); E.secRunOut.innerHTML='<div class="sec">✅ Máquina "'+esc(label)+'" — comando pronto</div><div class="mut" style="font-size:11px;margin-bottom:6px">Na máquina nova: Node ≥22, git, Tailscale conectado, e <code>claude login</code>.</div>';
+      E.secRunOut.appendChild(copyBox('1) Baixar o código:', 'git clone '+repo+'.git && cd jarvis'));
+      E.secRunOut.appendChild(copyBox('2a) Windows (PowerShell, na pasta do repo):', ".\\scripts\\install-runner.ps1 -Hub '"+hub+"' -Token '"+token+"' -Label '"+label+"'"));
+      E.secRunOut.appendChild(copyBox('2b) Mac/Linux:', "./scripts/install-runner.sh -h '"+hub+"' -t '"+token+"' -l '"+label+"'")); }
     E.secPassSet.onclick=()=>{ const v=E.secPass.value.trim(); if(v.length<4){ toast('Senha muito curta (mín. 4).'); return; }
       authPass=v; if(E.secPassRemember.checked) localStorage.setItem('jarvis_pass',v); else localStorage.removeItem('jarvis_pass');
       tx({t:'set_pass',new:v}); E.secPass.value=''; };
@@ -492,6 +512,12 @@
         const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_invite',inviteId:i.id}); row.appendChild(b);
         E.secInvites.appendChild(row); });
       if(E.secPassStatus) E.secPassStatus.textContent = m.hasPass ? '✅ Configurada — pedida em novos logins.' : '⚪ Não configurada.';
+      if(m.repoUrl) secRepoUrl=m.repoUrl;
+      const runs=m.runnerTokens||[], online=new Set(m.onlineRunners||[]);
+      if(E.secRunners){ E.secRunners.innerHTML = runs.length ? '' : 'Nenhuma máquina adicionada ainda.';
+        runs.forEach(rt=>{ const on=online.has(rt.runnerId); const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(rt.label||rt.runnerId)+' · '+(on?'<span style="color:#3fb950">online</span>':'<span style="opacity:.5">offline</span>')+'</div>');
+          const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_runner',runnerId:rt.runnerId}); row.appendChild(b);
+          E.secRunners.appendChild(row); }); }
     }
     function showInvite(code){ const link=location.origin+'/#invite='+encodeURIComponent(code);
       E.secOut.classList.remove('hidden');
@@ -701,6 +727,7 @@
         else if(m.t==='need_pass'){ if(m.error){ authPass=''; localStorage.removeItem('jarvis_pass'); showVerify(m.error); } else if(authPass){ tx({t:'verify',pass:authPass}); } else { showVerify(''); } }
         else if(m.t==='sec_state'){ renderSec(m); }
         else if(m.t==='sec_invite_created'){ showInvite(m.code); }
+        else if(m.t==='runner_token'){ showRunnerCmd(m.token,m.label); }
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
         else if(m.t==='update_status'){ updState=m.status; renderUpdate(); }

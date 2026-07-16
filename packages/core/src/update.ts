@@ -21,6 +21,11 @@ async function git(root: string, args: string[], timeoutMs = 20000): Promise<str
   return String(stdout).trim();
 }
 
+/** The repo's origin URL (for showing the right `git clone …` command), or "". */
+export async function repoRemoteUrl(root: string): Promise<string> {
+  try { return (await git(root, ["remote", "get-url", "origin"])).replace(/\.git$/, ""); } catch { return ""; }
+}
+
 export interface UpdateStatus {
   supported: boolean;      // git clone with a remote?
   current: string;         // short sha of HEAD
