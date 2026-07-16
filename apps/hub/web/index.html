@@ -372,7 +372,7 @@
     <div id="spkList" class="mut" style="font-size:12px;margin:4px 0"></div>
     <div class="row"><button id="setEnroll" class="ghost" type="button">🎙 Cadastrar / atualizar minha voz</button></div>
     <div class="sec">Resumo / status falado ("o que está rolando" e o 🔊 das conversas)</div>
-    <div class="mut" style="font-size:12px;margin-bottom:4px">É uma tarefa leve — <b>recomendado modelo barato + esforço baixo</b> (padrão). Roda sempre nesta máquina (Hub).</div>
+    <div class="mut" style="font-size:12px;margin-bottom:4px">É uma tarefa leve — <b>recomendado modelo barato + esforço baixo</b> (padrão). Roda sempre no servidor (Hub).</div>
     <label>IA <select id="setSumAgent"></select></label>
     <label>Modelo <select id="setSumModel"></select></label>
     <label>Esforço <select id="setSumEffort"></select></label>
@@ -633,7 +633,7 @@
       E.machineBar.appendChild(bar);
       const menu=document.createElement('div'); menu.className='mmenu hidden'; menu.id='mmenu';
       machines.forEach(m=>{ const it=document.createElement('div'); it.className='mitem'+(m.id===currentMachine?' active':'');
-        it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+(m.local?'<span class="mtag">esta</span>':(m.online?'':'<span class="mtag">offline</span>'));
+        it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+(m.local?'<span class="mtag">servidor</span>':(m.online?'':'<span class="mtag">offline</span>'));
         it.onclick=(e)=>{ e.stopPropagation(); selectMachine(m.id); };
         if(authUser&&authUser.role==='owner'){ const pen=document.createElement('button'); pen.className='mpen'; pen.textContent='✏'; pen.title='Renomear';
           pen.onclick=async(e)=>{ e.stopPropagation(); const v=await dialog({title:'Renomear máquina',input:true,value:m.label,placeholder:'Nome da máquina'}); if(v&&v.trim()) tx({t:'rename_runner',runnerId:m.id,label:v.trim()}); };
@@ -731,7 +731,7 @@
       const renameBtn=(id,label)=>{ const b=document.createElement('button'); b.className='ghost'; b.style.flex='none'; b.textContent='Renomear'; b.onclick=async()=>{ const v=await dialog({title:'Renomear máquina',input:true,value:label||'',placeholder:'Nome da máquina'}); if(v&&v.trim()) tx({t:'rename_runner',runnerId:id,label:v.trim()}); }; return b; };
       if(E.secRunners){ E.secRunners.innerHTML = (runs.length||loc) ? '' : 'Nenhuma máquina adicionada ainda.';
         // máquina principal (o servidor) — sempre listada, sem "Revogar"
-        if(loc){ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(loc.label||'Servidor')+' <span style="opacity:.6">(esta máquina · servidor)</span> · <span style="color:#3fb950">online</span></div>');
+        if(loc){ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(loc.label||'Servidor')+' <span style="opacity:.6">(servidor)</span> · <span style="color:#3fb950">online</span></div>');
           row.appendChild(renameBtn(loc.id,loc.label)); E.secRunners.appendChild(row); }
         runs.forEach(rt=>{ const on=rt.online||online.has(rt.runnerId)||!!(machines.find(x=>x.id===rt.runnerId)||{}).online; const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(rt.label||rt.runnerId)+' · '+(on?'<span style="color:#3fb950">online</span>':'<span style="opacity:.5">offline</span>')+'</div>');
           row.appendChild(renameBtn(rt.runnerId,rt.label));
