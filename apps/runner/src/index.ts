@@ -93,9 +93,12 @@ async function availableAgents(): Promise<string[]> {
   if (agentsCache && Date.now() - agentsCache.at < 3_600_000) return agentsCache.list;
   const out: string[] = [];
   for (const n of agents.names()) { try { if (await agents.get(n).available()) out.push(n); } catch { /* skip */ } }
-  const list = out.length ? out : agents.names();
-  agentsCache = { at: Date.now(), list };
-  return list;
+  // Report HONESTLY: an empty list means nothing here is usable (e.g. `claude login` missing /
+  // token expired → 401). The old fallback listed every agent anyway, which made the machine
+  // look healthy in the UI and turned a clear auth problem into a mystery 401 on send.
+  if (!out.length) console.warn('[runner] nenhuma IA disponível — autentique nesta máquina (ex.: `claude login`)');
+  agentsCache = { at: Date.now(), list: out };
+  return out;
 }
 
 function allSessions(): RunnerSession[] {

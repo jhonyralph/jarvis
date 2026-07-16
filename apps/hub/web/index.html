@@ -222,6 +222,7 @@
     #machineBar .mitem { display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:8px; cursor:pointer; }
     #machineBar .mitem:hover { background:#ffffff10; } #machineBar .mitem.active { background:#2f81f722; }
     #machineBar .mtag { flex:none; font-size:10px; opacity:.6; border:1px solid #ffffff22; border-radius:6px; padding:1px 5px; }
+    #machineBar .mtag.warn { opacity:1; color:#e3b341; border-color:#e3b34155; background:#e3b3411a; }
     #machineBar .mpen { flex:none; background:none; border:0; color:inherit; opacity:.5; cursor:pointer; font-size:13px; padding:2px 4px; }
     #machineBar .mpen:hover { opacity:1; }
     .toast { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; cursor:pointer; }
@@ -655,7 +656,9 @@
       E.machineBar.appendChild(bar);
       const menu=document.createElement('div'); menu.className='mmenu hidden'; menu.id='mmenu';
       machines.forEach(m=>{ const it=document.createElement('div'); it.className='mitem'+(m.id===currentMachine?' active':'');
-        it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+(m.local?'<span class="mtag">servidor</span>':(m.online?'':'<span class="mtag">offline</span>'));
+        // online mas sem nenhuma IA utilizável (ex.: claude sem login / token expirado → 401)
+        const noAI = m.online && Array.isArray(m.agents) && !m.agents.length;
+        it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+(m.local?'<span class="mtag">servidor</span>':(m.online?'':'<span class="mtag">offline</span>'))+(noAI?'<span class="mtag warn" title="Nenhuma IA autenticada nesta máquina — rode `claude login` nela">⚠ sem IA</span>':'');
         it.onclick=(e)=>{ e.stopPropagation(); selectMachine(m.id); };
         if(authUser&&authUser.role==='owner'){ const pen=document.createElement('button'); pen.className='mpen'; pen.textContent='✏'; pen.title='Renomear';
           pen.onclick=async(e)=>{ e.stopPropagation(); const v=await dialog({title:'Renomear máquina',input:true,value:m.label,placeholder:'Nome da máquina'}); if(v&&v.trim()) tx({t:'rename_runner',runnerId:m.id,label:v.trim()}); };
