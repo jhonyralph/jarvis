@@ -163,6 +163,10 @@
     .pop .flist div { padding:7px 10px; cursor:pointer; font-size:13px; border-bottom:1px solid var(--line); }
     .pop .flist div:last-child { border-bottom:0; } .pop .flist div:hover { background:#ffffff0d; }
     .pop .frow { display:flex; gap:6px; margin-top:8px; } .pop .frow button { flex:1; font-size:12px; padding:7px 8px; }
+    .modal label > input[type=text], .modal label > select { width:100%; background:var(--bg); color:var(--text); border:1px solid #ffffff26; border-radius:10px; padding:11px 13px; font:inherit; font-size:14px; box-sizing:border-box; transition:border-color .15s, box-shadow .15s; }
+    .modal label > select { appearance:none; -webkit-appearance:none; cursor:pointer; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2394a3b8' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>"); background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; }
+    .modal label > input[type=text]:focus, .modal label > select:focus { outline:none; border-color:var(--me); box-shadow:0 0 0 3px #2563eb33; }
+    .modal label > input[type=text]::placeholder { color:#64748b; }
     .modal input[type=text] { background:var(--bg); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:11px 13px; font:inherit; }
     .pop { max-height:70vh; overflow:auto; }
     button.danger { background:#dc2626; }
@@ -386,7 +390,7 @@
     <div class="sec">Gerar convite (pessoa / navegador)</div>
     <div class="mut" style="font-size:12px;margin-bottom:6px">Crie um convite e compartilhe o link/código. Quem abrir vira um dispositivo conectado (revogável).</div>
     <label>Papel <select id="secRole"><option value="member">Membro</option><option value="owner">Dono</option></select></label>
-    <label>Validade <select id="secTtl"><option value="3600">1 hora</option><option value="86400" selected>1 dia</option><option value="604800">7 dias</option></select></label>
+    <label>Validade do acesso <select id="secTtl"><option value="3600">1 hora</option><option value="86400" selected>1 dia</option><option value="604800">7 dias</option><option value="2592000">1 mês</option><option value="7776000">3 meses</option><option value="31536000">1 ano</option><option value="0">Sem expiração</option></select></label>
     <div class="row"><button id="secGen" type="button">Gerar convite</button></div>
     <div id="secOut" class="hidden" style="margin-top:6px"></div>
     <div class="sec">Convites pendentes</div>
@@ -711,7 +715,8 @@
     function renderSec(m){
       const devs=m.devices||[], me=m.me;
       E.secDevices.innerHTML = devs.length ? '' : 'Nenhum dispositivo.';
-      devs.forEach(d=>{ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(d.label||'Dispositivo')+(d.id===me?' <span style="opacity:.6">(este)</span>':'')+' · '+esc(d.role||'')+'</div><div style="opacity:.55">'+esc(d.userName||'')+' · visto '+fmtAgo(d.lastSeen)+(d.ip?(' · '+esc(d.ip)):'')+'</div>');
+      devs.forEach(d=>{ const soon=d.expiresAt&&d.expiresAt-Date.now()<86400000; const exp = d.expiresAt ? (' · <span style="'+(soon?'color:#e3b341':'opacity:.55')+'">acesso '+(d.expiresAt<=Date.now()?'expirado':'expira em '+fmtIn(d.expiresAt))+'</span>') : ' · <span style="opacity:.4">permanente</span>';
+        const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(d.label||'Dispositivo')+(d.id===me?' <span style="opacity:.6">(este)</span>':'')+' · '+esc(d.role||'')+'</div><div style="opacity:.55">'+esc(d.userName||'')+' · visto '+fmtAgo(d.lastSeen)+exp+(d.ip?(' · '+esc(d.ip)):'')+'</div>');
         const rb=document.createElement('button'); rb.className='ghost'; rb.style.flex='none'; rb.textContent=d.role==='owner'?'→ membro':'→ dono'; rb.title='Alterar papel'; rb.onclick=()=>tx({t:'sec_set_role',deviceId:d.id,role:d.role==='owner'?'member':'owner'}); row.appendChild(rb);
         if(d.id!==me){ const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_device',deviceId:d.id}); row.appendChild(b); }
         E.secDevices.appendChild(row); });
@@ -728,7 +733,7 @@
         // máquina principal (o servidor) — sempre listada, sem "Revogar"
         if(loc){ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(loc.label||'Servidor')+' <span style="opacity:.6">(esta máquina · servidor)</span> · <span style="color:#3fb950">online</span></div>');
           row.appendChild(renameBtn(loc.id,loc.label)); E.secRunners.appendChild(row); }
-        runs.forEach(rt=>{ const on=rt.online||online.has(rt.runnerId); const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(rt.label||rt.runnerId)+' · '+(on?'<span style="color:#3fb950">online</span>':'<span style="opacity:.5">offline</span>')+'</div>');
+        runs.forEach(rt=>{ const on=rt.online||online.has(rt.runnerId)||!!(machines.find(x=>x.id===rt.runnerId)||{}).online; const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(rt.label||rt.runnerId)+' · '+(on?'<span style="color:#3fb950">online</span>':'<span style="opacity:.5">offline</span>')+'</div>');
           row.appendChild(renameBtn(rt.runnerId,rt.label));
           const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_runner',runnerId:rt.runnerId}); row.appendChild(b);
           E.secRunners.appendChild(row); }); }
@@ -972,7 +977,7 @@
         else if(m.t==='update_result'){ if(m.ok){ toast('✅ '+((m.log||'atualizado').split('\n').pop()||'').slice(0,80)); } else { toast('⚠ Falha: '+(m.log||'').slice(0,120)); if(E.updStatus) E.updStatus.textContent='⚠ '+(m.log||'').slice(0,140); E.updActions.classList.remove('hidden'); } }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
-        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); }
+        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'}); }
         else if(m.t==='filecontent'){ showFile(m); }
         else if(m.t==='filediff'){ showDiff(m); }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');

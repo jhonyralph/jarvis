@@ -42,8 +42,8 @@ const DEVICE_TTL_MS = Math.max(0, Number(process.env.JARVIS_DEVICE_TTL_DAYS || 0
 
 export type Role = "owner" | "member";
 export interface User { id: string; role: Role; name: string; createdAt: number; }
-export interface Device { id: string; userId: string; label: string; tokenHash: string; createdAt: number; lastSeen: number; ip?: string; ua?: string; }
-export interface Invite { id: string; codeHash: string; role: Role; runners: string[]; expiresAt: number; createdBy: string; createdAt: number; usedAt?: number; usedBy?: string; }
+export interface Device { id: string; userId: string; label: string; tokenHash: string; createdAt: number; lastSeen: number; ip?: string; ua?: string; expiresAt?: number; }
+export interface Invite { id: string; codeHash: string; role: Role; runners: string[]; expiresAt: number; deviceTtlSec?: number; createdBy: string; createdAt: number; usedAt?: number; usedBy?: string; }
 export interface RunnerToken { runnerId: string; label: string; tokenHash: string; createdAt: number; lastSeen: number; }
 interface AuthData {
   version: 1;
@@ -117,12 +117,17 @@ export function claim(code: string, label: string, meta?: { ip?: string; ua?: st
 // ---- invites (owner shares access) ----
 export function mintInvite(byUserId: string, opts: { role?: Role; runners?: string[]; ttlSec?: number }): { code: string; invite: Omit<Invite, "codeHash"> } {
   const code = newCode();
+  // ttlSec is the granted-access duration: it's how long the invited DEVICE keeps access AND
+  // (capped at 1y) the window to redeem the code. ttlSec 0 = never expires (permanent device).
+  const ttl = opts.ttlSec ?? 3600;
+  const YEAR = 365 * 24 * 3600;
   const inv: Invite = {
     id: newId(),
     codeHash: sha(code),
     role: opts.role || "member",
     runners: opts.runners || [],
-    expiresAt: Date.now() + (opts.ttlSec ?? 3600) * 1000,
+    expiresAt: Date.now() + (ttl > 0 ? Math.min(ttl, YEAR) : YEAR) * 1000,
+    deviceTtlSec: ttl > 0 ? ttl : 0,
     createdBy: byUserId,
     createdAt: Date.now(),
   };
@@ -149,7 +154,7 @@ export function redeem(code: string, label: string, meta?: { ip?: string; ua?: s
   const inv = data.invites.find((i) => !i.usedAt && i.expiresAt > Date.now() && hashEq(i.codeHash, h));
   if (!inv) throw new Error("convite inválido ou expirado");
   const user: User = { id: newId(), role: inv.role, name: label || "Convidado", createdAt: Date.now() };
-  const res = issueDevice(user, label, meta);
+  const res = issueDevice(user, label, meta, inv.deviceTtlSec);
   if (inv.role === "member") data.grants[user.id] = [...(inv.runners || [])];
   inv.usedAt = Date.now();
   inv.usedBy = user.id;
@@ -159,11 +164,12 @@ export function redeem(code: string, label: string, meta?: { ip?: string; ua?: s
   return res;
 }
 
-function issueDevice(user: User, label: string, meta?: { ip?: string; ua?: string }): AuthResult {
+function issueDevice(user: User, label: string, meta?: { ip?: string; ua?: string }, deviceTtlSec?: number): AuthResult {
   const token = newToken();
   const dev: Device = {
     id: newId(), userId: user.id, label: label || "Dispositivo",
     tokenHash: sha(token), createdAt: Date.now(), lastSeen: Date.now(), ip: meta?.ip, ua: meta?.ua,
+    expiresAt: deviceTtlSec && deviceTtlSec > 0 ? Date.now() + deviceTtlSec * 1000 : undefined,
   };
   data.devices.push(dev);
   // note: caller pushes user + saves (claim/redeem); here we mutate devices in place
@@ -176,6 +182,12 @@ export function authenticate(token: string, meta?: { ip?: string; ua?: string })
   const h = sha(token);
   const device = data.devices.find((d) => hashEq(d.tokenHash, h));
   if (!device) return null;
+  // hard access-window expiry (set from the invite's "validade")
+  if (device.expiresAt && Date.now() > device.expiresAt) {
+    data.devices = data.devices.filter((d) => d.id !== device.id); save(data);
+    audit("device_expired", { deviceId: device.id, ip: meta?.ip, detail: "validade do acesso expirou" });
+    return null;
+  }
   if (DEVICE_TTL_MS && Date.now() - device.lastSeen > DEVICE_TTL_MS) {
     data.devices = data.devices.filter((d) => d.id !== device.id); save(data);
     audit("device_expired", { deviceId: device.id, ip: meta?.ip, detail: `ocioso > ${process.env.JARVIS_DEVICE_TTL_DAYS}d` });

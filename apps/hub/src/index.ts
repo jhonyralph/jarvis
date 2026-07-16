@@ -1014,7 +1014,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "sec_invite") {
       const p = requireOwner(ws); if (!p) return;
       const role = msg.role === "owner" ? "owner" : "member";
-      const ttlSec = Math.min(Math.max(Number(msg.ttlSec) || 86400, 60), 30 * 86400);
+      // ttlSec 0 = sem expiração (permanente); senão entre 1min e 1 ano
+      const raw = Number(msg.ttlSec);
+      const ttlSec = raw === 0 ? 0 : Math.min(Math.max(raw || 86400, 60), 365 * 86400);
       const runners = Array.isArray(msg.runners) ? msg.runners.filter((x: any) => typeof x === "string") : [];
       const { code, invite } = auth.mintInvite(p.userId, { role, runners, ttlSec });
       send(ws, { t: "sec_invite_created", code, invite });
