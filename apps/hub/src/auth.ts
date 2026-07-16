@@ -259,6 +259,19 @@ export function authenticateRunner(token: string): RunnerToken | null {
 export function listRunnerTokens(): Array<Omit<RunnerToken, "tokenHash">> {
   return data.runnerTokens.map(({ tokenHash, ...pub }) => pub);
 }
+/** After a runner registers, bind the token it used to the runner's REAL id (+ label) — the
+ *  runner picks its own runnerId, so without this the token stays under its mint-time id and
+ *  the machines list can never line the two up. */
+export function bindRunnerToken(token: string, runnerId: string, label?: string): boolean {
+  const rt = data.runnerTokens.find((r) => hashEq(r.tokenHash, sha(token)));
+  if (!rt) return false;
+  if (rt.runnerId === runnerId && (!label || rt.label === label)) return false;
+  data.runnerTokens = data.runnerTokens.filter((r) => r === rt || r.runnerId !== runnerId); // drop stale duplicate
+  rt.runnerId = runnerId;
+  if (label) rt.label = label;
+  save(data);
+  return true;
+}
 export function revokeRunnerToken(runnerId: string): boolean {
   const before = data.runnerTokens.length;
   data.runnerTokens = data.runnerTokens.filter((r) => r.runnerId !== runnerId);

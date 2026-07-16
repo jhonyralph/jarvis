@@ -334,6 +334,8 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       if (!rid) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
       runners.set(rid, { id: rid, ws, local: false, lastSeen: Date.now(), info });
       if (!runnerLabels[rid]) { runnerLabels[rid] = info.label || info.host || rid; saveRunnerLabels(); }
+      // align the auth token with the runner's real id so the machines list reconciles
+      if (auth.AUTH_ENABLED) auth.bindRunnerToken(m.token, rid, runnerLabels[rid]);
       send(ws, { t: "welcome", runnerId: rid });
       auth.audit("runner_online", { runnerId: rid, detail: info.host });
       console.log(`[hub] runner online: ${rid} (${info.host})`);
