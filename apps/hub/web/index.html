@@ -35,6 +35,9 @@
     .msg.me .msgimgs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
     .msg.me .msgimgs:last-child { margin-bottom:0; }
     .msg.me .msgimg { max-width:220px; max-height:260px; width:auto; border-radius:10px; cursor:zoom-in; display:block; }
+    #dropHint { display:none; position:fixed; inset:0; z-index:60; background:#0b1220cc; backdrop-filter:blur(2px); align-items:center; justify-content:center; padding:24px; }
+    body.dragging #dropHint { display:flex; }
+    #dropHint .dhbox { border:2px dashed #3b82f6; border-radius:16px; padding:28px 40px; font-size:16px; color:#dbeafe; background:#1e293b99; pointer-events:none; }
     .msg.bot { align-self:flex-start; background:var(--bot); padding:2px 15px; border-radius:14px; max-width:min(88%,760px); overflow-wrap:anywhere; min-width:0; }
     .msg.err { align-self:center; color:#fca5a5; font-size:13px; }
     .msg.bot.pending { padding:11px 15px; }
@@ -248,6 +251,7 @@
   </style>
 </head>
 <body>
+  <div id="dropHint"><div class="dhbox">📎 Solte para anexar ao chat</div></div>
   <div id="app">
     <div id="backdrop" class="hidden"></div>
     <aside id="side">
@@ -1075,6 +1079,14 @@
       if(a.image&&a.preview){ c.innerHTML=`<img src="${a.preview}" alt="">`; const x=document.createElement('span'); x.className='rmx'; x.textContent='✕'; x.title='Remover'; x.onclick=(e)=>{ e.stopPropagation(); rm(); }; c.appendChild(x); }
       else { c.textContent='📎 '+a.name+' ✕'; c.onclick=rm; }
       E.attachRow.appendChild(c); }); }
+    // arrastar-e-soltar arquivos/imagens no chat → vira anexo (usa o mesmo addFile do ＋/paste)
+    const hasFiles=e=>e.dataTransfer&&Array.from(e.dataTransfer.types||[]).includes('Files');
+    let dragDepth=0;
+    addEventListener('dragenter',e=>{ if(hasFiles(e)){ e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); } });
+    addEventListener('dragover',e=>{ if(hasFiles(e)) e.preventDefault(); });
+    addEventListener('dragleave',e=>{ if(hasFiles(e)&&--dragDepth<=0){ dragDepth=0; document.body.classList.remove('dragging'); } });
+    addEventListener('drop',async e=>{ dragDepth=0; document.body.classList.remove('dragging');
+      const fs=e.dataTransfer&&e.dataTransfer.files; if(fs&&fs.length){ e.preventDefault(); for(const f of fs) await addFile(f); renderAttach(); } });
     // fila de mensagens: enquanto um turno roda, novas mensagens ficam na fila e são
     // enviadas JUNTAS (como uma só) quando o turno atual termina. Cancelável (✕ / limpar).
     let msgQueue=[], curBusy=false;
