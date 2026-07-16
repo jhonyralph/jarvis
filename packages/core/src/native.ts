@@ -340,7 +340,15 @@ function resolveClaudeJsonl(id: string): string | null {
   return f && f.claude ? f.path : null;
 }
 /** Walk a claude session jsonl and aggregate per-file tool activity (Read/Edit/Write/MultiEdit). */
+// Aggregating a session costs a full re-read plus an LCS diff per edit, and it is hit on every
+// open (and again per inline diff). Cached on the jsonl's mtime+size, so re-opening a session —
+// or a session that is idle — is free, while a live one re-aggregates as soon as it grows.
+const opsCache = new Map<string, { key: string; ops: Map<string, FileOp> }>();
 function claudeFileOps(jsonlPath: string): Map<string, FileOp> {
+  let stamp = "";
+  try { const s = statSync(jsonlPath); stamp = `${s.mtimeMs}:${s.size}`; } catch { /* fall through to a fresh read */ }
+  const hit = opsCache.get(jsonlPath);
+  if (hit && stamp && hit.key === stamp) return hit.ops;
   const ops = new Map<string, FileOp>();
   let raw: string;
   try { raw = readFileSync(jsonlPath, "utf8"); } catch { return ops; }
@@ -361,6 +369,7 @@ function claudeFileOps(jsonlPath: string): Map<string, FileOp> {
     if (o.action === "edit") for (const e of o.edits) { const c = editCounts(e.old, e.new); o.adds += c.adds; o.dels += c.dels; }
     else if (o.action === "write" && o.content != null) o.adds = o.content ? o.content.split("\n").length : 0;
   }
+  if (stamp) { if (opsCache.size > 40) opsCache.clear(); opsCache.set(jsonlPath, { key: stamp, ops }); }
   return ops;
 }
 /** Files touched in a session (real absolute paths + action + +/- counts). id: "claude:<uuid>" or a raw claude session_id. */
@@ -402,7 +411,11 @@ function findFileById(id: string): { path: string; claude: boolean } | null {
 export interface HistMsg { role: string; text: string; ts: number; name?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; }
 /** Full read-only history of one native session — text turns AND tool activity (role:"tool"),
  *  interleaved in order, so the "editando/criando arquivo" blocks survive a page refresh. */
-export function nativeHistory(id: string): { agent: string; cwd: string; title: string; messages: HistMsg[] } | null {
+// `diffLimit` bounds how many tool items get their file stats computed. Each Edit stat runs an
+// LCS diff, and the caller only ever renders the tail of the history — computing stats for every
+// tool_use in a long session meant hundreds of diffs built and then thrown away on the slice,
+// which is what made switching sessions crawl. Stats are filled for the last N tool items only.
+export function nativeHistory(id: string, diffLimit = 120): { agent: string; cwd: string; title: string; messages: HistMsg[] } | null {
   if (!isNativeId(id)) return null;
   const f = findFileById(id);
   if (!f) return null;
@@ -413,6 +426,7 @@ export function nativeHistory(id: string): { agent: string; cwd: string; title: 
     return null;
   }
   const messages: HistMsg[] = [];
+  const toolRefs: Array<{ m: HistMsg; name: string; input: unknown }> = [];
   let cwd = "", title = "";
   eachLine(raw, (o) => {
     if (f.claude) {
@@ -425,7 +439,7 @@ export function nativeHistory(id: string): { agent: string; cwd: string; title: 
         if (o.type === "assistant" && Array.isArray(content)) {
           for (const b of content) {
             if (b.type === "text" && b.text) { const t = cleanText(b.text); if (t) messages.push({ role: "assistant", text: t, ts }); }
-            else if (b.type === "tool_use") { const st = toolFileStat(b.name, b.input); messages.push({ role: "tool", text: toolSummary(b.name, b.input), ts, name: b.name, path: st.path, adds: st.adds, dels: st.dels, rows: st.rows }); }
+            else if (b.type === "tool_use") { const m: HistMsg = { role: "tool", text: toolSummary(b.name, b.input), ts, name: b.name }; messages.push(m); toolRefs.push({ m, name: b.name, input: b.input }); }
           }
         } else {
           let t = contentText(content);
@@ -442,5 +456,9 @@ export function nativeHistory(id: string): { agent: string; cwd: string; title: 
       }
     }
   });
+  for (const r of toolRefs.slice(-diffLimit)) {
+    const st = toolFileStat(r.name, r.input);
+    r.m.path = st.path; r.m.adds = st.adds; r.m.dels = st.dels; r.m.rows = st.rows;
+  }
   return { agent: f.claude ? "claude-code" : "codex", cwd, title: title || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão", messages };
 }
