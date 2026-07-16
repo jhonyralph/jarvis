@@ -19,7 +19,7 @@ import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
-  AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter,
+  AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, Store,
   updateApply, restartService, readProjectFile,
   type AgentAdapter, type SendOpts,
@@ -128,7 +128,11 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
   }
 }
 
+// Live turns on this machine, so a {t:cancel} from the Hub can kill the actual agent process.
+const runAborts = new Map<string, AbortController>();
 async function doSend(sessionId: string, text: string, agentName?: string, cwd?: string, opts?: SendOpts): Promise<void> {
+  const ctrl = new AbortController();
+  runAborts.set(sessionId, ctrl);
   activeRuns.add(sessionId); pushRuns();
   // pause the native tail so our own turn isn't double-broadcast (already streamed below)
   const tail = isNativeId(sessionId) ? tails.get(sessionId) : undefined;
@@ -150,13 +154,19 @@ async function doSend(sessionId: string, text: string, agentName?: string, cwd?:
     // Only NOW: "start" makes the UI drop its pending placeholder and open the reply bubble, so
     // emitting it before the user echo above left the echo landing *below* the reply.
     send({ t: "stream", sessionId, ev: { kind: "start" } });
-    const reply = await agent.send(sessionId, text, useCwd, opts, (ev) => send({ t: "stream", sessionId, ev }));
+    const reply = await agent.send(sessionId, text, useCwd, { ...opts, signal: ctrl.signal }, (ev) => send({ t: "stream", sessionId, ev }));
     if (!isNativeId(sessionId)) { store.add(sessionId, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name }); pushSessions(); }
     send({ t: "stream", sessionId, ev: { kind: "done", text: reply.text, usage: reply.usage } });
   } catch (e: any) {
-    send({ t: "stream", sessionId, ev: { kind: "error", text: String(e?.message ?? e) } });
-    send({ t: "error", message: String(e?.message ?? e) });
+    // User-initiated cancel: not an error — tell the UI it stopped and stay quiet otherwise.
+    if (ctrl.signal.aborted || String(e?.message) === ABORTED) {
+      send({ t: "stream", sessionId, ev: { kind: "cancelled" } });
+    } else {
+      send({ t: "stream", sessionId, ev: { kind: "error", text: String(e?.message ?? e) } });
+      send({ t: "error", message: String(e?.message ?? e) });
+    }
   } finally {
+    if (runAborts.get(sessionId) === ctrl) runAborts.delete(sessionId);
     activeRuns.delete(sessionId); pushRuns();
     if (tail) { try { tail.offset = statSync(tail.path).size; tail.buf = ""; } catch { /* ignore */ } tail.paused = false; }
   }
@@ -242,7 +252,7 @@ function connect(): void {
         if (r.ok && ((r.behind ?? 0) > 0 || m.force)) { setTimeout(() => { try { restartService("runner"); } catch { /* ignore */ } process.exit(0); }, 500); }
         return;
       }
-      if (m.t === "stop") { /* adapter kill not wired yet */ return; }
+      if ((m.t === "cancel" || m.t === "stop") && typeof m.sessionId === "string") { runAborts.get(m.sessionId)?.abort(); return; }
     } catch (e: any) { send({ t: "error", reqId: m?.reqId, message: String(e?.message ?? e) }); }
   });
   sock.on("close", () => { ws = null; setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 15000); console.log(`[runner] disconnected; retrying in ${reconnectDelay / 1000}s`); });

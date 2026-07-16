@@ -211,12 +211,6 @@
     #recents .rdel { flex:none; background:none; border:0; cursor:pointer; font-size:13px; padding:2px 5px; opacity:.4; border-radius:6px; line-height:1; }
     #recents .rdel:hover { opacity:1; background:#ef444422; }
     #side .rsec { display:flex; align-items:center; justify-content:space-between; }
-    .sellink { background:none; border:0; color:#93c5fd; font-size:10.5px; text-transform:none; letter-spacing:0; cursor:pointer; padding:2px 4px; }
-    .sellink:hover { text-decoration:underline; }
-    #selBar { display:flex; gap:6px; margin:0 4px 6px; } #selBar.hidden { display:none; }
-    #selBar button { flex:1; font-size:12px; padding:6px 8px; }
-    #recents .item .rchk { flex:none; width:15px; height:15px; accent-color:var(--me); cursor:pointer; }
-    #recents .item.picked { background:#2563eb22; outline:1px solid #2563eb55; }
     .busy { opacity:.55 !important; cursor:progress !important; pointer-events:none; }
     /* auth gate (device pairing) */
     #gate { display:none; position:fixed; inset:0; z-index:9999; background:#0b0f14; align-items:center; justify-content:center; padding:20px; }
@@ -298,7 +292,7 @@
       /* por ultimo: mesma altura do input (mesma especificidade que as regras acima). */
       .inputrow .micbtn { flex:none; min-height:0; min-width:44px; padding:var(--ipad) 14px; line-height:var(--ilh); font-size:17px; }
       .pill { max-width:none; }
-      #sendBtn { flex:1 1 100%; min-height:48px; font-size:16px; }
+      #sendBtn, #stopBtn { flex:1 1 100%; min-height:48px; font-size:16px; }
       #status { flex:none; white-space:nowrap; }
       .modal .card { width:100%; } .pop { max-width:92vw; }
     }
@@ -316,8 +310,7 @@
       <div class="link" id="digestBtn">🎧 o que está rolando</div>
       <div class="link" id="qrBtn">📱 abrir no celular</div>
       <div class="link hidden" id="secBtn">🔐 dispositivos &amp; convites</div>
-      <div class="sec rsec tog" id="recSec" title="Clique para minimizar"><span class="caret">▾</span><span class="lbl">Recentes</span><span class="cnt" id="recCnt"></span><button id="selBtn" class="sellink" type="button">selecionar</button></div>
-      <div id="selBar" class="hidden"><button id="selDel" type="button" class="danger">🗑 Remover (0)</button><button id="selCancel" type="button" class="ghost">cancelar</button></div>
+      <div class="sec rsec tog" id="recSec" title="Clique para minimizar"><span class="caret">▾</span><span class="lbl">Recentes</span><span class="cnt" id="recCnt"></span></div>
       <div id="recents"></div>
       <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
       <div class="sec tog" id="filesSec" title="Clique para minimizar"><span class="caret">▾</span><span class="lbl">Arquivos & imagens</span><span class="cnt" id="filesCnt"></span></div>
@@ -343,6 +336,7 @@
         <div id="attachRow"></div>
         <div class="inputrow">
           <textarea id="input" rows="1" placeholder="Fale ou digite…" autocomplete="off"></textarea>
+          <button type="button" id="micCancel" class="ghost micbtn hidden danger" title="Descartar áudio (não envia)">✕</button>
           <button type="button" id="mic" class="ghost micbtn" title="Falar">🎤</button>
         </div>
         <div class="controls">
@@ -357,6 +351,7 @@
             <button type="button" id="usageBtn" class="pill" title="Uso: contexto + limites do plano">◔ <span class="cap" id="usageName">—</span></button>
             <button type="button" id="speak" class="ghost" title="Falar respostas (voz)">🔇</button>
           </div>
+          <button type="button" id="stopBtn" class="hidden danger" title="Parar o que está em andamento">⏹ Parar</button>
           <button type="submit" id="sendBtn">Enviar</button>
         </div>
         <span class="usage" id="usage"></span>
@@ -478,8 +473,8 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','selBtn','selBar','selDel','selCancel','searchBtn','digestBtn','sumHdr','recSec','filesSec','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
-      'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','queueRow','usage','limit','sendBtn',
+      'newSess','searchBtn','digestBtn','sumHdr','recSec','filesSec','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -626,6 +621,13 @@
       const ft=finalText||strText; if(strTextEl){ strTextEl.innerHTML=md(ft); strTextEl.classList.add('done'); }
       if(usage){ const u=document.createElement('div'); u.className='usage'; u.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; strEl.appendChild(u); E.usage.textContent=u.textContent; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
       strEl=strTextEl=strToolsEl=strTimeEl=null; E.log.scrollTop=E.log.scrollHeight; if(typeof flushQueue==='function')flushQueue(); }
+    function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
+      if(strEl){ const head=strEl.querySelector('.strhead'); if(head) head.remove();
+        strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone);
+        if(strTextEl){ strTextEl.innerHTML=md(strText); strTextEl.classList.add('done'); }
+        const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ interrompido'; strEl.appendChild(n);
+        strEl=strTextEl=strToolsEl=strTimeEl=null; }
+      else addErr('⏹ interrompido'); E.log.scrollTop=E.log.scrollHeight; if(typeof flushQueue==='function')flushQueue(); }
     function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); strEl=strTextEl=strToolsEl=strTimeEl=null; if(typeof flushQueue==='function')flushQueue(); }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
@@ -647,7 +649,6 @@
       if(E.moreBtn && !cfg.recOpen) E.moreBtn.classList.add('hidden');
       if(E.filesMore && !cfg.filesOpen) E.filesMore.classList.add('hidden');
       if(E.filesMore && cfg.filesOpen) E.filesMore.classList.toggle('hidden', curFiles.length<=filesShown);
-      if(E.selBar && !cfg.recOpen) E.selBar.classList.add('hidden');
     }
     function secCounts(){ if(E.recCnt) E.recCnt.textContent = sessions.length ? String(sessions.length) : '';
       if(E.filesCnt) E.filesCnt.textContent = curFiles.length ? String(curFiles.length) : ''; }
@@ -730,23 +731,10 @@
         setTimeout(()=>{ if(del.isConnected){ del.textContent='🗑'; del.disabled=false; toast('Sem resposta do servidor — a conversa NÃO foi removida.'); } }, 6000); };
       d.appendChild(del);
       d.title=`${s.agent||''}${nat?' · nativo (somente leitura)':''}\n${s.cwd||''}`;
-      if(selMode){ d.classList.toggle('picked',selIds.has(s.id)); const cb=document.createElement('input'); cb.type='checkbox'; cb.className='rchk'; cb.checked=selIds.has(s.id); d.insertBefore(cb,d.firstChild); d.onclick=(e)=>{ e.stopPropagation(); toggleSel(s.id); }; }
-      else d.onclick=()=>{ openSession(s.id); closeSide(); };
+      d.onclick=()=>{ openSession(s.id); closeSide(); };
       E.recents.appendChild(d); });
       E.moreBtn.classList.toggle('hidden', sessions.length<=shown); }
     E.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
-    // multi-select + bulk delete (for clearing junk sessions in bulk)
-    let selMode=false; const selIds=new Set();
-    function updSelBar(){ E.selDel.textContent=`🗑 Remover (${selIds.size})`; E.selDel.disabled=!selIds.size; }
-    function toggleSel(id){ selIds.has(id)?selIds.delete(id):selIds.add(id); updSelBar(); renderRecents(); }
-    function exitSel(){ selMode=false; selIds.clear(); E.selBar.classList.add('hidden'); E.selBtn.textContent='selecionar'; renderRecents(); }
-    E.selBtn.onclick=()=>{ selMode=!selMode; selIds.clear(); E.selBar.classList.toggle('hidden',!selMode); E.selBtn.textContent=selMode?'sair':'selecionar'; updSelBar(); renderRecents(); };
-    E.selCancel.onclick=exitSel;
-    E.selDel.onclick=async()=>{ const n=selIds.size; if(!n)return;
-      const ok=await dialog({title:`Remover ${n} conversa(s)? Apaga no Jarvis e as sessões no claude/codex — não dá pra desfazer.`, okText:`Remover ${n}`, danger:true});
-      if(!ok)return; const ids=[...selIds]; tx({t:'delete',sessionIds:ids,alsoNative:true});
-      if(ids.includes(currentSession)){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); }
-      E.selDel.textContent='🗑 removendo…'; E.selDel.disabled=true; setTimeout(exitSel,400); };
 
     // ---------- seletor de máquina (runners) ----------
     function renderMachines(){
@@ -810,7 +798,7 @@
     E.searchBtn.onclick=()=>openSearch();
     // O clique no cabecalho minimiza — mas "selecionar" vive dentro dele: sem o guard abaixo,
     // clicar em selecionar fecharia a secao inteira que voce acabou de pedir pra usar.
-    E.recSec.onclick=(e)=>{ if(e.target.closest('#selBtn'))return; cfg.recOpen=!cfg.recOpen; saveCfg(); applySecs(); };
+    E.recSec.onclick=()=>{ cfg.recOpen=!cfg.recOpen; saveCfg(); applySecs(); };
     E.filesSec.onclick=()=>{ cfg.filesOpen=!cfg.filesOpen; saveCfg(); applySecs(); };
     applySecs();
     E.digestBtn.onclick=()=>{ if(!startVoiceOp('digest',E.digestBtn,'⏳ gerando…'))return; status('speaking','Analisando sessões…'); tx({t:'digest',speak:true}); };
@@ -1171,8 +1159,9 @@
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
           else if(ev.kind==='text') streamText(ev.text||'',ev.parentId);
-          else if(ev.kind==='done') streamDone(ev.text, m.usage);
-          else if(ev.kind==='error') streamErr(); }
+          else if(ev.kind==='done'){ streamDone(ev.text, m.usage); setBusy(false); }
+          else if(ev.kind==='cancelled'){ streamCancelled(); setBusy(false); }
+          else if(ev.kind==='error'){ streamErr(); setBusy(false); } }
         else if(m.t==='activity'){ if(m.sessionId!==currentSession)return; const d=document.createElement('div'); d.className='strtool act';
           d.innerHTML=`<span>${toolIcon(m.name)}</span><span>${esc(m.summary||m.name||'')}</span>`;
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
@@ -1193,7 +1182,7 @@
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }
         else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
-        else if(m.t==='error'){ endVoiceOp(); clearPending(); curBusy=false; addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
+        else if(m.t==='error'){ endVoiceOp(); clearPending(); setBusy(false); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
       const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…');
@@ -1204,7 +1193,7 @@
     function toast(t){ const d=document.createElement('div'); d.className='toast'; d.textContent=t; d.onclick=()=>d.remove(); document.body.appendChild(d); setTimeout(()=>{ if(d.parentNode) d.remove(); },9000); }
 
     // ---------- mic (manual + continuação hands-free com VAD) ----------
-    let rec=null,chunks=[],recording=false,contTimer=null,lastWasVoice=false;
+    let rec=null,chunks=[],recording=false,contTimer=null,lastWasVoice=false,discardRec=false;
     async function startRec(auto){ if(recording) return;
       try{ const st=await navigator.mediaDevices.getUserMedia({audio:{noiseSuppression:cfg.noise,echoCancellation:true,autoGainControl:true}}); rec=new MediaRecorder(st); chunks=[]; recording=true;
         // VAD: detecta fala e fim de fala (silêncio após falar) para não gravar o tempo todo
@@ -1216,14 +1205,17 @@
                     else if(!spoke&&elapsed>=6000){ rec.stop(); } }                        // ninguém falou em 6s -> desiste
         },100);
         rec.ondataavailable=(e)=>chunks.push(e.data);
-        rec.onstop=async()=>{ clearInterval(poll); clearTimeout(contTimer); ac.close(); st.getTracks().forEach(t=>t.stop()); recording=false; E.mic.classList.remove('on'); E.mic.textContent='🎤'; status('');
+        rec.onstop=async()=>{ clearInterval(poll); clearTimeout(contTimer); ac.close(); st.getTracks().forEach(t=>t.stop()); recording=false; E.mic.classList.remove('on'); E.mic.textContent='🎤'; if(E.micCancel)E.micCancel.classList.add('hidden'); status('');
+          if(discardRec){ discardRec=false; return; }   // descartado pelo usuário -> nao envia
           if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
           lastWasVoice=true; tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); };
-        rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; status('listening', auto?'escutando resposta…':'escutando…');
+        discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?'escutando resposta…':'escutando…');
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
     E.mic.onclick=()=>{ if(recording){ rec.stop(); } else startRec(false); };
+    // Descartar: para a gravacao e NAO envia (comecei a falar besteira / sessao errada).
+    E.micCancel.onclick=()=>{ if(!recording||!rec)return; discardRec=true; try{rec.stop();}catch(e){} status(''); };
 
     // ---------- composer / misc ----------
     E.speak.onclick=()=>{ speak=!speak; cfg.voice=speak; saveCfg(); setSpeakBtn(); };
@@ -1266,9 +1258,11 @@
     // fila de mensagens: enquanto um turno roda, novas mensagens ficam na fila e são
     // enviadas JUNTAS (como uma só) quando o turno atual termina. Cancelável (✕ / limpar).
     let msgQueue=[], curBusy=false;
-    function sendMsg(text,atts){ lastWasVoice=false; tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments:atts||[]}); showPending(); curBusy=true; }
-    function flushQueue(){ curBusy=false; if(!msgQueue.length)return; const text=msgQueue.map(q=>q.text).join('\n\n'); const atts=msgQueue.flatMap(q=>q.atts||[]); msgQueue=[]; renderQueue(); sendMsg(text,atts); }
-    function clearQueue(){ msgQueue=[]; curBusy=false; renderQueue(); }
+    // Um turno em andamento mostra "Parar"; parar mata o processo do agente (nao so a UI).
+    function setBusy(b){ curBusy=b; if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!b); if(E.sendBtn) E.sendBtn.classList.toggle('hidden',!!b); }
+    function sendMsg(text,atts){ lastWasVoice=false; tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments:atts||[]}); showPending(); setBusy(true); }
+    function flushQueue(){ setBusy(false); if(!msgQueue.length)return; const text=msgQueue.map(q=>q.text).join('\n\n'); const atts=msgQueue.flatMap(q=>q.atts||[]); msgQueue=[]; renderQueue(); sendMsg(text,atts); }
+    function clearQueue(){ msgQueue=[]; setBusy(false); renderQueue(); }
     function renderQueue(){ if(!E.queueRow)return; E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!msgQueue.length); if(!msgQueue.length)return;
       const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+msgQueue.length+' na fila — enviadas juntas quando terminar'; hdr.appendChild(s);
       const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ msgQueue=[]; renderQueue(); }; hdr.appendChild(clr); E.queueRow.appendChild(hdr);
@@ -1277,6 +1271,7 @@
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
       if(curBusy){ msgQueue.push({text:text||'(anexo)',atts}); renderQueue(); return; }
       sendMsg(text||'(anexo)',atts); };
+    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); msgQueue=[]; renderQueue(); status('parando…'); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)

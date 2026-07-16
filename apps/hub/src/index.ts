@@ -19,7 +19,7 @@ import QRCode from "qrcode";
 import webpush from "web-push";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
-import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, ABORTED, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
 import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
@@ -630,11 +630,15 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
 /** One agent turn with LIVE streaming (tool activity + text) broadcast to session viewers.
  *  Returns the final reply. The stream 'done' event carries the final text + usage, so
  *  callers must NOT also broadcast a {t:message} assistant (they only persist it). */
+// Live turns keyed by session, so a "parar" from any client can abort the actual agent process.
+const localAborts = new Map<string, AbortController>();
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply> {
+  const ctrl = new AbortController();
+  localAborts.set(sid, ctrl);
   activeRuns.add(sid); broadcastRuns();
   broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "start" } });
   try {
-    const reply = await agent.send(sid, agentText, cwd, opts, (ev) => broadcast(sid, { t: "stream", sessionId: sid, ev }));
+    const reply = await agent.send(sid, agentText, cwd, { ...opts, signal: ctrl.signal }, (ev) => broadcast(sid, { t: "stream", sessionId: sid, ev }));
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage });
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
     const nativeId = agent.nativeSessionId?.(sid);
@@ -642,12 +646,27 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     notifyEvent("done", store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis"), reply.text, sid);
     return reply;
   } catch (e) {
+    // A user-initiated cancel is not a failure: tell the UI it stopped, and don't notify an error.
+    if (ctrl.signal.aborted || String((e as any)?.message) === ABORTED) {
+      broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "cancelled" } });
+      throw e;
+    }
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "error" } });
     notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid);
     throw e;
   } finally {
+    if (localAborts.get(sid) === ctrl) localAborts.delete(sid);
     activeRuns.delete(sid); broadcastRuns();
   }
+}
+/** Abort a live turn. Local session → kill its agent process; remote → relay to the owning runner.
+ *  Returns false only if nothing was running here to cancel. */
+function cancelTurn(sid: string, ws: WebSocket): boolean {
+  const rid = activeRunner(ws);
+  if (rid !== LOCAL_ID) { const rc = runners.get(rid); if (rc?.ws) { sendToRunner(rc, { t: "cancel", sessionId: sid }); return true; } return false; }
+  const ctrl = localAborts.get(sid);
+  if (ctrl) { ctrl.abort(); return true; }
+  return false;
 }
 /** Turn attachments into (a) the text the AGENT sees — text files inlined, images decoded to
  *  ~/.jarvis/pasted and referenced by path for the Read tool — and (b) the text/images SHOWN in
@@ -1282,6 +1301,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       } catch (e: any) {
         send(ws, { t: "error", message: String(e?.message ?? e) });
       }
+      return;
+    }
+
+    // Stop a turn already running (user hit "parar"). Works for local and remote sessions.
+    if (msg.t === "cancel") {
+      const target = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+      if (target) { const ok = cancelTurn(target, ws); if (!ok) send(ws, { t: "stream", sessionId: target, ev: { kind: "cancelled" } }); }
       return;
     }
 

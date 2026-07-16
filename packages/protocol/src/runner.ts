@@ -126,6 +126,7 @@ export type HubToRunner =
   | { t: "readdiff"; reqId: string; sessionId: string; path: string }
   | { t: "caps"; agent?: string }
   | { t: "stop"; sessionId: string }
+  | { t: "cancel"; sessionId: string } // abort a live turn (user hit "parar")
   /** force: descarta alterações locais (git reset --hard) antes de atualizar — só sob pedido explícito do dono. */
   | { t: "update"; force?: boolean }
   | { t: "ping" };

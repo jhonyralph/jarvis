@@ -10,6 +10,7 @@
  * Results cache ~1h; on any failure we fall back to a small pinned list.
  */
 import { spawn } from "node:child_process";
+import { platform } from "node:os";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +58,31 @@ export interface AgentCaps {
 export interface SendOpts {
   model?: string;
   effort?: string;
+  /** Abort the underlying agent process (user hit "parar"). Rejects the send with ABORTED. */
+  signal?: AbortSignal;
+}
+
+/** Thrown when a run is cancelled via its AbortSignal — distinct from a real failure, so the
+ *  caller can treat it as "cancelled by the user" (no error toast, no error notification). */
+export const ABORTED = "__aborted__";
+
+/** Kill a spawned process AND its children. On Windows a shell:true spawn wraps the real CLI in
+ *  cmd.exe, and killing only the wrapper orphans the agent (it keeps running, and keeps costing) —
+ *  taskkill /T takes the whole tree. Elsewhere a plain kill is enough. */
+function killTree(p: { pid?: number; kill: (s?: NodeJS.Signals) => boolean }): void {
+  try {
+    if (platform() === "win32" && p.pid) spawn("taskkill", ["/pid", String(p.pid), "/T", "/F"], { windowsHide: true });
+    else p.kill("SIGTERM");
+  } catch { /* already gone */ }
+}
+/** Wire an AbortSignal to a child: kill the tree on abort, and clean up the listener on close.
+ *  Returns a fn that reports whether the run ended because it was aborted. */
+function wireAbort(p: { pid?: number; kill: (s?: NodeJS.Signals) => boolean }, signal?: AbortSignal): () => boolean {
+  if (!signal) return () => false;
+  if (signal.aborted) { killTree(p); return () => true; }
+  const onAbort = () => killTree(p);
+  signal.addEventListener("abort", onAbort, { once: true });
+  return () => { signal.removeEventListener("abort", onAbort); return signal.aborted; };
 }
 
 /** Live activity while an agent works (for the streaming UI). */
@@ -256,13 +282,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           if (o.is_error) streamError = o.result || "claude error";
           usage = { costUsd: o.total_cost_usd, inputTokens: o.usage?.input_tokens, outputTokens: o.usage?.output_tokens };
         }
-      });
+      }, opts?.signal);
       if (streamError) throw new Error(streamError);
       if (sessionOut) { this.sessions.set(sessionId, sessionOut); this.saveSessions(); }
       return { text: finalText, usage };
     }
 
-    const raw = await run(this.bin, args, cwd, "", false);
+    const raw = await run(this.bin, args, cwd, "", false, opts?.signal);
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
     if (json.session_id) { this.sessions.set(sessionId, json.session_id); this.saveSessions(); }
@@ -332,7 +358,7 @@ export class CodexAdapter implements AgentAdapter {
     const args = ["exec", "--cd", cwd, "--dangerously-bypass-approvals-and-sandbox"];
     if (opts?.model) args.push("-m", opts.model);
     if (opts?.effort) args.push("-c", `model_reasoning_effort=${opts.effort}`);
-    const out = await run("codex", args, cwd, text, true);
+    const out = await run("codex", args, cwd, text, true, opts?.signal);
     this.started.add(sessionId);
     return { text: out.trim() };
   }
@@ -379,9 +405,10 @@ function runRaw(cmd: string, args: string[], cwd: string, stdin: string, useShel
  * that had printed to stdout a success. Returns stdout, because that is where a CLI puts its
  * output; callers that need stderr use runRaw and say so.
  */
-function run(cmd: string, args: string[], cwd: string, stdin: string, useShell: boolean): Promise<string> {
+function run(cmd: string, args: string[], cwd: string, stdin: string, useShell: boolean, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { cwd, windowsHide: true, shell: useShell });
+    const wasAborted = wireAbort(p, signal);
     let out = "";
     let err = "";
     p.stdout.on("data", (d) => (out += d.toString()));
@@ -390,16 +417,18 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, useShell: 
     if (stdin) p.stdin.write(stdin);
     p.stdin.end();
     p.on("close", (code) => {
-      if (code === 0) resolve(out);
+      if (wasAborted()) reject(new Error(ABORTED));
+      else if (code === 0) resolve(out);
       else reject(new Error(err.trim() || out.trim() || `${cmd} exited with ${code}`));
     });
   });
 }
 
 /** Like run(), but calls onLine for each complete stdout line as it arrives (NDJSON stream). */
-function runStream(cmd: string, args: string[], cwd: string, onLine: (line: string) => void): Promise<string> {
+function runStream(cmd: string, args: string[], cwd: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { cwd, windowsHide: true, shell: false });
+    const wasAborted = wireAbort(p, signal);
     let out = "";
     let buf = "";
     let err = "";
@@ -417,6 +446,7 @@ function runStream(cmd: string, args: string[], cwd: string, onLine: (line: stri
     p.on("error", reject);
     p.stdin.end();
     p.on("close", (code) => {
+      if (wasAborted()) { reject(new Error(ABORTED)); return; }
       if (buf.trim()) onLine(buf);
       if (code === 0 || out.trim()) resolve(out);
       else reject(new Error(err.trim() || `${cmd} exited with ${code}`));
