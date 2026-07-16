@@ -13,18 +13,18 @@
        800 — pra ver Arquivos você rolava por cima dos Recentes, e o ⚙ ficava a 2500px de scroll.
        Agora a lateral não rola: cada lista rola dentro de si, e as duas ficam visíveis juntas. */
     #side { width:260px; flex:none; background:var(--side); border-right:1px solid var(--line); display:flex; flex-direction:column; padding:12px; gap:6px; overflow:hidden; }
-    #side > :not(#recents):not(#files):not(.spacer) { flex:none; }  /* .spacer segue empurrando o ⚙ pro rodapé quando as duas seções estão fechadas */
+    #side > :not(.pane):not(.spacer) { flex:none; }  /* .spacer empurra o ⚙ pro rodapé */
+    /* Histórico e Arquivos viram ABAS: uma visível por vez, e a ativa ocupa toda a altura que
+       sobra — em vez de as duas dividirem o espaço e nenhuma mostrar muita coisa. */
+    .pane { display:flex; flex-direction:column; min-height:0; flex:1 1 auto; }
+    .pane.hidden { display:none; }
     #recents, #files { overflow-y:auto; overflow-x:hidden; min-height:0; flex:1 1 auto; }
-    #recents { flex-grow:1.4; }                 /* recentes é o que mais se usa */
-    #recents.collapsed, #files.collapsed { display:none; }
+    #listTabs { display:flex; gap:6px; margin:8px 0 4px; }
+    .ltab { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:var(--panel); color:var(--mut); border:1px solid var(--line); border-radius:9px; padding:8px 6px; font-size:12.5px; cursor:pointer; }
+    .ltab:hover { color:var(--text); }
+    .ltab.active { color:var(--text); border-color:#2563eb66; background:#2563eb1a; }
+    .ltab .tcnt { font-size:10.5px; opacity:.7; font-variant-numeric:tabular-nums; }
     #side .sec { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin:12px 4px 4px; }
-    /* cabeçalho vira controle: clicar minimiza a seção e devolve o espaço pra outra */
-    #side .sec.tog { display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; margin-bottom:2px; }
-    #side .sec.tog:hover { color:var(--text); }
-    #side .sec.tog .caret { font-size:9px; width:9px; flex:none; transition:transform .15s ease; }
-    #side .sec.tog.closed .caret { transform:rotate(-90deg); }
-    #side .sec.tog .lbl { flex:1; }
-    #side .sec.tog .cnt { font-size:10px; opacity:.65; font-variant-numeric:tabular-nums; }
     #recents .item, #files .item { padding:8px 10px; border-radius:9px; cursor:pointer; font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #recents .item:hover { background:#ffffff0d; } #recents .item.active { background:#ffffff14; }
     #files .item { color:var(--mut); font-size:12.5px; cursor:default; }
@@ -291,9 +291,9 @@
       .controls { flex-wrap:wrap; gap:8px; }
       .ctlpills { display:flex; gap:8px; overflow-x:auto; flex:1 1 100%; padding-bottom:3px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
       .ctlpills::-webkit-scrollbar { display:none; } .ctlpills .spacer { display:none; }
-      /* no celular os mais usados vêm primeiro: modelo, esforço, consumo, escutar — depois o resto */
-      #modelBtn { order:1; } #effortBtn { order:2; } #usageBtn { order:3; } #speak { order:4; }
-      #agentBtn { order:5; } #cwdBtn { order:6; } #attach { order:7; } #status { order:8; }
+      /* no celular os mais usados vêm primeiro: ＋ anexar, modelo, esforço, consumo, escutar — depois o resto */
+      #attach { order:0; } #modelBtn { order:1; } #effortBtn { order:2; } #usageBtn { order:3; } #speak { order:4; }
+      #agentBtn { order:5; } #cwdBtn { order:6; } #status { order:8; }
       /* alvo de toque: vale pro mic (agora fora de .controls, ao lado do input) e pros botoes de
          voz do header — sem isso eles ficariam com o tamanho de desktop justo no mobile. */
       .pill, .controls button.ghost, header button.ghost { min-height:42px; font-size:13.5px; padding:10px 13px; flex:none; }
@@ -322,12 +322,18 @@
         <div class="link" id="qrBtn" title="Abrir no celular"><span class="qic">📱</span><span class="qtx">abrir no celular</span></div>
         <div class="link hidden" id="secBtn" title="Dispositivos &amp; convites"><span class="qic">🔐</span><span class="qtx">dispositivos &amp; convites</span></div>
       </div>
-      <div class="sec rsec tog" id="recSec" title="Clique para minimizar"><span class="caret">▾</span><span class="lbl">Recentes</span><span class="cnt" id="recCnt"></span></div>
-      <div id="recents"></div>
-      <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
-      <div class="sec tog" id="filesSec" title="Clique para minimizar"><span class="caret">▾</span><span class="lbl">Arquivos & imagens</span><span class="cnt" id="filesCnt"></span></div>
-      <div id="files"></div>
-      <button id="filesMore" class="ghost hidden">Mostrar mais</button>
+      <div id="listTabs">
+        <button type="button" class="ltab active" id="tabRec">🕘 Histórico<span class="tcnt" id="recCnt"></span></button>
+        <button type="button" class="ltab" id="tabFiles">📄 Arquivos<span class="tcnt" id="filesCnt"></span></button>
+      </div>
+      <div class="pane" id="recPane">
+        <div id="recents"></div>
+        <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
+      </div>
+      <div class="pane hidden" id="filesPane">
+        <div id="files"></div>
+        <button id="filesMore" class="ghost hidden">Mostrar mais</button>
+      </div>
       <div class="spacer"></div>
       <button id="settingsBtn" class="ghost">⚙ Configurações</button>
     </aside>
@@ -485,7 +491,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','sumHdr','recSec','filesSec','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'newSess','searchBtn','digestBtn','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -502,7 +508,7 @@
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
     // ---- config (persisted; refresh não perde estado) ----
-    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', recOpen:true, filesOpen:true }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
     let speak = cfg.voice, speakers = [];
 
@@ -653,15 +659,11 @@
     // sent by the server from the session's claude jsonl. Clicking opens the side panel.
     let curFiles=[];
     const fileActIcon = a => a==='edit'?'✏️':a==='write'?'➕':'📄';
-    // Minimizar devolve o espaco pra outra secao (as duas dividem a altura da lateral).
-    function applySecs(){
-      E.recents.classList.toggle('collapsed', !cfg.recOpen); E.recSec.classList.toggle('closed', !cfg.recOpen);
-      E.files.classList.toggle('collapsed', !cfg.filesOpen); E.filesSec.classList.toggle('closed', !cfg.filesOpen);
-      // "Mostrar mais" pertence aos recentes: com a secao fechada ele fica orfao na tela
-      if(E.moreBtn && !cfg.recOpen) E.moreBtn.classList.add('hidden');
-      if(E.filesMore && !cfg.filesOpen) E.filesMore.classList.add('hidden');
-      if(E.filesMore && cfg.filesOpen) E.filesMore.classList.toggle('hidden', curFiles.length<=filesShown);
-    }
+    // Abas: uma lista visível por vez, ocupando toda a altura. Antes as duas dividiam o espaço.
+    function selectTab(t){ const rec=(t!=='files'); cfg.tab=rec?'rec':'files'; saveCfg();
+      E.recPane.classList.toggle('hidden',!rec); E.filesPane.classList.toggle('hidden',rec);
+      E.tabRec.classList.toggle('active',rec); E.tabFiles.classList.toggle('active',!rec);
+      if(rec) renderRecents(); else renderFiles(); }
     function secCounts(){ if(E.recCnt) E.recCnt.textContent = sessions.length ? String(sessions.length) : '';
       if(E.filesCnt) E.filesCnt.textContent = curFiles.length ? String(curFiles.length) : ''; }
     function renderFiles(){ E.files.innerHTML=''; secCounts();
@@ -672,7 +674,7 @@
         d.onclick=()=>openFile(f.path,f.action); E.files.appendChild(d); });
       if(E.filesMore){ const resta=curFiles.length-filesShown;
         E.filesMore.textContent = resta>0 ? `Mostrar mais (${resta})` : 'Mostrar mais';
-        E.filesMore.classList.toggle('hidden', resta<=0 || !cfg.filesOpen); } }
+        E.filesMore.classList.toggle('hidden', resta<=0); } }
     E.filesMore.onclick=()=>{ filesShown+=20; renderFiles(); };
     // Upsert a file touched during a LIVE turn (from the stream tool events).
     function touchFile(path,action,adds,dels){ if(!path)return; let f=curFiles.find(x=>x.path===path);
@@ -810,9 +812,9 @@
     E.searchBtn.onclick=()=>openSearch();
     // O clique no cabecalho minimiza — mas "selecionar" vive dentro dele: sem o guard abaixo,
     // clicar em selecionar fecharia a secao inteira que voce acabou de pedir pra usar.
-    E.recSec.onclick=()=>{ cfg.recOpen=!cfg.recOpen; saveCfg(); applySecs(); };
-    E.filesSec.onclick=()=>{ cfg.filesOpen=!cfg.filesOpen; saveCfg(); applySecs(); };
-    applySecs();
+    E.tabRec.onclick=()=>selectTab('rec');
+    E.tabFiles.onclick=()=>selectTab('files');
+    selectTab(cfg.tab);
     E.digestBtn.onclick=()=>{ if(!startVoiceOp('digest',E.digestBtn,'⏳ gerando…'))return; status('speaking','Analisando sessões…'); tx({t:'digest',speak:true}); };
     // Resumir a sessão ATUAL exigia abrir a barra lateral e achar a sessão na lista — no celular,
     // onde a lateral é overlay, isso é o caminho todo. O panorama (🎧) fica só na lateral: dois
