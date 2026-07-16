@@ -72,6 +72,7 @@ export type RunnerToHub =
   | { t: "stream"; sessionId: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
   | { t: "activity"; sessionId: string; name?: string; summary?: string }
+  | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; truncated?: boolean; error?: string }
   | { t: "runs"; active: string[] }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" };
@@ -90,6 +91,7 @@ export type HubToRunner =
       opts?: { model?: string; effort?: string };
     }
   | { t: "list" }
+  | { t: "readfile"; reqId: string; path: string; cwd?: string }
   | { t: "caps"; agent?: string }
   | { t: "stop"; sessionId: string }
   | { t: "update" }

@@ -94,6 +94,9 @@
     #queueRow .qx:hover { color:#ff6b6b; }
     .mut { color:var(--mut); font-size:12.5px; word-break:break-all; }
     .soon { font-size:10px; background:#ffffff14; border-radius:6px; padding:1px 5px; color:var(--mut); }
+    .fileCard { width:min(900px,100%); max-height:92dvh; }
+    .filebody { background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; margin:0; overflow:auto; max-height:74dvh; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.5; white-space:pre; color:var(--text); }
+    #files .item { cursor:default; } #files .item.readable { cursor:pointer; } #files .item.readable:hover { background:#ffffff0d; }
     .dirlist { border:1px solid var(--line); border-radius:10px; overflow:auto; max-height:240px; }
     .dirlist div { padding:8px 12px; cursor:pointer; font-size:13.5px; border-bottom:1px solid var(--line); } .dirlist div:hover { background:#ffffff0d; }
     /* clickable footer pills (agent / folder / model / effort) */
@@ -253,6 +256,12 @@
     <div class="row" style="justify-content:flex-end"><button id="dlgCancel" class="ghost" type="button">Cancelar</button><button id="dlgOk" type="button">OK</button></div>
   </div></div>
 
+  <div id="fileModal" class="modal hidden"><div class="card fileCard">
+    <div class="row" style="justify-content:space-between;align-items:center;gap:8px"><b id="fileName" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</b><button id="fileCopy" class="ghost" type="button">Copiar</button><button id="fileClose" class="ghost" type="button">✕</button></div>
+    <div id="fileMeta" class="mut" style="font-size:11px"></div>
+    <pre id="fileBody" class="filebody"></pre>
+  </div></div>
+
   <div id="qrModal" class="modal hidden"><div class="card">
     <b>📱 Abrir no celular</b>
     <div class="mut">Aponte a câmera do celular (com Tailscale ligado) para o QR:</div>
@@ -338,6 +347,7 @@
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck',
+      'fileModal','fileName','fileMeta','fileBody','fileCopy','fileClose',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
@@ -414,7 +424,14 @@
     function refreshFiles(msgs){ E.files.innerHTML=''; const f=[]; msgs.forEach(m=>{ if(m.role!=='assistant')return; const t=m.text;
       (t.match(/!\[[^\]]*\]/g)||[]).forEach(x=>f.push('🖼 '+(x.match(/!\[([^\]]*)\]/)?.[1]||'imagem')));
       (t.match(/\b[\w./-]+\.(ts|tsx|js|py|json|md|html|css|yml|yaml|sh)\b/g)||[]).forEach(x=>f.push('📄 '+x)); });
-      [...new Set(f)].slice(0,25).forEach(x=>{ const d=document.createElement('div'); d.className='item'; d.textContent=x; E.files.appendChild(d); }); }
+      [...new Set(f)].slice(0,25).forEach(x=>{ const d=document.createElement('div'); d.className='item'; d.textContent=x;
+        if(x.startsWith('📄 ')){ const p=x.slice(2).trim(); d.classList.add('readable'); d.title='Ver arquivo'; d.onclick=()=>openFile(p); }
+        E.files.appendChild(d); }); }
+    function openFile(path){ E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileMeta.textContent='Carregando… ('+path+')'; E.fileBody.textContent=''; E.fileModal.classList.remove('hidden'); tx({t:'readfile',path,cwd:curCwd}); }
+    function showFile(m){ if(E.fileModal.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo';
+      if(m.error){ E.fileMeta.textContent=esc(m.path||''); E.fileBody.textContent='⚠ '+m.error; return; }
+      const kb=m.size?(m.size<1024?m.size+' B':(m.size/1024).toFixed(1)+' KB'):''; E.fileMeta.textContent=(m.path||'')+(kb?' · '+kb:'')+(m.truncated?' · (mostrando os primeiros 512KB)':'');
+      E.fileBody.textContent=m.content||''; E.fileBody.scrollTop=0; }
 
     function renderRecents(){ E.recents.innerHTML='';
       if(activeRuns.length){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+activeRuns.length+' rodando agora'; E.recents.appendChild(h); }
@@ -489,6 +506,8 @@
     E.digestBtn.onclick=()=>{ if(!startVoiceOp('digest',E.digestBtn,'⏳ gerando…'))return; status('speaking','Analisando sessões…'); tx({t:'digest',speak:true}); };
     E.qrBtn.onclick=()=>{ tx({t:'qr',url:location.origin}); closeSide(); };
     E.qrClose.onclick=()=>E.qrModal.classList.add('hidden');
+    E.fileClose.onclick=()=>E.fileModal.classList.add('hidden');
+    E.fileCopy.onclick=()=>{ const t=E.fileBody.textContent||''; (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>{E.fileCopy.textContent='Copiado ✓';setTimeout(()=>E.fileCopy.textContent='Copiar',1500);}).catch(()=>{}); };
 
     // ---- segurança: dispositivos & convites (dono) ----
     function updateOwnerUI(){ if(authUser&&authUser.role==='owner') E.secBtn.classList.remove('hidden'); else E.secBtn.classList.add('hidden'); }
@@ -755,6 +774,7 @@
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
         else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); }
+        else if(m.t==='filecontent'){ showFile(m); }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
           if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
         else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){

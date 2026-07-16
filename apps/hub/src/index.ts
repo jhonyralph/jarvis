@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, readProjectFile } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
@@ -287,6 +287,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary }); return; }
   if (m.t === "runs") { runnerActive.set(rc.id, new Set(m.active || [])); for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
   if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries }); } return; }
+  if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, truncated: m.truncated, error: m.error }); } return; }
   if (m.t === "error") { const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return; }
 }
 
@@ -743,11 +744,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // when viewing a REMOTE machine, session ops are forwarded to that runner
     {
       const ar = activeRunner(ws);
-      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure")) {
+      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile")) {
         const rc = runners.get(ar);
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
         if (msg.t === "list") { sendToRunner(rc, { t: "list" }); return; }
         if (msg.t === "new") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "new", reqId, agent: msg.agent, cwd: msg.cwd }); return; }
+        if (msg.t === "readfile" && typeof msg.path === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readfile", reqId, path: msg.path, cwd: msg.cwd }); return; }
         if (msg.t === "listdir") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "listdir", reqId, path: msg.path }); return; }
         if (msg.t === "configure" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "configure", reqId, sessionId: msg.sessionId, agent: msg.agent, cwd: msg.cwd }); return; }
         if (msg.t === "open" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); subs.set(ws, msg.sessionId); sendToRunner(rc, { t: "open", reqId, sessionId: msg.sessionId }); return; }
@@ -792,6 +794,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "delspk" && typeof msg.name === "string") {
       await deleteSpeaker(msg.name);
       await broadcastVoiceState();
+      return;
+    }
+    // read a file to view it ("ver antes de executar") — local machine
+    if (msg.t === "readfile" && typeof msg.path === "string") {
+      send(ws, { t: "filecontent", ...readProjectFile(msg.path, typeof msg.cwd === "string" ? msg.cwd : undefined) });
       return;
     }
     // folder browser for the "new conversation" dialog (Hub machine)

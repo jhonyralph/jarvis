@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, Store,
-  updateApply, restartService,
+  updateApply, restartService, readProjectFile,
   type AgentAdapter, type SendOpts,
 } from "@jarvis/core";
 
@@ -169,6 +169,7 @@ function connect(): void {
         pushSessions();
         return;
       }
+      if (m.t === "readfile" && typeof m.path === "string") { send({ t: "filecontent", reqId: m.reqId, ...readProjectFile(m.path, m.cwd) }); return; }
       if (m.t === "open" && typeof m.sessionId === "string") { await doHistory(m.reqId, m.sessionId); return; }
       if (m.t === "listdir") {
         const base = (typeof m.path === "string" && m.path) ? m.path : homedir();
