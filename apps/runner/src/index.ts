@@ -88,9 +88,13 @@ function stopTail(sid: string): void { const t = tails.get(sid); if (t) { clearI
 // Probing availability spawns a real `claude -p` per agent, so it is CACHED: register runs on
 // every reconnect, and re-probing each time was both slow and (on older builds) left one
 // throwaway "ok" session per reconnect — thousands of them on a flapping link.
+// A negative result must NOT stick: probing right before the user runs `claude auth login` would
+// otherwise pin the machine to "no AI" for the whole TTL. Success is cached for an hour, failure
+// only long enough to avoid a probe storm, so the machine recovers on its own after a login.
 let agentsCache: { at: number; list: string[] } | null = null;
+const OK_TTL = 3_600_000, FAIL_TTL = 30_000;
 async function availableAgents(): Promise<string[]> {
-  if (agentsCache && Date.now() - agentsCache.at < 3_600_000) return agentsCache.list;
+  if (agentsCache && Date.now() - agentsCache.at < (agentsCache.list.length ? OK_TTL : FAIL_TTL)) return agentsCache.list;
   const out: string[] = [];
   for (const n of agents.names()) { try { if (await agents.get(n).available()) out.push(n); } catch { /* skip */ } }
   // Report HONESTLY: an empty list means nothing here is usable (e.g. `claude login` missing /
@@ -126,7 +130,6 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
 
 async function doSend(sessionId: string, text: string, agentName?: string, cwd?: string, opts?: SendOpts): Promise<void> {
   activeRuns.add(sessionId); pushRuns();
-  send({ t: "stream", sessionId, ev: { kind: "start" } });
   // pause the native tail so our own turn isn't double-broadcast (already streamed below)
   const tail = isNativeId(sessionId) ? tails.get(sessionId) : undefined;
   if (tail) tail.paused = true;
@@ -144,6 +147,9 @@ async function doSend(sessionId: string, text: string, agentName?: string, cwd?:
       send({ t: "message", sessionId, message: { role: "user", text, ts: Date.now() } });
       pushSessions();
     }
+    // Only NOW: "start" makes the UI drop its pending placeholder and open the reply bubble, so
+    // emitting it before the user echo above left the echo landing *below* the reply.
+    send({ t: "stream", sessionId, ev: { kind: "start" } });
     const reply = await agent.send(sessionId, text, useCwd, opts, (ev) => send({ t: "stream", sessionId, ev }));
     if (!isNativeId(sessionId)) { store.add(sessionId, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name }); pushSessions(); }
     send({ t: "stream", sessionId, ev: { kind: "done", text: reply.text, usage: reply.usage } });

@@ -496,7 +496,9 @@
         if(m.images&&m.images.length){ const w=document.createElement('div'); w.className='msgimgs'; m.images.forEach(u=>{ const im=document.createElement('img'); im.className='msgimg'; im.src=u; im.loading='lazy'; im.onclick=()=>window.open(u,'_blank'); w.appendChild(im); }); d.appendChild(w); }
         const showTxt=m.text&&!(m.images&&m.images.length&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); }
       else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
-    function addMsg(m){ const d=buildMsgEl(m); if(pendingEl) E.log.insertBefore(d,pendingEl); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+    // Anchor: a user message must never land under an open reply bubble, even if the echo arrives
+    // after the stream started (remote runners emit over the network, order isn't guaranteed).
+    function addMsg(m){ const d=buildMsgEl(m); const anchor=pendingEl||(m.role==='user'?strEl:null); if(anchor) E.log.insertBefore(d,anchor); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     // indicador AO VIVO com cronômetro — deixa claro que há algo executando
     let pendingEl=null, pendingTimer=null, pendingStart=0;
