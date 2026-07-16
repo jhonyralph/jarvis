@@ -430,7 +430,7 @@
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
 
     let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
-    let machines=[], currentMachine='local', lastByMachine={};
+    let machines=[], currentMachine=localStorage.getItem('jarvis_machine')||'local', lastByMachine={}, restoringMachine=currentMachine!=='local';
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
@@ -664,7 +664,7 @@
       E.machineBar.appendChild(menu);
     }
     function selectMachine(id){ const mm=document.getElementById('mmenu'); if(mm)mm.classList.add('hidden'); if(id===currentMachine) return;
-      currentMachine=id; currentSession=null; curStarted=false; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); tx({t:'runner',runnerId:id}); }
+      currentMachine=id; restoringMachine=false; try{localStorage.setItem('jarvis_machine',id);}catch{} currentSession=null; curStarted=false; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); tx({t:'runner',runnerId:id}); }
 
     const capsFor = n => caps.find(c=>c.name===n)||{models:[],defaultModel:null};
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
@@ -979,7 +979,7 @@
       if(gateMode==='verify'){ if(!val){ gateError('Informe a senha.'); return; } authPass=val; gateError(''); tx({t:'verify',pass:val}); return; }
       const label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
       if(!val){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code:val, label }); }
-    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); if(currentSession) tx({t:'open',sessionId:currentSession}); if(cfg.push) enablePush(); }
+    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) tx({t:'open',sessionId:currentSession}); if(cfg.push) enablePush(); }
     function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); }
 
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
@@ -999,17 +999,20 @@
         else if(m.t==='update_result'){ if(m.ok){ toast('✅ '+((m.log||'atualizado').split('\n').pop()||'').slice(0,80)); } else { toast('⚠ Falha: '+(m.log||'').slice(0,120)); if(E.updStatus) E.updStatus.textContent='⚠ '+(m.log||'').slice(0,140); E.updActions.classList.remove('hidden'); } }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
-        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'}); }
+        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'});
+          // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
+          if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }
         else if(m.t==='filecontent'){ showFile(m); }
         else if(m.t==='filediff'){ showDiff(m); }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
           if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
-        else if(m.t==='sessions'){ sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){
-          const exists=(id)=> !!id && (isNative(id)||sessions.some(s=>s.id===id));
+        else if(m.t==='sessions'){ if(m.runnerId && m.runnerId!==currentMachine) return; // sessões de OUTRA máquina — ignora (evita abrir na errada no reload)
+          restoringMachine=false; sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){
+          const exists=(id)=> !!id && sessions.some(s=>s.id===id);
           const last=lastByMachine[currentMachine], h=hashSession();
           const pick = exists(last)?last : (exists(h)?h : (sessions.find(s=>!isNative(s.id))||{}).id);
           if(pick) tx({t:'open',sessionId:pick});
-          else if(currentMachine==='local') E.newSess.onclick(); } }
+          else if(currentMachine==='local' && !hashSession()) E.newSess.onclick(); } }
         else if(m.t==='history'){ if(currentSession&&currentSession!==m.sessionId)clearQueue(); currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId); currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
           if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
           E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
