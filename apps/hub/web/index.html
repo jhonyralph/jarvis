@@ -64,6 +64,9 @@
     .msg.bot.streaming { display:flex; flex-direction:column; gap:7px; }
     .strhead { display:inline-flex; align-items:center; gap:8px; color:var(--mut); font-size:12.5px; }
     .strtools { display:flex; flex-direction:column; gap:4px; }
+    /* fluxo ao vivo: texto e ferramentas INTERCALADOS na ordem de chegada (como o histórico) */
+    .strflow { display:flex; flex-direction:column; gap:7px; }
+    .strflow .strtext { background:none; padding:0; }
     .strtool { display:flex; flex-direction:column; font-size:12.5px; color:#cbd5e1; background:#ffffff0d; border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow-wrap:anywhere; }
     .strtool .strtoolhead { display:flex; align-items:center; gap:7px; }
     .strtool.act { align-self:flex-start; max-width:min(88%,760px); }
@@ -622,45 +625,53 @@
     function clearPending(){ if(pendingTimer){ clearInterval(pendingTimer); pendingTimer=null; } if(pendingEl){ pendingEl.remove(); pendingEl=null; } }
     // ---- streaming (atividade ao vivo: ferramentas + texto) ----
     const toolIcon = n => ({Bash:'🖥',Read:'📄',Edit:'✏️',Write:'✏️',NotebookEdit:'✏️',MultiEdit:'✏️',Grep:'🔎',Glob:'📁',Task:'🤖',Agent:'🤖',WebFetch:'🌐',WebSearch:'🌐'}[n]||'🔧');
-    let strEl=null, strText='', strTimer=null, strStart=0, strTextEl=null, strToolsEl=null, strTimeEl=null, subAgents={};
-    function streamStartUI(){ clearPending(); strText=''; strStart=Date.now(); subAgents={};
+    // strFlow = container ordenado; curTextEl = bloco de texto aberto (null após uma ferramenta,
+    // pra o próximo texto virar um bloco NOVO); curTextRaw = markdown acumulado desse bloco.
+    let strEl=null, strFlow=null, curTextEl=null, curTextRaw='', sawText=false, strTimer=null, strStart=0, strTimeEl=null, subAgents={};
+    function streamStartUI(){ clearPending(); curTextEl=null; curTextRaw=''; sawText=false; strStart=Date.now(); subAgents={};
       strEl=document.createElement('div'); strEl.className='msg bot streaming';
-      strEl.innerHTML='<div class="strhead"><span class="spin"></span><span class="strtime">0s</span></div><div class="strtools"></div><div class="strtext"></div>';
-      strTimeEl=strEl.querySelector('.strtime'); strToolsEl=strEl.querySelector('.strtools'); strTextEl=strEl.querySelector('.strtext');
+      strEl.innerHTML='<div class="strhead"><span class="spin"></span><span class="strtime">0s</span></div><div class="strflow"></div>';
+      strTimeEl=strEl.querySelector('.strtime'); strFlow=strEl.querySelector('.strflow');
       strTimer=setInterval(()=>{ if(!strTimeEl)return; const s=Math.floor((Date.now()-strStart)/1000); strTimeEl.textContent=(s>=60?`${Math.floor(s/60)}m ${s%60}s`:`${s}s`); },1000);
       E.log.appendChild(strEl); E.log.scrollTop=E.log.scrollHeight; }
+    function closeTextBlock(){ curTextEl=null; curTextRaw=''; }   // próximo texto abre bloco novo (após tool)
     // A collapsible container for one spawned sub-agent (Task tool). Its nested tool calls +
     // text preview show "o que ele está fazendo"; the count badge shows progress at a glance.
-    function ensureSubAgent(id,desc){ if(!strToolsEl)streamStartUI(); if(subAgents[id]){ if(desc)subAgents[id].title.textContent=desc; return subAgents[id]; }
+    function ensureSubAgent(id,desc){ if(!strFlow)streamStartUI(); if(subAgents[id]){ if(desc)subAgents[id].title.textContent=desc; return subAgents[id]; }
       const wrap=document.createElement('div'); wrap.className='subagent'; wrap.dataset.id=id;
       wrap.innerHTML='<div class="sahead"><span class="satog">▸</span><span>🤖</span><span class="satitle"></span><span class="sacount">0</span></div><div class="sabody hidden"></div>';
       const head=wrap.querySelector('.sahead'), body=wrap.querySelector('.sabody'), title=wrap.querySelector('.satitle'), countEl=wrap.querySelector('.sacount'), tog=wrap.querySelector('.satog');
       title.textContent=desc||'sub-agente';
       head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
-      strToolsEl.appendChild(wrap);
+      closeTextBlock(); strFlow.appendChild(wrap);
       const rec={wrap,body,title,countEl,count:0,preview:null,previewText:''}; subAgents[id]=rec; return rec; }
-    function streamTool(name,summary,toolId,parentId,path,adds,dels,rows){ if(!strToolsEl)streamStartUI();
+    function streamTool(name,summary,toolId,parentId,path,adds,dels,rows){ if(!strFlow)streamStartUI();
       if(parentId){ const sa=ensureSubAgent(parentId); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows)); sa.count++; sa.countEl.textContent=sa.count; E.log.scrollTop=E.log.scrollHeight; return; }
       if((name==='Task'||name==='Agent')&&toolId){ ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); E.log.scrollTop=E.log.scrollHeight; return; }
-      strToolsEl.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows)); E.log.scrollTop=E.log.scrollHeight; }
+      closeTextBlock(); strFlow.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows)); E.log.scrollTop=E.log.scrollHeight; }
     function streamText(t,parentId){
       if(parentId){ const sa=ensureSubAgent(parentId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); E.log.scrollTop=E.log.scrollHeight; return; }
-      if(!strTextEl)streamStartUI(); strText+=t; strTextEl.textContent=strText; E.log.scrollTop=E.log.scrollHeight; }
+      if(!strFlow)streamStartUI();
+      // Abre um bloco NOVO de texto se o anterior foi fechado por uma ferramenta; senão acumula.
+      if(!curTextEl){ curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; strFlow.appendChild(curTextEl); }
+      curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); sawText=true; E.log.scrollTop=E.log.scrollHeight; }
+    function streamFinish(){ strEl=strFlow=curTextEl=strTimeEl=null; curTextRaw=''; sawText=false; }
     function streamDone(finalText,usage){ if(strTimer){clearInterval(strTimer);strTimer=null;}
       if(!strEl){ addMsg({role:'assistant',text:finalText||''}); return; }
       const head=strEl.querySelector('.strhead'); if(head) head.remove();
       strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone); // editando… → editado
-      const ft=finalText||strText; if(strTextEl){ strTextEl.innerHTML=md(ft); strTextEl.classList.add('done'); }
+      // Os blocos de texto já foram renderizados intercalados; só usa finalText se NADA foi streamado
+      // (ex.: resposta veio só no result), pra não duplicar o que já está na tela.
+      if(!sawText && finalText){ const d=document.createElement('div'); d.className='strtext done'; d.innerHTML=md(finalText); strFlow.appendChild(d); }
       if(usage){ const u=document.createElement('div'); u.className='usage'; u.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; strEl.appendChild(u); E.usage.textContent=u.textContent; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
-      strEl=strTextEl=strToolsEl=strTimeEl=null; E.log.scrollTop=E.log.scrollHeight; }
+      streamFinish(); E.log.scrollTop=E.log.scrollHeight; }
     function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
       if(strEl){ const head=strEl.querySelector('.strhead'); if(head) head.remove();
         strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone);
-        if(strTextEl){ strTextEl.innerHTML=md(strText); strTextEl.classList.add('done'); }
         const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ interrompido'; strEl.appendChild(n);
-        strEl=strTextEl=strToolsEl=strTimeEl=null; }
+        streamFinish(); }
       else addErr('⏹ interrompido'); E.log.scrollTop=E.log.scrollHeight; }
-    function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); strEl=strTextEl=strToolsEl=strTimeEl=null; }
+    function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); streamFinish(); }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
       (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
