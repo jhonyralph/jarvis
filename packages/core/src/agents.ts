@@ -13,6 +13,26 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { editCounts } from "./native.js";
+
+/** For a file tool_use, extract the real path + (for edits) +/- line counts, live. */
+function fileToolStat(name: string, input: any): { path?: string; adds?: number; dels?: number } {
+  try {
+    if (name === "Read" || name === "Edit" || name === "Write" || name === "MultiEdit") {
+      const path = input?.file_path;
+      if (name === "Edit") return { path, ...editCounts(input?.old_string || "", input?.new_string || "") };
+      if (name === "Write") return { path, adds: input?.content ? String(input.content).split("\n").length : 0, dels: 0 };
+      if (name === "MultiEdit" && Array.isArray(input?.edits)) {
+        let adds = 0, dels = 0;
+        for (const e of input.edits) { const c = editCounts(e?.old_string || "", e?.new_string || ""); adds += c.adds; dels += c.dels; }
+        return { path, adds, dels };
+      }
+      return { path };
+    }
+    if (name === "NotebookEdit") return { path: input?.notebook_path };
+  } catch { /* ignore */ }
+  return {};
+}
 
 // one-shot prompts (search / summary / digest / voice-intent) run in this dir so their
 // throwaway `claude -p` sessions land somewhere the native-session import excludes —
@@ -31,6 +51,16 @@ export interface ModelInfo {
   label?: string;
   efforts: string[];
   defaultEffort?: string;
+  context?: number; // max input tokens (context window) — for the usage gauge
+}
+
+/** One usage window (a % used + when it resets). */
+export interface UsageWindow { pct: number; resetsAt?: string; }
+/** Account-level plan usage, if the agent exposes it (Claude: /api/oauth/usage). */
+export interface AgentUsage {
+  fiveHour?: UsageWindow;
+  sevenDay?: UsageWindow;
+  extra?: Array<{ label: string } & UsageWindow>;
 }
 
 export interface AgentCaps {
@@ -63,6 +93,8 @@ export interface AgentAdapter {
   nativeSessionId?(sessionId: string): string | undefined;
   /** Forget a session's native binding (on delete), so a reused id won't resume it. */
   forgetSession?(sessionId: string): void;
+  /** Account plan usage (5h / weekly windows), if the agent exposes it. */
+  usage?(): Promise<AgentUsage | null>;
 }
 
 export class AgentRegistry {
@@ -136,6 +168,27 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   forgetSession(sessionId: string): void {
     if (this.sessions.delete(sessionId)) this.saveSessions();
   }
+  private usageCache?: { at: number; data: AgentUsage | null };
+  /** Plan usage (5h / weekly windows) from the Claude OAuth usage endpoint. Cached ~30s. */
+  async usage(): Promise<AgentUsage | null> {
+    if (this.usageCache && Date.now() - this.usageCache.at < 30_000) return this.usageCache.data;
+    let data: AgentUsage | null = null;
+    try {
+      const token = JSON.parse(readFileSync(join(homedir(), ".claude", ".credentials.json"), "utf8"))?.claudeAiOauth?.accessToken;
+      if (!token) throw new Error("no token");
+      const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+        headers: { authorization: `Bearer ${token}`, "anthropic-version": "2023-06-01", "anthropic-beta": "oauth-2025-04-20" },
+      });
+      const j: any = await res.json();
+      const win = (w: any): UsageWindow | undefined => (w && typeof w.utilization === "number") ? { pct: Math.round(w.utilization), resetsAt: w.resets_at } : undefined;
+      data = { fiveHour: win(j.five_hour), sevenDay: win(j.seven_day) };
+      const extra: Array<{ label: string } & UsageWindow> = [];
+      for (const [k, label] of [["seven_day_opus", "Semanal · Opus"], ["seven_day_sonnet", "Semanal · Sonnet"]] as const) { const w = win(j[k]); if (w) extra.push({ label, ...w }); }
+      if (extra.length) data.extra = extra;
+    } catch { data = null; }
+    this.usageCache = { at: Date.now(), data };
+    return data;
+  }
   private capsCache?: { at: number; caps: AgentCaps };
   private bin =
     existsSync(join(homedir(), ".local", "bin", process.platform === "win32" ? "claude.exe" : "claude"))
@@ -154,10 +207,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         headers: { authorization: `Bearer ${token}`, "anthropic-version": "2023-06-01", "anthropic-beta": "oauth-2025-04-20" },
       });
       const json: any = await res.json();
-      models = (json?.data || []).map((m: any) => ({ id: m.id, label: m.display_name, efforts, defaultEffort: "high" }));
-      // family aliases up front (opus/sonnet/haiku/fable resolve to the newest of each)
+      models = (json?.data || []).map((m: any) => ({ id: m.id, label: m.display_name, efforts, defaultEffort: "high", context: m.max_input_tokens }));
+      // family aliases up front (opus/sonnet/haiku/fable resolve to the newest of each);
+      // give each alias the largest context window seen in its family.
+      const famCtx = (fam: string) => { const c = models.filter((m) => m.id.includes(fam)).map((m) => m.context || 0); return c.length ? Math.max(...c) : undefined; };
       models = [
-        ...["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high" })),
+        ...["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high", context: famCtx(id) })),
         ...models,
       ];
       if (models.length <= 4) throw new Error("empty models");
@@ -171,7 +226,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async available(): Promise<boolean> {
     try {
-      const out = await run(this.bin, ["-p", "ok", "--output-format", "json"], homedir(), "", false);
+      // MUST run in ONESHOT_CWD (not homedir): every probe leaves a persistent `claude -p`
+      // session file, and only the oneshot cwd is excluded from the native-session list —
+      // otherwise the availability probe litters the sidebar with one "ok" session per run.
+      const out = await run(this.bin, ["-p", "ok", "--output-format", "json"], ONESHOT_CWD, "", false);
       return !JSON.parse(out).is_error;
     } catch {
       return false;
@@ -203,7 +261,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           const parentId = o.parent_tool_use_id || undefined;
           for (const b of o.message?.content || []) {
             if (b.type === "text" && b.text) { if (!parentId) finalText += b.text; onEvent({ kind: "text", text: b.text, parentId }); }
-            else if (b.type === "tool_use") onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), toolId: b.id, parentId });
+            else if (b.type === "tool_use") { const st = fileToolStat(b.name, b.input); onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), toolId: b.id, parentId, path: st.path, adds: st.adds, dels: st.dels }); }
             else if (b.type === "thinking") onEvent({ kind: "thinking", parentId });
           }
         } else if (o.type === "result") {
@@ -292,10 +350,11 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
-    const args = ["exec", "--cd", homedir(), "--dangerously-bypass-approvals-and-sandbox"];
+    // run in ONESHOT_CWD (excluded from the native list) so throwaway prompts don't litter the sidebar
+    const args = ["exec", "--cd", ONESHOT_CWD, "--dangerously-bypass-approvals-and-sandbox"];
     if (opts?.model) args.push("-m", opts.model);
     if (opts?.effort) args.push("-c", `model_reasoning_effort=${opts.effort}`);
-    const out = await run("codex", args, homedir(), text, true); // stateless: no this.started
+    const out = await run("codex", args, ONESHOT_CWD, text, true); // stateless: no this.started
     return { text: out.trim() };
   }
 }

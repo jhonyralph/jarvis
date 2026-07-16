@@ -25,7 +25,7 @@ import { transcribe } from "./stt.js";
 import { speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative } from "@jarvis/core";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, readProjectFile } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
@@ -281,7 +281,8 @@ function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.w
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "sessions") { for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [] }); return; }
-  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent })) }); } return; }
+  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent })), files: m.files }); } return; }
+  if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "stream") { for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary }); return; }
@@ -747,11 +748,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // when viewing a REMOTE machine, session ops are forwarded to that runner
     {
       const ar = activeRunner(ws);
-      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "delete")) {
+      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete")) {
         const rc = runners.get(ar);
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
         if (msg.t === "list") { sendToRunner(rc, { t: "list" }); return; }
-        if (msg.t === "delete" && typeof msg.sessionId === "string") { sendToRunner(rc, { t: "delete", sessionId: msg.sessionId, alsoNative: !!msg.alsoNative }); send(ws, { t: "deleted", sessionId: msg.sessionId, ok: true }); return; }
+        if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) { sendToRunner(rc, { t: "delete", sessionId: msg.sessionId, sessionIds: msg.sessionIds, alsoNative: !!msg.alsoNative }); send(ws, { t: "deleted", sessionId: msg.sessionId, ids: msg.sessionIds, ok: true }); return; }
+        if (msg.t === "readdiff" && typeof msg.path === "string" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readdiff", reqId, sessionId: msg.sessionId, path: msg.path }); return; }
         if (msg.t === "new") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "new", reqId, agent: msg.agent, cwd: msg.cwd }); return; }
         if (msg.t === "readfile" && typeof msg.path === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readfile", reqId, path: msg.path, cwd: msg.cwd }); return; }
         if (msg.t === "listdir") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "listdir", reqId, path: msg.path }); return; }
@@ -771,27 +773,33 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       sendSessions(ws);
       return;
     }
-    // Delete a conversation on THIS (local) machine — and, if asked, the underlying
-    // native claude/codex session it maps to. Irreversible.
-    if (msg.t === "delete" && typeof msg.sessionId === "string") {
-      const sid = msg.sessionId;
-      let ok = false;
-      if (isNativeId(sid)) {
-        stopTail(sid);
-        ok = deleteNative(sid); // a read-only native session shown in the list
-      } else {
+    // Delete one or MANY conversations on THIS (local) machine — and, if asked, the
+    // underlying native claude/codex session each maps to. Irreversible.
+    if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) {
+      const ids: string[] = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((x: any) => typeof x === "string") : [msg.sessionId];
+      const deleteOne = (sid: string): boolean => {
+        if (isNativeId(sid)) { stopTail(sid); return deleteNative(sid); }
         const s = store.get(sid);
         if (s) {
           const ag = agents.get(s.agent);
           if (msg.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); if (nid) deleteNative("claude:" + nid); }
           ag.forgetSession?.(sid);
-          auth.audit("delete", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${sid}: ${s.title}` });
         }
-        ok = store.delete(sid);
-      }
-      if (subs.get(ws) === sid) subs.delete(ws);
-      send(ws, { t: "deleted", sessionId: sid, ok });
+        return store.delete(sid);
+      };
+      let okCount = 0;
+      for (const sid of ids) { if (deleteOne(sid)) okCount++; if (subs.get(ws) === sid) subs.delete(ws); }
+      auth.audit("delete", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${okCount}/${ids.length} conversa(s)` });
+      send(ws, { t: "deleted", sessionId: msg.sessionId, ids, ok: okCount === ids.length, okCount });
       pushSessions();
+      return;
+    }
+    // plan usage (5h / weekly windows) — account-level, from the local agent's usage endpoint
+    if (msg.t === "get_usage") {
+      const name = typeof msg.agent === "string" && agents.names().includes(msg.agent) ? msg.agent : "claude-code";
+      let plan = null;
+      try { const a = agents.get(name); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
+      send(ws, { t: "usage_info", agent: name, plan });
       return;
     }
     // wake-word control (machine listener <-> browsers)
@@ -828,6 +836,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, { t: "filecontent", ...readProjectFile(msg.path, typeof msg.cwd === "string" ? msg.cwd : undefined) });
       return;
     }
+    // read the diff of an edited file, reconstructed from the session's claude jsonl — local machine
+    if (msg.t === "readdiff" && typeof msg.path === "string" && typeof msg.sessionId === "string") {
+      const diffId = isNativeId(msg.sessionId) ? msg.sessionId : (() => { const s = store.get(msg.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return nid ? "claude:" + nid : ""; })();
+      send(ws, { t: "filediff", ...(diffId ? sessionFileDiff(diffId, msg.path) : { path: msg.path, name: msg.path.split(/[\\/]/).pop() || msg.path, error: "sem sessão nativa vinculada" }) });
+      return;
+    }
     // folder browser for the "new conversation" dialog (Hub machine)
     if (msg.t === "listdir") {
       const base = typeof msg.path === "string" && msg.path ? msg.path : homedir();
@@ -853,6 +867,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" },
         total: h.messages.length,
         messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent })),
+        files: sessionFiles(msg.sessionId),
       });
       return;
     }
@@ -861,7 +876,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       syncTails();
       const s = store.ensure(msg.sessionId);
       const all = store.history(s.id);
-      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: agents.get(s.agent).nativeSessionId?.(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP) });
+      const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles("claude:" + nid) : [] });
       return;
     }
     if (msg.t === "new") {
@@ -1207,7 +1223,7 @@ const adminServer = createServer((req, res) => {
 adminServer.listen(ADMIN_PORT, "127.0.0.1", () => console.log(`[hub] admin (loopback) http://127.0.0.1:${ADMIN_PORT}  — recovery: scripts/jarvis.ps1`));
 
 void refreshLocalAgents();
-setInterval(() => void refreshLocalAgents(), 60_000);
+setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min — availability rarely changes; each probe spawns a real `claude -p`
 setTimeout(() => void refreshUpdate(true), 8_000); // first update check shortly after boot
 setInterval(() => void refreshUpdate(true), 6 * 3600_000); // then every 6h
 server.listen(PORT, () => {

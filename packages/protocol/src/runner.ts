@@ -55,7 +55,17 @@ export interface RunnerStreamEvent {
   toolId?: string;
   /** parent_tool_use_id — set when this event happens INSIDE a spawned sub-agent (Task) */
   parentId?: string;
+  /** for file tools: the real (usually absolute) file path, so the UI can open it */
+  path?: string;
+  /** for edits: line counts of this change */
+  adds?: number;
+  dels?: number;
 }
+
+/** A file touched by tools in a session (real path + action + +/- line counts). */
+export interface TouchedFileMeta { path: string; action: "read" | "edit" | "write" | string; adds: number; dels: number; }
+/** One row of a rendered diff: ' ' context, '+' add, '-' del, '@' section marker. */
+export interface DiffRowMeta { t: " " | "+" | "-" | "@" | string; s: string; }
 
 // --- Runner -> Hub ---
 export type RunnerToHub =
@@ -74,7 +84,10 @@ export type RunnerToHub =
       total: number;
       /** underlying native session id (e.g. the real claude session, for `claude --resume`) */
       nativeId?: string;
+      /** files touched by tools in this session (real paths, for the viewer/diff panel) */
+      files?: TouchedFileMeta[];
     }
+  | { t: "filediff"; reqId: string; path: string; name: string; rows?: DiffRowMeta[]; adds?: number; dels?: number; error?: string }
   | { t: "stream"; sessionId: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
   | { t: "activity"; sessionId: string; name?: string; summary?: string }
@@ -97,8 +110,9 @@ export type HubToRunner =
       opts?: { model?: string; effort?: string };
     }
   | { t: "list" }
-  | { t: "delete"; sessionId: string; alsoNative?: boolean }
+  | { t: "delete"; sessionId?: string; sessionIds?: string[]; alsoNative?: boolean }
   | { t: "readfile"; reqId: string; path: string; cwd?: string }
+  | { t: "readdiff"; reqId: string; sessionId: string; path: string }
   | { t: "caps"; agent?: string }
   | { t: "stop"; sessionId: string }
   | { t: "update" }

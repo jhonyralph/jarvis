@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter,
-  listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, Store,
+  listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, Store,
   updateApply, restartService, readProjectFile,
   type AgentAdapter, type SendOpts,
 } from "@jarvis/core";
@@ -104,12 +104,13 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
   if (isNativeId(sessionId)) {
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
-    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code", total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts })) });
+    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code", total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts })), files: sessionFiles(sessionId) });
     startTail(sessionId); // live-mirror new turns (external CLI) to the Hub
   } else {
     const s = store.ensure(sessionId);
     const all = store.history(s.id);
-    send({ t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: all.length, nativeId: agents.get(s.agent).nativeSessionId?.(s.id), messages: all.map((m: any) => ({ role: m.role, text: m.text, ts: m.ts })) });
+    const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+    send({ t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: all.length, nativeId: nid, messages: all.map((m: any) => ({ role: m.role, text: m.text, ts: m.ts })), files: nid ? sessionFiles("claude:" + nid) : [] });
   }
 }
 
@@ -170,17 +171,24 @@ function connect(): void {
         return;
       }
       if (m.t === "readfile" && typeof m.path === "string") { send({ t: "filecontent", reqId: m.reqId, ...readProjectFile(m.path, m.cwd) }); return; }
-      if (m.t === "delete" && typeof m.sessionId === "string") {
-        const sid = m.sessionId;
-        if (isNativeId(sid)) { stopTail(sid); deleteNative(sid); }
-        else {
-          const s = store.get(sid);
-          if (s) {
-            const ag = agents.get(s.agent);
-            if (m.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); if (nid) deleteNative("claude:" + nid); }
-            ag.forgetSession?.(sid);
+      if (m.t === "readdiff" && typeof m.path === "string" && typeof m.sessionId === "string") {
+        const diffId = isNativeId(m.sessionId) ? m.sessionId : (() => { const s = store.get(m.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return nid ? "claude:" + nid : ""; })();
+        send({ t: "filediff", reqId: m.reqId, ...(diffId ? sessionFileDiff(diffId, m.path) : { path: m.path, name: m.path.split(/[\\/]/).pop() || m.path, error: "sem sessão nativa vinculada" }) });
+        return;
+      }
+      if (m.t === "delete" && (typeof m.sessionId === "string" || Array.isArray(m.sessionIds))) {
+        const ids: string[] = Array.isArray(m.sessionIds) ? m.sessionIds.filter((x: any) => typeof x === "string") : [m.sessionId];
+        for (const sid of ids) {
+          if (isNativeId(sid)) { stopTail(sid); deleteNative(sid); }
+          else {
+            const s = store.get(sid);
+            if (s) {
+              const ag = agents.get(s.agent);
+              if (m.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); if (nid) deleteNative("claude:" + nid); }
+              ag.forgetSession?.(sid);
+            }
+            store.delete(sid);
           }
-          store.delete(sid);
         }
         pushSessions();
         return;

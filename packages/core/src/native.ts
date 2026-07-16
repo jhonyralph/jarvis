@@ -156,6 +156,7 @@ function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
       if (t && !isInjected(t)) title = t;
     }
   });
+  if (cwd && /[\\/]\.jarvis[\\/]oneshot/i.test(cwd)) return null; // Jarvis's own one-shot (summary/digest/voice) — not a real session
   if (!id) {
     const m = basename(path).match(/([0-9a-f]{8}-[0-9a-f-]+)\.jsonl$/i);
     id = m ? m[1] : basename(path);
@@ -203,13 +204,15 @@ export function nativeFilePath(id: string): { path: string; claude: boolean } | 
 }
 
 /** Permanently delete a native session's jsonl (claude:<id> / codex:<id>). Irreversible.
- *  A managed session's bound claude session is deleted by passing "claude:" + session_id. */
+ *  A managed session's bound claude session is deleted by passing "claude:" + session_id.
+ *  Best-effort: a session whose file is already gone counts as removed (returns true) so
+ *  the UI drops it either way; only a real unlink failure (locked/permission) returns false. */
 export function deleteNative(id: string): boolean {
+  listCache = null; // always re-scan the list after a delete attempt
   const f = isNativeId(id) ? findFileById(id) : null;
-  if (!f) return false;
+  if (!f) return true; // nothing on disk — treat as already removed
   try { unlinkSync(f.path); } catch { return false; }
   pcache.delete(f.path);
-  listCache = null; // force the next listNative() to re-scan
   return true;
 }
 
@@ -259,6 +262,84 @@ export function parseNativeEvents(line: string, claude: boolean): NativeEvent[] 
     }
   }
   return out;
+}
+
+// ------------------------- files touched in a session -------------------------
+export interface TouchedFile { path: string; action: "read" | "edit" | "write"; adds: number; dels: number; }
+export interface DiffRow { t: " " | "+" | "-" | "@"; s: string; }
+
+/** Line-level diff (LCS). Rows tagged ' '(context) '+'(add) '-'(del). Caps work to stay fast. */
+export function lineDiff(a: string, b: string): DiffRow[] {
+  const A = (a ?? "").split("\n"), B = (b ?? "").split("\n");
+  const n = A.length, m = B.length;
+  if (n * m > 4_000_000) return [...A.map((s) => ({ t: "-" as const, s })), ...B.map((s) => ({ t: "+" as const, s }))];
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out: DiffRow[] = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { out.push({ t: " ", s: A[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "-", s: A[i] }); i++; }
+    else { out.push({ t: "+", s: B[j] }); j++; }
+  }
+  while (i < n) out.push({ t: "-", s: A[i++] });
+  while (j < m) out.push({ t: "+", s: B[j++] });
+  return out;
+}
+/** +/- line counts for a single old→new edit. */
+export function editCounts(oldStr: string, newStr: string): { adds: number; dels: number } {
+  let adds = 0, dels = 0;
+  for (const r of lineDiff(oldStr, newStr)) { if (r.t === "+") adds++; else if (r.t === "-") dels++; }
+  return { adds, dels };
+}
+
+interface FileOp { action: "read" | "edit" | "write"; edits: Array<{ old: string; new: string }>; content?: string; adds: number; dels: number; }
+function resolveClaudeJsonl(id: string): string | null {
+  const f = findFileById(id.startsWith("claude:") ? id : "claude:" + id);
+  return f && f.claude ? f.path : null;
+}
+/** Walk a claude session jsonl and aggregate per-file tool activity (Read/Edit/Write/MultiEdit). */
+function claudeFileOps(jsonlPath: string): Map<string, FileOp> {
+  const ops = new Map<string, FileOp>();
+  let raw: string;
+  try { raw = readFileSync(jsonlPath, "utf8"); } catch { return ops; }
+  const bump = (p: string): FileOp => { let o = ops.get(p); if (!o) { o = { action: "read", edits: [], adds: 0, dels: 0 }; ops.set(p, o); } return o; };
+  eachLine(raw, (o: any) => {
+    if (o.type !== "assistant") return;
+    for (const b of o.message?.content || []) {
+      if (b.type !== "tool_use") continue;
+      const inp = b.input || {};
+      if (b.name === "Read" && inp.file_path) bump(inp.file_path);
+      else if (b.name === "Edit" && inp.file_path) { const x = bump(inp.file_path); x.action = "edit"; if (typeof inp.old_string === "string") x.edits.push({ old: inp.old_string, new: inp.new_string || "" }); }
+      else if (b.name === "MultiEdit" && inp.file_path && Array.isArray(inp.edits)) { const x = bump(inp.file_path); x.action = "edit"; for (const e of inp.edits) if (typeof e?.old_string === "string") x.edits.push({ old: e.old_string, new: e.new_string || "" }); }
+      else if (b.name === "Write" && inp.file_path) { const x = bump(inp.file_path); if (x.action !== "edit") x.action = "write"; x.content = inp.content || ""; }
+      else if (b.name === "NotebookEdit" && inp.notebook_path) { bump(inp.notebook_path).action = "edit"; }
+    }
+  });
+  for (const o of ops.values()) {
+    if (o.action === "edit") for (const e of o.edits) { const c = editCounts(e.old, e.new); o.adds += c.adds; o.dels += c.dels; }
+    else if (o.action === "write" && o.content != null) o.adds = o.content ? o.content.split("\n").length : 0;
+  }
+  return ops;
+}
+/** Files touched in a session (real absolute paths + action + +/- counts). id: "claude:<uuid>" or a raw claude session_id. */
+export function sessionFiles(id: string): TouchedFile[] {
+  const jsonl = resolveClaudeJsonl(id);
+  if (!jsonl) return [];
+  return [...claudeFileOps(jsonl).entries()]
+    .map(([path, o]) => ({ path, action: o.action, adds: o.adds, dels: o.dels }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+/** The unified diff rows for ONE edited file in a session (concatenates multiple edits). */
+export function sessionFileDiff(id: string, path: string): { path: string; name: string; rows?: DiffRow[]; adds?: number; dels?: number; error?: string } {
+  const jsonl = resolveClaudeJsonl(id);
+  if (!jsonl) return { path, name: basename(path), error: "sessão não encontrada" };
+  const o = claudeFileOps(jsonl).get(path);
+  if (!o || o.action !== "edit" || !o.edits.length) return { path, name: basename(path), error: "sem diff (não foi editado nesta sessão)" };
+  const rows: DiffRow[] = [];
+  o.edits.forEach((e, idx) => { if (idx) rows.push({ t: "@", s: `— edição ${idx + 1} de ${o.edits.length} —` }); for (const r of lineDiff(e.old, e.new)) rows.push(r); });
+  return { path, name: basename(path), rows, adds: o.adds, dels: o.dels };
 }
 
 /** Cheap agent+cwd lookup (head read only) — used to continue a native session. */
