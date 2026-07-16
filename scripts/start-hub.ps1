@@ -64,7 +64,7 @@ $lastWarm = [datetime]::MinValue
 while ($true) {
   if (((Get-Date) - $lastWarm).TotalMinutes -ge 30) { Warm-Token; $lastWarm = Get-Date }
   Log 'iniciando hub...'
-  if (Test-Path $tsx) { & node.exe $tsx 'src/index.ts' *>> $log }
+  if (Test-Path $tsx) { & node.exe $tsx "$root\apps\hub\src\index.ts" *>> $log }
   else { Log 'tsx nao encontrado na raiz — caindo pro npm'; & npm.cmd start *>> $log }
   Log 'hub encerrou — reiniciando em 3s'
   Start-Sleep -Seconds 3
