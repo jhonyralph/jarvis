@@ -29,6 +29,8 @@
     #recents .item:hover { background:#ffffff0d; } #recents .item.active { background:#ffffff14; }
     #files .item { color:var(--mut); font-size:12.5px; cursor:default; }
     .link { color:var(--mut); font-size:12px; cursor:pointer; padding:2px 6px; } .link:hover { color:var(--text); }
+    #quickRow { display:flex; flex-direction:column; gap:2px; }
+    .link .qic { margin-right:5px; }
     .spacer { flex:1; }
     main { flex:1; display:flex; flex-direction:column; min-width:0; }
     header { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); }
@@ -271,7 +273,12 @@
       #recents .rsum { opacity:.85; font-size:18px; padding:6px 8px; }
       #recents .rdel { opacity:.85; font-size:16px; padding:6px 8px; }
       #newSess, #settingsBtn, #moreBtn { padding:13px; font-size:15px; }
-      .link { font-size:14.5px; padding:10px 6px; }
+      /* atalhos fixos viram fileira de ícones — economizam 4 linhas inteiras no celular */
+      #quickRow { flex-direction:row; gap:6px; justify-content:space-between; margin:2px 0; }
+      #quickRow .link { flex:1; display:flex; align-items:center; justify-content:center; min-height:44px; border:1px solid var(--line); border-radius:10px; padding:0; }
+      #quickRow .link.hidden { display:none; }
+      #quickRow .qic { margin:0; font-size:19px; }
+      #quickRow .qtx { display:none; }   /* só o ícone no mobile; o title mostra o rótulo ao toque longo */
       #log { padding:14px; gap:12px; } .msg.me, .msg.bot { max-width:92%; }
       .msg.me { font-size:15.5px; } .msg.bot { font-size:15.5px; }
       /* composer: bigger targets; pills in one scrollable row; send full width */
@@ -284,6 +291,9 @@
       .controls { flex-wrap:wrap; gap:8px; }
       .ctlpills { display:flex; gap:8px; overflow-x:auto; flex:1 1 100%; padding-bottom:3px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
       .ctlpills::-webkit-scrollbar { display:none; } .ctlpills .spacer { display:none; }
+      /* no celular os mais usados vêm primeiro: modelo, esforço, consumo, escutar — depois o resto */
+      #modelBtn { order:1; } #effortBtn { order:2; } #usageBtn { order:3; } #speak { order:4; }
+      #agentBtn { order:5; } #cwdBtn { order:6; } #attach { order:7; } #status { order:8; }
       /* alvo de toque: vale pro mic (agora fora de .controls, ao lado do input) e pros botoes de
          voz do header — sem isso eles ficariam com o tamanho de desktop justo no mobile. */
       .pill, .controls button.ghost, header button.ghost { min-height:42px; font-size:13.5px; padding:10px 13px; flex:none; }
@@ -306,10 +316,12 @@
       <button id="sideClose" class="ghost" title="Fechar menu">✕</button>
       <div id="machineBar" style="display:none"></div>
       <button id="newSess">＋ Nova sessão</button>
-      <div class="link" id="searchBtn">🔎 buscar entre sessões</div>
-      <div class="link" id="digestBtn">🎧 o que está rolando</div>
-      <div class="link" id="qrBtn">📱 abrir no celular</div>
-      <div class="link hidden" id="secBtn">🔐 dispositivos &amp; convites</div>
+      <div id="quickRow">
+        <div class="link" id="searchBtn" title="Buscar entre sessões"><span class="qic">🔎</span><span class="qtx">buscar entre sessões</span></div>
+        <div class="link" id="digestBtn" title="O que está rolando entre as sessões"><span class="qic">🎧</span><span class="qtx">o que está rolando</span></div>
+        <div class="link" id="qrBtn" title="Abrir no celular"><span class="qic">📱</span><span class="qtx">abrir no celular</span></div>
+        <div class="link hidden" id="secBtn" title="Dispositivos &amp; convites"><span class="qic">🔐</span><span class="qtx">dispositivos &amp; convites</span></div>
+      </div>
       <div class="sec rsec tog" id="recSec" title="Clique para minimizar"><span class="caret">▾</span><span class="lbl">Recentes</span><span class="cnt" id="recCnt"></span></div>
       <div id="recents"></div>
       <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
