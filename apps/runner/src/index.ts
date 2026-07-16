@@ -85,10 +85,17 @@ function startTail(sid: string): void {
 }
 function stopTail(sid: string): void { const t = tails.get(sid); if (t) { clearInterval(t.timer); tails.delete(sid); } }
 
+// Probing availability spawns a real `claude -p` per agent, so it is CACHED: register runs on
+// every reconnect, and re-probing each time was both slow and (on older builds) left one
+// throwaway "ok" session per reconnect — thousands of them on a flapping link.
+let agentsCache: { at: number; list: string[] } | null = null;
 async function availableAgents(): Promise<string[]> {
+  if (agentsCache && Date.now() - agentsCache.at < 3_600_000) return agentsCache.list;
   const out: string[] = [];
   for (const n of agents.names()) { try { if (await agents.get(n).available()) out.push(n); } catch { /* skip */ } }
-  return out.length ? out : agents.names();
+  const list = out.length ? out : agents.names();
+  agentsCache = { at: Date.now(), list };
+  return list;
 }
 
 function allSessions(): RunnerSession[] {
