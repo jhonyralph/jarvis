@@ -75,14 +75,68 @@ webpush.setVapidDetails("mailto:jarvis@localhost", vapid.publicKey, vapid.privat
 let pushSubs: any[] = [];
 try { pushSubs = JSON.parse(readFileSync(SUBS_FILE, "utf8")); } catch { pushSubs = []; }
 function saveSubs(): void { try { mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(SUBS_FILE, JSON.stringify(pushSubs)); } catch { /* ignore */ } }
-function addSub(sub: any): void { if (sub?.endpoint && !pushSubs.some((s) => s.endpoint === sub.endpoint)) { pushSubs.push(sub); saveSubs(); } }
-function removeSub(endpoint: string): void { const n = pushSubs.length; pushSubs = pushSubs.filter((s) => s.endpoint !== endpoint); if (pushSubs.length !== n) saveSubs(); }
-async function pushNotify(sid: string, text: string): Promise<void> {
-  if (!pushSubs.length) return;
-  const title = store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis");
-  const payload = JSON.stringify({ title: "Jarvis · " + title, body: (text || "").replace(/[#*`>_~]/g, "").replace(/\s+/g, " ").trim().slice(0, 140), sid, tag: sid });
-  await Promise.all(pushSubs.map((sub) => webpush.sendNotification(sub, payload).catch((err: any) => { if (err?.statusCode === 404 || err?.statusCode === 410) removeSub(sub.endpoint); })));
+// --- notifications ---------------------------------------------------------
+// Prefs live ON the subscription: each device decides for itself. A phone in your pocket wants
+// "session done, grouped"; the desktop you're staring at may want nothing. A single global
+// switch can't express that, and pushSubs is already per-device.
+export type NotifyKind = "done" | "error" | "machine";
+interface PushPrefs { events: NotifyKind[]; mode: "each" | "grouped"; everyMin: number }
+const DEFAULT_PREFS: PushPrefs = { events: ["done", "error"], mode: "each", everyMin: 15 };
+function prefsOf(sub: any): PushPrefs {
+  const p = sub?.prefs || {};
+  const events = Array.isArray(p.events) ? p.events.filter((e: string) => ["done", "error", "machine"].includes(e)) : DEFAULT_PREFS.events;
+  const everyMin = Math.min(240, Math.max(1, Number(p.everyMin) || DEFAULT_PREFS.everyMin));
+  return { events, mode: p.mode === "grouped" ? "grouped" : "each", everyMin };
 }
+function addSub(sub: any, prefs?: unknown): void {
+  if (!sub?.endpoint) return;
+  const existing = pushSubs.find((s) => s.endpoint === sub.endpoint);
+  if (existing) { if (prefs) existing.prefs = prefs; saveSubs(); return; }
+  pushSubs.push({ ...sub, prefs: prefs || DEFAULT_PREFS }); saveSubs();
+}
+function setSubPrefs(endpoint: string, prefs: unknown): void {
+  const s = pushSubs.find((x) => x.endpoint === endpoint);
+  if (s) { s.prefs = prefs; saveSubs(); }
+}
+function removeSub(endpoint: string): void { const n = pushSubs.length; pushSubs = pushSubs.filter((s) => s.endpoint !== endpoint); if (pushSubs.length !== n) { pending.delete(endpoint); saveSubs(); } }
+
+async function sendPush(sub: any, payload: object): Promise<void> {
+  await webpush.sendNotification(sub, JSON.stringify(payload)).catch((err: any) => {
+    // 404/410 = the browser dropped this subscription for good; anything else may be transient.
+    if (err?.statusCode === 404 || err?.statusCode === 410) removeSub(sub.endpoint);
+  });
+}
+const clean = (s: string) => (s || "").replace(/[#*`>_~]/g, "").replace(/\s+/g, " ").trim();
+// Grouped mode: hold events per device and flush on that device's own interval.
+const pending = new Map<string, { at: number; items: Array<{ kind: NotifyKind; title: string; body: string }> }>();
+/** One event, fanned out to every device that asked for this kind — now or at its next flush. */
+function notifyEvent(kind: NotifyKind, title: string, body: string, tag?: string): void {
+  for (const sub of [...pushSubs]) {
+    const p = prefsOf(sub);
+    if (!p.events.includes(kind)) continue;
+    if (p.mode === "each") { void sendPush(sub, { title: "Jarvis · " + clean(title).slice(0, 60), body: clean(body).slice(0, 140), tag: tag || kind }); continue; }
+    const q = pending.get(sub.endpoint) || { at: Date.now(), items: [] };
+    q.items.push({ kind, title: clean(title).slice(0, 60), body: clean(body).slice(0, 90) });
+    if (q.items.length > 50) q.items.shift(); // a stuck flusher must not grow without bound
+    pending.set(sub.endpoint, q);
+  }
+}
+/** Flush grouped queues whose interval elapsed. One tick for everyone; each device has its own. */
+function flushGrouped(): void {
+  const now = Date.now();
+  for (const [endpoint, q] of [...pending]) {
+    const sub = pushSubs.find((s) => s.endpoint === endpoint);
+    if (!sub) { pending.delete(endpoint); continue; }
+    const p = prefsOf(sub);
+    if (p.mode !== "grouped" || !q.items.length || now - q.at < p.everyMin * 60_000) continue;
+    pending.delete(endpoint);
+    const n = q.items.length;
+    const head = n === 1 ? q.items[0].title : `${n} eventos`;
+    const body = q.items.slice(-4).map((i) => `${i.kind === "error" ? "⚠" : i.kind === "machine" ? "🖥" : "✓"} ${i.title}`).join(" · ");
+    void sendPush(sub, { title: "Jarvis · " + head, body: body.slice(0, 200), tag: "jarvis-grouped" });
+  }
+}
+setInterval(flushGrouped, 30_000).unref?.();
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -346,7 +400,14 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "sessions") { const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
   if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows })), files: m.files }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
-  if (m.t === "stream") { for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage }); return; }
+  if (m.t === "stream") {
+    for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage });
+    // Turnos de máquina remota terminavam em silêncio: só o cliente conectado ficava sabendo.
+    const label = runnerLabels[rc.id] || rc.info.host || rc.id;
+    if (m.ev?.kind === "done") notifyEvent("done", `${label} · sessão concluída`, m.ev.text || "", m.sessionId);
+    else if (m.ev?.kind === "error") notifyEvent("error", `${label} · falhou`, m.ev.text || "", m.sessionId);
+    return;
+  }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary }); return; }
   if (m.t === "runs") { runnerActive.set(rc.id, new Set(m.active || [])); for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
@@ -371,7 +432,7 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
   const ping = setInterval(() => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "ping" }); else clearInterval(ping); }, 20000);
   // drop runners that never register (token) within 20s
   const regTimer = setTimeout(() => { if (!rid) { try { ws.close(1008, "no register"); } catch { /* ignore */ } } }, 20000);
-  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; console.log(`[hub] runner offline: ${rid}`); broadcastMachines(); } } });
+  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; console.log(`[hub] runner offline: ${rid}`); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
   ws.on("error", () => { /* close handles cleanup */ });
   ws.on("message", (raw) => {
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
@@ -578,10 +639,11 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
     const nativeId = agent.nativeSessionId?.(sid);
     if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
-    void pushNotify(sid, reply.text); // notifica quando termina (SW suprime se a aba estiver focada)
+    notifyEvent("done", store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis"), reply.text, sid);
     return reply;
   } catch (e) {
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "error" } });
+    notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid);
     throw e;
   } finally {
     activeRuns.delete(sid); broadcastRuns();
@@ -1202,7 +1264,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // Web Push subscribe/unsubscribe + VAPID public key
     if (msg.t === "pushkey") { send(ws, { t: "pushkey", key: vapid.publicKey }); return; }
-    if (msg.t === "subscribe" && msg.sub) { addSub(msg.sub); send(ws, { t: "pushok" }); return; }
+    if (msg.t === "subscribe" && msg.sub) { addSub(msg.sub, msg.prefs); send(ws, { t: "pushok" }); return; }
+    if (msg.t === "push_prefs" && typeof msg.endpoint === "string") { setSubPrefs(msg.endpoint, msg.prefs); send(ws, { t: "pushok" }); return; }
     if (msg.t === "unsubscribe" && typeof msg.endpoint === "string") { removeSub(msg.endpoint); return; }
     if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
       const s = store.get(msg.sessionId);

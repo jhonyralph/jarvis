@@ -399,7 +399,20 @@
     <label class="row"><input type="checkbox" id="setWake"> Wake word "Hey Jarvis" (na máquina) <span class="soon">requer wake_listener.py</span></label>
     <label class="row"><input type="checkbox" id="setNoise"> Filtro anti-ruído / detecção de fala (VAD)</label>
     <div class="sec">Notificações</div>
-    <label class="row"><input type="checkbox" id="setPush"> Notificar no aparelho quando a resposta terminar (Web Push)</label>
+    <label class="row"><input type="checkbox" id="setPush"> Notificar neste aparelho (Web Push)</label>
+    <div id="pushCfg" class="hidden" style="margin:2px 0 6px 14px">
+      <div class="mut" style="font-size:11.5px;margin-bottom:4px">Avisar sobre — vale só para este aparelho:</div>
+      <label class="row"><input type="checkbox" id="pushDone"> Sessão concluída (qualquer máquina)</label>
+      <label class="row"><input type="checkbox" id="pushError"> Falhas / erros</label>
+      <label class="row"><input type="checkbox" id="pushMachine"> Máquina ficou offline</label>
+      <label>Entrega
+        <select id="pushMode">
+          <option value="each">Na hora, a cada evento</option>
+          <option value="grouped">Agrupar e avisar de tempos em tempos</option>
+        </select>
+      </label>
+      <label id="pushEveryRow">A cada quantos minutos<input type="number" id="pushEvery" min="1" max="240" step="1"></label>
+    </div>
     <div class="sec">Identificação de voz (multiusuário)</div>
     <label class="row"><input type="checkbox" id="setGate"> Exigir voz cadastrada (bloquear vozes desconhecidas)</label>
     <div id="spkList" class="mut" style="font-size:12px;margin:4px 0"></div>
@@ -443,7 +456,7 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','selBtn','selBar','selDel','selCancel','searchBtn','digestBtn','sumHdr','digestHdr','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
-      'setWake','setNoise','setPush','setGate','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','queueRow','usage','limit','sendBtn',
+      'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','queueRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -459,7 +472,7 @@
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
     // ---- config (persisted; refresh não perde estado) ----
-    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, lastCwd:'' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
     let speak = cfg.voice, speakers = [];
 
@@ -831,13 +844,20 @@
     // ---------- Web Push (notificação no aparelho quando termina) ----------
     let pushKeyResolve=null;
     function urlB64ToUint8(b64){ const pad='='.repeat((4-b64.length%4)%4); const s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/'); const raw=atob(s); const arr=new Uint8Array(raw.length); for(let i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i); return arr; }
+    // As prefs vivem NA inscricao (por aparelho): o celular no bolso e o desktop que voce esta
+    // encarando querem coisas diferentes, e um interruptor global nao consegue dizer isso.
+    let pushSub=null;
+    function pushPrefs(){ const ev=[]; if(E.pushDone&&E.pushDone.checked)ev.push('done'); if(E.pushError&&E.pushError.checked)ev.push('error'); if(E.pushMachine&&E.pushMachine.checked)ev.push('machine');
+      return { events:ev, mode:(E.pushMode&&E.pushMode.value)||'each', everyMin:Math.min(240,Math.max(1,Number(E.pushEvery&&E.pushEvery.value)||15)) }; }
+    function renderPushCfg(){ if(!E.pushCfg)return; E.pushCfg.classList.toggle('hidden', !E.setPush.checked);
+      if(E.pushEveryRow) E.pushEveryRow.classList.toggle('hidden', E.pushMode.value!=='grouped'); }
     async function enablePush(){ if(!('serviceWorker'in navigator)||!('PushManager'in window)){ toast('Notificações não suportadas neste navegador.'); return false; }
       try{ const reg=await navigator.serviceWorker.register('/sw.js');
         if(Notification.permission!=='granted'){ if((await Notification.requestPermission())!=='granted'){ toast('Permissão de notificação negada.'); return false; } }
         const key=await new Promise(res=>{ pushKeyResolve=res; tx({t:'pushkey'}); setTimeout(()=>res(null),5000); });
         if(!key){ toast('Servidor sem chave de push.'); return false; }
         let sub=await reg.pushManager.getSubscription(); if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToUint8(key)});
-        tx({t:'subscribe', sub:sub.toJSON()}); cfg.push=true; saveCfg(); return true;
+        pushSub=sub; tx({t:'subscribe', sub:sub.toJSON(), prefs:pushPrefs()}); cfg.push=true; saveCfg(); return true;
       }catch(e){ toast('Falha ao ativar notificações: '+(e.message||e)); return false; } }
     async function disablePush(){ cfg.push=false; saveCfg(); try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription(); if(sub){ tx({t:'unsubscribe',endpoint:sub.endpoint}); await sub.unsubscribe(); } }catch(e){} }
     function openSearch(){ E.searchResults.innerHTML=''; E.searchInput.value=''; E.searchModal.classList.remove('hidden'); closeSide(); setTimeout(()=>E.searchInput.focus(),30); }
@@ -922,7 +942,7 @@
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
       fillSel(E.setModel,c.models,cfg.model||c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
-      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setPush.checked=!!cfg.push; E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
+      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setPush.checked=!!cfg.push; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
       E.settings.classList.remove('hidden'); };
@@ -958,6 +978,9 @@
       if((s.behind||0)>0){ const l=s.latest||{}; E.updStatus.innerHTML='🔄 <b>Nova versão</b> ('+s.behind+' commit'+(s.behind>1?'s':'')+'): '+esc((l.subject||'').slice(0,80));
         E.updActions.classList.toggle('hidden',!owner); if(!owner) E.updStatus.innerHTML+=' <span style="opacity:.6">(peça ao dono para atualizar)</span>'; }
       else { E.updStatus.textContent='✓ Na última versão ('+(s.current||'')+')'; E.updActions.classList.add('hidden'); } }
+    // reagem na hora: sem isso o usuario marca "agrupar" e nao ve onde escolher o intervalo
+    if(E.setPush) E.setPush.onchange=renderPushCfg;
+    if(E.pushMode) E.pushMode.onchange=renderPushCfg;
     E.updCheck.onclick=()=>{ E.updStatus.textContent='Verificando…'; tx({t:'update_check'}); };
     let updArmed=0;
     E.updApply.onclick=()=>{ const now=Date.now(); if(now-updArmed<4000){ updArmed=0; E.updApply.textContent='Atualizar'; E.updStatus.textContent='Atualizando… (o Hub vai reiniciar)'; E.updActions.classList.add('hidden'); tx({t:'update_apply',allMachines:E.updAll.checked}); }
@@ -968,7 +991,11 @@
       Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
       continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked});
       saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate});
+      const pp=pushPrefs(); cfg.pushEvents=pp.events; cfg.pushMode=pp.mode; cfg.pushEvery=pp.everyMin;
       const wantPush=E.setPush.checked; if(wantPush&&!cfg.push) enablePush(); else if(!wantPush&&cfg.push) disablePush();
+      // Ja inscrito: so atualiza as prefs — re-inscrever trocaria o endpoint a toa.
+      else if(wantPush&&cfg.push){ (async()=>{ try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription();
+        if(sub) tx({t:'push_prefs', endpoint:sub.endpoint, prefs:pp}); }catch(e){} })(); }
       E.settings.classList.add('hidden'); };
     E.setCancel.onclick=()=>E.settings.classList.add('hidden'); // fecha sem salvar
 
