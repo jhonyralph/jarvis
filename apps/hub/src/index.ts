@@ -281,7 +281,7 @@ function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.w
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "sessions") { for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [] }); return; }
-  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent })), files: m.files }); } return; }
+  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, path: x.path, adds: x.adds, dels: x.dels })), files: m.files }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "stream") { for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
@@ -866,7 +866,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         sessionId: msg.sessionId,
         session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" },
         total: h.messages.length,
-        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent })),
+        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, path: m.path, adds: m.adds, dels: m.dels })),
         files: sessionFiles(msg.sessionId),
       });
       return;
@@ -1123,11 +1123,28 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // Attachments: what we SEND to the agent includes file contents; what we SHOW
     // stays the user's text + a small chip (files are viewable in the chat).
-    const attachments: Array<{ name: string; content: string }> = Array.isArray(msg.attachments) ? msg.attachments : [];
+    const attachments: Array<{ name: string; content: string; image?: boolean }> = Array.isArray(msg.attachments) ? msg.attachments : [];
     let agentText = text;
     if (attachments.length) {
-      const block = attachments.map((a) => `--- arquivo anexado: ${a.name} ---\n${a.content}`).join("\n\n");
-      agentText = `${block}\n\n${text}`;
+      // images (pasted/uploaded) are decoded to a temp file and referenced by path so the
+      // agent can Read them; text files are inlined into the prompt.
+      const parts: string[] = [];
+      const imgPaths: string[] = [];
+      for (const a of attachments) {
+        if (a.image) {
+          try {
+            const dir = join(homedir(), ".jarvis", "pasted");
+            mkdirSync(dir, { recursive: true });
+            const p = join(dir, `${Date.now()}-${String(a.name || "img").replace(/[^\w.-]/g, "_")}`);
+            writeFileSync(p, Buffer.from(a.content, "base64"));
+            imgPaths.push(p);
+          } catch { /* skip */ }
+        } else {
+          parts.push(`--- arquivo anexado: ${a.name} ---\n${a.content}`);
+        }
+      }
+      if (imgPaths.length) parts.push(`Imagens anexadas — use a ferramenta Read para vê-las:\n${imgPaths.join("\n")}`);
+      agentText = `${parts.join("\n\n")}\n\n${text}`;
       text = `${text}\n\n📎 ${attachments.map((a) => a.name).join(", ")}`;
     }
 

@@ -226,7 +226,8 @@ function toolSummary(name: string, input: any): string {
     switch (name) {
       case "Bash": return "Bash: " + String(input?.command || "").replace(/\s+/g, " ").slice(0, 90);
       case "Read": return "Lendo " + base(input?.file_path);
-      case "Edit": case "Write": case "NotebookEdit": case "MultiEdit": return "Editando " + base(input?.file_path);
+      case "Write": return "Criando " + base(input?.file_path);
+      case "Edit": case "NotebookEdit": case "MultiEdit": return "Editando " + base(input?.file_path);
       case "Grep": return "Buscando /" + String(input?.pattern || "").slice(0, 40) + "/";
       case "Glob": return "Listando " + String(input?.pattern || "");
       case "Task": case "Agent": return "Subagente: " + String(input?.description || input?.subagent_type || "").slice(0, 60);
@@ -235,6 +236,17 @@ function toolSummary(name: string, input: any): string {
       default: { const s = JSON.stringify(input || {}); return name + (s && s !== "{}" ? " " + s.slice(0, 60) : ""); }
     }
   } catch { return name; }
+}
+
+/** For a file tool_use: the real path + (for edits) +/- line counts. Mirrors the live path. */
+function toolStat(name: string, input: any): { path?: string; adds?: number; dels?: number } {
+  const inp = input || {};
+  if (name === "Edit") return { path: inp.file_path, ...editCounts(inp.old_string || "", inp.new_string || "") };
+  if (name === "Write") return { path: inp.file_path, adds: inp.content ? String(inp.content).split("\n").length : 0, dels: 0 };
+  if (name === "MultiEdit" && Array.isArray(inp.edits)) { let a = 0, d = 0; for (const e of inp.edits) { const c = editCounts(e?.old_string || "", e?.new_string || ""); a += c.adds; d += c.dels; } return { path: inp.file_path, adds: a, dels: d }; }
+  if (name === "Read") return { path: inp.file_path };
+  if (name === "NotebookEdit") return { path: inp.notebook_path };
+  return {};
 }
 
 /** Parse ONE jsonl line into displayable events: text turns AND tool activity (for live tailing). */
@@ -359,8 +371,10 @@ function findFileById(id: string): { path: string; claude: boolean } | null {
   return hit ? { path: hit.path, claude } : null;
 }
 
-/** Full read-only history of one native session (parsed to Jarvis message shape). */
-export function nativeHistory(id: string): { agent: string; cwd: string; title: string; messages: Array<{ role: string; text: string; ts: number }> } | null {
+export interface HistMsg { role: string; text: string; ts: number; name?: string; path?: string; adds?: number; dels?: number; }
+/** Full read-only history of one native session — text turns AND tool activity (role:"tool"),
+ *  interleaved in order, so the "editando/criando arquivo" blocks survive a page refresh. */
+export function nativeHistory(id: string): { agent: string; cwd: string; title: string; messages: HistMsg[] } | null {
   if (!isNativeId(id)) return null;
   const f = findFileById(id);
   if (!f) return null;
@@ -370,7 +384,7 @@ export function nativeHistory(id: string): { agent: string; cwd: string; title: 
   } catch {
     return null;
   }
-  const messages: Array<{ role: string; text: string; ts: number }> = [];
+  const messages: HistMsg[] = [];
   let cwd = "", title = "";
   eachLine(raw, (o) => {
     if (f.claude) {
@@ -378,10 +392,19 @@ export function nativeHistory(id: string): { agent: string; cwd: string; title: 
       else if (o.type === "ai-title" && o.aiTitle) title = title || o.aiTitle;
       else if (o.type === "user" || o.type === "assistant") {
         if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
-        let t = contentText(o.message?.content);
-        if (o.type === "user" && isInjected(t)) return; // tool-results/notifications injected as "user" — not a human turn
-        t = cleanText(t);
-        if (t) messages.push({ role: o.type, text: t, ts: Date.parse(o.timestamp) || 0 });
+        const ts = Date.parse(o.timestamp) || 0;
+        const content = o.message?.content;
+        if (o.type === "assistant" && Array.isArray(content)) {
+          for (const b of content) {
+            if (b.type === "text" && b.text) { const t = cleanText(b.text); if (t) messages.push({ role: "assistant", text: t, ts }); }
+            else if (b.type === "tool_use") { const st = toolStat(b.name, b.input); messages.push({ role: "tool", text: toolSummary(b.name, b.input), ts, name: b.name, path: st.path, adds: st.adds, dels: st.dels }); }
+          }
+        } else {
+          let t = contentText(content);
+          if (o.type === "user" && isInjected(t)) return; // tool-results/notifications injected as "user"
+          t = cleanText(t);
+          if (t) messages.push({ role: o.type, text: t, ts });
+        }
       }
     } else {
       if (o.type === "session_meta" && o.payload) cwd = o.payload.cwd || cwd;

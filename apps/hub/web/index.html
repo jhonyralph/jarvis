@@ -44,6 +44,9 @@
     .strtools { display:flex; flex-direction:column; gap:4px; }
     .strtool { display:flex; align-items:center; gap:7px; font-size:12.5px; color:#cbd5e1; background:#ffffff0d; border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow-wrap:anywhere; }
     .strtool.act { align-self:flex-start; max-width:min(88%,760px); }
+    .strtool .ttl { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .strtool.clk { cursor:pointer; } .strtool.clk:hover { background:#ffffff1a; border-color:#ffffff33; }
+    .strtool .fadd { color:#3fb950; flex:none; } .strtool .fdel { color:#f85149; flex:none; }
     .subagent { border:1px solid var(--line); border-radius:8px; background:#ffffff08; overflow:hidden; }
     .subagent .sahead { display:flex; align-items:center; gap:7px; font-size:12.5px; color:#e2e8f0; padding:6px 9px; cursor:pointer; user-select:none; }
     .subagent .sahead:hover { background:#ffffff0d; }
@@ -70,6 +73,8 @@
     #composer { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
     #attachRow { display:flex; gap:6px; flex-wrap:wrap; }
     #attachRow .chip { font-size:12px; padding:4px 8px; cursor:pointer; }
+    #attachRow .imgchip { padding:3px; max-width:none; position:relative; } #attachRow .imgchip img { height:40px; width:auto; max-width:120px; border-radius:6px; display:block; object-fit:cover; }
+    #attachRow .imgchip span { position:absolute; top:1px; right:1px; background:#000a; border-radius:50%; width:16px; height:16px; display:flex; align-items:center; justify-content:center; font-size:11px; }
     #input { width:100%; resize:none; background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:12px; padding:10px 12px; font:inherit; max-height:160px; }
     .controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .controls .spacer { flex:1; min-width:8px; }
@@ -432,7 +437,18 @@
         if(/^\s*[-*+]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*[-*+]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*[-*+]\s+/,''))).replace(/^\[([ xX])\]\s+/,(_,c)=>/x/i.test(c)?'☑ ':'☐ '));i++;} h+=`<ul>${it.map(x=>`<li>${x}</li>`).join('')}</ul>`; continue; }
         if(/^\s*\d+[.)]\s+/.test(line)){ const it=[]; while(i<L.length&&/^\s*\d+[.)]\s+/.test(L[i])){it.push(inl(esc(L[i].replace(/^\s*\d+[.)]\s+/,''))));i++;} h+=`<ol>${it.map(x=>`<li>${x}</li>`).join('')}</ol>`; continue; }
         if(line.trim()===''){ i++; continue; } h+=`<p>${inl(esc(line))}</p>`; i++; } return h; }
-    function buildMsgEl(m){ const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
+    // A tool-activity block (icon + summary + optional +/- counts). File tools are clickable
+    // → open the viewer/diff panel. Reused by streaming AND by rebuilt history (persists refresh).
+    function toolRowEl(name,summary,path,adds,dels){
+      const d=document.createElement('div'); d.className='strtool';
+      const cnt=(adds||dels)?` <span class="fadd">+${adds||0}</span> <span class="fdel">-${dels||0}</span>`:'';
+      d.innerHTML=`<span>${toolIcon(name)}</span><span class="ttl">${esc(summary||name||'')}</span>${cnt}`;
+      const act=/Edit$/.test(name||'')?'edit':(name==='Write'?'write':(name==='Read'?'read':''));
+      if(path&&act){ d.classList.add('clk'); d.title='Ver '+path; d.onclick=(e)=>{ e.stopPropagation(); openFile(path,act); }; }
+      return d; }
+    function buildMsgEl(m){
+      if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels);
+      const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
         if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
         d.appendChild(document.createTextNode(m.text)); } else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
     function addMsg(m){ const d=buildMsgEl(m); if(pendingEl) E.log.insertBefore(d,pendingEl); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
@@ -463,10 +479,10 @@
       head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
       strToolsEl.appendChild(wrap);
       const rec={wrap,body,title,countEl,count:0,preview:null,previewText:''}; subAgents[id]=rec; return rec; }
-    function streamTool(name,summary,toolId,parentId){ if(!strToolsEl)streamStartUI();
-      if(parentId){ const sa=ensureSubAgent(parentId); const d=document.createElement('div'); d.className='strtool'; d.innerHTML=`<span>${toolIcon(name)}</span><span>${esc(summary||name||'')}</span>`; sa.body.appendChild(d); sa.count++; sa.countEl.textContent=sa.count; E.log.scrollTop=E.log.scrollHeight; return; }
+    function streamTool(name,summary,toolId,parentId,path,adds,dels){ if(!strToolsEl)streamStartUI();
+      if(parentId){ const sa=ensureSubAgent(parentId); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels)); sa.count++; sa.countEl.textContent=sa.count; E.log.scrollTop=E.log.scrollHeight; return; }
       if((name==='Task'||name==='Agent')&&toolId){ ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); E.log.scrollTop=E.log.scrollHeight; return; }
-      const d=document.createElement('div'); d.className='strtool'; d.innerHTML=`<span>${toolIcon(name)}</span><span>${esc(summary||name||'')}</span>`; strToolsEl.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+      strToolsEl.appendChild(toolRowEl(name,summary,path,adds,dels)); E.log.scrollTop=E.log.scrollHeight; }
     function streamText(t,parentId){
       if(parentId){ const sa=ensureSubAgent(parentId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); E.log.scrollTop=E.log.scrollHeight; return; }
       if(!strTextEl)streamStartUI(); strText+=t; strTextEl.textContent=strText; E.log.scrollTop=E.log.scrollHeight; }
@@ -936,7 +952,7 @@
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
-          else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
+          else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
           else if(ev.kind==='text') streamText(ev.text||'',ev.parentId);
           else if(ev.kind==='done') streamDone(ev.text, m.usage);
           else if(ev.kind==='error') streamErr(); }
@@ -1010,8 +1026,16 @@
         if(f) openFile(f.path,f.action); else openFile(href); }
     });
     E.attach.onclick=()=>E.file.click();
-    E.file.onchange=async()=>{ for(const f of E.file.files){ attachments.push({name:f.name,content:await f.text()}); } E.file.value=''; renderAttach(); };
-    function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='📎 '+a.name+' ✕'; c.onclick=()=>{attachments.splice(i,1);renderAttach();}; E.attachRow.appendChild(c); }); }
+    const readB64 = f => new Promise(r=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.readAsDataURL(f); });
+    async function addFile(f){ if(f.type&&f.type.startsWith('image/')){ const url=await readB64(f); attachments.push({name:f.name||`colada-${Date.now()}.png`, content:String(url).split(',')[1], image:true, preview:url}); } else { attachments.push({name:f.name,content:await f.text()}); } }
+    E.file.onchange=async()=>{ for(const f of E.file.files) await addFile(f); E.file.value=''; renderAttach(); };
+    // Ctrl+V de imagem direto no chat (igual ao Claude)
+    E.input.addEventListener('paste', async (e)=>{ const its=(e.clipboardData&&e.clipboardData.items)||[]; let got=false;
+      for(const it of its){ if(it.kind==='file'&&it.type.startsWith('image/')){ const b=it.getAsFile(); if(b){ got=true; await addFile(b); } } }
+      if(got){ e.preventDefault(); renderAttach(); } });
+    function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'+(a.image?' imgchip':'');
+      if(a.image&&a.preview){ c.innerHTML=`<img src="${a.preview}" alt=""><span>✕</span>`; } else { c.textContent='📎 '+a.name+' ✕'; }
+      c.onclick=()=>{attachments.splice(i,1);renderAttach();}; E.attachRow.appendChild(c); }); }
     // fila de mensagens: enquanto um turno roda, novas mensagens ficam na fila e são
     // enviadas JUNTAS (como uma só) quando o turno atual termina. Cancelável (✕ / limpar).
     let msgQueue=[], curBusy=false;

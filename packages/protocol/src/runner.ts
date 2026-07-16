@@ -39,9 +39,14 @@ export interface RunnerSession {
 }
 
 export interface RunnerMsg {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   text: string;
   ts?: number;
+  /** role:"tool" — the tool name + (file tools) the real path and +/- line counts */
+  name?: string;
+  path?: string;
+  adds?: number;
+  dels?: number;
 }
 
 /** Live activity while an agent works, mirrored to the streaming UI. */
