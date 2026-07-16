@@ -1254,6 +1254,7 @@ const adminServer = createServer((req, res) => {
       if (req.method === "GET" && url === "/admin/update") { return json(200, await updateCheck(UPDATE_ROOT, true)); }
       if (req.method === "POST" && url === "/admin/update") { const r = await updateApply(UPDATE_ROOT); if (r.ok && (r.behind ?? 0) > 0) scheduleRestart(); return json(200, r); }
       if (req.method === "POST" && url === "/admin/update/rollback") { const r = await updateRollback(UPDATE_ROOT); if (r.ok) scheduleRestart(); return json(200, r); }
+      if (req.method === "POST" && url === "/admin/update-runners") { let sent = 0; for (const rc of runners.values()) if (!rc.local && rc.ws && rc.ws.readyState === WebSocket.OPEN) { if (sendToRunner(rc, { t: "update" })) sent++; } return json(200, { ok: true, sent }); }
       if (req.method === "POST" && url === "/admin/invite") {
         const b = await body();
         const role = b.role === "owner" ? "owner" : "member";
