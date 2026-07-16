@@ -131,6 +131,8 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
 // Live turns on this machine, so a {t:cancel} from the Hub can kill the actual agent process.
 const runAborts = new Map<string, AbortController>();
 async function doSend(sessionId: string, text: string, agentName?: string, cwd?: string, opts?: SendOpts): Promise<void> {
+  // One turn per session (authoritative): a second send while one runs = two agents on one repo.
+  if (activeRuns.has(sessionId)) { send({ t: "busy", message: "Já há um processamento nesta sessão — aguarde terminar ou toque em Parar." }); return; }
   const ctrl = new AbortController();
   runAborts.set(sessionId, ctrl);
   activeRuns.add(sessionId); pushRuns();

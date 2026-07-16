@@ -1135,6 +1135,10 @@
       ws.onopen=()=>{ E.dot.classList.add('on'); enteredConn=false; if(authToken) tx({t:'auth',token:authToken}); else tx({t:'authinfo'}); }; // autentica antes de tudo
       ws.onclose=()=>{ E.dot.classList.remove('on'); scheduleReconnect(); };
       ws.onmessage=(e)=>{ const m=JSON.parse(e.data);
+        // Auto-recarregar quando a UI muda no servidor: guarda a 1ª versão recebida (a do HTML que
+        // esta pagina carregou); se depois chegar outra, o arquivo mudou -> esta pagina esta velha.
+        // Espera o turno atual terminar pra nao recarregar no meio de uma resposta.
+        if(m.t==='version'){ if(myVer==null){ myVer=m.v; } else if(m.v!==myVer){ needReload=true; maybeReload(); } return; }
         if(m.t==='authinfo'){ showGate(m.claimed); }
         else if(m.t==='authed'){ if(m.token){ authToken=m.token; localStorage.setItem('jarvis_token',authToken); } authUser=m.user||authUser; updateOwnerUI(); enter(); }
         else if(m.t==='need_pass'){ if(m.error){ authPass=''; localStorage.removeItem('jarvis_pass'); showVerify(m.error); } else if(authPass){ tx({t:'verify',pass:authPass}); } else { showVerify(''); } }
@@ -1188,7 +1192,7 @@
         else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
         else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
-        else if(m.t==='busy'){ endVoiceOp(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
+        else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
         else if(m.t==='runs'){ const now=m.active||[]; activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; renderRecents(); }
         else if(m.t==='qr'){ E.qrImg.src=m.dataUri; E.qrUrl.textContent=m.url; E.qrModal.classList.remove('hidden'); }
         else if(m.t==='pushkey'){ if(pushKeyResolve){ const r=pushKeyResolve; pushKeyResolve=null; r(m.key); } }
@@ -1223,7 +1227,8 @@
           if(discardRec){ discardRec=false; return; }   // descartado pelo usuário -> nao envia
           if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
-          lastWasVoice=true; tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); };
+          if(curBusy){ toast('⏳ Aguarde o término do que está em andamento.'); return; }   // um turno por sessão
+          lastWasVoice=true; tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); setBusy(true); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?'escutando resposta…':'escutando…');
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
@@ -1271,9 +1276,12 @@
       const fs=e.dataTransfer&&e.dataTransfer.files; if(fs&&fs.length){ e.preventDefault(); for(const f of fs) await addFile(f); renderAttach(); } });
     // fila de mensagens: enquanto um turno roda, novas mensagens ficam na fila e são
     // enviadas JUNTAS (como uma só) quando o turno atual termina. Cancelável (✕ / limpar).
+    // auto-reload: só recarrega quando ocioso (nada rodando, nada na fila, sem gravar áudio)
+    let myVer=null, needReload=false;
+    function maybeReload(){ if(!needReload)return; if(curBusy||msgQueue.length||recording)return; toast('🔄 Nova versão — atualizando…'); setTimeout(()=>location.reload(),700); }
     let msgQueue=[], curBusy=false;
     // Um turno em andamento mostra "Parar"; parar mata o processo do agente (nao so a UI).
-    function setBusy(b){ curBusy=b; if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!b); if(E.sendBtn) E.sendBtn.classList.toggle('hidden',!!b); }
+    function setBusy(b){ curBusy=b; if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!b); if(E.sendBtn) E.sendBtn.classList.toggle('hidden',!!b); if(!b) maybeReload(); }
     function sendMsg(text,atts){ lastWasVoice=false; tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:currentSession,attachments:atts||[]}); showPending(); setBusy(true); }
     function flushQueue(){ setBusy(false); if(!msgQueue.length)return; const text=msgQueue.map(q=>q.text).join('\n\n'); const atts=msgQueue.flatMap(q=>q.atts||[]); msgQueue=[]; renderQueue(); sendMsg(text,atts); }
     function clearQueue(){ msgQueue=[]; setBusy(false); renderQueue(); }

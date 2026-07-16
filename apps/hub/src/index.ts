@@ -408,6 +408,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     else if (m.ev?.kind === "error") notifyEvent("error", `${label} · falhou`, m.ev.text || "", m.sessionId);
     return;
   }
+  if (m.t === "busy") { for (const c of clientsOn(rc.id)) send(c, { t: "busy", message: m.message }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary }); return; }
   if (m.t === "runs") { runnerActive.set(rc.id, new Set(m.active || [])); for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
@@ -823,8 +824,16 @@ async function broadcastVoiceState(): Promise<void> {
   broadcastAll({ t: "voice_state", gate: voiceGate, threshold: voiceThreshold ?? null, speakers });
 }
 
+// Client build version = the served index.html's mtime. It changes the moment the file is edited
+// (the Hub serves it from disk per request, no restart needed), so it's the exact signal for
+// "this browser is now running stale UI". Sent on connect and pushed whenever it changes.
+function webVersion(): string { try { return String(Math.floor(statSync(join(WEB, "index.html")).mtimeMs)); } catch { return "0"; } }
+let lastWebVersion = webVersion();
+setInterval(() => { const v = webVersion(); if (v !== lastWebVersion) { lastWebVersion = v; broadcastAll({ t: "version", v }); } }, 15_000).unref?.();
+
 /** Push the app's initial state to a (now authenticated) client. */
 async function sendInitialState(ws: WebSocket): Promise<void> {
+  send(ws, { t: "version", v: webVersion() });
   send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
   send(ws, { t: "machines", machines: machineList() });
   send(ws, { t: "update_status", status: updateStatus });
@@ -1361,6 +1370,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       await handleVoiceTurn(text, !!msg.speak, speaker);
       return;
     }
+    // One turn per session. A second send while one is still running would spawn a CONCURRENT
+    // agent on the same session — two processes editing the same repo at once. The client queues,
+    // but that's just UX; this is the authoritative guard (covers voice, a second tab, a reconnect).
+    // Search and the wake router returned above, so this only gates real native/normal turns.
+    if (activeRuns.has(sid)) { send(ws, { t: "busy", message: "Já há um processamento nesta sessão — aguarde terminar ou toque em Parar." }); return; }
+
     // Continue an imported native CLI session (resumes the real claude session; persists in its jsonl).
     if (isNativeId(sid)) {
       await deliverNativeTurn(ws, sid, text, { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [] });

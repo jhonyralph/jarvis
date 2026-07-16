@@ -81,6 +81,7 @@ export type RunnerToHub =
   /** Resultado do update NESTA máquina. Sem isso o Hub só sabia que enviou o pedido, e um
    *  update abortado (repo sujo) ficava invisível — o dono achava que tinha atualizado. */
   | { t: "update_done"; ok: boolean; dirty?: boolean; behind?: number; log?: string }
+  | { t: "busy"; message: string } // recusa de turno concorrente na mesma sessão
   | { t: "sessions"; sessions: RunnerSession[] }
   | { t: "caps"; agent: string; caps: unknown }
   | {
