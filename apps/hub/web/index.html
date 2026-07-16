@@ -250,6 +250,8 @@
     .updm.wait { opacity:.6; }
     .updm .why { font-size:11px; opacity:.75; }
     .updm button { font-size:11px; padding:3px 7px; }
+    header #sumHdr { display:inline-flex; align-items:center; gap:5px; }
+    header #sumHdr .blbl { font-size:12px; }
     #machineBar .mtag.warn { opacity:1; color:#e3b341; border-color:#e3b34155; background:#e3b3411a; }
     #machineBar .mpen { flex:none; background:none; border:0; color:inherit; opacity:.5; cursor:pointer; font-size:13px; padding:2px 4px; }
     #machineBar .mpen:hover { opacity:1; }
@@ -291,7 +293,8 @@
       /* alvo de toque: vale pro mic (agora fora de .controls, ao lado do input) e pros botoes de
          voz do header — sem isso eles ficariam com o tamanho de desktop justo no mobile. */
       .pill, .controls button.ghost, header button.ghost { min-height:42px; font-size:13.5px; padding:10px 13px; flex:none; }
-      header #sumHdr, header #digestHdr { min-width:44px; font-size:17px; }
+      header #sumHdr { min-width:44px; font-size:17px; }
+      header #sumHdr .blbl { display:none; }   /* no celular so o ícone: o título precisa do espaço */
       /* por ultimo: mesma altura do input (mesma especificidade que as regras acima). */
       .inputrow .micbtn { flex:none; min-height:0; min-width:44px; padding:var(--ipad) 14px; line-height:var(--ilh); font-size:17px; }
       .pill { max-width:none; }
@@ -330,8 +333,7 @@
         <span id="title">Jarvis</span>
         <span id="nativeChip" class="natchip hidden" title="Sessão nativa vinculada — clique para copiar o comando de retomada"></span>
         <span class="spacer"></span>
-        <button type="button" id="sumHdr" class="ghost" title="Resumir esta sessão e falar">🔊</button>
-        <button type="button" id="digestHdr" class="ghost" title="O que está rolando entre as sessões">🎧</button>
+        <button type="button" id="sumHdr" class="ghost" title="Resumir esta conversa e falar (só esta sessão)">🔊<span class="blbl">Resumir</span></button>
       </header>
       <div id="limit" class="hidden"></div>
       <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
@@ -476,7 +478,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','selBtn','selBar','selDel','selCancel','searchBtn','digestBtn','sumHdr','digestHdr','recSec','filesSec','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'newSess','selBtn','selBar','selDel','selCancel','searchBtn','digestBtn','sumHdr','recSec','filesSec','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','spkList','setEnroll','setCancel','setClose','composer','input','mic','attach','file','attachRow','queueRow','usage','limit','sendBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -812,9 +814,9 @@
     E.filesSec.onclick=()=>{ cfg.filesOpen=!cfg.filesOpen; saveCfg(); applySecs(); };
     applySecs();
     E.digestBtn.onclick=()=>{ if(!startVoiceOp('digest',E.digestBtn,'⏳ gerando…'))return; status('speaking','Analisando sessões…'); tx({t:'digest',speak:true}); };
-    // Mesmas ações de voz, agora no header: resumir a sessão ATUAL exigia abrir a barra lateral e
-    // achar a sessão na lista — no celular, onde a lateral é overlay, isso é o caminho todo.
-    E.digestHdr.onclick=()=>{ if(!startVoiceOp('digest',E.digestHdr,'⏳'))return; status('speaking','Analisando sessões…'); tx({t:'digest',speak:true}); };
+    // Resumir a sessão ATUAL exigia abrir a barra lateral e achar a sessão na lista — no celular,
+    // onde a lateral é overlay, isso é o caminho todo. O panorama (🎧) fica só na lateral: dois
+    // ícones de áudio lado a lado não diziam qual era o escopo de cada um.
     E.sumHdr.onclick=()=>{ if(!currentSession){ toast('Abra uma conversa primeiro.'); return; }
       if(!startVoiceOp('summarize',E.sumHdr,'⏳',currentSession))return; status('speaking','Gerando resumo…'); tx({t:'summarize',sessionId:currentSession,speak:true}); };
     E.qrBtn.onclick=()=>{ tx({t:'qr',url:location.origin}); closeSide(); };
