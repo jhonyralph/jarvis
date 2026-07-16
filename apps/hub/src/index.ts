@@ -148,7 +148,20 @@ const server = createServer((req, res) => {
   res.end(readFileSync(file));
 });
 
-const wss = new WebSocketServer({ server, maxPayload: guard.MAX_PAYLOAD });
+// `ws` ships permessage-deflate off on the server (it warns about CPU/memory), but our traffic is
+// JSON and our worst link is a relay: between this pair Tailscale never got a direct connection,
+// so everything rides DERP at 28..621ms RTT — and a remote session crosses it TWICE (hub<->runner
+// and hub<->browser). Measured on the largest real session: history 52.8KB -> 15.3KB (-71%) for
+// 0.6ms of CPU per send. That trade is worth it here; on a phone it's worth it twice over.
+// Browsers and the `ws` client both offer the extension, so enabling it here covers both hops.
+const wss = new WebSocketServer({
+  server,
+  maxPayload: guard.MAX_PAYLOAD,
+  perMessageDeflate: {
+    threshold: 1024,       // below this the CPU costs more than the bytes saved
+    concurrencyLimit: 10,  // cap parallel zlib jobs so a burst can't starve the loop
+  },
+});
 wss.on("error", (e: any) => console.error("[hub] wss error:", e?.message ?? e));
 // Last-resort safety net: a stray socket/parse error must not take the hub down
 // (a crash is a denial-of-service). Log loudly and keep serving.
