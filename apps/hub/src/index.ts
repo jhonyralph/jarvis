@@ -301,9 +301,12 @@ function machineList(): any[] {
 function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList() }); } }
 function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.ws.readyState === WebSocket.OPEN) { rc.ws.send(JSON.stringify(obj)); return true; } return false; }
 
+// admin: waiters for a runner's next session list (used by the remote "ok" purge)
+const pendingRunnerList = new Map<string, (sessions: any[]) => void>();
+
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
-  if (m.t === "sessions") { for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [] }); return; }
+  if (m.t === "sessions") { const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [] }); return; }
   if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows })), files: m.files }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "stream") { for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage }); return; }
@@ -1256,6 +1259,25 @@ const adminServer = createServer((req, res) => {
       if (req.method === "POST" && url === "/admin/update") { const r = await updateApply(UPDATE_ROOT); if (r.ok && (r.behind ?? 0) > 0) scheduleRestart(); return json(200, r); }
       if (req.method === "POST" && url === "/admin/update/rollback") { const r = await updateRollback(UPDATE_ROOT); if (r.ok) scheduleRestart(); return json(200, r); }
       if (req.method === "POST" && url === "/admin/update-runners") { let sent = 0; for (const rc of runners.values()) if (!rc.local && rc.ws && rc.ws.readyState === WebSocket.OPEN) { if (sendToRunner(rc, { t: "update" })) sent++; } return json(200, { ok: true, sent }); }
+      // purge the "ok" probe litter on connected runners via their existing delete handler
+      // (no git-pull/restart needed): query the session list, delete the "ok" natives, repeat.
+      if (req.method === "POST" && url === "/admin/purge-runner-ok") {
+        const results: any[] = [];
+        for (const rc of runners.values()) {
+          if (rc.local || !rc.ws || rc.ws.readyState !== WebSocket.OPEN) continue;
+          let purged = 0;
+          for (let round = 0; round < 60; round++) {
+            const sessions: any[] = await new Promise((resolve) => { pendingRunnerList.set(rc.id, resolve); sendToRunner(rc, { t: "list" }); setTimeout(() => { if (pendingRunnerList.delete(rc.id)) resolve([]); }, 6000); });
+            const okIds = sessions.filter((s) => typeof s?.id === "string" && s.source === "native" && String(s.title || "").trim().toLowerCase() === "ok").map((s) => s.id);
+            if (!okIds.length) break;
+            sendToRunner(rc, { t: "delete", sessionIds: okIds, alsoNative: true });
+            purged += okIds.length;
+            await new Promise((r) => setTimeout(r, 900));
+          }
+          results.push({ runner: runnerLabels[rc.id] || rc.id, purged });
+        }
+        return json(200, { ok: true, results });
+      }
       if (req.method === "POST" && url === "/admin/invite") {
         const b = await body();
         const role = b.role === "owner" ? "owner" : "member";
