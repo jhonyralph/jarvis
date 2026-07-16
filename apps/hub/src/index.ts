@@ -510,20 +510,46 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     activeRuns.delete(sid); broadcastRuns();
   }
 }
+/** Turn attachments into (a) the text the AGENT sees — text files inlined, images decoded to
+ *  ~/.jarvis/pasted and referenced by path for the Read tool — and (b) the text/images SHOWN in
+ *  the chat (a 📎 chip for files, a served /pasted URL preview for images). Used by every turn. */
+function buildAttachments(attachments: Array<{ name: string; content: string; image?: boolean }>, text: string): { agentText: string; showText: string; images?: string[] } {
+  if (!attachments.length) return { agentText: text, showText: text };
+  const parts: string[] = [], imgPaths: string[] = [], imageUrls: string[] = [];
+  for (const a of attachments) {
+    if (a.image) {
+      try {
+        mkdirSync(PASTED_DIR, { recursive: true });
+        const p = join(PASTED_DIR, `${Date.now()}-${String(a.name || "img").replace(/[^\w.-]/g, "_")}`);
+        writeFileSync(p, Buffer.from(a.content, "base64"));
+        imgPaths.push(p); imageUrls.push("/pasted/" + basename(p));
+      } catch { /* skip */ }
+    } else parts.push(`--- arquivo anexado: ${a.name} ---\n${a.content}`);
+  }
+  if (imgPaths.length) parts.push(`Imagens anexadas — use a ferramenta Read para vê-las:\n${imgPaths.join("\n")}`);
+  const txtNames = attachments.filter((a) => !a.image).map((a) => a.name);
+  return {
+    agentText: parts.length ? `${parts.join("\n\n")}\n\n${text}` : text,
+    showText: txtNames.length ? `${text}\n\n📎 ${txtNames.join(", ")}` : text,
+    images: imageUrls.length ? imageUrls : undefined,
+  };
+}
+
 /** Continue a NATIVE CLI session (claude:<uuid>) by resuming the real claude session.
  *  Persists in the CLI's own jsonl (same file), so re-opening shows the new turns. */
-async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string }): Promise<void> {
+async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }> }): Promise<void> {
   const info = nativeInfo(sid);
   if (!info) { send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
   if (info.agent !== "claude-code") { send(ws, { t: "error", message: "continuar sessão nativa só é suportado no claude-code por enquanto" }); return; }
   const agent = agents.get(info.agent);
   const now = Date.now();
+  const { agentText, showText, images } = buildAttachments(Array.isArray(opts.attachments) ? opts.attachments : [], text);
   // pause the live tail so it doesn't re-broadcast our own turn (already shown via streaming)
   const tail = nativeTails.get(sid);
   if (tail) tail.paused = true;
-  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: info.agent, speaker: opts.speaker } });
+  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: info.agent, speaker: opts.speaker, images } });
   try {
-    const reply = await agentTurn(sid, agent, text, info.cwd || CWD, { model: opts.model, effort: opts.effort });
+    const reply = await agentTurn(sid, agent, agentText, info.cwd || CWD, { model: opts.model, effort: opts.effort });
     if (opts.speak) {
       const spoken = speechifyCapped(reply.text);
       if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
@@ -1130,7 +1156,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // Continue an imported native CLI session (resumes the real claude session; persists in its jsonl).
     if (isNativeId(sid)) {
-      await deliverNativeTurn(ws, sid, text, { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, speak: !!msg.speak, speaker });
+      await deliverNativeTurn(ws, sid, text, { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [] });
       return;
     }
 
@@ -1138,40 +1164,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     const session = store.ensure(sid);
     const agent = agents.get(session.agent);
 
-    // Attachments: what we SEND to the agent includes file contents; what we SHOW
-    // stays the user's text + a small chip (files are viewable in the chat).
-    const attachments: Array<{ name: string; content: string; image?: boolean }> = Array.isArray(msg.attachments) ? msg.attachments : [];
-    let agentText = text;
-    const imageUrls: string[] = [];
-    if (attachments.length) {
-      // images (pasted/uploaded) are decoded to a temp file — referenced by path so the agent
-      // can Read them, and served at /pasted/<file> so the chat shows a real preview;
-      // text files are inlined into the prompt.
-      const parts: string[] = [];
-      const imgPaths: string[] = [];
-      for (const a of attachments) {
-        if (a.image) {
-          try {
-            mkdirSync(PASTED_DIR, { recursive: true });
-            const p = join(PASTED_DIR, `${Date.now()}-${String(a.name || "img").replace(/[^\w.-]/g, "_")}`);
-            writeFileSync(p, Buffer.from(a.content, "base64"));
-            imgPaths.push(p);
-            imageUrls.push("/pasted/" + basename(p));
-          } catch { /* skip */ }
-        } else {
-          parts.push(`--- arquivo anexado: ${a.name} ---\n${a.content}`);
-        }
-      }
-      if (imgPaths.length) parts.push(`Imagens anexadas — use a ferramenta Read para vê-las:\n${imgPaths.join("\n")}`);
-      agentText = parts.length ? `${parts.join("\n\n")}\n\n${text}` : text;
-      const txtNames = attachments.filter((a) => !a.image).map((a) => a.name);
-      if (txtNames.length) text = `${text}\n\n📎 ${txtNames.join(", ")}`;
-    }
+    // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
+    const { agentText, showText, images } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
+    text = showText;
 
     const now = Date.now();
     // User message -> store + broadcast to everyone on this session (so all UIs show it).
-    store.add(sid, { role: "user", text, ts: now, agent: agent.name, speaker, images: imageUrls.length ? imageUrls : undefined });
-    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name, speaker, images: imageUrls.length ? imageUrls : undefined } });
+    store.add(sid, { role: "user", text, ts: now, agent: agent.name, speaker, images });
+    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name, speaker, images } });
     pushSessions();
 
     try {
