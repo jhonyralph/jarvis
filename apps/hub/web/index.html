@@ -48,11 +48,20 @@
     .msg.bot.streaming { display:flex; flex-direction:column; gap:7px; }
     .strhead { display:inline-flex; align-items:center; gap:8px; color:var(--mut); font-size:12.5px; }
     .strtools { display:flex; flex-direction:column; gap:4px; }
-    .strtool { display:flex; align-items:center; gap:7px; font-size:12.5px; color:#cbd5e1; background:#ffffff0d; border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow-wrap:anywhere; }
+    .strtool { display:flex; flex-direction:column; font-size:12.5px; color:#cbd5e1; background:#ffffff0d; border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow-wrap:anywhere; }
+    .strtool .strtoolhead { display:flex; align-items:center; gap:7px; }
     .strtool.act { align-self:flex-start; max-width:min(88%,760px); }
     .strtool .ttl { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .strtool.clk { cursor:pointer; } .strtool.clk:hover { background:#ffffff1a; border-color:#ffffff33; }
+    .strtool .ttl.clk { cursor:pointer; } .strtool .ttl.clk:hover { color:#fff; text-decoration:underline; }
+    .strtool .tcnt { flex:none; font-family:ui-monospace,Menlo,Consolas,monospace; border-radius:5px; padding:1px 4px; }
+    .strtool .tcnt.clk { cursor:pointer; } .strtool .tcnt.clk:hover { background:#ffffff1f; }
     .strtool .fadd { color:#3fb950; flex:none; } .strtool .fdel { color:#f85149; flex:none; }
+    .strtool .tdiff { margin-top:6px; border-top:1px solid var(--line); padding-top:6px; max-height:360px; overflow:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.5; }
+    .strtool .tdiff .dline { display:block; white-space:pre-wrap; overflow-wrap:anywhere; padding:0 2px; }
+    .strtool .tdiff .dline.add { background:#2ea04326; } .strtool .tdiff .dline.add::before { content:'+ '; color:#3fb950; }
+    .strtool .tdiff .dline.del { background:#f8514926; } .strtool .tdiff .dline.del::before { content:'- '; color:#f85149; }
+    .strtool .tdiff .dline.ctx { color:var(--mut); } .strtool .tdiff .dline.ctx::before { content:'\00a0\00a0'; }
+    .strtool .tdiff .dline.sec { color:#93c5fd; background:#1e293b; margin:4px 0; }
     .subagent { border:1px solid var(--line); border-radius:8px; background:#ffffff08; overflow:hidden; }
     .subagent .sahead { display:flex; align-items:center; gap:7px; font-size:12.5px; color:#e2e8f0; padding:6px 9px; cursor:pointer; user-select:none; }
     .subagent .sahead:hover { background:#ffffff0d; }
@@ -457,17 +466,30 @@
     // A tool-activity block (icon + summary + optional +/- counts). File tools are clickable
     // → open the viewer/diff panel. done=true shows past tense ("Editado"); reused by streaming
     // (present tense while running, flipped on done) AND by rebuilt history (already done).
-    function toolRowEl(name,summary,path,adds,dels,done){
+    function toolRowEl(name,summary,path,adds,dels,done,rows){
       const d=document.createElement('div'); d.className='strtool'; d.dataset.name=name||''; d.dataset.sum=summary||'';
-      const cnt=(adds||dels)?` <span class="fadd">+${adds||0}</span> <span class="fdel">-${dels||0}</span>`:'';
-      d.innerHTML=`<span>${toolIcon(name)}</span><span class="ttl">${esc((done?pastify(name,summary):summary)||name||'')}</span>${cnt}`;
-      const act=/Edit$/.test(name||'')?'edit':(name==='Write'?'write':(name==='Read'?'read':''));
-      if(path&&act){ d.classList.add('clk'); d.title='Ver '+path; d.onclick=(e)=>{ e.stopPropagation(); openFile(path,act); }; }
-      return d; }
+      const isFile=/Edit$/.test(name||'')||name==='Write'||name==='Read'||name==='NotebookEdit';
+      const head=document.createElement('div'); head.className='strtoolhead';
+      head.innerHTML=`<span>${toolIcon(name)}</span><span class="ttl">${esc((done?pastify(name,summary):summary)||name||'')}</span>`;
+      const ttl=head.querySelector('.ttl');
+      // clicar no NOME → abre o arquivo (conteúdo)
+      if(path&&isFile){ ttl.classList.add('clk'); ttl.title='Abrir '+path; ttl.onclick=(e)=>{ e.stopPropagation(); openFile(path,'read'); }; }
+      // clicar na CONTAGEM → diff SÓ desta alteração, inline (fallback: painel do arquivo inteiro)
+      if(adds||dels){ const c=document.createElement('span'); c.className='tcnt'; c.innerHTML=`<span class="fadd">+${adds||0}</span> <span class="fdel">-${dels||0}</span>`;
+        if(rows&&rows.length){ c.classList.add('clk'); c.title='Ver o diff desta alteração'; c.onclick=(e)=>{ e.stopPropagation(); toggleInlineDiff(d,rows,adds,dels); }; }
+        else if(path){ c.classList.add('clk'); c.title='Ver diff no painel'; c.onclick=(e)=>{ e.stopPropagation(); openFile(path,'edit'); }; }
+        head.appendChild(c); }
+      d.appendChild(head); return d; }
+    // expande/colapsa o diff da alteração DENTRO do próprio chat
+    function toggleInlineDiff(block,rows,adds,dels){
+      const ex=block.querySelector('.tdiff'); if(ex){ ex.remove(); return; }
+      const w=document.createElement('div'); w.className='tdiff';
+      (rows||[]).forEach(r=>{ const cls=r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx'; const ln=document.createElement('span'); ln.className='dline '+cls; ln.textContent=r.s; w.appendChild(ln); });
+      block.appendChild(w); w.scrollIntoView({block:'nearest'}); }
     // flip a live tool block to past tense when its turn finishes
     function setToolDone(block){ const nm=block.dataset.name, ttl=block.querySelector('.ttl'); if(ttl&&nm) ttl.textContent=pastify(nm,block.dataset.sum); }
     function buildMsgEl(m){
-      if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels,true);
+      if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels,true,m.rows);
       const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
         if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
         if(m.images&&m.images.length){ const w=document.createElement('div'); w.className='msgimgs'; m.images.forEach(u=>{ const im=document.createElement('img'); im.className='msgimg'; im.src=u; im.loading='lazy'; im.onclick=()=>window.open(u,'_blank'); w.appendChild(im); }); d.appendChild(w); }
@@ -501,10 +523,10 @@
       head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
       strToolsEl.appendChild(wrap);
       const rec={wrap,body,title,countEl,count:0,preview:null,previewText:''}; subAgents[id]=rec; return rec; }
-    function streamTool(name,summary,toolId,parentId,path,adds,dels){ if(!strToolsEl)streamStartUI();
-      if(parentId){ const sa=ensureSubAgent(parentId); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels)); sa.count++; sa.countEl.textContent=sa.count; E.log.scrollTop=E.log.scrollHeight; return; }
+    function streamTool(name,summary,toolId,parentId,path,adds,dels,rows){ if(!strToolsEl)streamStartUI();
+      if(parentId){ const sa=ensureSubAgent(parentId); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows)); sa.count++; sa.countEl.textContent=sa.count; E.log.scrollTop=E.log.scrollHeight; return; }
       if((name==='Task'||name==='Agent')&&toolId){ ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); E.log.scrollTop=E.log.scrollHeight; return; }
-      strToolsEl.appendChild(toolRowEl(name,summary,path,adds,dels)); E.log.scrollTop=E.log.scrollHeight; }
+      strToolsEl.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows)); E.log.scrollTop=E.log.scrollHeight; }
     function streamText(t,parentId){
       if(parentId){ const sa=ensureSubAgent(parentId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); E.log.scrollTop=E.log.scrollHeight; return; }
       if(!strTextEl)streamStartUI(); strText+=t; strTextEl.textContent=strText; E.log.scrollTop=E.log.scrollHeight; }
@@ -1003,7 +1025,7 @@
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
-          else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
+          else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
           else if(ev.kind==='text') streamText(ev.text||'',ev.parentId);
           else if(ev.kind==='done') streamDone(ev.text, m.usage);
           else if(ev.kind==='error') streamErr(); }

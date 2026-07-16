@@ -304,7 +304,7 @@ function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.w
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "sessions") { for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [] }); return; }
-  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, path: x.path, adds: x.adds, dels: x.dels })), files: m.files }); } return; }
+  if (m.t === "history") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows })), files: m.files }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "stream") { for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
@@ -586,7 +586,8 @@ async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts:
 }
 /** Cross-session search: reason over recent sessions, reply only to the asker (optionally spoken). */
 async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): Promise<void> {
-  const r = await runSessionSearch({ query, store, agents });
+  const extra = listNative(24).map((n) => ({ id: n.id, agent: n.agent, cwd: n.cwd, title: n.title, updatedAt: n.updatedAt, lastUser: "", lastAssistant: "" }));
+  const r = await runSessionSearch({ query, store, agents, extra });
   let audio: string | undefined;
   if (speak) {
     const spoken = speechifyCapped(r.answer);
@@ -932,7 +933,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         sessionId: msg.sessionId,
         session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" },
         total: h.messages.length,
-        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, path: m.path, adds: m.adds, dels: m.dels })),
+        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows })),
         files: sessionFiles(msg.sessionId),
       });
       return;
@@ -975,7 +976,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // cross-session search (explicit) + execute-in-a-specific-session
     if (msg.t === "search" && typeof msg.query === "string") {
-      await runAndSendSearch(ws, msg.query, !!msg.speak);
+      await runAndSendSearch(ws, msg.query, false); // busca digitada não fala; áudio só quando pedido por voz
       return;
     }
     // per-session "resumir e falar" — cheap one-shot, spoken, not stored in history

@@ -104,7 +104,7 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
   if (isNativeId(sessionId)) {
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
-    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code", total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, path: m.path, adds: m.adds, dels: m.dels })), files: sessionFiles(sessionId) });
+    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code", total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows })), files: sessionFiles(sessionId) });
     startTail(sessionId); // live-mirror new turns (external CLI) to the Hub
   } else {
     const s = store.ensure(sessionId);

@@ -259,12 +259,19 @@ function toolSummary(name: string, input: any): string {
   } catch { return name; }
 }
 
-/** For a file tool_use: the real path + (for edits) +/- line counts. Mirrors the live path. */
-function toolStat(name: string, input: any): { path?: string; adds?: number; dels?: number } {
+/** For a file tool_use: the real path, +/- line counts AND the diff rows of THIS specific edit
+ *  (so the chat can expand exactly what changed at that point). Rows are capped — a huge edit
+ *  omits them and the UI falls back to the full-file diff panel. Shared by history + live stream. */
+export function toolFileStat(name: string, input: any): { path?: string; adds?: number; dels?: number; rows?: DiffRow[] } {
   const inp = input || {};
-  if (name === "Edit") return { path: inp.file_path, ...editCounts(inp.old_string || "", inp.new_string || "") };
-  if (name === "Write") return { path: inp.file_path, adds: inp.content ? String(inp.content).split("\n").length : 0, dels: 0 };
-  if (name === "MultiEdit" && Array.isArray(inp.edits)) { let a = 0, d = 0; for (const e of inp.edits) { const c = editCounts(e?.old_string || "", e?.new_string || ""); a += c.adds; d += c.dels; } return { path: inp.file_path, adds: a, dels: d }; }
+  const cap = (rows: DiffRow[]): DiffRow[] | undefined => (rows.length && rows.length <= 300 ? rows : undefined);
+  if (name === "Edit") { const c = editCounts(inp.old_string || "", inp.new_string || ""); return { path: inp.file_path, ...c, rows: cap(lineDiff(inp.old_string || "", inp.new_string || "")) }; }
+  if (name === "Write") { const lines = String(inp.content || "").split("\n"); return { path: inp.file_path, adds: inp.content ? lines.length : 0, dels: 0, rows: cap(inp.content ? lines.map((s: string) => ({ t: "+" as const, s })) : []) }; }
+  if (name === "MultiEdit" && Array.isArray(inp.edits)) {
+    let a = 0, d = 0; const rows: DiffRow[] = [];
+    inp.edits.forEach((e: any, i: number) => { if (i) rows.push({ t: "@", s: `— edição ${i + 1} —` }); rows.push(...lineDiff(e?.old_string || "", e?.new_string || "")); const c = editCounts(e?.old_string || "", e?.new_string || ""); a += c.adds; d += c.dels; });
+    return { path: inp.file_path, adds: a, dels: d, rows: cap(rows) };
+  }
   if (name === "Read") return { path: inp.file_path };
   if (name === "NotebookEdit") return { path: inp.notebook_path };
   return {};
@@ -392,7 +399,7 @@ function findFileById(id: string): { path: string; claude: boolean } | null {
   return hit ? { path: hit.path, claude } : null;
 }
 
-export interface HistMsg { role: string; text: string; ts: number; name?: string; path?: string; adds?: number; dels?: number; }
+export interface HistMsg { role: string; text: string; ts: number; name?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; }
 /** Full read-only history of one native session — text turns AND tool activity (role:"tool"),
  *  interleaved in order, so the "editando/criando arquivo" blocks survive a page refresh. */
 export function nativeHistory(id: string): { agent: string; cwd: string; title: string; messages: HistMsg[] } | null {
@@ -418,7 +425,7 @@ export function nativeHistory(id: string): { agent: string; cwd: string; title: 
         if (o.type === "assistant" && Array.isArray(content)) {
           for (const b of content) {
             if (b.type === "text" && b.text) { const t = cleanText(b.text); if (t) messages.push({ role: "assistant", text: t, ts }); }
-            else if (b.type === "tool_use") { const st = toolStat(b.name, b.input); messages.push({ role: "tool", text: toolSummary(b.name, b.input), ts, name: b.name, path: st.path, adds: st.adds, dels: st.dels }); }
+            else if (b.type === "tool_use") { const st = toolFileStat(b.name, b.input); messages.push({ role: "tool", text: toolSummary(b.name, b.input), ts, name: b.name, path: st.path, adds: st.adds, dels: st.dels, rows: st.rows }); }
           }
         } else {
           let t = contentText(content);

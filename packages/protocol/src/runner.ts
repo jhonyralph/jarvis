@@ -42,11 +42,12 @@ export interface RunnerMsg {
   role: "user" | "assistant" | "system" | "tool";
   text: string;
   ts?: number;
-  /** role:"tool" — the tool name + (file tools) the real path and +/- line counts */
+  /** role:"tool" — the tool name + (file tools) the real path, +/- line counts and diff rows */
   name?: string;
   path?: string;
   adds?: number;
   dels?: number;
+  rows?: DiffRowMeta[];
 }
 
 /** Live activity while an agent works, mirrored to the streaming UI. */
@@ -65,6 +66,8 @@ export interface RunnerStreamEvent {
   /** for edits: line counts of this change */
   adds?: number;
   dels?: number;
+  /** for edits: the diff rows of THIS specific change (for the inline expand) */
+  rows?: DiffRowMeta[];
 }
 
 /** A file touched by tools in a session (real path + action + +/- line counts). */

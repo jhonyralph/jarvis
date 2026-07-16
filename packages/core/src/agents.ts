@@ -13,25 +13,11 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { editCounts } from "./native.js";
+import { toolFileStat } from "./native.js";
 
-/** For a file tool_use, extract the real path + (for edits) +/- line counts, live. */
-function fileToolStat(name: string, input: any): { path?: string; adds?: number; dels?: number } {
-  try {
-    if (name === "Read" || name === "Edit" || name === "Write" || name === "MultiEdit") {
-      const path = input?.file_path;
-      if (name === "Edit") return { path, ...editCounts(input?.old_string || "", input?.new_string || "") };
-      if (name === "Write") return { path, adds: input?.content ? String(input.content).split("\n").length : 0, dels: 0 };
-      if (name === "MultiEdit" && Array.isArray(input?.edits)) {
-        let adds = 0, dels = 0;
-        for (const e of input.edits) { const c = editCounts(e?.old_string || "", e?.new_string || ""); adds += c.adds; dels += c.dels; }
-        return { path, adds, dels };
-      }
-      return { path };
-    }
-    if (name === "NotebookEdit") return { path: input?.notebook_path };
-  } catch { /* ignore */ }
-  return {};
+/** For a file tool_use, extract the real path, +/- counts and this edit's diff rows, live. */
+function fileToolStat(name: string, input: any): { path?: string; adds?: number; dels?: number; rows?: unknown[] } {
+  try { return toolFileStat(name, input); } catch { return {}; }
 }
 
 // one-shot prompts (search / summary / digest / voice-intent) run in this dir so their
@@ -261,7 +247,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           const parentId = o.parent_tool_use_id || undefined;
           for (const b of o.message?.content || []) {
             if (b.type === "text" && b.text) { if (!parentId) finalText += b.text; onEvent({ kind: "text", text: b.text, parentId }); }
-            else if (b.type === "tool_use") { const st = fileToolStat(b.name, b.input); onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), toolId: b.id, parentId, path: st.path, adds: st.adds, dels: st.dels }); }
+            else if (b.type === "tool_use") { const st = fileToolStat(b.name, b.input); onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), toolId: b.id, parentId, path: st.path, adds: st.adds, dels: st.dels, rows: st.rows as any }); }
             else if (b.type === "thinking") onEvent({ kind: "thinking", parentId });
           }
         } else if (o.type === "result") {
