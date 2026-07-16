@@ -211,6 +211,14 @@ function secState(ws: WebSocket): void {
   const onlineRunners = new Set([...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN).map((r) => r.id));
   send(ws, { t: "sec_state", devices: auth.listDevices(), invites: auth.listInvites(), me: p?.deviceId || null, role: p?.role || (auth.AUTH_ENABLED ? "member" : "owner"), hasPass: auth.hasPassphrase(), runnerTokens: auth.listRunnerTokens(), onlineRunners: [...onlineRunners], repoUrl });
 }
+/** Update the live role of any connected session for this device (so the owner UI
+ *  appears/disappears without a reconnect). */
+function refreshPrincipalRole(deviceId: string, role: auth.Role): void {
+  for (const client of wss.clients) {
+    const pr = principals.get(client as WebSocket);
+    if (pr && pr.deviceId === deviceId) { pr.role = role; try { send(client as WebSocket, { t: "authed", user: { id: pr.userId, role, name: pr.name } }); } catch { /* ignore */ } }
+  }
+}
 /** Boot any currently-connected device whose token was just revoked. */
 function dropRevoked(): void {
   const valid = new Set(auth.listDevices().map((d) => d.id));
@@ -919,6 +927,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       secState(ws);
       return;
     }
+    if (msg.t === "sec_set_role" && typeof msg.deviceId === "string" && (msg.role === "owner" || msg.role === "member")) {
+      if (!requireOwner(ws)) return;
+      if (auth.setDeviceRole(msg.deviceId, msg.role)) refreshPrincipalRole(msg.deviceId, msg.role);
+      else send(ws, { t: "error", message: "não é possível (precisa de ao menos 1 dono)" });
+      secState(ws);
+      return;
+    }
     if (msg.t === "sec_revoke_all") {
       const p = requireOwner(ws); if (!p) return;
       if (p.deviceId) auth.revokeAllExcept(p.deviceId);
@@ -1149,6 +1164,7 @@ const adminServer = createServer((req, res) => {
         return json(200, { enabled: auth.hasPassphrase() });
       }
       if (req.method === "POST" && url === "/admin/revoke") { const b = await body(); const ok = typeof b.deviceId === "string" && auth.revokeDevice(b.deviceId); dropRevoked(); return json(200, { ok: !!ok }); }
+      if (req.method === "POST" && url === "/admin/device-role") { const b = await body(); const role = b.role === "owner" ? "owner" : "member"; const ok = typeof b.deviceId === "string" && auth.setDeviceRole(b.deviceId, role); if (ok) refreshPrincipalRole(b.deviceId, role); return json(200, { ok: !!ok, role }); }
       if (req.method === "POST" && url === "/admin/revoke-all") { const n = auth.listDevices().length; for (const d of auth.listDevices()) auth.revokeDevice(d.id); dropRevoked(); return json(200, { revoked: n }); }
       json(404, { error: "not found" });
     } catch (e: any) { json(500, { error: String(e?.message ?? e) }); }

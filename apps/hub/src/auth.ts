@@ -198,6 +198,22 @@ export function listDevices(): Array<Omit<Device, "tokenHash"> & { role: Role; u
     return { ...pub, role: u?.role || "member", userName: u?.name || "?" };
   });
 }
+/** Change a device's role (owner/member). Refuses to demote the last owner. */
+export function setDeviceRole(deviceId: string, role: Role): boolean {
+  const dev = data.devices.find((d) => d.id === deviceId);
+  if (!dev) return false;
+  const user = data.users.find((u) => u.id === dev.userId);
+  if (!user) return false;
+  if (user.role === "owner" && role !== "owner") {
+    if (data.users.filter((u) => u.role === "owner").length <= 1) return false; // keep at least one owner
+  }
+  user.role = role;
+  if (role === "member" && !data.grants[user.id]) data.grants[user.id] = [];
+  save(data);
+  audit("set_role", { deviceId, detail: `${dev.label} -> ${role}` });
+  return true;
+}
+
 export function revokeDevice(deviceId: string): boolean {
   const dev = data.devices.find((d) => d.id === deviceId);
   const before = data.devices.length;
