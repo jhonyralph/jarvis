@@ -91,6 +91,9 @@ export interface StreamEvent {
   text?: string; // for kind:"text" — a chunk of the reply
   name?: string; // for kind:"tool" — the tool name (Bash, Edit, Read…)
   summary?: string; // for kind:"tool" — a human one-liner (e.g. "Editando foo.ts")
+  detail?: string; // for kind:"tool" — the FULL command/args (untruncated), shown when the row is expanded
+  toolId?: string; parentId?: string; // sub-agent linkage (Task/Agent → its nested tools)
+  path?: string; adds?: number; dels?: number; rows?: any[]; // file tools: touched path + diff
 }
 export type OnEvent = (ev: StreamEvent) => void;
 
@@ -257,12 +260,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort); // ultracode -> xhigh
     if (prev) args.unshift("--resume", prev);
 
+    // input_tokens sozinho é só o delta NÃO-cacheado (poucas centenas mesmo com a janela quase
+    // cheia). O medidor de contexto precisa da SOMA: fresh + cache_creation + cache_read — senão
+    // marca ~0% quando a sessão está de fato ~95% cheia.
+    const inputContext = (u: any): number | undefined => {
+      if (!u) return undefined;
+      const n = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+      return n || undefined;
+    };
+
     if (onEvent) {
       // streaming: emit tool/text activity live; accumulate the final reply + usage.
       let finalText = "";
       let sessionOut = "";
       let streamError = "";
       let usage: AgentReply["usage"];
+      let lastMsgUsage: any;
       await runStream(this.bin, args, cwd, (line) => {
         let o: any;
         try { o = JSON.parse(line); } catch { return; }
@@ -271,16 +284,18 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           // Sub-agent (Task) turns carry a top-level parent_tool_use_id; their text is the
           // sub-agent's own reasoning, NOT the parent answer — surface it but don't accumulate it.
           const parentId = o.parent_tool_use_id || undefined;
+          // idem para o contexto: só o thread principal conta para a janela (sub-agente é outro contexto).
+          if (!parentId && o.message?.usage) lastMsgUsage = o.message.usage;
           for (const b of o.message?.content || []) {
             if (b.type === "text" && b.text) { if (!parentId) finalText += b.text; onEvent({ kind: "text", text: b.text, parentId }); }
-            else if (b.type === "tool_use") { const st = fileToolStat(b.name, b.input); onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), toolId: b.id, parentId, path: st.path, adds: st.adds, dels: st.dels, rows: st.rows as any }); }
+            else if (b.type === "tool_use") { const st = fileToolStat(b.name, b.input); onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), toolId: b.id, parentId, path: st.path, adds: st.adds, dels: st.dels, rows: st.rows as any }); }
             else if (b.type === "thinking") onEvent({ kind: "thinking", parentId });
           }
         } else if (o.type === "result") {
           if (o.session_id) sessionOut = o.session_id;
           if (o.result && !finalText) finalText = o.result;
           if (o.is_error) streamError = o.result || "claude error";
-          usage = { costUsd: o.total_cost_usd, inputTokens: o.usage?.input_tokens, outputTokens: o.usage?.output_tokens };
+          usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens };
         }
       }, opts?.signal);
       if (streamError) throw new Error(streamError);
@@ -294,7 +309,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (json.session_id) { this.sessions.set(sessionId, json.session_id); this.saveSessions(); }
     return {
       text: json.result ?? "",
-      usage: { costUsd: json.total_cost_usd, inputTokens: json.usage?.input_tokens, outputTokens: json.usage?.output_tokens },
+      usage: { costUsd: json.total_cost_usd, inputTokens: inputContext(json.usage), outputTokens: json.usage?.output_tokens },
     };
   }
 
@@ -452,6 +467,21 @@ function runStream(cmd: string, args: string[], cwd: string, onLine: (line: stri
       else reject(new Error(err.trim() || `${cmd} exited with ${code}`));
     });
   });
+}
+
+/** The FULL command/args behind a tool row (untruncated, newlines kept) — surfaced when the user
+ *  expands the activity row. Returns undefined when the summary already shows everything. */
+function toolDetail(name: string, input: any): string | undefined {
+  let full = "";
+  if (name === "Bash") full = String(input?.command || "");
+  else if (name === "Task" || name === "Agent") full = String(input?.prompt || input?.description || "");
+  else if (name === "Grep") full = String(input?.pattern || "");
+  else if (name === "WebFetch") full = String(input?.url || "");
+  else if (name === "WebSearch") full = String(input?.query || "");
+  else { try { full = JSON.stringify(input ?? {}, null, 1); } catch { full = ""; } }
+  full = full.trim();
+  if (!full || full.length <= 90) return undefined; // o resumo já mostra tudo
+  return full.length > 4000 ? full.slice(0, 4000) + "\n… (truncado)" : full;
 }
 
 /** Human one-liner for a tool_use (shown as a collapsible activity block). */

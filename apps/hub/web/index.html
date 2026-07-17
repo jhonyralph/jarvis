@@ -73,13 +73,14 @@
     /* comando/ação muito grande: recolhe em 2 linhas e oferece expandir */
     .strtool.clamp .ttl { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
     .strtool.clamp.expanded .ttl { -webkit-line-clamp:unset; overflow:visible; white-space:pre-wrap; }
-    .strtool .xpand { background:none; border:0; color:#7aa2f7; cursor:pointer; font-size:13px; line-height:1; padding:2px 6px 0 0; align-self:flex-start; }
+    .strtool .xpand { flex:none; background:none; border:0; color:#7aa2f7; cursor:pointer; font-size:15px; line-height:1; padding:0; width:15px; text-align:center; }
     .strtool .xpand:hover { color:#a9c4ff; }
     .strtool .ttl { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .strtool .ttl.clk { cursor:pointer; } .strtool .ttl.clk:hover { color:#fff; text-decoration:underline; }
     .strtool .tcnt { flex:none; font-family:ui-monospace,Menlo,Consolas,monospace; border-radius:5px; padding:1px 4px; }
     .strtool .tcnt.clk { cursor:pointer; } .strtool .tcnt.clk:hover { background:#ffffff1f; }
     .strtool .fadd { color:#3fb950; flex:none; } .strtool .fdel { color:#f85149; flex:none; }
+    .strtool .tdetail { margin-top:6px; border-top:1px solid var(--line); padding-top:6px; max-height:360px; overflow:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; color:#cbd5e1; } .strtool .tdetail.hidden { display:none; }
     .strtool .tdiff { margin-top:6px; border-top:1px solid var(--line); padding-top:6px; max-height:360px; overflow:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.5; }
     .strtool .tdiff .dline { display:block; white-space:pre-wrap; overflow-wrap:anywhere; padding:0 2px; }
     .strtool .tdiff .dline.add { background:#2ea04326; } .strtool .tdiff .dline.add::before { content:'+ '; color:#3fb950; }
@@ -112,7 +113,7 @@
     #composer { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
     #attachRow { display:flex; gap:6px; flex-wrap:wrap; }
     #attachRow .chip { font-size:12px; padding:4px 8px; cursor:pointer; }
-    #attachRow .imgchip { padding:3px; max-width:none; position:relative; cursor:default; } #attachRow .imgchip img { height:40px; width:auto; max-width:120px; border-radius:6px; display:block; object-fit:cover; cursor:default; }
+    #attachRow .imgchip { padding:3px; max-width:none; position:relative; cursor:default; } #attachRow .imgchip img { height:40px; width:auto; max-width:120px; border-radius:6px; display:block; object-fit:cover; cursor:zoom-in; }
     #attachRow .imgchip .rmx { position:absolute; top:1px; right:1px; background:#000c; border-radius:50%; width:17px; height:17px; display:flex; align-items:center; justify-content:center; font-size:11px; cursor:pointer; } #attachRow .imgchip .rmx:hover { background:#ef4444; }
     #input { width:100%; resize:none; background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:12px; padding:10px 12px; font:inherit; max-height:160px; }
     /* mic à direita do input (padrão de app de mensagem). align-items:flex-end mantém ele colado
@@ -123,12 +124,16 @@
     .controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .controls .spacer { flex:1; min-width:8px; }
     #status { font-size:12.5px; color:var(--mut); display:inline-flex; align-items:center; gap:6px; }
-    #status.speaking { color:#22c55e; } #status.listening { color:#f59e0b; }
+    #status.speaking { color:#22c55e; } #status.listening { color:#f59e0b; } #status.busy { color:#94a3b8; }
     #status .pulse { width:8px; height:8px; border-radius:50%; background:currentColor; animation:p 1s infinite; }
     @keyframes p { 0%,100%{opacity:.3} 50%{opacity:1} }
     .usage { color:var(--mut); font-size:11.5px; }
     .modal { position:fixed; inset:0; background:#000a; display:flex; align-items:center; justify-content:center; padding:16px; z-index:30; }
     .modal .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; width:min(480px,100%); display:flex; flex-direction:column; gap:11px; max-height:90dvh; overflow:auto; }
+    #imgModal .imgwrap { position:relative; max-width:96vw; max-height:92dvh; }
+    #imgModal img { max-width:96vw; max-height:92dvh; width:auto; height:auto; border-radius:10px; object-fit:contain; display:block; }
+    #imgModal .imgx { position:absolute; top:-12px; right:-12px; width:34px; height:34px; border-radius:50%; background:#000c; color:#fff; border:1px solid var(--line); cursor:pointer; font-size:15px; display:flex; align-items:center; justify-content:center; }
+    #imgModal .imgx:hover { background:#ef4444; }
     .modal label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--mut); }
     .modal label.row { flex-direction:row; align-items:center; gap:8px; }
     .modal .row { display:flex; gap:8px; } .modal .sec { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin-top:6px; }
@@ -149,16 +154,15 @@
     #queueRow .qclr { background:none; border:0; color:#f0883e; cursor:pointer; font-size:11.5px; padding:2px 4px; }
     #queueRow .qitem { background:#ffffff0d; border:1px dashed var(--line); border-radius:9px; padding:6px 9px; }
     #queueRow .qhead { display:flex; align-items:center; gap:6px; }
-    #queueRow .qtog { flex:none; background:none; border:0; color:#7aa2f7; cursor:pointer; font-size:12px; line-height:1; width:14px; padding:0; }
+    #queueRow .qtog { flex:none; background:none; border:0; color:#7aa2f7; cursor:pointer; font-size:15px; line-height:1; width:16px; padding:0; }
     #queueRow .qtext { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
-    #queueRow .qitem.open .qtext { white-space:normal; overflow:visible; }
     #queueRow .qatt { flex:none; font-size:11px; color:#7aa2f7; background:#7aa2f71a; border-radius:6px; padding:1px 6px; white-space:nowrap; }
     #queueRow .qx { flex:none; background:none; border:0; color:var(--mut); cursor:pointer; font-size:14px; padding:0 2px; }
     #queueRow .qx:hover { color:#ff6b6b; }
     #queueRow .qbody { margin:6px 0 2px 20px; display:flex; flex-direction:column; gap:6px; } #queueRow .qbody.hidden { display:none; }
     #queueRow .qfull { font-size:12.5px; white-space:pre-wrap; word-break:break-word; color:var(--text); opacity:.9; }
     #queueRow .qatts { display:flex; flex-wrap:wrap; gap:6px; }
-    #queueRow .qthumb { width:46px; height:46px; object-fit:cover; border-radius:6px; border:1px solid var(--line); }
+    #queueRow .qthumb { width:46px; height:46px; object-fit:cover; border-radius:6px; border:1px solid var(--line); cursor:zoom-in; }
     #queueRow .qchip { font-size:11.5px; color:#7aa2f7; background:#7aa2f71a; border-radius:6px; padding:2px 7px; }
     .mut { color:var(--mut); font-size:12.5px; word-break:break-all; }
     .soon { font-size:10px; background:#ffffff14; border-radius:6px; padding:1px 5px; color:var(--mut); }
@@ -431,6 +435,8 @@
     <div class="row" style="justify-content:flex-end"><button id="qrClose" class="ghost" type="button">Fechar</button></div>
   </div></div>
 
+  <div id="imgModal" class="modal hidden"><div class="imgwrap"><button type="button" id="imgClose" class="imgx" title="Fechar">✕</button><img id="imgModalPic" alt=""></div></div>
+
   <div id="searchModal" class="modal hidden"><div class="card">
     <b>🔎 Buscar entre sessões</b>
     <input id="searchInput" type="text" placeholder="Ex.: como está o progresso da sessão de SLA?" autocomplete="off">
@@ -523,9 +529,16 @@
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
       'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileCopy','fileClose','nativeChip',
+      'imgModal','imgModalPic','imgClose',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
+    // visualizador de imagem (modal) — clicar em qualquer imagem (mensagem, preview do anexo,
+    // miniatura da fila) abre aqui; fecha no ✕, no fundo ou com Esc. Nunca abre nova guia.
+    function openImg(src){ if(!src)return; E.imgModalPic.src=src; E.imgModal.classList.remove('hidden'); }
+    function closeImg(){ E.imgModal.classList.add('hidden'); E.imgModalPic.removeAttribute('src'); }
+    E.imgModal.onclick=(e)=>{ if(e.target===E.imgModal||e.target===E.imgClose) closeImg(); };
+    document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!E.imgModal.classList.contains('hidden')){ e.stopPropagation(); closeImg(); } });
 
     let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, filesShown=12, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
     let machines=[], currentMachine=localStorage.getItem('jarvis_machine')||'local', lastByMachine={}, restoringMachine=currentMachine!=='local';
@@ -564,7 +577,7 @@
     // A tool-activity block (icon + summary + optional +/- counts). File tools are clickable
     // → open the viewer/diff panel. done=true shows past tense ("Editado"); reused by streaming
     // (present tense while running, flipped on done) AND by rebuilt history (already done).
-    function toolRowEl(name,summary,path,adds,dels,done,rows){
+    function toolRowEl(name,summary,path,adds,dels,done,rows,detail){
       const d=document.createElement('div'); d.className='strtool'; d.dataset.name=name||''; d.dataset.sum=summary||'';
       const isFile=/Edit$/.test(name||'')||name==='Write'||name==='Read'||name==='NotebookEdit';
       const head=document.createElement('div'); head.className='strtoolhead';
@@ -577,12 +590,18 @@
         if(rows&&rows.length){ c.classList.add('clk'); c.title='Ver o diff desta alteração'; c.onclick=(e)=>{ e.stopPropagation(); toggleInlineDiff(d,rows,adds,dels); }; }
         else if(path){ c.classList.add('clk'); c.title='Ver diff no painel'; c.onclick=(e)=>{ e.stopPropagation(); openFile(path,'edit'); }; }
         head.appendChild(c); }
-      d.appendChild(head); addExpand(d,(done?pastify(name,summary):summary)||''); return d; }
+      d.appendChild(head); addExpand(d,(done?pastify(name,summary):summary)||'',detail); return d; }
     // Comando/ação longa: recolhe em 2 linhas e adiciona "expandir/recolher". Aplica-se tanto às
     // linhas de tool do stream quanto ao bloco de atividade ao vivo.
-    function addExpand(block,text){ if((text||'').length<=90 && !/\n/.test(text||''))return;
-      block.classList.add('clamp'); const b=document.createElement('button'); b.type='button'; b.className='xpand'; b.title='Expandir'; b.textContent='▸';
-      b.onclick=(e)=>{ e.stopPropagation(); const ex=block.classList.toggle('expanded'); b.textContent=ex?'▾':'▸'; b.title=ex?'Recolher':'Expandir'; }; block.appendChild(b); }
+    function addExpand(block,text,detail){ const hasDetail=!!(detail&&detail.length);
+      if(!hasDetail && (text||'').length<=90 && !/\n/.test(text||''))return;
+      block.classList.add('clamp'); const head=block.querySelector('.strtoolhead');
+      const b=document.createElement('button'); b.type='button'; b.className='xpand'; b.title='Expandir'; b.textContent='▸';
+      // se veio o comando completo (detail), expandir revela ele num bloco monoespaçado; senão só
+      // desfaz o recorte de 2 linhas do resumo.
+      let det=null; if(hasDetail){ det=document.createElement('div'); det.className='tdetail hidden'; det.textContent=detail; block.appendChild(det); }
+      b.onclick=(e)=>{ e.stopPropagation(); const ex=block.classList.toggle('expanded'); if(det) det.classList.toggle('hidden',!ex); b.textContent=ex?'▾':'▸'; b.title=ex?'Recolher':'Expandir'; };
+      if(head) head.insertBefore(b,head.firstChild); else block.appendChild(b); }
     // expande/colapsa o diff da alteração DENTRO do próprio chat
     function toggleInlineDiff(block,rows,adds,dels){
       const ex=block.querySelector('.tdiff'); if(ex){ ex.remove(); return; }
@@ -592,10 +611,10 @@
     // flip a live tool block to past tense when its turn finishes
     function setToolDone(block){ const nm=block.dataset.name, ttl=block.querySelector('.ttl'); if(ttl&&nm) ttl.textContent=pastify(nm,block.dataset.sum); }
     function buildMsgEl(m){
-      if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels,true,m.rows);
+      if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels,true,m.rows,m.detail);
       const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
         if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
-        if(m.images&&m.images.length){ const w=document.createElement('div'); w.className='msgimgs'; m.images.forEach(u=>{ const im=document.createElement('img'); im.className='msgimg'; im.src=u; im.loading='lazy'; im.onclick=()=>window.open(u,'_blank'); w.appendChild(im); }); d.appendChild(w); }
+        if(m.images&&m.images.length){ const w=document.createElement('div'); w.className='msgimgs'; m.images.forEach(u=>{ const im=document.createElement('img'); im.className='msgimg'; im.src=u; im.loading='lazy'; im.onclick=()=>openImg(u); w.appendChild(im); }); d.appendChild(w); }
         const showTxt=m.text&&!(m.images&&m.images.length&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); }
       else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
     // Trocar de sessão custa DUAS travessias de rede quando ela vive em outra máquina
@@ -611,6 +630,10 @@
     function openSession(id){ if(!id)return; const c=histCache.get(id); if(c&&id!==currentSession) applyHistory(c); tx({t:'open',sessionId:id}); }
     function applyHistory(m){
       // NÃO limpar a fila da sessão anterior — ela continua válida quando o turno dela terminar.
+      // Rascunho do composer é POR SESSÃO: ao TROCAR de sessão guarda o texto não-enviado da anterior
+      // e restaura o da nova; um refresh da MESMA sessão nunca mexe no que você está digitando agora.
+      const prevSession=currentSession, switchingSession=prevSession!==m.sessionId;
+      if(switchingSession && prevSession!=null) draftBySession[prevSession]=E.input.value;
       currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId);
       currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
@@ -618,11 +641,12 @@
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
       msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); E.log.scrollTop=E.log.scrollHeight;
-      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=0; updUsagePill(); renderRecents(); closePop();
+      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; updUsagePill(); renderRecents(); closePop();
       curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
       E.input.disabled=ro; E.sendBtn.disabled=ro; E.mic.disabled=ro; E.input.placeholder=ro?'Sessão nativa — somente leitura':'Fale ou digite…';
+      if(switchingSession){ E.input.value=draftBySession[m.sessionId]||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; }
       curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession); refreshComposer();
     }
     // Anchor: a user message must never land under an open reply bubble, even if the echo arrives
@@ -658,10 +682,10 @@
       head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
       closeTextBlock(); strFlow.appendChild(wrap);
       const rec={wrap,body,title,countEl,count:0,preview:null,previewText:''}; subAgents[id]=rec; return rec; }
-    function streamTool(name,summary,toolId,parentId,path,adds,dels,rows){ if(!strFlow)streamStartUI();
-      if(parentId){ const sa=ensureSubAgent(parentId); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows)); sa.count++; sa.countEl.textContent=sa.count; E.log.scrollTop=E.log.scrollHeight; return; }
+    function streamTool(name,summary,toolId,parentId,path,adds,dels,rows,detail){ if(!strFlow)streamStartUI();
+      if(parentId){ const sa=ensureSubAgent(parentId); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); sa.count++; sa.countEl.textContent=sa.count; E.log.scrollTop=E.log.scrollHeight; return; }
       if((name==='Task'||name==='Agent')&&toolId){ ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); E.log.scrollTop=E.log.scrollHeight; return; }
-      closeTextBlock(); strFlow.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows)); E.log.scrollTop=E.log.scrollHeight; }
+      closeTextBlock(); strFlow.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); E.log.scrollTop=E.log.scrollHeight; }
     function streamText(t,parentId){
       if(parentId){ const sa=ensureSubAgent(parentId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); E.log.scrollTop=E.log.scrollHeight; return; }
       if(!strFlow)streamStartUI();
@@ -776,7 +800,8 @@
       sessions.slice(0,shown).forEach(s=>{ const run=activeRuns.includes(s.id), un=unread.has(s.id)&&!run&&s.id!==currentSession;
       const d=document.createElement('div'); d.className='item'+(s.id===currentSession?' active':'')+(run?' running':'')+(un?' unread':'');
       const nat=isNative(s.id);
-      d.innerHTML=`<span class="rdot"></span><span class="rbadge" title="${esc(s.agent||'')}">${agentIcon(s.agent)}</span><span class="rtitle">${esc(s.title||'Sessão')}</span>`+(nat?'<span class="rnat">nativo</span>':'');
+      // "nativo" NÃO vai mais na listagem (encurtava o nome da sessão); a marca de nativo continua no tooltip (title) do item.
+      d.innerHTML=`<span class="rdot"></span><span class="rbadge" title="${esc(s.agent||'')}">${agentIcon(s.agent)}</span><span class="rtitle">${esc(s.title||'Sessão')}</span>`;
       const sum=document.createElement('button'); sum.type='button'; sum.className='rsum'; sum.title='Resumir e falar (não entra no histórico)';
       const busySum=voiceOp==='summarize'&&voiceOpSid===s.id; sum.textContent=busySum?'⏳':'🔊'; if(busySum){ sum.disabled=true; sum.classList.add('busy'); voiceOpBtn=sum; }
       sum.onclick=(e)=>{ e.stopPropagation(); if(!startVoiceOp('summarize',sum,'⏳',s.id))return; status('speaking','Gerando resumo…'); tx({t:'summarize',sessionId:s.id,speak:true}); }; d.appendChild(sum);
@@ -1225,7 +1250,7 @@
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
-          else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
+          else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
           else if(ev.kind==='text') streamText(ev.text||'',ev.parentId);
           else if(ev.kind==='done'){ streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
           else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
@@ -1233,7 +1258,7 @@
         else if(m.t==='activity'){ if(m.sessionId!==currentSession)return;
           // espelho ao vivo de uma sessão nativa: o evento já é uma ação CONCLUÍDA (o tail lê o que
           // foi escrito) → tool row completo (done): "Editado", contagem +/-, abrir arquivo, diff.
-          const d=toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows);
+          const d=toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows,m.detail);
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; if(m.usage.inputTokens){lastInputTokens=m.usage.inputTokens; updUsagePill();} } }
@@ -1281,7 +1306,7 @@
           if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
           if(busy(currentSession)){ toast('⏳ Sessão ocupada — envie o áudio quando terminar.'); return; }   // voz não entra na fila (a fila envia texto)
-          lastWasVoice=true; justSent.add(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); refreshComposer(); };
+          lastWasVoice=true; markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?'escutando resposta…':'escutando…');
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
@@ -1316,7 +1341,7 @@
       if(got){ e.preventDefault(); renderAttach(); } });
     function renderAttach(){ E.attachRow.innerHTML=''; attachments.forEach((a,i)=>{ const c=document.createElement('span'); c.className='chip'+(a.image?' imgchip':'');
       const rm=()=>{ attachments.splice(i,1); renderAttach(); };
-      if(a.image&&a.preview){ c.innerHTML=`<img src="${a.preview}" alt="">`; const x=document.createElement('span'); x.className='rmx'; x.textContent='✕'; x.title='Remover'; x.onclick=(e)=>{ e.stopPropagation(); rm(); }; c.appendChild(x); }
+      if(a.image&&a.preview){ c.innerHTML=`<img src="${a.preview}" alt="">`; const im=c.querySelector('img'); if(im) im.onclick=(e)=>{ e.stopPropagation(); openImg(a.preview); }; const x=document.createElement('span'); x.className='rmx'; x.textContent='✕'; x.title='Remover'; x.onclick=(e)=>{ e.stopPropagation(); rm(); }; c.appendChild(x); }
       else { c.textContent='📎 '+a.name+' ✕'; c.onclick=rm; }
       E.attachRow.appendChild(c); }); }
     // arrastar-e-soltar arquivos/imagens no chat → vira anexo (usa o mesmo addFile do ＋/paste)
@@ -1338,16 +1363,22 @@
     // Fila e "ocupado" são POR SESSÃO. A verdade de quem está rodando é o servidor (activeRuns, via
     // {t:runs}); justSent cobre a janela entre eu enviar e o servidor confirmar. Enfileirar numa
     // sessão NUNCA bloqueia outra: cada uma tem sua fila e seu estado.
-    const queueBySession={}, justSent=new Set();
+    const queueBySession={}, justSent=new Set(), draftBySession={}, justSentTimers={};
     function queueOf(sid){ return queueBySession[sid] || (queueBySession[sid]=[]); }
     function busy(sid){ return !!sid && (activeRuns.includes(sid) || justSent.has(sid)); }
+    // "justSent" cobre a janela entre eu ENVIAR e o servidor CONFIRMAR o run (activeRuns, via {t:runs}).
+    // Failsafe POR SESSÃO: se em 45s o servidor não confirmar (run perdido — WS caiu, done não chegou),
+    // destrava a sessão em vez de deixá-la "executando" pra sempre bloqueando novos envios. NUNCA
+    // afeta outra sessão (cada sid tem seu timer); se o run de fato começou (activeRuns), não mexe.
+    function markJustSent(sid){ if(!sid)return; justSent.add(sid); clearTimeout(justSentTimers[sid]);
+      justSentTimers[sid]=setTimeout(()=>{ if(justSent.has(sid)&&!activeRuns.includes(sid)){ justSent.delete(sid); refreshComposer(); renderRecents(); } }, 45000); }
     let curBusy=false;   // reflete busy(currentSession); mantido p/ auto-reload
     function refreshComposer(){ curBusy=busy(currentSession);
       // Parar aparece AO LADO do Enviar (não o substitui): mesmo rodando, você pode digitar e
       // enfileirar. Parar é só o ícone, vermelho; Enviar continua sempre disponível.
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!curBusy);
       renderQueue(); maybeReload(); }
-    function sendMsgTo(sid,text,atts){ if(!sid)return; lastWasVoice=false; justSent.add(sid);
+    function sendMsgTo(sid,text,atts){ if(!sid)return; lastWasVoice=false; markJustSent(sid);
       tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:sid,attachments:atts||[]});
       if(sid===currentSession){ showPending(); } refreshComposer(); }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
@@ -1373,9 +1404,9 @@
         it.appendChild(head);
         // corpo expansível: texto completo + os anexos que vão junto (imagem com miniatura)
         const body=document.createElement('div'); body.className='qbody hidden';
-        if(it0.text){ const ft=document.createElement('div'); ft.className='qfull'; ft.textContent=it0.text; body.appendChild(ft); }
+        if(it0.text){ const ft=document.createElement('div'); ft.className='qfull'; ft.textContent=it0.text.length>2000?it0.text.slice(0,2000)+'… (truncado)':it0.text; body.appendChild(ft); }
         if(atts.length){ const w=document.createElement('div'); w.className='qatts'; atts.forEach(a=>{
-          if(a.image && a.content){ const im=document.createElement('img'); im.className='qthumb'; im.src=(a.content.startsWith('data:')?a.content:'data:image/*;base64,'+a.content); im.title=a.name||''; w.appendChild(im); }
+          if(a.image && a.content){ const im=document.createElement('img'); im.className='qthumb'; const src=(a.content.startsWith('data:')?a.content:'data:image/*;base64,'+a.content); im.src=src; im.title=a.name||''; im.onclick=(e)=>{ e.stopPropagation(); openImg(src); }; w.appendChild(im); }
           else { const c=document.createElement('span'); c.className='qchip'; c.textContent='📎 '+(a.name||'arquivo'); w.appendChild(c); } });
           body.appendChild(w); }
         it.appendChild(body);
@@ -1385,10 +1416,11 @@
       E.queueRow.appendChild(list); }
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
+      if(currentSession) delete draftBySession[currentSession];   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); return; }
       sendMsgTo(currentSession,text||'(anexo)',atts); };
-    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; refreshComposer(); status('parando…'); };
-    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; };
+    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; refreshComposer(); status('busy','parando…'); };
+    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
     document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && (!ws||ws.readyState>1)){ if(reconnectT){clearTimeout(reconnectT);reconnectT=null;} connect(); } });

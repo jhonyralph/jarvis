@@ -25,7 +25,7 @@ import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk } from "@jarvis/core";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
@@ -422,7 +422,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
   }
   if (m.t === "busy") { for (const c of clientsOn(rc.id)) send(c, { t: "busy", message: m.message }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
-  if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows }); return; }
+  if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows }); return; }
   if (m.t === "runs") { runnerActive.set(rc.id, new Set(m.active || [])); for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
   // Update outcome of a machine. Goes to whoever asked (any owner watching the update panel),
   // not just clients on that machine — you fire the update from the Hub's own screen.
@@ -500,7 +500,7 @@ function pollTail(sid: string): void {
     if (!line.trim()) continue;
     for (const e of parseNativeEvents(line, t.claude) as any[]) {
       if (e.kind === "message") broadcast(sid, { t: "message", message: { sessionId: sid, role: e.role, text: e.text, ts: e.ts, agent: t.claude ? "claude-code" : "codex" } });
-      else broadcast(sid, { t: "activity", sessionId: sid, name: e.name, summary: e.summary, path: e.path, adds: e.adds, dels: e.dels, rows: e.rows });
+      else broadcast(sid, { t: "activity", sessionId: sid, name: e.name, summary: e.summary, detail: e.detail, path: e.path, adds: e.adds, dels: e.dels, rows: e.rows });
     }
   }
 }
@@ -645,13 +645,19 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
  *  callers must NOT also broadcast a {t:message} assistant (they only persist it). */
 // Live turns keyed by session, so a "parar" from any client can abort the actual agent process.
 const localAborts = new Map<string, AbortController>();
+// Atividade viva bufferizada por sessão EM ANDAMENTO: um cliente que (re)abre no meio do turno
+// replica o que perdeu e vê "processando" em vez de uma espera em branco. Limpo ao fim do turno
+// (o texto final vai pro histórico, então replay só acontece enquanto o turno está ativo — sem
+// duplicar o texto de um turno já concluído).
+const activityBuf = new Map<string, any[]>();
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply> {
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
   activeRuns.add(sid); broadcastRuns();
+  const buf: any[] = []; activityBuf.set(sid, buf);
   broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "start" } });
   try {
-    const reply = await agent.send(sid, agentText, cwd, { ...opts, signal: ctrl.signal }, (ev) => broadcast(sid, { t: "stream", sessionId: sid, ev }));
+    const reply = await agent.send(sid, agentText, cwd, { ...opts, signal: ctrl.signal }, (ev) => { if (buf.length < 600) buf.push(ev); broadcast(sid, { t: "stream", sessionId: sid, ev }); });
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage });
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
     const nativeId = agent.nativeSessionId?.(sid);
@@ -669,8 +675,20 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     throw e;
   } finally {
     if (localAborts.get(sid) === ctrl) localAborts.delete(sid);
+    activityBuf.delete(sid);
     activeRuns.delete(sid); broadcastRuns();
   }
+}
+/** Replay the buffered live activity of an IN-PROGRESS local turn to a client that just (re)opened
+ *  the session — so a page refresh mid-turn shows "processando" + the tool/subagente activity it
+ *  missed, instead of a blank wait until the reply lands. No-op once the turn is done (buffer gone),
+ *  so a finished turn (whose text is already in history) is never re-streamed/duplicated. */
+function replayActivity(ws: WebSocket, sid: string): void {
+  if (!activeRuns.has(sid)) return;
+  const buf = activityBuf.get(sid);
+  if (!buf) return;
+  send(ws, { t: "stream", sessionId: sid, ev: { kind: "start" } });
+  for (const ev of buf) send(ws, { t: "stream", sessionId: sid, ev });
 }
 /** Abort a live turn. Local session → kill its agent process; remote → relay to the owning runner.
  *  Returns false only if nothing was running here to cancel. */
@@ -1105,11 +1123,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, {
         t: "history",
         sessionId: msg.sessionId,
-        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" },
+        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code", inputTokens: h.inputTokens },
         total: h.messages.length,
-        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows })),
+        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows })),
         files: sessionFiles(msg.sessionId),
       });
+      replayActivity(ws, msg.sessionId);
       return;
     }
     if (msg.t === "open" && typeof msg.sessionId === "string") {
@@ -1119,6 +1138,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const all = store.history(s.id);
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
       send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles("claude:" + nid) : [] });
+      replayActivity(ws, s.id);
       return;
     }
     if (msg.t === "new") {
@@ -1518,6 +1538,7 @@ setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min — availa
 setTimeout(() => void refreshUpdate(true), 8_000); // first update check shortly after boot
 setInterval(() => void refreshUpdate(true), 6 * 3600_000); // then every 6h
 try { const purged = purgeProbeJunk(); if (purged) console.log(`[hub] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
+try { const s = purgeScratch(); if (s) console.log(`[hub] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);

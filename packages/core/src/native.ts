@@ -54,11 +54,18 @@ function eachLine(text: string, fn: (o: any) => void): void {
 }
 
 // ------------------------------- file discovery -------------------------------
-function claudeFiles(): Array<{ path: string; mtime: number }> {
+// Jarvis roda seus próprios prompts descartáveis (busca/resumo/digest/warmup) com cwd em
+// ~/.jarvis/oneshot; o claude grava um transcript para cada um, e o projeto vira o diretório
+// dashed "…-jarvis-oneshot". São centenas, com mtime sempre fresco — se entrarem na descoberta,
+// tomam as vagas do topo por mtime e EXPULSAM as sessões reais da janela (slice antes do filtro).
+// Excluídos aqui na origem; purgeProbeJunk ainda os alcança via includeScratch=true.
+const SCRATCH_DIR = /jarvis-oneshot$/i;
+function claudeFiles(includeScratch = false): Array<{ path: string; mtime: number }> {
   const out: Array<{ path: string; mtime: number }> = [];
   if (!existsSync(CLAUDE_DIR)) return out;
   for (const dir of readdirSync(CLAUDE_DIR, { withFileTypes: true })) {
     if (!dir.isDirectory()) continue;
+    if (!includeScratch && SCRATCH_DIR.test(dir.name)) continue;
     const p = join(CLAUDE_DIR, dir.name);
     let files: string[];
     try {
@@ -129,7 +136,10 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
   let customTitle = "", aiTitle = "", firstUser = "", cwd = "";
   eachLine(head, (o) => {
     if (o.type === "custom-title" && o.customTitle) customTitle = o.customTitle;
-    else if (o.type === "ai-title" && o.aiTitle) aiTitle = o.aiTitle;
+    // FIXA o PRIMEIRO ai-title. O Claude Code emite novos ai-titles conforme a conversa evolui;
+    // pegar o último fazia o nome da sessão mudar "no meio da corrida" e virava uma zona pra achar
+    // o assunto depois. Um rename manual (custom-title) continua tendo prioridade.
+    else if (o.type === "ai-title" && o.aiTitle && !aiTitle) aiTitle = o.aiTitle;
     else if (o.type === "user" || o.type === "assistant") {
       if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
       if (!firstUser && o.type === "user" && typeof o.message?.content === "string") {
@@ -177,7 +187,7 @@ function cachedParse(path: string, mtime: number, fn: (p: string) => Omit<Native
 let listCache: { at: number; list: NativeMeta[] } | null = null;
 
 /** Recent native sessions across Claude + Codex, newest first, agent-tagged. */
-export function listNative(limit = Number(process.env.JARVIS_NATIVE_LIMIT || 25)): NativeMeta[] {
+export function listNative(limit = Number(process.env.JARVIS_NATIVE_LIMIT || 40)): NativeMeta[] {
   if (listCache && Date.now() - listCache.at < 15000) return listCache.list;
   const metas: NativeMeta[] = [];
   for (const { path, mtime } of claudeFiles().sort((a, b) => b.mtime - a.mtime).slice(0, limit)) {
@@ -200,7 +210,7 @@ export function listNative(limit = Number(process.env.JARVIS_NATIVE_LIMIT || 25)
  *  conversation. Runs at Hub/Runner startup on each machine. Returns how many were removed. */
 export function purgeProbeJunk(): number {
   let n = 0;
-  for (const { path } of claudeFiles()) {
+  for (const { path } of claudeFiles(true)) {
     try {
       if (statSync(path).size > 30000) continue;
       const meta = parseClaude(path);
@@ -210,6 +220,23 @@ export function purgeProbeJunk(): number {
       if (firstUser.toLowerCase() !== "ok") continue;
       unlinkSync(path); n++;
     } catch { /* skip */ }
+  }
+  if (n) listCache = null;
+  return n;
+}
+
+/** Delete Jarvis's own throwaway one-shot transcripts (search/summary/digest/warmup) that claude
+ *  writes into ~/.claude under the "…-jarvis-oneshot" project. They are never real sessions (already
+ *  excluded from the list) but pile up by the hundreds. Only files OLDER than maxAgeMs are removed,
+ *  so an in-flight one-shot is never touched. Runs at Hub/Runner startup. Returns how many removed. */
+const SCRATCH_PATH = /jarvis-oneshot[\\/]/i;
+export function purgeScratch(maxAgeMs = 30 * 60_000): number {
+  let n = 0;
+  const now = Date.now();
+  for (const { path, mtime } of claudeFiles(true)) {
+    if (!SCRATCH_PATH.test(path)) continue;
+    if (now - mtime < maxAgeMs) continue;
+    try { unlinkSync(path); n++; } catch { /* skip */ }
   }
   if (n) listCache = null;
   return n;
@@ -241,7 +268,7 @@ export type NativeEvent =
   | { kind: "message"; role: string; text: string; ts: number }
   // path/adds/dels/rows so a LIVE-mirrored tool block matches what a page refresh shows:
   // clickable file, +/- counts, expandable diff. Without them the tail rendered a bare "Editando".
-  | { kind: "tool"; name: string; summary: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[] };
+  | { kind: "tool"; name: string; summary: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[] };
 
 function toolSummary(name: string, input: any): string {
   const base = (p: string) => (p || "").split(/[\\/]/).pop() || p;
@@ -259,6 +286,21 @@ function toolSummary(name: string, input: any): string {
       default: { const s = JSON.stringify(input || {}); return name + (s && s !== "{}" ? " " + s.slice(0, 60) : ""); }
     }
   } catch { return name; }
+}
+
+/** Full command/args behind a tool row (untruncated, newlines kept) — shown when the row is
+ *  expanded. undefined when the summary already shows everything. Mirrors agents.ts:toolDetail. */
+function toolDetail(name: string, input: any): string | undefined {
+  let full = "";
+  if (name === "Bash") full = String(input?.command || "");
+  else if (name === "Task" || name === "Agent") full = String(input?.prompt || input?.description || "");
+  else if (name === "Grep") full = String(input?.pattern || "");
+  else if (name === "WebFetch") full = String(input?.url || "");
+  else if (name === "WebSearch") full = String(input?.query || "");
+  else { try { full = JSON.stringify(input ?? {}, null, 1); } catch { full = ""; } }
+  full = full.trim();
+  if (!full || full.length <= 90) return undefined;
+  return full.length > 4000 ? full.slice(0, 4000) + "\n… (truncado)" : full;
 }
 
 /** For a file tool_use: the real path, +/- line counts AND the diff rows of THIS specific edit
@@ -288,7 +330,7 @@ export function parseNativeEvents(line: string, claude: boolean): NativeEvent[] 
     if (o.type === "assistant") {
       for (const b of o.message?.content || []) {
         if (b.type === "text" && b.text?.trim()) { const t = cleanText(b.text); if (t) out.push({ kind: "message", role: "assistant", text: t, ts: Date.parse(o.timestamp) || 0 }); }
-        else if (b.type === "tool_use") { const st = toolFileStat(b.name, b.input); out.push({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), path: st.path, adds: st.adds, dels: st.dels, rows: st.rows }); }
+        else if (b.type === "tool_use") { const st = toolFileStat(b.name, b.input); out.push({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), path: st.path, adds: st.adds, dels: st.dels, rows: st.rows }); }
       }
     } else if (o.type === "user") {
       const t = cleanText(contentText(o.message?.content));
@@ -410,7 +452,7 @@ function findFileById(id: string): { path: string; claude: boolean } | null {
   return hit ? { path: hit.path, claude } : null;
 }
 
-export interface HistMsg { role: string; text: string; ts: number; name?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; }
+export interface HistMsg { role: string; text: string; ts: number; name?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; }
 /** Full read-only history of one native session — text turns AND tool activity (role:"tool"),
  *  interleaved in order, so the "editando/criando arquivo" blocks survive a page refresh. */
 // `diffLimit` bounds how many tool items get their file stats computed. Each Edit stat runs an
@@ -422,8 +464,15 @@ export interface HistMsg { role: string; text: string; ts: number; name?: string
 // response, which is why "os arquivos demoram a aparecer"). Cache the PARSED VIEW keyed on the
 // jsonl's mtime+size (not the file bytes): an idle session re-opens instantly, a live one whose
 // jsonl just grew re-parses. Bounded so memory can't run away.
-type NativeHist = { agent: string; cwd: string; title: string; messages: HistMsg[] };
+type NativeHist = { agent: string; cwd: string; title: string; messages: HistMsg[]; inputTokens?: number };
 const histCache = new Map<string, { key: string; data: NativeHist }>();
+// Contexto de entrada (fresh + cache) do último turno do thread principal — pro medidor de consumo
+// aparecer JÁ ao abrir a sessão, não só depois da 1ª mensagem nova. Mesma conta de agents.ts.
+function inputContextOf(u: any): number | undefined {
+  if (!u) return undefined;
+  const n = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+  return n || undefined;
+}
 export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   if (!isNativeId(id)) return null;
   const f = findFileById(id);
@@ -442,18 +491,20 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   const messages: HistMsg[] = [];
   const toolRefs: Array<{ m: HistMsg; name: string; input: unknown }> = [];
   let cwd = "", title = "";
+  let lastUsage: any;
   eachLine(raw, (o) => {
     if (f.claude) {
       if (o.type === "custom-title" && o.customTitle) title = o.customTitle;
       else if (o.type === "ai-title" && o.aiTitle) title = title || o.aiTitle;
       else if (o.type === "user" || o.type === "assistant") {
         if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
+        if (o.type === "assistant" && !o.isSidechain && o.message?.usage) lastUsage = o.message.usage;
         const ts = Date.parse(o.timestamp) || 0;
         const content = o.message?.content;
         if (o.type === "assistant" && Array.isArray(content)) {
           for (const b of content) {
             if (b.type === "text" && b.text) { const t = cleanText(b.text); if (t) messages.push({ role: "assistant", text: t, ts }); }
-            else if (b.type === "tool_use") { const m: HistMsg = { role: "tool", text: toolSummary(b.name, b.input), ts, name: b.name }; messages.push(m); toolRefs.push({ m, name: b.name, input: b.input }); }
+            else if (b.type === "tool_use") { const m: HistMsg = { role: "tool", text: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), ts, name: b.name }; messages.push(m); toolRefs.push({ m, name: b.name, input: b.input }); }
           }
         } else {
           let t = contentText(content);
@@ -474,7 +525,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
     const st = toolFileStat(r.name, r.input);
     r.m.path = st.path; r.m.adds = st.adds; r.m.dels = st.dels; r.m.rows = st.rows;
   }
-  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: title || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão", messages };
+  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: title || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão", messages, inputTokens: inputContextOf(lastUsage) };
   if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
   return data;
 }
