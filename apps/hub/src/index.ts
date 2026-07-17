@@ -747,8 +747,10 @@ async function flushQueue(sid: string): Promise<void> {
   const items = queueOf(sid);
   if (!items.length) return;
   const rid = items.find((q) => q.runnerId)?.runnerId; // fila de sessão de runner remoto?
-  if (rid) { if ((runnerActive.get(rid) || new Set()).has(sid)) return; }  // runner ainda ocupado
-  else if (activeRuns.has(sid)) return;                                     // local ainda ocupado
+  if (rid) {
+    if ((runnerActive.get(rid) || new Set()).has(sid)) return;   // runner ainda ocupado
+    if (!runners.get(rid)?.ws) return;                            // runner OFFLINE → mantém a fila (não perde)
+  } else if (activeRuns.has(sid)) return;                         // local ainda ocupado
   const text = items.map((q) => q.text).join("\n\n");
   const atts = items.flatMap((q) => q.atts || []);
   const model = items.find((q) => q.model)?.model;

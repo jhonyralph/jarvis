@@ -113,6 +113,11 @@
     .askcard .asknav { display:flex; justify-content:space-between; gap:8px; margin-top:2px; }
     .askcard .asknav .grow { flex:1; }
     .askcard.done { opacity:.7; } .askcard.done .askopt, .askcard.done .askother { pointer-events:none; }
+    /* barra "voltar mensagem ao campo" (abaixo das mensagens) quando um envio é interrompido */
+    .restorebar { align-self:center; display:flex; align-items:center; gap:9px; background:#2a1e12; border:1px solid #7a5a2e; border-radius:10px; padding:7px 11px; font-size:12.5px; color:#e3c08a; }
+    .restorebar .rback { background:#7a5a2e; border:0; color:#fff; border-radius:7px; padding:4px 10px; cursor:pointer; font-size:12px; }
+    .restorebar .rback:hover { background:#96703a; }
+    .restorebar .rx { background:none; border:0; color:#e3c08a99; cursor:pointer; font-size:13px; padding:0 2px; } .restorebar .rx:hover { color:#ff6b6b; }
     .msg.bot p { margin:.55em 0; } .msg.bot h4 { margin:.7em 0 .3em; font-size:15px; }
     .msg.bot ul,.msg.bot ol { margin:.4em 0; padding-left:1.3em; }
     .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; overflow-wrap:anywhere; }
@@ -665,6 +670,7 @@
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
       msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); forceBottom();
+      if(getRestorable(m.sessionId)) showRestoreBar(m.sessionId);   // mensagem não enviada de antes → oferece voltar ao input
       curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; sessCost=(m.session||{}).sessionCost||0; updUsagePill(); renderRecents(); closePop();
       curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
       E.roBanner.classList.toggle('hidden',!curNative);
@@ -1352,14 +1358,14 @@
           if(pick) openSession(pick);
           else if(currentMachine==='local' && !hashSession()) E.newSess.onclick(); } }
         else if(m.t==='history'){ cacheHist(m); applyHistory(m); }
-        else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
+        else if(m.t==='message'){ if(m.message.role==='assistant') clearRestorable(m.message.sessionId); if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='queue'){ queueBySession[m.sessionId]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession) renderQueue(); }
         else if(m.t==='ask'){ if(m.sessionId===currentSession) renderAskCard(m.questions||[]); }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
-          else if(ev.kind==='text') streamText(ev.text||'',ev.parentId);
-          else if(ev.kind==='done'){ if(typeof m.sessionCost==='number'&&m.sessionId===currentSession) sessCost=m.sessionCost; streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
+          else if(ev.kind==='text'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.parentId); }
+          else if(ev.kind==='done'){ clearRestorable(m.sessionId); if(typeof m.sessionCost==='number'&&m.sessionId===currentSession) sessCost=m.sessionCost; streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
           else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
           else if(ev.kind==='error'){ streamErr(); onTurnEnd(m.sessionId); } }
         else if(m.t==='activity'){ if(m.sessionId!==currentSession)return;
@@ -1476,6 +1482,20 @@
     // {t:runs}); justSent cobre a janela entre eu enviar e o servidor confirmar. Enfileirar numa
     // sessão NUNCA bloqueia outra: cada uma tem sua fila e seu estado.
     const queueBySession={}, justSent=new Set(), draftBySession={}, justSentTimers={};
+    // Mensagem "em voo" recuperável: se você PARAR antes de vir resposta, ela volta pro input pra
+    // editar e reenviar. Persistida (localStorage, TTL 1h) pra sobreviver a reload. Some quando a
+    // resposta começa a chegar.
+    const RESTORE_TTL=3600000;
+    function setRestorable(sid,text,atts){ if(!sid)return; try{ localStorage.setItem('jarvis_restore_'+sid,JSON.stringify({text:text||'',atts:atts||[],ts:Date.now()})); }catch(e){} }
+    function getRestorable(sid){ if(!sid)return null; try{ const v=JSON.parse(localStorage.getItem('jarvis_restore_'+sid)||'null'); if(v&&Date.now()-(v.ts||0)<RESTORE_TTL)return v; }catch(e){} return null; }
+    function clearRestorable(sid){ if(!sid)return; try{localStorage.removeItem('jarvis_restore_'+sid);}catch(e){} const b=document.getElementById('restorebar'); if(b)b.remove(); }
+    function restoreToInput(sid){ const v=getRestorable(sid); if(!v)return; E.input.value=v.text||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(Array.isArray(v.atts)&&v.atts.length){ attachments=v.atts.slice(); renderAttach(); } clearRestorable(sid); try{E.input.focus();}catch(e){} }
+    function showRestoreBar(sid){ if(!getRestorable(sid)||sid!==currentSession)return; const old=document.getElementById('restorebar'); if(old)old.remove();
+      const b=document.createElement('div'); b.id='restorebar'; b.className='restorebar';
+      const s=document.createElement('span'); s.className='rtxt'; s.textContent='Mensagem não enviada — recupere para editar e reenviar.'; b.appendChild(s);
+      const btn=document.createElement('button'); btn.type='button'; btn.className='rback'; btn.textContent='↩ Voltar ao campo'; btn.onclick=()=>restoreToInput(sid); b.appendChild(btn);
+      const x=document.createElement('button'); x.type='button'; x.className='rx'; x.title='Descartar'; x.textContent='✕'; x.onclick=()=>clearRestorable(sid); b.appendChild(x);
+      E.log.appendChild(b); autoScroll(); }
     function queueOf(sid){ return queueBySession[sid] || (queueBySession[sid]=[]); }
     function busy(sid){ return !!sid && (activeRuns.includes(sid) || justSent.has(sid)); }
     // "justSent" cobre a janela entre eu ENVIAR e o servidor CONFIRMAR o run (activeRuns, via {t:runs}).
@@ -1530,14 +1550,19 @@
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
       if(currentSession) delete draftBySession[currentSession];   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort}); return; }
-      sendMsgTo(currentSession,text||'(anexo)',atts); };
+      setRestorable(currentSession,text,atts); sendMsgTo(currentSession,text||'(anexo)',atts); };
     E.stopBtn.onclick=()=>{
       if(askActive){   // interromper a DECISÃO → dispensa o card e devolve o composer pra digitar manualmente
         askVoice=false; askPendingVoice=false;
         try{ const c=askActive.card; const nav=c.querySelector('.asknav'); if(nav)nav.remove(); c.classList.add('done'); c.classList.remove('min');
           const n=document.createElement('div'); n.className='askhd'; n.textContent='Decisão interrompida — responda manualmente pelo campo abaixo.'; c.appendChild(n); }catch(e){}
         askActive=null; status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
-      if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); askVoice=false; askPendingVoice=false; refreshComposer(); status('busy','parando…'); };
+      // Parar um turno em andamento: cancela o agente e — se ainda não veio resposta — devolve a
+      // mensagem ao input (ou mostra o botão "voltar" se você já estava digitando). A FILA é
+      // preservada (não some mais no parar).
+      if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); askVoice=false; askPendingVoice=false;
+      if(getRestorable(currentSession)){ if(!E.input.value.trim()) restoreToInput(currentSession); else showRestoreBar(currentSession); }
+      refreshComposer(); status('busy','parando…'); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
