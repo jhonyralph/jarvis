@@ -97,6 +97,10 @@
     .subagent .sapreview { font-size:12px; color:#94a3b8; white-space:pre-wrap; overflow-wrap:anywhere; }
     .strtext { white-space:pre-wrap; } .strtext.done { white-space:normal; }
     .msg.bot .usage { margin-top:4px; }
+    /* selo de CONCLUSÃO no fim de um turno — deixa claro que terminou e onde o resultado está */
+    .msg.bot .strdone { align-self:flex-start; display:inline-flex; align-items:center; gap:6px; margin-top:7px; font-size:12px; color:#3fb950; background:#2ea04314; border:1px solid #2ea04340; border-radius:8px; padding:3px 10px; }
+    .msg.bot .strdone .dchk { font-weight:700; }
+    .msg.bot .strdone .dcost { color:var(--mut); }
     /* cards de decisão (stepper) — perguntas geradas a partir da resposta do agente */
     .askcard { display:flex; flex-direction:column; gap:9px; border:1px solid var(--line); background:#ffffff08; }
     .askcard .askhd { font-size:11.5px; color:var(--mut); display:flex; align-items:center; justify-content:space-between; gap:8px; }
@@ -808,7 +812,12 @@
       // Os blocos de texto já foram renderizados intercalados; só usa finalText se NADA foi streamado
       // (ex.: resposta veio só no result), pra não duplicar o que já está na tela.
       if(!sawText && finalText){ const d=document.createElement('div'); d.className='strtext done'; d.innerHTML=md(finalText); strFlow.appendChild(d); }
-      if(usage){ const u=document.createElement('div'); u.className='usage'; u.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; strEl.appendChild(u); E.usage.textContent=u.textContent; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
+      // Marcador CLARO de conclusão (o resultado é o texto logo acima) — "não sei se terminou" resolvido.
+      const secs=strStart?Math.round((Date.now()-strStart)/1000):0; const tstr=secs>=60?`${Math.floor(secs/60)}m ${secs%60}s`:`${secs}s`;
+      const f=document.createElement('div'); f.className='strdone';
+      f.innerHTML=`<span class="dchk">✓</span><span>Concluído · ${tstr}</span>`+(usage?` · <span class="dcost">~$${(usage.costUsd||0).toFixed(4)}</span>`:'');
+      strEl.appendChild(f);
+      if(usage){ E.usage.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
       streamFinish(); autoScroll(); }
     function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
       if(strEl){ const head=strEl.querySelector('.strhead'); if(head) head.remove();
