@@ -132,6 +132,17 @@ export class Store {
     return this.data[id]?.messages ?? [];
   }
 
+  /** Remove the trailing USER message — a turn the user cancelled before any reply, "taking it back"
+   *  to edit and resend. No-op if the last message isn't a user one (a reply already landed). */
+  dropLastUser(id: string): boolean {
+    const s = this.data[id];
+    if (!s || !s.messages.length || s.messages[s.messages.length - 1].role !== "user") return false;
+    s.messages.pop();
+    s.updatedAt = s.messages.at(-1)?.ts ?? s.updatedAt;
+    this.flush();
+    return true;
+  }
+
   /** Cheap cross-session context: the last N sessions (any agent) with title +
    *  last user/assistant message (truncated). Used by cross-session search. */
   digest(n = 8, cap = 220): Array<{ id: string; agent: string; cwd: string; title: string; updatedAt: number; lastUser: string; lastAssistant: string }> {

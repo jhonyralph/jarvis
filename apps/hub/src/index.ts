@@ -1553,6 +1553,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       broadcastQueue(msg.sessionId); saveQueues(); return;
     }
     if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); saveQueues(); return; }
+    // "voltar" mensagem cancelada: tira a última mensagem do usuário do store (sessão do hub) pra
+    // ela não reaparecer no reload. Nativa não dá (o transcript é do claude) — some só na tela.
+    if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (!isNativeId(msg.sessionId)) { store.dropLastUser(msg.sessionId); pushSessions(); } return; }
 
     // Wizard de voz dos cards de decisão: falar um passo (say) e interpretar a resposta falada (ask_voice).
     if (msg.t === "say" && typeof msg.text === "string") {

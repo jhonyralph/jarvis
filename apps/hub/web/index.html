@@ -776,7 +776,7 @@
     const toolIcon = n => ({Bash:'🖥',Read:'📄',Edit:'✏️',Write:'✏️',NotebookEdit:'✏️',MultiEdit:'✏️',Grep:'🔎',Glob:'📁',Task:'🤖',Agent:'🤖',WebFetch:'🌐',WebSearch:'🌐'}[n]||'🔧');
     // strFlow = container ordenado; curTextEl = bloco de texto aberto (null após uma ferramenta,
     // pra o próximo texto virar um bloco NOVO); curTextRaw = markdown acumulado desse bloco.
-    let strEl=null, strFlow=null, curTextEl=null, curTextRaw='', sawText=false, strTimer=null, strStart=0, strTimeEl=null, subAgents={};
+    let strEl=null, strFlow=null, curTextEl=null, curTextRaw='', sawText=false, strTimer=null, strStart=0, strTimeEl=null, subAgents={}, cleanCancel=false;
     function streamStartUI(){ clearPending(); curTextEl=null; curTextRaw=''; sawText=false; strStart=Date.now(); subAgents={};
       strEl=document.createElement('div'); strEl.className='msg bot streaming';
       strEl.innerHTML='<div class="strhead"><span class="spin"></span><span class="strtime">0s</span></div><div class="strflow"></div>';
@@ -820,6 +820,7 @@
       if(usage){ E.usage.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
       streamFinish(); autoScroll(); }
     function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
+      if(cleanCancel){ cleanCancel=false; if(strEl)strEl.remove(); streamFinish(); autoScroll(); return; }  // cancel limpo: a msg voltou ao input → sem bloco "interrompido"
       if(strEl){ const head=strEl.querySelector('.strhead'); if(head) head.remove();
         strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone);
         const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ interrompido'; strEl.appendChild(n);
@@ -1570,7 +1571,12 @@
       // mensagem ao input (ou mostra o botão "voltar" se você já estava digitando). A FILA é
       // preservada (não some mais no parar).
       if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); askVoice=false; askPendingVoice=false;
-      if(getRestorable(currentSession)){ if(!E.input.value.trim()) restoreToInput(currentSession); else showRestoreBar(currentSession); }
+      if(getRestorable(currentSession)){
+        const b=E.log.querySelectorAll('.msg.me'); const last=b[b.length-1]; if(last)last.remove();   // tira a mensagem cancelada do chat
+        cleanCancel=true;                                                                            // o bloco de atividade some sem deixar "interrompido"
+        if(!curNative) tx({t:'dropLast',sessionId:currentSession});                                  // hub: tira do store pra não voltar no reload
+        if(!E.input.value.trim()) restoreToInput(currentSession); else showRestoreBar(currentSession);
+      }
       refreshComposer(); status('busy','parando…'); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
