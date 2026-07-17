@@ -10,9 +10,9 @@
  * Ids are prefixed ("claude:"/"codex:") so they never collide with Jarvis's own
  * session UUIDs and the open handler can route them here. Nothing is written back.
  */
-import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync, unlinkSync } from "node:fs";
+import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, basename } from "node:path";
+import { join, basename, dirname } from "node:path";
 
 export interface NativeMeta {
   id: string;
@@ -148,6 +148,26 @@ function contentText(c: any): string {
   return "";
 }
 
+// Nome ESTÁVEL de uma sessão nativa. O Claude Code reescreve o ai-title a cada turno; se o menu
+// seguisse o mais recente, o nome ficaria mudando "no meio da corrida". Então CONGELAMOS: na
+// primeira vez que vemos um ai-title de verdade, gravamos e nunca mais mudamos. Guardado em
+// ~/.jarvis (NÃO toca o store do .claude). Apagar essa sessão limpa a entrada (deleteNative).
+const TITLES_FILE = join(homedir(), ".jarvis", "native-titles.json");
+let titleStore: Record<string, string> | null = null;
+function loadTitles(): Record<string, string> {
+  if (!titleStore) { try { titleStore = JSON.parse(readFileSync(TITLES_FILE, "utf8")); } catch { titleStore = {}; } }
+  return titleStore;
+}
+function saveTitles(): void { try { mkdirSync(dirname(TITLES_FILE), { recursive: true }); writeFileSync(TITLES_FILE, JSON.stringify(titleStore)); } catch { /* ignore */ } }
+/** Congela o 1º ai-title real visto; depois disso, sempre o mesmo (estável). `fallback` (custom-title
+ *  ou 1ª mensagem) é usado só enquanto ainda não há ai-title — e NÃO é congelado. */
+function stableTitle(id: string, latestAi: string, fallback: string): string {
+  const store = loadTitles();
+  if (store[id]) return store[id];
+  if (latestAi) { store[id] = latestAi; saveTitles(); return latestAi; }
+  return fallback || "Sessão Claude";
+}
+
 function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
   const head = readHead(path);
   if (!head) return null;
@@ -170,7 +190,7 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
     if (o.type === "ai-title" && o.aiTitle) aiTitle = o.aiTitle;
     else if (o.type === "custom-title" && o.customTitle) customTitle = o.customTitle;
   });
-  const title = aiTitle || customTitle || firstUser.slice(0, 60) || "Sessão Claude";
+  const title = stableTitle("claude:" + id, aiTitle, customTitle || firstUser.slice(0, 60));
   return { id: "claude:" + id, title, agent: "claude-code", cwd, count: 0, source: "native" };
 }
 
@@ -278,6 +298,7 @@ export function nativeFilePath(id: string): { path: string; claude: boolean } | 
  *  the UI drops it either way; only a real unlink failure (locked/permission) returns false. */
 export function deleteNative(id: string): boolean {
   listCache = null; // always re-scan the list after a delete attempt
+  const store = loadTitles(); if (store[id]) { delete store[id]; saveTitles(); } // esquece o nome congelado
   const f = isNativeId(id) ? findFileById(id) : null;
   if (!f) return true; // nothing on disk — treat as already removed
   try { unlinkSync(f.path); } catch { return false; }
@@ -546,7 +567,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
     const st = toolFileStat(r.name, r.input);
     r.m.path = st.path; r.m.adds = st.adds; r.m.dels = st.dels; r.m.rows = st.rows;
   }
-  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: lastAi || lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão", messages, inputTokens: inputContextOf(lastUsage) };
+  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: inputContextOf(lastUsage) };
   if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
   return data;
 }
