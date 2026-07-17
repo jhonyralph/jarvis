@@ -815,8 +815,8 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
     if (!agent?.oneShot) return [];
     const prompt =
       "Você analisa a RESPOSTA de um assistente de desenvolvimento e detecta se ela PEDE uma decisão ao usuário (escolher entre alternativas, priorizar itens, confirmar rumo).\n" +
-      'Se SIM, devolva JSON estrito: {"questions":[{"header":"2-4 palavras","question":"a pergunta","multi":false,"options":[{"label":"opção curta","desc":"detalhe opcional"}]}]}\n' +
-      "Regras: multi=true SOMENTE quando o usuário pode escolher VÁRIOS itens de uma lista (ex.: quais tarefas fazer); multi=false quando é UMA alternativa. Use as opções que a resposta oferece; se poucas, gere as plausíveis do texto. NÃO inclua 'Outros' (a UI adiciona).\n" +
+      'Se SIM, devolva JSON estrito: {"questions":[{"header":"2-4 palavras","question":"pergunta RESUMIDA em 1 linha","multi":false,"options":[{"label":"opção curta","desc":"detalhe curto"}]}]}\n' +
+      "Regras: RESUMA — header 2-4 palavras, question 1 linha curta, label/desc curtos (o texto completo já está na resposta acima do card, o usuário abre o histórico se precisar). multi=true SOMENTE quando o usuário pode escolher VÁRIOS itens de uma lista (ex.: quais tarefas fazer); multi=false quando é UMA alternativa. Use as opções que a resposta oferece; se poucas, gere as plausíveis do texto. NÃO inclua 'Outros' (a UI adiciona).\n" +
       'Se a resposta NÃO pede decisão, devolva {"questions":[]}. Responda APENAS o JSON.\n\nRESPOSTA:\n' +
       t.slice(0, 4000);
     const reply = await agent.oneShot(prompt, { model: summaryCfg.model, effort: summaryCfg.effort });

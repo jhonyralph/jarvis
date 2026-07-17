@@ -99,7 +99,9 @@
     .msg.bot .usage { margin-top:4px; }
     /* cards de decisão (stepper) — perguntas geradas a partir da resposta do agente */
     .askcard { display:flex; flex-direction:column; gap:9px; border:1px solid var(--line); background:#ffffff08; }
-    .askcard .askhd { font-size:11.5px; color:var(--mut); display:flex; justify-content:space-between; gap:8px; }
+    .askcard .askhd { font-size:11.5px; color:var(--mut); display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .askcard .askmin { background:none; border:0; color:#7aa2f7; cursor:pointer; font-size:11.5px; padding:2px 4px; flex:none; }
+    .askcard.min { gap:0; } .askcard.min .askq, .askcard.min .askopts, .askcard.min .askother, .askcard.min .asknav { display:none; }
     .askcard .askq { font-size:14px; color:var(--text); font-weight:500; }
     .askcard .askopts { display:flex; flex-direction:column; gap:6px; }
     .askcard .askopt { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; background:#ffffff0d; border:1px solid var(--line); border-radius:9px; padding:8px 11px; cursor:pointer; color:var(--text); }
@@ -676,9 +678,13 @@
       const answers=questions.map(()=>({sel:new Set(), other:''}));
       const card=document.createElement('div'); card.className='msg bot askcard'; E.log.appendChild(card);
       const st={questions,answers,step:0,card};
-      function draw(){ const q=questions[st.step], a=answers[st.step]; card.innerHTML='';
+      function draw(){ const q=questions[st.step], a=answers[st.step]; card.innerHTML=''; card.classList.toggle('min',!!st.min);
         const hd=document.createElement('div'); hd.className='askhd';
-        hd.innerHTML=`<span>Passo ${st.step+1}/${questions.length}${q.header?' · '+esc(q.header):''}</span><span>${q.multi?'escolha uma ou mais':'escolha uma'}</span>`; card.appendChild(hd);
+        const lbl=document.createElement('span'); lbl.textContent=`Passo ${st.step+1}/${questions.length}${q.header?' · '+q.header:''}`;
+        const right=document.createElement('span'); right.style.cssText='display:flex;align-items:center;gap:8px';
+        if(!st.min){ const hint=document.createElement('span'); hint.textContent=q.multi?'escolha uma ou mais':'escolha uma'; right.appendChild(hint); }
+        const mini=document.createElement('button'); mini.type='button'; mini.className='askmin'; mini.textContent=st.min?'▸ abrir':'▾ minimizar'; mini.title=st.min?'Abrir a decisão':'Minimizar para ver o histórico'; mini.onclick=(e)=>{ e.stopPropagation(); st.min=!st.min; draw(); };
+        right.appendChild(mini); hd.appendChild(lbl); hd.appendChild(right); card.appendChild(hd);
         const qt=document.createElement('div'); qt.className='askq'; qt.textContent=q.question; card.appendChild(qt);
         const opts=document.createElement('div'); opts.className='askopts';
         q.options.forEach((o,i)=>{ const b=document.createElement('button'); b.type='button'; b.className='askopt'+(a.sel.has(i)?' on':'');
@@ -693,7 +699,7 @@
         const sp=document.createElement('span'); sp.className='grow';
         const fwd=document.createElement('button'); fwd.type='button'; fwd.textContent=st.step===questions.length-1?'Enviar ✓':'Avançar ▶'; fwd.onclick=()=>go(1);
         nav.appendChild(back); nav.appendChild(sp); nav.appendChild(fwd); card.appendChild(nav);
-        E.log.scrollTop=E.log.scrollHeight;
+        if(!st.min) E.log.scrollTop=E.log.scrollHeight;
       }
       function go(dir){ const a=answers[st.step];
         if(dir>0 && !a.sel.size && !a.other.trim()){ toast('Escolha uma opção ou preencha "Outros".'); return; }
@@ -705,7 +711,7 @@
       function submit(){ const text='Decisões escolhidas:\n'+questions.map((q,i)=>`- ${q.question}\n  → ${answerText(i)}`).join('\n');
         card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false;
         sendMsgTo(currentSession, text); if(wasVoice) lastWasVoice=true; }  // mantém o modo voz para a próxima decisão
-      st.draw=draw; st.submit=submit; st.voice=lastWasVoice; askActive=st; draw();
+      st.draw=draw; st.submit=submit; st.voice=lastWasVoice; askActive=st; draw(); refreshComposer();
       // Se a decisão veio de uma fala, conduz por VOZ (step a step). Espera a fala da resposta
       // terminar antes de começar, pra não sobrepor áudio.
       if(st.voice){ if(ttsPlaying) askPendingVoice=true; else startAskVoice(); }
@@ -1462,9 +1468,12 @@
       justSentTimers[sid]=setTimeout(()=>{ if(justSent.has(sid)&&!activeRuns.includes(sid)){ justSent.delete(sid); refreshComposer(); renderRecents(); } }, 45000); }
     let curBusy=false;   // reflete busy(currentSession); mantido p/ auto-reload
     function refreshComposer(){ curBusy=busy(currentSession);
-      // Parar aparece AO LADO do Enviar (não o substitui): mesmo rodando, você pode digitar e
-      // enfileirar. Parar é só o ícone, vermelho; Enviar continua sempre disponível.
-      if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!curBusy);
+      // Durante uma DECISÃO pendente: trava input + enviar + mic (a resposta vem pelo card), mas
+      // mantém Parar ATIVO — parar dispensa o card e devolve o composer pra digitar manualmente.
+      const lock=!!askActive, ro=curNative&&!curNativeWritable;
+      if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!(curBusy||lock));
+      E.input.disabled=ro||lock; E.sendBtn.disabled=ro||lock; if(E.mic)E.mic.disabled=ro||lock;
+      E.input.placeholder=lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':'Fale ou digite…');
       renderQueue(); maybeReload(); }
     function sendMsgTo(sid,text,atts){ if(!sid)return; lastWasVoice=false; markJustSent(sid);
       tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:sid,attachments:atts||[]});
@@ -1504,7 +1513,13 @@
       if(currentSession) delete draftBySession[currentSession];   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort}); return; }
       sendMsgTo(currentSession,text||'(anexo)',atts); };
-    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); askVoice=false; askPendingVoice=false; refreshComposer(); status('busy','parando…'); };
+    E.stopBtn.onclick=()=>{
+      if(askActive){   // interromper a DECISÃO → dispensa o card e devolve o composer pra digitar manualmente
+        askVoice=false; askPendingVoice=false;
+        try{ const c=askActive.card; const nav=c.querySelector('.asknav'); if(nav)nav.remove(); c.classList.add('done'); c.classList.remove('min');
+          const n=document.createElement('div'); n.className='askhd'; n.textContent='Decisão interrompida — responda manualmente pelo campo abaixo.'; c.appendChild(n); }catch(e){}
+        askActive=null; status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
+      if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); askVoice=false; askPendingVoice=false; refreshComposer(); status('busy','parando…'); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
