@@ -665,7 +665,7 @@
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
       msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); forceBottom();
-      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; updUsagePill(); renderRecents(); closePop();
+      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; sessCost=(m.session||{}).sessionCost||0; updUsagePill(); renderRecents(); closePop();
       curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
@@ -1142,7 +1142,7 @@
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
-    let lastInputTokens=0, planUsage=null;
+    let lastInputTokens=0, planUsage=null, sessCost=0;
     function modelContext(){ return (modelObj(currentAgent,curModel)||{}).context||0; }
     function ctxPct(){ const c=modelContext(); return c?Math.min(100,Math.round(lastInputTokens/c*100)):0; }
     function updUsagePill(){ if(!E.usageName)return; E.usageName.textContent=(modelContext()&&lastInputTokens)?ctxPct()+'%':'—'; }
@@ -1155,6 +1155,7 @@
       let h='<div class="upop"><div class="uh">Janela de contexto</div>';
       if(c&&lastInputTokens){ const pc=ctxPct(); h+=`<div class="urow"><span>${kfmt(lastInputTokens)} / ${kfmt(c)}</span><b>${pc}%</b></div>`+ubar(pc, pc>85?'#f85149':pc>60?'#e3b341':'#3fb950'); }
       else h+='<div class="umut">envie uma mensagem para medir</div>';
+      h+='<div class="uh" style="margin-top:12px">Custo da sessão</div>'+(sessCost>0?`<div class="urow"><span>acumulado (via Jarvis)</span><b>~$${sessCost.toFixed(4)}</b></div>`:'<div class="umut">sem custo ainda nesta sessão</div>');
       h+='<div class="uh" style="margin-top:12px">Limites do plano</div><div id="uplan" class="umut">carregando…</div></div>';
       p.innerHTML=h; renderPlan(planUsage); tx({t:'get_usage',agent:currentAgent}); }
     function renderPlan(plan){ const el=document.getElementById('uplan'); if(!el)return;
@@ -1358,7 +1359,7 @@
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
           else if(ev.kind==='text') streamText(ev.text||'',ev.parentId);
-          else if(ev.kind==='done'){ streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
+          else if(ev.kind==='done'){ if(typeof m.sessionCost==='number'&&m.sessionId===currentSession) sessCost=m.sessionCost; streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
           else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
           else if(ev.kind==='error'){ streamErr(); onTurnEnd(m.sessionId); } }
         else if(m.t==='activity'){ if(m.sessionId!==currentSession)return;

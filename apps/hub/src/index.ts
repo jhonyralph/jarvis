@@ -690,6 +690,19 @@ function loadQueues(): void {
     for (const sid of Object.keys(obj)) { const e = obj[sid]; if (e && Array.isArray(e.items) && e.items.length && now - (e.ts || 0) < QUEUE_TTL_MS) queues.set(sid, e.items); }
   } catch { /* ignore */ }
 }
+// Custo ACUMULADO por sessão (o que passou pelo Jarvis), persistido pra sobreviver a reload/restart.
+const sessionCost = new Map<string, { cost: number; ts: number }>();
+const COST_FILE = join(JARVIS_DIR, "session-cost.json");
+function costOf(sid: string): number { return sessionCost.get(sid)?.cost || 0; }
+function addCost(sid: string, usd?: number): void {
+  if (!usd || !isFinite(usd)) return;
+  const e = sessionCost.get(sid) || { cost: 0, ts: 0 };
+  e.cost += usd; e.ts = Date.now(); sessionCost.set(sid, e);
+  try { const obj: Record<string, { cost: number; ts: number }> = {}; for (const [s, v] of sessionCost) obj[s] = v; mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(COST_FILE, JSON.stringify(obj)); } catch { /* ignore */ }
+}
+function loadSessionCost(): void {
+  try { const obj = JSON.parse(readFileSync(COST_FILE, "utf8")); const now = Date.now(), TTL = 30 * 24 * 3600 * 1000; for (const s of Object.keys(obj)) { const e = obj[s]; if (e && now - (e.ts || 0) < TTL) sessionCost.set(s, { cost: e.cost || 0, ts: e.ts || now }); } } catch { /* ignore */ }
+}
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply> {
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
@@ -698,7 +711,8 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "start" } });
   try {
     const reply = await agent.send(sid, agentText, cwd, { ...opts, signal: ctrl.signal }, (ev) => { if (buf.length < 600) buf.push(ev); broadcast(sid, { t: "stream", sessionId: sid, ev }); });
-    broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage });
+    addCost(sid, reply.usage?.costUsd);
+    broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage, sessionCost: costOf(sid) });
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
     const nativeId = agent.nativeSessionId?.(sid);
     if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
@@ -1292,7 +1306,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, {
         t: "history",
         sessionId: msg.sessionId,
-        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code", inputTokens: h.inputTokens },
+        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code", inputTokens: h.inputTokens, sessionCost: costOf(msg.sessionId) },
         total: h.messages.length,
         messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows })),
         files: sessionFiles(msg.sessionId),
@@ -1307,7 +1321,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const s = store.ensure(msg.sessionId);
       const all = store.history(s.id);
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles("claude:" + nid) : [] });
+      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles("claude:" + nid) : [] });
       replayActivity(ws, s.id);
       send(ws, { t: "queue", sessionId: s.id, items: queueOf(s.id).map((q) => ({ text: q.text, atts: q.atts })) });
       return;
@@ -1746,6 +1760,7 @@ setInterval(() => void refreshUpdate(true), 6 * 3600_000); // then every 6h
 try { const purged = purgeProbeJunk(); if (purged) console.log(`[hub] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
 try { const s = purgeScratch(); if (s) console.log(`[hub] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
 try { loadQueues(); const n = [...queues.values()].reduce((a, q) => a + q.length, 0); if (n) console.log(`[hub] fila restaurada: ${n} mensagem(ns) (cache com TTL)`); } catch { /* ignore */ }
+try { loadSessionCost(); } catch { /* ignore */ }
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
