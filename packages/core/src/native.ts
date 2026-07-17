@@ -40,6 +40,25 @@ function readHead(path: string, bytes = HEAD_BYTES): string {
   }
 }
 
+// Lê o FIM do arquivo. O ai-title "correto" é reescrito a cada turno e, numa sessão grande, mora
+// perto do EOF — muito além do head. A primeira linha pode vir cortada (offset no meio): o parser
+// de linha ignora o JSON inválido. 128KB cobre com folga (o último título fica a ~30KB do fim).
+function readTail(path: string, bytes = 131072): string {
+  try {
+    const size = statSync(path).size;
+    if (size <= 0) return "";
+    const start = Math.max(0, size - bytes);
+    const len = Math.min(bytes, size);
+    const fd = openSync(path, "r");
+    const b = Buffer.alloc(len);
+    const n = readSync(fd, b, 0, len, start);
+    closeSync(fd);
+    return b.subarray(0, n).toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
 function eachLine(text: string, fn: (o: any) => void): void {
   for (const line of text.split(/\r?\n/)) {
     if (!line) continue;
@@ -133,14 +152,9 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
   const head = readHead(path);
   if (!head) return null;
   const id = basename(path).replace(/\.jsonl$/i, "");
-  let customTitle = "", aiTitle = "", firstUser = "", cwd = "";
+  let firstUser = "", cwd = "";
   eachLine(head, (o) => {
-    if (o.type === "custom-title" && o.customTitle) customTitle = o.customTitle;
-    // FIXA o PRIMEIRO ai-title. O Claude Code emite novos ai-titles conforme a conversa evolui;
-    // pegar o último fazia o nome da sessão mudar "no meio da corrida" e virava uma zona pra achar
-    // o assunto depois. Um rename manual (custom-title) continua tendo prioridade.
-    else if (o.type === "ai-title" && o.aiTitle && !aiTitle) aiTitle = o.aiTitle;
-    else if (o.type === "user" || o.type === "assistant") {
+    if (o.type === "user" || o.type === "assistant") {
       if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
       if (!firstUser && o.type === "user" && typeof o.message?.content === "string") {
         const t = o.message.content.trim();
@@ -149,7 +163,14 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
     }
   });
   if (cwd && /[\\/]\.jarvis[\\/]oneshot/i.test(cwd)) return null; // Jarvis's own one-shot (search/summary/digest) — not a real session
-  const title = customTitle || aiTitle || firstUser.slice(0, 60) || "Sessão Claude";
+  // Título CORRETO = o ai-title MAIS RECENTE (o Claude Code o reescreve a cada turno; fica descritivo
+  // e no idioma da conversa). Ele vive no FIM do arquivo, então lemos a cauda. O último vence.
+  let aiTitle = "", customTitle = "";
+  eachLine(readTail(path), (o) => {
+    if (o.type === "ai-title" && o.aiTitle) aiTitle = o.aiTitle;
+    else if (o.type === "custom-title" && o.customTitle) customTitle = o.customTitle;
+  });
+  const title = aiTitle || customTitle || firstUser.slice(0, 60) || "Sessão Claude";
   return { id: "claude:" + id, title, agent: "claude-code", cwd, count: 0, source: "native" };
 }
 
@@ -490,12 +511,12 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   }
   const messages: HistMsg[] = [];
   const toolRefs: Array<{ m: HistMsg; name: string; input: unknown }> = [];
-  let cwd = "", title = "";
+  let cwd = "", lastAi = "", lastCustom = "";
   let lastUsage: any;
   eachLine(raw, (o) => {
     if (f.claude) {
-      if (o.type === "custom-title" && o.customTitle) title = o.customTitle;
-      else if (o.type === "ai-title" && o.aiTitle) title = title || o.aiTitle;
+      if (o.type === "custom-title" && o.customTitle) lastCustom = o.customTitle;   // último vence
+      else if (o.type === "ai-title" && o.aiTitle) lastAi = o.aiTitle;              // título CORRETO = ai-title mais recente
       else if (o.type === "user" || o.type === "assistant") {
         if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
         if (o.type === "assistant" && !o.isSidechain && o.message?.usage) lastUsage = o.message.usage;
@@ -525,7 +546,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
     const st = toolFileStat(r.name, r.input);
     r.m.path = st.path; r.m.adds = st.adds; r.m.dels = st.dels; r.m.rows = st.rows;
   }
-  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: title || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão", messages, inputTokens: inputContextOf(lastUsage) };
+  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: lastAi || lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão", messages, inputTokens: inputContextOf(lastUsage) };
   if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
   return data;
 }
