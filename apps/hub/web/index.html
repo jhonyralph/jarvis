@@ -97,6 +97,20 @@
     .subagent .sapreview { font-size:12px; color:#94a3b8; white-space:pre-wrap; overflow-wrap:anywhere; }
     .strtext { white-space:pre-wrap; } .strtext.done { white-space:normal; }
     .msg.bot .usage { margin-top:4px; }
+    /* cards de decisão (stepper) — perguntas geradas a partir da resposta do agente */
+    .askcard { display:flex; flex-direction:column; gap:9px; border:1px solid var(--line); background:#ffffff08; }
+    .askcard .askhd { font-size:11.5px; color:var(--mut); display:flex; justify-content:space-between; gap:8px; }
+    .askcard .askq { font-size:14px; color:var(--text); font-weight:500; }
+    .askcard .askopts { display:flex; flex-direction:column; gap:6px; }
+    .askcard .askopt { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; background:#ffffff0d; border:1px solid var(--line); border-radius:9px; padding:8px 11px; cursor:pointer; color:var(--text); }
+    .askcard .askopt:hover { background:#ffffff14; }
+    .askcard .askopt.on { border-color:var(--me); background:#7aa2f71f; }
+    .askcard .askopt .l { font-size:13.5px; } .askcard .askopt.on .l::before { content:'✓ '; color:#7aa2f7; }
+    .askcard .askopt .d { font-size:12px; color:var(--mut); }
+    .askcard .askother { background:#0e1420; border:1px solid var(--line); border-radius:9px; padding:8px 11px; color:var(--text); font-size:13px; width:100%; box-sizing:border-box; }
+    .askcard .asknav { display:flex; justify-content:space-between; gap:8px; margin-top:2px; }
+    .askcard .asknav .grow { flex:1; }
+    .askcard.done { opacity:.7; } .askcard.done .askopt, .askcard.done .askother { pointer-events:none; }
     .msg.bot p { margin:.55em 0; } .msg.bot h4 { margin:.7em 0 .3em; font-size:15px; }
     .msg.bot ul,.msg.bot ol { margin:.4em 0; padding-left:1.3em; }
     .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; overflow-wrap:anywhere; }
@@ -653,6 +667,45 @@
     // after the stream started (remote runners emit over the network, order isn't guaranteed).
     function addMsg(m){ const d=buildMsgEl(m); const anchor=pendingEl||(m.role==='user'?strEl:null); if(anchor) E.log.insertBefore(d,anchor); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+    // Stepper de decisão: perguntas (single/multi) + campo "Outros", com Voltar/Avançar. Ao concluir,
+    // compõe as escolhas e envia como o PRÓXIMO input (o agente continua a partir daí). Agnóstico.
+    let askActive=null; // {questions, answers, step, card, draw} — usado também pelo wizard de voz
+    function renderAskCard(questions){
+      if(!Array.isArray(questions)||!questions.length) return;
+      const answers=questions.map(()=>({sel:new Set(), other:''}));
+      const card=document.createElement('div'); card.className='msg bot askcard'; E.log.appendChild(card);
+      const st={questions,answers,step:0,card};
+      function draw(){ const q=questions[st.step], a=answers[st.step]; card.innerHTML='';
+        const hd=document.createElement('div'); hd.className='askhd';
+        hd.innerHTML=`<span>Passo ${st.step+1}/${questions.length}${q.header?' · '+esc(q.header):''}</span><span>${q.multi?'escolha uma ou mais':'escolha uma'}</span>`; card.appendChild(hd);
+        const qt=document.createElement('div'); qt.className='askq'; qt.textContent=q.question; card.appendChild(qt);
+        const opts=document.createElement('div'); opts.className='askopts';
+        q.options.forEach((o,i)=>{ const b=document.createElement('button'); b.type='button'; b.className='askopt'+(a.sel.has(i)?' on':'');
+          b.innerHTML=`<span class="l">${esc(o.label)}</span>`+(o.desc?`<span class="d">${esc(o.desc)}</span>`:'');
+          b.onclick=()=>{ if(q.multi){ a.sel.has(i)?a.sel.delete(i):a.sel.add(i); } else { a.sel.clear(); a.sel.add(i); } draw(); };
+          opts.appendChild(b); });
+        card.appendChild(opts);
+        const other=document.createElement('input'); other.type='text'; other.className='askother'; other.placeholder='Outros (diga como deve ser)…'; other.value=a.other;
+        other.oninput=()=>{ a.other=other.value; }; card.appendChild(other);
+        const nav=document.createElement('div'); nav.className='asknav';
+        const back=document.createElement('button'); back.type='button'; back.className='ghost'; back.textContent='◀ Voltar'; back.disabled=st.step===0; back.onclick=()=>go(-1);
+        const sp=document.createElement('span'); sp.className='grow';
+        const fwd=document.createElement('button'); fwd.type='button'; fwd.textContent=st.step===questions.length-1?'Enviar ✓':'Avançar ▶'; fwd.onclick=()=>go(1);
+        nav.appendChild(back); nav.appendChild(sp); nav.appendChild(fwd); card.appendChild(nav);
+        E.log.scrollTop=E.log.scrollHeight;
+      }
+      function go(dir){ const a=answers[st.step];
+        if(dir>0 && !a.sel.size && !a.other.trim()){ toast('Escolha uma opção ou preencha "Outros".'); return; }
+        const nx=st.step+dir; if(nx<0) return;
+        if(nx>=questions.length){ submit(); return; }
+        st.step=nx; draw();
+      }
+      function answerText(i){ const q=questions[i],a=answers[i]; const picks=[...a.sel].map(x=>q.options[x].label); if(a.other.trim())picks.push('Outros: '+a.other.trim()); return picks.join('; '); }
+      function submit(){ const text='Decisões escolhidas:\n'+questions.map((q,i)=>`- ${q.question}\n  → ${answerText(i)}`).join('\n');
+        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); askActive=null;
+        sendMsgTo(currentSession, text); }
+      st.draw=draw; askActive=st; draw();
+    }
     // indicador AO VIVO com cronômetro — deixa claro que há algo executando
     let pendingEl=null, pendingTimer=null, pendingStart=0;
     function showPending(){ if(pendingEl)return; pendingStart=Date.now(); pendingEl=document.createElement('div'); pendingEl.className='msg bot pending';
@@ -1251,6 +1304,7 @@
         else if(m.t==='history'){ cacheHist(m); applyHistory(m); }
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='queue'){ queueBySession[m.sessionId]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession) renderQueue(); }
+        else if(m.t==='ask'){ if(m.sessionId===currentSession) renderAskCard(m.questions||[]); }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }

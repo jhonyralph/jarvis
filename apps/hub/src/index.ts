@@ -683,6 +683,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     const nativeId = agent.nativeSessionId?.(sid);
     if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
     notifyEvent("done", store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis"), reply.text, sid);
+    void maybeAsk(sid, reply.text); // detecta decisões na resposta e emite os cards (agnóstico)
     return reply;
   } catch (e) {
     // A user-initiated cancel is not a failure: tell the UI it stopped, and don't notify an error.
@@ -799,6 +800,47 @@ async function correctTranscript(text: string): Promise<string> {
   } catch {
     return text;
   }
+}
+
+/** Agnostic decision cards: a cheap LLM reads the agent's reply and, if it ASKS the user to decide,
+ *  extracts structured questions (single- or multi-select). Works for ANY agent because it acts on
+ *  the reply text, not the agent. The UI renders a stepper; the chosen answers come back as a normal
+ *  next message. Best-effort; gated on a "?" so most replies skip the call. Disable: JARVIS_ASK=0. */
+async function detectDecisions(replyText: string): Promise<Array<{ header: string; question: string; multi: boolean; options: Array<{ label: string; desc: string }> }>> {
+  if (process.env.JARVIS_ASK === "0") return [];
+  const t = (replyText || "").trim();
+  if (t.length < 12 || !t.includes("?")) return [];
+  try {
+    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    if (!agent?.oneShot) return [];
+    const prompt =
+      "Você analisa a RESPOSTA de um assistente de desenvolvimento e detecta se ela PEDE uma decisão ao usuário (escolher entre alternativas, priorizar itens, confirmar rumo).\n" +
+      'Se SIM, devolva JSON estrito: {"questions":[{"header":"2-4 palavras","question":"a pergunta","multi":false,"options":[{"label":"opção curta","desc":"detalhe opcional"}]}]}\n' +
+      "Regras: multi=true SOMENTE quando o usuário pode escolher VÁRIOS itens de uma lista (ex.: quais tarefas fazer); multi=false quando é UMA alternativa. Use as opções que a resposta oferece; se poucas, gere as plausíveis do texto. NÃO inclua 'Outros' (a UI adiciona).\n" +
+      'Se a resposta NÃO pede decisão, devolva {"questions":[]}. Responda APENAS o JSON.\n\nRESPOSTA:\n' +
+      t.slice(0, 4000);
+    const reply = await agent.oneShot(prompt, { model: summaryCfg.model, effort: summaryCfg.effort });
+    const m = String(reply?.text ?? "").match(/\{[\s\S]*\}/);
+    if (!m) return [];
+    const qs = JSON.parse(m[0])?.questions;
+    if (!Array.isArray(qs)) return [];
+    return qs
+      .filter((q: any) => q && q.question && Array.isArray(q.options) && q.options.length)
+      .slice(0, 6)
+      .map((q: any) => ({
+        header: String(q.header || "").slice(0, 40),
+        question: String(q.question).slice(0, 300),
+        multi: !!q.multi,
+        options: q.options.slice(0, 8).map((o: any) => ({ label: String(o?.label ?? o ?? "").slice(0, 80), desc: String(o?.desc ?? "").slice(0, 160) })).filter((o: any) => o.label),
+      }))
+      .filter((q: any) => q.options.length);
+  } catch {
+    return [];
+  }
+}
+async function maybeAsk(sid: string, replyText: string): Promise<void> {
+  const questions = await detectDecisions(replyText);
+  if (questions.length) broadcast(sid, { t: "ask", sessionId: sid, questions });
 }
 
 async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }> }): Promise<void> {
