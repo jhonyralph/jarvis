@@ -672,6 +672,7 @@
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
       E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
+      updateStopStatus();   // reflete o "parando…" da sessão ATUAL (por sessão, não global)
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
       msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); forceBottom();
@@ -821,6 +822,7 @@
       if(usage){ E.usage.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
       streamFinish(); autoScroll(); }
     function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
+      if(currentSession) delete stopping[currentSession]; updateStopStatus();   // parou → limpa o "parando…" da sessão
       if(cleanCancel){ cleanCancel=false; if(strEl)strEl.remove(); streamFinish(); autoScroll(); return; }  // cancel limpo: a msg voltou ao input → sem bloco "interrompido"
       if(strEl){ const head=strEl.querySelector('.strhead'); if(head) head.remove();
         strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone);
@@ -915,6 +917,9 @@
       (m.rows||[]).forEach(r=>{ const cls=r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx'; const ln=document.createElement('span'); ln.className='dline '+cls; ln.textContent=r.s; E.fileBody.appendChild(ln); });
       E.fileBody.scrollTop=0; }
 
+    // Ao enviar, a sessão vira a MAIS RECENTE → sobe pro topo do menu na hora (o servidor confirma depois).
+    let lastBump=null;
+    function bumpSession(sid){ if(!sid)return; lastBump={sid,ts:Date.now()}; const i=sessions.findIndex(s=>s.id===sid); if(i>0){ const [s]=sessions.splice(i,1); sessions.unshift(s); renderRecents(); } }
     function renderRecents(){ E.recents.innerHTML='';
       if(activeRuns.length){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+activeRuns.length+' rodando agora'; E.recents.appendChild(h); }
       secCounts();
@@ -1269,6 +1274,10 @@
 
     // ---------- status indicator ----------
     function status(mode,txt){ E.status.className=mode||''; E.status.innerHTML = mode ? `<span class="pulse"></span>${txt}` : ''; }
+    // "parando…" é POR SESSÃO, não global: só aparece na sessão que você parou; troca de sessão
+    // reflete o estado da sessão atual. (Não mexe nos status de voz listening/speaking.)
+    const stopping={};
+    function updateStopStatus(){ if(currentSession && stopping[currentSession]) status('busy','parando…'); else if(E.status.className==='busy') status(''); }
     // trava global de operação de voz (resumo/digest): só 1 por vez, independente do chat.
     // libera ao chegar {t:summary}/{t:busy}/{t:error} ou por failsafe de tempo.
     let voiceOp=null,voiceOpSid=null,voiceOpBtn=null,voiceOpHtml='',voiceOpTimer=0;
@@ -1362,7 +1371,9 @@
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
           if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
         else if(m.t==='sessions'){ if(m.runnerId && m.runnerId!==currentMachine) return; // sessões de OUTRA máquina — ignora (evita abrir na errada no reload)
-          restoringMachine=false; sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs; renderRecents(); if(!currentSession){
+          restoringMachine=false; sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs;
+          if(lastBump && Date.now()-lastBump.ts<12000){ const bi=sessions.findIndex(s=>s.id===lastBump.sid); if(bi>0){ const [bs]=sessions.splice(bi,1); sessions.unshift(bs); } }  // preserva o topo recém-enviado
+          renderRecents(); if(!currentSession){
           const exists=(id)=> !!id && sessions.some(s=>s.id===id);
           const last=lastByMachine[currentMachine], h=hashSession();
           const pick = exists(last)?last : (exists(h)?h : (sessions.find(s=>!isNative(s.id))||{}).id);
@@ -1435,7 +1446,7 @@
           if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
           if(busy(currentSession)){ toast('⏳ Sessão ocupada — envie o áudio quando terminar.'); return; }   // voz não entra na fila (a fila envia texto)
-          lastWasVoice=true; stick=true; markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); refreshComposer(); };
+          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?'escutando resposta…':'escutando…');
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
@@ -1524,13 +1535,13 @@
       E.input.disabled=ro||lock; E.sendBtn.disabled=ro||lock; if(E.mic)E.mic.disabled=ro||lock;
       E.input.placeholder=lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':'Fale ou digite…');
       renderQueue(); maybeReload(); }
-    function sendMsgTo(sid,text,atts){ if(!sid)return; lastWasVoice=false; markJustSent(sid);
+    function sendMsgTo(sid,text,atts){ if(!sid)return; lastWasVoice=false; bumpSession(sid); markJustSent(sid);
       tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:sid,attachments:atts||[]});
       if(sid===currentSession){ stick=true; showPending(); } refreshComposer(); }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
     // Fim de turno de uma sessão. O FLUSH da fila agora é do SERVIDOR (flushQueue no hub): ele
     // envia a fila acumulada e re-transmite {t:queue}/{t:message}. Aqui só destravamos o composer.
-    function onTurnEnd(sid){ if(!sid)return; justSent.delete(sid); refreshComposer(); }
+    function onTurnEnd(sid){ if(!sid)return; justSent.delete(sid); delete stopping[sid]; if(sid===currentSession) updateStopStatus(); refreshComposer(); }
     function clearQueue(){ if(currentSession){ queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); } refreshComposer(); }
     function renderQueue(){ if(!E.queueRow)return; const q=queueOf(currentSession); E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!q.length); if(!q.length)return;
       const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — enviadas juntas quando terminar'; hdr.appendChild(s);
@@ -1560,7 +1571,7 @@
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
       if(currentSession) delete draftBySession[currentSession];   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
-      if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort}); return; }
+      if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort}); return; }
       setRestorable(currentSession,text,atts); sendMsgTo(currentSession,text||'(anexo)',atts); };
     E.stopBtn.onclick=()=>{
       if(askActive){   // interromper a DECISÃO → dispensa o card e devolve o composer pra digitar manualmente
@@ -1578,7 +1589,7 @@
         if(!curNative) tx({t:'dropLast',sessionId:currentSession});                                  // hub: tira do store pra não voltar no reload
         if(!E.input.value.trim()) restoreToInput(currentSession); else showRestoreBar(currentSession);
       }
-      refreshComposer(); status('busy','parando…'); };
+      stopping[currentSession]=true; refreshComposer(); updateStopStatus(); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
