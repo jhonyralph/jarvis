@@ -886,11 +886,12 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
     if (!agent?.oneShot) return [];
     const prompt =
       "Você analisa a RESPOSTA de um assistente de desenvolvimento e detecta se ela PEDE decisões ao usuário (escolher alternativas, priorizar itens, confirmar rumo, preencher lacunas).\n" +
-      'Se SIM, devolva JSON estrito: {"questions":[{"header":"título curto","question":"a pergunta, clara e autoexplicativa","multi":false,"options":[{"label":"opção","desc":"detalhe útil"}]}]}\n' +
+      'Se SIM, devolva JSON estrito: {"questions":[{"header":"título curto","question":"a pergunta, clara e autoexplicativa","multi":false,"options":[{"label":"opção curta, com \\"(Recomendado)\\" no fim SE a resposta recomendar essa","desc":"detalhe"}]}]}\n' +
       "Regras:\n" +
       "- Extraia TODAS as decisões que a resposta pede — se ela pede 5, gere as 5 (não corte nem junte).\n" +
       "- CADA pergunta PRECISA de opções (2 a 6). Use as que a resposta oferece; se ela não listar, GERE opções plausíveis do contexto. Nunca devolva pergunta sem opções.\n" +
-      "- Conciso MAS claro: a pergunta e as opções devem ser entendíveis SEM abrir o histórico — nem telegráfico, nem um parágrafo. header ~2-5 palavras; question 1-2 linhas; label curto; desc só se agrega.\n" +
+      "- header ~2-5 palavras; question 1-2 linhas — sempre curtos, entendíveis sem abrir o histórico.\n" +
+      "- label: curto (uma linha). desc: aqui vale ser RICO quando a resposta original já explica o porquê — o que essa opção concretamente faz, o custo/trade-off, a consequência de escolher. NÃO invente justificativa que a resposta não deu; se a resposta só listou a opção sem explicar, deixe desc curto ou vazio. Não force tamanho artificial pra cima nem pra baixo — o tamanho certo é o que a resposta já sustenta.\n" +
       "- multi=true SOMENTE quando o usuário escolhe VÁRIOS itens de uma lista (ex.: quais tarefas fazer); multi=false quando é UMA alternativa entre outras.\n" +
       "- NÃO inclua 'Outros' (a UI adiciona).\n" +
       'Se a resposta NÃO pede decisão, devolva {"questions":[]}. Responda APENAS o JSON.\n\nRESPOSTA:\n' +
@@ -907,7 +908,7 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
         header: String(q.header || "").slice(0, 40),
         question: String(q.question).slice(0, 300),
         multi: !!q.multi,
-        options: q.options.slice(0, 8).map((o: any) => ({ label: String(o?.label ?? o ?? "").slice(0, 80), desc: String(o?.desc ?? "").slice(0, 160) })).filter((o: any) => o.label),
+        options: q.options.slice(0, 8).map((o: any) => ({ label: String(o?.label ?? o ?? "").slice(0, 100), desc: String(o?.desc ?? "").slice(0, 500) })).filter((o: any) => o.label),
       }))
       .filter((q: any) => q.options.length);
   } catch {
