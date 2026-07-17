@@ -255,11 +255,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // native imported sessions ("claude:<uuid>") resume the underlying real claude session
     const prev = this.sessions.get(sessionId) || (sessionId.startsWith("claude:") ? sessionId.slice("claude:".length) : undefined);
     const fmt = onEvent ? ["--output-format", "stream-json", "--verbose"] : ["--output-format", "json"];
-    // "--" before the prompt: without it, text starting with "-" (a dash-led sentence, or the
-    // "--- arquivo anexado:" attachment marker) gets misread as a CLI flag by claude's own parser —
-    // confirmed directly: `-p "-verbose x"` silently printed the CLI's version and never ran the
-    // prompt; `-p -- "-verbose x"` runs it correctly. Subsequent flags still parse normally after it.
-    const args = ["-p", "--", text, ...fmt, "--permission-mode", "bypassPermissions"];
+    // The prompt goes over STDIN, not as a "-p <value>" argv value — confirmed by direct testing:
+    // text starting with "-" (a dash-led sentence, or the "--- arquivo anexado:" attachment marker)
+    // gets misread as a CLI flag when passed inline (`-p "-verbose x"` silently printed the CLI's
+    // version and never ran the prompt). A "--" terminator (`-p -- "-verbose x"`) dodges THAT crash
+    // but breaks --output-format stream-json the moment the turn uses any tool — verified directly:
+    // it silently falls back to plain markdown output, which agents.ts's JSON.parse(line) then
+    // silently discards, so every tool-using turn would come back empty. Stdin has neither problem,
+    // and as a bonus removes the CLI's own "no stdin data received in 3s" wait on every turn.
+    const args = ["-p", ...fmt, "--permission-mode", "bypassPermissions"];
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort); // ultracode -> xhigh
     if (prev) args.unshift("--resume", prev);
@@ -280,7 +284,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       let streamError = "";
       let usage: AgentReply["usage"];
       let lastMsgUsage: any;
-      await runStream(this.bin, args, cwd, (line) => {
+      await runStream(this.bin, args, cwd, text, (line) => {
         let o: any;
         try { o = JSON.parse(line); } catch { return; }
         if (o.type === "system" && o.subtype === "init" && o.session_id) sessionOut = o.session_id;
@@ -307,7 +311,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       return { text: finalText, usage };
     }
 
-    const raw = await run(this.bin, args, cwd, "", false, opts?.signal);
+    const raw = await run(this.bin, args, cwd, text, false, opts?.signal);
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
     if (json.session_id) { this.sessions.set(sessionId, json.session_id); this.saveSessions(); }
@@ -318,10 +322,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
-    const args = ["-p", "--", text, "--output-format", "json", "--permission-mode", "bypassPermissions"]; // see send(): "--" avoids dash-prefixed text being misread as a flag
+    const args = ["-p", "--output-format", "json", "--permission-mode", "bypassPermissions"]; // prompt via stdin — see send()
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
-    const raw = await run(this.bin, args, ONESHOT_CWD, "", false); // stateless + isolated cwd (excluded from native list)
+    const raw = await run(this.bin, args, ONESHOT_CWD, text, false); // stateless + isolated cwd (excluded from native list)
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
     return { text: json.result ?? "" };
@@ -444,7 +448,7 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, useShell: 
 }
 
 /** Like run(), but calls onLine for each complete stdout line as it arrives (NDJSON stream). */
-function runStream(cmd: string, args: string[], cwd: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<string> {
+function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { cwd, windowsHide: true, shell: false });
     const wasAborted = wireAbort(p, signal);
@@ -463,6 +467,7 @@ function runStream(cmd: string, args: string[], cwd: string, onLine: (line: stri
     });
     p.stderr.on("data", (d) => (err += d.toString()));
     p.on("error", reject);
+    if (stdin) p.stdin.write(stdin);
     p.stdin.end();
     p.on("close", (code) => {
       if (wasAborted()) { reject(new Error(ABORTED)); return; }
