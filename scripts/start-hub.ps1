@@ -62,6 +62,12 @@ $lastWarm = [datetime]::MinValue
 # de 30min desde a última vez) e (re)sobe o Hub em foreground. Quando o node encerra,
 # registra e reinicia após um pequeno backoff.
 while ($true) {
+  # Limpa STT órfão da instância anterior: o node é morto com -Force (no restart) e o Windows NÃO
+  # mata o filho Python (whisper_service), que fica segurando ~1.5GB do modelo. Sem isso, cada
+  # restart deixa um órfão e a RAM enche. Rodar aqui garante um único STT por subida.
+  Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'whisper_service' } |
+    ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Log "STT orfao encerrado (pid $($_.ProcessId))" } catch {} }
   if (((Get-Date) - $lastWarm).TotalMinutes -ge 30) { Warm-Token; $lastWarm = Get-Date }
   Log 'iniciando hub...'
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\hub\src\index.ts" *>> $log }

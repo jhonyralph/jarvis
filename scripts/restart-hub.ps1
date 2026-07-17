@@ -47,6 +47,12 @@ Set-Status 'iniciando: derrubando o Hub atual na porta 4577...'
 $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
 if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }
 
+# STT órfão: o Python (whisper_service) é filho do node do hub; matar o node com -Force NÃO mata o
+# filho no Windows, e ele fica segurando ~1.5GB do modelo. Encerra o órfão (o novo hub sobe o seu).
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -match 'whisper_service' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
 # O supervisor relança o node sozinho com o source novo. Start-ScheduledTask é só fallback caso
 # o próprio supervisor tenha morrido (com -MultipleInstances IgnoreNew a chamada é inócua se já roda).
 Start-Sleep -Seconds 3

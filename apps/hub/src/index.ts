@@ -670,6 +670,26 @@ type QueueItem = { text: string; atts: Array<{ name: string; content: string; im
 const queues = new Map<string, QueueItem[]>();
 function queueOf(sid: string): QueueItem[] { let q = queues.get(sid); if (!q) { q = []; queues.set(sid, q); } return q; }
 function broadcastQueue(sid: string): void { broadcast(sid, { t: "queue", sessionId: sid, items: queueOf(sid).map((q) => ({ text: q.text, atts: q.atts })) }); }
+// A fila vive em memória; um restart do hub a perdia. Persistimos num cache com TTL para que, após
+// reiniciar, o usuário VEJA a fila de volta e continue de onde estava (some sozinha após o TTL).
+const QUEUES_FILE = join(JARVIS_DIR, "queues.json");
+const QUEUE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+function saveQueues(): void {
+  try {
+    const now = Date.now();
+    const obj: Record<string, { items: QueueItem[]; ts: number }> = {};
+    for (const [sid, items] of queues) if (items.length) obj[sid] = { items, ts: now };
+    mkdirSync(JARVIS_DIR, { recursive: true });
+    writeFileSync(QUEUES_FILE, JSON.stringify(obj));
+  } catch { /* ignore */ }
+}
+function loadQueues(): void {
+  try {
+    const obj = JSON.parse(readFileSync(QUEUES_FILE, "utf8"));
+    const now = Date.now();
+    for (const sid of Object.keys(obj)) { const e = obj[sid]; if (e && Array.isArray(e.items) && e.items.length && now - (e.ts || 0) < QUEUE_TTL_MS) queues.set(sid, e.items); }
+  } catch { /* ignore */ }
+}
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply> {
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
@@ -714,7 +734,7 @@ async function flushQueue(sid: string): Promise<void> {
   const atts = items.flatMap((q) => q.atts || []);
   const model = items.find((q) => q.model)?.model;
   const effort = items.find((q) => q.effort)?.effort;
-  queues.set(sid, []); broadcastQueue(sid);     // limpa ANTES de rodar (evita re-flush do mesmo)
+  queues.set(sid, []); broadcastQueue(sid); saveQueues();   // limpa ANTES de rodar (evita re-flush do mesmo)
   const viewer = [...wss.clients].find((c) => c.readyState === c.OPEN && subs.get(c as WebSocket) === sid) as WebSocket | undefined;
   try {
     if (rid) { const rc = runners.get(rid); if (rc?.ws) sendToRunner(rc, { t: "send", sessionId: sid, text, attachments: atts, model, effort }); return; } // runner: relaya como envio normal
@@ -1500,13 +1520,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // veem a sessão (sincroniza entre dispositivos). O flush em si roda no fim do turno (flushQueue).
     if (msg.t === "enqueue" && typeof msg.sessionId === "string" && (typeof msg.text === "string" || Array.isArray(msg.attachments))) {
       { const rid = activeRunner(ws); queueOf(msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, runnerId: rid !== LOCAL_ID ? rid : undefined }); }
-      broadcastQueue(msg.sessionId); return;
+      broadcastQueue(msg.sessionId); saveQueues(); return;
     }
     if (msg.t === "dequeue" && typeof msg.sessionId === "string" && typeof msg.index === "number") {
       const q = queueOf(msg.sessionId); if (msg.index >= 0 && msg.index < q.length) q.splice(msg.index, 1);
-      broadcastQueue(msg.sessionId); return;
+      broadcastQueue(msg.sessionId); saveQueues(); return;
     }
-    if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); return; }
+    if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); saveQueues(); return; }
 
     // Wizard de voz dos cards de decisão: falar um passo (say) e interpretar a resposta falada (ask_voice).
     if (msg.t === "say" && typeof msg.text === "string") {
@@ -1725,6 +1745,7 @@ setTimeout(() => void refreshUpdate(true), 8_000); // first update check shortly
 setInterval(() => void refreshUpdate(true), 6 * 3600_000); // then every 6h
 try { const purged = purgeProbeJunk(); if (purged) console.log(`[hub] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
 try { const s = purgeScratch(); if (s) console.log(`[hub] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
+try { loadQueues(); const n = [...queues.values()].reduce((a, q) => a + q.length, 0); if (n) console.log(`[hub] fila restaurada: ${n} mensagem(ns) (cache com TTL)`); } catch { /* ignore */ }
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
