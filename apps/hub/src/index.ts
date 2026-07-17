@@ -1353,8 +1353,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
 
     // --- conversation (text or voice) ---
-    const sid = subs.get(ws) || (typeof msg.sessionId === "string" ? msg.sessionId : "default");
-    subs.set(ws, sid);
+    // O sessionId EXPLÍCITO manda (bate com o caminho de runner). Antes priorizávamos subs.get(ws)
+    // — a sessão que o ws está VENDO — então um flush de fila da sessão A, disparado depois de você
+    // trocar para B, ia parar em B (a fila de A é só de A). Agora roteia para A.
+    const explicit = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : "";
+    const viewing = subs.get(ws);
+    const sid = explicit || viewing || "default";
+    // Só (re)inscreve o ws se o envio é para a sessão que ele já vê (ou se ainda não vê nada). Um
+    // flush para uma sessão de FUNDO não pode trocar o que este ws está assistindo.
+    if (!viewing || sid === viewing) subs.set(ws, sid);
 
     // Resolve the utterance first — routing (search / voice / native / normal) depends on it,
     // and native ids aren't in the store so we must NOT store.ensure() them here.
