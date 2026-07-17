@@ -337,6 +337,25 @@ export class CodexAdapter implements AgentAdapter {
   readonly name = "codex";
   private started = new Set<string>();
   private capsCache?: { at: number; caps: AgentCaps };
+  // jarvis sessionId -> real codex thread_id. Persisted (same pattern as ClaudeCodeAdapter) so a
+  // Jarvis session actually RESUMES the same codex thread on the next turn — before this, every
+  // turn ran a stateless fresh `exec` with no continuity, and each one left its own untracked
+  // native rollout file on disk that `allSessions()` could never dedupe (no id was ever reported
+  // back to Jarvis), showing up as a phantom duplicate session in the list.
+  private sessionsFile = join(homedir(), ".jarvis", "codex-sessions.json");
+  private sessions = this.loadSessions();
+  private loadSessions(): Map<string, string> {
+    try { return new Map(Object.entries(JSON.parse(readFileSync(this.sessionsFile, "utf8")))); } catch { return new Map(); }
+  }
+  private saveSessions(): void {
+    try { mkdirSync(join(homedir(), ".jarvis"), { recursive: true }); writeFileSync(this.sessionsFile, JSON.stringify(Object.fromEntries(this.sessions))); } catch { /* ignore */ }
+  }
+  nativeSessionId(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId);
+  }
+  forgetSession(sessionId: string): void {
+    if (this.sessions.delete(sessionId)) this.saveSessions();
+  }
 
   async capabilities(): Promise<AgentCaps> {
     if (this.capsCache && Date.now() - this.capsCache.at < 3_600_000) return this.capsCache.caps;
@@ -378,12 +397,31 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async send(sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
-    const args = ["exec", "--cd", cwd, "--dangerously-bypass-approvals-and-sandbox"];
+    // Resume the bound thread if we have one — continuity, and dedupe (see nativeSessionId above).
+    // `resume` has no --cd of its own: it continues in the thread's original cwd. Confirmed
+    // directly: `codex exec resume <id> --json` correctly recalls prior turns in the same thread.
+    const prev = this.sessions.get(sessionId);
+    const args = prev
+      ? ["exec", "resume", prev, "--json", "--dangerously-bypass-approvals-and-sandbox"]
+      : ["exec", "--cd", cwd, "--json", "--dangerously-bypass-approvals-and-sandbox"];
     if (opts?.model) args.push("-m", opts.model);
     if (opts?.effort) args.push("-c", `model_reasoning_effort=${opts.effort}`);
     const out = await run("codex", args, cwd, text, true, opts?.signal);
     this.started.add(sessionId);
-    return { text: out.trim() };
+    // --json is NDJSON: pull the thread id (to bind/resume next turn) and the final agent message
+    // out of the event stream. Falls back to the raw trimmed output if parsing finds nothing (keeps
+    // working even if a future codex version changes the event shape).
+    let threadId: string | undefined, finalText = "";
+    for (const line of out.split("\n")) {
+      const t = line.trim();
+      if (!t) continue;
+      let o: any;
+      try { o = JSON.parse(t); } catch { continue; }
+      if (o.type === "thread.started" && o.thread_id) threadId = o.thread_id;
+      else if (o.type === "item.completed" && o.item?.type === "agent_message" && typeof o.item.text === "string") finalText = o.item.text;
+    }
+    if (threadId && threadId !== prev) { this.sessions.set(sessionId, threadId); this.saveSessions(); }
+    return { text: finalText || out.trim() };
   }
 
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
