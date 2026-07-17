@@ -163,7 +163,8 @@
     @keyframes p { 0%,100%{opacity:.3} 50%{opacity:1} }
     /* botão flutuante "descer para as mensagens recentes" — opaco, pulsando, 100% no hover */
     #composer { position:relative; }
-    #scrollBtn { position:absolute; bottom:calc(100% + 10px); left:50%; transform:translateX(-50%); z-index:16; width:36px; height:36px; border-radius:50%; background:#1b2330d9; border:1px solid var(--line); color:#cbd5e1; font-size:19px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 12px #0007; opacity:.45; animation:sbpulse 2.2s ease-in-out infinite; }
+    #scrollBtn { position:absolute; bottom:calc(100% + 10px); left:50%; transform:translateX(-50%); z-index:16; width:36px; height:36px; padding:0; border-radius:50%; background:#1b2330d9; border:1px solid var(--line); color:#cbd5e1; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 12px #0007; opacity:.45; animation:sbpulse 2.2s ease-in-out infinite; }
+    #scrollBtn svg { display:block; }
     #scrollBtn:hover { opacity:1; animation:none; background:#232d3d; }
     #scrollBtn.hidden { display:none; }
     @keyframes sbpulse { 0%,100%{opacity:.3} 50%{opacity:.68} }
@@ -220,8 +221,9 @@
     .filebody { flex:1; background:var(--code); margin:0; overflow:auto; padding:10px 0; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.5; white-space:pre; color:var(--text); }
     .filebody.plain { white-space:pre; padding:12px; }
     .filebody.code { white-space:pre; padding:12px; tab-size:2; }
-    .filebody .hl-com { color:#7c8797; font-style:italic; } .filebody .hl-str { color:#98c379; } .filebody .hl-num { color:#d19a66; }
-    .filebody .hl-kw { color:#c678dd; } .filebody .hl-lit { color:#56b6c2; } .filebody .hl-type { color:#e5c07b; } .filebody .hl-fn { color:#61afef; }
+    .filebody .hl-com, .filemodalbody .hl-com { color:#7c8797; font-style:italic; } .filebody .hl-str, .filemodalbody .hl-str { color:#98c379; } .filebody .hl-num, .filemodalbody .hl-num { color:#d19a66; }
+    .filebody .hl-kw, .filemodalbody .hl-kw { color:#c678dd; } .filebody .hl-lit, .filemodalbody .hl-lit { color:#56b6c2; } .filebody .hl-type, .filemodalbody .hl-type { color:#e5c07b; } .filebody .hl-fn, .filemodalbody .hl-fn { color:#61afef; }
+    .filebody .hl-tag, .filemodalbody .hl-tag { color:#e06c75; } .filebody .hl-attr, .filemodalbody .hl-attr { color:#e5c07b; }
     .filebody .dline { display:block; padding:0 12px; white-space:pre-wrap; overflow-wrap:anywhere; }
     .filebody .dline.add { background:#2ea04326; } .filebody .dline.add::before { content:'+ '; color:#3fb950; }
     .filebody .dline.del { background:#f8514926; } .filebody .dline.del::before { content:'- '; color:#f85149; }
@@ -322,6 +324,10 @@
     #roBanner { padding:8px 14px; background:#1e293b; color:#cbd5e1; font-size:12.5px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px; }
     .natchip { font-size:11px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#93c5fd; background:#1e293b; border:1px solid #334155; border-radius:999px; padding:2px 9px; cursor:pointer; white-space:nowrap; max-width:38vw; overflow:hidden; text-overflow:ellipsis; }
     .natchip:hover { background:#243049; color:#bfdbfe; }
+    /* indicador de "processando" no CABEÇALHO da conversa — visível mesmo quando o menu/lista fica
+       escondido (mobile), então dá pra saber que a sessão aberta está rodando sem depender do menu. */
+    .busychip { flex:none; display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:#e3b341; background:#e3b3411a; border:1px solid #e3b34140; border-radius:999px; padding:2px 10px; white-space:nowrap; }
+    .busychip .pulse { width:7px; height:7px; }
     .ctlpills { display:contents; } /* desktop: children flow into .controls flex */
     #sideClose, #backdrop { display:none; }
     .hidden { display:none !important; } #menuBtn { display:none; }
@@ -411,6 +417,7 @@
         <span class="dot" id="dot"></span>
         <span id="title">Jarvis</span>
         <span id="nativeChip" class="natchip hidden" title="Sessão nativa vinculada — clique para copiar o comando de retomada"></span>
+        <span id="busyChip" class="busychip hidden" title="Esta conversa está processando"><span class="pulse"></span>processando…</span>
         <span class="spacer"></span>
         <button type="button" id="sumHdr" class="ghost" title="Resumir esta conversa e falar (só esta sessão)">🔊<span class="blbl">Resumir</span></button>
       </header>
@@ -418,7 +425,7 @@
       <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
       <div id="log"></div>
       <form id="composer">
-        <button type="button" id="scrollBtn" class="hidden" title="Ir para as mensagens recentes">⌄</button>
+        <button type="button" id="scrollBtn" class="hidden" title="Ir para as mensagens recentes"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 16 18 9"></polyline></svg></button>
         <div id="queueRow" class="hidden"></div>
         <div id="attachRow"></div>
         <div class="inputrow">
@@ -578,7 +585,7 @@
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
       'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileCopy','fileClose','nativeChip',
-      'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
+      'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose','busyChip',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
@@ -955,11 +962,23 @@
       if(['ts','tsx','js','jsx','mjs','cjs','json','jsonc','css','scss','less','go','rs','java','c','cc','cpp','h','hpp','cs','php','kt','swift','dart','proto'].includes(e)) return 'ts';
       if(['py','rb'].includes(e)) return 'py';
       if(['sh','bash','zsh','env','ps1','yml','yaml','toml','ini','conf','dockerfile'].includes(e)) return 'sh';
-      if(e==='sql') return 'sql'; return null; }
+      if(e==='sql') return 'sql';
+      if(['html','htm','xhtml','xml','vue','svelte'].includes(e)) return 'html';
+      return null; }
     function hlEsc(s){ return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
     const HL_RX={ ts:/(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(`(?:\\[\s\S]|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b\d[\w.]*\b)|([A-Za-z_$][\w$]*)/g,
-      hash:/(#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b\d[\w.]*\b)|([A-Za-z_$][\w$]*)/g };
+      hash:/(#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b\d[\w.]*\b)|([A-Za-z_$][\w$]*)/g,
+      // HTML/XML has tag-based structure, not statement/expression tokens — its own pass:
+      // comments, <tag / </tag / > / />  punctuation, quoted attribute values, attribute names.
+      html:/(<!--[\s\S]*?-->)|(<\/?[A-Za-z][\w:-]*|\/?>)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|([A-Za-z_:][\w:.-]*(?=\s*=\s*["']))/g };
     function highlight(code,name){ const lang=hlLang(name); if(!lang||!code||code.length>300000) return null;
+      if(lang==='html'){ const rx=HL_RX.html; rx.lastIndex=0;
+        let out='',last=0,m; while((m=rx.exec(code))){ out+=hlEsc(code.slice(last,m.index)); last=rx.lastIndex;
+          if(m[1]) out+='<span class="hl-com">'+hlEsc(m[1])+'</span>';
+          else if(m[2]) out+='<span class="hl-tag">'+hlEsc(m[2])+'</span>';
+          else if(m[3]) out+='<span class="hl-str">'+hlEsc(m[3])+'</span>';
+          else if(m[4]) out+='<span class="hl-attr">'+hlEsc(m[4])+'</span>'; }
+        return out+hlEsc(code.slice(last)); }
       const kw=new Set((HL_KW[lang]||HL_KW.ts).split(' ')); const rx=(lang==='py'||lang==='sh')?HL_RX.hash:HL_RX.ts; rx.lastIndex=0;
       let out='',last=0,m; while((m=rx.exec(code))){ out+=hlEsc(code.slice(last,m.index)); last=rx.lastIndex;
         if(m[1]) out+='<span class="hl-com">'+hlEsc(m[1])+'</span>';
@@ -1051,10 +1070,16 @@
     const EFF_PT={minimal:'Mínimo',low:'Baixo',medium:'Médio',high:'Alto',xhigh:'Muito alto',max:'Máximo',ultra:'Ultra',ultracode:'Ultracode'};
     const effLabel=v=>v?(EFF_PT[v]||v):'—';
     const base = p => (p||'').replace(/[\\/]$/,'').split(/[\\/]/).pop()||p;
-    function syncModelEffort(){ const c=capsFor(currentAgent);
-      curModel=(cfg.model&&c.models.some(m=>m.id===cfg.model))?cfg.model:(c.defaultModel||(c.models[0]||{}).id||null);
+    // Modelo/esforço são POR SESSÃO — escolher em uma sessão não pode vazar pras outras. cfg.model/
+    // cfg.effort (Configurações) continuam sendo só o PADRÃO para sessão NOVA sem preferência salva
+    // ainda. Persistido (não só em memória) pra sobreviver a reload.
+    let sessionPrefs={}; try{ sessionPrefs=JSON.parse(localStorage.getItem('jarvis_session_prefs')||'{}'); }catch(e){}
+    function saveSessionPrefs(){ try{ localStorage.setItem('jarvis_session_prefs',JSON.stringify(sessionPrefs)); }catch(e){} }
+    function setSessionPref(model,effort){ if(!currentSession)return; const p=Object.assign({},sessionPrefs[currentSession]); if(model!=null)p.model=model; if(effort!=null)p.effort=effort; sessionPrefs[currentSession]=p; saveSessionPrefs(); }
+    function syncModelEffort(){ const c=capsFor(currentAgent); const pref=sessionPrefs[currentSession]||{};
+      curModel=(pref.model&&c.models.some(m=>m.id===pref.model))?pref.model:((cfg.model&&c.models.some(m=>m.id===cfg.model))?cfg.model:(c.defaultModel||(c.models[0]||{}).id||null));
       const efs=effortsFor(currentAgent,curModel);
-      curEffort=(cfg.effort&&efs.includes(cfg.effort))?cfg.effort:((modelObj(currentAgent,curModel)||{}).defaultEffort||efs[efs.length-1]||null);
+      curEffort=(pref.effort&&efs.includes(pref.effort))?pref.effort:((cfg.effort&&efs.includes(cfg.effort))?cfg.effort:((modelObj(currentAgent,curModel)||{}).defaultEffort||efs[efs.length-1]||null));
       renderControls(); }
     function renderControls(){
       E.agentName.textContent=currentAgent||'—';
@@ -1201,7 +1226,7 @@
 
     function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); (c.models||[]).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
-      o.onclick=()=>{ closePop(); curModel=mm.id; cfg.model=mm.id; const efs=effortsFor(currentAgent,mm.id); if(!efs.includes(curEffort)) curEffort=((modelObj(currentAgent,mm.id)||{}).defaultEffort||efs[efs.length-1]||null); cfg.effort=curEffort; saveCfg(); renderControls(); }; p.appendChild(o); }); }
+      o.onclick=()=>{ closePop(); curModel=mm.id; const efs=effortsFor(currentAgent,mm.id); if(!efs.includes(curEffort)) curEffort=((modelObj(currentAgent,mm.id)||{}).defaultEffort||efs[efs.length-1]||null); setSessionPref(curModel,curEffort); renderControls(); }; p.appendChild(o); }); }
 
     function buildEffortPop(p){ const efs=effortsFor(currentAgent,curModel); p.appendChild(ph('Esforço · '+(currentAgent||'')));
       if(!efs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='sem níveis para este modelo'; p.appendChild(d); return; }
@@ -1209,7 +1234,7 @@
       const rng=document.createElement('input'); rng.type='range'; rng.min=0; rng.max=efs.length-1; rng.step=1; let idx=efs.indexOf(curEffort); if(idx<0) idx=efs.length-1; rng.value=idx; p.appendChild(rng);
       const val=document.createElement('div'); val.className='sval'; val.textContent=effLabel(efs[idx]); p.appendChild(val);
       rng.oninput=()=>{ val.textContent=effLabel(efs[+rng.value]); };
-      rng.onchange=()=>{ curEffort=efs[+rng.value]; cfg.effort=curEffort; saveCfg(); renderControls(); }; }
+      rng.onchange=()=>{ curEffort=efs[+rng.value]; setSessionPref(null,curEffort); renderControls(); }; }
 
     function buildFolderPop(p){ popMode='folder'; p.appendChild(ph('Pasta de trabalho'));
       if(recentDirs.length){ p.appendChild(ph('Recentes')); const rl=document.createElement('div'); rl.className='flist'; rl.style.maxHeight='140px'; rl.style.marginBottom='8px';
@@ -1464,6 +1489,7 @@
         else if(m.t==='session'){ if(m.sessionId===currentSession && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
         else if(m.t==='deleted'){ const inCur = m.sessionId===currentSession || (Array.isArray(m.ids)&&m.ids.includes(currentSession));
           if(inCur){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); }
+          (Array.isArray(m.ids)?m.ids:[m.sessionId]).forEach(id=>{ if(id&&sessionPrefs[id]){ delete sessionPrefs[id]; } }); saveSessionPrefs();
           if(!m.ids && !m.ok) toast('Não consegui remover a conversa (talvez já não exista).'); }
         else if(m.t==='tts'){ if(m.for==='ask'){ askVoicePlayAndListen(m.audio); } else if(m.sessionId===currentSession) playTTS(m.audio); }
         else if(m.t==='ask_choice'){ askVoiceApply(m); }
@@ -1595,6 +1621,7 @@
       // mantém Parar ATIVO — parar dispensa o card e devolve o composer pra digitar manualmente.
       const lock=!!askActive, ro=curNative&&!curNativeWritable;
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!(curBusy||lock));
+      if(E.busyChip) E.busyChip.classList.toggle('hidden',!curBusy);
       E.input.disabled=ro||lock; E.sendBtn.disabled=ro||lock; if(E.mic)E.mic.disabled=ro||lock;
       E.input.placeholder=lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':'Fale ou digite…');
       renderQueue(); maybeReload(); }
