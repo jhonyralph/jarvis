@@ -423,7 +423,14 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "busy") { for (const c of clientsOn(rc.id)) send(c, { t: "busy", message: m.message }); return; }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows }); return; }
-  if (m.t === "runs") { runnerActive.set(rc.id, new Set(m.active || [])); for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] }); return; }
+  if (m.t === "runs") {
+    const prev = runnerActive.get(rc.id) || new Set<string>();
+    const now = new Set<string>(m.active || []);
+    runnerActive.set(rc.id, now);
+    for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] });
+    for (const sid of prev) if (!now.has(sid)) void flushQueue(sid); // turno do runner terminou → flush da fila DELE
+    return;
+  }
   // Update outcome of a machine. Goes to whoever asked (any owner watching the update panel),
   // not just clients on that machine — you fire the update from the Hub's own screen.
   if (m.t === "update_done") {
@@ -650,6 +657,13 @@ const localAborts = new Map<string, AbortController>();
 // (o texto final vai pro histórico, então replay só acontece enquanto o turno está ativo — sem
 // duplicar o texto de um turno já concluído).
 const activityBuf = new Map<string, any[]>();
+// Fila POR SESSÃO, dona no HUB (não mais só no navegador): toda web vendo a sessão enxerga a MESMA
+// fila, e o flush roda no servidor quando o turno termina — sobrevive mesmo que o dispositivo que
+// enfileirou saia. Cada item guarda texto + anexos (+ model/effort do envio original).
+type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean }>; model?: string; effort?: string; runnerId?: string };
+const queues = new Map<string, QueueItem[]>();
+function queueOf(sid: string): QueueItem[] { let q = queues.get(sid); if (!q) { q = []; queues.set(sid, q); } return q; }
+function broadcastQueue(sid: string): void { broadcast(sid, { t: "queue", sessionId: sid, items: queueOf(sid).map((q) => ({ text: q.text, atts: q.atts })) }); }
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply> {
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
@@ -677,7 +691,38 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     if (localAborts.get(sid) === ctrl) localAborts.delete(sid);
     activityBuf.delete(sid);
     activeRuns.delete(sid); broadcastRuns();
+    void flushQueue(sid); // fim de turno → envia a fila DESTA sessão (se houver), no servidor
   }
+}
+/** Envia a fila acumulada de `sid` como UM novo turno, no servidor — assim ela dispara mesmo se o
+ *  dispositivo que enfileirou já saiu, e nunca duplica (o guard activeRuns cobre corridas). Combina
+ *  os itens (texto juntado, anexos concatenados) e roteia pelo mesmo caminho de um envio normal. */
+async function flushQueue(sid: string): Promise<void> {
+  const items = queueOf(sid);
+  if (!items.length) return;
+  const rid = items.find((q) => q.runnerId)?.runnerId; // fila de sessão de runner remoto?
+  if (rid) { if ((runnerActive.get(rid) || new Set()).has(sid)) return; }  // runner ainda ocupado
+  else if (activeRuns.has(sid)) return;                                     // local ainda ocupado
+  const text = items.map((q) => q.text).join("\n\n");
+  const atts = items.flatMap((q) => q.atts || []);
+  const model = items.find((q) => q.model)?.model;
+  const effort = items.find((q) => q.effort)?.effort;
+  queues.set(sid, []); broadcastQueue(sid);     // limpa ANTES de rodar (evita re-flush do mesmo)
+  const viewer = [...wss.clients].find((c) => c.readyState === c.OPEN && subs.get(c as WebSocket) === sid) as WebSocket | undefined;
+  try {
+    if (rid) { const rc = runners.get(rid); if (rc?.ws) sendToRunner(rc, { t: "send", sessionId: sid, text, attachments: atts, model, effort }); return; } // runner: relaya como envio normal
+    if (isNativeId(sid)) { await deliverNativeTurn(viewer ?? null, sid, text, { model, effort, attachments: atts }); return; }
+    const session = store.ensure(sid);
+    const agent = agents.get(session.agent);
+    const { agentText, showText, images } = buildAttachments(atts, text);
+    const now = Date.now();
+    store.add(sid, { role: "user", text: showText, ts: now, agent: agent.name, images });
+    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: agent.name, images } });
+    pushSessions();
+    const reply = await agentTurn(sid, agent, agentText, session.cwd, { model, effort });
+    store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name });
+    pushSessions();
+  } catch (e: any) { broadcast(sid, { t: "error", message: String(e?.message ?? e) }); }
 }
 /** Replay the buffered live activity of an IN-PROGRESS local turn to a client that just (re)opened
  *  the session — so a page refresh mid-turn shows "processando" + the tool/subagente activity it
@@ -726,10 +771,10 @@ function buildAttachments(attachments: Array<{ name: string; content: string; im
 
 /** Continue a NATIVE CLI session (claude:<uuid>) by resuming the real claude session.
  *  Persists in the CLI's own jsonl (same file), so re-opening shows the new turns. */
-async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }> }): Promise<void> {
+async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }> }): Promise<void> {
   const info = nativeInfo(sid);
-  if (!info) { send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
-  if (info.agent !== "claude-code") { send(ws, { t: "error", message: "continuar sessão nativa só é suportado no claude-code por enquanto" }); return; }
+  if (!info) { if (ws) send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
+  if (info.agent !== "claude-code") { if (ws) send(ws, { t: "error", message: "continuar sessão nativa só é suportado no claude-code por enquanto" }); return; }
   const agent = agents.get(info.agent);
   const now = Date.now();
   const { agentText, showText, images } = buildAttachments(Array.isArray(opts.attachments) ? opts.attachments : [], text);
@@ -745,7 +790,8 @@ async function deliverNativeTurn(ws: WebSocket, sid: string, text: string, opts:
     }
   } catch (e: any) {
     const message = String(e?.message ?? e);
-    send(ws, { t: "error", message, limit: /limit|rate|quota|exceeded|usage/i.test(message) });
+    const err = { t: "error" as const, message, limit: /limit|rate|quota|exceeded|usage/i.test(message) };
+    if (ws) send(ws, err); else broadcast(sid, err);
   } finally {
     if (tail) { try { tail.offset = statSync(tail.path).size; tail.buf = ""; } catch { /* ignore */ } tail.paused = false; }
   }
@@ -1129,6 +1175,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         files: sessionFiles(msg.sessionId),
       });
       replayActivity(ws, msg.sessionId);
+      send(ws, { t: "queue", sessionId: msg.sessionId, items: queueOf(msg.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
       return;
     }
     if (msg.t === "open" && typeof msg.sessionId === "string") {
@@ -1139,6 +1186,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
       send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles("claude:" + nid) : [] });
       replayActivity(ws, s.id);
+      send(ws, { t: "queue", sessionId: s.id, items: queueOf(s.id).map((q) => ({ text: q.text, atts: q.atts })) });
       return;
     }
     if (msg.t === "new") {
@@ -1344,6 +1392,18 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
       return;
     }
+
+    // Fila dona no hub: enfileirar / remover um / limpar. Sempre re-transmite a fila a todos que
+    // veem a sessão (sincroniza entre dispositivos). O flush em si roda no fim do turno (flushQueue).
+    if (msg.t === "enqueue" && typeof msg.sessionId === "string" && (typeof msg.text === "string" || Array.isArray(msg.attachments))) {
+      { const rid = activeRunner(ws); queueOf(msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, runnerId: rid !== LOCAL_ID ? rid : undefined }); }
+      broadcastQueue(msg.sessionId); return;
+    }
+    if (msg.t === "dequeue" && typeof msg.sessionId === "string" && typeof msg.index === "number") {
+      const q = queueOf(msg.sessionId); if (msg.index >= 0 && msg.index < q.length) q.splice(msg.index, 1);
+      broadcastQueue(msg.sessionId); return;
+    }
+    if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); return; }
 
     // Stop a turn already running (user hit "parar"). Works for local and remote sessions.
     if (msg.t === "cancel") {

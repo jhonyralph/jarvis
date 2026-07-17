@@ -1250,6 +1250,7 @@
           else if(currentMachine==='local' && !hashSession()) E.newSess.onclick(); } }
         else if(m.t==='history'){ cacheHist(m); applyHistory(m); }
         else if(m.t==='message'){ if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
+        else if(m.t==='queue'){ queueBySession[m.sessionId]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession) renderQueue(); }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
@@ -1384,16 +1385,13 @@
       tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:sid,attachments:atts||[]});
       if(sid===currentSession){ showPending(); } refreshComposer(); }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
-    // Turno de uma sessão terminou -> envia a fila DELA (juntas), se houver e se não estiver mais ocupada.
-    function flushSession(sid){ const q=queueOf(sid); if(!q.length||busy(sid))return;
-      const text=q.map(x=>x.text).join('\n\n'); const atts=q.flatMap(x=>x.atts||[]); queueBySession[sid]=[];
-      if(sid===currentSession) renderQueue(); sendMsgTo(sid,text,atts); }
-    // Fim de turno de uma sessão (por done/erro/cancel OU por {t:runs} deixar de listá-la).
-    function onTurnEnd(sid){ if(!sid)return; justSent.delete(sid); flushSession(sid); refreshComposer(); }
-    function clearQueue(){ if(currentSession) queueBySession[currentSession]=[]; refreshComposer(); }
+    // Fim de turno de uma sessão. O FLUSH da fila agora é do SERVIDOR (flushQueue no hub): ele
+    // envia a fila acumulada e re-transmite {t:queue}/{t:message}. Aqui só destravamos o composer.
+    function onTurnEnd(sid){ if(!sid)return; justSent.delete(sid); refreshComposer(); }
+    function clearQueue(){ if(currentSession){ queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); } refreshComposer(); }
     function renderQueue(){ if(!E.queueRow)return; const q=queueOf(currentSession); E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!q.length); if(!q.length)return;
       const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — enviadas juntas quando terminar'; hdr.appendChild(s);
-      const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[currentSession]=[]; renderQueue(); }; hdr.appendChild(clr); E.queueRow.appendChild(hdr);
+      const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[currentSession]=[]; renderQueue(); tx({t:'clearqueue',sessionId:currentSession}); }; hdr.appendChild(clr); E.queueRow.appendChild(hdr);
       const list=document.createElement('div'); list.className='qlist';
       q.forEach((it0,i)=>{ const it=document.createElement('div'); it.className='qitem';
         const atts=it0.atts||[]; const imgs=atts.filter(a=>a.image).length, files=atts.length-imgs;
@@ -1402,7 +1400,7 @@
         const tog=document.createElement('button'); tog.type='button'; tog.className='qtog'; tog.textContent=long?'▸':''; tog.title='Expandir'; if(!long)tog.style.visibility='hidden'; head.appendChild(tog);
         const t=document.createElement('span'); t.className='qtext'; t.textContent=it0.text||'(anexo)'; head.appendChild(t);
         if(atts.length){ const a=document.createElement('span'); a.className='qatt'; a.textContent=((imgs?'🖼️ '+imgs+' ':'')+(files?'📎 '+files:'')).trim(); head.appendChild(a); }
-        const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=(e)=>{ e.stopPropagation(); q.splice(i,1); renderQueue(); }; head.appendChild(x);
+        const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=(e)=>{ e.stopPropagation(); q.splice(i,1); renderQueue(); tx({t:'dequeue',sessionId:currentSession,index:i}); }; head.appendChild(x);
         it.appendChild(head);
         // corpo expansível: texto completo + os anexos que vão junto (imagem com miniatura)
         const body=document.createElement('div'); body.className='qbody hidden';
@@ -1419,9 +1417,9 @@
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
       if(currentSession) delete draftBySession[currentSession];   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
-      if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); return; }
+      if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort}); return; }
       sendMsgTo(currentSession,text||'(anexo)',atts); };
-    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; refreshComposer(); status('busy','parando…'); };
+    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); refreshComposer(); status('busy','parando…'); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
