@@ -112,6 +112,7 @@
     .askcard .askopt:hover { background:#ffffff14; }
     .askcard .askopt.on { border-color:var(--me); background:#7aa2f71f; }
     .askcard .askopt .l { font-size:13.5px; } .askcard .askopt.on .l::before { content:'✓ '; color:#7aa2f7; }
+    .askcard .askopt .onum { color:#7aa2f7; }
     .askcard .askopt .d { font-size:12px; color:var(--mut); }
     .askcard .askother { background:#0e1420; border:1px solid var(--line); border-radius:9px; padding:8px 11px; color:var(--text); font-size:13px; width:100%; box-sizing:border-box; }
     .askcard .asknav { display:flex; justify-content:space-between; gap:8px; margin-top:2px; }
@@ -715,7 +716,7 @@
         const qt=document.createElement('div'); qt.className='askq'; qt.textContent=q.question; card.appendChild(qt);
         const opts=document.createElement('div'); opts.className='askopts';
         q.options.forEach((o,i)=>{ const b=document.createElement('button'); b.type='button'; b.className='askopt'+(a.sel.has(i)?' on':'');
-          b.innerHTML=`<span class="l">${esc(o.label)}</span>`+(o.desc?`<span class="d">${esc(o.desc)}</span>`:'');
+          b.innerHTML=`<span class="l"><b class="onum">${i+1}.</b> ${esc(o.label)}</span>`+(o.desc?`<span class="d">${esc(o.desc)}</span>`:'');
           b.onclick=()=>{ if(q.multi){ a.sel.has(i)?a.sel.delete(i):a.sel.add(i); } else { a.sel.clear(); a.sel.add(i); } draw(); };
           opts.appendChild(b); });
         card.appendChild(opts);
