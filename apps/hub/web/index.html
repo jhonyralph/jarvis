@@ -143,6 +143,12 @@
     #status.speaking { color:#22c55e; } #status.listening { color:#f59e0b; } #status.busy { color:#94a3b8; }
     #status .pulse { width:8px; height:8px; border-radius:50%; background:currentColor; animation:p 1s infinite; }
     @keyframes p { 0%,100%{opacity:.3} 50%{opacity:1} }
+    /* botão flutuante "descer para as mensagens recentes" — opaco, pulsando, 100% no hover */
+    #composer { position:relative; }
+    #scrollBtn { position:absolute; bottom:calc(100% + 10px); left:50%; transform:translateX(-50%); z-index:16; width:36px; height:36px; border-radius:50%; background:#1b2330d9; border:1px solid var(--line); color:#cbd5e1; font-size:19px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 12px #0007; opacity:.45; animation:sbpulse 2.2s ease-in-out infinite; }
+    #scrollBtn:hover { opacity:1; animation:none; background:#232d3d; }
+    #scrollBtn.hidden { display:none; }
+    @keyframes sbpulse { 0%,100%{opacity:.3} 50%{opacity:.68} }
     .usage { color:var(--mut); font-size:11.5px; }
     .modal { position:fixed; inset:0; background:#000a; display:flex; align-items:center; justify-content:center; padding:16px; z-index:30; }
     .modal .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; width:min(480px,100%); display:flex; flex-direction:column; gap:11px; max-height:90dvh; overflow:auto; }
@@ -394,6 +400,7 @@
       <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
       <div id="log"></div>
       <form id="composer">
+        <button type="button" id="scrollBtn" class="hidden" title="Ir para as mensagens recentes">⌄</button>
         <div id="queueRow" class="hidden"></div>
         <div id="attachRow"></div>
         <div class="inputrow">
@@ -539,7 +546,7 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
-      'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','usage','limit','sendBtn','stopBtn',
+      'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -657,7 +664,7 @@
       askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
-      msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); E.log.scrollTop=E.log.scrollHeight;
+      msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); forceBottom();
       curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; updUsagePill(); renderRecents(); closePop();
       curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
       E.roBanner.classList.toggle('hidden',!curNative);
@@ -668,8 +675,18 @@
     }
     // Anchor: a user message must never land under an open reply bubble, even if the echo arrives
     // after the stream started (remote runners emit over the network, order isn't guaranteed).
-    function addMsg(m){ const d=buildMsgEl(m); const anchor=pendingEl||(m.role==='user'?strEl:null); if(anchor) E.log.insertBefore(d,anchor); else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
-    function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+    // ---- auto-scroll inteligente: gruda no fim só quando o usuário ESTÁ no fim. Se ele sobe além
+    // de ~10% da altura, para de puxar; volta a grudar ao chegar de novo no fim. O botão flutuante
+    // aparece quando há conteúdo abaixo e leva de volta às mensagens recentes.
+    let stick=true;
+    function distBottom(){ return E.log.scrollHeight - E.log.scrollTop - E.log.clientHeight; }
+    function updScrollBtn(d){ if(d==null)d=distBottom(); if(E.scrollBtn) E.scrollBtn.classList.toggle('hidden', d<60); }
+    function autoScroll(){ if(stick) E.log.scrollTop=E.log.scrollHeight; updScrollBtn(); }
+    function forceBottom(){ stick=true; E.log.scrollTop=E.log.scrollHeight; updScrollBtn(0); }
+    E.log.addEventListener('scroll',()=>{ const d=distBottom(); if(d<40) stick=true; else if(d>E.log.clientHeight*0.1) stick=false; updScrollBtn(d); });
+    if(E.scrollBtn) E.scrollBtn.onclick=forceBottom;
+    function addMsg(m){ const d=buildMsgEl(m); const anchor=pendingEl||(m.role==='user'?strEl:null); if(anchor) E.log.insertBefore(d,anchor); else E.log.appendChild(d); autoScroll(); }
+    function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); autoScroll(); }
     // Stepper de decisão: perguntas (single/multi) + campo "Outros", com Voltar/Avançar. Ao concluir,
     // compõe as escolhas e envia como o PRÓXIMO input (o agente continua a partir daí). Agnóstico.
     let askActive=null, askVoice=false, askPendingVoice=false, ttsPlaying=false; // wizard de decisão (+voz)
@@ -699,7 +716,7 @@
         const sp=document.createElement('span'); sp.className='grow';
         const fwd=document.createElement('button'); fwd.type='button'; fwd.textContent=st.step===questions.length-1?'Enviar ✓':'Avançar ▶'; fwd.onclick=()=>go(1);
         nav.appendChild(back); nav.appendChild(sp); nav.appendChild(fwd); card.appendChild(nav);
-        if(!st.min) E.log.scrollTop=E.log.scrollHeight;
+        if(!st.min) autoScroll();
       }
       function go(dir){ const a=answers[st.step];
         if(dir>0 && !a.sel.size && !a.other.trim()){ toast('Escolha uma opção ou preencha "Outros".'); return; }
@@ -743,7 +760,7 @@
     function showPending(){ if(pendingEl)return; pendingStart=Date.now(); pendingEl=document.createElement('div'); pendingEl.className='msg bot pending';
       const upd=()=>{ if(!pendingEl)return; const s=Math.floor((Date.now()-pendingStart)/1000); const t=s>=60?`${Math.floor(s/60)}m ${s%60}s`:`${s}s`;
         pendingEl.innerHTML=`<span class="work"><span class="spin"></span>Jarvis trabalhando… ${t}</span>`; };
-      upd(); pendingTimer=setInterval(upd,1000); E.log.appendChild(pendingEl); E.log.scrollTop=E.log.scrollHeight; }
+      upd(); pendingTimer=setInterval(upd,1000); E.log.appendChild(pendingEl); autoScroll(); }
     function clearPending(){ if(pendingTimer){ clearInterval(pendingTimer); pendingTimer=null; } if(pendingEl){ pendingEl.remove(); pendingEl=null; } }
     // ---- streaming (atividade ao vivo: ferramentas + texto) ----
     const toolIcon = n => ({Bash:'🖥',Read:'📄',Edit:'✏️',Write:'✏️',NotebookEdit:'✏️',MultiEdit:'✏️',Grep:'🔎',Glob:'📁',Task:'🤖',Agent:'🤖',WebFetch:'🌐',WebSearch:'🌐'}[n]||'🔧');
@@ -755,7 +772,7 @@
       strEl.innerHTML='<div class="strhead"><span class="spin"></span><span class="strtime">0s</span></div><div class="strflow"></div>';
       strTimeEl=strEl.querySelector('.strtime'); strFlow=strEl.querySelector('.strflow');
       strTimer=setInterval(()=>{ if(!strTimeEl)return; const s=Math.floor((Date.now()-strStart)/1000); strTimeEl.textContent=(s>=60?`${Math.floor(s/60)}m ${s%60}s`:`${s}s`); },1000);
-      E.log.appendChild(strEl); E.log.scrollTop=E.log.scrollHeight; }
+      E.log.appendChild(strEl); autoScroll(); }
     function closeTextBlock(){ curTextEl=null; curTextRaw=''; }   // próximo texto abre bloco novo (após tool)
     // A collapsible container for one spawned sub-agent (Task tool). Its nested tool calls +
     // text preview show "o que ele está fazendo"; the count badge shows progress at a glance.
@@ -768,15 +785,15 @@
       closeTextBlock(); strFlow.appendChild(wrap);
       const rec={wrap,body,title,countEl,count:0,preview:null,previewText:''}; subAgents[id]=rec; return rec; }
     function streamTool(name,summary,toolId,parentId,path,adds,dels,rows,detail){ if(!strFlow)streamStartUI();
-      if(parentId){ const sa=ensureSubAgent(parentId); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); sa.count++; sa.countEl.textContent=sa.count; E.log.scrollTop=E.log.scrollHeight; return; }
-      if((name==='Task'||name==='Agent')&&toolId){ ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); E.log.scrollTop=E.log.scrollHeight; return; }
-      closeTextBlock(); strFlow.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); E.log.scrollTop=E.log.scrollHeight; }
+      if(parentId){ const sa=ensureSubAgent(parentId); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
+      if((name==='Task'||name==='Agent')&&toolId){ ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); autoScroll(); return; }
+      closeTextBlock(); strFlow.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); autoScroll(); }
     function streamText(t,parentId){
-      if(parentId){ const sa=ensureSubAgent(parentId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); E.log.scrollTop=E.log.scrollHeight; return; }
+      if(parentId){ const sa=ensureSubAgent(parentId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); autoScroll(); return; }
       if(!strFlow)streamStartUI();
       // Abre um bloco NOVO de texto se o anterior foi fechado por uma ferramenta; senão acumula.
       if(!curTextEl){ curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; strFlow.appendChild(curTextEl); }
-      curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); sawText=true; E.log.scrollTop=E.log.scrollHeight; }
+      curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); sawText=true; autoScroll(); }
     function streamFinish(){ strEl=strFlow=curTextEl=strTimeEl=null; curTextRaw=''; sawText=false; }
     function streamDone(finalText,usage){ if(strTimer){clearInterval(strTimer);strTimer=null;}
       if(!strEl){ addMsg({role:'assistant',text:finalText||''}); return; }
@@ -786,13 +803,13 @@
       // (ex.: resposta veio só no result), pra não duplicar o que já está na tela.
       if(!sawText && finalText){ const d=document.createElement('div'); d.className='strtext done'; d.innerHTML=md(finalText); strFlow.appendChild(d); }
       if(usage){ const u=document.createElement('div'); u.className='usage'; u.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; strEl.appendChild(u); E.usage.textContent=u.textContent; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
-      streamFinish(); E.log.scrollTop=E.log.scrollHeight; }
+      streamFinish(); autoScroll(); }
     function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
       if(strEl){ const head=strEl.querySelector('.strhead'); if(head) head.remove();
         strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone);
         const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ interrompido'; strEl.appendChild(n);
         streamFinish(); }
-      else addErr('⏹ interrompido'); E.log.scrollTop=E.log.scrollHeight; }
+      else addErr('⏹ interrompido'); autoScroll(); }
     function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); streamFinish(); }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
@@ -800,7 +817,7 @@
         (x.why||x.progress?`<br><span class="mut">${esc(x.why||x.progress||'')}</span>`:'')+
         (m.action?`<br><button type="button" class="exec ghost" data-id="${esc(x.id)}" data-action="${esc(m.action)}">▶ executar ação</button>`:'')+`</div>`; });
       return h; }
-    function addSearchCard(m){ const d=document.createElement('div'); d.className='msg bot'; d.innerHTML=searchCardHtml(m); E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; if(m.audio) playTTS(m.audio); }
+    function addSearchCard(m){ const d=document.createElement('div'); d.className='msg bot'; d.innerHTML=searchCardHtml(m); E.log.appendChild(d); autoScroll(); if(m.audio) playTTS(m.audio); }
     function renderSearchInto(c,m){ c.innerHTML=searchCardHtml(m); if(m.audio) playTTS(m.audio); }
     // Files touched by tools in this conversation (real paths + action + diff counts),
     // sent by the server from the session's claude jsonl. Clicking opens the side panel.
@@ -1349,7 +1366,7 @@
           // foi escrito) → tool row completo (done): "Editado", contagem +/-, abrir arquivo, diff.
           const d=toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows,m.detail);
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
-          if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
+          if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); autoScroll(); }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; if(m.usage.inputTokens){lastInputTokens=m.usage.inputTokens; updUsagePill();} } }
         else if(m.t==='usage_info'){ planUsage=m.plan||null; if(popMode==='usage') renderPlan(planUsage); }
         else if(m.t==='session'){ if(m.sessionId===currentSession && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
@@ -1400,7 +1417,7 @@
           if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
           if(busy(currentSession)){ toast('⏳ Sessão ocupada — envie o áudio quando terminar.'); return; }   // voz não entra na fila (a fila envia texto)
-          lastWasVoice=true; markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); refreshComposer(); };
+          lastWasVoice=true; stick=true; markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?'escutando resposta…':'escutando…');
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
@@ -1477,7 +1494,7 @@
       renderQueue(); maybeReload(); }
     function sendMsgTo(sid,text,atts){ if(!sid)return; lastWasVoice=false; markJustSent(sid);
       tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,sessionId:sid,attachments:atts||[]});
-      if(sid===currentSession){ showPending(); } refreshComposer(); }
+      if(sid===currentSession){ stick=true; showPending(); } refreshComposer(); }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
     // Fim de turno de uma sessão. O FLUSH da fila agora é do SERVIDOR (flushQueue no hub): ele
     // envia a fila acumulada e re-transmite {t:queue}/{t:message}. Aqui só destravamos o composer.
