@@ -589,7 +589,7 @@ async function deliverTurn(sid: string, opts: { showText: string; agentText?: st
   pushSessions();
   try {
     const reply = await agentTurn(sid, agent, opts.agentText ?? opts.showText, session.cwd, { model: opts.model, effort: opts.effort });
-    store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name });
+    store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name, activity: reply.activity });
     pushSessions();
     if (opts.speak) {
       const spoken = await speechForReply(reply.text);
@@ -705,10 +705,29 @@ function addCost(sid: string, usd?: number): void {
   e.cost += usd; e.ts = Date.now(); sessionCost.set(sid, e);
   try { const obj: Record<string, { cost: number; ts: number }> = {}; for (const [s, v] of sessionCost) obj[s] = v; mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(COST_FILE, JSON.stringify(obj)); } catch { /* ignore */ }
 }
+/** Reconcile a hub session against its bound NATIVE transcript. If the hub was killed mid-turn
+ *  (restart, crash), the spawned `claude -p --resume <id>` child can keep running as an orphan
+ *  (Windows doesn't kill children when the parent is force-killed) and finish writing the reply
+ *  straight into ~/.claude — but the in-memory `await agent.send()` that would call store.add()
+ *  never resumes (the whole Node process died), so the reply is invisible in Jarvis even though
+ *  `claude --resume` has it. If the store's last message is a user turn with no reply, and the
+ *  native transcript has a NEWER assistant reply, backfill it. Never touches a session that's
+ *  currently running (a live turn's own store.add will land normally when it finishes). */
+function reconcileFromNative(s: ReturnType<typeof store.ensure>): void {
+  if (s.agent !== "claude-code" || activeRuns.has(s.id)) return;
+  const last = store.history(s.id).at(-1);
+  if (!last || last.role !== "user") return; // already answered, or nothing sent yet — nothing to reconcile
+  const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+  if (!nid) return;
+  const h = nativeHistory("claude:" + nid);
+  if (!h) return;
+  const nativeReply = [...h.messages].reverse().find((m) => m.role === "assistant" && m.ts > last.ts);
+  if (nativeReply?.text) store.add(s.id, { role: "assistant", text: nativeReply.text, ts: nativeReply.ts, agent: s.agent });
+}
 function loadSessionCost(): void {
   try { const obj = JSON.parse(readFileSync(COST_FILE, "utf8")); const now = Date.now(), TTL = 30 * 24 * 3600 * 1000; for (const s of Object.keys(obj)) { const e = obj[s]; if (e && now - (e.ts || 0) < TTL) sessionCost.set(s, { cost: e.cost || 0, ts: e.ts || now }); } } catch { /* ignore */ }
 }
-async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply> {
+async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply & { activity?: any[] }> {
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
   activeRuns.add(sid); broadcastRuns();
@@ -723,7 +742,11 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
     notifyEvent("done", store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis"), reply.text, sid);
     void maybeAsk(sid, reply.text); // detecta decisões na resposta e emite os cards (agnóstico)
-    return reply;
+    // A subagent's internal tool calls only exist while the turn is live (Claude Code writes no
+    // recoverable trace of them to disk once done — verified: Task's toolUseResult.outputFile is
+    // never populated). The buffered stream events ARE that trace; hand them back so the caller can
+    // persist them onto the assistant message — otherwise they'd vanish the moment the turn ends.
+    return { ...reply, activity: buf.slice() };
   } catch (e) {
     // A user-initiated cancel is not a failure: tell the UI it stopped, and don't notify an error.
     if (ctrl.signal.aborted || String((e as any)?.message) === ABORTED) {
@@ -762,13 +785,13 @@ async function flushQueue(sid: string): Promise<void> {
     if (isNativeId(sid)) { await deliverNativeTurn(viewer ?? null, sid, text, { model, effort, attachments: atts }); return; }
     const session = store.ensure(sid);
     const agent = agents.get(session.agent);
-    const { agentText, showText, images } = buildAttachments(atts, text);
+    const { agentText, showText, images, files } = buildAttachments(atts, text);
     const now = Date.now();
-    store.add(sid, { role: "user", text: showText, ts: now, agent: agent.name, images });
-    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: agent.name, images } });
+    store.add(sid, { role: "user", text: showText, ts: now, agent: agent.name, images, files });
+    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: agent.name, images, files } });
     pushSessions();
     const reply = await agentTurn(sid, agent, agentText, session.cwd, { model, effort });
-    store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name });
+    store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name, activity: reply.activity });
     pushSessions();
   } catch (e: any) { broadcast(sid, { t: "error", message: String(e?.message ?? e) }); }
 }
@@ -800,9 +823,11 @@ function cancelTurn(sid: string, ws: WebSocket): boolean {
 /** Turn attachments into (a) the text the AGENT sees — text files inlined, images decoded to
  *  ~/.jarvis/pasted and referenced by path for the Read tool — and (b) the text/images SHOWN in
  *  the chat (a 📎 chip for files, a served /pasted URL preview for images). Used by every turn. */
-function buildAttachments(attachments: Array<{ name: string; content: string; image?: boolean }>, text: string): { agentText: string; showText: string; images?: string[] } {
+const ATTACH_PERSIST_MAX = 256 * 1024; // 256KB — same order as the file viewer's own cap (files.ts MAX)
+function buildAttachments(attachments: Array<{ name: string; content: string; image?: boolean }>, text: string): { agentText: string; showText: string; images?: string[]; files?: Array<{ name: string; content?: string }> } {
   if (!attachments.length) return { agentText: text, showText: text };
   const parts: string[] = [], imgPaths: string[] = [], imageUrls: string[] = [];
+  const files: Array<{ name: string; content?: string }> = [];
   for (const a of attachments) {
     if (a.image) {
       try {
@@ -811,14 +836,19 @@ function buildAttachments(attachments: Array<{ name: string; content: string; im
         writeFileSync(p, Buffer.from(a.content, "base64"));
         imgPaths.push(p); imageUrls.push("/pasted/" + basename(p));
       } catch { /* skip */ }
-    } else parts.push(`--- arquivo anexado: ${a.name} ---\n${a.content}`);
+    } else {
+      parts.push(`--- arquivo anexado: ${a.name} ---\n${a.content}`);
+      // Persisted so the chip in the chat can be opened later (viewer) — capped so a huge paste
+      // doesn't bloat sessions.json; past the cap the chip still shows but isn't openable.
+      files.push({ name: a.name, content: a.content.length <= ATTACH_PERSIST_MAX ? a.content : undefined });
+    }
   }
   if (imgPaths.length) parts.push(`Imagens anexadas — use a ferramenta Read para vê-las:\n${imgPaths.join("\n")}`);
-  const txtNames = attachments.filter((a) => !a.image).map((a) => a.name);
   return {
     agentText: parts.length ? `${parts.join("\n\n")}\n\n${text}` : text,
-    showText: txtNames.length ? `${text}\n\n📎 ${txtNames.join(", ")}` : text,
+    showText: text,
     images: imageUrls.length ? imageUrls : undefined,
+    files: files.length ? files : undefined,
   };
 }
 
@@ -926,11 +956,13 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   if (info.agent !== "claude-code") { if (ws) send(ws, { t: "error", message: "continuar sessão nativa só é suportado no claude-code por enquanto" }); return; }
   const agent = agents.get(info.agent);
   const now = Date.now();
-  const { agentText, showText, images } = buildAttachments(Array.isArray(opts.attachments) ? opts.attachments : [], text);
+  const { agentText, showText, images, files } = buildAttachments(Array.isArray(opts.attachments) ? opts.attachments : [], text);
   // pause the live tail so it doesn't re-broadcast our own turn (already shown via streaming)
   const tail = nativeTails.get(sid);
   if (tail) tail.paused = true;
-  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: info.agent, speaker: opts.speaker, images } });
+  // NOTE: native sessions have no Jarvis-side store — `files` rides the live broadcast (viewable
+  // now) but isn't persisted; a reload rebuilds from the claude transcript, which doesn't carry it.
+  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: info.agent, speaker: opts.speaker, images, files } });
   try {
     const reply = await agentTurn(sid, agent, agentText, info.cwd || CWD, { model: opts.model, effort: opts.effort });
     if (opts.speak) {
@@ -1331,6 +1363,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       subs.set(ws, msg.sessionId);
       syncTails();
       const s = store.ensure(msg.sessionId);
+      reconcileFromNative(s); // backfill a reply an orphaned turn (killed by a prior hub restart) already wrote natively
       const all = store.history(s.id);
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
       send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles("claude:" + nid) : [] });
@@ -1654,19 +1687,19 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     const agent = agents.get(session.agent);
 
     // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
-    const { agentText, showText, images } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
+    const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
     text = showText;
 
     const now = Date.now();
     // User message -> store + broadcast to everyone on this session (so all UIs show it).
-    store.add(sid, { role: "user", text, ts: now, agent: agent.name, speaker, images });
-    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name, speaker, images } });
+    store.add(sid, { role: "user", text, ts: now, agent: agent.name, speaker, images, files });
+    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name, speaker, images, files } });
     pushSessions();
 
     try {
       const opts = { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined };
       const reply = await agentTurn(sid, agent, agentText, session.cwd, opts);
-      store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name });
+      store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name, activity: reply.activity });
       pushSessions();
 
       if (msg.speak) {
@@ -1776,6 +1809,9 @@ try { const purged = purgeProbeJunk(); if (purged) console.log(`[hub] limpei ${p
 try { const s = purgeScratch(); if (s) console.log(`[hub] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
 try { loadQueues(); const n = [...queues.values()].reduce((a, q) => a + q.length, 0); if (n) console.log(`[hub] fila restaurada: ${n} mensagem(ns) (cache com TTL)`); } catch { /* ignore */ }
 try { loadSessionCost(); } catch { /* ignore */ }
+// A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
+// — fix them all proactively at boot, not just when the user happens to reopen one.
+try { let n = 0; for (const meta of store.list()) { const s = store.ensure(meta.id); const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) n++; } if (n) console.log(`[hub] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`); } catch { /* ignore */ }
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);

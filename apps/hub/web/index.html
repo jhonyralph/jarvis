@@ -51,6 +51,13 @@
     .msg.me .msgimgs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
     .msg.me .msgimgs:last-child { margin-bottom:0; }
     .msg.me .msgimg { max-width:220px; max-height:260px; width:auto; border-radius:10px; cursor:zoom-in; display:block; }
+    .msg.me .msgfiles { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+    .msg.me .msgfiles:last-child { margin-bottom:0; }
+    .msg.me .filechip { font-size:12px; background:#ffffff1a; border:1px solid var(--line); border-radius:8px; padding:4px 9px; cursor:pointer; color:inherit; }
+    .msg.me .filechip:hover { background:#ffffff2a; }
+    .msg.me .filechip.nocontent { cursor:default; opacity:.6; }
+    .filemodalcard { width:min(760px,94vw); max-height:88dvh; }
+    .filemodalbody { overflow:auto; max-height:70dvh; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; font:13px ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
     #dropHint { display:none; position:fixed; inset:0; z-index:60; background:#0b1220cc; backdrop-filter:blur(2px); align-items:center; justify-content:center; padding:24px; }
     body.dragging #dropHint { display:flex; }
     #dropHint .dhbox { border:2px dashed #3b82f6; border-radius:16px; padding:28px 40px; font-size:16px; color:#dbeafe; background:#1e293b99; pointer-events:none; }
@@ -97,6 +104,7 @@
     .subagent .sapreview { font-size:12px; color:#94a3b8; white-space:pre-wrap; overflow-wrap:anywhere; }
     .strtext { white-space:pre-wrap; } .strtext.done { white-space:normal; }
     .msg.bot .usage { margin-top:4px; }
+    .msg.bot .acthist { margin-bottom:9px; }
     /* selo de CONCLUSÃO no fim de um turno — deixa claro que terminou e onde o resultado está */
     .msg.bot .strdone { align-self:flex-start; display:inline-flex; align-items:center; gap:6px; margin-top:7px; font-size:12px; color:#3fb950; background:#2ea04314; border:1px solid #2ea04340; border-radius:8px; padding:3px 10px; }
     .msg.bot .strdone .dchk { font-weight:700; }
@@ -470,6 +478,14 @@
 
   <div id="imgModal" class="modal hidden"><div class="imgwrap"><button type="button" id="imgClose" class="imgx" title="Fechar">✕</button><img id="imgModalPic" alt=""></div></div>
 
+  <div id="fileModal" class="modal hidden"><div class="card filemodalcard">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <b id="fileModalName"></b>
+      <button type="button" id="fileModalClose" class="ghost" title="Fechar">✕</button>
+    </div>
+    <div id="fileModalBody" class="filemodalbody"></div>
+  </div></div>
+
   <div id="searchModal" class="modal hidden"><div class="card">
     <b>🔎 Buscar entre sessões</b>
     <input id="searchInput" type="text" placeholder="Ex.: como está o progresso da sessão de SLA?" autocomplete="off">
@@ -562,7 +578,7 @@
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
       'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileCopy','fileClose','nativeChip',
-      'imgModal','imgModalPic','imgClose',
+      'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
     E.file = document.createElement('input'); E.file.type='file'; E.file.multiple=true; E.file.style.display='none'; document.body.appendChild(E.file);
@@ -572,6 +588,16 @@
     function closeImg(){ E.imgModal.classList.add('hidden'); E.imgModalPic.removeAttribute('src'); }
     E.imgModal.onclick=(e)=>{ if(e.target===E.imgModal||e.target===E.imgClose) closeImg(); };
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!E.imgModal.classList.contains('hidden')){ e.stopPropagation(); closeImg(); } });
+    // visualizador de arquivo anexado (não-imagem) — clicar no chip "📎 nome" abre o conteúdo aqui
+    // (o mesmo destaque de sintaxe do painel de arquivos). Sem conteúdo (cap de 256KB) → não abre.
+    function openAttachedFile(f){ if(!f||f.content==null)return;
+      E.fileModalName.textContent=f.name||'arquivo';
+      const hl=highlight(f.content||'',f.name); if(hl!=null){ E.fileModalBody.innerHTML=hl; } else E.fileModalBody.textContent=f.content||'';
+      E.fileModal.classList.remove('hidden'); }
+    function closeFileModal(){ E.fileModal.classList.add('hidden'); E.fileModalBody.innerHTML=''; }
+    E.fileModal.onclick=(e)=>{ if(e.target===E.fileModal) closeFileModal(); };
+    E.fileModalClose.onclick=closeFileModal;
+    document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!E.fileModal.classList.contains('hidden')){ e.stopPropagation(); closeFileModal(); } });
 
     let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=8, filesShown=12, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
     let machines=[], currentMachine=localStorage.getItem('jarvis_machine')||'local', lastByMachine={}, restoringMachine=currentMachine!=='local';
@@ -648,8 +674,39 @@
       const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
         if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
         if(m.images&&m.images.length){ const w=document.createElement('div'); w.className='msgimgs'; m.images.forEach(u=>{ const im=document.createElement('img'); im.className='msgimg'; im.src=u; im.loading='lazy'; im.onclick=()=>openImg(u); w.appendChild(im); }); d.appendChild(w); }
-        const showTxt=m.text&&!(m.images&&m.images.length&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); }
-      else { d.className='msg bot'; d.innerHTML=md(m.text); } return d; }
+        if(m.files&&m.files.length){ const w=document.createElement('div'); w.className='msgfiles'; m.files.forEach(f=>{ const c=document.createElement('button'); c.type='button'; c.className='filechip'+(f.content==null?' nocontent':''); c.title=f.content==null?'Anexo grande demais para reabrir':'Abrir '+f.name; c.textContent='📎 '+f.name; c.onclick=()=>openAttachedFile(f); w.appendChild(c); }); d.appendChild(w); }
+        const showTxt=m.text&&!((m.images&&m.images.length||m.files&&m.files.length)&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); }
+      else { d.className='msg bot';
+        if(m.activity&&m.activity.length){ const af=renderActivityBlock(m.activity); if(af) d.appendChild(af); }
+        const tx=document.createElement('div'); tx.innerHTML=md(m.text); d.appendChild(tx); } return d; }
+    // Réplica ESTÁTICA (histórico) do que streamTool/streamText/ensureSubAgent fazem AO VIVO — mesma
+    // estrutura visual (caixas de subagente com contagem, linhas de ferramenta), mas com estado local
+    // (não usa strFlow/subAgents globais) e sem re-mostrar o texto de nível raiz (já é m.text acima);
+    // só o texto do PRÓPRIO subagente (preview) entra, pois esse não está em m.text.
+    function renderActivityBlock(events){
+      const flow=document.createElement('div'); flow.className='strflow acthist';
+      const subAgents={}; let curTextEl=null, curTextRaw='';
+      function closeTextBlock(){ curTextEl=null; curTextRaw=''; }
+      function ensureSA(id,desc){ if(subAgents[id]){ if(desc)subAgents[id].title.textContent=desc; return subAgents[id]; }
+        const wrap=document.createElement('div'); wrap.className='subagent'; wrap.dataset.id=id;
+        wrap.innerHTML='<div class="sahead"><span class="satog">▸</span><span>🤖</span><span class="satitle"></span><span class="sacount">0</span></div><div class="sabody hidden"></div>';
+        const head=wrap.querySelector('.sahead'), body=wrap.querySelector('.sabody'), title=wrap.querySelector('.satitle'), countEl=wrap.querySelector('.sacount'), tog=wrap.querySelector('.satog');
+        title.textContent=desc||'sub-agente';
+        head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
+        closeTextBlock(); flow.appendChild(wrap);
+        const rec={wrap,body,title,countEl,count:0,preview:null,previewText:''}; subAgents[id]=rec; return rec; }
+      (events||[]).forEach(ev=>{
+        if(ev.kind==='tool'){
+          if(ev.parentId){ const sa=ensureSA(ev.parentId); sa.body.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail)); sa.count++; sa.countEl.textContent=sa.count; return; }
+          if((ev.name==='Task'||ev.name==='Agent')&&ev.toolId){ ensureSA(ev.toolId,(ev.summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); return; }
+          closeTextBlock(); flow.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail));
+        } else if(ev.kind==='text'&&ev.parentId){   // só o texto do SUBAGENTE — o de nível raiz já é m.text
+          const t=ev.text||''; if(!t)return; const sa=ensureSA(ev.parentId);
+          if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); }
+          sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240);
+        }
+      });
+      return flow.childNodes.length?flow:null; }
     // Trocar de sessão custa DUAS travessias de rede quando ela vive em outra máquina
     // (browser → hub → runner → hub → browser), e esse enlace pode ser um relay: medido entre
     // Luby e o Desktop, o RTT oscila de 28ms a 621ms via DERP. O payload, porém, é o mesmo que
@@ -676,7 +733,13 @@
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
       msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); forceBottom();
-      if(getRestorable(m.sessionId)) showRestoreBar(m.sessionId);   // mensagem não enviada de antes → oferece voltar ao input
+      if(getRestorable(m.sessionId)){
+        // Só é "não enviada" de verdade se a ÚLTIMA mensagem do histórico ainda for do usuário (sem
+        // resposta). Se já tem resposta (ex.: o hub reconciliou com o transcript nativo depois de um
+        // restart), a barra estava aparecendo à toa — limpa em vez de mostrar.
+        const lastMsg=msgs[msgs.length-1];
+        if(lastMsg && lastMsg.role==='assistant') clearRestorable(m.sessionId); else showRestoreBar(m.sessionId);
+      }
       curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; sessCost=(m.session||{}).sessionCost||0; updUsagePill(); renderRecents(); closePop();
       curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
       E.roBanner.classList.toggle('hidden',!curNative);

@@ -31,17 +31,6 @@ $envFile = Join-Path $dir 'runner.env'
 "JARVIS_HUB=$Hub`r`nJARVIS_TOKEN=$Token`r`nJARVIS_LABEL=`"$Label`"" | Set-Content -Encoding UTF8 $envFile
 Write-Host "Config gravada em $envFile"
 
-# Registrar a tarefa (na raiz do Task Scheduler, -AtLogOn) exige elevação. Sem admin,
-# Register-ScheduledTask falha com "Acesso negado" — detecta ANTES de matar instâncias
-# soltas, e sai avisando em vez de fingir sucesso. O runner.env já foi gravado acima, então
-# basta reabrir um PowerShell como Administrador e rodar este script de novo.
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-  Write-Host 'Precisa rodar como Administrador para registrar a tarefa JarvisRunner.' -ForegroundColor Red
-  Write-Host "Config já salva em $envFile — reabra um PowerShell elevado e rode este script de novo." -ForegroundColor Yellow
-  exit 1
-}
-
 # O serviço tem que ser a ÚNICA instância. -MultipleInstances IgnoreNew só impede a *task* de
 # duplicar; um `npm start` deixado num terminal continua vivo e registra com o mesmo runnerId —
 # vira um zumbi que segue tailando sessões e sondando os agentes (é assim que uma máquina se
@@ -56,7 +45,10 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyCon
 
 $startPs = Join-Path $root 'scripts\start-runner.ps1'
 $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startPs`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn
+# -User $env:USERNAME é o que permite registrar SEM admin: um trigger AtLogOn genérico (sem -User)
+# exige elevação; especificar "rode como EU MESMO" é permitido a qualquer usuário padrão. Testado
+# e confirmado nesta máquina sem sessão elevada (mesmo padrão do install-autostart.ps1 do Hub).
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 # RestartCount é backstop caso o supervisor (start-runner.ps1) morra; o self-heal do node
 # fica no loop do launcher. IgnoreNew evita instância dupla quando o logon dispara de novo.
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
@@ -64,7 +56,7 @@ Register-ScheduledTask -TaskName 'JarvisRunner' -Action $action -Trigger $trigge
 # Confirma que a tarefa existe de fato antes de declarar sucesso — Register/Start emitem
 # erros não-terminantes que escapavam do -ErrorAction Stop e faziam o script mentir "instalado".
 if (-not (Get-ScheduledTask -TaskName 'JarvisRunner' -ErrorAction SilentlyContinue)) {
-  Write-Host 'Falha ao registrar a tarefa JarvisRunner (verifique se está elevado).' -ForegroundColor Red
+  Write-Host 'Falha ao registrar a tarefa JarvisRunner.' -ForegroundColor Red
   exit 1
 }
 Start-ScheduledTask -TaskName 'JarvisRunner'

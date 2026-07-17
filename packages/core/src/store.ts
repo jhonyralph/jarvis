@@ -14,6 +14,8 @@ export interface StoredMessage {
   agent?: string;
   speaker?: string; // identified enrolled speaker (voice messages only)
   images?: string[]; // served URLs (/pasted/<file>) of pasted/attached images, shown inline
+  files?: Array<{ name: string; content?: string }>; // non-image attachments — content omitted if too large to persist
+  activity?: unknown[]; // assistant only: the buffered live stream events (tool/text/thinking, incl. sub-agent parentId) for that turn — lets a reload rebuild the SAME activity blocks (incl. finished sub-agents) instead of just the final text
 }
 
 export interface SessionMeta {
