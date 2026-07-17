@@ -1353,7 +1353,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, {
         t: "history",
         sessionId: msg.sessionId,
-        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code", inputTokens: h.inputTokens, sessionCost: costOf(msg.sessionId) },
+        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code", inputTokens: h.inputTokens, sessionCost: costOf(msg.sessionId), model: h.model, effort: h.effort },
         total: h.messages.length,
         messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows })),
         files: sessionFiles(msg.sessionId),

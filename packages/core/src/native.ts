@@ -506,7 +506,7 @@ export interface HistMsg { role: string; text: string; ts: number; name?: string
 // response, which is why "os arquivos demoram a aparecer"). Cache the PARSED VIEW keyed on the
 // jsonl's mtime+size (not the file bytes): an idle session re-opens instantly, a live one whose
 // jsonl just grew re-parses. Bounded so memory can't run away.
-type NativeHist = { agent: string; cwd: string; title: string; messages: HistMsg[]; inputTokens?: number };
+type NativeHist = { agent: string; cwd: string; title: string; messages: HistMsg[]; inputTokens?: number; model?: string; effort?: string };
 const histCache = new Map<string, { key: string; data: NativeHist }>();
 // Contexto de entrada (fresh + cache) do último turno do thread principal — pro medidor de consumo
 // aparecer JÁ ao abrir a sessão, não só depois da 1ª mensagem nova. Mesma conta de agents.ts.
@@ -534,6 +534,12 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   const toolRefs: Array<{ m: HistMsg; name: string; input: unknown }> = [];
   let cwd = "", lastAi = "", lastCustom = "";
   let lastUsage: any;
+  // Modelo/esforço REAIS da sessão nativa, pra web refletir o que a máquina está usando (e não o
+  // default global). O último vence (a sessão pode ter trocado de modelo no meio). Claude grava o
+  // modelo por turno em message.model (ignora "<synthetic>", que é injeção interna, e sidechains de
+  // subagente); Claude NÃO grava o esforço em lugar nenhum do transcript, então effort fica vazio
+  // pro claude. Codex grava ambos no evento turn_context (model + effort no topo do payload).
+  let lastModel = "", lastEffort = "";
   eachLine(raw, (o) => {
     if (f.claude) {
       if (o.type === "custom-title" && o.customTitle) lastCustom = o.customTitle;   // último vence
@@ -541,6 +547,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
       else if (o.type === "user" || o.type === "assistant") {
         if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
         if (o.type === "assistant" && !o.isSidechain && o.message?.usage) lastUsage = o.message.usage;
+        if (o.type === "assistant" && !o.isSidechain && typeof o.message?.model === "string" && o.message.model && o.message.model !== "<synthetic>") lastModel = o.message.model;
         const ts = Date.parse(o.timestamp) || 0;
         const content = o.message?.content;
         if (o.type === "assistant" && Array.isArray(content)) {
@@ -557,6 +564,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
       }
     } else {
       if (o.type === "session_meta" && o.payload) cwd = o.payload.cwd || cwd;
+      else if (o.type === "turn_context" && o.payload) { if (typeof o.payload.model === "string" && o.payload.model) lastModel = o.payload.model; if (typeof o.payload.effort === "string" && o.payload.effort) lastEffort = o.payload.effort; }
       else if (o.type === "response_item" && o.payload?.type === "message" && (o.payload.role === "user" || o.payload.role === "assistant")) {
         const t = contentText(o.payload.content);
         if (t && !(o.payload.role === "user" && isInjected(t))) messages.push({ role: o.payload.role, text: t, ts: Date.parse(o.timestamp) || 0 });
@@ -567,7 +575,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
     const st = toolFileStat(r.name, r.input);
     r.m.path = st.path; r.m.adds = st.adds; r.m.dels = st.dels; r.m.rows = st.rows;
   }
-  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: inputContextOf(lastUsage) };
+  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: inputContextOf(lastUsage), model: lastModel || undefined, effort: lastEffort || undefined };
   if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
   return data;
 }

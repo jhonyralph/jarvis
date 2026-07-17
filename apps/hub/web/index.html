@@ -733,6 +733,7 @@
       if(switchingSession && prevSession!=null) draftBySession[prevSession]=E.input.value;
       currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId);
       currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
+      sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null;   // modelo/esforço reais da sessão da máquina (só nativas mandam)
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
       E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
@@ -1076,10 +1077,18 @@
     let sessionPrefs={}; try{ sessionPrefs=JSON.parse(localStorage.getItem('jarvis_session_prefs')||'{}'); }catch(e){}
     function saveSessionPrefs(){ try{ localStorage.setItem('jarvis_session_prefs',JSON.stringify(sessionPrefs)); }catch(e){} }
     function setSessionPref(model,effort){ if(!currentSession)return; const p=Object.assign({},sessionPrefs[currentSession]); if(model!=null)p.model=model; if(effort!=null)p.effort=effort; sessionPrefs[currentSession]=p; saveSessionPrefs(); }
+    // Modelo/esforço REAIS que a sessão nativa (criada na máquina) reporta — o servidor lê do transcript.
+    // Só as sessões nativas mandam isso; sessão gerenciada deixa null e cai no pref/default como antes.
+    let sessDeclModel=null, sessDeclEffort=null;
     function syncModelEffort(){ const c=capsFor(currentAgent); const pref=sessionPrefs[currentSession]||{};
-      curModel=(pref.model&&c.models.some(m=>m.id===pref.model))?pref.model:((cfg.model&&c.models.some(m=>m.id===cfg.model))?cfg.model:(c.defaultModel||(c.models[0]||{}).id||null));
+      // Prioridade do modelo: escolha explícita do usuário nesta sessão > o que a sessão realmente usa
+      // (nativa) > default global salvo > default do agente. Assim uma sessão da máquina abre já com o
+      // modelo/esforço dela, mas se você trocar pelo seletor a SUA escolha manda dali em diante.
+      const okM=id=>id&&c.models.some(m=>m.id===id);
+      curModel = okM(pref.model)?pref.model : (okM(sessDeclModel)?sessDeclModel : (okM(cfg.model)?cfg.model : (c.defaultModel||(c.models[0]||{}).id||null)));
       const efs=effortsFor(currentAgent,curModel);
-      curEffort=(pref.effort&&efs.includes(pref.effort))?pref.effort:((cfg.effort&&efs.includes(cfg.effort))?cfg.effort:((modelObj(currentAgent,curModel)||{}).defaultEffort||efs[efs.length-1]||null));
+      const okE=e=>e&&efs.includes(e);
+      curEffort = okE(pref.effort)?pref.effort : (okE(sessDeclEffort)?sessDeclEffort : (okE(cfg.effort)?cfg.effort : ((modelObj(currentAgent,curModel)||{}).defaultEffort||efs[efs.length-1]||null)));
       renderControls(); }
     function renderControls(){
       E.agentName.textContent=currentAgent||'—';
