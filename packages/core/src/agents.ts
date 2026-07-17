@@ -255,7 +255,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // native imported sessions ("claude:<uuid>") resume the underlying real claude session
     const prev = this.sessions.get(sessionId) || (sessionId.startsWith("claude:") ? sessionId.slice("claude:".length) : undefined);
     const fmt = onEvent ? ["--output-format", "stream-json", "--verbose"] : ["--output-format", "json"];
-    const args = ["-p", text, ...fmt, "--permission-mode", "bypassPermissions"];
+    // "--" before the prompt: without it, text starting with "-" (a dash-led sentence, or the
+    // "--- arquivo anexado:" attachment marker) gets misread as a CLI flag by claude's own parser —
+    // confirmed directly: `-p "-verbose x"` silently printed the CLI's version and never ran the
+    // prompt; `-p -- "-verbose x"` runs it correctly. Subsequent flags still parse normally after it.
+    const args = ["-p", "--", text, ...fmt, "--permission-mode", "bypassPermissions"];
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort); // ultracode -> xhigh
     if (prev) args.unshift("--resume", prev);
@@ -314,7 +318,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
-    const args = ["-p", text, "--output-format", "json", "--permission-mode", "bypassPermissions"];
+    const args = ["-p", "--", text, "--output-format", "json", "--permission-mode", "bypassPermissions"]; // see send(): "--" avoids dash-prefixed text being misread as a flag
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
     const raw = await run(this.bin, args, ONESHOT_CWD, "", false); // stateless + isolated cwd (excluded from native list)
