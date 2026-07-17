@@ -540,8 +540,13 @@ function syncTails(): void {
 function allSessions(): any[] {
   const own = store.list();
   const ownIds = new Set(own.map((s) => s.id));
+  // Uma sessão do hub que roda um turno cria (via `claude -p`) uma sessão NATIVA vinculada. Ela tem
+  // id "claude:<uuid>" (≠ id do hub), então sem isto apareceria DUPLICADA na lista (a do hub + a
+  // nativa). Junta os ids nativos vinculados e os exclui — a do hub é a canônica.
+  const boundNative = new Set<string>();
+  for (const s of own) { try { const nid = agents.get(s.agent)?.nativeSessionId?.(s.id); if (nid) boundNative.add((s.agent === "codex" ? "codex:" : "claude:") + nid); } catch { /* ignore */ } }
   const native = listNative()
-    .filter((n) => !ownIds.has(n.id))
+    .filter((n) => !ownIds.has(n.id) && !boundNative.has(n.id))
     .map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, createdAt: n.updatedAt, updatedAt: n.updatedAt, lastMessage: "", count: n.count }));
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -848,9 +853,14 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
     const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
     if (!agent?.oneShot) return [];
     const prompt =
-      "Você analisa a RESPOSTA de um assistente de desenvolvimento e detecta se ela PEDE uma decisão ao usuário (escolher entre alternativas, priorizar itens, confirmar rumo).\n" +
-      'Se SIM, devolva JSON estrito: {"questions":[{"header":"2-4 palavras","question":"pergunta RESUMIDA em 1 linha","multi":false,"options":[{"label":"opção curta","desc":"detalhe curto"}]}]}\n' +
-      "Regras: RESUMA — header 2-4 palavras, question 1 linha curta, label/desc curtos (o texto completo já está na resposta acima do card, o usuário abre o histórico se precisar). multi=true SOMENTE quando o usuário pode escolher VÁRIOS itens de uma lista (ex.: quais tarefas fazer); multi=false quando é UMA alternativa. Use as opções que a resposta oferece; se poucas, gere as plausíveis do texto. NÃO inclua 'Outros' (a UI adiciona).\n" +
+      "Você analisa a RESPOSTA de um assistente de desenvolvimento e detecta se ela PEDE decisões ao usuário (escolher alternativas, priorizar itens, confirmar rumo, preencher lacunas).\n" +
+      'Se SIM, devolva JSON estrito: {"questions":[{"header":"título curto","question":"a pergunta, clara e autoexplicativa","multi":false,"options":[{"label":"opção","desc":"detalhe útil"}]}]}\n' +
+      "Regras:\n" +
+      "- Extraia TODAS as decisões que a resposta pede — se ela pede 5, gere as 5 (não corte nem junte).\n" +
+      "- CADA pergunta PRECISA de opções (2 a 6). Use as que a resposta oferece; se ela não listar, GERE opções plausíveis do contexto. Nunca devolva pergunta sem opções.\n" +
+      "- Conciso MAS claro: a pergunta e as opções devem ser entendíveis SEM abrir o histórico — nem telegráfico, nem um parágrafo. header ~2-5 palavras; question 1-2 linhas; label curto; desc só se agrega.\n" +
+      "- multi=true SOMENTE quando o usuário escolhe VÁRIOS itens de uma lista (ex.: quais tarefas fazer); multi=false quando é UMA alternativa entre outras.\n" +
+      "- NÃO inclua 'Outros' (a UI adiciona).\n" +
       'Se a resposta NÃO pede decisão, devolva {"questions":[]}. Responda APENAS o JSON.\n\nRESPOSTA:\n' +
       t.slice(0, 4000);
     const reply = await agent.oneShot(prompt, { model: summaryCfg.model, effort: summaryCfg.effort });
