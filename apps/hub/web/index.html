@@ -495,7 +495,7 @@
 
   <div id="searchModal" class="modal hidden"><div class="card">
     <b>🔎 Buscar entre sessões</b>
-    <input id="searchInput" type="text" placeholder="Ex.: como está o progresso da sessão de SLA?" autocomplete="off">
+    <input id="searchInput" type="text" placeholder="Filtrar por título ou conteúdo… (ex.: a2p)" autocomplete="off">
     <div id="searchResults"></div>
     <div class="row"><button id="searchGo">Buscar</button><button id="searchClose" class="ghost">Fechar</button></div>
   </div></div>
@@ -909,6 +909,13 @@
       return h; }
     function addSearchCard(m){ const d=document.createElement('div'); d.className='msg bot'; d.innerHTML=searchCardHtml(m); E.log.appendChild(d); autoScroll(); if(m.audio) playTTS(m.audio); }
     function renderSearchInto(c,m){ c.innerHTML=searchCardHtml(m); if(m.audio) playTTS(m.audio); }
+    // Filtro literal (busca digitada): lista de sessões cujo título/conversa contém os termos. Sem áudio.
+    function hitsHtml(m){ const hits=m.hits||[];
+      if(!hits.length) return '<div class="mut">Nada encontrado para “'+esc(m.query)+'”.</div>';
+      return '<div class="mut" style="margin-bottom:6px">'+hits.length+' sessão(ões)</div>'+hits.map(x=>`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
+        (x.snippet && x.where==='content'?`<br><span class="mut">${esc(x.snippet)}</span>`:'')+
+        (x.cwd?`<br><span class="mut" style="font-size:11px;opacity:.7">${esc(base(x.cwd))}</span>`:'')+`</div>`).join(''); }
+    function renderHits(c,m){ c.innerHTML=hitsHtml(m); }
     // Files touched by tools in this conversation (real paths + action + diff counts),
     // sent by the server from the session's claude jsonl. Clicking opens the side panel.
     let curFiles=[];
@@ -1206,10 +1213,13 @@
       }catch(e){ toast('Falha ao ativar notificações: '+(e.message||e)); return false; } }
     async function disablePush(){ cfg.push=false; saveCfg(); try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription(); if(sub){ tx({t:'unsubscribe',endpoint:sub.endpoint}); await sub.unsubscribe(); } }catch(e){} }
     function openSearch(){ E.searchResults.innerHTML=''; E.searchInput.value=''; E.searchModal.classList.remove('hidden'); closeSide(); setTimeout(()=>E.searchInput.focus(),30); }
-    function runSearch(){ const q=E.searchInput.value.trim(); if(!q)return; E.searchResults.innerHTML='<div class="mut">Buscando…</div>'; tx({t:'search',query:q,speak}); }
+    let searchTimer=null;
+    function runSearch(){ const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; } E.searchResults.innerHTML='<div class="mut">Buscando…</div>'; tx({t:'search',query:q}); }
     E.searchGo.onclick=runSearch;
     E.searchClose.onclick=()=>E.searchModal.classList.add('hidden');
-    E.searchInput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); runSearch(); } };
+    E.searchInput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(searchTimer); runSearch(); } };
+    // filtra ao digitar (debounce) — a 1ª busca parseia as sessões nativas, refinar o termo é instantâneo
+    E.searchInput.oninput=()=>{ clearTimeout(searchTimer); const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; } searchTimer=setTimeout(runSearch,300); };
     E.searchResults.addEventListener('click',(e)=>{
       const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort}); openSession(exec.dataset.id); E.searchModal.classList.add('hidden'); return; }
       const match=e.target.closest('.match'); if(match){ openSession(match.dataset.id); E.searchModal.classList.add('hidden'); } });
@@ -1502,7 +1512,9 @@
           if(!m.ids && !m.ok) toast('Não consegui remover a conversa (talvez já não exista).'); }
         else if(m.t==='tts'){ if(m.for==='ask'){ askVoicePlayAndListen(m.audio); } else if(m.sessionId===currentSession) playTTS(m.audio); }
         else if(m.t==='ask_choice'){ askVoiceApply(m); }
-        else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
+        else if(m.t==='searchResult'){ clearPending();
+          if(m.hits!==undefined){ if(!E.searchModal.classList.contains('hidden') && m.query===E.searchInput.value.trim()) renderHits(E.searchResults,m); }   // filtro literal digitado (ignora resposta obsoleta)
+          else if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }   // busca falada (LLM + áudio)
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
         else if(m.t==='runs'){ const now=m.active||[]; const finished=[...new Set([...activeRuns,...justSent])].filter(id=>!now.includes(id)); activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; now.forEach(id=>justSent.delete(id)); finished.forEach(id=>onTurnEnd(id)); renderRecents(); refreshComposer(); }

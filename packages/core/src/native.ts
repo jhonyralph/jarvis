@@ -245,6 +245,81 @@ export function listNative(limit = Number(process.env.JARVIS_NATIVE_LIMIT || 40)
   return list;
 }
 
+// ------------------------------- full-text search -------------------------------
+// Filtro LITERAL sobre título + CONTEÚDO da conversa (não é busca semântica/LLM): digitar "a2p"
+// tem que achar a sessão da Twilio A2P mesmo que "a2p" só apareça no meio do chat. Como um grep
+// em todos os arquivos de sessão.
+export interface SessionHit { id: string; title: string; agent: string; cwd: string; updatedAt: number; snippet: string; where: "title" | "content"; }
+
+/** Trecho legível ao redor da 1ª ocorrência (colapsa espaços/novas linhas, com reticências). */
+export function snippetAround(hay: string, idx: number, tokLen: number, span = 200): string {
+  if (idx < 0) return hay.slice(0, span).replace(/\s+/g, " ").trim();
+  const start = Math.max(0, idx - 70), end = Math.min(hay.length, idx + tokLen + 110);
+  let s = hay.slice(start, end).replace(/\s+/g, " ").trim();
+  if (start > 0) s = "… " + s;
+  if (end < hay.length) s = s + " …";
+  return s.slice(0, span);
+}
+
+// Haystack (título + textos das mensagens) por arquivo, com teto de tamanho pra sessões gigantes
+// não estourarem memória, cacheado por mtime (a 1ª busca parseia; refinar o termo é instantâneo).
+const SEARCH_CAP = 2 * 1024 * 1024;
+const searchDocCache = new Map<string, { key: string; title: string; hay: string }>();
+function searchDoc(path: string, mtime: number, claude: boolean, title: string): { title: string; hay: string } {
+  const key = String(mtime);
+  const hit = searchDocCache.get(path);
+  if (hit && hit.key === key) return hit;
+  let raw = "";
+  try { raw = readFileSync(path, "utf8"); } catch { return { title, hay: title }; }
+  const parts: string[] = [title];
+  let total = title.length;
+  eachLine(raw, (o) => {
+    if (total > SEARCH_CAP) return;
+    let t = "";
+    if (claude) {
+      if (o.type !== "user" && o.type !== "assistant") return;
+      const c = o.message?.content;
+      t = Array.isArray(c) ? c.map((b: any) => (b?.type === "text" ? b.text || "" : "")).join(" ") : contentText(c);
+      if (o.type === "user" && isInjected(t)) return;
+    } else {
+      if (!(o.type === "response_item" && o.payload?.type === "message" && (o.payload.role === "user" || o.payload.role === "assistant"))) return;
+      t = contentText(o.payload.content);
+      if (o.payload.role === "user" && isInjected(t)) return;
+    }
+    t = cleanText(t);
+    if (t) { parts.push(t); total += t.length + 1; }
+  });
+  const doc = { key, title, hay: parts.join("\n").slice(0, SEARCH_CAP) };
+  if (searchDocCache.size > 60) searchDocCache.clear();
+  searchDocCache.set(path, doc);
+  return doc;
+}
+
+/** Native sessions whose title OR conversation contains ALL query tokens (case-insensitive). */
+export function searchNative(query: string, limit = Number(process.env.JARVIS_NATIVE_LIMIT || 40)): SessionHit[] {
+  const tokens = query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean);
+  if (!tokens.length) return [];
+  const cand = [
+    ...claudeFiles().map((f) => ({ ...f, claude: true })),
+    ...codexFiles().map((f) => ({ ...f, claude: false })),
+  ].sort((a, b) => b.mtime - a.mtime).slice(0, limit);
+  const hits: SessionHit[] = [];
+  for (const { path, mtime, claude } of cand) {
+    const meta = cachedParse(path, mtime, claude ? parseClaude : parseCodex);
+    if (!meta) continue;
+    const doc = searchDoc(path, mtime, claude, meta.title);
+    const hl = doc.hay.toLowerCase();
+    if (!tokens.every((t) => hl.includes(t))) continue;
+    const titleL = doc.title.toLowerCase();
+    // snippet: mostra a 1ª ocorrência de conteúdo; se o termo só bate no título, mostra o título.
+    const primary = tokens.find((t) => !titleL.includes(t)) || tokens[0];
+    const idx = hl.indexOf(primary);
+    const inContent = idx >= doc.title.length + 1;
+    hits.push({ id: meta.id, title: meta.title, agent: meta.agent, cwd: meta.cwd, updatedAt: mtime, where: inContent ? "content" : "title", snippet: inContent ? snippetAround(doc.hay, idx, primary.length) : meta.title });
+  }
+  return hits;
+}
+
 /** One-time cleanup of the availability-probe litter: native claude sessions whose whole
  *  content is the "ok" ping the OLD probe left in the home dir. The signature is very specific
  *  (title "ok" + tiny file + first user message exactly "ok") so it can never touch a real

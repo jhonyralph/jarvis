@@ -25,7 +25,7 @@ import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch } from "@jarvis/core";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
@@ -989,6 +989,32 @@ async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): P
   }
   send(ws, { t: "searchResult", query, answer: r.answer, matches: r.matches, action: r.action, audio });
 }
+/** LITERAL full-text filter over title + full conversation of ALL sessions (managed + native),
+ *  like grepping every session file. No LLM, no audio — just the sessions that contain the terms. */
+function literalSearch(query: string): SessionHit[] {
+  const tokens = query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean);
+  if (!tokens.length) return [];
+  // managed sessions: full messages are in memory, scan title + every message text
+  const own: SessionHit[] = [];
+  for (const meta of store.list()) {
+    const msgs = store.history(meta.id);
+    const hay = meta.title + "\n" + msgs.map((m) => m.text || "").join("\n");
+    const hl = hay.toLowerCase();
+    if (!tokens.every((t) => hl.includes(t))) continue;
+    const titleL = meta.title.toLowerCase();
+    const primary = tokens.find((t) => !titleL.includes(t)) || tokens[0];
+    const idx = hl.indexOf(primary);
+    const inContent = idx >= meta.title.length + 1;
+    own.push({ id: meta.id, title: meta.title, agent: meta.agent, cwd: meta.cwd, updatedAt: meta.updatedAt, where: inContent ? "content" : "title", snippet: inContent ? snippetAround(hay, idx, primary.length) : meta.title });
+  }
+  // native sessions: exclude the ones already bound to a managed session (same dedup as allSessions)
+  const ownIds = new Set(store.list().map((s) => s.id));
+  const boundNative = new Set<string>();
+  for (const s of store.list()) { try { const nid = agents.get(s.agent)?.nativeSessionId?.(s.id); if (nid) boundNative.add((s.agent === "codex" ? "codex:" : "claude:") + nid); } catch { /* ignore */ } }
+  const native = searchNative(query).filter((h) => !ownIds.has(h.id) && !boundNative.has(h.id));
+  // title matches first (most relevant), then content matches, each newest-first
+  return [...own, ...native].sort((a, b) => (a.where === b.where ? b.updatedAt - a.updatedAt : a.where === "title" ? -1 : 1));
+}
 /** Summarize ONE session with the cheapest model + lowest effort, speak it, and reply
  *  only to the asker. NOT stored in history — it's a standalone "read it to me" action. */
 async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Promise<void> {
@@ -1403,7 +1429,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // cross-session search (explicit) + execute-in-a-specific-session
     if (msg.t === "search" && typeof msg.query === "string") {
-      await runAndSendSearch(ws, msg.query, false); // busca digitada não fala; áudio só quando pedido por voz
+      // Filtro LITERAL sobre título + conteúdo de todas as sessões (como grep). Sem LLM, sem áudio —
+      // a busca semântica/falada continua no caminho de voz (looksLikeCrossSessionQuery).
+      send(ws, { t: "searchResult", query: msg.query, hits: literalSearch(msg.query) });
       return;
     }
     // per-session "resumir e falar" — cheap one-shot, spoken, not stored in history
