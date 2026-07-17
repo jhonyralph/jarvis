@@ -782,6 +782,25 @@ function buildAttachments(attachments: Array<{ name: string; content: string; im
 
 /** Continue a NATIVE CLI session (claude:<uuid>) by resuming the real claude session.
  *  Persists in the CLI's own jsonl (same file), so re-opening shows the new turns. */
+/** Post-STT correction: a cheap model fixes recognition errors (esp. English tech terms spoken in
+ *  pt/es) and returns ONLY the cleaned text — never an answer. Best-effort: any failure returns the
+ *  raw transcript unchanged, so it can never block a voice turn. Disable with JARVIS_STT_CORRECT=0. */
+async function correctTranscript(text: string): Promise<string> {
+  if (process.env.JARVIS_STT_CORRECT === "0" || !text || text.trim().length < 3) return text;
+  try {
+    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    if (!agent?.oneShot) return text;
+    const prompt =
+      "Você corrige transcrições de VOZ (pt/en/es) de um assistente de desenvolvimento. Conserte SOMENTE erros de reconhecimento — em especial termos técnicos em inglês ditos dentro do português (Docker, Kubernetes, git, commit, push, deploy, runner, hub, endpoint, API, Claude, Codex, PowerShell, etc.). NÃO responda, NÃO comente, NÃO traduza, NÃO adicione nada: devolva APENAS o texto corrigido, no mesmo idioma. Se já estiver correto, devolva idêntico.\n\nTranscrição:\n" +
+      text;
+    const reply = await agent.oneShot(prompt, { model: summaryCfg.model, effort: summaryCfg.effort });
+    const fixed = String(reply?.text ?? "").trim();
+    return fixed || text;
+  } catch {
+    return text;
+  }
+}
+
 async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }> }): Promise<void> {
   const info = nativeInfo(sid);
   if (!info) { if (ws) send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
@@ -1445,6 +1464,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const audio = Buffer.from(msg.audio, "base64");
       try {
         text = await transcribe(audio, msg.lang, msg.ext);
+        text = await correctTranscript(text); // limpa erros de reconhecimento (termos técnicos etc.)
       } catch (e: any) {
         send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) });
         return;
