@@ -1,53 +1,68 @@
 <#
-  restart-hub.ps1 - reinicia o Jarvis Hub num UNICO comando (derruba + sobe + confirma).
+  restart-hub.ps1 — reinicia o Jarvis Hub de forma À PROVA DE "morrer na praia".
 
-  Por que um script so: o Hub roda sob o supervisor start-hub.ps1 (task agendada "JarvisHub"),
-  cujo loop ressuscita o node assim que ele cai - e como o tsx sobe direto do source, o restart
-  ja pega o codigo novo. Matar o node e mandar o Start em passos separados abre uma janela pra
-  travar entre um e outro (foi essa a dor: "para aqui e nao continua"). Aqui e atomico e ainda
-  confirma que a porta 4577 voltou a escutar antes de declarar sucesso.
+  O problema: rodar o restart de forma síncrona trava a chamada ~30s (derruba + espera + confirma).
+  Se quem chamou for interrompido nesse meio, a AÇÃO até completa — o supervisor start-hub.ps1
+  (loop while($true), task "JarvisHub") relança o node sozinho em ~3s com o source novo — mas a
+  CONFIRMAÇÃO se perde e ninguém sabe se subiu ("está rodando ou morreu?").
 
-  Uso:  powershell -ExecutionPolicy Bypass -File scripts\restart-hub.ps1
+  A solução: o script se DESTACA. A chamada normal dispara um worker OCULTO e retorna na hora;
+  o worker faz derruba+espera+confirma e grava o resultado em ~/.jarvis/restart-status.txt.
+  Assim o desfecho é SEMPRE recuperável (basta ler o arquivo + checar a porta 4577), mesmo que o
+  chamador morra. Um único comando ainda derruba E garante o start (o supervisor cuida do start).
+
+  Uso:
+    powershell -ExecutionPolicy Bypass -File scripts\restart-hub.ps1          # dispara e volta na hora
+    powershell -ExecutionPolicy Bypass -File scripts\restart-hub.ps1 -Wait    # bloqueia até subir (~ até 40s)
+    Get-Content ~/.jarvis/restart-status.txt                                  # ver o desfecho a qualquer momento
 #>
+param([switch]$Worker, [switch]$Wait)
 $ErrorActionPreference = 'Continue'
 $port = 4577
+$status = Join-Path $env:USERPROFILE '.jarvis\restart-status.txt'
 
-Write-Host 'Reiniciando o Jarvis Hub...' -ForegroundColor Cyan
+if (-not $Worker) {
+  # Dispara o worker DESTACADO (janela oculta) e retorna já — não morre junto com o chamador.
+  Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Worker'
+  ) | Out-Null
+  Write-Host "Restart disparado em background. Desfecho em: $status" -ForegroundColor Cyan
+  Write-Host "  (acompanhe: Get-Content `"$status`")" -ForegroundColor DarkGray
+  if ($Wait) {
+    for ($i = 0; $i -lt 22; $i++) {
+      Start-Sleep -Seconds 2
+      if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { break }
+    }
+    Get-Content $status -ErrorAction SilentlyContinue | Write-Host
+  }
+  exit 0
+}
 
-# 1) Derruba a instancia atual na 4577 (o processo node interno do supervisor).
+# ---------- worker (destacado; roda mesmo que o chamador tenha morrido) ----------
+function Set-Status([string]$s) {
+  try { "$([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))  $s" | Set-Content -Encoding UTF8 -Path $status } catch { }
+}
+
+Set-Status 'iniciando: derrubando o Hub atual na porta 4577...'
 $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-if ($conn) {
-  $hubPid = $conn.OwningProcess
-  Write-Host "Encerrando Hub atual (pid $hubPid) na porta $port..." -ForegroundColor Yellow
-  Stop-Process -Id $hubPid -Force -ErrorAction SilentlyContinue
-} else {
-  Write-Host "Nada escutando na $port - vou apenas garantir que o supervisor suba." -ForegroundColor Yellow
-}
+if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }
 
-# 2) O loop supervisor (start-hub.ps1) relanca sozinho em ~3s com o source atualizado.
-#    Start-ScheduledTask e so fallback caso o proprio supervisor tenha morrido; com
-#    -MultipleInstances IgnoreNew a chamada e inocua quando ele ja esta de pe.
-Start-Sleep -Seconds 4
+# O supervisor relança o node sozinho com o source novo. Start-ScheduledTask é só fallback caso
+# o próprio supervisor tenha morrido (com -MultipleInstances IgnoreNew a chamada é inócua se já roda).
+Start-Sleep -Seconds 3
 $task = Get-ScheduledTask -TaskName 'JarvisHub' -ErrorAction SilentlyContinue
-if (-not $task) {
-  Write-Host 'Task JarvisHub nao registrada. Rode uma vez: scripts\install-autostart.ps1' -ForegroundColor Red
-  exit 1
-}
-if ($task.State -ne 'Running') {
-  Write-Host 'Supervisor nao estava rodando - iniciando a task JarvisHub.' -ForegroundColor Yellow
-  Start-ScheduledTask -TaskName 'JarvisHub' -ErrorAction SilentlyContinue
-}
+if (-not $task) { Set-Status 'FALHOU: task JarvisHub nao registrada — rode scripts\install-autostart.ps1'; exit 1 }
+if ($task.State -ne 'Running') { Start-ScheduledTask -TaskName 'JarvisHub' -ErrorAction SilentlyContinue }
 
-# 3) Confirma que voltou a escutar na 4577 (espera ate ~30s) antes de dizer que subiu.
+Set-Status 'aguardando o Hub voltar a escutar na 4577...'
 $ok = $false
-foreach ($i in 1..15) {
+for ($i = 0; $i -lt 20; $i++) {
   Start-Sleep -Seconds 2
   if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { $ok = $true; break }
 }
 if ($ok) {
   $c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-  Write-Host "Hub no ar de novo na porta $port (pid $($c.OwningProcess))." -ForegroundColor Green
+  Set-Status "OK: Hub no ar na porta $port (pid $($c.OwningProcess))"
 } else {
-  Write-Host "Hub nao voltou a escutar na $port em ~30s. Veja ~/.jarvis/hub.log." -ForegroundColor Red
-  exit 1
+  Set-Status "FALHOU: Hub nao voltou a escutar na $port em ~40s. Veja ~/.jarvis/hub.log"
 }

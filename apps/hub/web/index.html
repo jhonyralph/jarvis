@@ -786,6 +786,8 @@
     function showFile(m){ if(E.filePanel.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileStat.textContent=''; E.fileBody.className='filebody plain';
       if(m.error){ E.fileMeta.textContent=m.path||''; E.fileBody.textContent='⚠ '+m.error; return; }
       const kb=m.size?(m.size<1024?m.size+' B':(m.size/1024).toFixed(1)+' KB'):''; E.fileMeta.textContent=(m.path||'')+(kb?' · '+kb:'')+(m.truncated?' · (primeiros 512KB)':'');
+      if(m.image&&m.content){ const src='data:'+(m.mime||'image/*')+';base64,'+m.content; E.fileBody.className='filebody plain'; E.fileBody.innerHTML='';
+        const im=document.createElement('img'); im.src=src; im.alt=m.name||''; im.style.cssText='max-width:100%;height:auto;border-radius:8px;cursor:zoom-in;display:block'; im.onclick=()=>openImg(src); E.fileBody.appendChild(im); E.fileBody.scrollTop=0; return; }
       const hl=highlight(m.content||'',m.name||m.path); if(hl!=null){ E.fileBody.classList.add('code'); E.fileBody.innerHTML=hl; } else E.fileBody.textContent=m.content||''; E.fileBody.scrollTop=0; }
     function showDiff(m){ if(E.filePanel.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileMeta.textContent=m.path||'';
       if(m.error){ E.fileStat.textContent=''; E.fileBody.className='filebody plain'; E.fileBody.textContent='⚠ '+m.error; return; }
