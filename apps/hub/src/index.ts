@@ -842,6 +842,37 @@ async function maybeAsk(sid: string, replyText: string): Promise<void> {
   const questions = await detectDecisions(replyText);
   if (questions.length) broadcast(sid, { t: "ask", sessionId: sid, questions });
 }
+/** Voice wizard: map a spoken answer to a step action. Fast keyword nav first (voltar/avançar/
+ *  repetir), then a cheap LLM maps the utterance to option indices or free "other" text. Robust:
+ *  any failure falls back to treating the words as free "other" text. */
+async function interpretAskVoice(transcript: string, question: string, options: Array<{ label: string }>, multi: boolean): Promise<any> {
+  const t = (transcript || "").trim();
+  if (!t) return { action: "repeat" };
+  const low = t.toLowerCase();
+  if (/\b(voltar|volta|anterior|volte)\b/.test(low)) return { action: "back" };
+  if (/\b(avan[çc]ar|pr[óo]xim\w*|continuar|seguir|pronto|enviar|finalizar|confirmar)\b/.test(low)) return { action: "next" };
+  if (/\b(repetir|repete|de novo|n[ãa]o entendi|repita)\b/.test(low)) return { action: "repeat" };
+  try {
+    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    if (!agent?.oneShot) return { action: "other", other: t };
+    const list = options.map((o, i) => `${i}: ${o.label}`).join("\n");
+    const prompt =
+      "O usuário respondeu POR VOZ a uma pergunta com opções. Mapeie a fala para as opções.\n" +
+      `Pergunta: ${question}\nOpções:\n${list}\nMulti-seleção: ${multi ? "sim" : "não"}\nFala: "${t}"\n` +
+      'Responda JSON: {"action":"choose"|"other","indices":[índices],"other":"texto livre"}. Se a fala casa com opção(ões), use "choose" e os índices (um só se não for multi). Se é instrução/algo fora das opções, use "other" com o texto. Só o JSON.';
+    const r = await agent.oneShot(prompt, { model: summaryCfg.model, effort: summaryCfg.effort });
+    const m = String(r?.text ?? "").match(/\{[\s\S]*\}/);
+    if (!m) return { action: "other", other: t };
+    const o = JSON.parse(m[0]);
+    if (o.action === "choose" && Array.isArray(o.indices)) {
+      const idx = o.indices.filter((i: any) => Number.isInteger(i) && i >= 0 && i < options.length);
+      if (idx.length) return { action: "choose", indices: multi ? idx : [idx[0]] };
+    }
+    return { action: "other", other: String(o.other || t) };
+  } catch {
+    return { action: "other", other: t };
+  }
+}
 
 async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }> }): Promise<void> {
   const info = nativeInfo(sid);
@@ -1476,6 +1507,21 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       broadcastQueue(msg.sessionId); return;
     }
     if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); return; }
+
+    // Wizard de voz dos cards de decisão: falar um passo (say) e interpretar a resposta falada (ask_voice).
+    if (msg.t === "say" && typeof msg.text === "string") {
+      try { const wav = await synthesize(String(msg.text).slice(0, 900), VOICE); send(ws, { t: "tts", sessionId: msg.sessionId || "", audio: wav.toString("base64"), for: "ask" }); }
+      catch (e: any) { send(ws, { t: "error", message: "TTS: " + String(e?.message ?? e) }); }
+      return;
+    }
+    if (msg.t === "ask_voice" && typeof msg.audio === "string") {
+      let transcript = "";
+      try { transcript = await transcribe(Buffer.from(msg.audio, "base64"), undefined, msg.ext || "webm"); }
+      catch (e: any) { send(ws, { t: "ask_choice", action: "repeat", error: String(e?.message ?? e) }); return; }
+      const choice = await interpretAskVoice(transcript, String(msg.question || ""), Array.isArray(msg.options) ? msg.options : [], !!msg.multi);
+      send(ws, { t: "ask_choice", ...choice, transcript });
+      return;
+    }
 
     // Stop a turn already running (user hit "parar"). Works for local and remote sessions.
     if (msg.t === "cancel") {

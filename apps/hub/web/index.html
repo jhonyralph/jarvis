@@ -652,6 +652,7 @@
       currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
       E.title.textContent=(m.session||{}).title||'Sessão'; syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
+      askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
       msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); E.log.scrollTop=E.log.scrollHeight;
@@ -669,7 +670,7 @@
     function note(t){ const d=document.createElement('div'); d.className='msg bot'; d.textContent=t; E.log.appendChild(d); E.log.scrollTop=E.log.scrollHeight; }
     // Stepper de decisão: perguntas (single/multi) + campo "Outros", com Voltar/Avançar. Ao concluir,
     // compõe as escolhas e envia como o PRÓXIMO input (o agente continua a partir daí). Agnóstico.
-    let askActive=null; // {questions, answers, step, card, draw} — usado também pelo wizard de voz
+    let askActive=null, askVoice=false, askPendingVoice=false, ttsPlaying=false; // wizard de decisão (+voz)
     function renderAskCard(questions){
       if(!Array.isArray(questions)||!questions.length) return;
       const answers=questions.map(()=>({sel:new Set(), other:''}));
@@ -702,10 +703,35 @@
       }
       function answerText(i){ const q=questions[i],a=answers[i]; const picks=[...a.sel].map(x=>q.options[x].label); if(a.other.trim())picks.push('Outros: '+a.other.trim()); return picks.join('; '); }
       function submit(){ const text='Decisões escolhidas:\n'+questions.map((q,i)=>`- ${q.question}\n  → ${answerText(i)}`).join('\n');
-        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); askActive=null;
-        sendMsgTo(currentSession, text); }
-      st.draw=draw; askActive=st; draw();
+        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false;
+        sendMsgTo(currentSession, text); if(wasVoice) lastWasVoice=true; }  // mantém o modo voz para a próxima decisão
+      st.draw=draw; st.submit=submit; st.voice=lastWasVoice; askActive=st; draw();
+      // Se a decisão veio de uma fala, conduz por VOZ (step a step). Espera a fala da resposta
+      // terminar antes de começar, pra não sobrepor áudio.
+      if(st.voice){ if(ttsPlaying) askPendingVoice=true; else startAskVoice(); }
     }
+    // ---- wizard de VOZ dos cards de decisão ----
+    function startAskVoice(){ if(!askActive)return; askVoice=true; askVoiceStep(); }
+    function askVoiceStep(){ const st=askActive; if(!st||!askVoice)return; const q=st.questions[st.step];
+      const spoken=`${q.question}. Opções: ${q.options.map((o,i)=>(i+1)+', '+o.label).join('; ')}. Ou diga outros. Diga voltar ou avançar para navegar.`;
+      status('speaking','Jarvis perguntando…'); tx({t:'say',text:spoken,sessionId:currentSession}); }
+    function playClip(b64){ return new Promise(res=>{ try{ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
+      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); a.onended=()=>res(); a.onerror=()=>res(); a.play().catch(()=>res()); }catch(e){ res(); } }); }
+    async function askVoicePlayAndListen(b64){ status('speaking','Jarvis perguntando…'); await playClip(b64);
+      if(!askVoice||!askActive)return; status('listening','Escutando resposta…'); let clip;
+      try{ clip=await recordClip(Math.max(5,cfg.continueSec)*1000); }catch(e){ status(''); return; }
+      const q=askActive.questions[askActive.step];
+      tx({t:'ask_voice',audio:clip,ext:'webm',question:q.question,options:q.options,multi:q.multi,sessionId:currentSession}); }
+    function askAdvance(){ const st=askActive; if(!st)return; if(st.step<st.questions.length-1){ st.step++; st.draw(); askVoiceStep(); } else { askVoice=false; st.submit(); } }
+    function askVoiceApply(m){ const st=askActive; if(!st||!askVoice)return; const a=st.answers[st.step], q=st.questions[st.step];
+      if(m.action==='back'){ if(st.step>0)st.step--; st.draw(); askVoiceStep(); return; }
+      if(m.action==='repeat'){ askVoiceStep(); return; }
+      if(m.action==='next'){ if(!a.sel.size && !a.other.trim()){ askVoiceStep(); return; } askAdvance(); return; }
+      if(m.action==='choose' && Array.isArray(m.indices) && m.indices.length){ if(!q.multi)a.sel.clear(); m.indices.forEach(i=>{ if(i>=0&&i<q.options.length)a.sel.add(i); }); st.draw();
+        if(q.multi){ status('speaking','…'); tx({t:'say',text:'Anotado. Diga mais opções, ou avançar.',sessionId:currentSession}); } else askAdvance(); return; }
+      const other=(m.other||'').trim();
+      if(other){ a.other=(a.other?a.other+'; ':'')+other; st.draw(); if(q.multi){ status('speaking','…'); tx({t:'say',text:'Anotado. Diga mais, ou avançar.',sessionId:currentSession}); } else askAdvance(); }
+      else askVoiceStep(); }
     // indicador AO VIVO com cronômetro — deixa claro que há algo executando
     let pendingEl=null, pendingTimer=null, pendingStart=0;
     function showPending(){ if(pendingEl)return; pendingStart=Date.now(); pendingEl=document.createElement('div'); pendingEl.className='msg bot pending';
@@ -1324,7 +1350,8 @@
         else if(m.t==='deleted'){ const inCur = m.sessionId===currentSession || (Array.isArray(m.ids)&&m.ids.includes(currentSession));
           if(inCur){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); }
           if(!m.ids && !m.ok) toast('Não consegui remover a conversa (talvez já não exista).'); }
-        else if(m.t==='tts'){ if(m.sessionId===currentSession) playTTS(m.audio); }
+        else if(m.t==='tts'){ if(m.for==='ask'){ askVoicePlayAndListen(m.audio); } else if(m.sessionId===currentSession) playTTS(m.audio); }
+        else if(m.t==='ask_choice'){ askVoiceApply(m); }
         else if(m.t==='searchResult'){ clearPending(); if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
@@ -1338,8 +1365,12 @@
         else if(m.t==='error'){ endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
-      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…');
-      a.onended=()=>{ status(''); if((cfg.continue || lastWasVoice) && !recording) startRec(true); }; a.play().catch(()=>status('')); }
+      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…'); ttsPlaying=true;
+      a.onended=()=>{ ttsPlaying=false; status('');
+        if(askPendingVoice){ askPendingVoice=false; startAskVoice(); return; }   // decisão pendente → wizard de voz
+        if(askActive) return;                                                    // card de decisão aberto → não escuta em contínuo
+        if((cfg.continue || lastWasVoice) && !recording) startRec(true); };
+      a.play().catch(()=>{ ttsPlaying=false; status(''); }); }
     // reprodução única (resumo falado): NÃO re-arma o mic
     function playAudioOnce(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
       const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…'); a.onended=()=>status(''); a.play().catch(()=>status('')); }
@@ -1473,7 +1504,7 @@
       if(currentSession) delete draftBySession[currentSession];   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort}); return; }
       sendMsgTo(currentSession,text||'(anexo)',atts); };
-    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); refreshComposer(); status('busy','parando…'); };
+    E.stopBtn.onclick=()=>{ if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); askVoice=false; askPendingVoice=false; refreshComposer(); status('busy','parando…'); };
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
