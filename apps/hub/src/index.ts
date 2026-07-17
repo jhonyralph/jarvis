@@ -1268,7 +1268,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const s = store.get(sid);
         if (s) {
           const ag = agents.get(s.agent);
-          if (msg.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); if (nid) deleteNative("claude:" + nid); }
+          // Prefixo era fixo em "claude:" — sempre errado pra codex (procurava um arquivo claude com
+          // um uuid de thread codex, então nunca achava nada e a exclusão nativa falhava em silêncio).
+          if (msg.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); if (nid) deleteNative((s.agent === "codex" ? "codex:" : "claude:") + nid); }
           ag.forgetSession?.(sid);
         }
         return store.delete(sid);
