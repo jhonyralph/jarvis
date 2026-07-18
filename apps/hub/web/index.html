@@ -784,7 +784,7 @@
       // Rascunho do composer é POR SESSÃO: ao TROCAR de sessão guarda o texto não-enviado da anterior
       // e restaura o da nova; um refresh da MESMA sessão nunca mexe no que você está digitando agora.
       const prevSession=currentSession, switchingSession=prevSession!==m.sessionId;
-      if(switchingSession && prevSession!=null) draftBySession[prevSession]=E.input.value;
+      if(switchingSession && prevSession!=null){ draftBySession[prevSession]=E.input.value; saveDrafts(); }
       currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId);
       currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null;   // modelo/esforço reais da sessão da máquina (só nativas mandam)
@@ -1831,7 +1831,12 @@
     // Fila e "ocupado" são POR SESSÃO. A verdade de quem está rodando é o servidor (activeRuns, via
     // {t:runs}); justSent cobre a janela entre eu enviar e o servidor confirmar. Enfileirar numa
     // sessão NUNCA bloqueia outra: cada uma tem sua fila e seu estado.
-    const queueBySession={}, justSent=new Set(), draftBySession={}, justSentTimers={};
+    const queueBySession={}, justSent=new Set(), justSentTimers={};
+    // draft do composer POR SESSÃO, persistido — sobrevive ao lock/descarte da aba no mobile (antes
+    // era só em memória, então bloquear o telefone perdia o que você estava digitando).
+    const draftBySession=(()=>{ try{ return JSON.parse(localStorage.getItem('jarvis_drafts')||'{}'); }catch(e){ return {}; } })();
+    function saveDrafts(){ try{ localStorage.setItem('jarvis_drafts', JSON.stringify(draftBySession)); }catch(e){} }
+    function stashDraft(){ if(currentSession!=null){ const v=E.input?E.input.value:''; if(v&&v.trim()) draftBySession[currentSession]=v; else delete draftBySession[currentSession]; saveDrafts(); } }
     // Mensagem "em voo" recuperável: se você PARAR antes de vir resposta, ela volta pro input pra
     // editar e reenviar. Persistida (localStorage, TTL 1h) pra sobreviver a reload. Some quando a
     // resposta começa a chegar.
@@ -1901,7 +1906,7 @@
       E.queueRow.appendChild(list); }
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
-      if(currentSession) delete draftBySession[currentSession];   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
+      if(currentSession){ delete draftBySession[currentSession]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,msgId:uid()}); return; }
       setRestorable(currentSession,text,atts); sendMsgTo(currentSession,text||'(anexo)',atts); };
     E.stopBtn.onclick=()=>{
@@ -1924,7 +1929,9 @@
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; };
     E.input.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
-    document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && (!ws||ws.readyState>1)){ if(reconnectT){clearTimeout(reconnectT);reconnectT=null;} connect(); } });
+    document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ stashDraft(); return; }   // vai esconder (lock/background) → salva o draft ANTES de um possível descarte da aba
+      if(document.visibilityState==='visible' && (!ws||ws.readyState>1)){ if(reconnectT){clearTimeout(reconnectT);reconnectT=null;} connect(); } });
+    window.addEventListener('pagehide', stashDraft);   // último recurso antes do unload/descarte
     setSpeakBtn(); connect();
   </script>
 </body>
