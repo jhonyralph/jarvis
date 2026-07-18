@@ -45,8 +45,10 @@ export interface TurnCtx {
   now(): number;
   /** Run one streaming agent turn; resolves with the final reply + its buffered activity. */
   runAgentTurn(sid: string, agentName: string, agentText: string, cwd: string, opts: { model?: string; effort?: string }): Promise<TurnReply>;
-  /** Speak the reply (TTS) to session listeners. Only called when the input asked for speech. */
-  speak(sid: string, replyText: string): Promise<void>;
+  /** Speak the reply (TTS) to session listeners. `also` = extra channels to ALSO play it on (e.g. the
+   *  voice/WAKE channel when the turn is bound to a different session, so the audio still reaches the
+   *  wake listener). Only called when the input asked for speech. */
+  speak(sid: string, replyText: string, also?: string[]): Promise<void>;
   /** Optional cost guard-rail: if it blocks, the turn is refused BEFORE the agent runs (and before
    *  the user message is stored) so an accidental runaway can't keep spending. Off unless configured. */
   checkBudget?(sid: string): { blocked: boolean; message?: string };
@@ -68,6 +70,8 @@ export interface ManagedTurnInput {
   images?: string[];
   files?: Array<{ name: string; content?: string }>;
   speak?: boolean;
+  /** extra channels to ALSO play the spoken reply on (voice binding: reach the WAKE channel). */
+  speakAlso?: string[];
   /** idempotency key (client msgId) — a re-delivered turnId is skipped (mirrors the runner). */
   turnId?: string;
   /** How to deliver a failure — callers differ: some broadcast to the session, some reply to the sender. */
@@ -98,7 +102,7 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
     ctx.add(sid, { role: "assistant", text: reply.text, ts: ctx.now(), agent: agentName, activity: reply.activity });
     ctx.pushSessions();
     ctx.afterTurn?.(sid);
-    if (o.speak) await ctx.speak(sid, reply.text);
+    if (o.speak) await ctx.speak(sid, reply.text, o.speakAlso);
   } catch (e: unknown) {
     const message = String((e as { message?: unknown } | null)?.message ?? e);
     o.onError(message, isLimitError(message));

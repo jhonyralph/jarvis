@@ -641,9 +641,12 @@ const turnCtx: TurnCtx = {
   pushSessions: () => pushSessions(),
   now: () => Date.now(),
   runAgentTurn: (sid, agentName, agentText, cwd, opts) => agentTurn(sid, agents.get(agentName), agentText, cwd, opts),
-  speak: async (sid, replyText) => {
+  speak: async (sid, replyText, also) => {
     const spoken = await speechForReply(replyText);
-    if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
+    if (!spoken) return;
+    const wav = await synthesize(spoken, VOICE); const b64 = wav.toString("base64");
+    broadcast(sid, { t: "tts", sessionId: sid, audio: b64, text: spoken });
+    for (const a of (also || [])) if (a && a !== sid) broadcast(a, { t: "tts", sessionId: a, audio: b64, text: spoken }); // ex.: canal de voz (WAKE) quando vinculado a outra sessão
   },
   // Per-session spend cap (opt-in): JARVIS_SESSION_COST_CAP=<usd>. 0/unset = no cap (default, no
   // behavior change). Stops a runaway session from spending indefinitely without a human in the loop.
@@ -656,10 +659,10 @@ const turnCtx: TurnCtx = {
 };
 
 /** One full turn against a session's agent: store+broadcast the user msg, get the reply, speak if asked. */
-async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; speak?: boolean; speaker?: string }): Promise<void> {
+async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; speak?: boolean; speaker?: string; speakAlso?: string[] }): Promise<void> {
   await runManagedTurn(turnCtx, sid, {
     showText: opts.showText, agentText: opts.agentText, model: opts.model, effort: opts.effort,
-    speaker: opts.speaker, speak: opts.speak,
+    speaker: opts.speaker, speak: opts.speak, speakAlso: opts.speakAlso,
     onError: (message, limit) => broadcast(sid, { t: "error", message, limit }),
   });
 }
@@ -780,7 +783,8 @@ async function runVoiceTask(task: string, speak: boolean, speaker?: string): Pro
   const s = store.ensure(sid);
   if (sid === WAKE_SESSION && s.messages.length === 0) store.reconfigure(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd });
   // sessão vinculada usa o modelo/esforço DELA (undefined → prefs/default); só a de voz usa voiceConfig.
-  await deliverTurn(sid, { showText: task, model: sid === WAKE_SESSION ? voiceConfig.model : undefined, effort: sid === WAKE_SESSION ? voiceConfig.effort : undefined, speak, speaker });
+  // e o ÁUDIO também vai pro canal de voz (WAKE) quando vinculado a outra sessão, senão o wake listener não ouve.
+  await deliverTurn(sid, { showText: task, model: sid === WAKE_SESSION ? voiceConfig.model : undefined, effort: sid === WAKE_SESSION ? voiceConfig.effort : undefined, speak, speaker, speakAlso: sid !== WAKE_SESSION ? [WAKE_SESSION] : undefined });
 }
 /** Wake sem contexto: sugere a sessão mais provável (memória semântica) e abre o overlay p/ decidir
  *  continuar nela ou criar nova. Sem sugestão forte → cai na sessão de voz (comportamento antigo). */
@@ -841,8 +845,10 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
     await voiceSay(parts.join(", ") + ". Pode falar.");
     return;
   }
-  if (action === "new") { resetVoiceSession(); await runVoiceTask(task, speak, speaker); return; }
+  if (action === "new") { resetVoiceSession(); voiceTarget = ""; await runVoiceTask(task, speak, speaker); return; }
   if (inProgress && action !== "continue") { voicePending = { task }; await voiceSay("Já tenho uma conversa em andamento. Quer continuar ou começar uma nova?"); return; }
+  // fresh command-ish sem alvo → resolve a sessão (sugere via memória) em vez de cair direto na voz
+  if (!inProgress && !voiceTarget) { await resolveVoice(task, speak, speaker); return; }
   await runVoiceTask(task, speak, speaker);
 }
 /** One agent turn with LIVE streaming (tool activity + text) broadcast to session viewers.
