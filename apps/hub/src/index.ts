@@ -201,6 +201,15 @@ function secHeaders(nonce?: string): Record<string, string> {
 const PASTED_DIR = join(homedir(), ".jarvis", "pasted");
 const server = createServer((req, res) => {
   const urlPath = (req.url || "/").split("?")[0];
+  // Unauthenticated liveness/readiness probe for monitors, `tailscale serve` health, or a load
+  // balancer. Deliberately leaks only coarse status (up + uptime + count of connected runners) —
+  // no hostnames/ids — so it's safe to leave open on the private network.
+  if (urlPath === "/health" || urlPath === "/healthz") {
+    let online = 0; for (const r of runners.values()) if (r.ws) online++;
+    res.writeHead(200, { ...secHeaders(), "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify({ ok: true, uptime: Math.round(process.uptime()), runners: online }));
+    return;
+  }
   // pasted/attached images, served for the in-chat preview — basename only (no traversal)
   if (urlPath.startsWith("/pasted/")) {
     const name = basename(decodeURIComponent(urlPath.slice("/pasted/".length)));

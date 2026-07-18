@@ -270,6 +270,14 @@ function connect(): void {
 }
 
 console.log(`[runner] id=${RUNNER_ID} host=${hostname()} os=${platform()} -> ${HUB_URL}`);
+// Surface the #1 misconfig at boot instead of as a silent reject 20s later: an empty token means the
+// Hub drops the register unless it runs with JARVIS_AUTH=off. Warn (not exit) so the auth-off case
+// still works. Louder still when pointing at a REMOTE hub, where a missing token is almost never intended.
+if (!TOKEN) {
+  const remote = !/^wss?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(HUB);
+  console.warn(`[runner] ⚠ JARVIS_TOKEN vazio — com auth ligada (padrão) o Hub vai rejeitar o registro.`);
+  if (remote) console.warn(`[runner] ⚠ Hub remoto (${HUB}) sem token: gere um com \`jarvis machine "<label>"\` no Hub e grave JARVIS_TOKEN=... em ~/.jarvis/runner.env.`);
+}
 try { const purged = purgeProbeJunk(); if (purged) console.log(`[runner] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
 try { const s = purgeScratch(); if (s) console.log(`[runner] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
 connect();
