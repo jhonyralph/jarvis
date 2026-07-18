@@ -98,6 +98,17 @@ This installs dependencies, writes `~/.jarvis/hub.env`, and registers a service
 that starts the Hub at logon and brings it back if it dies. The UI is on
 **http://localhost:4577**.
 
+Not sure a machine is set up right? Run the read-only doctor — it checks the
+runtime, agent CLI, ports, config, `/health`, autostart, Tailscale and the voice
+deps, and prints a fix for anything missing:
+
+```sh
+./scripts/jarvis-doctor.sh          # or `runner` on a runner box
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\jarvis-doctor.ps1
+```
+
 Reach it from your other devices with Tailscale:
 
 ```sh
