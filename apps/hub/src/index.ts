@@ -1523,6 +1523,42 @@ function handleSecurityMsg(ws: WebSocket, msg: any): boolean {
   return false;
 }
 
+/** Voice-ambient (staging) + voice-config messages, lifted out of the god-router VERBATIM: spoken
+ *  refinement before committing to the real chat, the resolution-overlay choice, and voice-cfg
+ *  read/write. Returns true if it handled `msg`. Behavior-preserving — same relative order at the
+ *  original call site (a single `if (await handleVoiceStageMsg(...)) return;`). */
+async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
+  if (msg.t === "stage_voice" && typeof msg.audio === "string") {
+    const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION);
+    let text = "";
+    try { text = await transcribe(Buffer.from(msg.audio, "base64"), msg.lang, msg.ext); text = await correctTranscript(text); }
+    catch (e: any) { send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) }); return true; }
+    broadcast(sid, { t: "stage_heard", sessionId: sid, text });
+    await stageHandle(sid, text);
+    return true;
+  }
+  if (msg.t === "stage_text" && typeof msg.text === "string") { await stageHandle((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), msg.text); return true; }
+  if (msg.t === "stage_confirm") { await stageConfirm((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION)); return true; }
+  if (msg.t === "stage_cancel") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); staging.remove(sid); stageEscalatePending.delete(sid); broadcast(sid, { t: "stage", sessionId: sid, done: true }); return true; }
+  if (msg.t === "stage_state") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); const e = staging.get(sid); if (e && e.draft) send(ws, { t: "stage", sessionId: sid, draft: e.draft }); return true; }
+  if (msg.t === "stage_escalate_ok") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), true); return true; }
+  if (msg.t === "stage_escalate_no") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), false); return true; }
+  if (msg.t === "voice_suggest" && typeof msg.utterance === "string") { send(ws, { t: "voice_suggest", utterance: msg.utterance, suggestion: await suggestSession(msg.utterance) }); return true; }
+  if (msg.t === "canvas_choice") {
+    broadcast(WAKE_SESSION, { t: "canvas", op: "close" });
+    const rp = voiceResolve; voiceResolve = null;
+    if (msg.choice === "cancel" || !rp) return true;
+    if (msg.choice === "session" && typeof msg.sessionId === "string") voiceTarget = msg.sessionId;
+    else if (msg.choice === "new") { const id = randomUUID(); store.ensure(id, { agent: voiceConfig.agent, cwd: voiceConfig.cwd, title: (rp.task || "Voz").slice(0, 40) }); voiceTarget = id; }
+    else return true;
+    await runVoiceTask(rp.task, rp.speak, rp.speaker);
+    return true;
+  }
+  if (msg.t === "voice_cfg") { send(ws, { t: "voice_cfg", cfg: voiceCfg }); return true; }
+  if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return true; if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: voiceCfg }); return true; }
+  return false;
+}
+
 wss.on("connection", (ws: WebSocket, req: any) => {
   const ip = guard.clientIp(req);
   // connection cap (per IP + global) — blunts connection-flood DoS.
@@ -1901,38 +1937,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       })();
       return;
     }
-    // --- voz ambiente (staging): refino falado antes de comprometer no chat real ---
-    if (msg.t === "stage_voice" && typeof msg.audio === "string") {
-      const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION);
-      let text = "";
-      try { text = await transcribe(Buffer.from(msg.audio, "base64"), msg.lang, msg.ext); text = await correctTranscript(text); }
-      catch (e: any) { send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) }); return; }
-      broadcast(sid, { t: "stage_heard", sessionId: sid, text });
-      await stageHandle(sid, text);
-      return;
-    }
-    if (msg.t === "stage_text" && typeof msg.text === "string") { await stageHandle((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), msg.text); return; }
-    if (msg.t === "stage_confirm") { await stageConfirm((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION)); return; }
-    if (msg.t === "stage_cancel") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); staging.remove(sid); stageEscalatePending.delete(sid); broadcast(sid, { t: "stage", sessionId: sid, done: true }); return; }
-    // restaurar o painel de refino após um lock/reload: se há um rascunho de staging ativo, reemite-o.
-    if (msg.t === "stage_state") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); const e = staging.get(sid); if (e && e.draft) send(ws, { t: "stage", sessionId: sid, draft: e.draft }); return; }
-    if (msg.t === "stage_escalate_ok") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), true); return; }
-    if (msg.t === "stage_escalate_no") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), false); return; }
-    // voz (wake): sugerir a sessão existente mais provável para a fala (via memória semântica).
-    if (msg.t === "voice_suggest" && typeof msg.utterance === "string") { send(ws, { t: "voice_suggest", utterance: msg.utterance, suggestion: await suggestSession(msg.utterance) }); return; }
-    // voz: escolha do overlay de resolução (continuar em sessão / nova) → vincula e roda a tarefa.
-    if (msg.t === "canvas_choice") {
-      broadcast(WAKE_SESSION, { t: "canvas", op: "close" });
-      const rp = voiceResolve; voiceResolve = null;
-      if (msg.choice === "cancel" || !rp) return;
-      if (msg.choice === "session" && typeof msg.sessionId === "string") voiceTarget = msg.sessionId;
-      else if (msg.choice === "new") { const id = randomUUID(); store.ensure(id, { agent: voiceConfig.agent, cwd: voiceConfig.cwd, title: (rp.task || "Voz").slice(0, 40) }); voiceTarget = id; }
-      else return;
-      await runVoiceTask(rp.task, rp.speak, rp.speaker);
-      return;
-    }
-    if (msg.t === "voice_cfg") { send(ws, { t: "voice_cfg", cfg: voiceCfg }); return; }
-    if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return; if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: voiceCfg }); return; }
+    // --- voz ambiente (staging) + voz-config → handleVoiceStageMsg (extração verbatim, mesma ordem) ---
+    if (await handleVoiceStageMsg(ws, msg)) return;
     // QR code of the URL to open on the phone
     if (msg.t === "qr" && typeof msg.url === "string") {
       try { send(ws, { t: "qr", url: msg.url, dataUri: await QRCode.toDataURL(msg.url, { width: 300, margin: 1 }) }); }
