@@ -1820,7 +1820,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const name = typeof msg.agent === "string" && agents.names().includes(msg.agent) ? msg.agent : "claude-code";
       let plan = null;
       try { const a = agents.get(name); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
-      send(ws, { t: "usage_info", agent: name, plan });
+      // total accumulated across all sessions, so the client can show THIS session as a share of it
+      // (a raw $ on a plan has no baseline to compare against — a % does).
+      let costTotal = 0; for (const v of sessionCost.values()) costTotal += v.cost || 0;
+      send(ws, { t: "usage_info", agent: name, plan, total: costTotal });
       return;
     }
     // wake-word + speaker-id/voice-gate → handleVoiceDeviceMsg (extração verbatim, mesma ordem)

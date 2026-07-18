@@ -1526,7 +1526,15 @@
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
-    let lastInputTokens=0, planUsage=null, sessCost=0;
+    let lastInputTokens=0, planUsage=null, sessCost=0, costTotalAll=0;
+    // Custo da sessão como PARCELA do total acumulado — um $ isolado (ainda mais num plano, onde é só
+    // um equivalente-API, não dinheiro real) não dá pra comparar; % do total dá.
+    function sessCostRow(){
+      if(!(sessCost>0)) return '<div class="umut">sem custo ainda nesta sessão</div>';
+      const pct=costTotalAll>0?Math.round(sessCost/costTotalAll*100):null;
+      return `<div class="urow"><span>esta sessão${pct!=null?` · ${pct}% do total`:''}</span><b>~$${sessCost.toFixed(4)}</b></div>`
+        +(costTotalAll>0?`<div class="umut ureset">total acumulado (todas as sessões): ~$${costTotalAll.toFixed(2)} · estimativa equivalente-API</div>`:'');
+    }
     function modelContext(){ return (modelObj(currentAgent,curModel)||{}).context||0; }
     function ctxPct(){ const c=modelContext(); return c?Math.min(100,Math.round(lastInputTokens/c*100)):0; }
     function updUsagePill(){ if(!E.usageName)return; E.usageName.textContent=(modelContext()&&lastInputTokens)?ctxPct()+'%':'—'; }
@@ -1539,7 +1547,7 @@
       let h='<div class="upop"><div class="uh">Janela de contexto</div>';
       if(c&&lastInputTokens){ const pc=ctxPct(); h+=`<div class="urow"><span>${kfmt(lastInputTokens)} / ${kfmt(c)}</span><b>${pc}%</b></div>`+ubar(pc, pc>85?'#f85149':pc>60?'#e3b341':'#3fb950'); }
       else h+='<div class="umut">envie uma mensagem para medir</div>';
-      h+='<div class="uh" style="margin-top:12px">Custo da sessão</div>'+(sessCost>0?`<div class="urow"><span>acumulado (via Jarvis)</span><b>~$${sessCost.toFixed(4)}</b></div>`:'<div class="umut">sem custo ainda nesta sessão</div>');
+      h+='<div class="uh" style="margin-top:12px">Custo da sessão</div><div id="usessc">'+sessCostRow()+'</div>';
       h+='<div class="uh" style="margin-top:12px">Limites do plano</div><div id="uplan" class="umut">carregando…</div></div>';
       p.innerHTML=h; renderPlan(planUsage); tx({t:'get_usage',agent:currentAgent}); }
     function renderPlan(plan){ const el=document.getElementById('uplan'); if(!el)return;
@@ -1804,7 +1812,7 @@
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); autoScroll(); }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; if(m.usage.inputTokens){lastInputTokens=m.usage.inputTokens; updUsagePill();} } }
-        else if(m.t==='usage_info'){ planUsage=m.plan||null; if(popMode==='usage') renderPlan(planUsage); }
+        else if(m.t==='usage_info'){ planUsage=m.plan||null; if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
         else if(m.t==='session'){ if(m.sessionId===currentSession && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
         else if(m.t==='deleted'){ const inCur = m.sessionId===currentSession || (Array.isArray(m.ids)&&m.ids.includes(currentSession));
           if(inCur){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); }
