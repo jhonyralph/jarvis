@@ -8,3 +8,4 @@ export * from "./dedup.js";
 export * from "./routines.js";
 export * from "./mcp.js";
 export * from "./memory.js";
+export * from "./staging.js";

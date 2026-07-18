@@ -541,6 +541,7 @@
     <label class="row"><input type="checkbox" id="setVoice"> Falar as respostas por padrão</label>
     <label class="row"><input type="checkbox" id="setContinue"> Após responder, continuar escutando follow-up</label>
     <label>Janela de escuta de continuação (segundos)<input type="number" id="setContinueSec" min="5" max="120" step="5"></label>
+    <label>Refino por voz — modelo em análises difíceis <select id="setVoiceEscalate"></select></label>
     <div class="sec">Escuta avançada <span class="soon">em desenvolvimento</span></div>
     <label class="row"><input type="checkbox" id="setWake"> Wake word "Hey Jarvis" (na máquina) <span class="soon">requer wake_listener.py</span></label>
     <label class="row"><input type="checkbox" id="setNoise"> Filtro anti-ruído / detecção de fala (VAD)</label>
@@ -619,7 +620,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceEscalate',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -822,6 +823,8 @@
     // Stepper de decisão: perguntas (single/multi) + campo "Outros", com Voltar/Avançar. Ao concluir,
     // compõe as escolhas e envia como o PRÓXIMO input (o agente continua a partir daí). Agnóstico.
     let askActive=null, askVoice=false, askPendingVoice=false, ttsPlaying=false; // wizard de decisão (+voz)
+    let stagingActive=false, curTtsAudio=null; // voz ambiente: refino por cima do agente + handle do TTS p/ interromper
+    function stopTTS(){ try{ if(curTtsAudio){ curTtsAudio.pause(); curTtsAudio=null; } }catch(e){} ttsPlaying=false; }
     function renderAskCard(questions){
       if(!Array.isArray(questions)||!questions.length) return;
       const answers=questions.map(()=>({sel:new Set(), other:'', otherSel:false}));
@@ -1410,6 +1413,7 @@
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
       const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner) tx({t:'routines'});
+      tx({t:'voice_cfg'});
       E.settings.classList.remove('hidden'); };
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.models,c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     // ---------- rotinas agendadas (owner) ----------
@@ -1426,6 +1430,11 @@
     E.rtAdd.onclick=()=>{ const name=(E.rtName.value||'').trim(), prompt=(E.rtPrompt.value||'').trim(); if(!name||!prompt){ toast('Preencha o nome e o que rodar.'); return; }
       const t=(E.rtTime.value||'08:00').split(':'); const hour=parseInt(t[0]||'8',10)||0, minute=parseInt(t[1]||'0',10)||0;
       tx({t:'routine_add',routine:{name,prompt,hour,minute,speak:E.rtSpeak.checked}}); E.rtName.value=''; E.rtPrompt.value=''; E.rtSpeak.checked=false; };
+    // ---------- config do refino por voz (escalada de modelo) ----------
+    function renderVoiceCfg(cfg){ if(!E.setVoiceEscalate)return; const models=(capsFor('claude-code').models||[]).map(x=>x.id);
+      const opts=[['ask','Sempre perguntar'],['auto','Automático (deixar decidir)']].concat(models.map(m=>[m,'Sempre: '+m]));
+      E.setVoiceEscalate.innerHTML=''; opts.forEach(([v,l])=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; if(v===((cfg&&cfg.escalate)||'ask')) o.selected=true; E.setVoiceEscalate.appendChild(o); }); }
+    E.setVoiceEscalate.onchange=()=>tx({t:'set_voice_cfg',escalate:E.setVoiceEscalate.value});
     E.setModel.onchange=()=>fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value);
     // resumo/digest one-shot config (roda no Hub; barato por padrão)
     let sumCfg={agent:'claude-code',model:'haiku',effort:'low'};
@@ -1597,6 +1606,7 @@
         else if(m.t==='runner_token'){ showRunnerCmd(m.token,m.label); }
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
+        else if(m.t==='voice_cfg'){ renderVoiceCfg(m.cfg||{}); }
         else if(m.t==='routines'){ renderRoutines(m.routines||[]); }
         else if(m.t==='fleet'){ renderFleet(m); }
         else if(m.t==='update_status'){ updState=m.status; renderUpdate(); }
@@ -1662,6 +1672,10 @@
           const hits=(m.hits||[]).map(h=>({id:h.id,title:h.title,agent:h.agent,cwd:h.cwd,where:'content',snippet:'['+(h.score||0)+'%] '+(h.snippet||'')}));
           renderHits(E.searchResults,{query:m.query,hits,done:true}); }
         else if(m.t==='memory_reindexed'){ toast('✓ Memória reindexada: '+(m.count||0)+' sessões.'); }
+        else if(m.t==='stage'){ if(m.done){ hideStage(); } else showStage({draft:m.draft,say:m.say}); }
+        else if(m.t==='stage_heard'){ if(stageEl) showStage({heard:m.text}); }
+        else if(m.t==='stage_escalate'){ showStage({escalate:true,reason:m.reason}); }
+        else if(m.t==='stage_say'){ /* falado via tts; sem UI extra */ }
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
         else if(m.t==='runs'){ const now=m.active||[]; const finished=[...new Set([...activeRuns,...justSent])].filter(id=>!now.includes(id)); activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; now.forEach(id=>justSent.delete(id)); finished.forEach(id=>onTurnEnd(id)); renderRecents(); refreshComposer(); scheduleAllRefresh(); }
@@ -1674,8 +1688,9 @@
         else if(m.t==='error'){ endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
-      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…'); ttsPlaying=true;
-      a.onended=()=>{ ttsPlaying=false; status('');
+      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…'); ttsPlaying=true; curTtsAudio=a;
+      a.onended=()=>{ ttsPlaying=false; curTtsAudio=null; status('');
+        if(stagingActive && !recording){ startRec(true); return; }               // refino por voz em andamento → continua ouvindo
         if(askPendingVoice){ askPendingVoice=false; startAskVoice(); return; }   // decisão pendente → wizard de voz
         if(askActive) return;                                                    // card de decisão aberto → não escuta em contínuo
         if((cfg.continue || lastWasVoice) && !recording) startRec(true); };
@@ -1683,6 +1698,28 @@
     // reprodução única (resumo falado): NÃO re-arma o mic
     function playAudioOnce(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
       const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…'); a.onended=()=>status(''); a.play().catch(()=>status('')); }
+    // ---------- voz ambiente: painel de refino (staging) ----------
+    let stageEl=null;
+    function showStage(m){ stagingActive=true;
+      if(!stageEl){ stageEl=document.createElement('div'); stageEl.id='stagePanel';
+        stageEl.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:88px;z-index:55;width:min(560px,94vw);background:var(--panel);border:1px solid #a78bfa66;border-radius:14px;padding:12px 14px;box-shadow:0 10px 34px #000b';
+        document.body.appendChild(stageEl); }
+      renderStage(m||{}); }
+    function renderStage(m){ if(!stageEl)return;
+      if(m.draft!==undefined) stageEl.dataset.draft=m.draft||'';
+      const draft=stageEl.dataset.draft||'';
+      let h='<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><b style="color:#a78bfa">🎙 Refino por voz</b><span class="mut" style="font-size:11px">só entra no chat ao confirmar</span></div>';
+      if(m.heard) h+='<div class="mut" style="font-size:11.5px;margin-bottom:2px">você: '+esc(m.heard)+'</div>';
+      h+='<div style="background:var(--code);border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere">'+(draft?esc(draft):'<span class="mut">ouvindo…</span>')+'</div>';
+      if(m.say) h+='<div class="mut" style="font-size:12px;margin-bottom:6px">🔊 '+esc(m.say)+'</div>';
+      if(m.escalate) h+='<div style="color:#f59e0b;font-size:12px;margin-bottom:6px">Precisa de um modelo mais forte'+(m.reason?' ('+esc(m.reason)+')':'')+'. Autorizar?</div>';
+      stageEl.innerHTML=h;
+      const row=document.createElement('div'); row.className='row'; row.style.cssText='gap:6px;justify-content:flex-end;margin-top:2px';
+      const mk=(t,cls,fn)=>{ const b=document.createElement('button'); if(cls)b.className=cls; b.textContent=t; b.style.flex='none'; b.onclick=fn; return b; };
+      if(m.escalate){ row.appendChild(mk('Não','ghost',()=>tx({t:'stage_escalate_no',sessionId:currentSession}))); row.appendChild(mk('Sim, usar','',()=>tx({t:'stage_escalate_ok',sessionId:currentSession}))); }
+      else { row.appendChild(mk('Cancelar','ghost',()=>{ tx({t:'stage_cancel',sessionId:currentSession}); })); row.appendChild(mk('🎤 Falar','ghost',()=>startRec(false))); row.appendChild(mk('Enviar ✓','',()=>tx({t:'stage_confirm',sessionId:currentSession}))); }
+      stageEl.appendChild(row); }
+    function hideStage(){ stagingActive=false; stopTTS(); if(stageEl){ stageEl.remove(); stageEl=null; } status(''); }
     function toast(t){ const d=document.createElement('div'); d.className='toast'; d.textContent=t; d.onclick=()=>d.remove(); document.body.appendChild(d); setTimeout(()=>{ if(d.parentNode) d.remove(); },9000); }
 
     // ---------- mic (manual + continuação hands-free com VAD) ----------
@@ -1702,6 +1739,8 @@
           if(discardRec){ discardRec=false; return; }   // descartado pelo usuário -> nao envia
           if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
+          // barge-in: falar POR CIMA do agente (ou já em refino) → vai para o staging (refino), não pro chat
+          if(ttsPlaying || stagingActive){ stopTTS(); stagingActive=true; showStage({say:'refinando…'}); status('speaking','Refinando…'); tx({t:'stage_voice',audio:b64,ext:'webm',sessionId:currentSession}); return; }
           if(busy(currentSession)){ toast('⏳ Sessão ocupada — envie o áudio quando terminar.'); return; }   // voz não entra na fila (a fila envia texto)
           lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?'escutando resposta…':'escutando…');

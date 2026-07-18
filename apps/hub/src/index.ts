@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -51,6 +51,7 @@ const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });
 const routines = new RoutineStore();
 const memory = new MemoryStore();
+const staging = new StagingStore();
 /** Best-effort: embed a session's digest and upsert it into semantic memory (no-op if the local
  *  embedding model isn't installed). Called after each managed turn via turnCtx.afterTurn. */
 async function indexSession(sid: string): Promise<void> {
@@ -81,6 +82,14 @@ const summaryCfg: { agent: string; model: string; effort: string } = (() => {
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(SUMMARY_FILE, "utf8")) }; } catch { return d; }
 })();
 function saveSummaryCfg(): void { try { writeJsonAtomic(SUMMARY_FILE, summaryCfg, { pretty: true }); } catch { /* ignore */ } }
+// Voz ambiente (staging): política de escalada de modelo + modelos rápido/upgrade. Persistido.
+// escalate: "ask" (avisa e pede autorização por voz) | "auto" (sobe sozinho) | "<modelId>" (sobe pra esse).
+const VOICE_CFG_FILE = join(JARVIS_DIR, "voice-cfg.json");
+const voiceCfg: { escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string } = (() => {
+  const d = { escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high" };
+  try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(VOICE_CFG_FILE, "utf8")) }; } catch { return d; }
+})();
+function saveVoiceCfg(): void { try { writeJsonAtomic(VOICE_CFG_FILE, voiceCfg, { pretty: true }); } catch { /* ignore */ } }
 let vapid: { publicKey: string; privateKey: string };
 try {
   vapid = JSON.parse(readFileSync(VAPID_FILE, "utf8"));
@@ -679,6 +688,68 @@ setInterval(() => {
   const now = new Date();
   for (const r of routines.due(now)) { routines.markRun(r.id, now.getTime()); void runRoutine(r); }
 }, 30_000).unref?.();
+
+// ---- voz ambiente: staging (refinar a fala por voz ANTES de comprometer no chat real) --------
+const CONFIRM_RX = /\b(confirm(o|ar|ado)?|pode (mandar|enviar|ir)|manda(r)?|envia(r)?|isso mesmo|é isso|perfeito|fechou)\b/i;
+const stageEscalatePending = new Map<string, string>(); // sessão -> fala aguardando autorização de escalada
+function stageContext(sid: string): string {
+  return store.history(sid).slice(-6).map((m) => `${m.role === "user" ? "U" : "A"}: ${(m.text || "").slice(0, 200)}`).join("\n").slice(0, 1200);
+}
+async function stageSpeak(sid: string, text: string): Promise<void> {
+  if (!text) return;
+  broadcast(sid, { t: "stage_say", sessionId: sid, text });
+  try { const wav = await synthesize(text, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text }); } catch { /* tts opcional */ }
+}
+async function stageRefinePass(sid: string, utterance: string, model: string, effort: string): Promise<ReturnType<typeof parseRefine>> {
+  const e = staging.get(sid)!;
+  const prompt = buildRefinePrompt({ context: stageContext(sid), turns: e.turns, utterance });
+  const agent = agents.searchAgent();
+  const reply = agent.oneShot ? await agent.oneShot(prompt, { model, effort }) : await agent.send("__stage__", prompt, process.cwd(), { model, effort });
+  addCost(WAKE_SESSION, reply.usage?.costUsd); // atribui custo à voz
+  return parseRefine(reply.text);
+}
+async function stageHandle(sid: string, utterance: string): Promise<void> {
+  utterance = (utterance || "").trim();
+  if (!utterance) return;
+  let e = staging.get(sid) || staging.start(sid, { model: voiceCfg.fastModel, effort: voiceCfg.fastEffort });
+  if (CONFIRM_RX.test(utterance) && e.draft) { await stageConfirm(sid); return; }   // confirmação por voz
+  let r = await stageRefinePass(sid, utterance, e.model || voiceCfg.fastModel, e.effort || voiceCfg.fastEffort);
+  if (r.needsUpgrade && !e.escalated) {
+    if (voiceCfg.escalate === "ask") {
+      stageEscalatePending.set(sid, utterance);
+      broadcast(sid, { t: "stage_escalate", sessionId: sid, reason: r.reason || "" });
+      await stageSpeak(sid, `Isso pede um modelo mais forte pra ficar bom${r.reason ? " (" + r.reason + ")" : ""}. Posso usar por um momento?`);
+      return;
+    }
+    const up = (voiceCfg.escalate !== "auto" ? voiceCfg.escalate : voiceCfg.upgradeModel) || voiceCfg.upgradeModel;
+    r = await stageRefinePass(sid, utterance, up, voiceCfg.upgradeEffort);
+    staging.push(sid, { role: "user", text: utterance, ts: Date.now() }, r.draft, { escalated: true });
+  } else {
+    staging.push(sid, { role: "user", text: utterance, ts: Date.now() }, r.draft);
+  }
+  if (r.say) staging.push(sid, { role: "assistant", text: r.say, ts: Date.now() }, r.draft);
+  broadcast(sid, { t: "stage", sessionId: sid, draft: r.draft, say: r.say || "" });
+  await stageSpeak(sid, r.say || "Anotei. Pode confirmar ou ajustar.");
+}
+async function stageEscalateApprove(sid: string, ok: boolean): Promise<void> {
+  const utterance = stageEscalatePending.get(sid);
+  stageEscalatePending.delete(sid);
+  if (!utterance || !staging.get(sid)) return;
+  const model = ok ? ((voiceCfg.escalate !== "auto" && voiceCfg.escalate !== "ask" ? voiceCfg.escalate : voiceCfg.upgradeModel) || voiceCfg.upgradeModel) : voiceCfg.fastModel;
+  const effort = ok ? voiceCfg.upgradeEffort : voiceCfg.fastEffort;
+  if (!ok) await stageSpeak(sid, "Ok, sigo com o modelo rápido.");
+  const r = await stageRefinePass(sid, utterance, model, effort);
+  staging.push(sid, { role: "user", text: utterance, ts: Date.now() }, r.draft, { escalated: ok });
+  if (r.say) staging.push(sid, { role: "assistant", text: r.say, ts: Date.now() }, r.draft);
+  broadcast(sid, { t: "stage", sessionId: sid, draft: r.draft, say: r.say || "" });
+  await stageSpeak(sid, r.say || "Pode confirmar.");
+}
+async function stageConfirm(sid: string): Promise<void> {
+  const e = staging.get(sid);
+  staging.remove(sid); stageEscalatePending.delete(sid);
+  broadcast(sid, { t: "stage", sessionId: sid, done: true });
+  if (e && e.draft) await deliverTurn(sid, { showText: e.draft, speak: true });
+}
 
 /** Jarvis speaks a short control line into the voice session (not from the agent). */
 async function voiceSay(text: string): Promise<void> {
@@ -1724,6 +1795,23 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       })();
       return;
     }
+    // --- voz ambiente (staging): refino falado antes de comprometer no chat real ---
+    if (msg.t === "stage_voice" && typeof msg.audio === "string") {
+      const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION);
+      let text = "";
+      try { text = await transcribe(Buffer.from(msg.audio, "base64"), msg.lang, msg.ext); text = await correctTranscript(text); }
+      catch (e: any) { send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) }); return; }
+      broadcast(sid, { t: "stage_heard", sessionId: sid, text });
+      await stageHandle(sid, text);
+      return;
+    }
+    if (msg.t === "stage_text" && typeof msg.text === "string") { await stageHandle((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), msg.text); return; }
+    if (msg.t === "stage_confirm") { await stageConfirm((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION)); return; }
+    if (msg.t === "stage_cancel") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); staging.remove(sid); stageEscalatePending.delete(sid); broadcast(sid, { t: "stage", sessionId: sid, done: true }); return; }
+    if (msg.t === "stage_escalate_ok") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), true); return; }
+    if (msg.t === "stage_escalate_no") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), false); return; }
+    if (msg.t === "voice_cfg") { send(ws, { t: "voice_cfg", cfg: voiceCfg }); return; }
+    if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return; if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: voiceCfg }); return; }
     // QR code of the URL to open on the phone
     if (msg.t === "qr" && typeof msg.url === "string") {
       try { send(ws, { t: "qr", url: msg.url, dataUri: await QRCode.toDataURL(msg.url, { width: 300, margin: 1 }) }); }
