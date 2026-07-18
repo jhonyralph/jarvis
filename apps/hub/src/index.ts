@@ -27,7 +27,8 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, type Routine } from "@jarvis/core";
+import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
@@ -49,6 +50,20 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
 const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });
 const routines = new RoutineStore();
+const memory = new MemoryStore();
+/** Best-effort: embed a session's digest and upsert it into semantic memory (no-op if the local
+ *  embedding model isn't installed). Called after each managed turn via turnCtx.afterTurn. */
+async function indexSession(sid: string): Promise<void> {
+  try {
+    const s = store.get(sid);
+    if (!s || !s.messages.length) return;
+    const lastUser = [...s.messages].reverse().find((m) => m.role === "user")?.text || "";
+    const lastAsst = [...s.messages].reverse().find((m) => m.role === "assistant")?.text || "";
+    const text = `${s.title}\n${lastUser}\n${lastAsst}`.slice(0, 2000);
+    const vec = await embedOne(text);
+    if (vec.length) memory.upsert({ id: s.id, sessionId: s.id, agent: s.agent, cwd: s.cwd, title: s.title, text: text.slice(0, 400), ts: s.updatedAt, vec });
+  } catch { /* embedding unavailable — memory is opt-in */ }
+}
 // dedicated, locked-agent/cwd session that the machine wake listener injects into
 store.ensure(WAKE_SESSION, { agent: process.env.JARVIS_WAKE_AGENT || agents.default, cwd: process.env.JARVIS_WAKE_CWD || CWD, title: "Voz (Jarvis)" });
 
@@ -605,6 +620,7 @@ async function speechForReply(replyText: string): Promise<string> {
 const localSeenTurns = createSeenSet();
 const turnCtx: TurnCtx = {
   seen: (turnId) => localSeenTurns.add(turnId),
+  afterTurn: (sid) => { void indexSession(sid); },
   ensure: (sid) => store.ensure(sid),
   resolveAgentName: (n) => agents.get(n).name,
   add: (sid, msg) => store.add(sid, msg),
@@ -1678,9 +1694,34 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "fleet") {
       const machines = machineList().map((m: any) => ({ ...m, active: m.local ? activeRuns.size : (runnerActive.get(m.id)?.size || 0) }));
       let costTotal = 0; for (const v of sessionCost.values()) costTotal += v.cost || 0;
+      // custo atribuído à VOZ (a sessão de voz + o staging oculto usam o WAKE_SESSION) e sua fatia do total.
+      const voiceCost = costOf(WAKE_SESSION);
+      const voicePct = costTotal > 0 ? Math.round((voiceCost / costTotal) * 100) : 0;
       let remoteActive = 0; for (const s of runnerActive.values()) remoteActive += s.size;
       let plan = null; try { const a = agents.get("claude-code"); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
-      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal }, parseHealth: nativeParseHealth(), plan });
+      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, voiceCost, voicePct }, parseHealth: nativeParseHealth(), plan });
+      return;
+    }
+    // --- semantic memory: search by MEANING (local embeddings) + owner reindex ---
+    if (msg.t === "memory_search" && typeof msg.query === "string") {
+      const q = msg.query;
+      try {
+        const vec = await embedOne(q);
+        const hits = vec.length ? memory.search(vec, { topK: 10, minScore: 0.2 }) : [];
+        send(ws, { t: "memory_result", query: q, hits: hits.map((h) => ({ id: h.id, title: h.title, agent: h.agent, cwd: h.cwd, snippet: h.text, score: Math.round(h.score * 100) })) });
+      } catch { send(ws, { t: "memory_result", query: q, hits: [], error: "memória local indisponível — instale sentence-transformers na máquina do Hub (pip install sentence-transformers)" }); }
+      return;
+    }
+    if (msg.t === "memory_reindex") {
+      if (!requireOwner(ws)) return;
+      void (async () => {
+        try {
+          const jobs = store.list().map((s) => { const full = store.get(s.id); if (!full || !full.messages.length) return null; const lu = [...full.messages].reverse().find((m) => m.role === "user")?.text || ""; const la = [...full.messages].reverse().find((m) => m.role === "assistant")?.text || ""; return { meta: s, text: `${s.title}\n${lu}\n${la}`.slice(0, 2000) }; }).filter(Boolean) as Array<{ meta: any; text: string }>;
+          const vecs = await embed(jobs.map((j) => j.text));
+          memory.upsertMany(jobs.map((j, i) => ({ id: j.meta.id, sessionId: j.meta.id, agent: j.meta.agent, cwd: j.meta.cwd, title: j.meta.title, text: j.text.slice(0, 400), ts: j.meta.updatedAt, vec: vecs[i] || [] })).filter((e) => e.vec.length));
+          send(ws, { t: "memory_reindexed", count: memory.size() });
+        } catch (e: any) { send(ws, { t: "error", message: "reindex da memória falhou: " + String(e?.message ?? e) }); }
+      })();
       return;
     }
     // QR code of the URL to open on the phone

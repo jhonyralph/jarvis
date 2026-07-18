@@ -512,6 +512,12 @@
 
   <div id="searchModal" class="modal hidden"><div class="card">
     <b>🔎 Buscar entre sessões</b>
+    <div class="row" style="gap:6px;align-items:center;margin-top:2px">
+      <button id="smLiteral" class="ghost on" type="button" style="flex:none">Literal</button>
+      <button id="smSemantic" class="ghost" type="button" style="flex:none">🧠 Semântica</button>
+      <span class="spacer"></span>
+      <span class="link hidden" id="memReindex" title="Reindexar a memória semântica">↻ reindexar</span>
+    </div>
     <input id="searchInput" type="text" placeholder="Filtrar por título ou conteúdo… (ex.: a2p)" autocomplete="off">
     <div id="searchResults"></div>
     <div class="row"><button id="searchGo">Buscar</button><button id="searchClose" class="ghost">Fechar</button></div>
@@ -613,7 +619,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -818,7 +824,7 @@
     let askActive=null, askVoice=false, askPendingVoice=false, ttsPlaying=false; // wizard de decisão (+voz)
     function renderAskCard(questions){
       if(!Array.isArray(questions)||!questions.length) return;
-      const answers=questions.map(()=>({sel:new Set(), other:''}));
+      const answers=questions.map(()=>({sel:new Set(), other:'', otherSel:false}));
       const card=document.createElement('div'); card.className='msg bot askcard'; E.log.appendChild(card);
       const st={questions,answers,step:0,card};
       function draw(){ const q=questions[st.step], a=answers[st.step]; card.innerHTML=''; card.classList.toggle('min',!!st.min);
@@ -832,11 +838,16 @@
         const opts=document.createElement('div'); opts.className='askopts';
         q.options.forEach((o,i)=>{ const b=document.createElement('button'); b.type='button'; b.className='askopt'+(a.sel.has(i)?' on':'');
           b.innerHTML=`<span class="l"><b class="onum">${i+1}.</b> ${esc(o.label)}</span>`+(o.desc?`<span class="d">${esc(o.desc)}</span>`:'');
-          b.onclick=()=>{ if(q.multi){ a.sel.has(i)?a.sel.delete(i):a.sel.add(i); } else { a.sel.clear(); a.sel.add(i); } draw(); };
+          b.onclick=()=>{ if(q.multi){ a.sel.has(i)?a.sel.delete(i):a.sel.add(i); } else { a.sel.clear(); a.sel.add(i); a.otherSel=false; } draw(); };
           opts.appendChild(b); });
+        // "Outros": em escolha única é uma opção; em múltipla, um check. Marcar abre o campo livre.
+        const ob=document.createElement('button'); ob.type='button'; ob.className='askopt'+(a.otherSel?' on':'');
+        ob.innerHTML=`<span class="l"><b class="onum">${q.options.length+1}.</b> ${q.multi?(a.otherSel?'☑ ':'☐ '):''}Outros…</span>`;
+        ob.onclick=()=>{ if(q.multi){ a.otherSel=!a.otherSel; } else { a.sel.clear(); a.otherSel=true; } draw(); if(a.otherSel){ const inp=card.querySelector('.askother'); if(inp) inp.focus(); } };
+        opts.appendChild(ob);
         card.appendChild(opts);
-        const other=document.createElement('input'); other.type='text'; other.className='askother'; other.placeholder='Outros (diga como deve ser)…'; other.value=a.other;
-        other.oninput=()=>{ a.other=other.value; }; card.appendChild(other);
+        if(a.otherSel){ const other=document.createElement('input'); other.type='text'; other.className='askother'; other.placeholder='Diga como deve ser…'; other.value=a.other;
+          other.oninput=()=>{ a.other=other.value; }; card.appendChild(other); }
         const nav=document.createElement('div'); nav.className='asknav';
         const back=document.createElement('button'); back.type='button'; back.className='ghost'; back.textContent='◀ Voltar'; back.disabled=st.step===0; back.onclick=()=>go(-1);
         const sp=document.createElement('span'); sp.className='grow';
@@ -845,12 +856,13 @@
         if(!st.min) autoScroll();
       }
       function go(dir){ const a=answers[st.step];
-        if(dir>0 && !a.sel.size && !a.other.trim()){ toast('Escolha uma opção ou preencha "Outros".'); return; }
+        if(dir>0){ if(a.otherSel && !a.other.trim()){ toast('Preencha o campo "Outros".'); return; }
+          if(!a.sel.size && !(a.otherSel && a.other.trim())){ toast('Escolha uma opção ou marque "Outros".'); return; } }
         const nx=st.step+dir; if(nx<0) return;
         if(nx>=questions.length){ submit(); return; }
         st.step=nx; draw();
       }
-      function answerText(i){ const q=questions[i],a=answers[i]; const picks=[...a.sel].map(x=>q.options[x].label); if(a.other.trim())picks.push('Outros: '+a.other.trim()); return picks.join('; '); }
+      function answerText(i){ const q=questions[i],a=answers[i]; const picks=[...a.sel].map(x=>q.options[x].label); if(a.otherSel && a.other.trim())picks.push('Outros: '+a.other.trim()); return picks.join('; '); }
       function submit(){ const text='Decisões escolhidas:\n'+questions.map((q,i)=>`- ${q.question}\n  → ${answerText(i)}`).join('\n');
         card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false;
         sendMsgTo(currentSession, text); if(wasVoice) lastWasVoice=true; }  // mantém o modo voz para a próxima decisão
@@ -879,7 +891,7 @@
       if(m.action==='choose' && Array.isArray(m.indices) && m.indices.length){ if(!q.multi)a.sel.clear(); m.indices.forEach(i=>{ if(i>=0&&i<q.options.length)a.sel.add(i); }); st.draw();
         if(q.multi){ status('speaking','…'); tx({t:'say',text:'Anotado. Diga mais opções, ou avançar.',sessionId:currentSession}); } else askAdvance(); return; }
       const other=(m.other||'').trim();
-      if(other){ a.other=(a.other?a.other+'; ':'')+other; st.draw(); if(q.multi){ status('speaking','…'); tx({t:'say',text:'Anotado. Diga mais, ou avançar.',sessionId:currentSession}); } else askAdvance(); }
+      if(other){ a.otherSel=true; a.other=(a.other?a.other+'; ':'')+other; st.draw(); if(q.multi){ status('speaking','…'); tx({t:'say',text:'Anotado. Diga mais, ou avançar.',sessionId:currentSession}); } else askAdvance(); }
       else askVoiceStep(); }
     // indicador AO VIVO com cronômetro — deixa claro que há algo executando
     let pendingEl=null, pendingTimer=null, pendingStart=0;
@@ -1204,7 +1216,8 @@
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">${mm.filter(x=>x.online).length}/${mm.length}</div><div class="mut" style="font-size:11px">máquinas online</div></div>
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">${T.active||0}</div><div class="mut" style="font-size:11px">rodando agora</div></div>
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">${T.sessions||0}</div><div class="mut" style="font-size:11px">sessões</div></div>
-        <div><div style="font-size:20px;font-weight:700;color:var(--text)">~$${(T.costTotal||0).toFixed(2)}</div><div class="mut" style="font-size:11px">custo acumulado</div></div></div>`;
+        <div><div style="font-size:20px;font-weight:700;color:var(--text)">~$${(T.costTotal||0).toFixed(2)}</div><div class="mut" style="font-size:11px">custo acumulado</div></div>
+        <div title="Consumo de LLM atribuído à voz"><div style="font-size:20px;font-weight:700;color:#a78bfa">~$${(T.voiceCost||0).toFixed(2)}</div><div class="mut" style="font-size:11px">🎙 voz${T.voicePct?` · ${T.voicePct}% do total`:''}</div></div></div>`;
       h+='<div class="sec" style="margin:6px 0 4px">Máquinas</div>';
       mm.forEach(x=>{ const badges=[]; if(x.local)badges.push('<span class="mtag">servidor</span>'); if(!x.online)badges.push('<span class="mtag">offline</span>');
         if(x.online&&Array.isArray(x.agents)&&!x.agents.length)badges.push('<span class="mtag warn">⚠ sem IA</span>'); if(x.stale)badges.push('<span class="mtag warn">⚠ desatualizada</span>');
@@ -1301,14 +1314,20 @@
         pushSub=sub; tx({t:'subscribe', sub:sub.toJSON(), prefs:pushPrefs()}); cfg.push=true; saveCfg(); return true;
       }catch(e){ toast('Falha ao ativar notificações: '+(e.message||e)); return false; } }
     async function disablePush(){ cfg.push=false; saveCfg(); try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription(); if(sub){ tx({t:'unsubscribe',endpoint:sub.endpoint}); await sub.unsubscribe(); } }catch(e){} }
-    function openSearch(){ E.searchResults.innerHTML=''; E.searchInput.value=''; E.searchModal.classList.remove('hidden'); closeSide(); setTimeout(()=>E.searchInput.focus(),30); }
-    let searchTimer=null;
-    function runSearch(){ const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; } E.searchResults.innerHTML='<div class="mut">Buscando…</div>'; tx({t:'search',query:q}); }
+    let searchMode='literal', searchTimer=null;
+    function setSearchMode(m){ searchMode=m; E.smLiteral.classList.toggle('on',m==='literal'); E.smSemantic.classList.toggle('on',m==='semantic');
+      E.searchInput.placeholder=m==='semantic'?'Buscar por SIGNIFICADO (ex.: onde mexi no refresh de token)…':'Filtrar por título ou conteúdo… (ex.: a2p)'; E.searchResults.innerHTML=''; }
+    E.smLiteral.onclick=()=>setSearchMode('literal'); E.smSemantic.onclick=()=>setSearchMode('semantic');
+    E.memReindex.onclick=()=>{ tx({t:'memory_reindex'}); toast('Reindexando a memória semântica…'); };
+    function openSearch(){ E.searchInput.value=''; setSearchMode('literal'); if(E.memReindex) E.memReindex.classList.toggle('hidden',!(authUser&&authUser.role==='owner')); E.searchModal.classList.remove('hidden'); closeSide(); setTimeout(()=>E.searchInput.focus(),30); }
+    function runSearch(){ const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; }
+      E.searchResults.innerHTML=searchMode==='semantic'?'<div class="mut">Buscando por significado (pode levar alguns segundos)…</div>':'<div class="mut">Buscando…</div>';
+      tx(searchMode==='semantic'?{t:'memory_search',query:q}:{t:'search',query:q}); }
     E.searchGo.onclick=runSearch;
     E.searchClose.onclick=()=>E.searchModal.classList.add('hidden');
     E.searchInput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(searchTimer); runSearch(); } };
     // filtra ao digitar (debounce) — a 1ª busca parseia as sessões nativas, refinar o termo é instantâneo
-    E.searchInput.oninput=()=>{ clearTimeout(searchTimer); const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; } searchTimer=setTimeout(runSearch,300); };
+    E.searchInput.oninput=()=>{ clearTimeout(searchTimer); const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; } if(searchMode==='semantic') return; searchTimer=setTimeout(runSearch,300); };
     E.searchResults.addEventListener('click',(e)=>{
       const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort}); openSession(exec.dataset.id); E.searchModal.classList.add('hidden'); return; }
       const match=e.target.closest('.match'); if(match){ openSession(match.dataset.id); E.searchModal.classList.add('hidden'); } });
@@ -1638,6 +1657,11 @@
         else if(m.t==='searchResult'){ clearPending();
           if(m.hits!==undefined){ if(!E.searchModal.classList.contains('hidden') && m.query===E.searchInput.value.trim()) renderHits(E.searchResults,m); }   // filtro literal digitado (ignora resposta obsoleta)
           else if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }   // busca falada (LLM + áudio)
+        else if(m.t==='memory_result'){ if(E.searchModal.classList.contains('hidden'))return;
+          if(m.error){ E.searchResults.innerHTML='<div class="mut">'+esc(m.error)+'</div>'; return; }
+          const hits=(m.hits||[]).map(h=>({id:h.id,title:h.title,agent:h.agent,cwd:h.cwd,where:'content',snippet:'['+(h.score||0)+'%] '+(h.snippet||'')}));
+          renderHits(E.searchResults,{query:m.query,hits,done:true}); }
+        else if(m.t==='memory_reindexed'){ toast('✓ Memória reindexada: '+(m.count||0)+' sessões.'); }
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
         else if(m.t==='runs'){ const now=m.active||[]; const finished=[...new Set([...activeRuns,...justSent])].filter(id=>!now.includes(id)); activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; now.forEach(id=>justSent.delete(id)); finished.forEach(id=>onTurnEnd(id)); renderRecents(); refreshComposer(); scheduleAllRefresh(); }

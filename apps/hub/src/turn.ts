@@ -53,6 +53,8 @@ export interface TurnCtx {
   /** Optional idempotency: record a turnId; returns true if NEW, false if already seen (dup → skip).
    *  Makes LOCAL turns at-most-once too (mirrors the runner's turnId dedup). */
   seen?(turnId: string): boolean;
+  /** Optional post-turn hook (fire-and-forget) — e.g. index the session into semantic memory. */
+  afterTurn?(sid: string): void;
 }
 
 export interface ManagedTurnInput {
@@ -95,6 +97,7 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
     const reply = await ctx.runAgentTurn(sid, session.agent, o.agentText ?? o.showText, session.cwd, { model: o.model, effort: o.effort });
     ctx.add(sid, { role: "assistant", text: reply.text, ts: ctx.now(), agent: agentName, activity: reply.activity });
     ctx.pushSessions();
+    ctx.afterTurn?.(sid);
     if (o.speak) await ctx.speak(sid, reply.text);
   } catch (e: unknown) {
     const message = String((e as { message?: unknown } | null)?.message ?? e);

@@ -6,3 +6,5 @@ export * from "./files.js";
 export * from "./persist.js";
 export * from "./dedup.js";
 export * from "./routines.js";
+export * from "./mcp.js";
+export * from "./memory.js";
