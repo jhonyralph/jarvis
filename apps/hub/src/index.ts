@@ -17,6 +17,7 @@ import { homedir, hostname } from "node:os";
 import { join, normalize, dirname, basename } from "node:path";
 import QRCode from "qrcode";
 import webpush from "web-push";
+import { MobilePush } from "./mobilePush.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
@@ -108,6 +109,9 @@ webpush.setVapidDetails("mailto:jarvis@localhost", vapid.publicKey, vapid.privat
 let pushSubs: any[] = [];
 try { pushSubs = JSON.parse(readFileSync(SUBS_FILE, "utf8")); } catch { pushSubs = []; }
 function saveSubs(): void { try { writeJsonAtomic(SUBS_FILE, pushSubs); } catch { /* ignore */ } }
+// Native push for the Capacitor app (FCM), ALONGSIDE the browser web-push above. No-op unless
+// JARVIS_FCM_SA points at a Firebase service account — additive, opt-in (see mobilePush.ts).
+const mobilePush = new MobilePush(JARVIS_DIR);
 // --- notifications ---------------------------------------------------------
 // Prefs live ON the subscription: each device decides for itself. A phone in your pocket wants
 // "session done, grouped"; the desktop you're staring at may want nothing. A single global
@@ -153,6 +157,9 @@ function notifyEvent(kind: NotifyKind, title: string, body: string, tag?: string
     if (q.items.length > 50) q.items.shift(); // a stuck flusher must not grow without bound
     pending.set(sub.endpoint, q);
   }
+  // Native app devices (Capacitor/FCM) in parallel to the browser web-push above. No-op unless FCM
+  // is configured; kept "each"-mode for v1 (no grouped batching on the native side yet).
+  void mobilePush.notify(kind, clean(title), clean(body), tag);
 }
 /** Flush grouped queues whose interval elapsed. One tick for everyone; each device has its own. */
 function flushGrouped(): void {
@@ -1996,6 +2003,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "subscribe" && msg.sub) { addSub(msg.sub, msg.prefs); send(ws, { t: "pushok" }); return; }
     if (msg.t === "push_prefs" && typeof msg.endpoint === "string") { setSubPrefs(msg.endpoint, msg.prefs); send(ws, { t: "pushok" }); return; }
     if (msg.t === "unsubscribe" && typeof msg.endpoint === "string") { removeSub(msg.endpoint); return; }
+    // Native app (Capacitor/FCM) token registration — the mobile counterpart of subscribe/unsubscribe.
+    if (msg.t === "mobile_push_register" && typeof msg.token === "string") { mobilePush.register(msg.token, msg.platform === "ios" ? "ios" : "android", msg.events); send(ws, { t: "pushok" }); return; }
+    if (msg.t === "mobile_push_unregister" && typeof msg.token === "string") { mobilePush.remove(msg.token); return; }
     if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }

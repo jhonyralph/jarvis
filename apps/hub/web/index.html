@@ -1379,7 +1379,8 @@
       return { events:ev, mode:(E.pushMode&&E.pushMode.value)||'each', everyMin:Math.min(240,Math.max(1,Number(E.pushEvery&&E.pushEvery.value)||15)) }; }
     function renderPushCfg(){ if(!E.pushCfg)return; E.pushCfg.classList.toggle('hidden', !E.setPush.checked);
       if(E.pushEveryRow) E.pushEveryRow.classList.toggle('hidden', E.pushMode.value!=='grouped'); }
-    async function enablePush(){ if(!('serviceWorker'in navigator)||!('PushManager'in window)){ toast('Notificações não suportadas neste navegador.'); return false; }
+    async function enablePush(){ if(window.__jarvisNative&&window.__jarvisNative.push) return window.__jarvisNative.push(pushPrefs());  // no app nativo, usa FCM/APNs
+      if(!('serviceWorker'in navigator)||!('PushManager'in window)){ toast('Notificações não suportadas neste navegador.'); return false; }
       try{ const reg=await navigator.serviceWorker.register('/sw.js');
         if(Notification.permission!=='granted'){ if((await Notification.requestPermission())!=='granted'){ toast('Permissão de notificação negada.'); return false; } }
         const key=await new Promise(res=>{ pushKeyResolve=res; tx({t:'pushkey'}); setTimeout(()=>res(null),5000); });
@@ -1387,7 +1388,33 @@
         let sub=await reg.pushManager.getSubscription(); if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToUint8(key)});
         pushSub=sub; tx({t:'subscribe', sub:sub.toJSON(), prefs:pushPrefs()}); cfg.push=true; saveCfg(); return true;
       }catch(e){ toast('Falha ao ativar notificações: '+(e.message||e)); return false; } }
-    async function disablePush(){ cfg.push=false; saveCfg(); try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription(); if(sub){ tx({t:'unsubscribe',endpoint:sub.endpoint}); await sub.unsubscribe(); } }catch(e){} }
+    async function disablePush(){ if(window.__jarvisNative&&window.__jarvisNative.disablePush) return window.__jarvisNative.disablePush();
+      cfg.push=false; saveCfg(); try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription(); if(sub){ tx({t:'unsubscribe',endpoint:sub.endpoint}); await sub.unsubscribe(); } }catch(e){} }
+    // --- Native shell bridge (Capacitor). Populated ONLY inside the mobile app; a plain browser hits
+    //     the early return and window.__jarvisNative stays undefined, so every PWA path above is
+    //     untouched. Plugins are exposed at window.Capacitor.Plugins by the native shell at runtime —
+    //     no build-time imports here. Stages 3–4 (share/biometrics/wake-word) extend this same object. ---
+    (function(){
+      var Cap=window.Capacitor; if(!Cap||!Cap.isNativePlatform||!Cap.isNativePlatform()) return;   // browser → skip
+      var P=Cap.Plugins||{}, platform=(Cap.getPlatform&&Cap.getPlatform())||'android';
+      var N=window.__jarvisNative={platform:platform};
+      try{ document.documentElement.classList.add('native','native-'+platform); }catch(e){}
+      // ---- push (FCM/APNs) → registers the device token with the Hub (mobile_push_register) ----
+      if(P.PushNotifications){
+        var PN=P.PushNotifications, wantEvents=['done','error'];
+        PN.addListener('registration',function(t){ if(t&&t.value){ N._lastToken=t.value; tx({t:'mobile_push_register',token:t.value,platform:platform,events:wantEvents}); } });
+        PN.addListener('registrationError',function(e){ try{ toast('Push nativo falhou: '+((e&&e.error)||e)); }catch(_){} });
+        N.push=async function(prefs){ try{
+          wantEvents=(prefs&&prefs.events&&prefs.events.length)?prefs.events:wantEvents;
+          var perm=await PN.checkPermissions(); if(perm.receive!=='granted') perm=await PN.requestPermissions();
+          if(perm.receive!=='granted'){ toast('Permissão de notificação negada.'); return false; }
+          await PN.register(); cfg.push=true; saveCfg(); return true;
+        }catch(e){ toast('Falha no push nativo: '+(e.message||e)); return false; } };
+        N.disablePush=async function(){ cfg.push=false; saveCfg(); try{ if(N._lastToken) tx({t:'mobile_push_unregister',token:N._lastToken}); }catch(e){} };
+        // Re-send the token after each (re)connect + on relaunch (the Hub upserts, so it's cheap).
+        N.reregister=function(){ if(N._lastToken) tx({t:'mobile_push_register',token:N._lastToken,platform:platform,events:wantEvents}); else if(cfg.push) N.push(pushPrefs()); };
+      }
+    })();
     let searchMode='literal', searchTimer=null;
     function setSearchMode(m){ searchMode=m; E.smLiteral.classList.toggle('on',m==='literal'); E.smSemantic.classList.toggle('on',m==='semantic');
       E.searchInput.placeholder=m==='semantic'?'Buscar por SIGNIFICADO (ex.: onde mexi no refresh de token)…':'Filtrar por título ou conteúdo… (ex.: a2p)'; E.searchResults.innerHTML=''; }
@@ -1660,7 +1687,7 @@
       const label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
       if(!val){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code:val, label }); }
     function postAuth(){ tx({t:'wake',enabled:cfg.wake}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) openSession(currentSession); if(cfg.push) enablePush(); }
-    function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); }
+    function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); if(window.__jarvisNative&&window.__jarvisNative.reregister&&cfg.push) window.__jarvisNative.reregister(); }
 
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
       ws.onopen=()=>{ E.dot.classList.add('on'); enteredConn=false; if(authToken) tx({t:'auth',token:authToken}); else tx({t:'authinfo'}); }; // autentica antes de tudo
