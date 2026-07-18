@@ -16,7 +16,7 @@
  */
 import { createInterface } from "node:readline";
 import { WebSocket } from "ws";
-import { handleMcp, type McpTool, type JsonRpcMessage } from "@jarvis/core";
+import { handleMcp, VERSION, type McpTool, type JsonRpcMessage } from "@jarvis/core";
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/$/, "");
 const TOKEN = process.env.JARVIS_MCP_TOKEN || "";
@@ -125,7 +125,7 @@ rl.on("line", async (line) => {
   if (!s) return;
   let msg: JsonRpcMessage;
   try { msg = JSON.parse(s); } catch { return; }
-  const resp = await handleMcp(msg, tools, { name: "jarvis", version: "0.1.0" });
+  const resp = await handleMcp(msg, tools, { name: "jarvis", version: VERSION });
   if (resp) process.stdout.write(JSON.stringify(resp) + "\n");
 });
 log(`pronto (Hub ${HUB}${TOKEN ? "" : ", sem token"})`);

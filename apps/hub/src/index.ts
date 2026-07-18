@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -214,7 +214,7 @@ const server = createServer((req, res) => {
   if (urlPath === "/health" || urlPath === "/healthz") {
     let online = 0; for (const r of runners.values()) if (r.ws) online++;
     res.writeHead(200, { ...secHeaders(), "content-type": "application/json", "cache-control": "no-store" });
-    res.end(JSON.stringify({ ok: true, uptime: Math.round(process.uptime()), runners: online }));
+    res.end(JSON.stringify({ ok: true, version: VERSION, uptime: Math.round(process.uptime()), runners: online }));
     return;
   }
   // pasted/attached images, served for the in-chat preview — basename only (no traversal)

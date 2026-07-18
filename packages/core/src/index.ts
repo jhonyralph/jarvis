@@ -10,3 +10,4 @@ export * from "./mcp.js";
 export * from "./memory.js";
 export * from "./staging.js";
 export * from "./metrics.js";
+export * from "./version.js";

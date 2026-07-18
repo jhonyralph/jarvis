@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
-  updateApply, restartService, readProjectFile, repoCommit, createSeenSet,
+  updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION,
   type AgentAdapter, type SendOpts,
 } from "@jarvis/core";
 
@@ -205,7 +205,7 @@ function connect(): void {
   ws = sock;
   sock.on("open", async () => {
     reconnectDelay = 1000;
-    const info: RunnerInfo = { runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: await availableAgents(), version: "0.1.0", commit: await repoCommit(RUNNER_ROOT), label: process.env.JARVIS_LABEL || undefined };
+    const info: RunnerInfo = { runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: await availableAgents(), version: VERSION, commit: await repoCommit(RUNNER_ROOT), label: process.env.JARVIS_LABEL || undefined };
     send({ t: "register", token: TOKEN, info });
   });
   sock.on("message", async (data) => {
