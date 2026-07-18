@@ -15,7 +15,12 @@ we actually use (names, tools) — cheap and effective for domain terms.
 
 Env:
   JARVIS_STT_MODEL    default "deepdml/faster-whisper-large-v3-turbo-ct2" (near large-v3 accuracy,
-                      8-12x realtime on CPU int8, ~1.5GB). First run downloads it into the HF cache.
+                      ~1.5GB). NOTE: turbo's ENCODER is full-size, so on a CPU it's the dominant cost
+                      and scales with clip length — a long utterance can take 20s+. If STT is too slow
+                      on your machine, set a SMALLER model (biggest lever): "small" (~3-5x faster, some
+                      accuracy loss), "medium" (in between), or "base" (fastest). Accuracy vs. speed is
+                      your call on your own voice.
+  JARVIS_STT_BEAM     default 1 (greedy decoding — faster). Raise to 5 for max accuracy (slower decode).
   JARVIS_STT_COMPUTE  default "int8" (CPU). "int8_float16"/"float16" if a GPU is set up.
   JARVIS_STT_DEVICE   default "cpu".
 """
@@ -30,6 +35,7 @@ from faster_whisper import WhisperModel
 MODEL = os.environ.get("JARVIS_STT_MODEL", "deepdml/faster-whisper-large-v3-turbo-ct2")
 DEVICE = os.environ.get("JARVIS_STT_DEVICE", "cpu")
 COMPUTE = os.environ.get("JARVIS_STT_COMPUTE", "int8")
+BEAM = int(os.environ.get("JARVIS_STT_BEAM", "1"))  # greedy by default — the decode is cheaper than beam=5
 
 
 def _emit(obj: dict) -> None:
@@ -57,7 +63,7 @@ def main() -> int:
                 req["path"],
                 language=req.get("lang") or None,   # None -> auto-detect (pt/en/es/...)
                 vad_filter=True,
-                beam_size=int(req.get("beam", 5)),
+                beam_size=int(req.get("beam", BEAM)),
                 hotwords=req.get("hotwords") or None,
                 condition_on_previous_text=False,   # each utterance is independent; avoids drift
             )

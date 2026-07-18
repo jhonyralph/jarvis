@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -919,6 +919,19 @@ async function relevanceGate(text: string, context: string): Promise<boolean> {
     if (!v.relevant) console.log(`[voz] descartado (irrelevante${v.reason ? ": " + v.reason : ""}): "${text.slice(0, 60)}"`);
     return v.relevant;
   } catch { return true; }
+}
+/** ONE fast-model call that corrects the transcript AND judges relevance (vs. two contending CLI
+ *  spawns). Returns {text, relevant}. FAIL-OPEN. Empty/garbage → dropped without a model call. */
+async function voicePreflight(rawText: string, context: string): Promise<{ text: string; relevant: boolean }> {
+  if (!rawText || rawText.trim().length < 2) return { text: rawText, relevant: false };
+  try {
+    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    if (!agent?.oneShot) return { text: rawText, relevant: true };
+    const reply = await agent.oneShot(buildVoicePreflightPrompt(rawText, context), { model: voiceCfg.fastModel, effort: voiceCfg.fastEffort });
+    const r = parseVoicePreflight(String(reply?.text ?? ""), rawText);
+    if (!r.relevant) console.log(`[voz] descartado (irrelevante): "${rawText.slice(0, 60)}"`);
+    return r;
+  } catch { return { text: rawText, relevant: true }; }
 }
 async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): Promise<void> {
   // Relevance gate: unless we're waiting on a short control answer (continuar/nova/…), a captured
@@ -2142,21 +2155,18 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         console.error("[speaker]", String(e?.message ?? e)); // speaker-id must never block the conversation
       }
       const spkMs = Date.now() - tSpk;
-      // Correction + relevance in PARALLEL — both are independent fast-model calls on the raw text, so
-      // running them together costs ONE round-trip's latency instead of two (was serial). Typed `send`
-      // never gets here; the WAKE path has its own gate (with a control-answer skip) in handleVoiceTurn.
+      // ONE fast-model call does correction + relevance together — two contending CLI spawns are slower
+      // on a CPU-bound box (measured ~7.5s for the pair vs ~3.8s for one). Typed `send` never gets here;
+      // the WAKE path only needs the correction (handleVoiceTurn runs its own gate with control skip).
       const tPre = Date.now();
       const needGate = voiceCfg.relevance !== "off" && sid !== WAKE_SESSION;
-      const [corrected, relevant] = await Promise.all([
-        correctTranscript(raw),
-        needGate ? relevanceGate(raw, recentContextOf(sid)) : Promise.resolve(true),
-      ]);
+      const pre = await voicePreflight(raw, needGate ? recentContextOf(sid) : "");
       const preMs = Date.now() - tPre;
       // Timing to a file (hub.log doesn't capture stdout post-boot) so we can see WHERE the latency is.
-      try { appendFileSync(join(JARVIS_DIR, "voice-timing.log"), `${new Date().toISOString()} stt=${sttMs}ms speaker=${spkMs}ms correção+gate=${preMs}ms relevante=${relevant} "${String(raw).slice(0, 50)}"\n`); } catch { /* ignore */ }
+      try { appendFileSync(join(JARVIS_DIR, "voice-timing.log"), `${new Date().toISOString()} stt=${sttMs}ms speaker=${spkMs}ms correção+gate=${preMs}ms relevante=${pre.relevant} "${String(raw).slice(0, 50)}"\n`); } catch { /* ignore */ }
       send(ws, { t: "voice_timing", stt: sttMs, speaker: spkMs, preflight: preMs });
-      if (!relevant) { send(ws, { t: "voice_ignored", sessionId: sid, text: corrected }); return; }
-      text = corrected;
+      if (needGate && !pre.relevant) { send(ws, { t: "voice_ignored", sessionId: sid, text: pre.text }); return; }
+      text = pre.text;
     }
     if (!text) return;
     { const _p = principalOf(ws); auth.audit("send", { userId: _p?.userId, deviceId: _p?.deviceId, detail: `${sid}: ${String(text).slice(0, 80)}` }); }

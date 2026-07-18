@@ -26,6 +26,44 @@ export function buildRelevancePrompt(text: string, context?: string): string {
   );
 }
 
+/**
+ * Combined voice preflight: ONE fast-model call that BOTH corrects the transcript AND judges relevance,
+ * instead of two separate calls. On a CPU-bound box two simultaneous CLI spawns contend and each gets
+ * SLOWER (measured: ~7.5s for the pair vs ~3.8s for one), so a single call is the faster path. Returns
+ * {text, relevant}. FAIL-OPEN — a garbled/absent JSON keeps the raw text and lets it through.
+ */
+export function buildVoicePreflightPrompt(text: string, context?: string): string {
+  const hasCtx = !!(context && context.trim());
+  return (
+    "Você é um pré-processador de VOZ para o assistente de desenvolvimento Jarvis. Faça DUAS coisas com " +
+    "a transcrição abaixo, numa ÚNICA resposta:\n" +
+    "1) CORRIJA apenas erros de reconhecimento — em especial termos técnicos em inglês ditos dentro do " +
+    "português (Docker, Kubernetes, git, commit, push, deploy, runner, hub, endpoint, API, Claude, Codex, " +
+    "PowerShell...). NÃO responda, NÃO comente, NÃO traduza — só conserte o texto, no mesmo idioma.\n" +
+    "2) DECIDA se é um comando/pedido/pergunta dirigido ao Jarvis" +
+    (hasCtx ? ", ou uma continuação relacionada à conversa atual" : "") +
+    " (relevante=true), ou apenas RUÍDO / conversa com outra pessoa / fala solta sem intenção (relevante=false).\n" +
+    "Responda SOMENTE com JSON, sem texto extra: {\"texto\": \"<transcrição corrigida>\", \"relevante\": true|false}.\n" +
+    (hasCtx ? "\nContexto da conversa atual:\n" + context!.trim() + "\n" : "") +
+    "\nTranscrição:\n" + text
+  );
+}
+
+/** Parse the combined preflight. FAIL-OPEN: unparseable → keep the raw fallback text, relevant=true. */
+export function parseVoicePreflight(reply: string, fallbackText: string): { text: string; relevant: boolean } {
+  const m = (reply || "").match(/\{[\s\S]*\}/);
+  if (m) {
+    try {
+      const o = JSON.parse(m[0]);
+      const v = o.relevante ?? o.relevant ?? o.relevance;
+      const relevant = typeof v === "boolean" ? v : typeof v === "string" ? !/^(false|n[aã]o|no|0)$/i.test(v.trim()) : true;
+      const corrected = typeof o.texto === "string" && o.texto.trim() ? o.texto.trim() : typeof o.text === "string" && o.text.trim() ? o.text.trim() : fallbackText;
+      return { text: corrected, relevant };
+    } catch { /* fall through to fail-open */ }
+  }
+  return { text: fallbackText, relevant: true };
+}
+
 /** Parse the fast model's verdict. FAIL-OPEN: anything unparseable → { relevant: true }. */
 export function parseRelevanceVerdict(reply: string): { relevant: boolean; reason?: string } {
   const raw = (reply || "").trim();
