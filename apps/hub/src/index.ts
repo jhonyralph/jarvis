@@ -378,6 +378,11 @@ const LOCAL_ID = "local";
 runners.set(LOCAL_ID, { id: LOCAL_ID, ws: null, local: true, lastSeen: Date.now(), info: { runnerId: LOCAL_ID, host: hostname(), os: process.platform, agents: agents.names(), local: true } });
 const clientRunner = new WeakMap<WebSocket, string>();
 const runnerActive = new Map<string, Set<string>>(); // runnerId -> session ids running there
+// When each currently-offline runner dropped (cleared on reconnect), so the fleet view can show
+// "offline há Xm" and a periodic sweep can alert once when a machine stays down past the threshold.
+const offlineSince = new Map<string, number>();
+const offlineAlerted = new Set<string>();
+const OFFLINE_ALERT_MS = Math.max(0, Number(process.env.JARVIS_OFFLINE_ALERT_MIN || 10)) * 60000;
 // Clients with the update panel open. A machine's result arrives asynchronously (it may be busy,
 // or restarting), long after the request returned — this is who gets told.
 const updateWatchers = new Set<WebSocket>();
@@ -438,9 +443,23 @@ function machineList(): any[] {
     // "stale" = an online remote runner whose build differs from the Hub's (drift you can act on).
     const online = r.local || (!!r.ws && r.ws.readyState === WebSocket.OPEN);
     const stale = !r.local && online && !!commit && !!hubCommit && !sameBuild(commit, hubCommit);
-    return { id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os, agents: r.local ? localAgents : (r.info.agents || []), online, local: !!r.local, commit, hubCommit, stale };
+    const since = offlineSince.get(r.id);
+    const offlineMs = online || !since ? 0 : Date.now() - since;
+    return { id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os, agents: r.local ? localAgents : (r.info.agents || []), online, local: !!r.local, commit, hubCommit, stale, offlineMs };
   });
 }
+// Prolonged-offline alert: the immediate drop already pushes once; this fires a SECOND alert when a
+// machine is STILL down past the threshold (the one you actually want to act on — a brief blip is
+// noise), exactly once per outage. Cheap 60s sweep; unref'd so it never holds the process open.
+if (OFFLINE_ALERT_MS > 0) setInterval(() => {
+  const now = Date.now();
+  for (const [rid, since] of offlineSince) {
+    if (offlineAlerted.has(rid) || now - since < OFFLINE_ALERT_MS) continue;
+    offlineAlerted.add(rid);
+    const rc = runners.get(rid); const label = runnerLabels[rid] || rc?.info.host || rid;
+    notifyEvent("machine", `${label} segue offline há ${Math.round((now - since) / 60000)} min`, "A máquina não voltou — sessões nela seguem sem resposta.");
+  }
+}, 60000).unref?.();
 function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList() }); } }
 function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.ws.readyState === WebSocket.OPEN) { rc.ws.send(JSON.stringify(obj)); return true; } return false; }
 
@@ -549,7 +568,7 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
   }, 20000);
   // drop runners that never register (token) within 20s
   const regTimer = setTimeout(() => { if (!rid) { try { ws.close(1008, "no register"); } catch { /* ignore */ } } }, 20000);
-  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; console.log(`[hub] runner offline: ${rid}`); endRunnerRuns(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
+  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); console.log(`[hub] runner offline: ${rid}`); endRunnerRuns(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
   ws.on("error", () => { /* close handles cleanup */ });
   ws.on("message", (raw) => {
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
@@ -559,6 +578,7 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       clearTimeout(regTimer); guard.recordSuccess(ip);
       const info: RunnerInfo = m.info || {}; rid = info.runnerId || null;
       if (!rid) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
+      offlineSince.delete(rid); offlineAlerted.delete(rid); // back online — reset the offline clock + alert latch
       // Same id registering again = a second instance on that machine (e.g. the service plus a
       // hand-started one). The map would just be overwritten and the old socket left live but
       // orphaned — a zombie that keeps tailing and probing. Evict it explicitly.
