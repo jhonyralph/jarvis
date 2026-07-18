@@ -33,6 +33,16 @@ docker run -d --name jarvis-guest --restart unless-stopped \
 The machine appears in the Hub's selector like any other; grant a member access
 to only this runner (per-runner allowlist).
 
+### …or with Compose (one command)
+
+```sh
+cp .env.runner.example .env      # fill JARVIS_HUB / JARVIS_TOKEN
+docker compose -f docker-compose.runner.yml up -d --build
+```
+
+Same container + volumes as above; Compose fails fast if `JARVIS_HUB` /
+`JARVIS_TOKEN` are unset. `.env` is gitignored (only the `.example` is tracked).
+
 ## Agent auth inside the sandbox
 
 The agent CLI must be installed **and authenticated** in the container, with

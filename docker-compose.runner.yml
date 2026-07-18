@@ -1,0 +1,29 @@
+# Sandboxed Jarvis runner via Docker Compose — agents run INSIDE the container, not on your host,
+# so sharing a machine never grants a shell on the real box (the blast radius of bypassPermissions is
+# the container + its /workspace volume). See docs/runner-sandbox.md.
+#
+#   cp .env.runner.example .env      # fill JARVIS_HUB / JARVIS_TOKEN (from `jarvis machine "<label>"`)
+#   docker compose -f docker-compose.runner.yml up -d --build
+#
+# The agent CLI + its OWN credentials live in the jarvis-guest-agent volume (NOT the host's) — install
+# and authenticate it once inside the container per docs/runner-sandbox.md.
+services:
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    image: jarvis-runner
+    container_name: jarvis-guest
+    restart: unless-stopped
+    environment:
+      # quoted so YAML doesn't choke on the :// and : in the values; :? makes compose fail fast if unset
+      JARVIS_HUB: "${JARVIS_HUB:?set JARVIS_HUB in .env}"
+      JARVIS_TOKEN: "${JARVIS_TOKEN:?set JARVIS_TOKEN in .env}"
+      JARVIS_LABEL: "${JARVIS_LABEL:-Sandbox}"
+    volumes:
+      - jarvis-guest-work:/workspace       # the only writable surface the agent gets
+      - jarvis-guest-agent:/root/.claude   # the sandbox's own agent credentials (not yours)
+
+volumes:
+  jarvis-guest-work:
+  jarvis-guest-agent:
