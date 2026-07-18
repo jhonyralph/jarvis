@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
-  updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION,
+  updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
   type AgentAdapter, type SendOpts,
 } from "@jarvis/core";
 
@@ -65,17 +65,16 @@ let ws: WebSocket | null = null;
 // Bounded ring (newest kept) so a long turn over a long outage can't grow unbounded — dropping the
 // OLDEST preserves the terminal 'done'/'error', which is the one event that must survive. Control/list
 // messages (register/pong/sessions/caps/runs) are regenerated on reconnect, so they're never buffered.
-const OUTBOX_CAP = 3000;
-const outbox: RunnerToHub[] = [];
+const outbox = new Outbox<RunnerToHub>(3000);
 function send(m: RunnerToHub): void {
   if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(m)); return; }
-  if (m.t === "stream" || m.t === "message") { if (outbox.length >= OUTBOX_CAP) outbox.shift(); outbox.push(m); }
+  if (m.t === "stream" || m.t === "message") outbox.push(m);
 }
 /** Replay turn output buffered during an outage. Called right after a reconnect's `welcome` (socket
  *  OPEN again), before the fresh session/caps push, so the resumed stream lands in order. */
 function flushOutbox(): void {
-  if (!outbox.length) return;
-  const pending = outbox.splice(0, outbox.length);
+  if (!outbox.size) return;
+  const pending = outbox.drain();
   console.log(`[runner] reconectado — reenviando ${pending.length} evento(s) de turno bufferizados`);
   for (const m of pending) send(m);
 }
