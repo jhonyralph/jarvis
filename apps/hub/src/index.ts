@@ -19,7 +19,7 @@ import QRCode from "qrcode";
 import webpush from "web-push";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, ABORTED, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
 import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
@@ -46,6 +46,7 @@ const DEFAULT_AGENT = process.env.JARVIS_AGENT || "mock";
 const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new ClaudeCodeAdapter())
   .register(new CodexAdapter())
+  .register(new AiderAdapter())
   .register(new MockAgentAdapter());
 const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });

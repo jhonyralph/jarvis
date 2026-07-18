@@ -199,7 +199,7 @@ Everything is an env var — no secrets in the repo.
 |---|---|---|
 | `JARVIS_PORT` | `4577` | UI + WebSocket port |
 | `JARVIS_ADMIN_PORT` | `4578` | Loopback-only admin API |
-| `JARVIS_AGENT` | `mock` | Default agent (`claude-code`, `codex`, `mock`). The installer writes `claude-code` into `hub.env`, so that's what you get in practice |
+| `JARVIS_AGENT` | `mock` | Default agent (`claude-code`, `codex`, `aider`, `mock`). The installer writes `claude-code` into `hub.env`, so that's what you get in practice. `aider` is experimental (needs `aider` installed + a model key; continuity is per-folder — verify on first run) |
 | `JARVIS_AUTH` | `on` | Device auth. **Only** turn this off on a trusted private network |
 | `JARVIS_CWD` | process cwd | Default working directory for agents |
 | `JARVIS_VOICE` | — | Piper voice model |

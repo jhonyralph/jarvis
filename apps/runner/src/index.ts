@@ -19,7 +19,7 @@ import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
-  AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, ABORTED,
+  AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateApply, restartService, readProjectFile, repoCommit, createSeenSet,
   type AgentAdapter, type SendOpts,
@@ -48,6 +48,7 @@ const RUNNER_ID = runnerId();
 const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new ClaudeCodeAdapter())
   .register(new CodexAdapter())
+  .register(new AiderAdapter())
   .register(new MockAgentAdapter());
 const store = new Store({ agent: DEFAULT_AGENT, cwd: CWD });
 const activeRuns = new Set<string>();

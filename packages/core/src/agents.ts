@@ -437,6 +437,50 @@ export class CodexAdapter implements AgentAdapter {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Aider (https://aider.chat) — a third pluggable agent, headless one message per turn. Modeled on the
+ * CodexAdapter (non-streaming: spawn, wait, return the final text). Proves the "adding an agent = one
+ * adapter + register it" claim beyond the two built-ins, and is the copy-me template for the next one.
+ *
+ * WRITTEN TO SPEC — VERIFY ON FIRST RUN (it was authored without a local `aider` to test against):
+ *  - Requires `aider` on PATH and a model key in the env / ~/.aider.conf.yml (aider picks the provider).
+ *  - Runs inside a git repo (aider expects one); a non-repo cwd may make it warn/refuse.
+ *  - CONTINUITY is per-CWD via aider's own chat history (`--restore-chat-history`), NOT per Jarvis
+ *    session — two sessions sharing a folder share context. (Claude/Codex bind a native session id;
+ *    aider has no equivalent per-invocation handle, so this is the honest v1 approximation.)
+ *  - No streaming/tool events yet (final text only), same as codex here.
+ *  - capabilities() returns NO models on purpose — aider spans many providers and inventing an id
+ *    catalog would be a guess; pass opts.model to pick one, else aider uses its configured default.
+ * Flags used: --message (one-shot), --yes-always (auto-confirm), --no-stream + --no-pretty (clean
+ * stdout capture), --restore-chat-history (continuity), --model (optional). Adjust here if a flag
+ * name differs in your aider version.
+ */
+export class AiderAdapter implements AgentAdapter {
+  readonly name = "aider";
+  async capabilities(): Promise<AgentCaps> {
+    return { models: [] };
+  }
+  async available(): Promise<boolean> {
+    try { const r = await runRaw("aider", ["--version"], homedir(), "", true); return r.code === 0; }
+    catch { return false; }
+  }
+  async send(_sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
+    const args = ["--message", text, "--yes-always", "--no-stream", "--no-pretty", "--restore-chat-history"];
+    if (opts?.model) args.push("--model", opts.model);
+    const out = await run("aider", args, cwd, "", true, opts?.signal);
+    return { text: out.trim() };
+  }
+  async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
+    // stateless throwaway (no history restore, no commits) in the excluded oneshot dir
+    const args = ["--message", text, "--yes-always", "--no-stream", "--no-pretty", "--no-auto-commits"];
+    if (opts?.model) args.push("--model", opts.model);
+    const out = await run("aider", args, ONESHOT_CWD, "", true);
+    return { text: out.trim() };
+  }
+}
+
+// ---------------------------------------------------------------------------
+
 export interface RunResult { code: number; stdout: string; stderr: string }
 /**
  * Raw spawn: resolves with the outcome and lets the caller judge it. Rejects only when the
