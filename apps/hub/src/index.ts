@@ -1559,6 +1559,39 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
   return false;
 }
 
+/** Wake-word control + speaker-identification / voice-gate messages, lifted from the router VERBATIM.
+ *  Returns true if it handled `msg`. Behavior-preserving (same relative order at the call site). */
+async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
+  if (msg.t === "wake_hello") { wakeClients.add(ws); send(ws, { t: "wake_state", enabled: wakeEnabled }); return true; }
+  if (msg.t === "wake") { wakeEnabled = !!msg.enabled; for (const c of wakeClients) send(c, { t: "wake_state", enabled: wakeEnabled }); broadcastAll({ t: "wake_state", enabled: wakeEnabled }); return true; }
+  if (msg.t === "wake_event") { broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return true; }
+  if (msg.t === "speakers") { await sendVoiceState(ws); return true; }
+  if (msg.t === "voicecfg") {
+    if (typeof msg.gate === "boolean") voiceGate = msg.gate;
+    if (typeof msg.threshold === "number") voiceThreshold = msg.threshold;
+    await broadcastVoiceState();
+    return true;
+  }
+  if (msg.t === "enroll" && typeof msg.name === "string" && Array.isArray(msg.samples)) {
+    try {
+      const bufs = msg.samples.filter((s: any) => typeof s === "string").map((s: string) => Buffer.from(s, "base64"));
+      if (!bufs.length) { send(ws, { t: "error", message: "enroll: nenhum áudio recebido" }); return true; }
+      const r = await enrollSpeaker(msg.name, bufs, typeof msg.ext === "string" ? msg.ext : "webm");
+      send(ws, { t: "enrolled", name: r.name, samples: r.samples });
+      await broadcastVoiceState();
+    } catch (e: any) {
+      send(ws, { t: "error", message: "enroll: " + String(e?.message ?? e) });
+    }
+    return true;
+  }
+  if (msg.t === "delspk" && typeof msg.name === "string") {
+    await deleteSpeaker(msg.name);
+    await broadcastVoiceState();
+    return true;
+  }
+  return false;
+}
+
 wss.on("connection", (ws: WebSocket, req: any) => {
   const ip = guard.clientIp(req);
   // connection cap (per IP + global) — blunts connection-flood DoS.
@@ -1697,35 +1730,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, { t: "usage_info", agent: name, plan });
       return;
     }
-    // wake-word control (machine listener <-> browsers)
-    if (msg.t === "wake_hello") { wakeClients.add(ws); send(ws, { t: "wake_state", enabled: wakeEnabled }); return; }
-    if (msg.t === "wake") { wakeEnabled = !!msg.enabled; for (const c of wakeClients) send(c, { t: "wake_state", enabled: wakeEnabled }); broadcastAll({ t: "wake_state", enabled: wakeEnabled }); return; }
-    if (msg.t === "wake_event") { broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return; }
-    // speaker identification: enroll voiceprints, list them, toggle the unknown-voice gate
-    if (msg.t === "speakers") { await sendVoiceState(ws); return; }
-    if (msg.t === "voicecfg") {
-      if (typeof msg.gate === "boolean") voiceGate = msg.gate;
-      if (typeof msg.threshold === "number") voiceThreshold = msg.threshold;
-      await broadcastVoiceState();
-      return;
-    }
-    if (msg.t === "enroll" && typeof msg.name === "string" && Array.isArray(msg.samples)) {
-      try {
-        const bufs = msg.samples.filter((s: any) => typeof s === "string").map((s: string) => Buffer.from(s, "base64"));
-        if (!bufs.length) { send(ws, { t: "error", message: "enroll: nenhum áudio recebido" }); return; }
-        const r = await enrollSpeaker(msg.name, bufs, typeof msg.ext === "string" ? msg.ext : "webm");
-        send(ws, { t: "enrolled", name: r.name, samples: r.samples });
-        await broadcastVoiceState();
-      } catch (e: any) {
-        send(ws, { t: "error", message: "enroll: " + String(e?.message ?? e) });
-      }
-      return;
-    }
-    if (msg.t === "delspk" && typeof msg.name === "string") {
-      await deleteSpeaker(msg.name);
-      await broadcastVoiceState();
-      return;
-    }
+    // wake-word + speaker-id/voice-gate → handleVoiceDeviceMsg (extração verbatim, mesma ordem)
+    if (await handleVoiceDeviceMsg(ws, msg)) return;
     // read a file to view it ("ver antes de executar") — local machine
     if (msg.t === "readfile" && typeof msg.path === "string") {
       send(ws, { t: "filecontent", ...readProjectFile(msg.path, typeof msg.cwd === "string" ? msg.cwd : undefined) });
