@@ -402,13 +402,13 @@
     <aside id="side">
       <button id="sideClose" class="ghost" title="Fechar menu">✕</button>
       <div id="machineBar" style="display:none"></div>
-      <button id="newSess">＋ Nova sessão</button>
+      <button id="newSess" data-i18n="newSession">＋ Nova sessão</button>
       <div id="quickRow">
-        <div class="link" id="searchBtn" title="Buscar entre sessões"><span class="qic">🔎</span><span class="qtx">buscar entre sessões</span></div>
-        <div class="link" id="digestBtn" title="O que está rolando entre as sessões"><span class="qic">🎧</span><span class="qtx">o que está rolando</span></div>
-        <div class="link" id="fleetBtn" title="Painel da frota (máquinas, custo, uso)"><span class="qic">📊</span><span class="qtx">painel da frota</span></div>
-        <div class="link" id="qrBtn" title="Abrir no celular"><span class="qic">📱</span><span class="qtx">abrir no celular</span></div>
-        <div class="link hidden" id="secBtn" title="Dispositivos &amp; convites"><span class="qic">🔐</span><span class="qtx">dispositivos &amp; convites</span></div>
+        <div class="link" id="searchBtn" title="Buscar entre sessões"><span class="qic">🔎</span><span class="qtx" data-i18n="searchSessions">buscar entre sessões</span></div>
+        <div class="link" id="digestBtn" title="O que está rolando entre as sessões"><span class="qic">🎧</span><span class="qtx" data-i18n="whatsUp">o que está rolando</span></div>
+        <div class="link" id="fleetBtn" title="Painel da frota (máquinas, custo, uso)"><span class="qic">📊</span><span class="qtx" data-i18n="fleet">painel da frota</span></div>
+        <div class="link" id="qrBtn" title="Abrir no celular"><span class="qic">📱</span><span class="qtx" data-i18n="openMobile">abrir no celular</span></div>
+        <div class="link hidden" id="secBtn" title="Dispositivos &amp; convites"><span class="qic">🔐</span><span class="qtx" data-i18n="devices">dispositivos &amp; convites</span></div>
       </div>
       <div id="listTabs">
         <button type="button" class="ltab active" id="tabRec">🕘 Histórico<span class="tcnt" id="recCnt"></span></button>
@@ -416,14 +416,14 @@
       </div>
       <div class="pane" id="recPane">
         <div id="recents"></div>
-        <button id="moreBtn" class="ghost hidden">Mostrar mais</button>
+        <button id="moreBtn" class="ghost hidden" data-i18n="showMore">Mostrar mais</button>
       </div>
       <div class="pane hidden" id="filesPane">
         <div id="files"></div>
-        <button id="filesMore" class="ghost hidden">Mostrar mais</button>
+        <button id="filesMore" class="ghost hidden" data-i18n="showMore">Mostrar mais</button>
       </div>
       <div class="spacer"></div>
-      <button id="settingsBtn" class="ghost">⚙ Configurações</button>
+      <button id="settingsBtn" class="ghost" data-i18n="settings">⚙ Configurações</button>
     </aside>
     <main>
       <header>
@@ -529,7 +529,8 @@
 
   <div id="settings" class="modal hidden"><div class="card">
     <b>Configurações</b>
-    <div class="sec">Atualização</div>
+    <label style="margin-top:6px"><span data-i18n="language">Idioma</span> <select id="setLang"><option value="pt">Português</option><option value="en">English</option><option value="es">Español</option></select></label>
+    <div class="sec" data-i18n="secUpdate">Atualização</div>
     <div id="updStatus" class="mut" style="font-size:12px">—</div>
     <div id="updActions" class="row hidden" style="margin-top:4px">
       <label class="row" style="margin:0;flex:1"><input type="checkbox" id="updAll"> aplicar em todas as máquinas</label>
@@ -537,11 +538,11 @@
     </div>
     <div id="updMachines"></div>
     <div class="row" style="margin-top:4px"><button id="updCheck" class="ghost" type="button">Verificar agora</button></div>
-    <div class="sec">Padrões</div>
+    <div class="sec" data-i18n="secDefaults">Padrões</div>
     <label>Agente padrão <select id="setAgent"></select></label>
     <label>Modelo padrão <select id="setModel"></select></label>
     <label>Esforço padrão <select id="setEffort"></select></label>
-    <div class="sec">Voz</div>
+    <div class="sec" data-i18n="secVoice">Voz</div>
     <label class="row"><input type="checkbox" id="setVoice"> Falar as respostas por padrão</label>
     <label class="row"><input type="checkbox" id="setContinue"> Após responder, continuar escutando follow-up</label>
     <label>Janela de escuta de continuação (segundos)<input type="number" id="setContinueSec" min="5" max="120" step="5"></label>
@@ -549,7 +550,7 @@
     <div class="sec">Escuta avançada <span class="soon">em desenvolvimento</span></div>
     <label class="row"><input type="checkbox" id="setWake"> Wake word "Hey Jarvis" (na máquina) <span class="soon">requer wake_listener.py</span></label>
     <label class="row"><input type="checkbox" id="setNoise"> Filtro anti-ruído / detecção de fala (VAD)</label>
-    <div class="sec">Notificações</div>
+    <div class="sec" data-i18n="secNotif">Notificações</div>
     <label class="row"><input type="checkbox" id="setPush"> Notificar neste aparelho (Web Push)</label>
     <div id="pushCfg" class="hidden" style="margin:2px 0 6px 14px">
       <div class="mut" style="font-size:11.5px;margin-bottom:4px">Avisar sobre — vale só para este aparelho:</div>
@@ -624,7 +625,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceEscalate',
+      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceEscalate',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -665,6 +666,18 @@
     const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
     let speak = cfg.voice, speakers = [];
+    // ---------- i18n (pt-BR / en / es) — fundação: a chrome sempre-visível é traduzida via data-i18n;
+    //            o restante cai no pt (fallback). Novos textos: adicione a chave nos 3 idiomas + data-i18n. ----------
+    const I18N={
+      pt:{ newSession:'＋ Nova sessão', searchSessions:'buscar entre sessões', whatsUp:'o que está rolando', fleet:'painel da frota', openMobile:'abrir no celular', devices:'dispositivos & convites', showMore:'Mostrar mais', settings:'⚙ Configurações', composerPh:'Fale ou digite…', secUpdate:'Atualização', secDefaults:'Padrões', secVoice:'Voz', secNotif:'Notificações', language:'Idioma' },
+      en:{ newSession:'＋ New session', searchSessions:'search across sessions', whatsUp:"what's going on", fleet:'fleet dashboard', openMobile:'open on phone', devices:'devices & invites', showMore:'Show more', settings:'⚙ Settings', composerPh:'Speak or type…', secUpdate:'Update', secDefaults:'Defaults', secVoice:'Voice', secNotif:'Notifications', language:'Language' },
+      es:{ newSession:'＋ Nueva sesión', searchSessions:'buscar entre sesiones', whatsUp:'qué está pasando', fleet:'panel de la flota', openMobile:'abrir en el móvil', devices:'dispositivos e invitaciones', showMore:'Mostrar más', settings:'⚙ Configuración', composerPh:'Habla o escribe…', secUpdate:'Actualización', secDefaults:'Predeterminados', secVoice:'Voz', secNotif:'Notificaciones', language:'Idioma' },
+    };
+    let lang = cfg.lang || (navigator.language||'pt').slice(0,2); if(!I18N[lang]) lang='pt';
+    const t = k => (I18N[lang]&&I18N[lang][k]) || I18N.pt[k] || k;
+    function applyI18n(){ document.querySelectorAll('[data-i18n]').forEach(el=>{ el.textContent=t(el.dataset.i18n); }); document.querySelectorAll('[data-i18n-ph]').forEach(el=>{ el.placeholder=t(el.dataset.i18nPh); }); }
+    function setLang(l){ if(!I18N[l])return; lang=l; cfg.lang=l; saveCfg(); applyI18n(); if(typeof refreshComposer==='function') refreshComposer(); }
+    applyI18n();
 
     // ---------- markdown ----------
     const esc = s => s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -1444,8 +1457,9 @@
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
       const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner) tx({t:'routines'});
-      tx({t:'voice_cfg'});
+      tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang;
       E.settings.classList.remove('hidden'); };
+    if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.models,c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     // ---------- rotinas agendadas (owner) ----------
     function renderRoutines(list){ if(!E.routinesList)return;
@@ -1866,7 +1880,7 @@
       const lock=!!askActive, ro=curNative&&!curNativeWritable;
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!(curBusy||lock));
       E.input.disabled=ro||lock; E.sendBtn.disabled=ro||lock; if(E.mic)E.mic.disabled=ro||lock;
-      E.input.placeholder=lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':'Fale ou digite…');
+      E.input.placeholder=lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':t('composerPh'));
       renderQueue(); maybeReload(); }
     // id de mensagem p/ idempotência: o runner executa um turnId no máximo uma vez (re-entrega do
     // MESMO frame reusa o id e é ignorada). Cada submit gera um id novo (dois envios = dois turnos).
