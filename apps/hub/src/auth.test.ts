@@ -61,6 +61,7 @@ test("owner sees all runners via the '*' wildcard", () => {
 test("owner passphrase (2nd factor): set → verify → clear", () => {
   assert.equal(auth.hasPassphrase(), false);
   assert.equal(auth.verifyPassphrase("whatever"), true, "no passphrase configured → always passes");
+  assert.throws(() => auth.setPassphrase("curta"), /curta/, "a passphrase under 8 chars is rejected");
   auth.setPassphrase("segredo-forte");
   assert.equal(auth.hasPassphrase(), true);
   assert.equal(auth.verifyPassphrase("segredo-forte"), true);

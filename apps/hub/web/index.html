@@ -614,7 +614,7 @@
     <div class="sec">🔒 Senha do dono (2º fator)</div>
     <div class="mut" style="font-size:12px;margin-bottom:6px">Com senha, um token vazado não basta — todo login novo pede a senha também.</div>
     <div id="secPassStatus" class="mut" style="font-size:12px;margin-bottom:4px">—</div>
-    <label>Nova senha <input id="secPass" type="password" placeholder="mín. 4 caracteres" autocomplete="new-password"></label>
+    <label>Nova senha <input id="secPass" type="password" placeholder="mín. 8 caracteres" autocomplete="new-password"></label>
     <label class="row"><input type="checkbox" id="secPassRemember" checked> Lembrar neste dispositivo</label>
     <div class="row"><button id="secPassSet" type="button">Definir / trocar</button><button id="secPassClear" class="ghost" type="button">Remover</button></div>
     <div class="row" style="justify-content:space-between;margin-top:8px"><button id="secRevokeAll" class="ghost" type="button">Revogar todos os outros</button><button id="secClose" type="button">Fechar</button></div>
@@ -1325,7 +1325,7 @@
       E.secRunOut.appendChild(copyBox('1) Baixar o código:', 'git clone '+repo+'.git && cd jarvis'));
       E.secRunOut.appendChild(copyBox('2a) Windows (PowerShell, na pasta do repo):', ".\\scripts\\install-runner.ps1 -Hub '"+hub+"' -Token '"+token+"' -Label '"+label+"'"));
       E.secRunOut.appendChild(copyBox('2b) Mac/Linux:', "./scripts/install-runner.sh -h '"+hub+"' -t '"+token+"' -l '"+label+"'")); }
-    E.secPassSet.onclick=()=>{ const v=E.secPass.value.trim(); if(v.length<4){ toast('Senha muito curta (mín. 4).'); return; }
+    E.secPassSet.onclick=()=>{ const v=E.secPass.value.trim(); if(v.length<8){ toast('Senha muito curta (mín. 8).'); return; }
       authPass=v; if(E.secPassRemember.checked) localStorage.setItem('jarvis_pass',v); else localStorage.removeItem('jarvis_pass');
       tx({t:'set_pass',new:v}); E.secPass.value=''; };
     E.secPassClear.onclick=()=>{ authPass=''; localStorage.removeItem('jarvis_pass'); tx({t:'clear_pass'}); };

@@ -437,8 +437,11 @@ function clientsOn(runnerId: string): WebSocket[] {
   for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w) && activeRunner(w) === runnerId) out.push(w); }
   return out;
 }
-function machineList(): any[] {
-  return [...runners.values()].map((r) => {
+/** The machines a connection may see. Filtered by per-runner access so a member's machine bar shows
+ *  ONLY the runners granted in their invite — closes the residual name-visibility leak left by the
+ *  drive-only authz gate. No ws (internal callers) → unfiltered. Owner / auth-off → everything. */
+function machineList(ws?: WebSocket): any[] {
+  return [...runners.values()].filter((r) => !ws || canUseRunner(ws, r.id)).map((r) => {
     const commit = r.local ? hubCommit : (r.info.commit || "");
     // "stale" = an online remote runner whose build differs from the Hub's (drift you can act on).
     const online = r.local || (!!r.ws && r.ws.readyState === WebSocket.OPEN);
@@ -460,7 +463,7 @@ if (OFFLINE_ALERT_MS > 0) setInterval(() => {
     notifyEvent("machine", `${label} segue offline há ${Math.round((now - since) / 60000)} min`, "A máquina não voltou — sessões nela seguem sem resposta.");
   }
 }, 60000).unref?.();
-function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList() }); } }
+function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList(w) }); } }
 function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.ws.readyState === WebSocket.OPEN) { rc.ws.send(JSON.stringify(obj)); return true; } return false; }
 
 // admin: waiters for a runner's next session list (used by the remote "ok" purge)
@@ -1397,7 +1400,7 @@ setInterval(() => { const v = webVersion(); if (v !== lastWebVersion) { lastWebV
 async function sendInitialState(ws: WebSocket): Promise<void> {
   send(ws, { t: "version", v: webVersion() });
   send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
-  send(ws, { t: "machines", machines: machineList() });
+  send(ws, { t: "machines", machines: machineList(ws) });
   send(ws, { t: "update_status", status: updateStatus });
   // The initial view is the local machine — only push its sessions/runs to a principal allowed to use
   // it, so a member granted only remote runners doesn't get the Hub's local session list unprompted
@@ -1687,12 +1690,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (RUNNER_OPS.has(msg.t) && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
 
     // --- machine selection + routing to remote runners -----------------------
-    if (msg.t === "machines") { send(ws, { t: "machines", machines: machineList() }); return; }
+    if (msg.t === "machines") { send(ws, { t: "machines", machines: machineList(ws) }); return; }
     if (msg.t === "runner" && typeof msg.runnerId === "string") {
       const target = runners.has(msg.runnerId) ? msg.runnerId : LOCAL_ID;
       if (!canUseRunner(ws, target)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
       clientRunner.set(ws, target); subs.delete(ws);
-      send(ws, { t: "machines", machines: machineList() });
+      send(ws, { t: "machines", machines: machineList(ws) });
       if (target === LOCAL_ID) sendSessions(ws);
       else { const rc = runners.get(target); if (!rc || !sendToRunner(rc, { t: "list" })) send(ws, { t: "sessions", sessions: [], recentDirs: [], runnerId: target }); }
       return;
@@ -1946,14 +1949,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (handleRoutineMsg(ws, msg)) return;
     // --- fleet dashboard: a read-only snapshot of every machine + totals + plan + parse health ---
     if (msg.t === "fleet") {
-      const machines = machineList().map((m: any) => ({ ...m, active: m.local ? activeRuns.size : (runnerActive.get(m.id)?.size || 0) }));
+      const machines = machineList(ws).map((m: any) => ({ ...m, active: m.local ? activeRuns.size : (runnerActive.get(m.id)?.size || 0) }));
       let costTotal = 0; for (const v of sessionCost.values()) costTotal += v.cost || 0;
       // custo atribuído à VOZ (a sessão de voz + o staging oculto usam o WAKE_SESSION) e sua fatia do total.
       const voiceCost = costOf(WAKE_SESSION);
       const voicePct = costTotal > 0 ? Math.round((voiceCost / costTotal) * 100) : 0;
       let remoteActive = 0; for (const s of runnerActive.values()) remoteActive += s.size;
       let plan = null; try { const a = agents.get("claude-code"); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
-      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, voiceCost, voicePct }, metrics: { overall: metrics.overall(), runners: metrics.byRunner() }, parseHealth: nativeParseHealth(), plan });
+      const runnerMetrics = metrics.byRunner().filter((r) => canUseRunner(ws, r.runnerId)); // don't leak ids of machines they can't see
+      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, voiceCost, voicePct }, metrics: { overall: metrics.overall(), runners: runnerMetrics }, parseHealth: nativeParseHealth(), plan });
       return;
     }
     // --- semantic memory: search by MEANING (local embeddings) + owner reindex ---

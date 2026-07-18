@@ -309,7 +309,7 @@ export function revokeRunnerToken(runnerId: string): boolean {
 // ---- owner passphrase (optional 2nd factor) ----
 export function hasPassphrase(): boolean { return !!(data.passHash && data.passSalt); }
 export function setPassphrase(pass: string): void {
-  if (!pass || pass.length < 4) throw new Error("senha muito curta (mín. 4)");
+  if (!pass || pass.length < 8) throw new Error("senha muito curta (mín. 8)");
   const salt = randomBytes(16).toString("hex");
   data.passSalt = salt;
   data.passHash = scryptSync(pass, salt, 64).toString("hex");
