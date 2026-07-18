@@ -1364,8 +1364,11 @@ async function sendInitialState(ws: WebSocket): Promise<void> {
   send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
   send(ws, { t: "machines", machines: machineList() });
   send(ws, { t: "update_status", status: updateStatus });
-  sendSessions(ws);
-  send(ws, { t: "runs", active: [...activeRuns] });
+  // The initial view is the local machine — only push its sessions/runs to a principal allowed to use
+  // it, so a member granted only remote runners doesn't get the Hub's local session list unprompted
+  // (mirrors the per-runner drive gate; the client then selects a machine it may access).
+  if (canUseRunner(ws, LOCAL_ID)) { sendSessions(ws); send(ws, { t: "runs", active: [...activeRuns] }); }
+  else send(ws, { t: "sessions", sessions: [], recentDirs: [] });
   await sendVoiceState(ws);
 }
 
