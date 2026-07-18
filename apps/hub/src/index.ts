@@ -441,6 +441,7 @@ function runnerSessions(rc: RunnerConn): Promise<any[]> {
 
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
+  if (m.t === "pong") return; // heartbeat ack — rc.lastSeen already refreshed by the caller
   if (m.t === "sessions") { const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
   if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows })), files: m.files }); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
@@ -483,14 +484,37 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "error") { const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return; }
 }
 
+/** A remote runner dropped (or was reaped): end any turns it had in flight so client spinners clear
+ *  instead of hanging forever. On a mid-turn disconnect the hub otherwise leaves `runnerActive` stale
+ *  and sends no terminating stream event, so a viewer sits on "processando…" indefinitely. We mark the
+ *  turn 'cancelled' (interrupted) rather than 'error' (failed): if the runner merely lost the network
+ *  and finishes the turn locally, the persisted reply reappears on the next history load. */
+function endRunnerRuns(rid: string): void {
+  const active = runnerActive.get(rid);
+  runnerActive.delete(rid);
+  if (!active || !active.size) return;
+  for (const sid of active) {
+    activityBuf.delete(sid);
+    for (const c of clientsOn(rid)) send(c, { t: "stream", sessionId: sid, ev: { kind: "cancelled" } });
+  }
+}
+
 /** A remote runner connected on /runner: register (token) then relay its stream to clients. */
 function handleRunnerConnection(ws: WebSocket, ip: string): void {
   runnerSockets.add(ws);
   let rid: string | null = null;
-  const ping = setInterval(() => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "ping" }); else clearInterval(ping); }, 20000);
+  // App-level heartbeat + half-open reaper. The runner answers every {t:"ping"} with {t:"pong"}, and
+  // ANY inbound message refreshes rc.lastSeen. A dead TCP half-open never fires 'close', so if three
+  // ping cycles pass with no traffic we terminate the socket ourselves — that triggers ws.on("close"),
+  // which ends the runner's in-flight turns instead of leaving them hung.
+  const ping = setInterval(() => {
+    if (ws.readyState !== WebSocket.OPEN) { clearInterval(ping); return; }
+    if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws && Date.now() - rc.lastSeen > 60000) { console.warn(`[hub] runner ${rid} sem pong — encerrando socket meio-aberto`); try { ws.terminate(); } catch { /* ignore */ } return; } }
+    send(ws, { t: "ping" });
+  }, 20000);
   // drop runners that never register (token) within 20s
   const regTimer = setTimeout(() => { if (!rid) { try { ws.close(1008, "no register"); } catch { /* ignore */ } } }, 20000);
-  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; console.log(`[hub] runner offline: ${rid}`); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
+  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; console.log(`[hub] runner offline: ${rid}`); endRunnerRuns(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
   ws.on("error", () => { /* close handles cleanup */ });
   ws.on("message", (raw) => {
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
