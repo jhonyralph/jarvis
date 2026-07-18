@@ -1851,6 +1851,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "stage_text" && typeof msg.text === "string") { await stageHandle((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), msg.text); return; }
     if (msg.t === "stage_confirm") { await stageConfirm((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION)); return; }
     if (msg.t === "stage_cancel") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); staging.remove(sid); stageEscalatePending.delete(sid); broadcast(sid, { t: "stage", sessionId: sid, done: true }); return; }
+    // restaurar o painel de refino após um lock/reload: se há um rascunho de staging ativo, reemite-o.
+    if (msg.t === "stage_state") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); const e = staging.get(sid); if (e && e.draft) send(ws, { t: "stage", sessionId: sid, draft: e.draft }); return; }
     if (msg.t === "stage_escalate_ok") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), true); return; }
     if (msg.t === "stage_escalate_no") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), false); return; }
     // voz (wake): sugerir a sessão existente mais provável para a fala (via memória semântica).

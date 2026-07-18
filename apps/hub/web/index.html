@@ -821,7 +821,10 @@
       E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
       E.input.disabled=ro; E.sendBtn.disabled=ro; E.mic.disabled=ro; E.input.placeholder=ro?'Sessão nativa — somente leitura':'Fale ou digite…';
       if(switchingSession){ E.input.value=draftBySession[m.sessionId]||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; }
-      curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession); refreshComposer();
+      curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession);
+      { const savedAsk=getAsk(m.sessionId); if(savedAsk&&savedAsk.length&&!askActive) renderAskCard(savedAsk); }   // restaura decision-card pendente (lock/reload)
+      if(!stagingActive) tx({t:'stage_state',sessionId:m.sessionId});   // restaura painel de refino de voz, se houver (lock/reload)
+      refreshComposer();
     }
     // Anchor: a user message must never land under an open reply bubble, even if the echo arrives
     // after the stream started (remote runners emit over the network, order isn't guaranteed).
@@ -884,7 +887,7 @@
       }
       function answerText(i){ const q=questions[i],a=answers[i]; const picks=[...a.sel].map(x=>q.options[x].label); if(a.otherSel && a.other.trim())picks.push('Outros: '+a.other.trim()); return picks.join('; '); }
       function submit(){ const text='Decisões escolhidas:\n'+questions.map((q,i)=>`- ${q.question}\n  → ${answerText(i)}`).join('\n');
-        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false;
+        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false; clearAsk(currentSession);
         sendMsgTo(currentSession, text); if(wasVoice) lastWasVoice=true; }  // mantém o modo voz para a próxima decisão
       st.draw=draw; st.submit=submit; st.voice=lastWasVoice; askActive=st; draw(); refreshComposer();
       // Se a decisão veio de uma fala, conduz por VOZ (step a step). Espera a fala da resposta
@@ -1686,7 +1689,7 @@
         else if(m.t==='history'){ cacheHist(m); applyHistory(m); }
         else if(m.t==='message'){ if(m.message.role==='assistant') clearRestorable(m.message.sessionId); if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='queue'){ queueBySession[m.sessionId]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession) renderQueue(); }
-        else if(m.t==='ask'){ if(m.sessionId===currentSession) renderAskCard(m.questions||[]); }
+        else if(m.t==='ask'){ if(m.sessionId===currentSession){ saveAsk(currentSession,m.questions||[]); renderAskCard(m.questions||[]); } }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
@@ -1851,6 +1854,10 @@
     const draftBySession=(()=>{ try{ return JSON.parse(localStorage.getItem('jarvis_drafts')||'{}'); }catch(e){ return {}; } })();
     function saveDrafts(){ try{ localStorage.setItem('jarvis_drafts', JSON.stringify(draftBySession)); }catch(e){} }
     function stashDraft(){ if(currentSession!=null){ const v=E.input?E.input.value:''; if(v&&v.trim()) draftBySession[currentSession]=v; else delete draftBySession[currentSession]; saveDrafts(); } }
+    // decision-card pendente por sessão, persistido — sobrevive ao lock/descarte da aba (restaura ao reabrir).
+    function saveAsk(sid,q){ if(!sid)return; try{ localStorage.setItem('jarvis_ask_'+sid, JSON.stringify(q||[])); }catch(e){} }
+    function clearAsk(sid){ if(!sid)return; try{ localStorage.removeItem('jarvis_ask_'+sid); }catch(e){} }
+    function getAsk(sid){ try{ const s=localStorage.getItem('jarvis_ask_'+sid); return s?JSON.parse(s):null; }catch(e){ return null; } }
     // Mensagem "em voo" recuperável: se você PARAR antes de vir resposta, ela volta pro input pra
     // editar e reenviar. Persistida (localStorage, TTL 1h) pra sobreviver a reload. Some quando a
     // resposta começa a chegar.
@@ -1928,7 +1935,7 @@
         askVoice=false; askPendingVoice=false;
         try{ const c=askActive.card; const nav=c.querySelector('.asknav'); if(nav)nav.remove(); c.classList.add('done'); c.classList.remove('min');
           const n=document.createElement('div'); n.className='askhd'; n.textContent='Decisão interrompida — responda manualmente pelo campo abaixo.'; c.appendChild(n); }catch(e){}
-        askActive=null; status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
+        askActive=null; clearAsk(currentSession); status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
       // Parar um turno em andamento: cancela o agente e — se ainda não veio resposta — devolve a
       // mensagem ao input (ou mostra o botão "voltar" se você já estava digitando). A FILA é
       // preservada (não some mais no parar).
