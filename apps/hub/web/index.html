@@ -406,6 +406,7 @@
       <div id="quickRow">
         <div class="link" id="searchBtn" title="Buscar entre sessões"><span class="qic">🔎</span><span class="qtx">buscar entre sessões</span></div>
         <div class="link" id="digestBtn" title="O que está rolando entre as sessões"><span class="qic">🎧</span><span class="qtx">o que está rolando</span></div>
+        <div class="link" id="fleetBtn" title="Painel da frota (máquinas, custo, uso)"><span class="qic">📊</span><span class="qtx">painel da frota</span></div>
         <div class="link" id="qrBtn" title="Abrir no celular"><span class="qic">📱</span><span class="qtx">abrir no celular</span></div>
         <div class="link hidden" id="secBtn" title="Dispositivos &amp; convites"><span class="qic">🔐</span><span class="qtx">dispositivos &amp; convites</span></div>
       </div>
@@ -487,6 +488,10 @@
   </div></div>
 
 
+  <div id="fleetModal" class="modal hidden"><div class="card" style="min-width:min(440px,92vw)">
+    <div class="row" style="justify-content:space-between;align-items:center"><b>📊 Painel da frota</b><button id="fleetClose" class="ghost" type="button">Fechar</button></div>
+    <div id="fleetBody" class="mut" style="font-size:13px">Carregando…</div>
+  </div></div>
   <div id="qrModal" class="modal hidden"><div class="card">
     <b>📱 Abrir no celular</b>
     <div class="mut">Aponte a câmera do celular (com Tailscale ligado) para o QR:</div>
@@ -608,7 +613,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
+      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -1189,6 +1194,29 @@
       if(!startVoiceOp('summarize',E.sumHdr,'⏳',currentSession))return; status('speaking','Gerando resumo…'); tx({t:'summarize',sessionId:currentSession,speak:true}); };
     E.qrBtn.onclick=()=>{ tx({t:'qr',url:location.origin}); closeSide(); };
     E.qrClose.onclick=()=>E.qrModal.classList.add('hidden');
+    // ---------- painel da frota ----------
+    E.fleetBtn.onclick=()=>{ E.fleetBody.innerHTML='Carregando…'; E.fleetModal.classList.remove('hidden'); closeSide(); tx({t:'fleet'}); };
+    E.fleetClose.onclick=()=>E.fleetModal.classList.add('hidden');
+    function pctBar(w){ const p=Math.min(100,Math.max(0,Math.round(w?.pct||0))); const col=p>=90?'#f43f5e':p>=70?'#f59e0b':'#22c55e';
+      return `<div style="background:#ffffff14;border-radius:5px;height:7px;overflow:hidden;margin-top:2px"><div style="width:${p}%;height:100%;background:${col}"></div></div><div class="mut" style="font-size:10.5px">${p}%${w?.resetsAt?' · reseta '+new Date(w.resetsAt).toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}):''}</div>`; }
+    function renderFleet(m){ if(!E.fleetBody)return; const T=m.totals||{}; const mm=m.machines||[]; let h='';
+      h+=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px">
+        <div><div style="font-size:20px;font-weight:700;color:var(--text)">${mm.filter(x=>x.online).length}/${mm.length}</div><div class="mut" style="font-size:11px">máquinas online</div></div>
+        <div><div style="font-size:20px;font-weight:700;color:var(--text)">${T.active||0}</div><div class="mut" style="font-size:11px">rodando agora</div></div>
+        <div><div style="font-size:20px;font-weight:700;color:var(--text)">${T.sessions||0}</div><div class="mut" style="font-size:11px">sessões</div></div>
+        <div><div style="font-size:20px;font-weight:700;color:var(--text)">~$${(T.costTotal||0).toFixed(2)}</div><div class="mut" style="font-size:11px">custo acumulado</div></div></div>`;
+      h+='<div class="sec" style="margin:6px 0 4px">Máquinas</div>';
+      mm.forEach(x=>{ const badges=[]; if(x.local)badges.push('<span class="mtag">servidor</span>'); if(!x.online)badges.push('<span class="mtag">offline</span>');
+        if(x.online&&Array.isArray(x.agents)&&!x.agents.length)badges.push('<span class="mtag warn">⚠ sem IA</span>'); if(x.stale)badges.push('<span class="mtag warn">⚠ desatualizada</span>');
+        if(x.active>0)badges.push(`<span class="mtag" style="color:#22c55e">▶ ${x.active}</span>`);
+        h+=`<div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid var(--line)">
+          <span class="mdot ${x.online?'on':'off'}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.label||x.id)}${x.commit?` <span class="mut" style="font-size:10.5px">${esc(x.commit)}</span>`:''}</span>${badges.join(' ')}</div>`; });
+      if(m.plan&&(m.plan.fiveHour||m.plan.sevenDay)){ h+='<div class="sec" style="margin:10px 0 4px">Uso do plano (Claude)</div>';
+        if(m.plan.fiveHour){ h+=`<div class="mut" style="font-size:11.5px">Janela de 5h</div>${pctBar(m.plan.fiveHour)}`; }
+        if(m.plan.sevenDay){ h+=`<div class="mut" style="font-size:11.5px;margin-top:5px">Semanal</div>${pctBar(m.plan.sevenDay)}`; }
+        (m.plan.extra||[]).forEach(e=>{ h+=`<div class="mut" style="font-size:11.5px;margin-top:5px">${esc(e.label)}</div>${pctBar(e)}`; }); }
+      const ph=m.parseHealth; if(ph&&ph.emptyNonEmptyFiles>0){ h+=`<div style="margin-top:10px;color:#f59e0b;font-size:11.5px">⚠ ${ph.emptyNonEmptyFiles} transcript(s) não-vazios parsearam 0 mensagens — possível mudança de formato do CLI.</div>`; }
+      E.fleetBody.innerHTML=h; }
     E.fileClose.onclick=()=>E.filePanel.classList.add('hidden');
     E.fileCopy.onclick=()=>{ const dl=E.fileBody.querySelectorAll('.dline'); const t=dl.length?[...dl].map(x=>x.textContent).join('\n'):(E.fileBody.textContent||''); (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>{E.fileCopy.textContent='Copiado ✓';setTimeout(()=>E.fileCopy.textContent='Copiar',1500);}).catch(()=>{}); };
 
@@ -1551,6 +1579,7 @@
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
         else if(m.t==='routines'){ renderRoutines(m.routines||[]); }
+        else if(m.t==='fleet'){ renderFleet(m); }
         else if(m.t==='update_status'){ updState=m.status; renderUpdate(); }
         else if(m.t==='update_progress'){ if(E.updStatus) E.updStatus.textContent='… '+(m.message||'atualizando'); toast('🔄 '+(m.message||''));
           updMach={}; (m.skipped||[]).forEach(lb=>{ updMach['sk:'+lb]={label:lb,state:'skip',why:'offline — não atualizada'}; }); renderUpdMachines(); }

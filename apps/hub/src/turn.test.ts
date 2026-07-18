@@ -100,3 +100,14 @@ test("cost guard-rail allows the turn when under budget", async () => {
   await runManagedTurn(m.ctx, "s1", { showText: "ok", onError: () => assert.fail("should not error") });
   assert.equal(m.added.filter((a) => a.msg.role === "assistant").length, 1);
 });
+
+test("idempotency: a re-delivered turnId runs at most once (local turns)", async () => {
+  const ids = new Set<string>();
+  const m = mockCtx({ seen: (id: string) => { if (ids.has(id)) return false; ids.add(id); return true; } });
+  await runManagedTurn(m.ctx, "s1", { showText: "x", turnId: "T1", onError: () => {} });
+  await runManagedTurn(m.ctx, "s1", { showText: "x", turnId: "T1", onError: () => {} }); // re-delivered
+  assert.equal(m.added.filter((a) => a.msg.role === "assistant").length, 1, "runs once despite re-delivery");
+  // a distinct turnId still runs
+  await runManagedTurn(m.ctx, "s1", { showText: "y", turnId: "T2", onError: () => {} });
+  assert.equal(m.added.filter((a) => a.msg.role === "assistant").length, 2);
+});

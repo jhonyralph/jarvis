@@ -50,6 +50,9 @@ export interface TurnCtx {
   /** Optional cost guard-rail: if it blocks, the turn is refused BEFORE the agent runs (and before
    *  the user message is stored) so an accidental runaway can't keep spending. Off unless configured. */
   checkBudget?(sid: string): { blocked: boolean; message?: string };
+  /** Optional idempotency: record a turnId; returns true if NEW, false if already seen (dup → skip).
+   *  Makes LOCAL turns at-most-once too (mirrors the runner's turnId dedup). */
+  seen?(turnId: string): boolean;
 }
 
 export interface ManagedTurnInput {
@@ -63,6 +66,8 @@ export interface ManagedTurnInput {
   images?: string[];
   files?: Array<{ name: string; content?: string }>;
   speak?: boolean;
+  /** idempotency key (client msgId) — a re-delivered turnId is skipped (mirrors the runner). */
+  turnId?: string;
   /** How to deliver a failure — callers differ: some broadcast to the session, some reply to the sender. */
   onError(message: string, limit: boolean): void;
 }
@@ -74,6 +79,8 @@ export function isLimitError(message: string): boolean {
 
 /** Run one full turn against a managed session. Behavior-preserving unification of the four old paths. */
 export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnInput): Promise<void> {
+  // Idempotency (opt-in): a re-delivered turnId runs at most once — nothing stored, nothing run.
+  if (o.turnId && ctx.seen && !ctx.seen(o.turnId)) return;
   // Cost guard-rail (opt-in): refuse the turn before spending anything if the session is over budget.
   const budget = ctx.checkBudget?.(sid);
   if (budget?.blocked) { o.onError(budget.message || "limite de custo desta sessão atingido", true); return; }

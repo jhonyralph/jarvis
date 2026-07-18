@@ -25,9 +25,9 @@ import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, type SessionHit } from "@jarvis/core";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, type Routine } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
@@ -600,7 +600,11 @@ async function speechForReply(replyText: string): Promise<string> {
 
 // The ONE managed-turn context (see turn.ts): wires the shared lifecycle to the hub's real store,
 // broadcast, agent runner and TTS. Every managed-session turn below routes through runManagedTurn(turnCtx,…).
+// Idempotency for LOCAL managed turns (mirrors the runner's turnId dedup) — a re-delivered send
+// runs at most once even on the embedded machine-0 path.
+const localSeenTurns = createSeenSet();
 const turnCtx: TurnCtx = {
+  seen: (turnId) => localSeenTurns.add(turnId),
   ensure: (sid) => store.ensure(sid),
   resolveAgentName: (n) => agents.get(n).name,
   add: (sid, msg) => store.add(sid, msg),
@@ -842,7 +846,7 @@ async function flushQueue(sid: string): Promise<void> {
     if (rid) { const rc = runners.get(rid); if (rc?.ws) sendToRunner(rc, { t: "send", sessionId: sid, text, attachments: atts, model, effort, turnId: (items.find((q) => q.msgId)?.msgId) || randomUUID() }); return; } // runner: relaya como envio normal (turnId = idempotência)
     if (isNativeId(sid)) { await deliverNativeTurn(viewer ?? null, sid, text, { model, effort, attachments: atts }); return; }
     const { agentText, showText, images, files } = buildAttachments(atts, text);
-    await runManagedTurn(turnCtx, sid, { showText, agentText, model, effort, images, files, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
+    await runManagedTurn(turnCtx, sid, { showText, agentText, model, effort, images, files, turnId: items.find((q) => q.msgId)?.msgId, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
   } catch (e: any) { broadcast(sid, { t: "error", message: String(e?.message ?? e) }); }
 }
 /** Replay the buffered live activity of an IN-PROGRESS local turn to a client that just (re)opened
@@ -1670,6 +1674,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (handleSecurityMsg(ws, msg)) return;
     // --- routines (owner-only): scheduled prompts ---
     if (handleRoutineMsg(ws, msg)) return;
+    // --- fleet dashboard: a read-only snapshot of every machine + totals + plan + parse health ---
+    if (msg.t === "fleet") {
+      const machines = machineList().map((m: any) => ({ ...m, active: m.local ? activeRuns.size : (runnerActive.get(m.id)?.size || 0) }));
+      let costTotal = 0; for (const v of sessionCost.values()) costTotal += v.cost || 0;
+      let remoteActive = 0; for (const s of runnerActive.values()) remoteActive += s.size;
+      let plan = null; try { const a = agents.get("claude-code"); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
+      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal }, parseHealth: nativeParseHealth(), plan });
+      return;
+    }
     // QR code of the URL to open on the phone
     if (msg.t === "qr" && typeof msg.url === "string") {
       try { send(ws, { t: "qr", url: msg.url, dataUri: await QRCode.toDataURL(msg.url, { width: 300, margin: 1 }) }); }
@@ -1805,6 +1818,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       model: typeof msg.model === "string" ? msg.model : undefined,
       effort: typeof msg.effort === "string" ? msg.effort : undefined,
       speaker, images, files, speak: !!msg.speak,
+      turnId: typeof msg.msgId === "string" ? msg.msgId : undefined,
       onError: (message, limit) => send(ws, { t: "error", message, limit }),
     });
   });
