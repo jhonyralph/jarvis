@@ -335,6 +335,7 @@
     #machineBar .mpen:hover { opacity:1; }
     .toast { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; cursor:pointer; }
     #roBanner { padding:8px 14px; background:#1e293b; color:#cbd5e1; font-size:12.5px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px; }
+    #offlineBar { padding:8px 14px; background:#7c2d12; color:#fed7aa; font-size:12.5px; border-bottom:1px solid var(--line); }
     .natchip { font-size:11px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#93c5fd; background:#1e293b; border:1px solid #334155; border-radius:999px; padding:2px 9px; cursor:pointer; white-space:nowrap; max-width:38vw; overflow:hidden; text-overflow:ellipsis; }
     .natchip:hover { background:#243049; color:#bfdbfe; }
     /* indicador de "processando" no CABEÇALHO da conversa — visível mesmo quando o menu/lista fica
@@ -436,6 +437,7 @@
       </header>
       <div id="limit" class="hidden"></div>
       <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
+      <div id="offlineBar" class="hidden"></div>
       <div id="log"></div>
       <form id="composer">
         <button type="button" id="scrollBtn" class="hidden" title="Ir para as mensagens recentes"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 16 18 9"></polyline></svg></button>
@@ -624,7 +626,7 @@
     // network-first for the HTML, so an online reload still deploys the latest UI (see web/sw.js).
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
-    const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
+    const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceEscalate',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
@@ -669,9 +671,9 @@
     // ---------- i18n (pt-BR / en / es) — fundação: a chrome sempre-visível é traduzida via data-i18n;
     //            o restante cai no pt (fallback). Novos textos: adicione a chave nos 3 idiomas + data-i18n. ----------
     const I18N={
-      pt:{ newSession:'＋ Nova sessão', searchSessions:'buscar entre sessões', whatsUp:'o que está rolando', fleet:'painel da frota', openMobile:'abrir no celular', devices:'dispositivos & convites', showMore:'Mostrar mais', settings:'⚙ Configurações', composerPh:'Fale ou digite…', secUpdate:'Atualização', secDefaults:'Padrões', secVoice:'Voz', secNotif:'Notificações', language:'Idioma', spSpeaking:'Jarvis falando…', spListening:'escutando…', spListeningAns:'escutando resposta…', spRefining:'Refinando…', spStopping:'parando…', spThinking:'Jarvis ouvindo…' },
-      en:{ newSession:'＋ New session', searchSessions:'search across sessions', whatsUp:"what's going on", fleet:'fleet dashboard', openMobile:'open on phone', devices:'devices & invites', showMore:'Show more', settings:'⚙ Settings', composerPh:'Speak or type…', secUpdate:'Update', secDefaults:'Defaults', secVoice:'Voice', secNotif:'Notifications', language:'Language', spSpeaking:'Jarvis speaking…', spListening:'listening…', spListeningAns:'listening for your answer…', spRefining:'Refining…', spStopping:'stopping…', spThinking:'Jarvis listening…' },
-      es:{ newSession:'＋ Nueva sesión', searchSessions:'buscar entre sesiones', whatsUp:'qué está pasando', fleet:'panel de la flota', openMobile:'abrir en el móvil', devices:'dispositivos e invitaciones', showMore:'Mostrar más', settings:'⚙ Configuración', composerPh:'Habla o escribe…', secUpdate:'Actualización', secDefaults:'Predeterminados', secVoice:'Voz', secNotif:'Notificaciones', language:'Idioma', spSpeaking:'Jarvis hablando…', spListening:'escuchando…', spListeningAns:'escuchando tu respuesta…', spRefining:'Refinando…', spStopping:'deteniendo…', spThinking:'Jarvis escuchando…' },
+      pt:{ newSession:'＋ Nova sessão', searchSessions:'buscar entre sessões', whatsUp:'o que está rolando', fleet:'painel da frota', openMobile:'abrir no celular', devices:'dispositivos & convites', showMore:'Mostrar mais', settings:'⚙ Configurações', composerPh:'Fale ou digite…', secUpdate:'Atualização', secDefaults:'Padrões', secVoice:'Voz', secNotif:'Notificações', language:'Idioma', spSpeaking:'Jarvis falando…', spListening:'escutando…', spListeningAns:'escutando resposta…', spRefining:'Refinando…', spStopping:'parando…', spThinking:'Jarvis ouvindo…', machineOffline:'offline — as mensagens não serão entregues até ela voltar.' },
+      en:{ newSession:'＋ New session', searchSessions:'search across sessions', whatsUp:"what's going on", fleet:'fleet dashboard', openMobile:'open on phone', devices:'devices & invites', showMore:'Show more', settings:'⚙ Settings', composerPh:'Speak or type…', secUpdate:'Update', secDefaults:'Defaults', secVoice:'Voice', secNotif:'Notifications', language:'Language', spSpeaking:'Jarvis speaking…', spListening:'listening…', spListeningAns:'listening for your answer…', spRefining:'Refining…', spStopping:'stopping…', spThinking:'Jarvis listening…', machineOffline:"is offline — messages won't be delivered until it's back." },
+      es:{ newSession:'＋ Nueva sesión', searchSessions:'buscar entre sesiones', whatsUp:'qué está pasando', fleet:'panel de la flota', openMobile:'abrir en el móvil', devices:'dispositivos e invitaciones', showMore:'Mostrar más', settings:'⚙ Configuración', composerPh:'Habla o escribe…', secUpdate:'Actualización', secDefaults:'Predeterminados', secVoice:'Voz', secNotif:'Notificaciones', language:'Idioma', spSpeaking:'Jarvis hablando…', spListening:'escuchando…', spListeningAns:'escuchando tu respuesta…', spRefining:'Refinando…', spStopping:'deteniendo…', spThinking:'Jarvis escuchando…', machineOffline:'desconectada — los mensajes no se entregarán hasta que vuelva.' },
     };
     let lang = cfg.lang || (navigator.language||'pt').slice(0,2); if(!I18N[lang]) lang='pt';
     const t = k => (I18N[lang]&&I18N[lang][k]) || I18N.pt[k] || k;
@@ -798,7 +800,7 @@
       // e restaura o da nova; um refresh da MESMA sessão nunca mexe no que você está digitando agora.
       const prevSession=currentSession, switchingSession=prevSession!==m.sessionId;
       if(switchingSession && prevSession!=null){ draftBySession[prevSession]=E.input.value; saveDrafts(); }
-      currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId);
+      currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId); updateOfflineBanner();
       currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null;   // modelo/esforço reais da sessão da máquina (só nativas mandam)
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
@@ -1151,7 +1153,17 @@
     }
     function selectMachine(id){ const mm=document.getElementById('mmenu'); if(mm)mm.classList.add('hidden'); if(id===currentMachine) return;
       currentMachine=id; restoringMachine=false; try{localStorage.setItem('jarvis_machine',id);}catch{} currentSession=null; curStarted=false; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash('');
-      if(id==='all'){ tx({t:'listAll'}); } else { routedMachine=id; tx({t:'runner',runnerId:id}); } }
+      if(id==='all'){ tx({t:'listAll'}); } else { routedMachine=id; tx({t:'runner',runnerId:id}); } updateOfflineBanner(); }
+    // Per-session offline indicator: a persistent banner when the machine this session lives on is
+    // offline, so the user knows WHY a turn won't go through (distinct from the transient "interrompido"
+    // a mid-turn drop shows). routedMachine already tracks the current session's machine (incl. 'all').
+    function updateOfflineBanner(){
+      const el=E.offlineBar; if(!el) return;
+      const mac=machines.find(x=>x.id===routedMachine);
+      const off=!!currentSession && mac && !mac.online;
+      el.classList.toggle('hidden', !off);
+      if(off) el.textContent='⚠ '+(mac.label||'Máquina')+' '+t('machineOffline');
+    }
 
     const capsFor = n => caps.find(c=>c.name===n)||{models:[],defaultModel:null};
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
@@ -1667,7 +1679,7 @@
         else if(m.t==='update_result'){ if(m.ok){ toast('✅ '+((m.log||'atualizado').split('\n').pop()||'').slice(0,80)); } else { toast('⚠ Falha: '+(m.log||'').slice(0,120)); if(E.updStatus) E.updStatus.textContent='⚠ '+(m.log||'').slice(0,140); E.updActions.classList.remove('hidden'); } }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
-        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'});
+        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'});
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
           if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }
         else if(m.t==='filecontent'){ showFile(m); }
