@@ -21,7 +21,11 @@ cd mobile
 # 1) Capacitor + the plugins for the three capabilities. @latest so versions resolve to the current
 #    Capacitor major on your machine (this scaffold deliberately pins nothing it can't verify).
 npm install @capacitor/core@latest @capacitor/cli@latest @capacitor/android@latest @capacitor/ios@latest \
-            @capacitor/push-notifications@latest @capacitor/share@latest
+            @capacitor/push-notifications@latest @capacitor/app@latest @capacitor/share@latest \
+            capacitor-native-biometric send-intent
+# The client bridge looks these plugins up by their runtime names — NativeBiometric (biometric
+# unlock), Share (share out), SendIntent (share INTO Jarvis), App (resume/lock hooks),
+# PushNotifications (push). Verify each package's current name/version with `npm run doctor`.
 
 # 2) Stage the web UI into ./www
 npm run sync-web

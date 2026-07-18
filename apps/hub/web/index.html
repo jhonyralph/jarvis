@@ -336,6 +336,11 @@
     .toast { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; cursor:pointer; }
     #roBanner { padding:8px 14px; background:#1e293b; color:#cbd5e1; font-size:12.5px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px; }
     #offlineBar { padding:8px 14px; background:#7c2d12; color:#fed7aa; font-size:12.5px; border-bottom:1px solid var(--line); }
+    /* native-only (Capacitor shell adds html.native): biometric toggle + lock overlay */
+    .biolockrow { display:none; }
+    html.native .biolockrow { display:flex; }
+    .biolock { position:fixed; inset:0; z-index:9999; background:#0d1117; display:flex; align-items:center; justify-content:center; text-align:center; color:#e8eef5; }
+    .biolock-in { display:flex; flex-direction:column; align-items:center; }
     .natchip { font-size:11px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#93c5fd; background:#1e293b; border:1px solid #334155; border-radius:999px; padding:2px 9px; cursor:pointer; white-space:nowrap; max-width:38vw; overflow:hidden; text-overflow:ellipsis; }
     .natchip:hover { background:#243049; color:#bfdbfe; }
     /* indicador de "processando" no CABEÇALHO da conversa — visível mesmo quando o menu/lista fica
@@ -554,6 +559,7 @@
     <label class="row"><input type="checkbox" id="setNoise"> Filtro anti-ruído / detecção de fala (VAD)</label>
     <div class="sec" data-i18n="secNotif">Notificações</div>
     <label class="row"><input type="checkbox" id="setPush"> Notificar neste aparelho (Web Push)</label>
+    <label class="row biolockrow"><input type="checkbox" id="setBioLock"> Bloquear com biometria (Face ID / digital)</label>
     <div id="pushCfg" class="hidden" style="margin:2px 0 6px 14px">
       <div class="mut" style="font-size:11.5px;margin-bottom:4px">Avisar sobre — vale só para este aparelho:</div>
       <label class="row"><input type="checkbox" id="pushDone"> Sessão concluída (qualquer máquina)</label>
@@ -628,7 +634,7 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceEscalate',
-      'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'setWake','setNoise','setPush','setBioLock','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -1414,7 +1420,36 @@
         // Re-send the token after each (re)connect + on relaunch (the Hub upserts, so it's cheap).
         N.reregister=function(){ if(N._lastToken) tx({t:'mobile_push_register',token:N._lastToken,platform:platform,events:wantEvents}); else if(cfg.push) N.push(pushPrefs()); };
       }
+      // ---- biometric app-unlock (Face ID / fingerprint). Plugin: capacitor-native-biometric (NativeBiometric). ----
+      var Bio=P.NativeBiometric;
+      if(Bio){
+        N.biometricAvailable=async function(){ try{ var r=await Bio.isAvailable(); return !!(r&&r.isAvailable); }catch(e){ return false; } };
+        N.unlock=async function(){ try{ await Bio.verifyIdentity({reason:'Desbloquear o Jarvis',title:'Jarvis',subtitle:'Confirme sua identidade',description:''}); return true; }catch(e){ return false; } };
+      }
+      // ---- share OUT (@capacitor/share) ----
+      if(P.Share){ N.share=async function(text,title){ try{ await P.Share.share({title:title||'Jarvis',text:text||''}); return true; }catch(e){ return false; } }; }
+      // ---- share INTO Jarvis: the OS share-sheet delivers text via the send-intent plugin; drop it into
+      //      the composer. Plugin: send-intent (capacitor-community). The native intent-filter (Android) /
+      //      share-extension (iOS) config is required — see docs/mobile.md. ----
+      if(P.SendIntent){
+        var pullShared=function(){ try{ P.SendIntent.checkSendIntentReceived().then(function(r){ if(r&&(r.text||r.url||r.title)) applyShareIn(r.text||r.url||r.title); }).catch(function(){}); }catch(e){} };
+        pullShared(); if(P.App) P.App.addListener('appStateChange',function(s){ if(s&&s.isActive) pullShared(); });
+      }
+      // ---- re-lock on resume + lock on launch ----
+      if(P.App) P.App.addListener('appStateChange',function(s){ if(s&&s.isActive){ try{ maybeBioLock(); }catch(e){} } });
+      try{ maybeBioLock(); }catch(e){}
     })();
+    // Drop OS-shared text into the composer (called by the native bridge's share-in handler).
+    function applyShareIn(text){ try{ if(!text)return; var v=E.input.value; E.input.value=(v?v+'\n':'')+String(text); E.input.dispatchEvent(new Event('input')); E.input.focus(); toast('Conteúdo compartilhado adicionado.'); }catch(e){} }
+    // Biometric lock overlay (native only). Shown when cfg.bioLock; cleared once the OS confirms identity.
+    var bioOverlay=null;
+    async function maybeBioLock(){ if(!(window.__jarvisNative&&window.__jarvisNative.unlock&&cfg.bioLock)) return; if(bioOverlay) return;
+      bioOverlay=document.createElement('div'); bioOverlay.className='biolock';
+      bioOverlay.innerHTML='<div class="biolock-in"><div style="font-size:44px">🔒</div><div style="margin:10px 0 16px">Jarvis bloqueado</div><button type="button" id="bioUnlockBtn" class="primary">Desbloquear</button></div>';
+      document.body.appendChild(bioOverlay);
+      var go=async function(){ if(await window.__jarvisNative.unlock()){ if(bioOverlay){ bioOverlay.remove(); bioOverlay=null; } } };
+      var b=bioOverlay.querySelector('#bioUnlockBtn'); if(b) b.onclick=go; go();
+    }
     let searchMode='literal', searchTimer=null;
     function setSearchMode(m){ searchMode=m; E.smLiteral.classList.toggle('on',m==='literal'); E.smSemantic.classList.toggle('on',m==='semantic');
       E.searchInput.placeholder=m==='semantic'?'Buscar por SIGNIFICADO (ex.: onde mexi no refresh de token)…':'Filtrar por título ou conteúdo… (ex.: a2p)'; E.searchResults.innerHTML=''; }
@@ -1507,7 +1542,7 @@
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
       fillSel(E.setModel,c.models,cfg.model||c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
-      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setPush.checked=!!cfg.push; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
+      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
       const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner) tx({t:'routines'});
@@ -1576,7 +1611,7 @@
     E.setClose.onclick=()=>{
       if(E.setGate.checked && !speakers.length){ addErr('Cadastre sua voz antes de exigir voz cadastrada (senão o modo voz fica bloqueado).'); E.setGate.checked=false; }
       Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
-      continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked});
+      continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked,bioLock:!!(E.setBioLock&&E.setBioLock.checked)});
       saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate});
       const pp=pushPrefs(); cfg.pushEvents=pp.events; cfg.pushMode=pp.mode; cfg.pushEvery=pp.everyMin;
       const wantPush=E.setPush.checked; if(wantPush&&!cfg.push) enablePush(); else if(!wantPush&&cfg.push) disablePush();
