@@ -1406,6 +1406,10 @@ async function handleAuth(ws: WebSocket, msg: any, req: any): Promise<void> {
     if (typeof msg.token !== "string" || !msg.token) return fail("sem token");
     const p = auth.authenticate(msg.token, { ip, ua });
     if (!p) return fail("token inválido");
+    // Successful token auth was the one lifecycle event NOT audited (only failures/claim/redeem were),
+    // leaving a blind spot on who actually connected. claim/redeem log their own events, so only the
+    // returning-token path needs this.
+    auth.audit("auth_ok", { userId: p.user.id, deviceId: p.device.id, ip, detail: p.user.role });
     await enterAuthed({ t: "authed", user: { id: p.user.id, role: p.user.role, name: p.user.name } }, { userId: p.user.id, role: p.user.role, name: p.user.name, deviceId: p.device.id, verified: false });
   } catch (e: any) {
     fail(String(e?.message ?? e));

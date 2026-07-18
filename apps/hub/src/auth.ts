@@ -14,7 +14,7 @@
  * Storage: ~/.jarvis/auth.json (hashes only). Escape hatch: JARVIS_AUTH=off.
  */
 import { randomBytes, createHash, timingSafeEqual, scryptSync } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, appendFileSync, statSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeJsonAtomic } from "@jarvis/core";
@@ -26,14 +26,28 @@ const CLAIM_FILE = join(DIR, "claim-code.txt");
 const AUDIT_FILE = join(DIR, "audit.log");
 
 // ---- audit (append-only attribution; see docs/multi-runner.md 4d) ----
+// The log is append-only and best-effort (never blocks/throws). It rotates by size so a busy Hub
+// can't grow it unbounded: at the cap the current file becomes audit.log.1 (exactly one previous
+// generation kept) and a fresh audit.log starts. Size is checked every N appends, not per line.
+const AUDIT_MAX = Math.max(0, Number(process.env.JARVIS_AUDIT_MAX_MB || 5)) * 1024 * 1024;
+let auditSinceCheck = 0;
+function rotateAuditIfBig(): void {
+  if (!AUDIT_MAX || ++auditSinceCheck < 64) return;
+  auditSinceCheck = 0;
+  try {
+    if (statSync(AUDIT_FILE).size <= AUDIT_MAX) return;
+    try { rmSync(AUDIT_FILE + ".1", { force: true }); } catch { /* ignore */ } // renameSync won't overwrite on Windows
+    renameSync(AUDIT_FILE, AUDIT_FILE + ".1");
+  } catch { /* missing/busy — ignore */ }
+}
 export function audit(event: string, info: { userId?: string | null; deviceId?: string | null; runnerId?: string | null; ip?: string; detail?: string } = {}): void {
-  try { appendFileSync(AUDIT_FILE, JSON.stringify({ ts: Date.now(), event, ...info }) + "\n"); } catch { /* never block on audit */ }
+  try { rotateAuditIfBig(); appendFileSync(AUDIT_FILE, JSON.stringify({ ts: Date.now(), event, ...info }) + "\n"); } catch { /* never block on audit */ }
 }
 export function readAudit(limit = 100): any[] {
-  try {
-    const lines = readFileSync(AUDIT_FILE, "utf8").trim().split("\n").filter(Boolean);
-    return lines.slice(-Math.max(1, Math.min(limit, 1000))).map((l) => { try { return JSON.parse(l); } catch { return { raw: l }; } });
-  } catch { return []; }
+  const read = (f: string) => { try { return readFileSync(f, "utf8").trim().split("\n").filter(Boolean); } catch { return []; } };
+  // Span the rotated generation too, so a tail request right after a rotation isn't nearly empty.
+  const lines = [...read(AUDIT_FILE + ".1"), ...read(AUDIT_FILE)];
+  return lines.slice(-Math.max(1, Math.min(limit, 1000))).map((l) => { try { return JSON.parse(l); } catch { return { raw: l }; } });
 }
 try { mkdirSync(DIR, { recursive: true }); } catch { /* ignore */ }
 
