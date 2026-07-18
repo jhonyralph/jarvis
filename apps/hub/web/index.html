@@ -669,9 +669,9 @@
     // ---------- i18n (pt-BR / en / es) — fundação: a chrome sempre-visível é traduzida via data-i18n;
     //            o restante cai no pt (fallback). Novos textos: adicione a chave nos 3 idiomas + data-i18n. ----------
     const I18N={
-      pt:{ newSession:'＋ Nova sessão', searchSessions:'buscar entre sessões', whatsUp:'o que está rolando', fleet:'painel da frota', openMobile:'abrir no celular', devices:'dispositivos & convites', showMore:'Mostrar mais', settings:'⚙ Configurações', composerPh:'Fale ou digite…', secUpdate:'Atualização', secDefaults:'Padrões', secVoice:'Voz', secNotif:'Notificações', language:'Idioma' },
-      en:{ newSession:'＋ New session', searchSessions:'search across sessions', whatsUp:"what's going on", fleet:'fleet dashboard', openMobile:'open on phone', devices:'devices & invites', showMore:'Show more', settings:'⚙ Settings', composerPh:'Speak or type…', secUpdate:'Update', secDefaults:'Defaults', secVoice:'Voice', secNotif:'Notifications', language:'Language' },
-      es:{ newSession:'＋ Nueva sesión', searchSessions:'buscar entre sesiones', whatsUp:'qué está pasando', fleet:'panel de la flota', openMobile:'abrir en el móvil', devices:'dispositivos e invitaciones', showMore:'Mostrar más', settings:'⚙ Configuración', composerPh:'Habla o escribe…', secUpdate:'Actualización', secDefaults:'Predeterminados', secVoice:'Voz', secNotif:'Notificaciones', language:'Idioma' },
+      pt:{ newSession:'＋ Nova sessão', searchSessions:'buscar entre sessões', whatsUp:'o que está rolando', fleet:'painel da frota', openMobile:'abrir no celular', devices:'dispositivos & convites', showMore:'Mostrar mais', settings:'⚙ Configurações', composerPh:'Fale ou digite…', secUpdate:'Atualização', secDefaults:'Padrões', secVoice:'Voz', secNotif:'Notificações', language:'Idioma', spSpeaking:'Jarvis falando…', spListening:'escutando…', spListeningAns:'escutando resposta…', spRefining:'Refinando…', spStopping:'parando…', spThinking:'Jarvis ouvindo…' },
+      en:{ newSession:'＋ New session', searchSessions:'search across sessions', whatsUp:"what's going on", fleet:'fleet dashboard', openMobile:'open on phone', devices:'devices & invites', showMore:'Show more', settings:'⚙ Settings', composerPh:'Speak or type…', secUpdate:'Update', secDefaults:'Defaults', secVoice:'Voice', secNotif:'Notifications', language:'Language', spSpeaking:'Jarvis speaking…', spListening:'listening…', spListeningAns:'listening for your answer…', spRefining:'Refining…', spStopping:'stopping…', spThinking:'Jarvis listening…' },
+      es:{ newSession:'＋ Nueva sesión', searchSessions:'buscar entre sesiones', whatsUp:'qué está pasando', fleet:'panel de la flota', openMobile:'abrir en el móvil', devices:'dispositivos e invitaciones', showMore:'Mostrar más', settings:'⚙ Configuración', composerPh:'Habla o escribe…', secUpdate:'Actualización', secDefaults:'Predeterminados', secVoice:'Voz', secNotif:'Notificaciones', language:'Idioma', spSpeaking:'Jarvis hablando…', spListening:'escuchando…', spListeningAns:'escuchando tu respuesta…', spRefining:'Refinando…', spStopping:'deteniendo…', spThinking:'Jarvis escuchando…' },
     };
     let lang = cfg.lang || (navigator.language||'pt').slice(0,2); if(!I18N[lang]) lang='pt';
     const t = k => (I18N[lang]&&I18N[lang][k]) || I18N.pt[k] || k;
@@ -1578,7 +1578,7 @@
     // "parando…" é POR SESSÃO, não global: só aparece na sessão que você parou; troca de sessão
     // reflete o estado da sessão atual. (Não mexe nos status de voz listening/speaking.)
     const stopping={};
-    function updateStopStatus(){ if(currentSession && stopping[currentSession]) status('busy','parando…'); else if(E.status.className==='busy') status(''); }
+    function updateStopStatus(){ if(currentSession && stopping[currentSession]) status('busy',t('spStopping')); else if(E.status.className==='busy') status(''); }
     // trava global de operação de voz (resumo/digest): só 1 por vez, independente do chat.
     // libera ao chegar {t:summary}/{t:busy}/{t:error} ou por failsafe de tempo.
     let voiceOp=null,voiceOpSid=null,voiceOpBtn=null,voiceOpHtml='',voiceOpTimer=0;
@@ -1737,7 +1737,7 @@
         else if(m.t==='error'){ endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
-      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…'); ttsPlaying=true; curTtsAudio=a;
+      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking',t('spSpeaking')); ttsPlaying=true; curTtsAudio=a;
       a.onended=()=>{ ttsPlaying=false; curTtsAudio=null; status('');
         if(stagingActive && !recording){ startRec(true); return; }               // refino por voz em andamento → continua ouvindo
         if(askPendingVoice){ askPendingVoice=false; startAskVoice(); return; }   // decisão pendente → wizard de voz
@@ -1746,7 +1746,7 @@
       a.play().catch(()=>{ ttsPlaying=false; status(''); }); }
     // reprodução única (resumo falado): NÃO re-arma o mic
     function playAudioOnce(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
-      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking','Jarvis falando…'); a.onended=()=>status(''); a.play().catch(()=>status('')); }
+      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking',t('spSpeaking')); a.onended=()=>status(''); a.play().catch(()=>status('')); }
     // ---------- voz ambiente: painel de refino (staging) ----------
     let stageEl=null;
     function showStage(m){ stagingActive=true;
@@ -1789,10 +1789,10 @@
           if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
           // barge-in: falar POR CIMA do agente (ou já em refino) → vai para o staging (refino), não pro chat
-          if(ttsPlaying || stagingActive){ stopTTS(); stagingActive=true; showStage({say:'refinando…'}); status('speaking','Refinando…'); tx({t:'stage_voice',audio:b64,ext:'webm',sessionId:currentSession}); return; }
+          if(ttsPlaying || stagingActive){ stopTTS(); stagingActive=true; showStage({say:'refinando…'}); status('speaking',t('spRefining')); tx({t:'stage_voice',audio:b64,ext:'webm',sessionId:currentSession}); return; }
           if(busy(currentSession)){ toast('⏳ Sessão ocupada — envie o áudio quando terminar.'); return; }   // voz não entra na fila (a fila envia texto)
           lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,sessionId:currentSession}); showPending(); refreshComposer(); };
-        discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?'escutando resposta…':'escutando…');
+        discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?t('spListeningAns'):t('spListening'));
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
     E.mic.onclick=()=>{ if(recording){ rec.stop(); } else startRec(false); };
