@@ -266,6 +266,10 @@ const voiceConfig: { agent: string; model?: string; effort?: string; cwd: string
   cwd: process.env.JARVIS_WAKE_CWD || CWD,
 };
 let voicePending: { task: string } | null = null;
+// Binding de voz: a sessão-ALVO da conversa de voz ("" = a sessão de voz). Garante que a voz aja na
+// sessão certa e não misture contexto. Definido pela resolução do wake (sugestão via memória).
+let voiceTarget = "";
+let voiceResolve: { task: string; speak: boolean; speaker?: string; suggestId?: string } | null = null;
 // cheap gate: only spend an LLM intent pass when the utterance plausibly carries a command
 const VOICE_HINT = /\b(codex|claude|gpt|opus|sonnet|haiku|fable|terra|luna|sol|modelo|model|esfor[çc]o|effort|pasta|diret[óo]rio|folder|sess[ãa]o|nov[ao]|continu|seguir|trocar|usar?|use|come[çc]ar)\b/i;
 const PT_EFFORT: Record<string, string> = { minimal: "mínimo", low: "baixo", medium: "médio", high: "alto", xhigh: "muito alto", max: "máximo", ultra: "ultra", ultracode: "ultracode" };
@@ -689,6 +693,16 @@ setInterval(() => {
   for (const r of routines.due(now)) { routines.markRun(r.id, now.getTime()); void runRoutine(r); }
 }, 30_000).unref?.();
 
+// Voz (wake sem contexto): qual sessão EXISTENTE a fala mais combina, via memória semântica.
+// null se nada forte o bastante. É a base da resolução "sugerir a sessão certa" (não perguntar cego).
+async function suggestSession(utterance: string): Promise<{ id: string; title: string; score: number } | null> {
+  try {
+    const vec = await embedOne(utterance);
+    if (!vec.length) return null;
+    const [top] = memory.search(vec, { topK: 1, minScore: 0.35 });
+    return top ? { id: top.sessionId, title: top.title || top.id, score: Math.round(top.score * 100) } : null;
+  } catch { return null; }
+}
 // ---- voz ambiente: staging (refinar a fala por voz ANTES de comprometer no chat real) --------
 const CONFIRM_RX = /\b(confirm(o|ar|ado)?|pode (mandar|enviar|ir)|manda(r)?|envia(r)?|isso mesmo|é isso|perfeito|fechou)\b/i;
 const stageEscalatePending = new Map<string, string>(); // sessão -> fala aguardando autorização de escalada
@@ -762,15 +776,38 @@ function resetVoiceSession(): void {
   pushSessions();
 }
 async function runVoiceTask(task: string, speak: boolean, speaker?: string): Promise<void> {
-  const s = store.ensure(WAKE_SESSION);
-  if (s.messages.length === 0) store.reconfigure(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd });
-  await deliverTurn(WAKE_SESSION, { showText: task, model: voiceConfig.model, effort: voiceConfig.effort, speak, speaker });
+  const sid = voiceTarget || WAKE_SESSION; // binding: age na sessão-alvo (evita sessão errada)
+  const s = store.ensure(sid);
+  if (sid === WAKE_SESSION && s.messages.length === 0) store.reconfigure(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd });
+  // sessão vinculada usa o modelo/esforço DELA (undefined → prefs/default); só a de voz usa voiceConfig.
+  await deliverTurn(sid, { showText: task, model: sid === WAKE_SESSION ? voiceConfig.model : undefined, effort: sid === WAKE_SESSION ? voiceConfig.effort : undefined, speak, speaker });
+}
+/** Wake sem contexto: sugere a sessão mais provável (memória semântica) e abre o overlay p/ decidir
+ *  continuar nela ou criar nova. Sem sugestão forte → cai na sessão de voz (comportamento antigo). */
+async function resolveVoice(task: string, speak: boolean, speaker?: string): Promise<void> {
+  const sug = await suggestSession(task);
+  if (sug && sug.id !== WAKE_SESSION && sug.id !== voiceTarget) {
+    voiceResolve = { task, speak, speaker, suggestId: sug.id };
+    broadcast(WAKE_SESSION, { t: "canvas", op: "show", kind: "resolve", title: "🎙 Onde continuar?", utterance: task, suggestion: sug, recents: store.list().slice(0, 20).map((s) => ({ id: s.id, title: s.title })) });
+    await voiceSay(`Isso parece a sessão ${sug.title}. Continuo nela, ou começo uma nova?`);
+    return;
+  }
+  await runVoiceTask(task, speak, speaker);
 }
 
 /** Proactive-voice router: pick agent/model/effort/folder from speech, and confirm
  *  new-vs-continue when a conversation is already in progress. */
 async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): Promise<void> {
   const inProgress = store.ensure(WAKE_SESSION).messages.length > 0;
+  // já vinculado a uma sessão? segue nela (contexto só dela), a menos que peça explicitamente nova/outra.
+  if (voiceTarget && !/\b(nov[ao]|outra sess|do zero|come[çc]ar de novo)\b/i.test(text)) { await runVoiceTask(text, speak, speaker); return; }
+  // resolvendo por VOZ o "continuar/nova" que o overlay perguntou
+  if (voiceResolve) {
+    const rp = voiceResolve;
+    if (/\b(nov[ao]|do zero|outra|come[çc]ar)\b/i.test(text)) { voiceResolve = null; voiceTarget = ""; broadcast(WAKE_SESSION, { t: "canvas", op: "close" }); resetVoiceSession(); await runVoiceTask(rp.task, rp.speak, rp.speaker); return; }
+    if (/\b(continu|sim|isso|nela|essa|pode|manter)\b/i.test(text) && rp.suggestId) { voiceResolve = null; voiceTarget = rp.suggestId; broadcast(WAKE_SESSION, { t: "canvas", op: "close" }); await runVoiceTask(rp.task, rp.speak, rp.speaker); return; }
+    await voiceSay("Diga 'continuar' para seguir na sessão, ou 'nova' para começar do zero."); return;
+  }
   // answering a pending "continuar ou nova?" (cheap, no LLM)
   if (voicePending) {
     const t = voicePending.task;
@@ -778,8 +815,8 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
     if (/\bcontinu|\bsegu|\bmesm[ao]\b|manter/i.test(text)) { voicePending = null; await runVoiceTask(t, speak, speaker); return; }
     voicePending = { task: text }; await voiceSay("Não entendi. Diga 'continuar' para seguir, ou 'nova' para começar do zero."); return;
   }
-  // plain task, fresh session -> run directly (no LLM)
-  if (!inProgress && !VOICE_HINT.test(text)) { await runVoiceTask(text, speak, speaker); return; }
+  // plain task, fresh session -> RESOLVE (sugere a sessão certa via memória; overlay decide)
+  if (!inProgress && !VOICE_HINT.test(text)) { await resolveVoice(text, speak, speaker); return; }
   // plain task, in progress -> ask new-vs-continue
   if (inProgress && !VOICE_HINT.test(text)) { voicePending = { task: text }; await voiceSay("Já tenho uma conversa em andamento. Quer continuar ou começar uma nova?"); return; }
   // command-ish utterance -> one LLM intent pass
@@ -1810,6 +1847,19 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "stage_cancel") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); staging.remove(sid); stageEscalatePending.delete(sid); broadcast(sid, { t: "stage", sessionId: sid, done: true }); return; }
     if (msg.t === "stage_escalate_ok") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), true); return; }
     if (msg.t === "stage_escalate_no") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), false); return; }
+    // voz (wake): sugerir a sessão existente mais provável para a fala (via memória semântica).
+    if (msg.t === "voice_suggest" && typeof msg.utterance === "string") { send(ws, { t: "voice_suggest", utterance: msg.utterance, suggestion: await suggestSession(msg.utterance) }); return; }
+    // voz: escolha do overlay de resolução (continuar em sessão / nova) → vincula e roda a tarefa.
+    if (msg.t === "canvas_choice") {
+      broadcast(WAKE_SESSION, { t: "canvas", op: "close" });
+      const rp = voiceResolve; voiceResolve = null;
+      if (msg.choice === "cancel" || !rp) return;
+      if (msg.choice === "session" && typeof msg.sessionId === "string") voiceTarget = msg.sessionId;
+      else if (msg.choice === "new") { const id = randomUUID(); store.ensure(id, { agent: voiceConfig.agent, cwd: voiceConfig.cwd, title: (rp.task || "Voz").slice(0, 40) }); voiceTarget = id; }
+      else return;
+      await runVoiceTask(rp.task, rp.speak, rp.speaker);
+      return;
+    }
     if (msg.t === "voice_cfg") { send(ws, { t: "voice_cfg", cfg: voiceCfg }); return; }
     if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return; if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: voiceCfg }); return; }
     // QR code of the URL to open on the phone

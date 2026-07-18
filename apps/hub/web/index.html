@@ -488,6 +488,10 @@
   </div></div>
 
 
+  <div id="canvasModal" class="modal hidden"><div class="card" style="min-width:min(520px,94vw);max-width:min(680px,96vw)">
+    <div class="row" style="justify-content:space-between;align-items:center"><b id="canvasTitle">🎙 Jarvis</b><button id="canvasClose" class="ghost" type="button">✕</button></div>
+    <div id="canvasBody" style="margin-top:6px"></div>
+  </div></div>
   <div id="fleetModal" class="modal hidden"><div class="card" style="min-width:min(440px,92vw)">
     <div class="row" style="justify-content:space-between;align-items:center"><b>📊 Painel da frota</b><button id="fleetClose" class="ghost" type="button">Fechar</button></div>
     <div id="fleetBody" class="mut" style="font-size:13px">Carregando…</div>
@@ -620,7 +624,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceEscalate',
+      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceEscalate',
       'setWake','setNoise','setPush','setGate','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -1212,6 +1216,33 @@
     // ---------- painel da frota ----------
     E.fleetBtn.onclick=()=>{ E.fleetBody.innerHTML='Carregando…'; E.fleetModal.classList.remove('hidden'); closeSide(); tx({t:'fleet'}); };
     E.fleetClose.onclick=()=>E.fleetModal.classList.add('hidden');
+    // ---------- canvas: overlay central iterativo (voz: resolução de sessão, pasta, confirmação; depois imagens/diagramas) ----------
+    function hideCanvas(){ E.canvasModal.classList.add('hidden'); }
+    function renderCanvas(m){ if(m.op==='close'){ hideCanvas(); return; }
+      E.canvasTitle.textContent=m.title||'🎙 Jarvis'; const b=E.canvasBody; b.innerHTML='';
+      const mkRow=()=>{ const r=document.createElement('div'); r.className='row'; r.style.cssText='gap:6px;flex-wrap:wrap;margin-top:10px'; return r; };
+      const btn=(txt,cls,fn)=>{ const x=document.createElement('button'); if(cls)x.className=cls; x.textContent=txt; x.style.flex='none'; x.onclick=fn; return x; };
+      if(m.kind==='resolve'){
+        if(m.utterance){ const u=document.createElement('div'); u.className='mut'; u.style.cssText='font-size:12px;margin-bottom:8px'; u.textContent='você: “'+m.utterance+'”'; b.appendChild(u); }
+        const q=document.createElement('div'); q.innerHTML=m.suggestion?('Isso parece a sessão <b>'+esc(m.suggestion.title)+'</b> <span class="mut">('+m.suggestion.score+'%)</span>. Continuar nela ou criar nova?'):'Não achei uma sessão parecida. Continuar na conversa de voz ou criar nova?'; b.appendChild(q);
+        const row=mkRow();
+        if(m.suggestion){ const t=m.suggestion.title||''; row.appendChild(btn('Continuar em “'+(t.length>22?t.slice(0,22)+'…':t)+'”','',()=>tx({t:'canvas_choice',choice:'session',sessionId:m.suggestion.id}))); }
+        row.appendChild(btn('＋ Nova sessão',m.suggestion?'ghost':'',()=>tx({t:'canvas_choice',choice:'new'})));
+        row.appendChild(btn('Escolher outra…','ghost',()=>renderCanvas({kind:'pick',title:m.title,recents:m.recents})));
+        b.appendChild(row);
+      } else if(m.kind==='pick'){
+        const list=document.createElement('div'); list.style.cssText='display:flex;flex-direction:column;gap:5px;max-height:44vh;overflow:auto';
+        ((m.recents&&m.recents.length?m.recents:sessions)||[]).slice(0,20).forEach(s=>list.appendChild(btn(s.title||s.id,'ghost',()=>tx({t:'canvas_choice',choice:'session',sessionId:s.id}))));
+        b.appendChild(list);
+      } else if(m.kind==='confirm'){
+        const t=document.createElement('div'); t.innerHTML=esc(m.text||''); b.appendChild(t);
+        const row=mkRow(); row.style.justifyContent='flex-end'; row.appendChild(btn('Cancelar','ghost',()=>tx({t:'canvas_choice',choice:'cancel'}))); row.appendChild(btn('Confirmar','',()=>tx({t:'canvas_choice',choice:'confirm'}))); b.appendChild(row);
+      } else if(m.kind==='info'){
+        if(m.text){ const t=document.createElement('div'); t.style.whiteSpace='pre-wrap'; t.innerHTML=md(m.text); b.appendChild(t); }
+        if(m.image){ const img=document.createElement('img'); img.src=m.image; img.style.cssText='max-width:100%;border-radius:10px;margin-top:8px'; b.appendChild(img); }
+      }
+      E.canvasModal.classList.remove('hidden'); }
+    E.canvasClose.onclick=()=>{ tx({t:'canvas_choice',choice:'cancel'}); hideCanvas(); };
     function pctBar(w){ const p=Math.min(100,Math.max(0,Math.round(w?.pct||0))); const col=p>=90?'#f43f5e':p>=70?'#f59e0b':'#22c55e';
       return `<div style="background:#ffffff14;border-radius:5px;height:7px;overflow:hidden;margin-top:2px"><div style="width:${p}%;height:100%;background:${col}"></div></div><div class="mut" style="font-size:10.5px">${p}%${w?.resetsAt?' · reseta '+new Date(w.resetsAt).toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}):''}</div>`; }
     function renderFleet(m){ if(!E.fleetBody)return; const T=m.totals||{}; const mm=m.machines||[]; let h='';
@@ -1676,6 +1707,7 @@
         else if(m.t==='stage_heard'){ if(stageEl) showStage({heard:m.text}); }
         else if(m.t==='stage_escalate'){ showStage({escalate:true,reason:m.reason}); }
         else if(m.t==='stage_say'){ /* falado via tts; sem UI extra */ }
+        else if(m.t==='canvas'){ renderCanvas(m); }
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
         else if(m.t==='runs'){ const now=m.active||[]; const finished=[...new Set([...activeRuns,...justSent])].filter(id=>!now.includes(id)); activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; now.forEach(id=>justSent.delete(id)); finished.forEach(id=>onTurnEnd(id)); renderRecents(); refreshComposer(); scheduleAllRefresh(); }
