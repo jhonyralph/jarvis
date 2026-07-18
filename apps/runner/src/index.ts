@@ -56,7 +56,28 @@ const activeRuns = new Set<string>();
 const seenTurns = createSeenSet();
 
 let ws: WebSocket | null = null;
-function send(m: RunnerToHub): void { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); }
+// Outbound resilience (turn resume): while the socket is down a mid-turn agent keeps running here
+// (only an explicit cancel aborts it), so without this its live stream AND its final reply would be
+// silently dropped by send() — the turn finishes into the local store but a viewer on the Hub never
+// sees it (it only reappears if they re-open the session). Buffer the turn-OUTPUT messages emitted
+// during an outage and replay them on reconnect, so the Hub re-forwards them to whoever's watching.
+// Bounded ring (newest kept) so a long turn over a long outage can't grow unbounded — dropping the
+// OLDEST preserves the terminal 'done'/'error', which is the one event that must survive. Control/list
+// messages (register/pong/sessions/caps/runs) are regenerated on reconnect, so they're never buffered.
+const OUTBOX_CAP = 3000;
+const outbox: RunnerToHub[] = [];
+function send(m: RunnerToHub): void {
+  if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(m)); return; }
+  if (m.t === "stream" || m.t === "message") { if (outbox.length >= OUTBOX_CAP) outbox.shift(); outbox.push(m); }
+}
+/** Replay turn output buffered during an outage. Called right after a reconnect's `welcome` (socket
+ *  OPEN again), before the fresh session/caps push, so the resumed stream lands in order. */
+function flushOutbox(): void {
+  if (!outbox.length) return;
+  const pending = outbox.splice(0, outbox.length);
+  console.log(`[runner] reconectado — reenviando ${pending.length} evento(s) de turno bufferizados`);
+  for (const m of pending) send(m);
+}
 
 // --- live mirror of native CLI sessions: tail the jsonl and push new turns as an
 //     EXTERNAL Claude Code (or us) appends them, so the Hub UI updates without refresh. ---
@@ -189,7 +210,7 @@ function connect(): void {
   sock.on("message", async (data) => {
     let m: any; try { m = JSON.parse(data.toString()); } catch { return; }
     try {
-      if (m.t === "welcome") { console.log(`[runner] registered as ${RUNNER_ID} (${hostname()})`); pushSessions(); send({ t: "caps", agent: DEFAULT_AGENT, caps: await agents.describe() }); return; }
+      if (m.t === "welcome") { console.log(`[runner] registered as ${RUNNER_ID} (${hostname()})`); flushOutbox(); pushSessions(); pushRuns(); send({ t: "caps", agent: DEFAULT_AGENT, caps: await agents.describe() }); return; }
       if (m.t === "reject") { console.error(`[runner] rejected by hub: ${m.reason}`); sock.close(); return; }
       if (m.t === "ping") { send({ t: "pong" }); return; }
       if (m.t === "list") { pushSessions(); return; }
