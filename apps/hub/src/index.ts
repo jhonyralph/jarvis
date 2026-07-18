@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -52,6 +52,12 @@ const store = new Store({ agent: agents.default, cwd: CWD });
 const routines = new RoutineStore();
 const memory = new MemoryStore();
 const staging = new StagingStore();
+// Live turn telemetry (latency + error rate per machine) for the fleet dashboard. In-memory rolling
+// window — resets on restart (it's a "how are turns doing now" signal, not an audit trail).
+const metrics = new Metrics();
+// Start time of a remote runner's in-flight turn, keyed "runnerId\0sessionId", so relayRunner can
+// measure its duration when the terminal stream event arrives.
+const remoteTurnStart = new Map<string, number>();
 /** Best-effort: embed a session's digest and upsert it into semantic memory (no-op if the local
  *  embedding model isn't installed). Called after each managed turn via turnCtx.afterTurn. */
 async function indexSession(sid: string): Promise<void> {
@@ -472,9 +478,15 @@ function relayRunner(rc: RunnerConn, m: any): void {
     // Buffer a atividade viva do runner por sessão (igual ao local) pra um refresh no meio do
     // turno remoto reexibir "processando" + as ferramentas em vez de esperar em branco.
     { const sid = m.sessionId, ev = m.ev || {};
-      if (ev.kind === "start") activityBuf.set(sid, []);
+      const mkey = rc.id + "\0" + sid;
+      if (ev.kind === "start") { activityBuf.set(sid, []); remoteTurnStart.set(mkey, Date.now()); }
       else if (ev.kind === "tool" || ev.kind === "text" || ev.kind === "thinking") { const b = activityBuf.get(sid); if (b && b.length < 600) b.push(ev); }
-      else if (ev.kind === "done" || ev.kind === "cancelled" || ev.kind === "error") activityBuf.delete(sid); }
+      else if (ev.kind === "done" || ev.kind === "cancelled" || ev.kind === "error") {
+        activityBuf.delete(sid);
+        const t0 = remoteTurnStart.get(mkey);
+        if (t0 && ev.kind !== "cancelled") metrics.record({ runnerId: rc.id, ms: Date.now() - t0, ok: ev.kind === "done", ts: Date.now() });
+        remoteTurnStart.delete(mkey);
+      } }
     for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage });
     // Turnos de máquina remota terminavam em silêncio: só o cliente conectado ficava sabendo.
     const label = runnerLabels[rc.id] || rc.info.host || rc.id;
@@ -974,10 +986,12 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   localAborts.set(sid, ctrl);
   activeRuns.add(sid); broadcastRuns();
   const buf: any[] = []; activityBuf.set(sid, buf);
+  const t0 = Date.now();
   broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "start" } });
   try {
     const reply = await agent.send(sid, agentText, cwd, { ...opts, signal: ctrl.signal }, (ev) => { if (buf.length < 600) buf.push(ev); broadcast(sid, { t: "stream", sessionId: sid, ev }); });
     addCost(sid, reply.usage?.costUsd);
+    metrics.record({ runnerId: LOCAL_ID, ms: Date.now() - t0, ok: true, ts: Date.now() });
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage, sessionCost: costOf(sid) });
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
     const nativeId = agent.nativeSessionId?.(sid);
@@ -995,6 +1009,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
       broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "cancelled" } });
       throw e;
     }
+    metrics.record({ runnerId: LOCAL_ID, ms: Date.now() - t0, ok: false, ts: Date.now() });
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "error" } });
     notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid);
     throw e;
@@ -1918,7 +1933,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const voicePct = costTotal > 0 ? Math.round((voiceCost / costTotal) * 100) : 0;
       let remoteActive = 0; for (const s of runnerActive.values()) remoteActive += s.size;
       let plan = null; try { const a = agents.get("claude-code"); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
-      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, voiceCost, voicePct }, parseHealth: nativeParseHealth(), plan });
+      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, voiceCost, voicePct }, metrics: { overall: metrics.overall(), runners: metrics.byRunner() }, parseHealth: nativeParseHealth(), plan });
       return;
     }
     // --- semantic memory: search by MEANING (local embeddings) + owner reindex ---
