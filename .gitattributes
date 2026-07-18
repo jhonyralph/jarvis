@@ -1,0 +1,4 @@
+# Keep tests out of the distributable tarball (scripts/pack.sh uses `git archive`).
+# They're dev-only and pull in node:test; runners never run them.
+*.test.ts export-ignore
+.github/ export-ignore

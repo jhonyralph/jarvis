@@ -18,7 +18,7 @@ import { join, normalize, dirname, basename } from "node:path";
 import QRCode from "qrcode";
 import webpush from "web-push";
 import { fileURLToPath } from "node:url";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, ABORTED, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
 import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
@@ -27,10 +27,11 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, type Routine } from "@jarvis/core";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
+import { runManagedTurn, type TurnCtx } from "./turn.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
@@ -47,6 +48,7 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new MockAgentAdapter());
 const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });
+const routines = new RoutineStore();
 // dedicated, locked-agent/cwd session that the machine wake listener injects into
 store.ensure(WAKE_SESSION, { agent: process.env.JARVIS_WAKE_AGENT || agents.default, cwd: process.env.JARVIS_WAKE_CWD || CWD, title: "Voz (Jarvis)" });
 
@@ -63,18 +65,18 @@ const summaryCfg: { agent: string; model: string; effort: string } = (() => {
   const d = { agent: process.env.JARVIS_SEARCH_AGENT || "claude-code", model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(SUMMARY_FILE, "utf8")) }; } catch { return d; }
 })();
-function saveSummaryCfg(): void { try { mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(SUMMARY_FILE, JSON.stringify(summaryCfg, null, 2)); } catch { /* ignore */ } }
+function saveSummaryCfg(): void { try { writeJsonAtomic(SUMMARY_FILE, summaryCfg, { pretty: true }); } catch { /* ignore */ } }
 let vapid: { publicKey: string; privateKey: string };
 try {
   vapid = JSON.parse(readFileSync(VAPID_FILE, "utf8"));
 } catch {
   vapid = webpush.generateVAPIDKeys();
-  try { mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(VAPID_FILE, JSON.stringify(vapid)); } catch { /* ignore */ }
+  try { writeJsonAtomic(VAPID_FILE, vapid); } catch { /* ignore */ }
 }
 webpush.setVapidDetails("mailto:jarvis@localhost", vapid.publicKey, vapid.privateKey);
 let pushSubs: any[] = [];
 try { pushSubs = JSON.parse(readFileSync(SUBS_FILE, "utf8")); } catch { pushSubs = []; }
-function saveSubs(): void { try { mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(SUBS_FILE, JSON.stringify(pushSubs)); } catch { /* ignore */ } }
+function saveSubs(): void { try { writeJsonAtomic(SUBS_FILE, pushSubs); } catch { /* ignore */ } }
 // --- notifications ---------------------------------------------------------
 // Prefs live ON the subscription: each device decides for itself. A phone in your pocket wants
 // "session done, grouped"; the desktop you're staring at may want nothing. A single global
@@ -148,6 +150,8 @@ const MIME: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".webmanifest": "application/manifest+json",
 };
 
 // Hardening headers on every response — clickjacking, sniffing, referrer leak,
@@ -284,7 +288,7 @@ function maybeWarnInsecure(req: any): void {
 }
 /** Owner-only gate for the security/admin messages. Returns the principal or null (and errors). */
 function requireOwner(ws: WebSocket): Conn | null {
-  if (!auth.AUTH_ENABLED) return { userId: "local", role: "owner", name: "Local", deviceId: null };
+  if (!auth.AUTH_ENABLED) return { userId: "local", role: "owner", name: "Local", deviceId: null, verified: true };
   const p = principalOf(ws);
   if (!p || p.role !== "owner") { send(ws, { t: "error", message: "apenas o dono pode gerenciar dispositivos" }); return null; }
   return p;
@@ -323,7 +327,7 @@ function dropRevoked(): void {
 // ---- runner registry: machine 0 (this host, in-process) + remote runners (dial /runner) ----
 const RUNNERS_FILE = join(JARVIS_DIR, "runners.json");
 const runnerLabels: Record<string, string> = (() => { try { return JSON.parse(readFileSync(RUNNERS_FILE, "utf8")); } catch { return {}; } })();
-function saveRunnerLabels(): void { try { writeFileSync(RUNNERS_FILE, JSON.stringify(runnerLabels, null, 2)); } catch { /* ignore */ } }
+function saveRunnerLabels(): void { try { writeJsonAtomic(RUNNERS_FILE, runnerLabels, { pretty: true }); } catch { /* ignore */ } }
 interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastSeen: number; local: boolean; }
 const runners = new Map<string, RunnerConn>();
 const runnerSockets = new Set<WebSocket>();
@@ -562,6 +566,21 @@ function recentDirsList(n = 10): string[] {
 }
 function sessionsPayload(): unknown { return { t: "sessions", sessions: allSessions(), recentDirs: recentDirsList(), runnerId: LOCAL_ID }; }
 function pushSessions(): void { const p = sessionsPayload(); for (const c of clientsOn(LOCAL_ID)) send(c, p); }
+/** Unified "all machines" view: local sessions + every ONLINE runner's sessions, each tagged with
+ *  its runnerId + machine label so the UI can badge them and route an open to the owning machine.
+ *  Remote lists are fetched concurrently with a per-runner timeout — a silent machine just yields
+ *  nothing instead of hanging the whole view. */
+async function aggregateAllSessions(): Promise<any[]> {
+  const localLabel = runnerLabels[LOCAL_ID] || runners.get(LOCAL_ID)?.info.host || "Servidor";
+  const out: any[] = allSessions().map((s) => ({ ...s, runnerId: LOCAL_ID, machine: localLabel }));
+  const online = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN);
+  const lists = await Promise.all(online.map((rc) => runnerSessions(rc).then((ss) => ({ rc, ss })).catch(() => ({ rc, ss: [] as any[] }))));
+  for (const { rc, ss } of lists) {
+    const label = runnerLabels[rc.id] || rc.info.host || rc.id;
+    for (const s of ss) out.push({ ...s, runnerId: rc.id, machine: label });
+  }
+  return out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
 function sendSessions(ws: WebSocket): void { send(ws, sessionsPayload()); }
 
 /** What to SPEAK for an agent reply: short answers are read verbatim (cleaned); long ones are
@@ -579,27 +598,67 @@ async function speechForReply(replyText: string): Promise<string> {
   } catch { return speechifyCapped(replyText); }
 }
 
+// The ONE managed-turn context (see turn.ts): wires the shared lifecycle to the hub's real store,
+// broadcast, agent runner and TTS. Every managed-session turn below routes through runManagedTurn(turnCtx,…).
+const turnCtx: TurnCtx = {
+  ensure: (sid) => store.ensure(sid),
+  resolveAgentName: (n) => agents.get(n).name,
+  add: (sid, msg) => store.add(sid, msg),
+  broadcast: (sid, msg) => broadcast(sid, msg as any),
+  pushSessions: () => pushSessions(),
+  now: () => Date.now(),
+  runAgentTurn: (sid, agentName, agentText, cwd, opts) => agentTurn(sid, agents.get(agentName), agentText, cwd, opts),
+  speak: async (sid, replyText) => {
+    const spoken = await speechForReply(replyText);
+    if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
+  },
+  // Per-session spend cap (opt-in): JARVIS_SESSION_COST_CAP=<usd>. 0/unset = no cap (default, no
+  // behavior change). Stops a runaway session from spending indefinitely without a human in the loop.
+  checkBudget: (sid) => {
+    const cap = Number(process.env.JARVIS_SESSION_COST_CAP) || 0;
+    const spent = costOf(sid);
+    if (cap > 0 && spent >= cap) return { blocked: true, message: `Esta sessão já custou $${spent.toFixed(2)} (limite $${cap.toFixed(2)}). Ajuste JARVIS_SESSION_COST_CAP ou continue em outra sessão.` };
+    return { blocked: false };
+  },
+};
+
 /** One full turn against a session's agent: store+broadcast the user msg, get the reply, speak if asked. */
 async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; speak?: boolean; speaker?: string }): Promise<void> {
-  const session = store.ensure(sid);
-  const agent = agents.get(session.agent);
-  const now = Date.now();
-  store.add(sid, { role: "user", text: opts.showText, ts: now, agent: agent.name, speaker: opts.speaker });
-  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: opts.showText, ts: now, agent: agent.name, speaker: opts.speaker } });
-  pushSessions();
-  try {
-    const reply = await agentTurn(sid, agent, opts.agentText ?? opts.showText, session.cwd, { model: opts.model, effort: opts.effort });
-    store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name, activity: reply.activity });
-    pushSessions();
-    if (opts.speak) {
-      const spoken = await speechForReply(reply.text);
-      if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
-    }
-  } catch (e: any) {
-    const message = String(e?.message ?? e);
-    broadcast(sid, { t: "error", message, limit: /limit|rate|quota|exceeded|usage/i.test(message) });
-  }
+  await runManagedTurn(turnCtx, sid, {
+    showText: opts.showText, agentText: opts.agentText, model: opts.model, effort: opts.effort,
+    speaker: opts.speaker, speak: opts.speak,
+    onError: (message, limit) => broadcast(sid, { t: "error", message, limit }),
+  });
 }
+
+/** Run a scheduled routine in its own session, then push/speak the result. Goes through the shared
+ *  turn lifecycle, so agentTurn's own "done" push notification fires — the user gets briefed even
+ *  with the app closed. NOTE: the session's agent/cwd lock on first run; editing a routine's
+ *  agent/folder later won't move an existing routine session (delete+recreate to change those). */
+async function runRoutine(r: Routine): Promise<void> {
+  const sid = "routine-" + r.id;
+  store.ensure(sid, { agent: r.agent || agents.default, cwd: r.cwd || CWD, title: "⏰ " + r.name });
+  await runManagedTurn(turnCtx, sid, {
+    showText: r.prompt, model: r.model, effort: r.effort, speak: !!r.speak,
+    onError: (message) => notifyEvent("error", "⏰ " + r.name, message, sid),
+  });
+}
+/** Owner-only routine management (list / add / update / delete / run-now). */
+function handleRoutineMsg(ws: WebSocket, msg: any): boolean {
+  const listMsg = () => ({ t: "routines" as const, routines: routines.list().map((r) => ({ ...r, label: scheduleLabel(r) })) });
+  if (msg.t === "routines") { if (!requireOwner(ws)) return true; send(ws, listMsg()); return true; }
+  if (msg.t === "routine_add") { if (!requireOwner(ws)) return true; routines.add(msg.routine || {}); send(ws, listMsg()); return true; }
+  if (msg.t === "routine_update" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; routines.update(msg.id, msg.patch || {}); send(ws, listMsg()); return true; }
+  if (msg.t === "routine_del" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; routines.remove(msg.id); send(ws, listMsg()); return true; }
+  if (msg.t === "routine_run" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; const r = routines.get(msg.id); if (r) void runRoutine(r); send(ws, listMsg()); return true; }
+  return false;
+}
+// Scheduler: every 30s, fire any routine whose local HH:MM matches now (markRun BEFORE running so a
+// sub-minute re-tick can't double-fire; isDue also guards it). ~2 ticks/minute → never misses a minute.
+setInterval(() => {
+  const now = new Date();
+  for (const r of routines.due(now)) { routines.markRun(r.id, now.getTime()); void runRoutine(r); }
+}, 30_000).unref?.();
 
 /** Jarvis speaks a short control line into the voice session (not from the agent). */
 async function voiceSay(text: string): Promise<void> {
@@ -671,7 +730,7 @@ const activityBuf = new Map<string, any[]>();
 // Fila POR SESSÃO, dona no HUB (não mais só no navegador): toda web vendo a sessão enxerga a MESMA
 // fila, e o flush roda no servidor quando o turno termina — sobrevive mesmo que o dispositivo que
 // enfileirou saia. Cada item guarda texto + anexos (+ model/effort do envio original).
-type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean }>; model?: string; effort?: string; runnerId?: string };
+type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean }>; model?: string; effort?: string; runnerId?: string; msgId?: string };
 const queues = new Map<string, QueueItem[]>();
 function queueOf(sid: string): QueueItem[] { let q = queues.get(sid); if (!q) { q = []; queues.set(sid, q); } return q; }
 function broadcastQueue(sid: string): void { broadcast(sid, { t: "queue", sessionId: sid, items: queueOf(sid).map((q) => ({ text: q.text, atts: q.atts })) }); }
@@ -684,8 +743,7 @@ function saveQueues(): void {
     const now = Date.now();
     const obj: Record<string, { items: QueueItem[]; ts: number }> = {};
     for (const [sid, items] of queues) if (items.length) obj[sid] = { items, ts: now };
-    mkdirSync(JARVIS_DIR, { recursive: true });
-    writeFileSync(QUEUES_FILE, JSON.stringify(obj));
+    writeJsonAtomic(QUEUES_FILE, obj);
   } catch { /* ignore */ }
 }
 function loadQueues(): void {
@@ -703,7 +761,7 @@ function addCost(sid: string, usd?: number): void {
   if (!usd || !isFinite(usd)) return;
   const e = sessionCost.get(sid) || { cost: 0, ts: 0 };
   e.cost += usd; e.ts = Date.now(); sessionCost.set(sid, e);
-  try { const obj: Record<string, { cost: number; ts: number }> = {}; for (const [s, v] of sessionCost) obj[s] = v; mkdirSync(JARVIS_DIR, { recursive: true }); writeFileSync(COST_FILE, JSON.stringify(obj)); } catch { /* ignore */ }
+  try { const obj: Record<string, { cost: number; ts: number }> = {}; for (const [s, v] of sessionCost) obj[s] = v; writeJsonAtomic(COST_FILE, obj); } catch { /* ignore */ }
 }
 /** Reconcile a hub session against its bound NATIVE transcript. If the hub was killed mid-turn
  *  (restart, crash), the spawned `claude -p --resume <id>` child can keep running as an orphan
@@ -781,18 +839,10 @@ async function flushQueue(sid: string): Promise<void> {
   queues.set(sid, []); broadcastQueue(sid); saveQueues();   // limpa ANTES de rodar (evita re-flush do mesmo)
   const viewer = [...wss.clients].find((c) => c.readyState === c.OPEN && subs.get(c as WebSocket) === sid) as WebSocket | undefined;
   try {
-    if (rid) { const rc = runners.get(rid); if (rc?.ws) sendToRunner(rc, { t: "send", sessionId: sid, text, attachments: atts, model, effort }); return; } // runner: relaya como envio normal
+    if (rid) { const rc = runners.get(rid); if (rc?.ws) sendToRunner(rc, { t: "send", sessionId: sid, text, attachments: atts, model, effort, turnId: (items.find((q) => q.msgId)?.msgId) || randomUUID() }); return; } // runner: relaya como envio normal (turnId = idempotência)
     if (isNativeId(sid)) { await deliverNativeTurn(viewer ?? null, sid, text, { model, effort, attachments: atts }); return; }
-    const session = store.ensure(sid);
-    const agent = agents.get(session.agent);
     const { agentText, showText, images, files } = buildAttachments(atts, text);
-    const now = Date.now();
-    store.add(sid, { role: "user", text: showText, ts: now, agent: agent.name, images, files });
-    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: agent.name, images, files } });
-    pushSessions();
-    const reply = await agentTurn(sid, agent, agentText, session.cwd, { model, effort });
-    store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name, activity: reply.activity });
-    pushSessions();
+    await runManagedTurn(turnCtx, sid, { showText, agentText, model, effort, images, files, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
   } catch (e: any) { broadcast(sid, { t: "error", message: String(e?.message ?? e) }); }
 }
 /** Replay the buffered live activity of an IN-PROGRESS local turn to a client that just (re)opened
@@ -991,10 +1041,16 @@ async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): P
 }
 /** LITERAL full-text filter over title + full conversation of ALL sessions (managed + native),
  *  like grepping every session file. No LLM, no audio — just the sessions that contain the terms. */
-function literalSearch(query: string): SessionHit[] {
+// Literal (grep-like) search, split so results can be delivered in stages: managed sessions are
+// in-memory (instant), native sessions read from disk (the slow part). Title matches rank first,
+// then content, each newest-first.
+function sortHits(hits: SessionHit[]): SessionHit[] {
+  return hits.sort((a, b) => (a.where === b.where ? b.updatedAt - a.updatedAt : a.where === "title" ? -1 : 1));
+}
+/** Managed (Jarvis-owned) sessions whose title/conversation contains ALL query tokens — from memory. */
+function searchManaged(query: string): SessionHit[] {
   const tokens = query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean);
   if (!tokens.length) return [];
-  // managed sessions: full messages are in memory, scan title + every message text
   const own: SessionHit[] = [];
   for (const meta of store.list()) {
     const msgs = store.history(meta.id);
@@ -1007,13 +1063,16 @@ function literalSearch(query: string): SessionHit[] {
     const inContent = idx >= meta.title.length + 1;
     own.push({ id: meta.id, title: meta.title, agent: meta.agent, cwd: meta.cwd, updatedAt: meta.updatedAt, where: inContent ? "content" : "title", snippet: inContent ? snippetAround(hay, idx, primary.length) : meta.title });
   }
-  // native sessions: exclude the ones already bound to a managed session (same dedup as allSessions)
-  const ownIds = new Set(store.list().map((s) => s.id));
-  const boundNative = new Set<string>();
-  for (const s of store.list()) { try { const nid = agents.get(s.agent)?.nativeSessionId?.(s.id); if (nid) boundNative.add((s.agent === "codex" ? "codex:" : "claude:") + nid); } catch { /* ignore */ } }
-  const native = searchNative(query).filter((h) => !ownIds.has(h.id) && !boundNative.has(h.id));
-  // title matches first (most relevant), then content matches, each newest-first
-  return [...own, ...native].sort((a, b) => (a.where === b.where ? b.updatedAt - a.updatedAt : a.where === "title" ? -1 : 1));
+  return own;
+}
+/** Native session ids that are already represented by a managed session (dedup, same as allSessions). */
+function nativeExcludeIds(): Set<string> {
+  const ex = new Set<string>();
+  for (const s of store.list()) {
+    ex.add(s.id);
+    try { const nid = agents.get(s.agent)?.nativeSessionId?.(s.id); if (nid) ex.add((s.agent === "codex" ? "codex:" : "claude:") + nid); } catch { /* ignore */ }
+  }
+  return ex;
 }
 /** Summarize ONE session with the cheapest model + lowest effort, speak it, and reply
  *  only to the asker. NOT stored in history — it's a standalone "read it to me" action. */
@@ -1190,6 +1249,89 @@ async function handleVerify(ws: WebSocket, msg: any, req: any): Promise<void> {
   await sendInitialState(ws);
 }
 
+/** Owner-only security/admin messages (devices, invites, roles, runner tokens, passphrase). Returns
+ *  true if it handled `msg`. Extracted VERBATIM from the router to shrink the god-function; these
+ *  handlers are self-contained and single-registered, so lifting them out changes no control flow. */
+function handleSecurityMsg(ws: WebSocket, msg: any): boolean {
+  if (msg.t === "sec_state") { if (!requireOwner(ws)) return true; secState(ws); return true; }
+  if (msg.t === "sec_invite") {
+    const p = requireOwner(ws); if (!p) return true;
+    const role = msg.role === "owner" ? "owner" : "member";
+    // ttlSec 0 = sem expiração (permanente); senão entre 1min e 1 ano
+    const raw = Number(msg.ttlSec);
+    const ttlSec = raw === 0 ? 0 : Math.min(Math.max(raw || 86400, 60), 365 * 86400);
+    const runners = Array.isArray(msg.runners) ? msg.runners.filter((x: any) => typeof x === "string") : [];
+    const { code, invite } = auth.mintInvite(p.userId, { role, runners, ttlSec });
+    send(ws, { t: "sec_invite_created", code, invite });
+    secState(ws);
+    return true;
+  }
+  if (msg.t === "sec_revoke_device" && typeof msg.deviceId === "string") {
+    if (!requireOwner(ws)) return true;
+    auth.revokeDevice(msg.deviceId);
+    dropRevoked();
+    secState(ws);
+    return true;
+  }
+  if (msg.t === "sec_set_role" && typeof msg.deviceId === "string" && (msg.role === "owner" || msg.role === "member")) {
+    if (!requireOwner(ws)) return true;
+    if (auth.setDeviceRole(msg.deviceId, msg.role)) refreshPrincipalRole(msg.deviceId, msg.role);
+    else send(ws, { t: "error", message: "não é possível (precisa de ao menos 1 dono)" });
+    secState(ws);
+    return true;
+  }
+  if (msg.t === "sec_revoke_all") {
+    const p = requireOwner(ws); if (!p) return true;
+    if (p.deviceId) auth.revokeAllExcept(p.deviceId);
+    dropRevoked();
+    secState(ws);
+    return true;
+  }
+  if (msg.t === "sec_revoke_invite" && typeof msg.inviteId === "string") {
+    if (!requireOwner(ws)) return true;
+    auth.revokeInvite(msg.inviteId);
+    secState(ws);
+    return true;
+  }
+  // --- machines (runners): mint a per-machine token / revoke one (owner) ---
+  if (msg.t === "mint_runner") {
+    const p = requireOwner(ws); if (!p) return true;
+    const label = (typeof msg.label === "string" && msg.label.trim()) ? msg.label.trim().slice(0, 40) : "Nova máquina";
+    const rid = "m-" + randomUUID().slice(0, 8);
+    const token = auth.mintRunnerToken(rid, label);
+    auth.audit("mint_runner", { userId: p.userId, detail: label });
+    send(ws, { t: "runner_token", runnerId: rid, label, token });
+    secState(ws);
+    return true;
+  }
+  if (msg.t === "sec_revoke_runner" && typeof msg.runnerId === "string") {
+    if (!requireOwner(ws)) return true;
+    auth.revokeRunnerToken(msg.runnerId);
+    const rc = runners.get(msg.runnerId); if (rc && rc.ws) { try { rc.ws.close(); } catch { /* ignore */ } }
+    runners.delete(msg.runnerId); if (runnerLabels[msg.runnerId]) { delete runnerLabels[msg.runnerId]; saveRunnerLabels(); }
+    broadcastMachines(); secState(ws);
+    return true;
+  }
+  // owner passphrase (2nd factor): set/change/clear
+  if (msg.t === "set_pass" && typeof msg.new === "string") {
+    if (!requireOwner(ws)) return true;
+    try { auth.setPassphrase(msg.new); } catch (e: any) { send(ws, { t: "error", message: String(e?.message ?? e) }); return true; }
+    // don't kick sessions that are already in — only future/reconnecting ones need the passphrase
+    for (const c of wss.clients) { const pr = principals.get(c as WebSocket); if (pr) pr.verified = true; }
+    send(ws, { t: "pass_set", enabled: true });
+    secState(ws);
+    return true;
+  }
+  if (msg.t === "clear_pass") {
+    if (!requireOwner(ws)) return true;
+    auth.clearPassphrase();
+    send(ws, { t: "pass_set", enabled: false });
+    secState(ws);
+    return true;
+  }
+  return false;
+}
+
 wss.on("connection", (ws: WebSocket, req: any) => {
   const ip = guard.clientIp(req);
   // connection cap (per IP + global) — blunts connection-flood DoS.
@@ -1258,6 +1400,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       runnerLabels[msg.runnerId] = msg.label.slice(0, 40); saveRunnerLabels(); broadcastMachines(); secState(ws); return;
     }
+    // unified "all machines" view: aggregate local + every online runner's sessions (tagged).
+    if (msg.t === "listAll") {
+      aggregateAllSessions().then((sessions) => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "sessions", runnerId: "all", sessions, recentDirs: recentDirsList() }); }).catch(() => { /* ignore */ });
+      return;
+    }
     // when viewing a REMOTE machine, session ops are forwarded to that runner
     {
       const ar = activeRunner(ws);
@@ -1275,7 +1422,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (msg.t === "send" && typeof msg.text === "string") {
           const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || "default");
           auth.audit("send", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: ar, detail: `${sid}: ${String(msg.text).slice(0, 80)}` });
-          sendToRunner(rc, { t: "send", sessionId: sid, text: msg.text, opts: { model: msg.model, effort: msg.effort } });
+          sendToRunner(rc, { t: "send", sessionId: sid, text: msg.text, opts: { model: msg.model, effort: msg.effort }, turnId: (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID() });
           return;
         }
       }
@@ -1431,7 +1578,26 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "search" && typeof msg.query === "string") {
       // Filtro LITERAL sobre título + conteúdo de todas as sessões (como grep). Sem LLM, sem áudio —
       // a busca semântica/falada continua no caminho de voz (looksLikeCrossSessionQuery).
-      send(ws, { t: "searchResult", query: msg.query, hits: literalSearch(msg.query) });
+      // Staged delivery so results appear FAST and grow: managed sessions (in-memory) render
+      // instantly; then the most-recent native sessions; then the full native sweep. Each message
+      // carries the full accumulated set + a `done` flag, so the client just replaces + shows
+      // "buscando mais…" until done. setImmediate lets each batch paint before the next disk scan.
+      {
+        const q = msg.query;
+        const managed = searchManaged(q);
+        const exclude = nativeExcludeIds();
+        const NAT = Number(process.env.JARVIS_NATIVE_LIMIT) || 40;
+        send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done: false });
+        const stage = (limit: number, done: boolean): void => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          try {
+            const nat = searchNative(q, limit).filter((h) => !exclude.has(h.id));
+            send(ws, { t: "searchResult", query: q, hits: sortHits([...managed, ...nat]), done });
+          } catch { send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done }); }
+        };
+        // most-recent 10 native first (quick), then the full sweep — or straight to full if the cap is ≤10.
+        setImmediate(() => { if (NAT > 10) { stage(10, false); setImmediate(() => stage(NAT, true)); } else stage(NAT, true); });
+      }
       return;
     }
     // per-session "resumir e falar" — cheap one-shot, spoken, not stored in history
@@ -1500,83 +1666,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (r.ok) scheduleRestart();
       return;
     }
-    // --- security admin (owner-only): connected devices + invites + revoke ---
-    if (msg.t === "sec_state") { if (!requireOwner(ws)) return; secState(ws); return; }
-    if (msg.t === "sec_invite") {
-      const p = requireOwner(ws); if (!p) return;
-      const role = msg.role === "owner" ? "owner" : "member";
-      // ttlSec 0 = sem expiração (permanente); senão entre 1min e 1 ano
-      const raw = Number(msg.ttlSec);
-      const ttlSec = raw === 0 ? 0 : Math.min(Math.max(raw || 86400, 60), 365 * 86400);
-      const runners = Array.isArray(msg.runners) ? msg.runners.filter((x: any) => typeof x === "string") : [];
-      const { code, invite } = auth.mintInvite(p.userId, { role, runners, ttlSec });
-      send(ws, { t: "sec_invite_created", code, invite });
-      secState(ws);
-      return;
-    }
-    if (msg.t === "sec_revoke_device" && typeof msg.deviceId === "string") {
-      if (!requireOwner(ws)) return;
-      auth.revokeDevice(msg.deviceId);
-      dropRevoked();
-      secState(ws);
-      return;
-    }
-    if (msg.t === "sec_set_role" && typeof msg.deviceId === "string" && (msg.role === "owner" || msg.role === "member")) {
-      if (!requireOwner(ws)) return;
-      if (auth.setDeviceRole(msg.deviceId, msg.role)) refreshPrincipalRole(msg.deviceId, msg.role);
-      else send(ws, { t: "error", message: "não é possível (precisa de ao menos 1 dono)" });
-      secState(ws);
-      return;
-    }
-    if (msg.t === "sec_revoke_all") {
-      const p = requireOwner(ws); if (!p) return;
-      if (p.deviceId) auth.revokeAllExcept(p.deviceId);
-      dropRevoked();
-      secState(ws);
-      return;
-    }
-    if (msg.t === "sec_revoke_invite" && typeof msg.inviteId === "string") {
-      if (!requireOwner(ws)) return;
-      auth.revokeInvite(msg.inviteId);
-      secState(ws);
-      return;
-    }
-    // --- machines (runners): mint a per-machine token / revoke one (owner) ---
-    if (msg.t === "mint_runner") {
-      const p = requireOwner(ws); if (!p) return;
-      const label = (typeof msg.label === "string" && msg.label.trim()) ? msg.label.trim().slice(0, 40) : "Nova máquina";
-      const rid = "m-" + randomUUID().slice(0, 8);
-      const token = auth.mintRunnerToken(rid, label);
-      auth.audit("mint_runner", { userId: p.userId, detail: label });
-      send(ws, { t: "runner_token", runnerId: rid, label, token });
-      secState(ws);
-      return;
-    }
-    if (msg.t === "sec_revoke_runner" && typeof msg.runnerId === "string") {
-      if (!requireOwner(ws)) return;
-      auth.revokeRunnerToken(msg.runnerId);
-      const rc = runners.get(msg.runnerId); if (rc && rc.ws) { try { rc.ws.close(); } catch { /* ignore */ } }
-      runners.delete(msg.runnerId); if (runnerLabels[msg.runnerId]) { delete runnerLabels[msg.runnerId]; saveRunnerLabels(); }
-      broadcastMachines(); secState(ws);
-      return;
-    }
-    // owner passphrase (2nd factor): set/change/clear
-    if (msg.t === "set_pass" && typeof msg.new === "string") {
-      if (!requireOwner(ws)) return;
-      try { auth.setPassphrase(msg.new); } catch (e: any) { send(ws, { t: "error", message: String(e?.message ?? e) }); return; }
-      // don't kick sessions that are already in — only future/reconnecting ones need the passphrase
-      for (const c of wss.clients) { const pr = principals.get(c as WebSocket); if (pr) pr.verified = true; }
-      send(ws, { t: "pass_set", enabled: true });
-      secState(ws);
-      return;
-    }
-    if (msg.t === "clear_pass") {
-      if (!requireOwner(ws)) return;
-      auth.clearPassphrase();
-      send(ws, { t: "pass_set", enabled: false });
-      secState(ws);
-      return;
-    }
+    // --- security admin (owner-only): devices, invites, roles, runner tokens, passphrase ---
+    if (handleSecurityMsg(ws, msg)) return;
+    // --- routines (owner-only): scheduled prompts ---
+    if (handleRoutineMsg(ws, msg)) return;
     // QR code of the URL to open on the phone
     if (msg.t === "qr" && typeof msg.url === "string") {
       try { send(ws, { t: "qr", url: msg.url, dataUri: await QRCode.toDataURL(msg.url, { width: 300, margin: 1 }) }); }
@@ -1591,25 +1684,16 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
-      const ag = agents.get(s.agent);
-      const now = Date.now();
-      store.add(s.id, { role: "user", text: msg.text, ts: now, agent: s.agent });
-      broadcast(s.id, { t: "message", message: { sessionId: s.id, role: "user", text: msg.text, ts: now, agent: s.agent } });
-      pushSessions();
-      try {
-        const reply = await agentTurn(s.id, ag, msg.text, s.cwd, { model: msg.model, effort: msg.effort });
-        store.add(s.id, { role: "assistant", text: reply.text, ts: Date.now(), agent: s.agent });
-        pushSessions();
-      } catch (e: any) {
-        send(ws, { t: "error", message: String(e?.message ?? e) });
-      }
+      // routes through the shared lifecycle — which (unlike the old inline copy) also persists the
+      // assistant's activity trace, so a reload of a session driven via sendTo keeps its tool blocks.
+      await runManagedTurn(turnCtx, s.id, { showText: msg.text, model: msg.model, effort: msg.effort, onError: (message) => send(ws, { t: "error", message }) });
       return;
     }
 
     // Fila dona no hub: enfileirar / remover um / limpar. Sempre re-transmite a fila a todos que
     // veem a sessão (sincroniza entre dispositivos). O flush em si roda no fim do turno (flushQueue).
     if (msg.t === "enqueue" && typeof msg.sessionId === "string" && (typeof msg.text === "string" || Array.isArray(msg.attachments))) {
-      { const rid = activeRunner(ws); queueOf(msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, runnerId: rid !== LOCAL_ID ? rid : undefined }); }
+      { const rid = activeRunner(ws); queueOf(msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined }); }
       broadcastQueue(msg.sessionId); saveQueues(); return;
     }
     if (msg.t === "dequeue" && typeof msg.sessionId === "string" && typeof msg.index === "number") {
@@ -1714,37 +1798,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
 
     // --- normal Jarvis session (agent + cwd locked at creation) ---
-    const session = store.ensure(sid);
-    const agent = agents.get(session.agent);
-
     // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
     const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
-    text = showText;
-
-    const now = Date.now();
-    // User message -> store + broadcast to everyone on this session (so all UIs show it).
-    store.add(sid, { role: "user", text, ts: now, agent: agent.name, speaker, images, files });
-    broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts: now, agent: agent.name, speaker, images, files } });
-    pushSessions();
-
-    try {
-      const opts = { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined };
-      const reply = await agentTurn(sid, agent, agentText, session.cwd, opts);
-      store.add(sid, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name, activity: reply.activity });
-      pushSessions();
-
-      if (msg.speak) {
-        const spoken = await speechForReply(reply.text); // clean text, not raw markdown
-        if (spoken) {
-          const wav = await synthesize(spoken, VOICE);
-          broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken });
-        }
-      }
-    } catch (e: any) {
-      const message = String(e?.message ?? e);
-      const limit = /limit|rate|quota|exceeded|usage/i.test(message);
-      send(ws, { t: "error", message, limit });
-    }
+    await runManagedTurn(turnCtx, sid, {
+      showText, agentText,
+      model: typeof msg.model === "string" ? msg.model : undefined,
+      effort: typeof msg.effort === "string" ? msg.effort : undefined,
+      speaker, images, files, speak: !!msg.speak,
+      onError: (message, limit) => send(ws, { t: "error", message, limit }),
+    });
   });
 
   // Initial state — pushed AFTER the message listener is attached. With auth ON,

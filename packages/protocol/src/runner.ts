@@ -55,7 +55,7 @@ export interface RunnerMsg {
 
 /** Live activity while an agent works, mirrored to the streaming UI. */
 export interface RunnerStreamEvent {
-  kind: "start" | "text" | "tool" | "thinking" | "done" | "error";
+  kind: "start" | "text" | "tool" | "thinking" | "done" | "error" | "cancelled";
   text?: string; // text / thinking chunk, or final text on "done"
   name?: string; // tool name (Bash, Edit, Read…)
   summary?: string; // tool one-liner ("Editando foo.ts")
@@ -107,6 +107,8 @@ export type RunnerToHub =
   | { t: "message"; sessionId: string; message: RunnerMsg }
   | { t: "activity"; sessionId: string; name?: string; summary?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[] }
   | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; truncated?: boolean; error?: string }
+  /** directory listing for the folder browser (reply to Hub->Runner "listdir") */
+  | { t: "dirs"; reqId: string; path: string; parent: string; entries: string[] }
   | { t: "runs"; active: string[] }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" };
@@ -123,6 +125,13 @@ export type HubToRunner =
       agent?: string;
       cwd?: string;
       opts?: { model?: string; effort?: string };
+      /** idempotency key — the Runner executes a given turnId at most once (dedupes re-delivery:
+       *  client resend on reconnect, queue re-flush, WS redelivery). See @jarvis/core createSeenSet. */
+      turnId?: string;
+      /** attachments carried by a queue flush (top-level model/effort accompany them) */
+      attachments?: Array<{ name: string; content: string; image?: boolean }>;
+      model?: string;
+      effort?: string;
     }
   | { t: "list" }
   | { t: "delete"; sessionId?: string; sessionIds?: string[]; alsoNative?: boolean }

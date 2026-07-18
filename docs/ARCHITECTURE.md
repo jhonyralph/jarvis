@@ -2,7 +2,8 @@
 
 ## Principles
 
-1. **Security first.** No third-party storage. All data local (SQLite + files).
+1. **Security first.** No third-party storage. All data local (crash-safe JSON
+   snapshots + files; see `packages/core/src/persist.ts`).
    Transport is **Tailscale only** (private WireGuard, no public exposure).
 2. **Agnostic.** Never lock to one agent, one voice engine, or one transport.
    Everything external is behind a swappable **adapter**.
@@ -13,8 +14,10 @@
 
 ## Topology: Hub + Runners + Clients
 
-- **Hub** — one always-on machine. Owns the local **SQLite** DB (sessions,
-  messages, transcripts). Serves the chat **PWA**. Hosts the local **voice**
+- **Hub** — one always-on machine. Owns the local store (sessions, messages,
+  transcripts) as **atomic JSON snapshots** under `~/.jarvis` — every write is
+  temp-file + fsync + rename with a `.bak`, so a crash can't corrupt or lose it.
+  Serves the chat **PWA**. Hosts the local **voice**
   services (STT/TTS). Registers Runners and **routes** messages. Reached over
   Tailscale.
 - **Runner** — one per desktop. Registers with the Hub and runs `AgentAdapter`s
@@ -56,7 +59,8 @@ desktop A, hear it on the phone and desktop B.
 
 ## Data & security model
 
-- **Storage:** SQLite + local files on the Hub machine. Nothing leaves.
+- **Storage:** crash-safe (atomic) JSON snapshots + local files on the Hub
+  machine. Nothing leaves.
 - **Network:** Tailscale tailnet only. No ports exposed publicly.
 - **Encryption:** Tailscale (WireGuard) end-to-end on the wire.
 - **External calls:** only the agent's inference API (Claude/Codex). Voice is
@@ -65,6 +69,6 @@ desktop A, hear it on the phone and desktop B.
 ## Build phases
 
 1. **Local voice on the machine** — prove STT+TTS locally. *(TTS ✅)*
-2. **Hub** — SQLite + WS server + Runner registration + one `ClaudeCodeAdapter`.
+2. **Hub** — local store (atomic JSON) + WS server + Runner registration + one `ClaudeCodeAdapter`.
 3. **PWA** — chat on mobile + desktop over Tailscale; push-to-talk + listener.
 4. **Codex adapter + multi-desktop + wake word.**

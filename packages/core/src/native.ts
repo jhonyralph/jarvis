@@ -13,6 +13,7 @@
 import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename, dirname } from "node:path";
+import { writeJsonAtomic, readJson } from "./persist.js";
 
 export interface NativeMeta {
   id: string;
@@ -155,10 +156,10 @@ function contentText(c: any): string {
 const TITLES_FILE = join(homedir(), ".jarvis", "native-titles.json");
 let titleStore: Record<string, string> | null = null;
 function loadTitles(): Record<string, string> {
-  if (!titleStore) { try { titleStore = JSON.parse(readFileSync(TITLES_FILE, "utf8")); } catch { titleStore = {}; } }
-  return titleStore;
+  if (!titleStore) titleStore = readJson<Record<string, string>>(TITLES_FILE, {});
+  return titleStore ?? {};
 }
-function saveTitles(): void { try { mkdirSync(dirname(TITLES_FILE), { recursive: true }); writeFileSync(TITLES_FILE, JSON.stringify(titleStore)); } catch { /* ignore */ } }
+function saveTitles(): void { try { writeJsonAtomic(TITLES_FILE, titleStore ?? {}); } catch { /* ignore */ } }
 /** Congela o 1º ai-title real visto; depois disso, sempre o mesmo (estável). `fallback` (custom-title
  *  ou 1ª mensagem) é usado só enquanto ainda não há ai-title — e NÃO é congelado. */
 function stableTitle(id: string, latestAi: string, fallback: string): string {
@@ -381,8 +382,12 @@ export function deleteNative(id: string): boolean {
   return true;
 }
 
+/** The message roles Jarvis surfaces from a native transcript (matches the Runner↔Hub protocol's
+ *  RunnerMsg.role). On-disk values are normalized to these; anything else is dropped upstream. */
+export type MsgRole = "user" | "assistant" | "system" | "tool";
+
 export type NativeEvent =
-  | { kind: "message"; role: string; text: string; ts: number }
+  | { kind: "message"; role: MsgRole; text: string; ts: number }
   // path/adds/dels/rows so a LIVE-mirrored tool block matches what a page refresh shows:
   // clickable file, +/- counts, expandable diff. Without them the tail rendered a bare "Editando".
   | { kind: "tool"; name: string; summary: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[] };
@@ -569,7 +574,7 @@ function findFileById(id: string): { path: string; claude: boolean } | null {
   return hit ? { path: hit.path, claude } : null;
 }
 
-export interface HistMsg { role: string; text: string; ts: number; name?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; }
+export interface HistMsg { role: MsgRole; text: string; ts: number; name?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; }
 /** Full read-only history of one native session — text turns AND tool activity (role:"tool"),
  *  interleaved in order, so the "editando/criando arquivo" blocks survive a page refresh. */
 // `diffLimit` bounds how many tool items get their file stats computed. Each Edit stat runs an
@@ -590,6 +595,31 @@ function inputContextOf(u: any): number | undefined {
   const n = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
   return n || undefined;
 }
+// ---- parse-health telemetry -------------------------------------------------
+// The native readers reverse-engineer an UNDOCUMENTED on-disk format, so an upstream CLI change
+// degrades SILENTLY: a non-empty transcript that suddenly parses to zero messages is the tell.
+// We count that and warn (throttled) so a format break surfaces HERE instead of as a user
+// "my history went blank" much later. The Hub can also surface nativeParseHealth() in a status view.
+const PARSE_HEALTH = { parses: 0, emptyNonEmptyFiles: 0, lastEmptyPath: "", lastEmptyAt: 0 };
+let lastParseWarnAt = 0;
+function noteParse(path: string, bytes: number, produced: number): void {
+  PARSE_HEALTH.parses++;
+  if (bytes > 2048 && produced === 0) {
+    PARSE_HEALTH.emptyNonEmptyFiles++;
+    PARSE_HEALTH.lastEmptyPath = path;
+    PARSE_HEALTH.lastEmptyAt = Date.now();
+    if (PARSE_HEALTH.lastEmptyAt - lastParseWarnAt > 60_000) {
+      lastParseWarnAt = PARSE_HEALTH.lastEmptyAt;
+      console.warn(`[native] AVISO: transcript de ${bytes} bytes parseou 0 mensagens — possível mudança no formato on-disk do CLI: ${path}`);
+    }
+  }
+}
+/** Snapshot of native-parse health. `emptyNonEmptyFiles` = non-empty transcripts that parsed to
+ *  zero messages — the early signal that an upstream (Claude/Codex) format change broke the reader. */
+export function nativeParseHealth(): { parses: number; emptyNonEmptyFiles: number; lastEmptyPath: string; lastEmptyAt: number } {
+  return { ...PARSE_HEALTH };
+}
+
 export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   if (!isNativeId(id)) return null;
   const f = findFileById(id);
@@ -650,6 +680,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
     const st = toolFileStat(r.name, r.input);
     r.m.path = st.path; r.m.adds = st.adds; r.m.dels = st.dels; r.m.rows = st.rows;
   }
+  noteParse(f.path, raw.length, messages.length); // format-drift telemetry (non-empty file, 0 msgs)
   const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: inputContextOf(lastUsage), model: lastModel || undefined, effort: lastEffort || undefined };
   if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
   return data;

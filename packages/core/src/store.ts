@@ -3,9 +3,9 @@
  * an **agent** and a **working folder**, both **locked** once it exists (only the
  * model/effort change per message). All data lives on the Hub machine.
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { writeJsonAtomic, readJson } from "./persist.js";
 
 export interface StoredMessage {
   role: "user" | "assistant" | "system";
@@ -39,31 +39,31 @@ interface SessionData {
   messages: StoredMessage[];
 }
 
-const DIR = join(homedir(), ".jarvis", "hub");
-const FILE = join(DIR, "sessions.json");
+/** Honors JARVIS_HOME (matches auth.ts) so a sandboxed runner / test run can relocate all state. */
+const JARVIS_HOME = process.env.JARVIS_HOME || homedir();
 
 export class Store {
   private data: Record<string, SessionData> = {};
+  private readonly file: string;
 
-  constructor(private defaults: { agent: string; cwd: string }) {
-    if (!existsSync(FILE)) return;
-    try {
-      const raw = JSON.parse(readFileSync(FILE, "utf8"));
-      for (const [id, v] of Object.entries(raw)) {
-        if (Array.isArray(v)) continue; // drop v0 test data
-        const s = v as Partial<SessionData>;
-        this.data[id] = {
-          id,
-          title: s.title || "Conversa",
-          agent: s.agent || defaults.agent,
-          cwd: s.cwd || defaults.cwd,
-          createdAt: s.createdAt ?? Date.now(),
-          updatedAt: s.updatedAt ?? Date.now(),
-          messages: s.messages ?? [],
-        };
-      }
-    } catch {
-      this.data = {};
+  /** `dir` overrides the storage directory (tests / sandbox); defaults to ~/.jarvis/hub. */
+  constructor(private defaults: { agent: string; cwd: string }, dir?: string) {
+    this.file = join(dir || join(JARVIS_HOME, ".jarvis", "hub"), "sessions.json");
+    // readJson recovers from `.bak` if the primary is torn/corrupt, so a bad file degrades to the
+    // last good snapshot instead of wiping every session (the old bare read fell straight to {}).
+    const raw = readJson<Record<string, unknown>>(this.file, {});
+    for (const [id, v] of Object.entries(raw)) {
+      if (Array.isArray(v)) continue; // drop v0 test data
+      const s = v as Partial<SessionData>;
+      this.data[id] = {
+        id,
+        title: s.title || "Conversa",
+        agent: s.agent || defaults.agent,
+        cwd: s.cwd || defaults.cwd,
+        createdAt: s.createdAt ?? Date.now(),
+        updatedAt: s.updatedAt ?? Date.now(),
+        messages: s.messages ?? [],
+      };
     }
   }
 
@@ -178,7 +178,8 @@ export class Store {
   }
 
   private flush(): void {
-    if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true });
-    writeFileSync(FILE, JSON.stringify(this.data, null, 2));
+    // Atomic write (temp + fsync + rename) with a `.bak` of the previous good file — a crash
+    // mid-write can no longer truncate sessions.json and take all history with it.
+    writeJsonAtomic(this.file, this.data, { pretty: true });
   }
 }

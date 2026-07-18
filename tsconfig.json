@@ -1,0 +1,16 @@
+{
+  "//": "Root TYPECHECK config (npm run typecheck / lint). Covers every package + app + test in one pass, no emit. The per-package tsconfigs remain for any manual `tsc` build; the run path uses tsx and needs neither.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"]
+  },
+  "include": ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts"],
+  "exclude": ["node_modules", "**/dist"]
+}

@@ -17,6 +17,7 @@ import { randomBytes, createHash, timingSafeEqual, scryptSync } from "node:crypt
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { writeJsonAtomic } from "@jarvis/core";
 
 const HOME = process.env.JARVIS_HOME || homedir();
 const DIR = join(HOME, ".jarvis");
@@ -25,7 +26,7 @@ const CLAIM_FILE = join(DIR, "claim-code.txt");
 const AUDIT_FILE = join(DIR, "audit.log");
 
 // ---- audit (append-only attribution; see docs/multi-runner.md 4d) ----
-export function audit(event: string, info: { userId?: string; deviceId?: string; runnerId?: string; ip?: string; detail?: string } = {}): void {
+export function audit(event: string, info: { userId?: string | null; deviceId?: string | null; runnerId?: string | null; ip?: string; detail?: string } = {}): void {
   try { appendFileSync(AUDIT_FILE, JSON.stringify({ ts: Date.now(), event, ...info }) + "\n"); } catch { /* never block on audit */ }
 }
 export function readAudit(limit = 100): any[] {
@@ -68,7 +69,7 @@ function load(): AuthData {
     return { ...fresh(), ...d, grants: d.grants || {} };
   } catch { return fresh(); }
 }
-function save(d: AuthData): void { writeFileSync(AUTH_FILE, JSON.stringify(d, null, 2)); }
+function save(d: AuthData): void { writeJsonAtomic(AUTH_FILE, d, { pretty: true }); }
 
 let data = load();
 

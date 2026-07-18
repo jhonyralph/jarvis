@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
-  updateApply, restartService, readProjectFile, repoCommit,
+  updateApply, restartService, readProjectFile, repoCommit, createSeenSet,
   type AgentAdapter, type SendOpts,
 } from "@jarvis/core";
 
@@ -51,6 +51,9 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new MockAgentAdapter());
 const store = new Store({ agent: DEFAULT_AGENT, cwd: CWD });
 const activeRuns = new Set<string>();
+// Idempotency: turnIds already executed here. `activeRuns` only blocks a CONCURRENT duplicate;
+// this makes a re-delivered send (reconnect resend / queue re-flush / WS redelivery) run at most once.
+const seenTurns = createSeenSet();
 
 let ws: WebSocket | null = null;
 function send(m: RunnerToHub): void { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); }
@@ -242,7 +245,12 @@ function connect(): void {
         pushSessions();
         return;
       }
-      if (m.t === "send" && typeof m.sessionId === "string") { await doSend(m.sessionId, String(m.text ?? ""), m.agent, m.cwd, m.opts); return; }
+      if (m.t === "send" && typeof m.sessionId === "string") {
+        // idempotency: skip a turnId we already executed (dedupe re-delivery — see seenTurns).
+        if (typeof m.turnId === "string" && m.turnId && !seenTurns.add(m.turnId)) { console.log(`[runner] turno duplicado ignorado (turnId=${m.turnId})`); return; }
+        await doSend(m.sessionId, String(m.text ?? ""), m.agent, m.cwd, m.opts);
+        return;
+      }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }
       if (m.t === "update") {
         console.log("[runner] update solicitado pelo Hub...", m.force ? "(forçado)" : "");

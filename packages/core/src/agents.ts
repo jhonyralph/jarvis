@@ -15,6 +15,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { toolFileStat } from "./native.js";
+import { writeJsonAtomic } from "./persist.js";
 
 /** For a file tool_use, extract the real path, +/- counts and this edit's diff rows, live. */
 function fileToolStat(name: string, input: any): { path?: string; adds?: number; dels?: number; rows?: unknown[] } {
@@ -175,7 +176,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     try { return new Map(Object.entries(JSON.parse(readFileSync(this.sessionsFile, "utf8")))); } catch { return new Map(); }
   }
   private saveSessions(): void {
-    try { mkdirSync(join(homedir(), ".jarvis"), { recursive: true }); writeFileSync(this.sessionsFile, JSON.stringify(Object.fromEntries(this.sessions))); } catch { /* ignore */ }
+    try { writeJsonAtomic(this.sessionsFile, Object.fromEntries(this.sessions)); } catch { /* ignore */ }
   }
   nativeSessionId(sessionId: string): string | undefined {
     return this.sessions.get(sessionId);
@@ -348,7 +349,7 @@ export class CodexAdapter implements AgentAdapter {
     try { return new Map(Object.entries(JSON.parse(readFileSync(this.sessionsFile, "utf8")))); } catch { return new Map(); }
   }
   private saveSessions(): void {
-    try { mkdirSync(join(homedir(), ".jarvis"), { recursive: true }); writeFileSync(this.sessionsFile, JSON.stringify(Object.fromEntries(this.sessions))); } catch { /* ignore */ }
+    try { writeJsonAtomic(this.sessionsFile, Object.fromEntries(this.sessions)); } catch { /* ignore */ }
   }
   nativeSessionId(sessionId: string): string | undefined {
     return this.sessions.get(sessionId);

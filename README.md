@@ -179,6 +179,7 @@ Everything is an env var — no secrets in the repo.
 | `JARVIS_VOICE` | — | Piper voice model |
 | `JARVIS_SUMMARY_MODEL` | `haiku` | Model for spoken summaries/digest (cheap on purpose) |
 | `JARVIS_HISTORY_CAP` | `120` | Messages sent when opening a session |
+| `JARVIS_SESSION_COST_CAP` | `0` | Per-session USD spend cap (`0` = off). A turn is refused before it runs once the session's cumulative cost reaches this — a runaway can't keep spending unattended |
 | `JARVIS_PUBLIC_URL` | — | Base URL used in invite links |
 | `JARVIS_REQUIRE_TLS` / `JARVIS_TRUST_PROXY` | off | Set both when behind a TLS proxy |
 | `JARVIS_HUB` / `JARVIS_TOKEN` / `JARVIS_LABEL` | — | Runner: where to connect, and as whom |
@@ -204,13 +205,21 @@ npm --prefix apps/hub start        # Hub    (tsx, no build step)
 npm --prefix apps/runner start     # Runner
 ```
 
-There is **no typecheck in the run path** — `tsx` strips types without checking
-them. Before pushing:
+The run path uses `tsx`, which strips types without checking them, so type
+errors only surface if you ask. Do that before pushing (CI runs the same on
+every push/PR — see `.github/workflows/ci.yml`):
 
 ```sh
-npx tsc --noEmit --skipLibCheck --module esnext --target es2022 \
-        --moduleResolution bundler apps/hub/src/index.ts
+npm run typecheck   # tsc --noEmit across every package + app
+npm test            # node --test (persistence, store, native parsers, auth, guard)
+npm run check       # both of the above
 ```
+
+State is persisted as **crash-safe JSON** via `writeJsonAtomic`
+([`packages/core/src/persist.ts`](packages/core/src/persist.ts)): temp-file +
+fsync + atomic rename with a `.bak`, so a crash mid-write can't corrupt or lose
+a session file (it recovers from the backup). Not SQLite — no native deps, which
+keeps `npm install` trivial across a heterogeneous runner fleet.
 
 The web client is a single hand-written
 [`apps/hub/web/index.html`](apps/hub/web/index.html) — no framework, no bundler.
