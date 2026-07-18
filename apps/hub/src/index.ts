@@ -2137,6 +2137,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
     }
     if (!text) return;
+    // Relevance gate for VOICE going straight into a session (the push-to-talk mic): the mic may have
+    // caught noise or you talking to someone else. Typed `send` is always intentional (skipped); the
+    // WAKE path has its own gate (with a control-answer skip) inside handleVoiceTurn, so only the
+    // direct-to-session voice case is gated here. Fail-open, so a real command is never lost.
+    if (msg.t === "voice" && sid !== WAKE_SESSION && !(await relevanceGate(text, recentContextOf(sid)))) {
+      send(ws, { t: "voice_ignored", sessionId: sid, text });
+      return;
+    }
     { const _p = principalOf(ws); auth.audit("send", { userId: _p?.userId, deviceId: _p?.deviceId, detail: `${sid}: ${String(text).slice(0, 80)}` }); }
 
     // Meta-question about other sessions? -> cross-session search (typed or spoken).
