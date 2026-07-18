@@ -406,6 +406,20 @@ async function refreshUpdate(doBroadcast = true): Promise<void> {
 /** Apply the Hub update and restart (via the service manager) so the new code takes effect. */
 function scheduleRestart(): void { broadcastAll({ t: "update_progress", message: "Nova versão aplicada — reiniciando." }); setTimeout(() => { try { restartService("hub"); } catch { /* ignore */ } process.exit(0); }, 900); }
 function activeRunner(ws: WebSocket): string { return clientRunner.get(ws) || LOCAL_ID; }
+/** Per-runner authorization — the "access to the Hub == a shell on the machine" boundary. The owner
+ *  reaches every machine; a member only the runners granted in their invite (auth.grants). Auth off =
+ *  fully trusted. This is the DRIVE gate (select + act), enforced for BOTH the local machine and remote
+ *  runners, so it also covers the default unselected case (activeRunner falls back to LOCAL_ID). */
+function canUseRunner(ws: WebSocket, rid: string): boolean {
+  if (!auth.AUTH_ENABLED) return true;
+  const p = principalOf(ws);
+  if (!p) return false;
+  if (p.role === "owner") return true;
+  return auth.canAccessRunner(p.userId, rid);
+}
+// The session ops that act on a machine (local or the selected runner). A member without a grant for
+// the target machine may not run any of these — mirrors the forwarded-op list below.
+const RUNNER_OPS = new Set(["list", "open", "send", "new", "listdir", "configure", "readfile", "readdiff", "delete"]);
 /** Client sockets (not runner sockets) currently viewing a given machine. */
 function clientsOn(runnerId: string): WebSocket[] {
   const out: WebSocket[] = [];
@@ -631,10 +645,13 @@ function pushSessions(): void { const p = sessionsPayload(); for (const c of cli
  *  its runnerId + machine label so the UI can badge them and route an open to the owning machine.
  *  Remote lists are fetched concurrently with a per-runner timeout — a silent machine just yields
  *  nothing instead of hanging the whole view. */
-async function aggregateAllSessions(): Promise<any[]> {
+async function aggregateAllSessions(ws?: WebSocket): Promise<any[]> {
+  // Filter to the machines this connection may use so the "all machines" view never leaks sessions
+  // from a runner a member wasn't granted. No ws (internal callers) => unfiltered.
+  const canUse = (rid: string) => !ws || canUseRunner(ws, rid);
   const localLabel = runnerLabels[LOCAL_ID] || runners.get(LOCAL_ID)?.info.host || "Servidor";
-  const out: any[] = allSessions().map((s) => ({ ...s, runnerId: LOCAL_ID, machine: localLabel }));
-  const online = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN);
+  const out: any[] = canUse(LOCAL_ID) ? allSessions().map((s) => ({ ...s, runnerId: LOCAL_ID, machine: localLabel })) : [];
+  const online = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUse(r.id));
   const lists = await Promise.all(online.map((rc) => runnerSessions(rc).then((ss) => ({ rc, ss })).catch(() => ({ rc, ss: [] as any[] }))));
   for (const { rc, ss } of lists) {
     const label = runnerLabels[rc.id] || rc.info.host || rc.id;
@@ -1553,10 +1570,16 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       return;
     }
 
+    // --- per-runner authorization (drive gate) -------------------------------
+    // A member may only act on machines granted in their invite; the owner has all. Checked BEFORE
+    // routing and for both local + remote, so the default (unselected → LOCAL_ID) case is covered too.
+    if (RUNNER_OPS.has(msg.t) && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
+
     // --- machine selection + routing to remote runners -----------------------
     if (msg.t === "machines") { send(ws, { t: "machines", machines: machineList() }); return; }
     if (msg.t === "runner" && typeof msg.runnerId === "string") {
       const target = runners.has(msg.runnerId) ? msg.runnerId : LOCAL_ID;
+      if (!canUseRunner(ws, target)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
       clientRunner.set(ws, target); subs.delete(ws);
       send(ws, { t: "machines", machines: machineList() });
       if (target === LOCAL_ID) sendSessions(ws);
@@ -1569,7 +1592,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // unified "all machines" view: aggregate local + every online runner's sessions (tagged).
     if (msg.t === "listAll") {
-      aggregateAllSessions().then((sessions) => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "sessions", runnerId: "all", sessions, recentDirs: recentDirsList() }); }).catch(() => { /* ignore */ });
+      aggregateAllSessions(ws).then((sessions) => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "sessions", runnerId: "all", sessions, recentDirs: recentDirsList() }); }).catch(() => { /* ignore */ });
       return;
     }
     // when viewing a REMOTE machine, session ops are forwarded to that runner
