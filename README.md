@@ -82,6 +82,21 @@ Everything external enters through a swappable adapter (`AgentAdapter`,
 git clone https://github.com/jhonyralph/jarvis && cd jarvis
 ```
 
+**Guided setup (recommended)** — one command that installs deps, writes config,
+registers the autostart service, starts the Hub, prints your **claim code**, and
+ends with a health check:
+
+```sh
+# macOS / Linux
+sh scripts/jarvis-setup.sh
+```
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\jarvis-setup.ps1
+```
+
+Or do it by hand:
+
 ```sh
 # macOS / Linux
 sh scripts/install-hub.sh
