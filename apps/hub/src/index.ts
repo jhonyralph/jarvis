@@ -1638,6 +1638,18 @@ async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
   return false;
 }
 
+/** Notifications message group, lifted from the router VERBATIM: web-push (VAPID) subscribe/prefs/
+ *  unsubscribe + the native-app (FCM) token register/unregister. Returns true if it handled `msg`. */
+function handlePushMsg(ws: WebSocket, msg: any): boolean {
+  if (msg.t === "pushkey") { send(ws, { t: "pushkey", key: vapid.publicKey }); return true; }
+  if (msg.t === "subscribe" && msg.sub) { addSub(msg.sub, msg.prefs); send(ws, { t: "pushok" }); return true; }
+  if (msg.t === "push_prefs" && typeof msg.endpoint === "string") { setSubPrefs(msg.endpoint, msg.prefs); send(ws, { t: "pushok" }); return true; }
+  if (msg.t === "unsubscribe" && typeof msg.endpoint === "string") { removeSub(msg.endpoint); return true; }
+  if (msg.t === "mobile_push_register" && typeof msg.token === "string") { mobilePush.register(msg.token, msg.platform === "ios" ? "ios" : "android", msg.events); send(ws, { t: "pushok" }); return true; }
+  if (msg.t === "mobile_push_unregister" && typeof msg.token === "string") { mobilePush.remove(msg.token); return true; }
+  return false;
+}
+
 wss.on("connection", (ws: WebSocket, req: any) => {
   const ip = guard.clientIp(req);
   // connection cap (per IP + global) — blunts connection-flood DoS.
@@ -1998,14 +2010,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       catch (e: any) { send(ws, { t: "error", message: "qr: " + String(e?.message ?? e) }); }
       return;
     }
-    // Web Push subscribe/unsubscribe + VAPID public key
-    if (msg.t === "pushkey") { send(ws, { t: "pushkey", key: vapid.publicKey }); return; }
-    if (msg.t === "subscribe" && msg.sub) { addSub(msg.sub, msg.prefs); send(ws, { t: "pushok" }); return; }
-    if (msg.t === "push_prefs" && typeof msg.endpoint === "string") { setSubPrefs(msg.endpoint, msg.prefs); send(ws, { t: "pushok" }); return; }
-    if (msg.t === "unsubscribe" && typeof msg.endpoint === "string") { removeSub(msg.endpoint); return; }
-    // Native app (Capacitor/FCM) token registration — the mobile counterpart of subscribe/unsubscribe.
-    if (msg.t === "mobile_push_register" && typeof msg.token === "string") { mobilePush.register(msg.token, msg.platform === "ios" ? "ios" : "android", msg.events); send(ws, { t: "pushok" }); return; }
-    if (msg.t === "mobile_push_unregister" && typeof msg.token === "string") { mobilePush.remove(msg.token); return; }
+    // notifications (web-push + native FCM) → handlePushMsg (extração verbatim, mesma posição)
+    if (handlePushMsg(ws, msg)) return;
     if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
