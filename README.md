@@ -182,7 +182,12 @@ Everything is an env var — no secrets in the repo.
 | `JARVIS_SESSION_COST_CAP` | `0` | Per-session USD spend cap (`0` = off). A turn is refused before it runs once the session's cumulative cost reaches this — a runaway can't keep spending unattended |
 | `JARVIS_PUBLIC_URL` | — | Base URL used in invite links |
 | `JARVIS_REQUIRE_TLS` / `JARVIS_TRUST_PROXY` | off | Set both when behind a TLS proxy |
+| `JARVIS_AUDIT_MAX_MB` | `5` | Audit-log rotation cap. At the size the current `audit.log` becomes `audit.log.1` (one generation kept) and a fresh log starts |
 | `JARVIS_HUB` / `JARVIS_TOKEN` / `JARVIS_LABEL` | — | Runner: where to connect, and as whom |
+
+The Hub also answers an unauthenticated `GET /health` (`/healthz`) on the UI port
+returning `{ok,uptime,runners}` — for a monitor, `tailscale serve` health, or a load
+balancer. It leaks only coarse status (no hostnames/ids).
 
 More knobs (rate limits, TTS tuning, wake word, voice gate) are read straight
 from the environment — `grep -r JARVIS_ apps packages` for the full list.

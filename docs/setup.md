@@ -3,16 +3,17 @@
 ## The repository
 
 Jarvis is **one repository** — a monorepo at `…/jarvis` (`apps/hub`, `apps/runner`,
-`packages/*`). There are **no separate repos**. Today it is **local-only (no git
-remote)**, so a fresh machine has nowhere to `git clone` from. Pick one:
+`packages/*`). There are **no separate repos**. It lives on a **private git remote**
+(`origin` → `github.com/jhonyralph/jarvis`), so a machine **with access** can just
+`git clone <url>` and later `git pull` to update (this is what the README shows). If
+a machine can't reach the remote, package it instead:
 
-- **Recommended — push it to a private git remote** (GitHub private, or a
-  self-hosted git). Then each machine does `git clone <url>` and later `git pull`
-  to update. (You choose the host; publishing code is your call.)
-- **No remote — package it:** on the Hub machine run `scripts/pack.ps1` (Windows)
-  or `scripts/pack.sh` (mac/Linux) → produces `jarvis-dist.tgz` (committed tree,
-  no node_modules). Copy it to the other machine, `tar -xzf` it, done. Update =
-  re-pack and re-extract.
+- **Recommended — clone from the remote:** `git clone <url>` then `git pull` to
+  update. The repo is private — granting access is your call.
+- **No remote access — package it:** on the Hub machine run `scripts/pack.ps1`
+  (Windows) or `scripts/pack.sh` (mac/Linux) → produces `jarvis-dist.tgz`
+  (committed tree, no node_modules). Copy it to the other machine, `tar -xzf` it,
+  done. Update = re-pack and re-extract.
 - Or just **copy the folder** (minus `node_modules`) over the network.
 
 ## How the pieces fit
