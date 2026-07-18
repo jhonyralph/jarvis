@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -93,8 +93,9 @@ function saveSummaryCfg(): void { try { writeJsonAtomic(SUMMARY_FILE, summaryCfg
 // Voz ambiente (staging): política de escalada de modelo + modelos rápido/upgrade. Persistido.
 // escalate: "ask" (avisa e pede autorização por voz) | "auto" (sobe sozinho) | "<modelId>" (sobe pra esse).
 const VOICE_CFG_FILE = join(JARVIS_DIR, "voice-cfg.json");
-const voiceCfg: { escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string } = (() => {
-  const d = { escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high" };
+const voiceCfg: { escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string } = (() => {
+  // relevance: "on" (padrão — filtra falas que não são comando/relacionadas antes de despachar) | "off".
+  const d = { escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high", relevance: (process.env.JARVIS_VOICE_RELEVANCE || "on") };
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(VOICE_CFG_FILE, "utf8")) }; } catch { return d; }
 })();
 function saveVoiceCfg(): void { try { writeJsonAtomic(VOICE_CFG_FILE, voiceCfg, { pretty: true }); } catch { /* ignore */ } }
@@ -894,7 +895,41 @@ async function resolveVoice(task: string, speak: boolean, speaker?: string): Pro
 
 /** Proactive-voice router: pick agent/model/effort/folder from speech, and confirm
  *  new-vs-continue when a conversation is already in progress. */
+/** Recent topic/context of a session (title + last few messages), for the relevance gate to judge
+ *  whether a spoken follow-up is on-topic. Trimmed hard — this only needs the gist. */
+function recentContextOf(sid: string): string {
+  try {
+    const s = store.get(sid);
+    if (!s) return "";
+    const msgs = (s.messages || []).slice(-3).map((m: any) => `${m.role === "user" ? "você" : "jarvis"}: ${String(m.text || "").slice(0, 200)}`);
+    return [s.title ? `Sessão: ${s.title}` : "", ...msgs].filter(Boolean).join("\n").slice(0, 800);
+  } catch { return ""; }
+}
+/** Fast-model relevance gate: true = dispatch to a session, false = ignore (noise / a conversation
+ *  with someone else / off-topic). FAIL-OPEN — any error/unparseable verdict returns true, so a glitch
+ *  never swallows a real command. Empty/garbage transcripts are dropped without even a model call. */
+async function relevanceGate(text: string, context: string): Promise<boolean> {
+  if (voiceCfg.relevance === "off") return true;
+  if (!text || text.trim().length < 2) return false;
+  try {
+    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    if (!agent?.oneShot) return true;
+    const reply = await agent.oneShot(buildRelevancePrompt(text, context), { model: voiceCfg.fastModel, effort: voiceCfg.fastEffort });
+    const v = parseRelevanceVerdict(String(reply?.text ?? ""));
+    if (!v.relevant) console.log(`[voz] descartado (irrelevante${v.reason ? ": " + v.reason : ""}): "${text.slice(0, 60)}"`);
+    return v.relevant;
+  } catch { return true; }
+}
 async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): Promise<void> {
+  // Relevance gate: unless we're waiting on a short control answer (continuar/nova/…), a captured
+  // utterance must first pass a fast-model check that it's actually meant for Jarvis — not background
+  // noise or you talking to someone else. If it fails, ignore it (no session dispatch).
+  if (!voiceResolve && !voicePending) {
+    if (!(await relevanceGate(text, voiceTarget ? recentContextOf(voiceTarget) : ""))) {
+      broadcast(WAKE_SESSION, { t: "voice_ignored", text });
+      return;
+    }
+  }
   const inProgress = store.ensure(WAKE_SESSION).messages.length > 0;
   // já vinculado a uma sessão? segue nela (contexto só dela), a menos que peça explicitamente nova/outra.
   if (voiceTarget && !/\b(nov[ao]|outra sess|do zero|come[çc]ar de novo)\b/i.test(text)) { await runVoiceTask(text, speak, speaker); return; }
@@ -1601,7 +1636,7 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
     return true;
   }
   if (msg.t === "voice_cfg") { send(ws, { t: "voice_cfg", cfg: voiceCfg }); return true; }
-  if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return true; if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: voiceCfg }); return true; }
+  if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return true; if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; if (typeof msg.relevance === "string") voiceCfg.relevance = msg.relevance; saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: voiceCfg }); return true; }
   return false;
 }
 

@@ -12,3 +12,4 @@ export * from "./staging.js";
 export * from "./metrics.js";
 export * from "./version.js";
 export * from "./outbox.js";
+export * from "./relevance.js";
