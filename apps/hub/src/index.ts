@@ -12,7 +12,7 @@
  */
 import { createServer } from "node:http";
 import { randomUUID, randomBytes } from "node:crypto";
-import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join, normalize, dirname, basename } from "node:path";
 import QRCode from "qrcode";
@@ -2113,14 +2113,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (typeof msg.speaker === "string") speaker = msg.speaker; // wake listener already identified it
     } else if (msg.t === "voice" && typeof msg.audio === "string") {
       const audio = Buffer.from(msg.audio, "base64");
+      const t0 = Date.now();
+      let raw: string;
       try {
-        text = await transcribe(audio, msg.lang, msg.ext);
-        text = await correctTranscript(text); // limpa erros de reconhecimento (termos técnicos etc.)
+        raw = await transcribe(audio, msg.lang, msg.ext); // RAW — correction runs below, parallel to the gate
       } catch (e: any) {
         send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) });
         return;
       }
+      const sttMs = Date.now() - t0;
       // who spoke? label the message and, if the gate is on, reject unknown voices.
+      const tSpk = Date.now();
       try {
         const id = await identifySpeaker(audio, msg.ext || "webm", voiceThreshold);
         if (id.known && id.name) speaker = id.name;
@@ -2135,16 +2138,24 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       } catch (e: any) {
         console.error("[speaker]", String(e?.message ?? e)); // speaker-id must never block the conversation
       }
+      const spkMs = Date.now() - tSpk;
+      // Correction + relevance in PARALLEL — both are independent fast-model calls on the raw text, so
+      // running them together costs ONE round-trip's latency instead of two (was serial). Typed `send`
+      // never gets here; the WAKE path has its own gate (with a control-answer skip) in handleVoiceTurn.
+      const tPre = Date.now();
+      const needGate = voiceCfg.relevance !== "off" && sid !== WAKE_SESSION;
+      const [corrected, relevant] = await Promise.all([
+        correctTranscript(raw),
+        needGate ? relevanceGate(raw, recentContextOf(sid)) : Promise.resolve(true),
+      ]);
+      const preMs = Date.now() - tPre;
+      // Timing to a file (hub.log doesn't capture stdout post-boot) so we can see WHERE the latency is.
+      try { appendFileSync(join(JARVIS_DIR, "voice-timing.log"), `${new Date().toISOString()} stt=${sttMs}ms speaker=${spkMs}ms correção+gate=${preMs}ms relevante=${relevant} "${String(raw).slice(0, 50)}"\n`); } catch { /* ignore */ }
+      send(ws, { t: "voice_timing", stt: sttMs, speaker: spkMs, preflight: preMs });
+      if (!relevant) { send(ws, { t: "voice_ignored", sessionId: sid, text: corrected }); return; }
+      text = corrected;
     }
     if (!text) return;
-    // Relevance gate for VOICE going straight into a session (the push-to-talk mic): the mic may have
-    // caught noise or you talking to someone else. Typed `send` is always intentional (skipped); the
-    // WAKE path has its own gate (with a control-answer skip) inside handleVoiceTurn, so only the
-    // direct-to-session voice case is gated here. Fail-open, so a real command is never lost.
-    if (msg.t === "voice" && sid !== WAKE_SESSION && !(await relevanceGate(text, recentContextOf(sid)))) {
-      send(ws, { t: "voice_ignored", sessionId: sid, text });
-      return;
-    }
     { const _p = principalOf(ws); auth.audit("send", { userId: _p?.userId, deviceId: _p?.deviceId, detail: `${sid}: ${String(text).slice(0, 80)}` }); }
 
     // Meta-question about other sessions? -> cross-session search (typed or spoken).
