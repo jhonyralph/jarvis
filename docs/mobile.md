@@ -57,10 +57,13 @@ paths. Order below is by value/risk.
 ### 3. Background wake-word ("Jey Jarvis" always-on) — highest risk
 - **No reliable off-the-shelf plugin.** iOS restricts background audio hard; Android needs a
   foreground service.
-- Plan: a **custom Capacitor plugin** (`npm init @capacitor/plugin`) that runs the wake listener in a
-  native background-audio / foreground-service context and bridges detections to the existing voice
-  pipeline (the `services/voice` wake flow + the Hub's staging/`wake_event`).
-- This is a mini-project of its own; treat it as a separate milestone after 1 & 2 prove the shell.
+- **Scaffolded:** the plugin CONTRACT (TS definitions + web no-op stub) and the client wiring already
+  exist — see `mobile/plugins/jarvis-wake/` (its README is the native implementation spec: engine
+  choice Porcupine vs TFLite, foreground service / background-audio, entitlements). The client bridge
+  starts it on the wake toggle and, on the `wake` event, runs the same auto voice capture the Python
+  listener triggers. The NATIVE detector itself is intentionally NOT written (blind-writing it would
+  be dishonest) — that's the remaining device work.
+- A mini-project of its own; treat it as a separate milestone after 1 & 2 prove the shell.
 - Device test: screen locked, say the wake word, confirm capture + a turn starts.
 
 ## Staged plan

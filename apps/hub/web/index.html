@@ -1435,10 +1435,20 @@
         var pullShared=function(){ try{ P.SendIntent.checkSendIntentReceived().then(function(r){ if(r&&(r.text||r.url||r.title)) applyShareIn(r.text||r.url||r.title); }).catch(function(){}); }catch(e){} };
         pullShared(); if(P.App) P.App.addListener('appStateChange',function(s){ if(s&&s.isActive) pullShared(); });
       }
+      // ---- background wake-word: custom plugin JarvisWake (mobile/plugins/jarvis-wake). Bridges a
+      //      native always-on detector to the voice flow. Web stub → unsupported → clean no-op. ----
+      var Wake=P.JarvisWake;
+      if(Wake){
+        N.wakeStart=async function(){ try{ if(Wake.isSupported){ var s=await Wake.isSupported(); if(s&&s.supported===false) return false; } await Wake.start(); return true; }catch(e){ return false; } };
+        N.wakeStop=async function(){ try{ await Wake.stop(); }catch(e){} };
+        try{ Wake.addListener&&Wake.addListener('wake',function(){ try{ onNativeWake(); }catch(e){} }); }catch(e){}
+      }
       // ---- re-lock on resume + lock on launch ----
       if(P.App) P.App.addListener('appStateChange',function(s){ if(s&&s.isActive){ try{ maybeBioLock(); }catch(e){} } });
       try{ maybeBioLock(); }catch(e){}
     })();
+    // Native background wake-word fired → start the same auto voice capture the Python wake listener uses.
+    function onNativeWake(){ try{ if(typeof recording!=='undefined'&&recording) return; startRec(true); }catch(e){} }
     // Drop OS-shared text into the composer (called by the native bridge's share-in handler).
     function applyShareIn(text){ try{ if(!text)return; var v=E.input.value; E.input.value=(v?v+'\n':'')+String(text); E.input.dispatchEvent(new Event('input')); E.input.focus(); toast('Conteúdo compartilhado adicionado.'); }catch(e){} }
     // Biometric lock overlay (native only). Shown when cfg.bioLock; cleared once the OS confirms identity.
@@ -1613,6 +1623,7 @@
       Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
       continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked,bioLock:!!(E.setBioLock&&E.setBioLock.checked)});
       saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate});
+      if(window.__jarvisNative){ if(cfg.wake){ window.__jarvisNative.wakeStart&&window.__jarvisNative.wakeStart(); } else { window.__jarvisNative.wakeStop&&window.__jarvisNative.wakeStop(); } }
       const pp=pushPrefs(); cfg.pushEvents=pp.events; cfg.pushMode=pp.mode; cfg.pushEvery=pp.everyMin;
       const wantPush=E.setPush.checked; if(wantPush&&!cfg.push) enablePush(); else if(!wantPush&&cfg.push) disablePush();
       // Ja inscrito: so atualiza as prefs — re-inscrever trocaria o endpoint a toa.
@@ -1722,7 +1733,7 @@
       const label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
       if(!val){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code:val, label }); }
     function postAuth(){ tx({t:'wake',enabled:cfg.wake}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) openSession(currentSession); if(cfg.push) enablePush(); }
-    function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); if(window.__jarvisNative&&window.__jarvisNative.reregister&&cfg.push) window.__jarvisNative.reregister(); }
+    function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); if(window.__jarvisNative){ if(window.__jarvisNative.reregister&&cfg.push) window.__jarvisNative.reregister(); if(window.__jarvisNative.wakeStart&&cfg.wake) window.__jarvisNative.wakeStart(); } }
 
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
       ws.onopen=()=>{ E.dot.classList.add('on'); enteredConn=false; if(authToken) tx({t:'auth',token:authToken}); else tx({t:'authinfo'}); }; // autentica antes de tudo
