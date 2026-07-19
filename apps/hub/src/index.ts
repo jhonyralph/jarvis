@@ -2152,11 +2152,29 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       await handleVoiceTurn(text, !!msg.speak, speaker);
       return;
     }
-    // One turn per session. A second send while one is still running would spawn a CONCURRENT
-    // agent on the same session — two processes editing the same repo at once. The client queues,
-    // but that's just UX; this is the authoritative guard (covers voice, a second tab, a reconnect).
-    // Search and the wake router returned above, so this only gates real native/normal turns.
-    if (activeRuns.has(sid)) { send(ws, { t: "busy", message: "Já há um processamento nesta sessão — aguarde terminar ou toque em Parar." }); return; }
+    // One turn per session. A second send while one is still running would spawn a CONCURRENT agent
+    // on the same session — two processes editing the same repo at once. Instead of DROPPING the
+    // input, QUEUE it: it runs when the current turn finishes (flushQueue). This is critical for
+    // VOICE — the utterance is transcribed here on the server, so the old "busy" reply threw away a
+    // just-recorded audio (a long one is real work lost). A typed send only reaches here in a race
+    // (the client sends {t:enqueue} once it knows the session is busy), so there's no double-queue.
+    // Search and the wake router returned above, so this only covers real native/normal turns.
+    if (activeRuns.has(sid)) {
+      const rid = activeRunner(ws);
+      queueOf(sid).push({
+        text,
+        atts: Array.isArray(msg.attachments) ? msg.attachments : [],
+        model: typeof msg.model === "string" ? msg.model : undefined,
+        effort: typeof msg.effort === "string" ? msg.effort : undefined,
+        runnerId: rid !== LOCAL_ID ? rid : undefined,
+        msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
+      });
+      broadcastQueue(sid); saveQueues();
+      // ack so the client stops its "processando" spinner and confirms the utterance landed (the
+      // queue list itself already updated via broadcastQueue above).
+      send(ws, { t: "queued", sessionId: sid, text, voice: msg.t === "voice" });
+      return;
+    }
 
     // Continue an imported native CLI session (resumes the real claude session; persists in its jsonl).
     if (isNativeId(sid)) {
