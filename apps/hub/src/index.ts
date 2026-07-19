@@ -447,7 +447,7 @@ function runnerSessions(rc: RunnerConn): Promise<any[]> {
 function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "pong") return; // heartbeat ack — rc.lastSeen already refreshed by the caller
   if (m.t === "sessions") { const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
-  if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows })), files: m.files }); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
+  if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })), files: m.files }); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "stream") {
     // Buffer a atividade viva do runner por sessão (igual ao local) pra um refresh no meio do
@@ -1845,7 +1845,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         sessionId: msg.sessionId,
         session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code", inputTokens: h.inputTokens, sessionCost: costOf(msg.sessionId), model: h.model, effort: h.effort },
         total: h.messages.length,
-        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows })),
+        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })),
         files: sessionFiles(msg.sessionId),
       });
       replayActivity(ws, msg.sessionId);

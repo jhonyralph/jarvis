@@ -53,6 +53,9 @@ export interface RunnerMsg {
   adds?: number;
   dels?: number;
   rows?: DiffRowMeta[];
+  /** role:"assistant" — the turn's grouped tool/sub-agent activity, so native history renders the
+   *  same nested flow shown live (see @jarvis/core HistEvent). Opaque to the protocol layer. */
+  activity?: unknown[];
 }
 
 /** Live activity while an agent works, mirrored to the streaming UI. */

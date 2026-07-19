@@ -25,8 +25,10 @@ export interface NativeMeta {
   source: "native";
 }
 
-const CLAUDE_DIR = join(homedir(), ".claude", "projects");
-const CODEX_DIR = join(homedir(), ".codex", "sessions");
+// Overridable so tests can point the readers at a fixture dir (production leaves them unset and
+// falls back to the real agent homes). Closes the "native reader is untestable" gap.
+const CLAUDE_DIR = process.env.JARVIS_CLAUDE_DIR || join(homedir(), ".claude", "projects");
+const CODEX_DIR = process.env.JARVIS_CODEX_DIR || join(homedir(), ".codex", "sessions");
 const HEAD_BYTES = 262144; // enough to reach the title + first human prompt
 
 function readHead(path: string, bytes = HEAD_BYTES): string {
@@ -153,7 +155,7 @@ function contentText(c: any): string {
 // seguisse o mais recente, o nome ficaria mudando "no meio da corrida". Então CONGELAMOS: na
 // primeira vez que vemos um ai-title de verdade, gravamos e nunca mais mudamos. Guardado em
 // ~/.jarvis (NÃO toca o store do .claude). Apagar essa sessão limpa a entrada (deleteNative).
-const TITLES_FILE = join(homedir(), ".jarvis", "native-titles.json");
+const TITLES_FILE = join(process.env.JARVIS_HOME || homedir(), ".jarvis", "native-titles.json");
 let titleStore: Record<string, string> | null = null;
 function loadTitles(): Record<string, string> {
   if (!titleStore) titleStore = readJson<Record<string, string>>(TITLES_FILE, {});
@@ -574,7 +576,11 @@ function findFileById(id: string): { path: string; claude: boolean } | null {
   return hit ? { path: hit.path, claude } : null;
 }
 
-export interface HistMsg { role: MsgRole; text: string; ts: number; name?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; }
+/** One activity event grouped under an assistant turn (same shape the live stream / a managed
+ *  session's `activity` uses), so the client renders native history with the identical grouped +
+ *  sub-agent-nested flow it shows live. `toolId`/`parentId` drive the sub-agent (Task) nesting. */
+export interface HistEvent { kind: "tool" | "text" | "thinking"; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; toolId?: string; parentId?: string; text?: string; }
+export interface HistMsg { role: MsgRole; text: string; ts: number; name?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; activity?: HistEvent[]; }
 /** Full read-only history of one native session — text turns AND tool activity (role:"tool"),
  *  interleaved in order, so the "editando/criando arquivo" blocks survive a page refresh. */
 // `diffLimit` bounds how many tool items get their file stats computed. Each Edit stat runs an
@@ -636,7 +642,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
     return null;
   }
   const messages: HistMsg[] = [];
-  const toolRefs: Array<{ m: HistMsg; name: string; input: unknown }> = [];
+  const toolRefs: Array<{ ev: HistEvent; name: string; input: unknown }> = [];
   let cwd = "", lastAi = "", lastCustom = "";
   let lastUsage: any;
   // Modelo/esforço REAIS da sessão nativa, pra web refletir o que a máquina está usando (e não o
@@ -645,26 +651,65 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   // subagente); Claude NÃO grava o esforço em lugar nenhum do transcript, então effort fica vazio
   // pro claude. Codex grava ambos no evento turn_context (model + effort no topo do payload).
   let lastModel = "", lastEffort = "";
+  // Group each assistant TURN's activity (tools + sub-agent text) into ONE assistant message's
+  // `activity` array — the SAME shape a managed session stores — so the client renders native history
+  // with the identical grouped/nested flow it shows live, not a flat list of separate tool rows.
+  let pend: { text: string; activity: HistEvent[]; ts: number } | null = null;
+  const flushPend = (): void => {
+    if (!pend) return;
+    const t = cleanText(pend.text);
+    if (t || pend.activity.length) messages.push({ role: "assistant", text: t, ts: pend.ts, activity: pend.activity.length ? pend.activity : undefined });
+    pend = null;
+  };
+  // Sub-agent nesting: a main-thread Task/Agent tool_use spawns a sidechain; map the sidechain back to
+  // that task id so its tools nest under the same box the live view draws. Best-effort — degrades to a
+  // flat-within-group tool when the transcript doesn't carry the link (e.g. background agents).
+  const taskOfEntry = new Map<string, string>();
+  const taskOfSide = new Map<string, string>();
   eachLine(raw, (o) => {
     if (f.claude) {
       if (o.type === "custom-title" && o.customTitle) lastCustom = o.customTitle;   // último vence
       else if (o.type === "ai-title" && o.aiTitle) lastAi = o.aiTitle;              // título CORRETO = ai-title mais recente
       else if (o.type === "user" || o.type === "assistant") {
         if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
-        if (o.type === "assistant" && !o.isSidechain && o.message?.usage) lastUsage = o.message.usage;
-        if (o.type === "assistant" && !o.isSidechain && typeof o.message?.model === "string" && o.message.model && o.message.model !== "<synthetic>") lastModel = o.message.model;
+        const isSide = !!o.isSidechain;
+        if (o.type === "assistant" && !isSide && o.message?.usage) lastUsage = o.message.usage;
+        if (o.type === "assistant" && !isSide && typeof o.message?.model === "string" && o.message.model && o.message.model !== "<synthetic>") lastModel = o.message.model;
         const ts = Date.parse(o.timestamp) || 0;
         const content = o.message?.content;
-        if (o.type === "assistant" && Array.isArray(content)) {
+        if (o.type === "user") {
+          // A REAL user message closes the current assistant turn and opens the next one. Injected
+          // tool-results/notifications (also type:"user") are mid-turn — skip, never split on them.
+          const t = cleanText(contentText(content));
+          if (!t || isInjected(t)) return;
+          flushPend();
+          messages.push({ role: "user", text: t, ts });
+          return;
+        }
+        // assistant turn (main thread or a sub-agent sidechain)
+        let parentId: string | undefined;
+        if (isSide && typeof o.parentUuid === "string") {
+          parentId = taskOfSide.get(o.parentUuid) ?? taskOfEntry.get(o.parentUuid);
+          if (parentId && typeof o.uuid === "string") taskOfSide.set(o.uuid, parentId); // propagate down the sidechain chain
+        }
+        if (!pend) pend = { text: "", activity: [], ts };
+        if (Array.isArray(content)) {
           for (const b of content) {
-            if (b.type === "text" && b.text) { const t = cleanText(b.text); if (t) messages.push({ role: "assistant", text: t, ts }); }
-            else if (b.type === "tool_use") { const m: HistMsg = { role: "tool", text: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), ts, name: b.name }; messages.push(m); toolRefs.push({ m, name: b.name, input: b.input }); }
+            if (b.type === "text" && b.text) {
+              if (isSide) pend.activity.push({ kind: "text", text: b.text, parentId });   // sub-agent reasoning → nested preview
+              else pend.text += b.text;                                                    // main answer (accumulated across the turn, like a managed reply)
+            } else if (b.type === "tool_use") {
+              const ev: HistEvent = { kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), toolId: b.id, parentId };
+              pend.activity.push(ev);
+              toolRefs.push({ ev, name: b.name, input: b.input });
+              if (!isSide && b.id && (b.name === "Task" || b.name === "Agent") && typeof o.uuid === "string") taskOfEntry.set(o.uuid, b.id); // this entry spawned a sub-agent
+            } else if (b.type === "thinking") {
+              pend.activity.push({ kind: "thinking", parentId });
+            }
           }
         } else {
-          let t = contentText(content);
-          if (o.type === "user" && isInjected(t)) return; // tool-results/notifications injected as "user"
-          t = cleanText(t);
-          if (t) messages.push({ role: o.type, text: t, ts });
+          const t = contentText(content);
+          if (t) { if (isSide) pend.activity.push({ kind: "text", text: t, parentId }); else pend.text += t; }
         }
       }
     } else {
@@ -676,9 +721,10 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
       }
     }
   });
+  flushPend(); // close the final turn
   for (const r of toolRefs.slice(-diffLimit)) {
     const st = toolFileStat(r.name, r.input);
-    r.m.path = st.path; r.m.adds = st.adds; r.m.dels = st.dels; r.m.rows = st.rows;
+    r.ev.path = st.path; r.ev.adds = st.adds; r.ev.dels = st.dels; r.ev.rows = st.rows;
   }
   noteParse(f.path, raw.length, messages.length); // format-drift telemetry (non-empty file, 0 msgs)
   const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: inputContextOf(lastUsage), model: lastModel || undefined, effort: lastEffort || undefined };
