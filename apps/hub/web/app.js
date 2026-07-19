@@ -1444,8 +1444,11 @@
     function closeCmdPop(){ if(cmdPopOpen()){ E.cmdPop.classList.add('hidden'); E.cmdPop.innerHTML=''; } cmdItems=[]; cmdIdx=-1; }
     // The "/token" currently being typed: the whole (trimmed) input is "/word" with no space/newline yet.
     function slashToken(){ const m=/^\s*\/([\w:.\-]*)$/.exec(E.input.value); return m?m[1]:null; }
-    function filterCmds(tok){ const q=(tok||'').toLowerCase();
-      const arr=cmdList.filter(c=> !q || c.name.toLowerCase().includes(q) || (c.description||'').toLowerCase().includes(q));
+    // Show ONLY the selected AI's skills+commands (a Codex session shouldn't offer Claude commands).
+    function cmdAgentSel(){ const a=currentAgent||''; return a==='claude-code'?'claude':a==='codex'?'codex':null; }
+    function filterCmds(tok){ const q=(tok||'').toLowerCase(); const ag=cmdAgentSel();
+      let arr=ag?cmdList.filter(c=>c.agent===ag):[];
+      arr=arr.filter(c=> !q || c.name.toLowerCase().includes(q) || (c.description||'').toLowerCase().includes(q));
       arr.sort((a,b)=>{ const ap=a.name.toLowerCase().startsWith(q)?0:1, bp=b.name.toLowerCase().startsWith(q)?0:1; return ap-bp || a.name.localeCompare(b.name); });
       return arr.slice(0,50); }
     function renderCmdPop(){

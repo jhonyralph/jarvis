@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -1243,7 +1243,7 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   const now = Date.now();
   const { agentText, showText, images, files } = buildAttachments(Array.isArray(opts.attachments) ? opts.attachments : [], text);
   // A "/cmd" is expanded to its prompt for the AGENT; the echoed user message stays the raw "/cmd".
-  const cmdExp = expandCommand(text, info.cwd || CWD);
+  const cmdExp = expandCommand(text, info.cwd || CWD, cmdAgentOf(info.agent));
   const agentSend = cmdExp ? cmdExp.expanded : agentText;
   // pause the live tail so it doesn't re-broadcast our own turn (already shown via streaming)
   const tail = nativeTails.get(sid);
@@ -2200,8 +2200,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // --- normal Jarvis session (agent + cwd locked at creation) ---
     // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
     const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
-    // A "/cmd" is expanded to its prompt for the AGENT (chat keeps showing the raw "/cmd").
-    const cmdExp = expandCommand(text, store.get(sid)?.cwd || CWD);
+    // A "/cmd" is expanded to its prompt for the AGENT (chat keeps showing the raw "/cmd"), using only
+    // THIS session's agent's commands (a Codex turn never runs a Claude command).
+    const cmdExp = expandCommand(text, store.get(sid)?.cwd || CWD, cmdAgentOf(store.get(sid)?.agent));
     await runManagedTurn(turnCtx, sid, {
       showText, agentText: cmdExp ? cmdExp.expanded : agentText,
       model: typeof msg.model === "string" ? msg.model : undefined,

@@ -10,16 +10,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const HOME = mkdtempSync(join(tmpdir(), "jarvis-cmd-"));
-mkdirSync(join(HOME, "skills", "my-skill"), { recursive: true });
-mkdirSync(join(HOME, "commands", "flow"), { recursive: true });
-writeFileSync(join(HOME, "skills", "my-skill", "SKILL.md"), `---
+const CLAUDE = join(HOME, "claude"), CODEX = join(HOME, "codex");
+mkdirSync(join(CLAUDE, "skills", "my-skill"), { recursive: true });
+mkdirSync(join(CLAUDE, "commands", "flow"), { recursive: true });
+mkdirSync(join(CODEX, "prompts"), { recursive: true });
+writeFileSync(join(CLAUDE, "skills", "my-skill", "SKILL.md"), `---
 name: my-skill
 description: >-
   A test skill that does
   something useful.
 ---
 Body of the skill.`);
-writeFileSync(join(HOME, "commands", "flow", "discovery.md"), `---
+writeFileSync(join(CLAUDE, "commands", "flow", "discovery.md"), `---
 description: Discovery phase — break an epic into features
 argument-hint: <epic>
 ---
@@ -27,10 +29,14 @@ Run discovery for: $ARGUMENTS
 
 - step one
 - step two`);
-writeFileSync(join(HOME, "commands", "plain.md"), `Just a body, no frontmatter, with $ARGUMENTS.`);
-process.env.JARVIS_CLAUDE_HOME = HOME;
+writeFileSync(join(CLAUDE, "commands", "plain.md"), `Just a body, no frontmatter, with $ARGUMENTS.`);
+// A Codex prompt: flat file (no frontmatter), plus one whose NAME CLASHES with a Claude command.
+writeFileSync(join(CODEX, "prompts", "cx-only.md"), `Codex-only prompt for $ARGUMENTS here.`);
+writeFileSync(join(CODEX, "prompts", "plain.md"), `CODEX version of plain — should lose to Claude.`);
+process.env.JARVIS_CLAUDE_HOME = CLAUDE;
+process.env.JARVIS_CODEX_HOME = CODEX;
 
-const { listCommands, listCommandsPublic, expandCommand } = await import("./commands.js");
+const { listCommands, listCommandsPublic, expandCommand, cmdAgentOf } = await import("./commands.js");
 
 test("listCommands finds skills and namespaced commands with metadata", () => {
   const all = listCommands();
@@ -63,6 +69,45 @@ test("expandCommand turns a skill into a use-the-skill instruction", () => {
   assert.ok(r);
   assert.match(r!.expanded, /Use the "my-skill" skill/);
   assert.match(r!.expanded, /some context/);
+});
+
+test("Codex prompts are discovered (flat, first-line description) alongside Claude", () => {
+  const all = listCommands();
+  const cx = all.find((c) => c.name === "cx-only");
+  assert.ok(cx, "codex prompt discovered");
+  assert.equal(cx!.agent, "codex");
+  assert.equal(cx!.kind, "command");
+  assert.match(cx!.description, /Codex-only prompt/, "first body line used as description");
+  const skill = all.find((c) => c.name === "my-skill");
+  assert.equal(skill!.agent, "claude");
+});
+
+test("on a name clash Claude wins; expanding it uses the Claude file", () => {
+  const plain = listCommands().filter((c) => c.name === "plain");
+  assert.equal(plain.length, 1, "deduped to a single 'plain'");
+  assert.equal(plain[0].agent, "claude", "Claude takes preference over Codex");
+  assert.match(expandCommand("/plain X")!.expanded, /no frontmatter, with X/, "the Claude body is expanded, not Codex's");
+});
+
+test("expandCommand is name-tolerant (leaf name resolves a namespaced command)", () => {
+  const r = expandCommand("/discovery my epic");
+  assert.ok(r, "/discovery resolves flow:discovery by leaf name");
+  assert.equal(r!.name, "flow:discovery");
+  assert.match(r!.expanded, /Run discovery for: my epic/);
+});
+
+test("cmdAgentOf maps adapter names to the command-owning agent", () => {
+  assert.equal(cmdAgentOf("claude-code"), "claude");
+  assert.equal(cmdAgentOf("codex"), "codex");
+  assert.equal(cmdAgentOf("aider"), null);
+  assert.equal(cmdAgentOf(undefined), null);
+});
+
+test("expandCommand is agent-scoped: a Codex turn never runs a Claude command", () => {
+  assert.equal(expandCommand("/flow:discovery x", undefined, "codex"), null, "Claude command not offered under Codex");
+  assert.match(expandCommand("/cx-only y", undefined, "codex")!.expanded, /Codex-only prompt for y/, "Codex prompt resolves under Codex");
+  assert.match(expandCommand("/flow:discovery x", undefined, "claude")!.expanded, /Run discovery for: x/, "and resolves under Claude");
+  assert.equal(expandCommand("/flow:discovery x", undefined, null), null, "an adapter with no command system expands nothing");
 });
 
 test("expandCommand returns null for non-commands and unknown names", () => {
