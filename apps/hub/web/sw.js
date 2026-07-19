@@ -6,8 +6,10 @@
 //     dropped, tab resumed offline) so the app opens instead of showing a blank page.
 //   • static shell assets (manifest, icon) → cache-first with a background refresh.
 // Everything else (POST, /pasted/ images, cross-origin) is passed straight through, untouched.
-const CACHE = "jarvis-shell-v1";
-const SHELL = ["/", "/manifest.webmanifest", "/icon.svg"];
+// Bumped v1 → v2 when the app JS moved out of index.html into /app.js: the shell now MUST cache the
+// external script or an offline open would render an empty page.
+const CACHE = "jarvis-shell-v2";
+const SHELL = ["/", "/app.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {

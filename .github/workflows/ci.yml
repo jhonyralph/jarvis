@@ -7,7 +7,13 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # The Hub/runners run in production on Windows (autostart is a Scheduled Task; update.ts shells
+    # npm.cmd / Task Scheduler). Linux-only CI never exercised those paths — run BOTH.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,3 +24,19 @@ jobs:
         run: npm run typecheck
       - name: Tests (node --test)
         run: npm test
+      - name: Web client syntax (app.js — not covered by tsc)
+        run: node --check apps/hub/web/app.js
+      - name: Capacitor staging smoke (sync-web)
+        run: node mobile/sync-web.mjs
+
+  python:
+    # Syntax-only gate for the voice services — no heavy deps installed (compileall never imports),
+    # so a typo in a .py surfaces here instead of only when the Hub first tries STT/TTS.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python syntax gate (compileall)
+        run: python -m compileall services/voice
