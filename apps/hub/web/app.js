@@ -1009,7 +1009,7 @@
       if(E.setGate.checked && !speakers.length){ addErr('Cadastre sua voz antes de exigir voz cadastrada (senão o modo voz fica bloqueado).'); E.setGate.checked=false; }
       Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
       continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked,bioLock:!!(E.setBioLock&&E.setBioLock.checked),slashMenu:!E.setSlash||E.setSlash.checked});
-      if(!slashOn()) closeCmdPop();
+      if(!slashOn()) closeTrig();
       saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate});
       if(window.__jarvisNative){ if(cfg.wake){ window.__jarvisNative.wakeStart&&window.__jarvisNative.wakeStart(); } else { window.__jarvisNative.wakeStop&&window.__jarvisNative.wakeStop(); } }
       const pp=pushPrefs(); cfg.pushEvents=pp.events; cfg.pushMode=pp.mode; cfg.pushEvery=pp.everyMin;
@@ -1152,7 +1152,8 @@
         else if(m.t==='update_result'){ if(m.ok){ toast('✅ '+((m.log||'atualizado').split('\n').pop()||'').slice(0,80)); } else { toast('⚠ Falha: '+(m.log||'').slice(0,120)); if(E.updStatus) E.updStatus.textContent='⚠ '+(m.log||'').slice(0,140); E.updActions.classList.remove('hidden'); } }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
-        else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=m.runnerId; cmdReqPending=false; if(cmdPopOpen()) updateCmdPop(); }
+        else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=m.runnerId; cmdReqPending=false; if(trigOpen()&&trigMode==='cmd') updateTrig(); }
+        else if(m.t==='mention_list'){ fileList=m.files||[]; if(trigOpen()&&trigMode==='file'){ trigItems=fileList.slice(0,50); trigIdx=trigItems.length?0:-1; renderTrig(); } }
         else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'});
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
           if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }
@@ -1415,6 +1416,10 @@
         list.appendChild(it); });
       E.queueRow.appendChild(list); }
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
+      // "#note" → append to the project memory file (CLAUDE.md/AGENTS.md), confirmed. Not a turn.
+      if(text.startsWith('#')){ const note=text.replace(/^#+\s*/,'').trim(); if(!note) return; closeTrig();
+        dialog({title:'Anexar à memória do projeto: “'+note.slice(0,60)+(note.length>60?'…':'')+'”?', okText:'Anexar'}).then(ok=>{ if(ok){ tx({t:'memory_append', text:note, sessionId:currentSession}); E.input.value=''; E.input.style.height='auto'; if(currentSession){ delete draftBySession[currentSession]; saveDrafts(); } } });
+        return; }
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
       if(currentSession){ delete draftBySession[currentSession]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,msgId:uid()}); return; }
@@ -1436,43 +1441,58 @@
         if(!E.input.value.trim()) restoreToInput(currentSession); else showRestoreBar(currentSession);
       }
       stopping[currentSession]=true; refreshComposer(); updateStopStatus(); };
-    // ---------- "/" command & skill autocomplete ----------
-    let cmdList=[], cmdListFor=null, cmdReqPending=false, cmdItems=[], cmdIdx=-1;
-    const slashOn=()=> cfg.slashMenu!==false;   // default ON; user can disable in Settings
+    // ---------- composer triggers: "/" commands+skills+mcp · "@" files · "#" memory ----------
+    let cmdList=[], cmdListFor=null, cmdReqPending=false;   // "/" catalog (per machine)
+    let fileList=[], mentionT=null, fileAt=null;            // "@" last results + debounce + insert range
+    let trigMode=null, trigItems=[], trigIdx=-1;            // shared trigger-popover state (distinct from the E.pop popover)
+    const slashOn=()=> cfg.slashMenu!==false;               // default ON; the toggle governs ALL trigger popovers
     function requestCommands(){ if(slashOn() && !cmdReqPending){ cmdReqPending=true; tx({t:'commands'}); } }
-    function cmdPopOpen(){ return !E.cmdPop.classList.contains('hidden'); }
-    function closeCmdPop(){ if(cmdPopOpen()){ E.cmdPop.classList.add('hidden'); E.cmdPop.innerHTML=''; } cmdItems=[]; cmdIdx=-1; }
-    // The "/token" currently being typed: the whole (trimmed) input is "/word" with no space/newline yet.
-    function slashToken(){ const m=/^\s*\/([\w:.\-]*)$/.exec(E.input.value); return m?m[1]:null; }
-    // Show ONLY the selected AI's skills+commands (a Codex session shouldn't offer Claude commands).
     function cmdAgentSel(){ const a=currentAgent||''; return a==='claude-code'?'claude':a==='codex'?'codex':null; }
+    function trigOpen(){ return !E.cmdPop.classList.contains('hidden'); }
+    function closeTrig(){ if(trigOpen()){ E.cmdPop.classList.add('hidden'); E.cmdPop.innerHTML=''; } trigMode=null; trigItems=[]; trigIdx=-1; }
+    // "/word" = the whole (trimmed) input; "@frag" = a path fragment right before the cursor.
+    function slashTok(){ const m=/^\s*\/([\w:.\-]*)$/.exec(E.input.value); return m?m[1]:null; }
+    function atTok(){ const p=E.input.selectionStart||0; const m=/(?:^|\s)@([\w./\-]*)$/.exec(E.input.value.slice(0,p)); return m?{tok:m[1],start:p-m[1].length-1,end:p}:null; }
     function filterCmds(tok){ const q=(tok||'').toLowerCase(); const ag=cmdAgentSel();
       let arr=ag?cmdList.filter(c=>c.agent===ag):[];
       arr=arr.filter(c=> !q || c.name.toLowerCase().includes(q) || (c.description||'').toLowerCase().includes(q));
       arr.sort((a,b)=>{ const ap=a.name.toLowerCase().startsWith(q)?0:1, bp=b.name.toLowerCase().startsWith(q)?0:1; return ap-bp || a.name.localeCompare(b.name); });
       return arr.slice(0,50); }
-    function renderCmdPop(){
-      if(!cmdItems.length){ E.cmdPop.innerHTML='<div class="cmdempty">Nenhum comando/skill encontrado.</div>'; E.cmdPop.classList.remove('hidden'); return; }
-      const h=['<div class="cmdhint">↑↓ navegar · Enter/Tab inserir · Esc fechar</div>'];
-      cmdItems.forEach((c,i)=>{ h.push('<div class="cmdit'+(i===cmdIdx?' sel':'')+'" data-i="'+i+'"><span class="cn">/'+esc(c.name)+'</span><span class="ck">'+(c.kind==='skill'?'skill':'cmd')+'</span><span class="cd">'+esc(c.description||c.argHint||'')+'</span></div>'); });
-      E.cmdPop.innerHTML=h.join(''); E.cmdPop.classList.remove('hidden');
-      E.cmdPop.querySelectorAll('.cmdit').forEach(el=>{ el.onclick=()=>selectCmd(+el.dataset.i); });
+    const kindBadge=(k)=> k==='skill'?'skill':k==='mcp'?'mcp':'cmd';
+    function renderTrig(){
+      if(!trigItems.length){ E.cmdPop.innerHTML='<div class="cmdempty">'+(trigMode==='file'?'Nenhum arquivo.':'Nenhum comando/skill.')+'</div>'; E.cmdPop.classList.remove('hidden'); return; }
+      const rows=trigItems.map((it,i)=> trigMode==='file'
+        ? '<div class="cmdit'+(i===trigIdx?' sel':'')+'" data-i="'+i+'"><span class="cn">📄 '+esc(it)+'</span></div>'
+        : '<div class="cmdit'+(i===trigIdx?' sel':'')+'" data-i="'+i+'"><span class="cn">/'+esc(it.name)+'</span><span class="ck">'+kindBadge(it.kind)+'</span><span class="cd">'+esc(it.description||it.argHint||'')+'</span></div>');
+      E.cmdPop.innerHTML='<div class="cmdhint">↑↓ navegar · Enter/Tab inserir · Esc fechar</div>'+rows.join(''); E.cmdPop.classList.remove('hidden');
+      E.cmdPop.querySelectorAll('.cmdit').forEach(el=>{ el.onclick=()=>selectTrig(+el.dataset.i); });
       const s=E.cmdPop.querySelector('.cmdit.sel'); if(s) s.scrollIntoView({block:'nearest'}); }
-    function openCmdPop(tok){
-      if(!slashOn()){ closeCmdPop(); return; }
-      if(cmdListFor!==routedMachine){ requestCommands(); E.cmdPop.innerHTML='<div class="cmdempty">Carregando comandos…</div>'; E.cmdPop.classList.remove('hidden'); cmdItems=[]; cmdIdx=-1; return; }
-      cmdItems=filterCmds(tok); cmdIdx=cmdItems.length?0:-1; renderCmdPop(); }
-    function updateCmdPop(){ const tok=slashToken(); if(tok===null){ closeCmdPop(); return; } openCmdPop(tok); }
-    function moveCmd(d){ if(!cmdItems.length)return; cmdIdx=(cmdIdx+d+cmdItems.length)%cmdItems.length; renderCmdPop(); }
-    function selectCmd(i){ const c=cmdItems[i]; if(!c)return; E.input.value='/'+c.name+' '; closeCmdPop(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} }
+    function openCmd(tok){
+      if(cmdListFor!==routedMachine){ requestCommands(); E.cmdPop.innerHTML='<div class="cmdempty">Carregando…</div>'; E.cmdPop.classList.remove('hidden'); trigItems=[]; trigIdx=-1; return; }
+      trigItems=filterCmds(tok); trigIdx=trigItems.length?0:-1; renderTrig(); }
+    function openMention(tok){
+      clearTimeout(mentionT); mentionT=setTimeout(()=>{ if(trigMode==='file') tx({t:'mention', q:tok}); }, 120);
+      const q=(tok||'').toLowerCase();
+      trigItems=fileList.filter(f=>!q||f.toLowerCase().includes(q)).slice(0,50); trigIdx=trigItems.length?0:-1;
+      if(!trigItems.length && !fileList.length){ E.cmdPop.innerHTML='<div class="cmdempty">Buscando arquivos…</div>'; E.cmdPop.classList.remove('hidden'); return; }
+      renderTrig(); }
+    function updateTrig(){
+      if(!slashOn()){ closeTrig(); return; }
+      const st=slashTok(); if(st!==null){ trigMode='cmd'; openCmd(st); return; }
+      const at=atTok(); if(at){ trigMode='file'; fileAt=at; openMention(at.tok); return; }
+      closeTrig(); }
+    function moveTrig(d){ if(!trigItems.length)return; trigIdx=(trigIdx+d+trigItems.length)%trigItems.length; renderTrig(); }
+    function selectTrig(i){ const it=trigItems[i]; if(it==null)return;
+      if(trigMode==='file'){ const at=fileAt||atTok(); if(!at){ closeTrig(); return; } const v=E.input.value; E.input.value=v.slice(0,at.start)+it+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} return; }
+      E.input.value='/'+it.name+' '; closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} }
 
-    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; updateCmdPop(); };
+    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; updateTrig(); };
     E.input.onkeydown=(e)=>{
-      if(cmdPopOpen()){
-        if(e.key==='ArrowDown'){ e.preventDefault(); moveCmd(1); return; }
-        if(e.key==='ArrowUp'){ e.preventDefault(); moveCmd(-1); return; }
-        if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); closeCmdPop(); return; }
-        if((e.key==='Tab'||(e.key==='Enter'&&!e.shiftKey)) && cmdIdx>=0){ e.preventDefault(); selectCmd(cmdIdx); return; }
+      if(trigOpen()){
+        if(e.key==='ArrowDown'){ e.preventDefault(); moveTrig(1); return; }
+        if(e.key==='ArrowUp'){ e.preventDefault(); moveTrig(-1); return; }
+        if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); closeTrig(); return; }
+        if((e.key==='Tab'||(e.key==='Enter'&&!e.shiftKey)) && trigIdx>=0){ e.preventDefault(); selectTrig(trigIdx); return; }
       }
       if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)

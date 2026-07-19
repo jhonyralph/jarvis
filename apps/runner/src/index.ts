@@ -22,7 +22,7 @@ import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
-  listCommandsPublic, expandCommand, cmdAgentOf,
+  listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory,
   type AgentAdapter, type SendOpts,
 } from "@jarvis/core";
 
@@ -153,6 +153,10 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
   }
 }
 
+/** cwd / agent of a session on THIS machine (managed or native), for "@" search, "!" and "#" memory. */
+function sessCwd(sid?: string): string { if (!sid) return CWD; if (isNativeId(sid)) return nativeInfo(sid)?.cwd || CWD; return store.get(sid)?.cwd || CWD; }
+function sessAgent(sid?: string): string | undefined { if (!sid) return undefined; if (isNativeId(sid)) return nativeInfo(sid)?.agent; return store.get(sid)?.agent; }
+
 // Live turns on this machine, so a {t:cancel} from the Hub can kill the actual agent process.
 const runAborts = new Map<string, AbortController>();
 async function doSend(sessionId: string, text: string, agentName?: string, cwd?: string, opts?: SendOpts): Promise<void> {
@@ -181,9 +185,12 @@ async function doSend(sessionId: string, text: string, agentName?: string, cwd?:
     // Only NOW: "start" makes the UI drop its pending placeholder and open the reply bubble, so
     // emitting it before the user echo above left the echo landing *below* the reply.
     send({ t: "stream", sessionId, ev: { kind: "start" } });
-    // "/cmd" → its expanded prompt for the agent (only THIS agent's commands); echo stays the raw "/cmd".
-    const cmdExp = expandCommand(text, useCwd, cmdAgentOf(agent.name));
-    const reply = await agent.send(sessionId, cmdExp ? cmdExp.expanded : text, useCwd, { ...opts, signal: ctrl.signal }, (ev) => send({ t: "stream", sessionId, ev }));
+    // Power-triggers for the agent (echo stays raw): "!cmd" runs + injects output; else "/cmd" expands
+    // to its prompt (only THIS agent's commands).
+    const bang = await expandBang(text, useCwd);
+    const cmdExp = bang ? null : expandCommand(text, useCwd, cmdAgentOf(agent.name));
+    const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : text);
+    const reply = await agent.send(sessionId, agentInput, useCwd, { ...opts, signal: ctrl.signal }, (ev) => send({ t: "stream", sessionId, ev }));
     if (!isNativeId(sessionId)) { store.add(sessionId, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name }); pushSessions(); }
     send({ t: "stream", sessionId, ev: { kind: "done", text: reply.text, usage: reply.usage } });
   } catch (e: any) {
@@ -290,6 +297,12 @@ function connect(): void {
       }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }
       if (m.t === "commands") { send({ t: "command_list", reqId: m.reqId, commands: listCommandsPublic(CWD) }); return; }
+      if (m.t === "mention") { send({ t: "mention_list", reqId: m.reqId, files: listMentionFiles(sessCwd(m.sessionId), typeof m.q === "string" ? m.q : "") }); return; }
+      if (m.t === "memory_append" && typeof m.text === "string") {
+        try { const r = appendMemory(m.text, sessCwd(m.sessionId), cmdAgentOf(sessAgent(m.sessionId))); if (m.sessionId) send({ t: "message", sessionId: m.sessionId, message: { role: "assistant", text: "📝 Anotado em " + r.file, ts: Date.now() } }); }
+        catch (e: any) { send({ t: "error", message: "memória: " + String(e?.message ?? e) }); }
+        return;
+      }
       if (m.t === "update") {
         console.log("[runner] update solicitado pelo Hub...", m.force ? "(forçado)" : "");
         const r = await updateApply(RUNNER_ROOT, { force: !!m.force });

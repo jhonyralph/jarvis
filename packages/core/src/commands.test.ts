@@ -33,8 +33,10 @@ writeFileSync(join(CLAUDE, "commands", "plain.md"), `Just a body, no frontmatter
 // A Codex prompt: flat file (no frontmatter), plus one whose NAME CLASHES with a Claude command.
 writeFileSync(join(CODEX, "prompts", "cx-only.md"), `Codex-only prompt for $ARGUMENTS here.`);
 writeFileSync(join(CODEX, "prompts", "plain.md"), `CODEX version of plain — should lose to Claude.`);
+writeFileSync(join(HOME, "claude.json"), JSON.stringify({ mcpServers: { "my-mcp": { type: "http", url: "https://x" } } }));
 process.env.JARVIS_CLAUDE_HOME = CLAUDE;
 process.env.JARVIS_CODEX_HOME = CODEX;
+process.env.JARVIS_CLAUDE_JSON = join(HOME, "claude.json");
 
 const { listCommands, listCommandsPublic, expandCommand, cmdAgentOf } = await import("./commands.js");
 
@@ -108,6 +110,15 @@ test("expandCommand is agent-scoped: a Codex turn never runs a Claude command", 
   assert.match(expandCommand("/cx-only y", undefined, "codex")!.expanded, /Codex-only prompt for y/, "Codex prompt resolves under Codex");
   assert.match(expandCommand("/flow:discovery x", undefined, "claude")!.expanded, /Run discovery for: x/, "and resolves under Claude");
   assert.equal(expandCommand("/flow:discovery x", undefined, null), null, "an adapter with no command system expands nothing");
+});
+
+test("MCP servers from ~/.claude.json are listed (kind:mcp, Claude) and expand to a hint", () => {
+  const mcp = listCommands().find((c) => c.name === "my-mcp");
+  assert.ok(mcp, "mcp server listed");
+  assert.equal(mcp!.kind, "mcp");
+  assert.equal(mcp!.agent, "claude");
+  assert.match(expandCommand("/my-mcp do X", undefined, "claude")!.expanded, /Use the "my-mcp" MCP server/);
+  assert.equal(expandCommand("/my-mcp", undefined, "codex"), null, "not offered under Codex");
 });
 
 test("expandCommand returns null for non-commands and unknown names", () => {

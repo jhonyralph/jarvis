@@ -24,7 +24,7 @@ export interface SlashCommand {
   name: string;              // "flow:discovery" (Claude), "flow-discovery" (Codex), or a skill name
   description: string;
   argHint?: string;
-  kind: "skill" | "command";
+  kind: "skill" | "command" | "mcp";
   agent: CmdAgent;
   source: "user" | "project";
   /** File to read for expansion — internal; stripped by listCommandsPublic before it reaches a client. */
@@ -34,6 +34,7 @@ export interface SlashCommand {
 // Overridable so tests can point at fixture agent-homes (production leaves them unset).
 const claudeHome = (): string => process.env.JARVIS_CLAUDE_HOME || join(homedir(), ".claude");
 const codexHome = (): string => process.env.JARVIS_CODEX_HOME || join(homedir(), ".codex");
+const claudeJson = (): string => process.env.JARVIS_CLAUDE_JSON || join(homedir(), ".claude.json");
 
 function splitFrontmatter(text: string): { fm: Record<string, string>; body: string } {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
@@ -93,6 +94,26 @@ function scanCommands(dir: string, agent: CmdAgent, source: SlashCommand["source
   }
 }
 
+/** Configured MCP servers (Claude): global ~/.claude.json `mcpServers` + this project's entry + a
+ *  project .mcp.json. Listed for discovery (kind:"mcp") — the model invokes the actual tools; there's
+ *  no reliable static tool catalog without connecting to each server. */
+function scanMcp(cwd: string | undefined, out: SlashCommand[]): void {
+  const add = (servers: any, source: SlashCommand["source"], origin: string): void => {
+    if (!servers || typeof servers !== "object") return;
+    for (const name of Object.keys(servers)) {
+      const s = servers[name] || {};
+      const kind = s.type || (s.url ? "http" : s.command ? "stdio" : "");
+      out.push({ name, description: `Servidor MCP${kind ? ` (${kind})` : ""}${origin ? ` · ${origin}` : ""}`, kind: "mcp", agent: "claude", source, path: "" });
+    }
+  };
+  try {
+    const j = JSON.parse(readFileSync(claudeJson(), "utf8"));
+    add(j.mcpServers, "user", "global");
+    if (cwd && j.projects && j.projects[cwd]) add(j.projects[cwd].mcpServers, "project", "projeto");
+  } catch { /* no ~/.claude.json */ }
+  if (cwd) { try { const j = JSON.parse(readFileSync(join(cwd, ".mcp.json"), "utf8")); add(j.mcpServers || j, "project", ".mcp.json"); } catch { /* none */ } }
+}
+
 // Lower = higher priority. Claude beats Codex on a name clash; a project entry beats a user one.
 const prio = (c: SlashCommand): number => (c.agent === "claude" ? 0 : 10) + (c.source === "project" ? 0 : 1);
 const leafOf = (name: string): string => name.split(":").pop() || name;
@@ -111,8 +132,8 @@ const cache = new Map<string, { key: string; data: SlashCommand[] }>();
  *  Cached, keyed on the source dirs' mtimes so a newly added command shows up without a restart. */
 export function listCommands(cwd?: string): SlashCommand[] {
   const ch = claudeHome(), xh = codexHome();
-  const dirs = [join(ch, "skills"), join(ch, "commands"), join(xh, "skills"), join(xh, "prompts")];
-  if (cwd) dirs.push(join(cwd, ".claude", "skills"), join(cwd, ".claude", "commands"));
+  const dirs = [join(ch, "skills"), join(ch, "commands"), join(xh, "skills"), join(xh, "prompts"), claudeJson()];
+  if (cwd) dirs.push(join(cwd, ".claude", "skills"), join(cwd, ".claude", "commands"), join(cwd, ".mcp.json"));
   const key = dirs.map((d) => { try { return d + ":" + statSync(d).mtimeMs; } catch { return d + ":0"; } }).join("|");
   const ck = cwd || "";
   const hit = cache.get(ck);
@@ -122,6 +143,7 @@ export function listCommands(cwd?: string): SlashCommand[] {
   scanCommands(join(ch, "commands"), "claude", "user", out);
   scanSkills(join(xh, "skills"), "codex", "user", out);
   scanCommands(join(xh, "prompts"), "codex", "user", out);   // Codex prompts are the equivalent of slash-commands
+  scanMcp(cwd, out);
   if (cwd) { scanSkills(join(cwd, ".claude", "skills"), "claude", "project", out); scanCommands(join(cwd, ".claude", "commands"), "claude", "project", out); }
   out.sort((a, b) => prio(a) - prio(b) || a.name.localeCompare(b.name));
   const byName = new Map<string, SlashCommand>();
@@ -150,6 +172,7 @@ export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | nul
   const cmd = all.find((c) => c.name === typed) || all.find((c) => leafOf(c.name) === leafOf(typed));
   if (!cmd) return null;
   if (cmd.kind === "skill") return { name: cmd.name, expanded: `Use the "${cmd.name}" skill.` + (args ? ` Context: ${args}` : "") };
+  if (cmd.kind === "mcp") return { name: cmd.name, expanded: `Use the "${cmd.name}" MCP server's tools.` + (args ? ` ${args}` : "") };
   let body = "";
   try { body = splitFrontmatter(readFileSync(cmd.path, "utf8")).body; } catch { return null; }
   const expanded = body

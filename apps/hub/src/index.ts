@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -361,6 +361,9 @@ function scheduleRestart(): void {
   })();
 }
 function activeRunner(ws: WebSocket): string { return clientRunner.get(ws) || LOCAL_ID; }
+/** The cwd / agent of a LOCAL session (managed or native), for "@" file search, "!" and "#" memory. */
+function sessionCwd(sid?: string): string { if (!sid) return CWD; if (isNativeId(sid)) return nativeInfo(sid)?.cwd || CWD; return store.get(sid)?.cwd || CWD; }
+function sessionAgent(sid?: string): string | undefined { if (!sid) return undefined; if (isNativeId(sid)) return nativeInfo(sid)?.agent; return store.get(sid)?.agent; }
 /** Per-runner authorization — the "access to the Hub == a shell on the machine" boundary. The owner
  *  reaches every machine; a member only the runners granted in their invite (auth.grants). Auth off =
  *  fully trusted. This is the DRIVE gate (select + act), enforced for BOTH the local machine and remote
@@ -490,6 +493,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     return;
   }
   if (m.t === "command_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "command_list", runnerId: rc.id, commands: m.commands || [] }); } return; }
+  if (m.t === "mention_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "mention_list", files: m.files || [] }); } return; }
   if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries }); } return; }
   if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); } return; }
   if (m.t === "error") { const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return; }
@@ -1242,9 +1246,11 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   const agent = agents.get(info.agent);
   const now = Date.now();
   const { agentText, showText, images, files } = buildAttachments(Array.isArray(opts.attachments) ? opts.attachments : [], text);
-  // A "/cmd" is expanded to its prompt for the AGENT; the echoed user message stays the raw "/cmd".
-  const cmdExp = expandCommand(text, info.cwd || CWD, cmdAgentOf(info.agent));
-  const agentSend = cmdExp ? cmdExp.expanded : agentText;
+  // Power-triggers for the AGENT (echoed user message stays raw): "!cmd" runs + injects output;
+  // otherwise "/cmd" expands to its prompt (scoped to this session's agent).
+  const bang = await expandBang(text, info.cwd || CWD);
+  const cmdExp = bang ? null : expandCommand(text, info.cwd || CWD, cmdAgentOf(info.agent));
+  const agentSend = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
   // pause the live tail so it doesn't re-broadcast our own turn (already shown via streaming)
   const tail = nativeTails.get(sid);
   if (tail) tail.paused = true;
@@ -1743,6 +1749,29 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       else send(ws, { t: "command_list", runnerId: ar, commands: [] });
       return;
     }
+    // "@" file-mention search — files under the session's cwd (local off disk, remote from its runner).
+    if (msg.t === "mention") {
+      const ar = activeRunner(ws);
+      const q = typeof msg.q === "string" ? msg.q : "";
+      if (ar === LOCAL_ID) { send(ws, { t: "mention_list", files: listMentionFiles(sessionCwd(subs.get(ws)), q) }); return; }
+      if (!canUseRunner(ws, ar)) { send(ws, { t: "mention_list", files: [] }); return; }
+      const rc = runners.get(ar);
+      if (rc?.ws) { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "mention", reqId, q, sessionId: subs.get(ws) }); }
+      else send(ws, { t: "mention_list", files: [] });
+      return;
+    }
+    // "#note" → append to the session's memory file (CLAUDE.md / AGENTS.md) in its cwd. No turn.
+    if (msg.t === "memory_append" && typeof msg.text === "string") {
+      const ar = activeRunner(ws);
+      const sid = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+      if (ar !== LOCAL_ID) { if (canUseRunner(ws, ar)) { const rc = runners.get(ar); if (rc?.ws) sendToRunner(rc, { t: "memory_append", text: msg.text, sessionId: sid }); } return; }
+      try {
+        const r = appendMemory(msg.text, sessionCwd(sid), cmdAgentOf(sessionAgent(sid)));
+        const note = { t: "message" as const, message: { sessionId: sid || "", role: "assistant", text: "📝 Anotado em " + r.file, ts: Date.now() } };
+        if (sid) broadcast(sid, note); else send(ws, note);
+      } catch (e: any) { send(ws, { t: "error", message: "memória: " + String(e?.message ?? e) }); }
+      return;
+    }
     if (msg.t === "runner" && typeof msg.runnerId === "string") {
       const target = runners.has(msg.runnerId) ? msg.runnerId : LOCAL_ID;
       if (!canUseRunner(ws, target)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
@@ -2200,11 +2229,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // --- normal Jarvis session (agent + cwd locked at creation) ---
     // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
     const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
-    // A "/cmd" is expanded to its prompt for the AGENT (chat keeps showing the raw "/cmd"), using only
-    // THIS session's agent's commands (a Codex turn never runs a Claude command).
-    const cmdExp = expandCommand(text, store.get(sid)?.cwd || CWD, cmdAgentOf(store.get(sid)?.agent));
+    // Power-triggers, resolved for the AGENT only (chat keeps showing the raw text): "!cmd" runs and
+    // injects its output; otherwise a "/cmd" expands to its prompt (scoped to this session's agent).
+    const scwd = store.get(sid)?.cwd || CWD;
+    const bang = await expandBang(text, scwd);
+    const cmdExp = bang ? null : expandCommand(text, scwd, cmdAgentOf(store.get(sid)?.agent));
     await runManagedTurn(turnCtx, sid, {
-      showText, agentText: cmdExp ? cmdExp.expanded : agentText,
+      showText, agentText: bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText),
       model: typeof msg.model === "string" ? msg.model : undefined,
       effort: typeof msg.effort === "string" ? msg.effort : undefined,
       speaker, images, files, speak: !!msg.speak,

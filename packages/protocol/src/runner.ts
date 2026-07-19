@@ -118,6 +118,8 @@ export type RunnerToHub =
   | { t: "runs"; active: string[] }
   /** available slash-commands / skills on this machine (reply to Hub->Runner "commands") */
   | { t: "command_list"; reqId?: string; commands: unknown[] }
+  /** "@" file-mention matches under a session's cwd (reply to Hub->Runner "mention") */
+  | { t: "mention_list"; reqId?: string; files: string[] }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" };
 
@@ -154,6 +156,10 @@ export type HubToRunner =
   | { t: "caps"; agent?: string }
   /** enumerate this machine's slash-commands / skills (reply: command_list) */
   | { t: "commands"; reqId: string }
+  /** "@" file-mention search under a session's cwd (reply: mention_list) */
+  | { t: "mention"; reqId: string; q?: string; sessionId?: string }
+  /** "#note" → append to the session's memory file (CLAUDE.md/AGENTS.md); no reply beyond a message */
+  | { t: "memory_append"; text: string; sessionId?: string }
   | { t: "stop"; sessionId: string }
   | { t: "cancel"; sessionId: string } // abort a live turn (user hit "parar")
   /** force: descarta alterações locais (git reset --hard) antes de atualizar — só sob pedido explícito do dono. */
