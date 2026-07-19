@@ -27,7 +27,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -489,6 +489,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     for (const c of updateWatchers) send(c, { t: "update_machine", runnerId: rc.id, label, ok: !!m.ok, dirty: !!m.dirty, behind: m.behind ?? 0, log: String(m.log || "").slice(0, 600) });
     return;
   }
+  if (m.t === "command_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "command_list", runnerId: rc.id, commands: m.commands || [] }); } return; }
   if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries }); } return; }
   if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); } return; }
   if (m.t === "error") { const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return; }
@@ -1241,6 +1242,9 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   const agent = agents.get(info.agent);
   const now = Date.now();
   const { agentText, showText, images, files } = buildAttachments(Array.isArray(opts.attachments) ? opts.attachments : [], text);
+  // A "/cmd" is expanded to its prompt for the AGENT; the echoed user message stays the raw "/cmd".
+  const cmdExp = expandCommand(text, info.cwd || CWD);
+  const agentSend = cmdExp ? cmdExp.expanded : agentText;
   // pause the live tail so it doesn't re-broadcast our own turn (already shown via streaming)
   const tail = nativeTails.get(sid);
   if (tail) tail.paused = true;
@@ -1248,7 +1252,7 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   // now) but isn't persisted; a reload rebuilds from the claude transcript, which doesn't carry it.
   broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: info.agent, speaker: opts.speaker, images, files } });
   try {
-    const reply = await agentTurn(sid, agent, agentText, info.cwd || CWD, { model: opts.model, effort: opts.effort });
+    const reply = await agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort });
     if (opts.speak) {
       const spoken = await speechForReply(reply.text);
       if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
@@ -1728,6 +1732,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // --- machine selection + routing to remote runners -----------------------
     if (msg.t === "machines") { send(ws, { t: "machines", machines: machineList(ws) }); return; }
+    // Slash-command / skill list for the composer's "/" autocomplete, for the machine in view. Local
+    // is read straight off disk; a remote machine's list is fetched from its runner (it owns the files).
+    if (msg.t === "commands") {
+      const ar = activeRunner(ws);
+      if (ar === LOCAL_ID) { send(ws, { t: "command_list", runnerId: LOCAL_ID, commands: listCommandsPublic(CWD) }); return; }
+      if (!canUseRunner(ws, ar)) { send(ws, { t: "command_list", runnerId: ar, commands: [] }); return; }
+      const rc = runners.get(ar);
+      if (rc?.ws) { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "commands", reqId }); }
+      else send(ws, { t: "command_list", runnerId: ar, commands: [] });
+      return;
+    }
     if (msg.t === "runner" && typeof msg.runnerId === "string") {
       const target = runners.has(msg.runnerId) ? msg.runnerId : LOCAL_ID;
       if (!canUseRunner(ws, target)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
@@ -2185,8 +2200,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // --- normal Jarvis session (agent + cwd locked at creation) ---
     // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
     const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
+    // A "/cmd" is expanded to its prompt for the AGENT (chat keeps showing the raw "/cmd").
+    const cmdExp = expandCommand(text, store.get(sid)?.cwd || CWD);
     await runManagedTurn(turnCtx, sid, {
-      showText, agentText,
+      showText, agentText: cmdExp ? cmdExp.expanded : agentText,
       model: typeof msg.model === "string" ? msg.model : undefined,
       effort: typeof msg.effort === "string" ? msg.effort : undefined,
       speaker, images, files, speak: !!msg.speak,

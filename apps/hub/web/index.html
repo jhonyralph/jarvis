@@ -400,6 +400,19 @@
       #status { flex:none; white-space:nowrap; }
       .modal .card { width:100%; } .pop { max-width:92vw; }
     }
+    /* "/" command autocomplete popover, floating above the composer */
+    #composer { position:relative; }
+    .cmdpop { position:absolute; left:8px; right:8px; bottom:100%; margin-bottom:6px; z-index:40;
+      max-height:min(46vh,340px); overflow-y:auto; background:#12151a; border:1px solid #2a2f37;
+      border-radius:12px; box-shadow:0 10px 34px rgba(0,0,0,.55); padding:4px; }
+    .cmdpop.hidden { display:none; }
+    .cmdpop .cmdhint { font-size:11px; opacity:.55; padding:6px 10px 4px; }
+    .cmdpop .cmdit { display:flex; gap:8px; align-items:baseline; padding:8px 10px; border-radius:8px; cursor:pointer; }
+    .cmdpop .cmdit:hover, .cmdpop .cmdit.sel { background:#1e2530; }
+    .cmdpop .cmdit .cn { font-weight:600; color:#e6e9ee; white-space:nowrap; }
+    .cmdpop .cmdit .ck { font-size:10px; text-transform:uppercase; letter-spacing:.04em; opacity:.55; border:1px solid #333a44; border-radius:6px; padding:1px 5px; }
+    .cmdpop .cmdit .cd { font-size:12px; opacity:.62; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+    .cmdpop .cmdempty { padding:10px; opacity:.6; font-size:13px; }
   </style>
 </head>
 <body>
@@ -449,6 +462,7 @@
         <button type="button" id="scrollBtn" class="hidden" title="Ir para as mensagens recentes"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 16 18 9"></polyline></svg></button>
         <div id="queueRow" class="hidden"></div>
         <div id="attachRow"></div>
+        <div id="cmdPop" class="cmdpop hidden"></div>
         <div class="inputrow">
           <textarea id="input" rows="1" placeholder="Fale ou digite…" autocomplete="off"></textarea>
           <button type="button" id="micCancel" class="ghost micbtn hidden danger" title="Descartar áudio (não envia)">✕</button>
@@ -550,6 +564,7 @@
     <label><span data-i18n="lblAgent">Agente padrão</span> <select id="setAgent"></select></label>
     <label><span data-i18n="lblModel">Modelo padrão</span> <select id="setModel"></select></label>
     <label><span data-i18n="lblEffort">Esforço padrão</span> <select id="setEffort"></select></label>
+    <label class="row"><input type="checkbox" id="setSlash" checked> <span data-i18n="lblSlash">Autocomplete de comandos ao digitar "/"</span></label>
     <div class="sec" data-i18n="secVoice">Voz</div>
     <label class="row"><input type="checkbox" id="setVoice"> <span data-i18n="lblSpeakDefault">Falar as respostas por padrão</span></label>
     <label class="row"><input type="checkbox" id="setContinue"> <span data-i18n="lblContinue">Após responder, continuar escutando follow-up</span></label>

@@ -116,6 +116,8 @@ export type RunnerToHub =
   /** directory listing for the folder browser (reply to Hub->Runner "listdir") */
   | { t: "dirs"; reqId: string; path: string; parent: string; entries: string[] }
   | { t: "runs"; active: string[] }
+  /** available slash-commands / skills on this machine (reply to Hub->Runner "commands") */
+  | { t: "command_list"; reqId?: string; commands: unknown[] }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" };
 
@@ -150,6 +152,8 @@ export type HubToRunner =
   | { t: "readfile"; reqId: string; path: string; cwd?: string }
   | { t: "readdiff"; reqId: string; sessionId: string; path: string }
   | { t: "caps"; agent?: string }
+  /** enumerate this machine's slash-commands / skills (reply: command_list) */
+  | { t: "commands"; reqId: string }
   | { t: "stop"; sessionId: string }
   | { t: "cancel"; sessionId: string } // abort a live turn (user hit "parar")
   /** force: descarta alterações locais (git reset --hard) antes de atualizar — só sob pedido explícito do dono. */

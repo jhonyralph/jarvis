@@ -22,6 +22,7 @@ import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
+  listCommandsPublic, expandCommand,
   type AgentAdapter, type SendOpts,
 } from "@jarvis/core";
 
@@ -180,7 +181,9 @@ async function doSend(sessionId: string, text: string, agentName?: string, cwd?:
     // Only NOW: "start" makes the UI drop its pending placeholder and open the reply bubble, so
     // emitting it before the user echo above left the echo landing *below* the reply.
     send({ t: "stream", sessionId, ev: { kind: "start" } });
-    const reply = await agent.send(sessionId, text, useCwd, { ...opts, signal: ctrl.signal }, (ev) => send({ t: "stream", sessionId, ev }));
+    // "/cmd" → its expanded prompt for the agent; the echoed/stored user message stays the raw "/cmd".
+    const cmdExp = expandCommand(text, useCwd);
+    const reply = await agent.send(sessionId, cmdExp ? cmdExp.expanded : text, useCwd, { ...opts, signal: ctrl.signal }, (ev) => send({ t: "stream", sessionId, ev }));
     if (!isNativeId(sessionId)) { store.add(sessionId, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name }); pushSessions(); }
     send({ t: "stream", sessionId, ev: { kind: "done", text: reply.text, usage: reply.usage } });
   } catch (e: any) {
@@ -286,6 +289,7 @@ function connect(): void {
         return;
       }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }
+      if (m.t === "commands") { send({ t: "command_list", reqId: m.reqId, commands: listCommandsPublic(CWD) }); return; }
       if (m.t === "update") {
         console.log("[runner] update solicitado pelo Hub...", m.force ? "(forçado)" : "");
         const r = await updateApply(RUNNER_ROOT, { force: !!m.force });
