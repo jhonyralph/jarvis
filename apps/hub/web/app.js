@@ -41,6 +41,7 @@
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
     const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
     let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
+    const askingSids=new Set();  // sessões na fase "consolidando" pós-turno (servidor → {t:asking}); trava o composer
     // ---- config (persisted; refresh não perde estado) ----
     const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
@@ -231,6 +232,7 @@
     function stopTTS(){ try{ if(curTtsAudio){ curTtsAudio.pause(); curTtsAudio=null; } }catch(e){} ttsPlaying=false; }
     function renderAskCard(questions){
       if(!Array.isArray(questions)||!questions.length) return;
+      E.log.querySelectorAll('.askcard').forEach(c=>c.remove());  // idempotente: nunca empilha (resend no open)
       const answers=questions.map(()=>({sel:new Set(), other:'', otherSel:false}));
       const card=document.createElement('div'); card.className='msg bot askcard'; E.log.appendChild(card);
       const st={questions,answers,step:0,card};
@@ -271,7 +273,7 @@
       }
       function answerText(i){ const q=questions[i],a=answers[i]; const picks=[...a.sel].map(x=>q.options[x].label); if(a.otherSel && a.other.trim())picks.push('Outros: '+a.other.trim()); return picks.join('; '); }
       function submit(){ const text='Decisões escolhidas:\n'+questions.map((q,i)=>`- ${q.question}\n  → ${answerText(i)}`).join('\n');
-        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false; clearAsk(currentSession);
+        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false; clearAsk(currentSession); tx({t:'ask_clear',sessionId:currentSession});
         sendMsgTo(currentSession, text); if(wasVoice) lastWasVoice=true; }  // mantém o modo voz para a próxima decisão
       st.draw=draw; st.submit=submit; st.voice=lastWasVoice; askActive=st; draw(); refreshComposer();
       // Se a decisão veio de uma fala, conduz por VOZ (step a step). Espera a fala da resposta
@@ -1176,7 +1178,8 @@
         else if(m.t==='history'){ cacheHist(m); applyHistory(m); }
         else if(m.t==='message'){ if(m.message.role==='assistant') clearRestorable(m.message.sessionId); if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='queue'){ queueBySession[m.sessionId]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession) renderQueue(); }
-        else if(m.t==='ask'){ if(m.sessionId===currentSession){ saveAsk(currentSession,m.questions||[]); renderAskCard(m.questions||[]); } }
+        else if(m.t==='asking'){ if(m.on) askingSids.add(m.sessionId); else askingSids.delete(m.sessionId); if(m.sessionId===currentSession){ if(m.on) status('busy','Consolidando o resultado…'); else if(!askActive) status(''); refreshComposer(); } renderRecents(); }
+        else if(m.t==='ask'){ askingSids.delete(m.sessionId); saveAsk(m.sessionId,m.questions||[]); if(m.sessionId===currentSession){ status(''); renderAskCard(m.questions||[]); refreshComposer(); } else { unread.add(m.sessionId); renderRecents(); } }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
@@ -1373,11 +1376,13 @@
     let curBusy=false;   // reflete busy(currentSession); mantido p/ auto-reload
     function refreshComposer(){ curBusy=busy(currentSession);
       // Durante uma DECISÃO pendente: trava input + enviar + mic (a resposta vem pelo card), mas
-      // mantém Parar ATIVO — parar dispensa o card e devolve o composer pra digitar manualmente.
-      const lock=!!askActive, ro=curNative&&!curNativeWritable;
+      // mantém Parar ATIVO. Durante a fase "consolidando" (o servidor está gerando as perguntas): trava
+      // tudo e mostra o status, para o input não ficar livre no ~1min entre o fim do turno e a pergunta.
+      const consolidating=askingSids.has(currentSession);
+      const lock=!!askActive, ro=curNative&&!curNativeWritable, block=ro||lock||consolidating;
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!(curBusy||lock));
-      E.input.disabled=ro||lock; E.sendBtn.disabled=ro||lock; if(E.mic)E.mic.disabled=ro||lock;
-      E.input.placeholder=lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':t('composerPh'));
+      E.input.disabled=block; E.sendBtn.disabled=block; if(E.mic)E.mic.disabled=block;
+      E.input.placeholder=consolidating?'Consolidando o resultado…':(lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':t('composerPh')));
       renderQueue(); maybeReload(); }
     // id de mensagem p/ idempotência: o runner executa um turnId no máximo uma vez (re-entrega do
     // MESMO frame reusa o id e é ignorada). Cada submit gera um id novo (dois envios = dois turnos).
@@ -1429,7 +1434,7 @@
         askVoice=false; askPendingVoice=false;
         try{ const c=askActive.card; const nav=c.querySelector('.asknav'); if(nav)nav.remove(); c.classList.add('done'); c.classList.remove('min');
           const n=document.createElement('div'); n.className='askhd'; n.textContent='Decisão interrompida — responda manualmente pelo campo abaixo.'; c.appendChild(n); }catch(e){}
-        askActive=null; clearAsk(currentSession); status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
+        askActive=null; clearAsk(currentSession); tx({t:'ask_clear',sessionId:currentSession}); status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
       // Parar um turno em andamento: cancela o agente e — se ainda não veio resposta — devolve a
       // mensagem ao input (ou mostra o botão "voltar" se você já estava digitando). A FILA é
       // preservada (não some mais no parar).

@@ -238,6 +238,16 @@ function broadcastAll(obj: unknown): void {
 
 // sessions with an in-flight Jarvis-driven turn — powers the "rodando agora" panel.
 const activeRuns = new Set<string>();
+// Post-turn decision detection ("consolidating" → questions). `asking` = sessions whose reply is being
+// analysed (locks the composer); `pendingAsk` = questions awaiting an answer, kept so a client that
+// opens the session LATER (switched away, phone reopened) still sees them. Both LOCAL-session only.
+const asking = new Set<string>();
+const pendingAsk = new Map<string, unknown[]>();
+/** Resend a session's pending "consolidating" state + questions to a client that just (re)opened it. */
+function sendPendingAsk(ws: WebSocket, sid: string): void {
+  if (asking.has(sid)) send(ws, { t: "asking", sessionId: sid, on: true });
+  const pa = pendingAsk.get(sid); if (pa) send(ws, { t: "ask", sessionId: sid, questions: pa });
+}
 // runs/sessions are per-machine: only clients viewing the LOCAL machine get local ones.
 function broadcastRuns(): void { const s = JSON.stringify({ t: "runs", active: [...activeRuns] }); for (const c of clientsOn(LOCAL_ID)) if (c.readyState === c.OPEN) c.send(s); }
 // single-flight global para operações de voz (resumo/digest): só 1 por vez em toda a instância,
@@ -1024,6 +1034,8 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
   activeRuns.add(sid); broadcastRuns();
+  // A new turn supersedes any pending decision / consolidating state from the previous one.
+  pendingAsk.delete(sid); if (asking.delete(sid)) broadcast(sid, { t: "asking", sessionId: sid, on: false });
   const buf: any[] = []; activityBuf.set(sid, buf);
   const t0 = Date.now();
   broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "start" } });
@@ -1036,7 +1048,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     const nativeId = agent.nativeSessionId?.(sid);
     if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
     notifyEvent("done", store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis"), reply.text, sid);
-    void maybeAsk(sid, reply.text); // detecta decisões na resposta e emite os cards (agnóstico)
+    void runAsking(sid, reply.text); // detecta decisões na resposta, trava o chat enquanto isso, e as persiste
     // A subagent's internal tool calls only exist while the turn is live (Claude Code writes no
     // recoverable trace of them to disk once done — verified: Task's toolUseResult.outputFile is
     // never populated). The buffered stream events ARE that trace; hand them back so the caller can
@@ -1203,9 +1215,17 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
     return [];
   }
 }
-async function maybeAsk(sid: string, replyText: string): Promise<void> {
-  const questions = await detectDecisions(replyText);
-  if (questions.length) broadcast(sid, { t: "ask", sessionId: sid, questions });
+/** Post-turn decision flow: mark the session "consolidating" (locks the composer, shows a status)
+ *  while the — slow — detector runs, then broadcast the questions AND remember them (pendingAsk) so a
+ *  client opening the session later still gets them. Always emits `asking:false` at the end. */
+async function runAsking(sid: string, replyText: string): Promise<void> {
+  asking.add(sid);
+  broadcast(sid, { t: "asking", sessionId: sid, on: true });
+  try {
+    const questions = await detectDecisions(replyText);
+    if (questions.length) { pendingAsk.set(sid, questions); broadcast(sid, { t: "ask", sessionId: sid, questions }); }
+  } catch { /* ignore */ }
+  finally { asking.delete(sid); broadcast(sid, { t: "asking", sessionId: sid, on: false }); }
 }
 /** Voice wizard: map a spoken answer to a step action. Fast keyword nav first (voltar/avançar/
  *  repetir), then a cheap LLM maps the utterance to option indices or free "other" text. Robust:
@@ -1893,6 +1913,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         files: sessionFiles(msg.sessionId),
       });
       replayActivity(ws, msg.sessionId);
+      sendPendingAsk(ws, msg.sessionId);
       send(ws, { t: "queue", sessionId: msg.sessionId, items: queueOf(msg.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
       return;
     }
@@ -1905,6 +1926,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
       send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles("claude:" + nid) : [] });
       replayActivity(ws, s.id);
+      sendPendingAsk(ws, s.id);
       send(ws, { t: "queue", sessionId: s.id, items: queueOf(s.id).map((q) => ({ text: q.text, atts: q.atts })) });
       return;
     }
@@ -2099,6 +2121,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // "voltar" mensagem cancelada: tira a última mensagem do usuário do store (sessão do hub) pra
     // ela não reaparecer no reload. Nativa não dá (o transcript é do claude) — some só na tela.
     if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (!isNativeId(msg.sessionId)) { store.dropLastUser(msg.sessionId); pushSessions(); } return; }
+    // The user answered/dismissed a decision card → forget the pending questions for that session.
+    if (msg.t === "ask_clear" && typeof msg.sessionId === "string") { pendingAsk.delete(msg.sessionId); return; }
 
     // Wizard de voz dos cards de decisão: falar um passo (say) e interpretar a resposta falada (ask_voice).
     if (msg.t === "say" && typeof msg.text === "string") {
