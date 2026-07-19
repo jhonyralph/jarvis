@@ -72,7 +72,10 @@ function ensureProc(): Promise<void> {
 }
 
 export async function transcribe(audio: Buffer, lang?: string, ext = "webm"): Promise<string> {
-  const path = join(tmpdir(), `jarvis_stt_${Date.now()}_${++seq}.${ext}`);
+  // `ext` comes straight from the client — a value like "../../evil.cmd" would write outside tmp.
+  // Allow only a short alphanumeric extension; anything else falls back to a safe default.
+  const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext : "webm";
+  const path = join(tmpdir(), `jarvis_stt_${Date.now()}_${++seq}.${safeExt}`);
   writeFileSync(path, audio);
   try {
     await ensureProc();

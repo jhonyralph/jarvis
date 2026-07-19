@@ -9,10 +9,10 @@
  *     (supported_reasoning_levels); falls back to ~/.codex/models_cache.json.
  * Results cache ~1h; on any failure we fall back to a small pinned list.
  */
-import { spawn } from "node:child_process";
-import { platform } from "node:os";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { spawn, type ChildProcess } from "node:child_process";
+import { platform, homedir, tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { toolFileStat } from "./native.js";
 import { writeJsonAtomic } from "./persist.js";
@@ -66,6 +66,12 @@ export interface SendOpts {
 /** Thrown when a run is cancelled via its AbortSignal — distinct from a real failure, so the
  *  caller can treat it as "cancelled by the user" (no error toast, no error notification). */
 export const ABORTED = "__aborted__";
+
+/** model/effort are identifiers the user picks from the agent's OWN catalog — pass them to the CLI
+ *  only if they look like one. Cheap allowlist: keeps a malformed or hostile value out of the argv
+ *  (defence in depth — with shell:false there is no shell to inject, but a junk value still errors). */
+const safeIdent = (v?: string): string | undefined =>
+  (typeof v === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(v) ? v : undefined);
 
 /** Kill a spawned process AND its children. On Windows a shell:true spawn wraps the real CLI in
  *  cmd.exe, and killing only the wrapper orphans the agent (it keeps running, and keeps costing) —
@@ -245,7 +251,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // MUST run in ONESHOT_CWD (not homedir): every probe leaves a persistent `claude -p`
       // session file, and only the oneshot cwd is excluded from the native-session list —
       // otherwise the availability probe litters the sidebar with one "ok" session per run.
-      const out = await run(this.bin, ["-p", "ok", "--output-format", "json"], ONESHOT_CWD, "", false);
+      const out = await run(this.bin, ["-p", "ok", "--output-format", "json"], ONESHOT_CWD, "");
       return !JSON.parse(out).is_error;
     } catch {
       return false;
@@ -265,8 +271,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // silently discards, so every tool-using turn would come back empty. Stdin has neither problem,
     // and as a bonus removes the CLI's own "no stdin data received in 3s" wait on every turn.
     const args = ["-p", ...fmt, "--permission-mode", "bypassPermissions"];
-    if (opts?.model) args.push("--model", opts.model);
-    if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort); // ultracode -> xhigh
+    const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
+    if (model) args.push("--model", model);
+    if (effort) args.push("--effort", effort === "ultracode" ? "xhigh" : effort); // ultracode -> xhigh
     if (prev) args.unshift("--resume", prev);
 
     // input_tokens sozinho é só o delta NÃO-cacheado (poucas centenas mesmo com a janela quase
@@ -312,7 +319,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       return { text: finalText, usage };
     }
 
-    const raw = await run(this.bin, args, cwd, text, false, opts?.signal);
+    const raw = await run(this.bin, args, cwd, text, opts?.signal);
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
     if (json.session_id) { this.sessions.set(sessionId, json.session_id); this.saveSessions(); }
@@ -326,7 +333,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const args = ["-p", "--output-format", "json", "--permission-mode", "bypassPermissions"]; // prompt via stdin — see send()
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
-    const raw = await run(this.bin, args, ONESHOT_CWD, text, false); // stateless + isolated cwd (excluded from native list)
+    const raw = await run(this.bin, args, ONESHOT_CWD, text); // stateless + isolated cwd (excluded from native list)
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
     return { text: json.result ?? "" };
@@ -366,7 +373,7 @@ export class CodexAdapter implements AgentAdapter {
         .map((m) => ({ id: m.slug, label: m.display_name, efforts: (m.supported_reasoning_levels || []).map((e: any) => e.effort), defaultEffort: m.default_reasoning_level }));
     let models: ModelInfo[] = [];
     try {
-      const out = await run("codex", ["debug", "models"], homedir(), "", true);
+      const out = await run("codex", ["debug", "models"], homedir(), "");
       models = mapModels(JSON.parse(out.slice(out.indexOf("{"))).models);
     } catch {
       try {
@@ -390,7 +397,7 @@ export class CodexAdapter implements AgentAdapter {
     try {
       // Measured (codex-cli 0.144.4): `login status` exits 0 with an EMPTY stdout and prints
       // "Logged in using ChatGPT" to stderr. Read both, and trust the exit code for success.
-      const r = await runRaw("codex", ["login", "status"], homedir(), "", true);
+      const r = await runRaw("codex", ["login", "status"], homedir(), "");
       return r.code === 0 && /logged in|authenticated|active/i.test(r.stdout + r.stderr);
     } catch {
       return false; // binary not installed / not on PATH
@@ -405,9 +412,10 @@ export class CodexAdapter implements AgentAdapter {
     const args = prev
       ? ["exec", "resume", prev, "--json", "--dangerously-bypass-approvals-and-sandbox"]
       : ["exec", "--cd", cwd, "--json", "--dangerously-bypass-approvals-and-sandbox"];
-    if (opts?.model) args.push("-m", opts.model);
-    if (opts?.effort) args.push("-c", `model_reasoning_effort=${opts.effort}`);
-    const out = await run("codex", args, cwd, text, true, opts?.signal);
+    const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
+    if (model) args.push("-m", model);
+    if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
+    const out = await run("codex", args, cwd, text, opts?.signal);
     this.started.add(sessionId);
     // --json is NDJSON: pull the thread id (to bind/resume next turn) and the final agent message
     // out of the event stream. Falls back to the raw trimmed output if parsing finds nothing (keeps
@@ -428,9 +436,10 @@ export class CodexAdapter implements AgentAdapter {
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
     // run in ONESHOT_CWD (excluded from the native list) so throwaway prompts don't litter the sidebar
     const args = ["exec", "--cd", ONESHOT_CWD, "--dangerously-bypass-approvals-and-sandbox"];
-    if (opts?.model) args.push("-m", opts.model);
-    if (opts?.effort) args.push("-c", `model_reasoning_effort=${opts.effort}`);
-    const out = await run("codex", args, ONESHOT_CWD, text, true); // stateless: no this.started
+    const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
+    if (model) args.push("-m", model);
+    if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
+    const out = await run("codex", args, ONESHOT_CWD, text); // stateless: no this.started
     return { text: out.trim() };
   }
 }
@@ -461,25 +470,73 @@ export class AiderAdapter implements AgentAdapter {
     return { models: [] };
   }
   async available(): Promise<boolean> {
-    try { const r = await runRaw("aider", ["--version"], homedir(), "", true); return r.code === 0; }
+    try { const r = await runRaw("aider", ["--version"], homedir(), ""); return r.code === 0; }
     catch { return false; }
   }
   async send(_sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
-    const args = ["--message", text, "--yes-always", "--no-stream", "--no-pretty", "--restore-chat-history"];
-    if (opts?.model) args.push("--model", opts.model);
-    const out = await run("aider", args, cwd, "", true, opts?.signal);
-    return { text: out.trim() };
+    // The chat message goes via --message-file, not --message <text>: the text is user input, and on
+    // the old shell:true path a message with `;`/`&`/`$()` ran as a shell command. A temp file keeps
+    // it entirely off the command line (belt-and-braces with spawnCli's shell:false).
+    const mf = tempTextFile("jarvis_aider", text);
+    try {
+      const args = ["--message-file", mf.path, "--yes-always", "--no-stream", "--no-pretty", "--restore-chat-history"];
+      const model = safeIdent(opts?.model); if (model) args.push("--model", model);
+      const out = await run("aider", args, cwd, "", opts?.signal);
+      return { text: out.trim() };
+    } finally { mf.cleanup(); }
   }
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
     // stateless throwaway (no history restore, no commits) in the excluded oneshot dir
-    const args = ["--message", text, "--yes-always", "--no-stream", "--no-pretty", "--no-auto-commits"];
-    if (opts?.model) args.push("--model", opts.model);
-    const out = await run("aider", args, ONESHOT_CWD, "", true);
-    return { text: out.trim() };
+    const mf = tempTextFile("jarvis_aider", text);
+    try {
+      const args = ["--message-file", mf.path, "--yes-always", "--no-stream", "--no-pretty", "--no-auto-commits"];
+      const model = safeIdent(opts?.model); if (model) args.push("--model", model);
+      const out = await run("aider", args, ONESHOT_CWD, "");
+      return { text: out.trim() };
+    } finally { mf.cleanup(); }
   }
 }
 
 // ---------------------------------------------------------------------------
+
+/** Resolve a bare command to an absolute path via PATH (+ PATHEXT on Windows). Returns the name
+ *  unchanged when nothing matches (spawn then surfaces a clear ENOENT) or when it's already a path.
+ *  Cached per name. This is what lets us drop shell:true (below) without losing the shell's PATH
+ *  lookup — the shell was only ever needed to FIND the binary, never to parse our arguments. */
+const binCache = new Map<string, string>();
+function resolveBin(cmd: string): string {
+  if (cmd.includes("/") || cmd.includes("\\")) return cmd; // already an explicit path
+  const cached = binCache.get(cmd); if (cached) return cached;
+  const win = platform() === "win32";
+  const exts = win ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";").filter(Boolean) : [""];
+  const dirs = (process.env.PATH || "").split(win ? ";" : ":").filter(Boolean);
+  for (const dir of dirs) for (const ext of exts) {
+    const full = join(dir, cmd + ext);
+    if (existsSync(full)) { binCache.set(cmd, full); return full; }
+  }
+  return cmd;
+}
+/**
+ * Spawn a CLI with NO shell, EVER. The command's arguments (which include user-controlled text on
+ * some adapters) are passed as a raw argv array, so shell metacharacters (`;`, `&`, `$()`, backticks,
+ * quotes) are inert — this is the fix for the shell-injection that shell:true allowed. A Windows
+ * .cmd/.bat shim isn't directly executable, so it's run through cmd.exe explicitly (cmd.exe is the
+ * real executable we spawn; the script + args remain a quoted array, never a concatenated string).
+ */
+function spawnCli(cmd: string, args: string[], cwd: string): ChildProcess {
+  const bin = resolveBin(cmd);
+  if (platform() === "win32" && /\.(cmd|bat)$/i.test(bin)) {
+    return spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", bin, ...args], { cwd, windowsHide: true });
+  }
+  return spawn(bin, args, { cwd, windowsHide: true });
+}
+/** Write `text` to a throwaway temp file and hand back its path + a cleanup fn. Lets an adapter pass
+ *  a prompt via `--message-file` instead of on the command line, so the text never becomes argv. */
+function tempTextFile(prefix: string, text: string): { path: string; cleanup: () => void } {
+  const path = join(tmpdir(), `${prefix}_${randomUUID()}.txt`);
+  writeFileSync(path, text);
+  return { path, cleanup: () => { try { unlinkSync(path); } catch { /* already gone */ } } };
+}
 
 export interface RunResult { code: number; stdout: string; stderr: string }
 /**
@@ -490,16 +547,16 @@ export interface RunResult { code: number; stdout: string; stderr: string }
  * and prints its answer to STDERR, while `codex exec` prints the reply to STDOUT and a banner to
  * STDERR. A helper that collapses both into one string cannot serve both.
  */
-function runRaw(cmd: string, args: string[], cwd: string, stdin: string, useShell: boolean): Promise<RunResult> {
+function runRaw(cmd: string, args: string[], cwd: string, stdin: string): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, windowsHide: true, shell: useShell });
+    const p = spawnCli(cmd, args, cwd);
     let out = "";
     let err = "";
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.stderr.on("data", (d) => (err += d.toString()));
+    p.stdout!.on("data", (d) => (out += d.toString()));
+    p.stderr!.on("data", (d) => (err += d.toString()));
     p.on("error", reject);
-    if (stdin) p.stdin.write(stdin);
-    p.stdin.end();
+    if (stdin) p.stdin!.write(stdin);
+    p.stdin!.end();
     p.on("close", (code) => resolve({ code: code ?? -1, stdout: out, stderr: err }));
   });
 }
@@ -511,17 +568,17 @@ function runRaw(cmd: string, args: string[], cwd: string, stdin: string, useShel
  * that had printed to stdout a success. Returns stdout, because that is where a CLI puts its
  * output; callers that need stderr use runRaw and say so.
  */
-function run(cmd: string, args: string[], cwd: string, stdin: string, useShell: boolean, signal?: AbortSignal): Promise<string> {
+function run(cmd: string, args: string[], cwd: string, stdin: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, windowsHide: true, shell: useShell });
+    const p = spawnCli(cmd, args, cwd);
     const wasAborted = wireAbort(p, signal);
     let out = "";
     let err = "";
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.stderr.on("data", (d) => (err += d.toString()));
+    p.stdout!.on("data", (d) => (out += d.toString()));
+    p.stderr!.on("data", (d) => (err += d.toString()));
     p.on("error", reject);
-    if (stdin) p.stdin.write(stdin);
-    p.stdin.end();
+    if (stdin) p.stdin!.write(stdin);
+    p.stdin!.end();
     p.on("close", (code) => {
       if (wasAborted()) reject(new Error(ABORTED));
       else if (code === 0) resolve(out);
@@ -533,12 +590,12 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, useShell: 
 /** Like run(), but calls onLine for each complete stdout line as it arrives (NDJSON stream). */
 function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, windowsHide: true, shell: false });
+    const p = spawnCli(cmd, args, cwd);
     const wasAborted = wireAbort(p, signal);
     let out = "";
     let buf = "";
     let err = "";
-    p.stdout.on("data", (d) => {
+    p.stdout!.on("data", (d) => {
       buf += d.toString();
       let i: number;
       while ((i = buf.indexOf("\n")) >= 0) {
@@ -548,10 +605,10 @@ function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLi
         if (line.trim()) onLine(line);
       }
     });
-    p.stderr.on("data", (d) => (err += d.toString()));
+    p.stderr!.on("data", (d) => (err += d.toString()));
     p.on("error", reject);
-    if (stdin) p.stdin.write(stdin);
-    p.stdin.end();
+    if (stdin) p.stdin!.write(stdin);
+    p.stdin!.end();
     p.on("close", (code) => {
       if (wasAborted()) { reject(new Error(ABORTED)); return; }
       if (buf.trim()) onLine(buf);

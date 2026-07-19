@@ -42,7 +42,10 @@ function lastJson(s: string): any {
 }
 
 function tmp(ext: string): string {
-  return join(tmpdir(), `jarvis_spk_${randomUUID()}.${ext}`);
+  // `ext` is client-supplied — reject anything that isn't a short alphanumeric extension, so it can't
+  // steer the write out of tmp (e.g. "../../../foo.cmd"). Falls back to a safe default.
+  const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext : "webm";
+  return join(tmpdir(), `jarvis_spk_${randomUUID()}.${safeExt}`);
 }
 
 /** Identify the speaker of one utterance. Returns known=false if no voiceprint matches. */
