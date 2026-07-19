@@ -78,4 +78,16 @@ test("a runner token authenticates and revokes", () => {
   assert.equal(auth.authenticateRunner(token), null, "revoked token no longer works");
 });
 
+test("runner token TOFU: adopts the real id once, then is pinned; no id takeover", () => {
+  const t1 = auth.mintRunnerToken("m-tofu-1", "Placeholder 1"); // minted with a placeholder id
+  assert.equal(auth.claimRunnerId(t1, "real-X", "Máquina X"), true, "first use adopts the runner's real id");
+  assert.ok(auth.authenticateRunner(t1), "token still authenticates after binding");
+  assert.equal(auth.claimRunnerId(t1, "real-X"), true, "same machine reconnecting is idempotent");
+  assert.equal(auth.claimRunnerId(t1, "real-Y"), false, "a pinned token may not jump to another id");
+  const t2 = auth.mintRunnerToken("m-tofu-2", "Placeholder 2");
+  assert.equal(auth.claimRunnerId(t2, "real-X"), false, "a token cannot take over an id another token owns");
+  assert.equal(auth.claimRunnerId(t2, "real-Z", "Máquina Z"), true, "but it can adopt its own fresh id");
+  assert.equal(auth.claimRunnerId("not-a-token", "real-Q"), false, "an unknown token is refused");
+});
+
 test.after(() => rmSync(HOME, { recursive: true, force: true }));

@@ -59,7 +59,7 @@ export type Role = "owner" | "member";
 export interface User { id: string; role: Role; name: string; createdAt: number; }
 export interface Device { id: string; userId: string; label: string; tokenHash: string; createdAt: number; lastSeen: number; ip?: string; ua?: string; expiresAt?: number; }
 export interface Invite { id: string; codeHash: string; role: Role; runners: string[]; expiresAt: number; deviceTtlSec?: number; createdBy: string; createdAt: number; usedAt?: number; usedBy?: string; }
-export interface RunnerToken { runnerId: string; label: string; tokenHash: string; createdAt: number; lastSeen: number; }
+export interface RunnerToken { runnerId: string; label: string; tokenHash: string; createdAt: number; lastSeen: number; bound?: boolean; }
 interface AuthData {
   version: 1;
   claimed: boolean;
@@ -286,15 +286,30 @@ export function authenticateRunner(token: string): RunnerToken | null {
 export function listRunnerTokens(): Array<Omit<RunnerToken, "tokenHash">> {
   return data.runnerTokens.map(({ tokenHash, ...pub }) => pub);
 }
-/** After a runner registers, bind the token it used to the runner's REAL id (+ label) — the
- *  runner picks its own runnerId, so without this the token stays under its mint-time id and
- *  the machines list can never line the two up. */
-export function bindRunnerToken(token: string, runnerId: string, label?: string): boolean {
+/** TOFU binding of a runner token to the REAL id the runner declares at register. A freshly minted
+ *  token carries a placeholder id; on first use it adopts the runner's id and is PINNED to it. After
+ *  that the token may never present a different id, and no token may claim an id that already belongs
+ *  to another token — this is what stops a leaked / low-trust runner token from impersonating or
+ *  evicting another machine (it used to rebind unconditionally, dropping the legit token). Returns
+ *  false when the claim must be REFUSED — the caller must reject the register. */
+export function claimRunnerId(token: string, runnerId: string, label?: string): boolean {
   const rt = data.runnerTokens.find((r) => hashEq(r.tokenHash, sha(token)));
   if (!rt) return false;
-  if (rt.runnerId === runnerId && (!label || rt.label === label)) return false;
-  data.runnerTokens = data.runnerTokens.filter((r) => r === rt || r.runnerId !== runnerId); // drop stale duplicate
+  // The id already belongs to a DIFFERENT token → refuse (impersonation / id takeover).
+  if (data.runnerTokens.some((r) => r !== rt && r.runnerId === runnerId)) return false;
+  if (rt.runnerId === runnerId) {
+    // Same machine reconnecting: pin it (also migrates legacy tokens that predate `bound`) + refresh label.
+    let changed = false;
+    if (!rt.bound) { rt.bound = true; changed = true; }
+    if (label && rt.label !== label) { rt.label = label; changed = true; }
+    if (changed) save(data);
+    return true;
+  }
+  // A token already pinned to one id may not jump to another.
+  if (rt.bound) return false;
+  // First use of a fresh token: adopt the runner's real id and pin it.
   rt.runnerId = runnerId;
+  rt.bound = true;
   if (label) rt.label = label;
   save(data);
   return true;

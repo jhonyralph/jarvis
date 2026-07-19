@@ -202,13 +202,26 @@ let reconnectDelay = 1000;
 function connect(): void {
   const sock = new WebSocket(HUB_URL);
   ws = sock;
+  // Inverse heartbeat / half-open detection. The Hub pings every 20s; ANY inbound frame refreshes
+  // this clock. A dead TCP half-open (Hub crashed, NAT dropped the mapping) never fires 'close', so
+  // the socket would sit "OPEN" for minutes while every turn event is written into the void (send()
+  // only buffers to the outbox when readyState !== OPEN). If three ping cycles pass with no traffic,
+  // terminate the socket ourselves — that fires 'close', which reconnects and re-arms the outbox.
+  let lastInbound = Date.now();
+  const hb = setInterval(() => {
+    if (sock.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - lastInbound > 60000) { console.warn("[runner] Hub sem ping há 60s — encerrando socket meio-aberto"); try { sock.terminate(); } catch { /* ignore */ } }
+  }, 20000);
+  hb.unref?.();
   sock.on("open", async () => {
     reconnectDelay = 1000;
     const info: RunnerInfo = { runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: await availableAgents(), version: VERSION, commit: await repoCommit(RUNNER_ROOT), label: process.env.JARVIS_LABEL || undefined };
     send({ t: "register", token: TOKEN, info });
   });
   sock.on("message", async (data) => {
+    lastInbound = Date.now();
     let m: any; try { m = JSON.parse(data.toString()); } catch { return; }
+    if (!m || typeof m !== "object" || typeof m.t !== "string") return; // drop junk / non-object frames
     try {
       if (m.t === "welcome") { console.log(`[runner] registered as ${RUNNER_ID} (${hostname()})`); flushOutbox(); pushSessions(); pushRuns(); send({ t: "caps", agent: DEFAULT_AGENT, caps: await agents.describe() }); return; }
       if (m.t === "reject") { console.error(`[runner] rejected by hub: ${m.reason}`); sock.close(); return; }
@@ -280,15 +293,38 @@ function connect(): void {
         // Report back: this used to land only in THIS machine's console, so the Hub said
         // "atualizando N máquinas" and an abort here was invisible — you'd find out days later.
         send({ t: "update_done", ok: r.ok, dirty: !!r.dirty, behind: r.behind ?? 0, log: r.log.slice(0, 600) });
-        if (r.ok && ((r.behind ?? 0) > 0 || m.force)) { setTimeout(() => { try { restartService("runner"); } catch { /* ignore */ } process.exit(0); }, 500); }
+        if (r.ok && ((r.behind ?? 0) > 0 || m.force)) void drainAndExit();
         return;
       }
       if ((m.t === "cancel" || m.t === "stop") && typeof m.sessionId === "string") { runAborts.get(m.sessionId)?.abort(); return; }
     } catch (e: any) { send({ t: "error", reqId: m?.reqId, message: String(e?.message ?? e) }); }
   });
-  sock.on("close", () => { ws = null; setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 15000); console.log(`[runner] disconnected; retrying in ${reconnectDelay / 1000}s`); });
+  sock.on("close", () => { clearInterval(hb); ws = null; setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 15000); console.log(`[runner] disconnected; retrying in ${reconnectDelay / 1000}s`); });
   sock.on("error", (e: any) => { console.error("[runner] ws error:", e?.message ?? e); });
 }
+
+/** Wait for in-flight turns to finish (up to a deadline), then restart via the service manager. A
+ *  restart mid-turn kills the agent's process tree — draining lets the running turn land its reply
+ *  first; the deadline stops a stuck turn from blocking the update forever. */
+async function drainAndExit(deadlineMs = 120000): Promise<void> {
+  const start = Date.now();
+  while (activeRuns.size && Date.now() - start < deadlineMs) await new Promise((r) => setTimeout(r, 1000));
+  if (activeRuns.size) console.warn(`[runner] reiniciando com ${activeRuns.size} turno(s) ainda ativo(s) — deadline atingido`);
+  try { restartService("runner"); } catch { /* ignore */ }
+  process.exit(0);
+}
+// Graceful shutdown: a service stop / SIGTERM otherwise leaves the spawned agent CLIs (running with
+// bypassPermissions) orphaned — still working, still spending tokens, with nothing to collect the
+// result. Abort every live turn (killTree fires via the AbortSignal) before exiting.
+let shuttingDown = false;
+function shutdown(sig: string): void {
+  if (shuttingDown) return; shuttingDown = true;
+  if (runAborts.size) console.log(`[runner] ${sig} — abortando ${runAborts.size} turno(s) em andamento`);
+  for (const [, ctrl] of runAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
+  setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 console.log(`[runner] id=${RUNNER_ID} host=${hostname()} os=${platform()} -> ${HUB_URL}`);
 // Surface the #1 misconfig at boot instead of as a silent reject 20s later: an empty token means the

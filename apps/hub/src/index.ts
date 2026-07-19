@@ -16,8 +16,7 @@ import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, cl
 import { homedir, hostname } from "node:os";
 import { join, normalize, dirname, basename } from "node:path";
 import QRCode from "qrcode";
-import webpush from "web-push";
-import { MobilePush } from "./mobilePush.js";
+import { PushCenter } from "./push.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
@@ -33,6 +32,7 @@ import { embed, embedOne } from "./embed.js";
 import type { RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
+import { startAdminApi } from "./adminApi.js";
 import { runManagedTurn, type TurnCtx } from "./turn.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
@@ -80,8 +80,6 @@ store.ensure(WAKE_SESSION, { agent: process.env.JARVIS_WAKE_AGENT || agents.defa
 // + subscriptions live locally; the push protocol relays via the browser's FCM/APNs
 // (payload is encrypted). ----
 const JARVIS_DIR = join(homedir(), ".jarvis");
-const VAPID_FILE = join(JARVIS_DIR, "vapid.json");
-const SUBS_FILE = join(JARVIS_DIR, "push-subs.json");
 
 // Summary/digest one-shot config — cheap by default (it's a light task), user-tunable in Settings.
 const SUMMARY_FILE = join(JARVIS_DIR, "summary.json");
@@ -93,91 +91,15 @@ function saveSummaryCfg(): void { try { writeJsonAtomic(SUMMARY_FILE, summaryCfg
 // Voz ambiente (staging): política de escalada de modelo + modelos rápido/upgrade. Persistido.
 // escalate: "ask" (avisa e pede autorização por voz) | "auto" (sobe sozinho) | "<modelId>" (sobe pra esse).
 const VOICE_CFG_FILE = join(JARVIS_DIR, "voice-cfg.json");
-const voiceCfg: { escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string } = (() => {
+const voiceCfg: { escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number } = (() => {
   // relevance: "on" (padrão — filtra falas que não são comando/relacionadas antes de despachar) | "off".
   const d = { escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high", relevance: (process.env.JARVIS_VOICE_RELEVANCE || "on") };
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(VOICE_CFG_FILE, "utf8")) }; } catch { return d; }
 })();
 function saveVoiceCfg(): void { try { writeJsonAtomic(VOICE_CFG_FILE, voiceCfg, { pretty: true }); } catch { /* ignore */ } }
-let vapid: { publicKey: string; privateKey: string };
-try {
-  vapid = JSON.parse(readFileSync(VAPID_FILE, "utf8"));
-} catch {
-  vapid = webpush.generateVAPIDKeys();
-  try { writeJsonAtomic(VAPID_FILE, vapid); } catch { /* ignore */ }
-}
-webpush.setVapidDetails("mailto:jarvis@localhost", vapid.publicKey, vapid.privateKey);
-let pushSubs: any[] = [];
-try { pushSubs = JSON.parse(readFileSync(SUBS_FILE, "utf8")); } catch { pushSubs = []; }
-function saveSubs(): void { try { writeJsonAtomic(SUBS_FILE, pushSubs); } catch { /* ignore */ } }
-// Native push for the Capacitor app (FCM), ALONGSIDE the browser web-push above. No-op unless
-// JARVIS_FCM_SA points at a Firebase service account — additive, opt-in (see mobilePush.ts).
-const mobilePush = new MobilePush(JARVIS_DIR);
-// --- notifications ---------------------------------------------------------
-// Prefs live ON the subscription: each device decides for itself. A phone in your pocket wants
-// "session done, grouped"; the desktop you're staring at may want nothing. A single global
-// switch can't express that, and pushSubs is already per-device.
-export type NotifyKind = "done" | "error" | "machine";
-interface PushPrefs { events: NotifyKind[]; mode: "each" | "grouped"; everyMin: number }
-const DEFAULT_PREFS: PushPrefs = { events: ["done", "error"], mode: "each", everyMin: 15 };
-function prefsOf(sub: any): PushPrefs {
-  const p = sub?.prefs || {};
-  const events = Array.isArray(p.events) ? p.events.filter((e: string) => ["done", "error", "machine"].includes(e)) : DEFAULT_PREFS.events;
-  const everyMin = Math.min(240, Math.max(1, Number(p.everyMin) || DEFAULT_PREFS.everyMin));
-  return { events, mode: p.mode === "grouped" ? "grouped" : "each", everyMin };
-}
-function addSub(sub: any, prefs?: unknown): void {
-  if (!sub?.endpoint) return;
-  const existing = pushSubs.find((s) => s.endpoint === sub.endpoint);
-  if (existing) { if (prefs) existing.prefs = prefs; saveSubs(); return; }
-  pushSubs.push({ ...sub, prefs: prefs || DEFAULT_PREFS }); saveSubs();
-}
-function setSubPrefs(endpoint: string, prefs: unknown): void {
-  const s = pushSubs.find((x) => x.endpoint === endpoint);
-  if (s) { s.prefs = prefs; saveSubs(); }
-}
-function removeSub(endpoint: string): void { const n = pushSubs.length; pushSubs = pushSubs.filter((s) => s.endpoint !== endpoint); if (pushSubs.length !== n) { pending.delete(endpoint); saveSubs(); } }
-
-async function sendPush(sub: any, payload: object): Promise<void> {
-  await webpush.sendNotification(sub, JSON.stringify(payload)).catch((err: any) => {
-    // 404/410 = the browser dropped this subscription for good; anything else may be transient.
-    if (err?.statusCode === 404 || err?.statusCode === 410) removeSub(sub.endpoint);
-  });
-}
-const clean = (s: string) => (s || "").replace(/[#*`>_~]/g, "").replace(/\s+/g, " ").trim();
-// Grouped mode: hold events per device and flush on that device's own interval.
-const pending = new Map<string, { at: number; items: Array<{ kind: NotifyKind; title: string; body: string }> }>();
-/** One event, fanned out to every device that asked for this kind — now or at its next flush. */
-function notifyEvent(kind: NotifyKind, title: string, body: string, tag?: string): void {
-  for (const sub of [...pushSubs]) {
-    const p = prefsOf(sub);
-    if (!p.events.includes(kind)) continue;
-    if (p.mode === "each") { void sendPush(sub, { title: "Jarvis · " + clean(title).slice(0, 60), body: clean(body).slice(0, 140), tag: tag || kind }); continue; }
-    const q = pending.get(sub.endpoint) || { at: Date.now(), items: [] };
-    q.items.push({ kind, title: clean(title).slice(0, 60), body: clean(body).slice(0, 90) });
-    if (q.items.length > 50) q.items.shift(); // a stuck flusher must not grow without bound
-    pending.set(sub.endpoint, q);
-  }
-  // Native app devices (Capacitor/FCM) in parallel to the browser web-push above. No-op unless FCM
-  // is configured; kept "each"-mode for v1 (no grouped batching on the native side yet).
-  void mobilePush.notify(kind, clean(title), clean(body), tag);
-}
-/** Flush grouped queues whose interval elapsed. One tick for everyone; each device has its own. */
-function flushGrouped(): void {
-  const now = Date.now();
-  for (const [endpoint, q] of [...pending]) {
-    const sub = pushSubs.find((s) => s.endpoint === endpoint);
-    if (!sub) { pending.delete(endpoint); continue; }
-    const p = prefsOf(sub);
-    if (p.mode !== "grouped" || !q.items.length || now - q.at < p.everyMin * 60_000) continue;
-    pending.delete(endpoint);
-    const n = q.items.length;
-    const head = n === 1 ? q.items[0].title : `${n} eventos`;
-    const body = q.items.slice(-4).map((i) => `${i.kind === "error" ? "⚠" : i.kind === "machine" ? "🖥" : "✓"} ${i.title}`).join(" · ");
-    void sendPush(sub, { title: "Jarvis · " + head, body: body.slice(0, 200), tag: "jarvis-grouped" });
-  }
-}
-setInterval(flushGrouped, 30_000).unref?.();
+const push = new PushCenter(JARVIS_DIR);
+// Bound method — the Hub keeps calling notifyEvent(...) everywhere, now delegated to the module.
+const notifyEvent = push.notifyEvent;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -281,8 +203,10 @@ const wakeClients = new Set<WebSocket>();
 let wakeEnabled = process.env.JARVIS_WAKE !== "0";
 // speaker-id: label voice messages with the enrolled speaker; optionally reject
 // unknown voices (gate). Off by default so an un-enrolled user is never locked out.
-let voiceGate = process.env.JARVIS_VOICE_GATE === "1";
-let voiceThreshold: number | undefined = process.env.JARVIS_VOICE_THRESHOLD ? Number(process.env.JARVIS_VOICE_THRESHOLD) : undefined;
+// Persisted (voice-cfg.json) so the owner turning the gate ON survives a Hub restart — it used to
+// live only in memory + env, so a restart silently reverted a security control to its default.
+let voiceGate = typeof voiceCfg.gate === "boolean" ? voiceCfg.gate : process.env.JARVIS_VOICE_GATE === "1";
+let voiceThreshold: number | undefined = typeof voiceCfg.threshold === "number" ? voiceCfg.threshold : (process.env.JARVIS_VOICE_THRESHOLD ? Number(process.env.JARVIS_VOICE_THRESHOLD) : undefined);
 // proactive-voice session setup: which agent/model/effort/folder the wake session
 // uses, and a task held while we ask the user "continuar ou nova sessão?".
 const voiceConfig: { agent: string; model?: string; effort?: string; cwd: string } = {
@@ -423,8 +347,19 @@ async function refreshUpdate(doBroadcast = true): Promise<void> {
   try { updateStatus = await updateCheck(UPDATE_ROOT, true); } catch (e: any) { updateStatus = { supported: false, error: String(e?.message ?? e) }; }
   if (doBroadcast) broadcastAll({ t: "update_status", status: updateStatus });
 }
-/** Apply the Hub update and restart (via the service manager) so the new code takes effect. */
-function scheduleRestart(): void { broadcastAll({ t: "update_progress", message: "Nova versão aplicada — reiniciando." }); setTimeout(() => { try { restartService("hub"); } catch { /* ignore */ } process.exit(0); }, 900); }
+/** Apply the Hub update and restart (via the service manager) so the new code takes effect. Drains
+ *  in-flight LOCAL turns first (up to a deadline) so a restart doesn't kill an agent mid-edit. */
+function scheduleRestart(): void {
+  broadcastAll({ t: "update_progress", message: "Nova versão aplicada — reiniciando." });
+  void (async () => {
+    await new Promise((r) => setTimeout(r, 900)); // let the broadcast flush to clients
+    const start = Date.now();
+    while (activeRuns.size && Date.now() - start < 120000) await new Promise((r) => setTimeout(r, 1000));
+    if (activeRuns.size) console.warn(`[hub] reiniciando com ${activeRuns.size} turno(s) local(is) ativo(s) — deadline atingido`);
+    try { restartService("hub"); } catch { /* ignore */ }
+    process.exit(0);
+  })();
+}
 function activeRunner(ws: WebSocket): string { return clientRunner.get(ws) || LOCAL_ID; }
 /** Per-runner authorization — the "access to the Hub == a shell on the machine" boundary. The owner
  *  reaches every machine; a member only the runners granted in their invite (auth.grants). Auth off =
@@ -440,6 +375,15 @@ function canUseRunner(ws: WebSocket, rid: string): boolean {
 // The session ops that act on a machine (local or the selected runner). A member without a grant for
 // the target machine may not run any of these — mirrors the forwarded-op list below.
 const RUNNER_OPS = new Set(["list", "open", "send", "new", "listdir", "configure", "readfile", "readdiff", "delete"]);
+// Ops that ALWAYS read or execute the LOCAL (Hub) machine's own sessions, regardless of which runner
+// is selected — they never take the remote-forward path. These were NOT in RUNNER_OPS, so a member
+// without local access reached them: `sendTo`/`voice` execute a turn ON THE HUB (bypassPermissions),
+// and search/summary read every local session. Gate them on LOCAL_ID like any other machine op.
+const LOCAL_OPS = new Set(["sendTo", "dropLast", "search", "memory_search", "voice"]);
+// Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
+// the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
+// active runner so a member may drive only a machine they were granted.
+const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "cancel", "summarize"]);
 /** Client sockets (not runner sockets) currently viewing a given machine. */
 function clientsOn(runnerId: string): WebSocket[] {
   const out: WebSocket[] = [];
@@ -584,12 +528,24 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
   ws.on("error", () => { /* close handles cleanup */ });
   ws.on("message", (raw) => {
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
+    if (!m || typeof m !== "object" || typeof m.t !== "string") return; // drop junk / non-object frames
     if (m.t === "register") {
       if (guard.blockedFor(ip) > 0) { send(ws, { t: "reject", reason: "muitas tentativas" }); try { ws.close(); } catch { /* ignore */ } return; }
       if (auth.AUTH_ENABLED) { const rt = auth.authenticateRunner(m.token); if (!rt) { const r = guard.recordFail(ip); auth.audit(r.blocked ? "auth_blocked" : "runner_reject", { ip, detail: `runner token${r.blocked ? " — bloqueado" : ""}` }); send(ws, { t: "reject", reason: "token de runner inválido" }); try { ws.close(); } catch { /* ignore */ } return; } }
       clearTimeout(regTimer); guard.recordSuccess(ip);
-      const info: RunnerInfo = m.info || {}; rid = info.runnerId || null;
-      if (!rid) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
+      const info: RunnerInfo = m.info || {};
+      const declaredId = info.runnerId || null;
+      if (!declaredId) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
+      // Machine 0 (this host) is always LOCAL_ID; a remote runner may not claim that reserved id and
+      // overwrite the in-process entry.
+      if (declaredId === LOCAL_ID) { send(ws, { t: "reject", reason: "runnerId reservado" }); try { ws.close(); } catch { /* ignore */ } return; }
+      // TOFU: pin the token to this id and forbid claiming an id owned by another token. Done BEFORE
+      // evicting any current holder, so a rejected impersonation attempt can't knock the real one off.
+      if (auth.AUTH_ENABLED && !auth.claimRunnerId(m.token, declaredId, info.label || info.host || declaredId)) {
+        auth.audit("runner_reject", { ip, runnerId: declaredId, detail: "id não confere com o token" });
+        send(ws, { t: "reject", reason: "identidade de runner recusada" }); try { ws.close(); } catch { /* ignore */ } return;
+      }
+      rid = declaredId;
       offlineSince.delete(rid); offlineAlerted.delete(rid); // back online — reset the offline clock + alert latch
       // Same id registering again = a second instance on that machine (e.g. the service plus a
       // hand-started one). The map would just be overwritten and the old socket left live but
@@ -598,8 +554,6 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       if (prevRc?.ws && prevRc.ws !== ws) { console.warn(`[hub] runner ${rid} registrou de novo — encerrando instância anterior`); try { prevRc.ws.close(); } catch { /* ignore */ } }
       runners.set(rid, { id: rid, ws, local: false, lastSeen: Date.now(), info });
       if (!runnerLabels[rid]) { runnerLabels[rid] = info.label || info.host || rid; saveRunnerLabels(); }
-      // align the auth token with the runner's real id so the machines list reconciles
-      if (auth.AUTH_ENABLED) auth.bindRunnerToken(m.token, rid, runnerLabels[rid]);
       send(ws, { t: "welcome", runnerId: rid });
       auth.audit("runner_online", { runnerId: rid, detail: info.host });
       console.log(`[hub] runner online: ${rid} (${info.host})`);
@@ -608,7 +562,8 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
     }
     if (!rid) return;
     const rc = runners.get(rid); if (!rc) return; rc.lastSeen = Date.now();
-    relayRunner(rc, m);
+    // A malformed frame from a runner must never take the hub down (unhandled throw → process crash).
+    try { relayRunner(rc, m); } catch (e) { console.error("[hub] erro no relay do runner", rid, "-", String((e as any)?.message ?? e)); }
   });
 }
 
@@ -1391,8 +1346,11 @@ async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Pr
 }
 /** Cross-agent digest ("what's happening across your sessions") — cheap, spoken, not stored. */
 async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
-  const own = store.digest(10, 200);
-  const nat = listNative(8).map((n) => ({ id: n.id, agent: n.agent, title: n.title, updatedAt: n.updatedAt, lastAssistant: "", lastUser: "" }));
+  // A member only hears the machines they were granted: the local (Hub) sessions require local access,
+  // and remote machines are filtered below — otherwise the digest leaked titles/state of every machine.
+  const canLocal = canUseRunner(ws, LOCAL_ID);
+  const own = canLocal ? store.digest(10, 200) : [];
+  const nat = canLocal ? listNative(8).map((n) => ({ id: n.id, agent: n.agent, title: n.title, updatedAt: n.updatedAt, lastAssistant: "", lastUser: "" })) : [];
   const all = [...own, ...nat].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   // "active now" = a Jarvis-driven turn in flight OR a native session whose jsonl was
   // just written (an EXTERNAL claude/codex working in a terminal shows up here too).
@@ -1405,7 +1363,7 @@ async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
   // Remote machines: pull their real sessions. Sending only a running count left the model
   // describing an online machine with a dozen idle sessions as "inativa" — nothing in flight is
   // not the same as offline, and the machine's own sessions were invisible here entirely.
-  const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN);
+  const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUseRunner(ws, r.id));
   const remoteLines = (await Promise.all(remotes.map(async (r) => {
     const label = runnerLabels[r.id] || r.info.host || r.id;
     const running = runnerActive.get(r.id) || new Set<string>();
@@ -1657,16 +1615,22 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
  *  Returns true if it handled `msg`. Behavior-preserving (same relative order at the call site). */
 async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
   if (msg.t === "wake_hello") { wakeClients.add(ws); send(ws, { t: "wake_state", enabled: wakeEnabled }); return true; }
-  if (msg.t === "wake") { wakeEnabled = !!msg.enabled; for (const c of wakeClients) send(c, { t: "wake_state", enabled: wakeEnabled }); broadcastAll({ t: "wake_state", enabled: wakeEnabled }); return true; }
+  if (msg.t === "wake") { if (!requireOwner(ws)) return true; wakeEnabled = !!msg.enabled; for (const c of wakeClients) send(c, { t: "wake_state", enabled: wakeEnabled }); broadcastAll({ t: "wake_state", enabled: wakeEnabled }); return true; }
   if (msg.t === "wake_event") { broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return true; }
   if (msg.t === "speakers") { await sendVoiceState(ws); return true; }
   if (msg.t === "voicecfg") {
+    // Owner-only: this is the biometric voice gate (an access control) + its threshold. A member could
+    // otherwise disable it or lower the bar. Persisted so it survives a restart.
+    if (!requireOwner(ws)) return true;
     if (typeof msg.gate === "boolean") voiceGate = msg.gate;
     if (typeof msg.threshold === "number") voiceThreshold = msg.threshold;
+    voiceCfg.gate = voiceGate; voiceCfg.threshold = voiceThreshold; saveVoiceCfg();
     await broadcastVoiceState();
     return true;
   }
   if (msg.t === "enroll" && typeof msg.name === "string" && Array.isArray(msg.samples)) {
+    // Owner-only: enrolling a voice grants it spoken access; a member could enroll their own.
+    if (!requireOwner(ws)) return true;
     try {
       const bufs = msg.samples.filter((s: any) => typeof s === "string").map((s: string) => Buffer.from(s, "base64"));
       if (!bufs.length) { send(ws, { t: "error", message: "enroll: nenhum áudio recebido" }); return true; }
@@ -1679,6 +1643,7 @@ async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
     return true;
   }
   if (msg.t === "delspk" && typeof msg.name === "string") {
+    if (!requireOwner(ws)) return true; // deleting a voiceprint (biometric data) is an owner action
     await deleteSpeaker(msg.name);
     await broadcastVoiceState();
     return true;
@@ -1689,13 +1654,7 @@ async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
 /** Notifications message group, lifted from the router VERBATIM: web-push (VAPID) subscribe/prefs/
  *  unsubscribe + the native-app (FCM) token register/unregister. Returns true if it handled `msg`. */
 function handlePushMsg(ws: WebSocket, msg: any): boolean {
-  if (msg.t === "pushkey") { send(ws, { t: "pushkey", key: vapid.publicKey }); return true; }
-  if (msg.t === "subscribe" && msg.sub) { addSub(msg.sub, msg.prefs); send(ws, { t: "pushok" }); return true; }
-  if (msg.t === "push_prefs" && typeof msg.endpoint === "string") { setSubPrefs(msg.endpoint, msg.prefs); send(ws, { t: "pushok" }); return true; }
-  if (msg.t === "unsubscribe" && typeof msg.endpoint === "string") { removeSub(msg.endpoint); return true; }
-  if (msg.t === "mobile_push_register" && typeof msg.token === "string") { mobilePush.register(msg.token, msg.platform === "ios" ? "ios" : "android", msg.events); send(ws, { t: "pushok" }); return true; }
-  if (msg.t === "mobile_push_unregister" && typeof msg.token === "string") { mobilePush.remove(msg.token); return true; }
-  return false;
+  return push.handleMsg(msg, (obj) => send(ws, obj));
 }
 
 wss.on("connection", (ws: WebSocket, req: any) => {
@@ -1738,6 +1697,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     } catch {
       return;
     }
+    // Drop non-object frames / anything without a string `t` before dispatch — a JSON scalar (literal
+    // `null`, `5`, `"x"`) would make `msg.t` throw deeper in, and there was no catch, so it surfaced as
+    // an unhandledRejection. The whole dispatch is wrapped below so ANY handler error returns a clean
+    // {t:"error"} instead of killing the turn silently (was the god-router's biggest reliability gap).
+    if (!msg || typeof msg !== "object" || typeof msg.t !== "string") return;
+    try {
 
     // --- auth gate: until this connection is authenticated, ONLY the auth
     //     handshake is processed; every other message is dropped. ---
@@ -1756,6 +1721,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // A member may only act on machines granted in their invite; the owner has all. Checked BEFORE
     // routing and for both local + remote, so the default (unselected → LOCAL_ID) case is covered too.
     if (RUNNER_OPS.has(msg.t) && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
+    // Local-only ops (execute/read the Hub's OWN store) → require access to the LOCAL machine. Active-
+    // machine ops (queue/cancel/summarize) → require access to the selected runner. Owner passes both.
+    if (LOCAL_OPS.has(msg.t) && !canUseRunner(ws, LOCAL_ID)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
+    if (ACTIVE_OPS.has(msg.t) && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
 
     // --- machine selection + routing to remote runners -----------------------
     if (msg.t === "machines") { send(ws, { t: "machines", machines: machineList(ws) }); return; }
@@ -2206,6 +2175,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       turnId: typeof msg.msgId === "string" ? msg.msgId : undefined,
       onError: (message, limit) => send(ws, { t: "error", message, limit }),
     });
+    } catch (e) {
+      console.error("[hub] erro ao processar", msg.t, "-", String((e as any)?.message ?? e));
+      try { send(ws, { t: "error", message: "erro interno ao processar a mensagem" }); } catch { /* ignore */ }
+    }
   });
 
   // Initial state — pushed AFTER the message listener is attached. With auth ON,
@@ -2215,83 +2188,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
   if (!auth.AUTH_ENABLED) void sendInitialState(ws);
 });
 
-// --- loopback-only admin API (host recovery) --------------------------------
-// Mint pairing codes / manage devices WITHOUT a logged-in device. Bound to
-// 127.0.0.1 so only host-local processes reach it (a reverse proxy forwards to
-// PORT, never here). This is the answer to "no devices left — how do I get a
-// code?": run scripts/jarvis.ps1 on the host. See docs/multi-runner.md (4a).
-const ADMIN_PORT = Number(process.env.JARVIS_ADMIN_PORT || 4578);
-const PUBLIC_URL = (process.env.JARVIS_PUBLIC_URL || "").replace(/\/+$/, "");
-function inviteLink(code: string): string | undefined { return PUBLIC_URL ? `${PUBLIC_URL}/#invite=${encodeURIComponent(code)}` : undefined; }
-const adminServer = createServer((req, res) => {
-  const ra = String(req.socket.remoteAddress || "");
-  if (!/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(ra)) { res.writeHead(403, { "content-type": "application/json" }).end('{"error":"loopback only"}'); return; }
-  // anti-CSRF + anti-DNS-rebinding: the recovery CLI never sets Origin/Referer, and always
-  // uses a localhost Host. A browser page (even via DNS rebinding) sets Origin and/or a
-  // rebound Host — reject those so a visited web page can't drive the admin API.
-  if (req.headers.origin || req.headers.referer) { res.writeHead(403, { "content-type": "application/json" }).end('{"error":"browser requests not allowed"}'); return; }
-  const host = String(req.headers.host || "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
-  if (host && !/^(127\.0\.0\.1|localhost|::1)$/.test(host)) { res.writeHead(403, { "content-type": "application/json" }).end('{"error":"bad host"}'); return; }
-  const url = (req.url || "/").split("?")[0];
-  const json = (code: number, obj: unknown) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
-  const body = () => new Promise<any>((resolve) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve({}); } }); });
-  (async () => {
-    try {
-      if (req.method === "GET" && url === "/admin/status") return json(200, { claimed: auth.isClaimed(), authEnabled: auth.AUTH_ENABLED, devices: auth.listDevices(), invites: auth.listInvites(), guard: guard.stats() });
-      if (req.method === "GET" && url === "/admin/claimcode") return json(200, { claimed: auth.isClaimed(), code: auth.isClaimed() ? null : auth.ensureClaimCode() });
-      if (req.method === "GET" && url === "/admin/audit") { const n = Number((req.url || "").split("n=")[1]) || 100; return json(200, { audit: auth.readAudit(n) }); }
-      if (req.method === "GET" && url === "/admin/update") { return json(200, await updateCheck(UPDATE_ROOT, true)); }
-      if (req.method === "POST" && url === "/admin/update") { const r = await updateApply(UPDATE_ROOT); if (r.ok && (r.behind ?? 0) > 0) scheduleRestart(); return json(200, r); }
-      if (req.method === "POST" && url === "/admin/update/rollback") { const r = await updateRollback(UPDATE_ROOT); if (r.ok) scheduleRestart(); return json(200, r); }
-      if (req.method === "POST" && url === "/admin/update-runners") { let sent = 0; for (const rc of runners.values()) if (!rc.local && rc.ws && rc.ws.readyState === WebSocket.OPEN) { if (sendToRunner(rc, { t: "update" })) sent++; } return json(200, { ok: true, sent }); }
-      // purge the "ok" probe litter on connected runners via their existing delete handler
-      // (no git-pull/restart needed): query the session list, delete the "ok" natives, repeat.
-      if (req.method === "POST" && url === "/admin/purge-runner-ok") {
-        const results: any[] = [];
-        for (const rc of runners.values()) {
-          if (rc.local || !rc.ws || rc.ws.readyState !== WebSocket.OPEN) continue;
-          let purged = 0;
-          for (let round = 0; round < 60; round++) {
-            const sessions: any[] = await new Promise((resolve) => { pendingRunnerList.set(rc.id, resolve); sendToRunner(rc, { t: "list" }); setTimeout(() => { if (pendingRunnerList.delete(rc.id)) resolve([]); }, 6000); });
-            const okIds = sessions.filter((s) => typeof s?.id === "string" && s.source === "native" && String(s.title || "").trim().toLowerCase() === "ok").map((s) => s.id);
-            if (!okIds.length) break;
-            sendToRunner(rc, { t: "delete", sessionIds: okIds, alsoNative: true });
-            purged += okIds.length;
-            await new Promise((r) => setTimeout(r, 900));
-          }
-          results.push({ runner: runnerLabels[rc.id] || rc.id, purged });
-        }
-        return json(200, { ok: true, results });
-      }
-      if (req.method === "POST" && url === "/admin/invite") {
-        const b = await body();
-        const role = b.role === "owner" ? "owner" : "member";
-        const ttlSec = Math.min(Math.max(Number(b.ttlSec) || 86400, 60), 30 * 86400);
-        const { code, invite } = auth.mintInvite("cli", { role, runners: [], ttlSec });
-        return json(200, { code, link: inviteLink(code), invite });
-      }
-      if (req.method === "POST" && url === "/admin/runner-token") {
-        const b = await body();
-        const label = (typeof b.label === "string" && b.label) ? b.label : "runner";
-        const rid = (typeof b.runnerId === "string" && b.runnerId) ? b.runnerId : ("m-" + randomUUID().slice(0, 8));
-        const token = auth.mintRunnerToken(rid, label);
-        const hubWs = PUBLIC_URL ? PUBLIC_URL.replace(/^http/, "ws") : `ws://<este-host>:${PORT}`;
-        return json(200, { runnerId: rid, label, token, hub: hubWs });
-      }
-      if (req.method === "POST" && url === "/admin/passphrase") {
-        const b = await body();
-        if (b.clear) { auth.clearPassphrase(); return json(200, { ok: true, enabled: false }); }
-        if (typeof b.new === "string") { try { auth.setPassphrase(b.new); return json(200, { ok: true, enabled: true }); } catch (e: any) { return json(400, { error: String(e?.message ?? e) }); } }
-        return json(200, { enabled: auth.hasPassphrase() });
-      }
-      if (req.method === "POST" && url === "/admin/revoke") { const b = await body(); const ok = typeof b.deviceId === "string" && auth.revokeDevice(b.deviceId); dropRevoked(); return json(200, { ok: !!ok }); }
-      if (req.method === "POST" && url === "/admin/device-role") { const b = await body(); const role = b.role === "owner" ? "owner" : "member"; const ok = typeof b.deviceId === "string" && auth.setDeviceRole(b.deviceId, role); if (ok) refreshPrincipalRole(b.deviceId, role); return json(200, { ok: !!ok, role }); }
-      if (req.method === "POST" && url === "/admin/revoke-all") { const n = auth.listDevices().length; for (const d of auth.listDevices()) auth.revokeDevice(d.id); dropRevoked(); return json(200, { revoked: n }); }
-      json(404, { error: "not found" });
-    } catch (e: any) { json(500, { error: String(e?.message ?? e) }); }
-  })();
-});
-adminServer.listen(ADMIN_PORT, "127.0.0.1", () => console.log(`[hub] admin (loopback) http://127.0.0.1:${ADMIN_PORT}  — recovery: scripts/jarvis.ps1`));
+// Loopback-only admin API (host recovery) — see adminApi.ts. Injected with the Hub state it needs.
+startAdminApi({ updateRoot: UPDATE_ROOT, port: PORT, scheduleRestart, dropRevoked, refreshPrincipalRole, runners, runnerLabels, pendingRunnerList, sendToRunner });
 
 void refreshLocalAgents();
 setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min — availability rarely changes; each probe spawns a real `claude -p`
@@ -2304,6 +2202,19 @@ try { loadSessionCost(); } catch { /* ignore */ }
 // A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
 // — fix them all proactively at boot, not just when the user happens to reopen one.
 try { let n = 0; for (const meta of store.list()) { const s = store.ensure(meta.id); const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) n++; } if (n) console.log(`[hub] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`); } catch { /* ignore */ }
+// Graceful shutdown: the Hub is also a runner (it spawns local agent CLIs with bypassPermissions).
+// A service stop / SIGTERM would orphan them — abort every live local turn (killTree fires via the
+// AbortSignal) before exiting, mirroring the runner.
+let hubShuttingDown = false;
+function hubShutdown(sig: string): void {
+  if (hubShuttingDown) return; hubShuttingDown = true;
+  if (localAborts.size) console.log(`[hub] ${sig} — abortando ${localAborts.size} turno(s) local(is) em andamento`);
+  for (const [, ctrl] of localAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
+  setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
+}
+process.on("SIGTERM", () => hubShutdown("SIGTERM"));
+process.on("SIGINT", () => hubShutdown("SIGINT"));
+
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);

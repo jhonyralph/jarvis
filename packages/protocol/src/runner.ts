@@ -47,6 +47,8 @@ export interface RunnerMsg {
   ts?: number;
   /** role:"tool" — the tool name + (file tools) the real path, +/- line counts and diff rows */
   name?: string;
+  /** role:"tool" — the FULL command/args behind the row (shown when expanded) */
+  detail?: string;
   path?: string;
   adds?: number;
   dels?: number;
@@ -59,6 +61,7 @@ export interface RunnerStreamEvent {
   text?: string; // text / thinking chunk, or final text on "done"
   name?: string; // tool name (Bash, Edit, Read…)
   summary?: string; // tool one-liner ("Editando foo.ts")
+  detail?: string; // tool FULL command/args (untruncated), shown when the row is expanded
   usage?: { costUsd?: number; inputTokens?: number; outputTokens?: number };
   /** tool_use id — lets sub-agent (Task) activity be correlated to a parent block */
   toolId?: string;
@@ -105,7 +108,7 @@ export type RunnerToHub =
   | { t: "filediff"; reqId: string; path: string; name: string; rows?: DiffRowMeta[]; adds?: number; dels?: number; error?: string }
   | { t: "stream"; sessionId: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
-  | { t: "activity"; sessionId: string; name?: string; summary?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[] }
+  | { t: "activity"; sessionId: string; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[] }
   | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; truncated?: boolean; error?: string }
   /** directory listing for the folder browser (reply to Hub->Runner "listdir") */
   | { t: "dirs"; reqId: string; path: string; parent: string; entries: string[] }
@@ -134,6 +137,12 @@ export type HubToRunner =
       effort?: string;
     }
   | { t: "list" }
+  /** create a fresh managed session on the runner (reply: history with the new id) */
+  | { t: "new"; reqId: string; agent?: string; cwd?: string }
+  /** folder browser for the "new conversation" dialog (reply: dirs) */
+  | { t: "listdir"; reqId: string; path?: string }
+  /** change agent/cwd of a not-yet-started session (reply: history) */
+  | { t: "configure"; reqId: string; sessionId: string; agent?: string; cwd?: string }
   | { t: "delete"; sessionId?: string; sessionIds?: string[]; alsoNative?: boolean }
   | { t: "readfile"; reqId: string; path: string; cwd?: string }
   | { t: "readdiff"; reqId: string; sessionId: string; path: string }
