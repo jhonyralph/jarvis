@@ -117,7 +117,12 @@
       (rows||[]).forEach(r=>{ const cls=r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx'; const ln=document.createElement('span'); ln.className='dline '+cls; ln.textContent=r.s; w.appendChild(ln); });
       block.appendChild(w); w.scrollIntoView({block:'nearest'}); }
     // flip a live tool block to past tense when its turn finishes
-    function setToolDone(block){ const nm=block.dataset.name, ttl=block.querySelector('.ttl'); if(ttl&&nm) ttl.textContent=pastify(nm,block.dataset.sum); }
+    function setToolDone(block){ if(block.classList.contains('tdone'))return; const nm=block.dataset.name, ttl=block.querySelector('.ttl'); if(ttl&&nm) ttl.textContent=pastify(nm,block.dataset.sum); block.classList.add('tdone'); }
+    // Flip the tools ALREADY placed in a container to past tense ("Editando"→"Editado") the moment the
+    // NEXT action in that container starts — a finished action shouldn't sit in present tense for the
+    // rest of a long turn (it used to flip only when the WHOLE turn ended). Direct children only, so a
+    // sub-agent box's internals aren't touched from the top level.
+    function flipDone(container){ if(container) container.querySelectorAll(':scope > .strtool[data-name]:not(.tdone)').forEach(setToolDone); }
     function buildMsgEl(m){
       if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels,true,m.rows,m.detail);
       const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
@@ -326,14 +331,15 @@
       closeTextBlock(); strFlow.appendChild(wrap);
       const rec={wrap,body,title,countEl,count:0,preview:null,previewText:''}; subAgents[id]=rec; return rec; }
     function streamTool(name,summary,toolId,parentId,path,adds,dels,rows,detail){ if(!strFlow)streamStartUI();
-      if(parentId){ const sa=ensureSubAgent(parentId); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
-      if((name==='Task'||name==='Agent')&&toolId){ ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); autoScroll(); return; }
-      closeTextBlock(); strFlow.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); autoScroll(); }
+      if(parentId){ const sa=ensureSubAgent(parentId); flipDone(sa.body); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
+      if((name==='Task'||name==='Agent')&&toolId){ flipDone(strFlow); ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); autoScroll(); return; }
+      closeTextBlock(); flipDone(strFlow); strFlow.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); autoScroll(); }
     function streamText(t,parentId){
       if(parentId){ const sa=ensureSubAgent(parentId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); autoScroll(); return; }
       if(!strFlow)streamStartUI();
       // Abre um bloco NOVO de texto se o anterior foi fechado por uma ferramenta; senão acumula.
-      if(!curTextEl){ curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; strFlow.appendChild(curTextEl); }
+      // Um novo bloco de texto significa que as ferramentas anteriores já terminaram → passa pra passado.
+      if(!curTextEl){ flipDone(strFlow); curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; strFlow.appendChild(curTextEl); }
       curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); sawText=true; autoScroll(); }
     function streamFinish(){ strEl=strFlow=curTextEl=strTimeEl=null; curTextRaw=''; sawText=false; }
     function streamDone(finalText,usage){ if(strTimer){clearInterval(strTimer);strTimer=null;}

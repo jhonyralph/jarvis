@@ -48,6 +48,23 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // app.js is the app CODE (the deploy artifact), not a static asset. NETWORK-FIRST like the HTML, so
+  // a normal online reload always ships the latest client — keeping "reload is the deploy" intact now
+  // that the JS lives in an external file. Cache is only the offline fallback. (Still pre-cached in the
+  // SHELL on install so an offline first-open works.)
+  if (url.pathname === "/app.js") {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req);
+        if (res && res.ok) { const c = await caches.open(CACHE); c.put(req, res.clone()); }
+        return res;
+      } catch {
+        return (await caches.match(req)) || Response.error();
+      }
+    })());
+    return;
+  }
+
   // Shell assets: serve from cache immediately, refresh in the background (stale-while-revalidate).
   if (SHELL.includes(url.pathname)) {
     event.respondWith((async () => {
