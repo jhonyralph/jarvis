@@ -86,8 +86,23 @@ export interface AdaptiveRunDecision {
 }
 
 export type AdaptiveManagedUnknownEstimatePolicy = "allow" | "reject";
+export type AdaptiveControlState = "allow" | "ask" | "reject";
 export type AdaptiveApprovalAction = "routine_background" | "risk" | "budget";
 export type AdaptiveApprovalStatus = "pending" | "approved" | "rejected";
+
+export interface AdaptiveControlStatus {
+  key: string;
+  label: string;
+  state: AdaptiveControlState;
+  reason: string;
+}
+
+export interface AdaptivePolicyExplanation {
+  policyId: string;
+  chain: ResolvedAdaptivePolicy["chain"];
+  warnings: string[];
+  controls: AdaptiveControlStatus[];
+}
 
 export interface AdaptiveApprovalRequest {
   schemaVersion: 1;
@@ -394,6 +409,55 @@ export function decideAdaptiveRun(policy: AdaptivePolicy, request: AdaptiveRunRe
     return { action: "ask", reason: "risk_requires_approval" };
   }
   return { action: "allow", reason: "policy_allows" };
+}
+
+function controlFromRun(key: string, label: string, decision: AdaptiveRunDecision): AdaptiveControlStatus {
+  return { key, label, state: decision.action, reason: decision.reason };
+}
+
+function repoWriteControl(policy: AdaptivePolicy): AdaptiveControlStatus {
+  if (!policy.write.allowRepoWrites) return { key: "repo_writes", label: "Escrita no repo", state: "reject", reason: "repo_writes_disabled" };
+  if (policy.write.requireDiffPreview) return { key: "repo_writes", label: "Escrita no repo", state: "ask", reason: "diff_preview_required" };
+  return { key: "repo_writes", label: "Escrita no repo", state: "allow", reason: "repo_writes_allowed" };
+}
+
+function memoryControl(policy: AdaptivePolicy): AdaptiveControlStatus {
+  const decision = decideMemoryWrite(policy, { repoAvailable: true });
+  return {
+    key: "memory_write",
+    label: "Memória",
+    state: decision.action === "reject" ? "reject" : "allow",
+    reason: decision.reason,
+  };
+}
+
+function budgetControl(policy: AdaptivePolicy): AdaptiveControlStatus {
+  if (policy.budget.maxCostUsd === undefined && policy.budget.maxTokens === undefined) {
+    return { key: "budget_unknown", label: "Orçamento desconhecido", state: "allow", reason: "no_budget_cap" };
+  }
+  return controlFromRun("budget_unknown", "Orçamento desconhecido", decideAdaptiveRun(policy, { risk: "low" }));
+}
+
+function withBudgetEstimatesAllowed(policy: AdaptivePolicy): AdaptivePolicy {
+  return { ...policy, budget: { ...policy.budget, unknownEstimate: "allow" } };
+}
+
+export function explainAdaptivePolicy(resolved: ResolvedAdaptivePolicy): AdaptivePolicyExplanation {
+  const policy = resolved.policy;
+  const autonomyPolicy = withBudgetEstimatesAllowed(policy);
+  return {
+    policyId: policy.id,
+    chain: resolved.chain,
+    warnings: resolved.warnings,
+    controls: [
+      memoryControl(policy),
+      repoWriteControl(policy),
+      controlFromRun("queue_autoplay", "Play automático da fila", decideAdaptiveRun(autonomyPolicy, { queueAutoplay: true })),
+      controlFromRun("background_turns", "Turnos em background", decideAdaptiveRun(autonomyPolicy, { background: true, risk: "medium" })),
+      controlFromRun("high_risk", "Ações de alto risco", decideAdaptiveRun(autonomyPolicy, { risk: "high" })),
+      budgetControl(policy),
+    ],
+  };
 }
 
 export function managedUnknownEstimateFromAdaptive(policy: AdaptivePolicy): AdaptiveManagedUnknownEstimatePolicy {

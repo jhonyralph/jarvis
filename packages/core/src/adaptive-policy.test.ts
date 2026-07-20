@@ -9,6 +9,7 @@ import {
   createAdaptiveApprovalRequest,
   decideAdaptiveRun,
   decideMemoryWrite,
+  explainAdaptivePolicy,
   loadAdaptivePolicyDocument,
   mergeAdaptiveManagedPolicy,
   normalizeAdaptivePolicyDocument,
@@ -142,4 +143,25 @@ test("adaptive approval request is normalized and starts pending", () => {
     expiresAt: 100,
     status: "pending",
   });
+});
+
+test("adaptive policy explanation reports effective control states", () => {
+  const resolved = resolveAdaptivePolicy(normalizeAdaptivePolicyDocument({
+    global: policy({
+      id: "global",
+      scope: "global",
+      label: "Global",
+      memory: { writeTarget: "repo_allowed" } as any,
+      write: { allowRepoWrites: true, requireDiffPreview: true },
+      autonomy: { allowQueueAutoplay: false, allowBackgroundTurns: true, requireApprovalAboveRisk: "medium" } as any,
+      budget: { maxTokens: 1000, unknownEstimate: "ask" } as any,
+    }),
+  }, 1));
+  const controls = Object.fromEntries(explainAdaptivePolicy(resolved).controls.map((c) => [c.key, c]));
+  assert.equal(controls.memory_write.state, "allow");
+  assert.equal(controls.repo_writes.state, "ask");
+  assert.deepEqual([controls.queue_autoplay.state, controls.queue_autoplay.reason], ["reject", "queue_autoplay_disabled"]);
+  assert.equal(controls.background_turns.state, "allow");
+  assert.deepEqual([controls.high_risk.state, controls.high_risk.reason], ["ask", "risk_requires_approval"]);
+  assert.deepEqual([controls.budget_unknown.state, controls.budget_unknown.reason], ["ask", "tokens_estimate_unknown"]);
 });

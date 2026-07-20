@@ -1100,13 +1100,17 @@
         acts.appendChild(no); acts.appendChild(yes); row.appendChild(acts); adaptiveApprovalEl.appendChild(row);
       });
     }
-    function renderAdaptivePolicy(m){ adaptivePolicyDoc=m.doc||adaptivePolicyDoc||{}; const g=adaptivePolicyDoc.global||{}, mem=g.memory||{}, au=g.autonomy||{}, bu=g.budget||{}, wr=g.write||{}, eff=(m.effective&&m.effective.policy)||g, chain=(m.effective&&m.effective.chain)||[];
+    function renderAdaptivePolicy(m){ adaptivePolicyDoc=m.doc||adaptivePolicyDoc||{}; const g=adaptivePolicyDoc.global||{}, mem=g.memory||{}, au=g.autonomy||{}, bu=g.budget||{}, wr=g.write||{}, eff=(m.effective&&m.effective.policy)||g, chain=(m.effective&&m.effective.chain)||[], exp=(m.effective&&m.effective.explanation)||{};
       E.setPolicyMode.value=au.mode||'assisted'; E.setPolicyMemoryTarget.value=mem.writeTarget||'jarvis_only'; E.setPolicyRisk.value=au.requireApprovalAboveRisk||'medium'; E.setPolicyUnknown.value=bu.unknownEstimate||'ask';
       E.setPolicyCost.value=bu.maxCostUsd==null?'':bu.maxCostUsd; E.setPolicyTokens.value=bu.maxTokens==null?'':bu.maxTokens;
       E.setPolicyRepoWrites.checked=!!(wr.allowRepoWrites); E.setPolicyDiff.checked=wr.requireDiffPreview!==false; E.setPolicyAutoplay.checked=!!au.allowQueueAutoplay; E.setPolicyBackground.checked=!!au.allowBackgroundTurns;
       E.setPolicyOverrides.value=JSON.stringify({projects:adaptivePolicyDoc.projects||[],sessions:adaptivePolicyDoc.sessions||[],tasks:adaptivePolicyDoc.tasks||[]},null,2);
       const effBits=[eff.scope||'global',eff.label||'Global'].filter(Boolean).join(' · '), chainTxt=chain.length?chain.map(x=>x.label||x.id).join(' > '):'Global';
-      E.policyNote.textContent=(m.saved?'✓ Política salva. ':'')+'Efetiva agora: '+effBits+' · cadeia: '+chainTxt; }
+      const lbl={allow:'permitido',ask:'aprovação',reject:'bloqueado'}, ic={allow:'✓',ask:'?',reject:'×'}, bg={allow:'#22c55e1f',ask:'#f59e0b22',reject:'#ef444422'}, br={allow:'#22c55e55',ask:'#f59e0b66',reject:'#ef444466'};
+      const controls=Array.isArray(exp.controls)?exp.controls:[];
+      const chips=controls.map(c=>'<span title="'+esc(c.reason||'')+'" style="display:inline-flex;align-items:center;gap:4px;border:1px solid '+(br[c.state]||'#ffffff24')+';background:'+(bg[c.state]||'#ffffff12')+';border-radius:999px;padding:2px 7px;margin:2px 4px 2px 0">'+(ic[c.state]||'•')+' '+esc(c.label||c.key)+': '+esc(lbl[c.state]||c.state)+'</span>').join('');
+      const warnings=Array.isArray(exp.warnings)&&exp.warnings.length?'<div style="color:#fcd34d;margin-top:4px">'+esc(exp.warnings.join(' · '))+'</div>':'';
+      E.policyNote.innerHTML=(m.saved?'✓ Política salva. ':'')+'Efetiva agora: '+esc(effBits)+' · cadeia: '+esc(chainTxt)+(chips?'<div style="margin-top:6px">'+chips+'</div>':'')+warnings; }
     function collectAdaptivePolicy(){ if(!adaptivePolicyDoc)return null; let extra; try{ extra=JSON.parse(E.setPolicyOverrides.value||'{}'); }catch(e){ toast('JSON de políticas avançadas inválido.'); E.setPolicyOverrides.focus(); return null; }
       const global=Object.assign({},adaptivePolicyDoc.global||{}); global.memory=Object.assign({},global.memory||{}, {writeTarget:E.setPolicyMemoryTarget.value}); global.autonomy=Object.assign({},global.autonomy||{}, {mode:E.setPolicyMode.value,requireApprovalAboveRisk:E.setPolicyRisk.value,allowQueueAutoplay:E.setPolicyAutoplay.checked,allowBackgroundTurns:E.setPolicyBackground.checked}); global.budget=Object.assign({},global.budget||{}, {unknownEstimate:E.setPolicyUnknown.value}); global.write=Object.assign({},global.write||{}, {allowRepoWrites:E.setPolicyRepoWrites.checked,requireDiffPreview:E.setPolicyDiff.checked}); global.updatedAt=Date.now();
       if(E.setPolicyCost.value.trim()==='') delete global.budget.maxCostUsd; else global.budget.maxCostUsd=Number(E.setPolicyCost.value);

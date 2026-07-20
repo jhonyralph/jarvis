@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -102,6 +102,10 @@ function saveAdaptivePolicy(): void { saveAdaptivePolicyDocument(ADAPTIVE_POLICY
 function effectivePolicyFor(sessionId?: string): ReturnType<typeof resolveAdaptivePolicy> {
   const cwd = sessionId ? sessionCwd(sessionId) : undefined;
   return resolveAdaptivePolicy(adaptivePolicyDoc, { sessionId, cwd });
+}
+function adaptivePolicyPayload(sessionId?: string, saved = false): unknown {
+  const effective = effectivePolicyFor(sessionId);
+  return { t: "adaptive_policy", doc: adaptivePolicyDoc, effective: { ...effective, explanation: explainAdaptivePolicy(effective) }, sessionId, saved };
 }
 interface PendingAdaptiveApproval { approval: AdaptiveApprovalRequest; routineId: string; }
 const pendingAdaptiveApprovals = new Map<string, PendingAdaptiveApproval>();
@@ -2945,7 +2949,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "policy_state") {
       if (!requireOwner(ws)) return;
       const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
-      send(ws, { t: "adaptive_policy", doc: adaptivePolicyDoc, effective: effectivePolicyFor(sessionId), sessionId });
+      send(ws, adaptivePolicyPayload(sessionId));
       send(ws, { t: "adaptive_approvals", approvals: adaptiveApprovalList() });
       return;
     }
@@ -2975,7 +2979,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       adaptivePolicyDoc = normalizeAdaptivePolicyDocument(msg.doc);
       saveAdaptivePolicy();
       const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
-      send(ws, { t: "adaptive_policy", doc: adaptivePolicyDoc, effective: effectivePolicyFor(sessionId), sessionId, saved: true });
+      send(ws, adaptivePolicyPayload(sessionId, true));
       return;
     }
     // --- self-update (git) ---
