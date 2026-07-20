@@ -1370,7 +1370,7 @@
       if(gateMode==='verify'){ if(!val){ gateError('Informe a senha.'); return; } authPass=val; gateError(''); tx({t:'verify',pass:val}); return; }
       const label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
       if(!val){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code:val, label }); }
-    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); tx({t:'executions_list',scope:'all',limit:500}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) openSession(currentSession); if(cfg.push) enablePush(); requestCommands(); if(hashWork())openWorkPanel({fromHash:true}); }
+    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); tx({t:'executions_list',scope:'all',limit:500}); if(authUser&&authUser.role==='owner')tx({t:'adaptive_approvals'}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) openSession(currentSession); if(cfg.push) enablePush(); requestCommands(); if(hashWork())openWorkPanel({fromHash:true}); }
     function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); if(window.__jarvisNative){ if(window.__jarvisNative.reregister&&cfg.push) window.__jarvisNative.reregister(); if(window.__jarvisNative.wakeStart&&cfg.wake) window.__jarvisNative.wakeStart(); } }
 
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);

@@ -135,6 +135,28 @@ function queueRoutineApproval(r: Routine, reason: string): void {
   notifyEvent("machine", "Rotina aguardando aprovação", `${r.name}: ${reason}`, sid);
   broadcastAdaptiveApprovals();
 }
+function completeAdaptiveApproval(id: string, action: "approve" | "reject", audit?: { userId?: string; deviceId?: string }): AdaptiveApprovalRequest | undefined {
+  const pending = pendingAdaptiveApprovals.get(id);
+  if (!pending) return undefined;
+  pendingAdaptiveApprovals.delete(id);
+  if (action === "approve") {
+    const routine = routines.get(pending.routineId);
+    if (routine) void runRoutine(routine, true);
+    auth.audit("adaptive_approval", { ...audit, detail: `${pending.approval.id}: approved` });
+  } else {
+    notifyEvent("machine", "Aprovação recusada", pending.approval.title, pending.approval.sessionId);
+    auth.audit("adaptive_approval", { ...audit, detail: `${pending.approval.id}: rejected` });
+  }
+  broadcastAdaptiveApprovals();
+  return pending.approval;
+}
+function adaptiveApprovalVoiceCommand(text: string): "approve" | "reject" | "list" | null {
+  const s = text.toLowerCase();
+  if (/\b(aprov|autoriza|autorizar|libera|liberar|pode rodar)\b/.test(s) && /\b(pend[eê]ncia|aprova|rotina|fila|background|tudo|primeir)/.test(s)) return "approve";
+  if (/\b(rejeit|recus|nega|negar|cancela|cancelar)\b/.test(s) && /\b(pend[eê]ncia|aprova|rotina|background|tudo|primeir)/.test(s)) return "reject";
+  if (/\b(list|mostr|quais|status|pend[eê]ncia)\b/.test(s) && /\b(aprov|pend[eê]ncia|rotina)\b/.test(s)) return "list";
+  return null;
+}
 interface ExecutionRuntimeConfig { enabled: boolean; retentionDays: number; maxEvents: number; maxConcurrency: number; maxDepth: number; defaultWrite: boolean; worktreeRoot: string; }
 const executionCfg: ExecutionRuntimeConfig = (() => {
   const defaults: ExecutionRuntimeConfig = {
@@ -2960,18 +2982,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (msg.t === "adaptive_approval" && typeof msg.id === "string") {
       if (!requireOwner(ws)) return;
-      const pending = pendingAdaptiveApprovals.get(msg.id);
-      if (!pending) { send(ws, { t: "adaptive_approvals", approvals: adaptiveApprovalList() }); return; }
-      pendingAdaptiveApprovals.delete(msg.id);
-      if (msg.action === "approve") {
-        const routine = routines.get(pending.routineId);
-        if (routine) void runRoutine(routine, true);
-        auth.audit("adaptive_approval", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: `${pending.approval.id}: approved` });
-      } else {
-        notifyEvent("machine", "Aprovação recusada", pending.approval.title, pending.approval.sessionId);
-        auth.audit("adaptive_approval", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: `${pending.approval.id}: rejected` });
-      }
-      broadcastAdaptiveApprovals();
+      if (!completeAdaptiveApproval(msg.id, msg.action === "approve" ? "approve" : "reject", { userId: principalOf(ws)?.userId || undefined, deviceId: principalOf(ws)?.deviceId || undefined })) send(ws, { t: "adaptive_approvals", approvals: adaptiveApprovalList() });
       return;
     }
     if (msg.t === "set_adaptive_policy_scope") {
@@ -3232,6 +3243,24 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (!text) return;
     if (msg.t === "send" && typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
     { const _p = principalOf(ws); auth.audit("send", { userId: _p?.userId, deviceId: _p?.deviceId, detail: `${sid}: ${String(text).slice(0, 80)}` }); }
+
+    const approvalCommand = adaptiveApprovalVoiceCommand(text);
+    if (approvalCommand) {
+      const owner = requireOwner(ws); if (!owner) return;
+      const approvals = adaptiveApprovalList();
+      let reply = "";
+      if (!approvals.length) reply = "Não há aprovações pendentes.";
+      else if (approvalCommand === "list") reply = `${approvals.length} aprovação(ões) pendente(s): ${approvals.slice(0, 3).map((a) => a.title).join("; ")}.`;
+      else {
+        const done = completeAdaptiveApproval(approvals[0].id, approvalCommand, { userId: owner.userId || undefined, deviceId: owner.deviceId || undefined });
+        reply = done ? `${approvalCommand === "approve" ? "Aprovado" : "Rejeitado"}: ${done.title}.` : "Essa aprovação não está mais pendente.";
+      }
+      send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply, ts: Date.now(), agent: "jarvis" } });
+      if (msg.speak) {
+        try { const wav = await synthesize(reply, VOICE); send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: reply }); } catch { /* ignore */ }
+      }
+      return;
+    }
 
     // Meta-question about other sessions? -> cross-session search (typed or spoken).
     if (looksLikeCrossSessionQuery(text)) {
