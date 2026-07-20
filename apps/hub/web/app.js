@@ -32,7 +32,7 @@
     E.fileModalClose.onclick=closeFileModal;
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!E.fileModal.classList.contains('hidden')){ e.stopPropagation(); closeFileModal(); } });
 
-    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=16, filesShown=12, attachments=[], browsePath='', browseRunner='local', browseUse=null, recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
+    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=16, filesShown=12, attachments=[], attachmentsBySession={}, browsePath='', browseRunner='local', browseUse=null, recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
     let machines=[], currentMachine=localStorage.getItem('jarvis_machine')||'local', routedMachine='local', lastByMachine={}, restoringMachine=(currentMachine!=='local'&&currentMachine!=='all');
     // vista "Todas as máquinas": currentMachine==='all' é a VISÃO unificada; routedMachine é a máquina
     // real para onde o hub roteia (definida ao abrir/criar uma sessão da lista agregada). hue por nome.
@@ -210,7 +210,7 @@
       // Rascunho do composer é POR SESSÃO: ao TROCAR de sessão guarda o texto não-enviado da anterior
       // e restaura o da nova; um refresh da MESMA sessão nunca mexe no que você está digitando agora.
       const prevSession=currentSession, switchingSession=prevSession!==m.sessionId;
-      if(switchingSession && prevSession!=null){ draftBySession[prevSession]=E.input.value; saveDrafts(); }
+      if(switchingSession && prevSession!=null){ draftBySession[prevSession]=E.input.value; saveDrafts(); stashAttachments(prevSession); }
       currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId); updateOfflineBanner();
       currentAgent=(m.session||{}).agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null; lastRouteReason='';   // modelo/esforço reais da sessão da máquina (só nativas mandam)
@@ -233,7 +233,7 @@
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
       E.input.disabled=ro; E.sendBtn.disabled=ro; E.mic.disabled=ro; E.input.placeholder=ro?'Sessão nativa — somente leitura':'Fale ou digite…';
-      if(switchingSession){ E.input.value=draftBySession[m.sessionId]||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; }
+      if(switchingSession){ E.input.value=draftBySession[m.sessionId]||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(m.sessionId); }
       curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession);
       { const savedAsk=getAsk(m.sessionId); if(savedAsk&&savedAsk.length&&!askActive) renderAskCard(savedAsk); }   // restaura decision-card pendente (lock/reload)
       if(!stagingActive) tx({t:'stage_state',sessionId:m.sessionId});   // restaura painel de refino de voz, se houver (lock/reload)
@@ -571,7 +571,9 @@
       E.machineBar.appendChild(menu);
     }
     function selectMachine(id){ const mm=document.getElementById('mmenu'); if(mm)mm.classList.add('hidden'); if(id===currentMachine) return;
-      currentMachine=id; restoringMachine=false; try{localStorage.setItem('jarvis_machine',id);}catch{} currentSession=null; curStarted=false; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); renderMachines();
+      if(currentSession!=null){ draftBySession[currentSession]=E.input.value; saveDrafts(); }
+      stashAttachments(currentSession);
+      currentMachine=id; restoringMachine=false; try{localStorage.setItem('jarvis_machine',id);}catch{} currentSession=null; curStarted=false; attachments=[]; renderAttach(); clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); renderMachines();
       if(id==='all'){ tx({t:'listAll'}); } else { routedMachine=id; tx({t:'runner',runnerId:id}); } updateOfflineBanner(); }
     // Per-session offline indicator: a persistent banner when the machine this session lives on is
     // offline, so the user knows WHY a turn won't go through (distinct from the transient "interrompido"
@@ -1609,6 +1611,8 @@
       if(a.image&&a.preview){ c.innerHTML=`<img src="${a.preview}" alt="">`; const im=c.querySelector('img'); if(im) im.onclick=(e)=>{ e.stopPropagation(); openImg(a.preview); }; const x=document.createElement('span'); x.className='rmx'; x.textContent='✕'; x.title='Remover'; x.onclick=(e)=>{ e.stopPropagation(); rm(); }; c.appendChild(x); }
       else { c.textContent='📎 '+a.name+' ✕'; c.onclick=rm; }
       E.attachRow.appendChild(c); }); }
+    function stashAttachments(sid){ if(!sid)return; if(attachments.length) attachmentsBySession[sid]=attachments.slice(); else delete attachmentsBySession[sid]; }
+    function restoreAttachments(sid){ attachments=(sid&&attachmentsBySession[sid])?attachmentsBySession[sid].slice():[]; renderAttach(); }
     // arrastar-e-soltar arquivos/imagens no chat → vira anexo (usa o mesmo addFile do ＋/paste)
     const hasFiles=e=>e.dataTransfer&&Array.from(e.dataTransfer.types||[]).includes('Files');
     let dragDepth=0;
@@ -1716,7 +1720,7 @@
         dialog({title:'Anexar à memória do projeto: “'+note.slice(0,60)+(note.length>60?'…':'')+'”?', okText:'Anexar'}).then(ok=>{ if(ok){ tx({t:'memory_append', text:note, sessionId:currentSession}); E.input.value=''; E.input.style.height='auto'; if(currentSession){ delete draftBySession[currentSession]; saveDrafts(); } } });
         return; }
       if(text.startsWith('!')) pushBang(text.slice(1).split('\n')[0].trim());   // guarda no histórico do "!"
-      const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
+      const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; if(currentSession) delete attachmentsBySession[currentSession]; renderAttach();
       if(currentSession){ delete draftBySession[currentSession]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),msgId:uid()}); return; }
       setRestorable(currentSession,text,atts); sendMsgTo(currentSession,text||'(anexo)',atts); };

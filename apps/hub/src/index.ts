@@ -785,6 +785,29 @@ function runnerUsage(rc: RunnerConn, agent: string, fallback: any): Promise<any>
   const reqId = "usage-" + randomUUID().slice(0, 8);
   return askRunner<any>(pendingRunnerUsage, reqId, () => sendToRunner(rc, { t: "usage", reqId, agent }), fallback, 6000);
 }
+function mergeRunnerSessionState(runnerId: string, sessions: any[]): Map<string, any> {
+  const states = runnerSessionState.get(runnerId) || new Map<string, any>();
+  for (const s of sessions) if (s?.id) states.set(s.id, { ...(states.get(s.id) || {}), ...s });
+  runnerSessionState.set(runnerId, states);
+  return states;
+}
+function dedupeRunnerSessions(runnerId: string, sessions: any[]): any[] {
+  const states = runnerSessionState.get(runnerId) || new Map<string, any>();
+  const boundNative = new Set<string>();
+  for (const s of states.values()) {
+    const key = s?.nativeId && s?.agent ? nativeIdForAgent(String(s.agent), String(s.nativeId)) : null;
+    if (key) boundNative.add(key);
+  }
+  return sessions.filter((s) => !boundNative.has(String(s?.id || "")));
+}
+function managedRunnerSessionForNative(runnerId: string, nativeSessionId: string): string | undefined {
+  const states = runnerSessionState.get(runnerId) || new Map<string, any>();
+  for (const [managedId, s] of states.entries()) {
+    const key = s?.nativeId && s?.agent ? nativeIdForAgent(String(s.agent), String(s.nativeId)) : null;
+    if (key === nativeSessionId) return managedId;
+  }
+  return undefined;
+}
 
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
@@ -842,11 +865,19 @@ function relayRunner(rc: RunnerConn, m: any): void {
     const client = pendingReq.get(m.requestId); if (client) { pendingReq.delete(m.requestId); send(client, m); }
     return;
   }
-  if (m.t === "sessions") { runnerSessionState.set(rc.id, new Map((m.sessions || []).map((s: any) => [s.id, s]))); const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
+  if (m.t === "sessions") {
+    const raw = Array.isArray(m.sessions) ? m.sessions : [];
+    mergeRunnerSessionState(rc.id, raw);
+    const sessions = dedupeRunnerSessions(rc.id, raw);
+    const cb = pendingRunnerList.get(rc.id);
+    if (cb) { pendingRunnerList.delete(rc.id); cb(sessions); }
+    for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions, recentDirs: [], runnerId: rc.id });
+    return;
+  }
   if (m.t === "deleted") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); for (const sid of m.ids || []) mirrorExecutionStore(rc.id).deleteSession(sid); send(c, { t: "deleted", sessionId: m.sessionId, ids: m.ids || [], ok: !!m.ok, okCount: Number(m.okCount) || 0 }); } return; }
   if (m.t === "history") {
     const states = runnerSessionState.get(rc.id) || new Map<string, any>();
-    states.set(m.sessionId, { ...(states.get(m.sessionId) || {}), id: m.sessionId, agent: m.agent, cwd: m.cwd, started: Number(m.total) > 0, source: /^(claude:|codex:)/.test(m.sessionId || "") ? "native" : "managed" });
+    states.set(m.sessionId, { ...(states.get(m.sessionId) || {}), id: m.sessionId, agent: m.agent, cwd: m.cwd, nativeId: m.nativeId, model: m.model, effort: m.effort, started: Number(m.total) > 0, source: /^(claude:|codex:)/.test(m.sessionId || "") ? "native" : "managed" });
     runnerSessionState.set(rc.id, states);
     const hcb = pendingRunnerHist.get(m.reqId);
     if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; }
@@ -2731,7 +2762,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (msg.t === "configure" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "configure", reqId, sessionId: msg.sessionId, agent: msg.agent, cwd: msg.cwd }); return; }
         if (msg.t === "open" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); subs.set(ws, msg.sessionId); sendToRunner(rc, { t: "open", reqId, sessionId: msg.sessionId }); return; }
         if (msg.t === "send" && typeof msg.text === "string") {
-          const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || "default");
+          let sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || "default");
+          const canonicalSid = isNativeId(sid) ? managedRunnerSessionForNative(rc.id, sid) : undefined;
+          if (canonicalSid) sid = canonicalSid;
           if (typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
           auth.audit("send", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: ar, detail: `${sid}: ${String(msg.text).slice(0, 80)}` });
           if (routeAborts.has(sid) || (runnerActive.get(ar)?.has(sid) ?? false)) {
