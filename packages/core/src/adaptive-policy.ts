@@ -69,6 +69,21 @@ export interface MemoryWriteDecision {
   reason: string;
 }
 
+export type AdaptiveRunAction = "allow" | "ask" | "reject";
+
+export interface AdaptiveRunRequest {
+  risk?: RiskLevel;
+  estimatedCostUsd?: number;
+  estimatedTokens?: number;
+  queueAutoplay?: boolean;
+  background?: boolean;
+}
+
+export interface AdaptiveRunDecision {
+  action: AdaptiveRunAction;
+  reason: string;
+}
+
 const SCOPES = new Set<PolicyScope>(["global", "project", "subscope", "session", "task"]);
 const WRITE_TARGETS = new Set<MemoryWriteTarget>(["jarvis_only", "repo_allowed", "repo_required", "disabled"]);
 const AUTONOMY = new Set<AutonomyMode>(["manual", "assisted", "controlled_autonomy"]);
@@ -318,6 +333,40 @@ export function decideMemoryWrite(policy: AdaptivePolicy, input: { repoAvailable
     return { action: "jarvis", reason: "repo_preview_required_fallback" };
   }
   return { action: "repo", reason: target };
+}
+
+function unknownBudgetDecision(policy: AdaptivePolicy, kind: "cost" | "tokens"): AdaptiveRunDecision | undefined {
+  if (policy.budget.unknownEstimate === "allow") return undefined;
+  if (policy.budget.unknownEstimate === "reject") return { action: "reject", reason: `${kind}_estimate_required` };
+  return { action: "ask", reason: `${kind}_estimate_unknown` };
+}
+
+export function decideAdaptiveRun(policy: AdaptivePolicy, request: AdaptiveRunRequest = {}): AdaptiveRunDecision {
+  if (request.queueAutoplay && !policy.autonomy.allowQueueAutoplay) return { action: "reject", reason: "queue_autoplay_disabled" };
+  if (request.background && !policy.autonomy.allowBackgroundTurns) return { action: "reject", reason: "background_turns_disabled" };
+
+  if (policy.budget.maxCostUsd !== undefined) {
+    if (request.estimatedCostUsd === undefined) {
+      const d = unknownBudgetDecision(policy, "cost");
+      if (d) return d;
+    } else if (request.estimatedCostUsd > policy.budget.maxCostUsd) {
+      return { action: "reject", reason: "cost_budget_exceeded" };
+    }
+  }
+  if (policy.budget.maxTokens !== undefined) {
+    if (request.estimatedTokens === undefined) {
+      const d = unknownBudgetDecision(policy, "tokens");
+      if (d) return d;
+    } else if (request.estimatedTokens > policy.budget.maxTokens) {
+      return { action: "reject", reason: "token_budget_exceeded" };
+    }
+  }
+
+  const risk = request.risk || "low";
+  if (riskRank[risk] > riskRank[policy.autonomy.requireApprovalAboveRisk]) {
+    return { action: "ask", reason: "risk_requires_approval" };
+  }
+  return { action: "allow", reason: "policy_allows" };
 }
 
 export function loadAdaptivePolicyDocument(file: string, now = Date.now()): AdaptivePolicyDocument {

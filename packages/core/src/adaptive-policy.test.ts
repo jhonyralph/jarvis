@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   defaultAdaptivePolicy,
   defaultAdaptivePolicyDocument,
+  decideAdaptiveRun,
   decideMemoryWrite,
   loadAdaptivePolicyDocument,
   normalizeAdaptivePolicyDocument,
@@ -84,4 +85,14 @@ test("memory write decision follows target, repo availability and preview policy
   assert.deepEqual(decideMemoryWrite(policy({ memory: { writeTarget: "repo_required" } as any })), { action: "reject", reason: "repo_required_unavailable" });
   assert.deepEqual(decideMemoryWrite(policy({ memory: { writeTarget: "repo_allowed" } as any, write: { allowRepoWrites: true, requireDiffPreview: false } as any }), { repoAvailable: true }), { action: "repo", reason: "repo_allowed" });
   assert.deepEqual(decideMemoryWrite(policy({ memory: { writeTarget: "repo_required" } as any, write: { allowRepoWrites: true, requireDiffPreview: true } as any }), { repoAvailable: true }), { action: "reject", reason: "repo_preview_required" });
+});
+
+test("adaptive run decision gates risk, unknown estimates, budgets and autonomy", () => {
+  assert.deepEqual(decideAdaptiveRun(policy({ autonomy: { requireApprovalAboveRisk: "medium" } as any }), { risk: "high" }), { action: "ask", reason: "risk_requires_approval" });
+  assert.deepEqual(decideAdaptiveRun(policy({ budget: { maxCostUsd: 1, unknownEstimate: "ask" } as any }), {}), { action: "ask", reason: "cost_estimate_unknown" });
+  assert.deepEqual(decideAdaptiveRun(policy({ budget: { maxTokens: 1000, unknownEstimate: "reject" } as any }), {}), { action: "reject", reason: "tokens_estimate_required" });
+  assert.deepEqual(decideAdaptiveRun(policy({ budget: { maxTokens: 1000, unknownEstimate: "allow" } as any }), {}), { action: "allow", reason: "policy_allows" });
+  assert.deepEqual(decideAdaptiveRun(policy({ budget: { maxCostUsd: 1, unknownEstimate: "allow" } as any }), { estimatedCostUsd: 2 }), { action: "reject", reason: "cost_budget_exceeded" });
+  assert.deepEqual(decideAdaptiveRun(policy({ autonomy: { allowQueueAutoplay: false } as any }), { queueAutoplay: true }), { action: "reject", reason: "queue_autoplay_disabled" });
+  assert.deepEqual(decideAdaptiveRun(policy({ autonomy: { allowBackgroundTurns: false } as any }), { background: true }), { action: "reject", reason: "background_turns_disabled" });
 });
