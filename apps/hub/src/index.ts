@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, UsageLedger, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, UsageLedger, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, type RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -366,6 +366,9 @@ async function refreshLocalAgents(): Promise<void> {
   if (local) {
     local.info.agents = next;
     local.info.agentDescriptors = await agents.describe();
+    const agentUsage: Record<string, unknown | null> = {};
+    for (const name of agents.names()) { const a = agents.get(name); try { agentUsage[name] = a.usage ? await a.usage() : null; } catch { agentUsage[name] = null; } }
+    local.info.agentUsage = agentUsage;
   }
   if (next.join() !== localAgents.join()) { localAgents = next; broadcastMachines(); }
   else localAgents = next;
@@ -494,7 +497,7 @@ function runnerSessions(rc: RunnerConn): Promise<any[]> {
 function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "pong") return; // heartbeat ack — rc.lastSeen already refreshed by the caller
   if (m.t === "sessions") { const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
-  if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId, sessionCost: costOf(m.sessionId), sessionUsage: usageLedger.session(m.sessionId) }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })), files: m.files }); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
+  if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""), su = usageLedger.session(m.sessionId); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId, sessionCost: costOf(m.sessionId), sessionUsage: su, inputTokens: m.inputTokens || su.contextTokens, contextWindowTokens: m.contextWindowTokens || su.contextWindowTokens, model: m.model || su.model }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })), files: m.files }); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "agent_event") {
     const event = m.event as AgentEvent, sid = m.sessionId, mkey = rc.id + "\0" + sid;
@@ -1936,12 +1939,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // plan usage (5h / weekly windows) — account-level, from the local agent's usage endpoint
     if (msg.t === "get_usage") {
       const name = typeof msg.agent === "string" && agents.names().includes(msg.agent) ? msg.agent : agents.default;
-      let plan = null;
-      try { const a = agents.get(name); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
+      const requestedRunner = typeof msg.runnerId === "string" ? msg.runnerId : LOCAL_ID;
+      let plan = null; const a = agents.get(name); let supportsUsage = !!a.usage;
+      if (requestedRunner !== LOCAL_ID) { const rc = runners.get(requestedRunner); plan = (rc?.info.agentUsage?.[name] as any) || null; supportsUsage = Object.prototype.hasOwnProperty.call(rc?.info.agentUsage || {}, name); }
+      else try { plan = a.usage ? await a.usage() : null; } catch { plan = null; }
       // total accumulated across all sessions, so the client can show THIS session as a share of it
       // (a raw $ on a plan has no baseline to compare against — a % does).
       const costTotal = usageLedger.total().costUsd;
-      send(ws, { t: "usage_info", agent: name, plan, total: costTotal });
+      send(ws, { t: "usage_info", agent: name, plan, planStatus: supportsUsage ? (plan ? "available" : "not_reported") : "unsupported", total: costTotal });
       return;
     }
     // wake-word + speaker-id/voice-gate → handleVoiceDeviceMsg (extração verbatim, mesma ordem)
@@ -1979,7 +1984,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, {
         t: "history",
         sessionId: msg.sessionId,
-        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, sessionCost: costOf(msg.sessionId), sessionUsage: usageLedger.session(msg.sessionId), model: h.model, effort: h.effort },
+        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, sessionCost: costOf(msg.sessionId), sessionUsage: usageLedger.session(msg.sessionId), model: h.model, effort: h.effort },
         total: h.messages.length,
         messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })),
         files: sessionFiles(msg.sessionId),
@@ -1996,7 +2001,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       reconcileFromNative(s); // backfill a reply an orphaned turn (killed by a prior hub restart) already wrote natively
       const all = store.history(s.id);
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: usageLedger.session(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles(nativeIdForAgent(s.agent, nid) || "") : [] });
+      const su = usageLedger.session(s.id), nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null;
+      const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
+      const files = [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))];
+      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
       replayActivity(ws, s.id);
       sendPendingAsk(ws, s.id);
       send(ws, { t: "queue", sessionId: s.id, items: queueOf(s.id).map((q) => ({ text: q.text, atts: q.atts })) });
@@ -2147,9 +2155,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const voiceCost = costOf(WAKE_SESSION);
       const voicePct = costTotal > 0 ? Math.round((voiceCost / costTotal) * 100) : 0;
       let remoteActive = 0; for (const s of runnerActive.values()) remoteActive += s.size;
-      let plan = null; try { const a = agents.get("claude-code"); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
+      const plans: Record<string, any> = {};
+      for (const machine of machines) for (const name of agents.names()) { const key = `${machine.id}:${name}`; const a = agents.get(name); if (machine.local) { if (!a.usage) plans[key] = { machine: machine.label, agent: name, status: "unsupported", plan: null }; else try { const plan = await a.usage(); plans[key] = { machine: machine.label, agent: name, status: plan ? "available" : "not_reported", plan }; } catch { plans[key] = { machine: machine.label, agent: name, status: "error", plan: null }; } } else { const has = Object.prototype.hasOwnProperty.call((runners.get(machine.id)?.info.agentUsage || {}), name), plan = (runners.get(machine.id)?.info.agentUsage?.[name] as any) || null; plans[key] = { machine: machine.label, agent: name, status: !has ? "unsupported" : plan ? "available" : "not_reported", plan }; } }
       const runnerMetrics = metrics.byRunner().filter((r) => canUseRunner(ws, r.runnerId)); // don't leak ids of machines they can't see
-      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, billableTotal: overallUsage.billableUsd, estimatedTotal: overallUsage.estimatedUsd, byKind: overallUsage.byKind, voiceCost, voicePct, byAgent, byAgentUsage, topSessions }, metrics: { overall: metrics.overall(), runners: runnerMetrics, agents: metrics.byAgent(), models: metrics.byModel() }, parseHealth: nativeParseHealth(), plan });
+      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, billableTotal: overallUsage.billableUsd, estimatedTotal: overallUsage.estimatedUsd, byKind: overallUsage.byKind, voiceCost, voicePct, byAgent, byAgentUsage, topSessions }, metrics: { overall: metrics.overall(), runners: runnerMetrics, agents: metrics.byAgent(), models: metrics.byModel() }, parseHealth: nativeParseHealth(), plans });
       return;
     }
     // --- semantic memory: search by MEANING (local embeddings) + owner reindex ---

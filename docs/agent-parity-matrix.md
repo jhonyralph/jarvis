@@ -18,7 +18,7 @@ documentação continua `unverified` até um probe autenticado daquela versão.
 | lifecycle local/remoto | implementado | serviço único, anexos/activity/usage/histórico compartilhados |
 | handshake Runner | implementado | protocolo v2; versão incompatível é recusada |
 | Claude Code | referência `complete` | esforços são CLI-wide e marcados não verificados por modelo |
-| Codex | `limited` | stream/native/resume/files/diff/modelos implementados; certificar todos os event types por versão |
+| Codex | `limited` | stream/native/resume/files/diff/modelos, janela efetiva e limite de conta implementados; certificar todos os event types por versão |
 | Gemini/Cursor/Copilot/OpenCode/Cline/Qwen | `unverified` ou `not_installed` | adapters/fixtures prontos; faltam binário+auth para probes reais nesta máquina |
 | Continue/Kiro/Antigravity/Aider | `limited` ou `not_installed` | saída final apenas ou sessão/usage sem prova suficiente |
 | modelos | implementado sem invenção silenciosa | catálogo e controle são separados: `runtime`, `configured`, `provider_dynamic`, `none` × `per_turn`, `configuration_only`, `provider_default`, `none` |
@@ -183,7 +183,7 @@ sem simular paridade.
 | Nativo | Arquivos/diff/modelo/esforço | dependente | Claude/Codex normalizados a partir do transcript disponível |
 | Arquivos | `@`, viewer texto/imagem e anexos | sim | Conteúdo é processado na máquina/cwd da sessão |
 | Arquivos | Anexos e chips no Runner remoto | sim | Builder e `StoredMessage` compartilhados |
-| Arquivos | Diff inline | dependente | Exibe caminho/linhas/+/- apenas quando o evento fornece dados |
+| Arquivos | Diff inline e menu persistente | dependente | Normalizador comum calcula caminho/linhas/+/- quando o evento fornece diff ou argumentos de edit/write; activity persistida recompõe o menu em qualquer adapter; CLI final-only não publica alterações para observar |
 | Compositor | `/` commands/prompts/skills/MCP por agente | dependente | Homônimos coexistem; fontes são mapeadas sem alegar conexão MCP ativa |
 | Compositor | `!cmd` + histórico | sim | Executa na máquina/cwd da sessão; histórico é local ao dispositivo |
 | Compositor | `#nota` | sim | Claude→`CLAUDE.md`, Gemini→`GEMINI.md`, demais→`AGENTS.md` |
@@ -192,7 +192,7 @@ sem simular paridade.
 | Modelos | Catálogo por Runner | sim | Cada máquina publica descriptors completos; UI não reutiliza o catálogo do Hub |
 | Modelos | Modelo/effort inválido | sim quando catalogado | Rejeição pré-spawn; catálogo vazio mantém somente default do provedor |
 | Uso | Tokens/contexto por turno | dependente | Ledger aceita usage tipado de qualquer adapter |
-| Uso | Uso de plano/conta | limitado | Somente Claude expõe endpoint verificado hoje |
+| Uso | Uso de plano/conta | dependente | Claude usa endpoint OAuth; Codex usa `token_count.rate_limits` do rollout; demais mostram explicitamente não reportado/não suportado |
 | Custo | Ledger por sessão/agente/modelo | sim | Classes billed/estimado/assinatura/tokens/indisponível separadas |
 | Custo | Guard-rail | sim | Atua conforme política tipada; estimativa não vira cobrança real |
 | Custo | Runner remoto e histórico | sim | `done` agrega usage e reabertura recebe rollup da sessão |
@@ -334,7 +334,7 @@ CLIs externos estavam `not_installed`.
 | Adapter | Implementação | Stream | Sessão/retomada | Usage/custo | Estado máximo sem probe real |
 |---|---|---|---|---|---|
 | Claude Code | nativa e verificada localmente | delta + tools/thinking/subagentes | binding, import, tail, resume, reconcile | tokens + equivalente informado pelo CLI + plano | `complete` |
-| Codex | nativa, parser e catálogo reais | blocos + reasoning/commands/patch/tools | binding, import, tail, resume, reconcile | tokens + estimativa configurável | `limited` até certificar todos os eventos por versão |
+| Codex | nativa, parser e catálogo reais | blocos + reasoning/commands/patch/tools | binding, import, tail, resume, reconcile | delta de tokens + janela efetiva + estimativa configurável + limite semanal | `limited` até certificar todos os eventos por versão |
 | Gemini CLI | adapter `stream-json` + fixtures | delta/tools | session id/resume previsto | tokens quando publicados | `unverified` |
 | Cursor Agent | adapter `stream-json` + fixtures | delta/tools, sem thinking | session id/resume previsto | indisponível no schema auditado | `unverified` |
 | GitHub Copilot CLI | adapter JSONL defensivo | delta/tools quando publicados | resume previsto | tipado conforme evento | `unverified` |

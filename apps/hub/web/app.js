@@ -207,7 +207,7 @@
         const lastMsg=msgs[msgs.length-1];
         if(lastMsg && lastMsg.role==='assistant') clearRestorable(m.sessionId); else showRestoreBar(m.sessionId);
       }
-      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; sessCost=(m.session||{}).sessionCost||0; sessUsage=(m.session||{}).sessionUsage||null; updUsagePill(); renderRecents(); closePop();
+      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; lastContextWindow=(m.session||{}).contextWindowTokens||0; sessCost=(m.session||{}).sessionCost||0; sessUsage=(m.session||{}).sessionUsage||null; updUsagePill(); renderRecents(); closePop();
       curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
@@ -321,7 +321,7 @@
     // strFlow = container ordenado; curTextEl = bloco de texto aberto (null após uma ferramenta,
     // pra o próximo texto virar um bloco NOVO); curTextRaw = markdown acumulado desse bloco.
     let strEl=null, strFlow=null, curTextEl=null, curTextRaw='', sawText=false, strTimer=null, strStart=0, strTimeEl=null, subAgents={}, liveTools={}, turnUsage=null, seenAgentEvents=new Set(), liveTurnId=null, cleanCancel=false;
-    function streamStartUI(){ if(strEl)return; clearPending(); curTextEl=null; curTextRaw=''; sawText=false; strStart=Date.now(); subAgents={}; liveTools={}; turnUsage=null;
+    function streamStartUI(startedAt){ if(strEl)return; clearPending(); curTextEl=null; curTextRaw=''; sawText=false; const at=Number(startedAt); strStart=Number.isFinite(at)&&at>0?Math.min(at,Date.now()):Date.now(); subAgents={}; liveTools={}; turnUsage=null;
       strEl=document.createElement('div'); strEl.className='msg bot streaming';
       // loading + timer FICAM NO FIM do bloco (abaixo da atividade): strflow primeiro, strhead depois.
       strEl.innerHTML='<div class="strflow"></div><div class="strhead"><span class="spin"></span><span class="strtime">0s</span></div>';
@@ -723,10 +723,10 @@
           <span style="color:${erColor(r.errorRate)}">${Math.round(r.errorRate*100)}%</span></div>`; });
         const dims=[['Por IA',M.agents||[],x=>agLabel(x.key)],['Por modelo',M.models||[],x=>x.key]];
         dims.forEach(([title,rows,label])=>{ if(!rows.length)return; h+=`<div class="mut" style="font-size:11px;margin-top:6px">${title}</div>`; rows.forEach(r=>{h+=`<div style="display:flex;gap:8px;font-size:11.5px;padding:2px 0"><span style="flex:1">${esc(label(r))}</span><span class="mut">${r.turns}t · p50 ${fmtMs(r.p50ms)}</span><span style="color:${erColor(r.errorRate)}">${Math.round(r.errorRate*100)}%</span></div>`;}); }); }
-      if(m.plan&&(m.plan.fiveHour||m.plan.sevenDay)){ h+='<div class="sec" style="margin:10px 0 4px">Uso do plano (Claude)</div>';
-        if(m.plan.fiveHour){ h+=`<div class="mut" style="font-size:11.5px">Janela de 5h</div>${pctBar(m.plan.fiveHour)}`; }
-        if(m.plan.sevenDay){ h+=`<div class="mut" style="font-size:11.5px;margin-top:5px">Semanal</div>${pctBar(m.plan.sevenDay)}`; }
-        (m.plan.extra||[]).forEach(e=>{ h+=`<div class="mut" style="font-size:11.5px;margin-top:5px">${esc(e.label)}</div>${pctBar(e)}`; }); }
+      const plans=m.plans||{}; h+='<div class="sec" style="margin:10px 0 4px">Uso do plano por IA</div>';
+      Object.entries(plans).filter(([,e])=>e&&e.agent!=='mock').forEach(([,entry])=>{ const a=entry.agent,p=entry&&entry.plan; h+=`<div class="mut" style="font-size:11.5px;margin-top:7px">${entry.machine?esc(entry.machine)+' · ':''}${esc(agLabel(a))}${p&&p.label?' · '+esc(p.label):''}</div>`;
+        if(!p){ const why=entry.status==='unsupported'?'o CLI não publica limites de conta':entry.status==='error'?'erro ao consultar':'nenhum limite reportado'; h+=`<div class="mut" style="font-size:11px">${why}</div>`; return; }
+        if(p.fiveHour)h+=pctBar(p.fiveHour); if(p.sevenDay)h+=pctBar(p.sevenDay); (p.extra||[]).forEach(e=>{h+=`<div class="mut" style="font-size:10.5px">${esc(e.label)}</div>${pctBar(e)}`;}); });
       const ph=m.parseHealth; if(ph&&ph.emptyNonEmptyFiles>0){ h+=`<div style="margin-top:10px;color:#f59e0b;font-size:11.5px">⚠ ${ph.emptyNonEmptyFiles} transcript(s) não-vazios parsearam 0 mensagens — possível mudança de formato do CLI.</div>`; }
       E.fleetBody.innerHTML=h; }
     E.fileClose.onclick=()=>E.filePanel.classList.add('hidden');
@@ -945,7 +945,7 @@
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
-    let lastInputTokens=0, planUsage=null, sessCost=0, sessUsage=null, costTotalAll=0;
+    let lastInputTokens=0, lastContextWindow=0, planUsage=null, planStatus=null, sessCost=0, sessUsage=null, costTotalAll=0;
     // Custo da sessão como PARCELA do total acumulado — um $ isolado (ainda mais num plano, onde é só
     // um equivalente-API, não dinheiro real) não dá pra comparar; % do total dá.
     function sessCostRow(){
@@ -955,7 +955,7 @@
       return `<div class="urow"><span>esta sessão${pct!=null?` · ${pct}% do total`:''}</span><b>${p}${sessCost.toFixed(4)}</b></div>`
         +(costTotalAll>0?`<div class="umut ureset">total acumulado (todas as sessões): Σ$${costTotalAll.toFixed(2)} · classes separadas em Uso & custo</div>`:'');
     }
-    function modelContext(){ return (modelObj(currentAgent,curModel)||{}).context||0; }
+    function modelContext(){ return lastContextWindow||((modelObj(currentAgent,curModel)||{}).context||0); }
     function ctxPct(){ const c=modelContext(); return c?Math.min(100,Math.round(lastInputTokens/c*100)):0; }
     function updUsagePill(){ if(!E.usageName)return; E.usageName.textContent=(modelContext()&&lastInputTokens)?ctxPct()+'%':'—'; }
     const kfmt=n=>n>=1e6?(n/1e6).toFixed(n%1e6?1:0)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n||0);
@@ -969,9 +969,9 @@
       else h+='<div class="umut">envie uma mensagem para medir</div>';
       h+='<div class="uh" style="margin-top:12px">Custo da sessão</div><div id="usessc">'+sessCostRow()+'</div>';
       h+='<div class="uh" style="margin-top:12px">Limites do plano</div><div id="uplan" class="umut">carregando…</div></div>';
-      p.innerHTML=h; renderPlan(planUsage); tx({t:'get_usage',agent:currentAgent}); }
+      p.innerHTML=h; renderPlan(planUsage); tx({t:'get_usage',agent:currentAgent,runnerId:(currentMachine==='all'?routedMachine:currentMachine)}); }
     function renderPlan(plan){ const el=document.getElementById('uplan'); if(!el)return;
-      if(!plan){ el.className='umut'; el.textContent='indisponível para este agente'; return; }
+      if(!plan){ el.className='umut'; el.textContent=planStatus==='unsupported'?'o CLI desta IA não publica limites de conta':planStatus==='error'?'erro ao consultar o provedor':'nenhum limite foi reportado pelo provedor'; return; }
       const w=(lbl,x,color)=> x?`<div class="urow"><span>${esc(lbl)}</span><b>${x.pct}%</b></div>`+ubar(x.pct,color)+(x.resetsAt?`<div class="umut ureset">reinicia ${fmtReset(x.resetsAt)}</div>`:''):'';
       let h=w('Limite de 5 horas',plan.fiveHour,'#2563eb')+w('Semanal · todos os modelos',plan.sevenDay,'#7c3aed');
       (plan.extra||[]).forEach(e=>h+=w(e.label,e,'#7c3aed'));
@@ -1230,12 +1230,12 @@
         else if(m.t==='agent_event'){ if(m.sessionId!==currentSession)return; const ev=m.event||{};
           if(liveTurnId!==ev.turnId){ liveTurnId=ev.turnId; seenAgentEvents.clear(); }
           if(ev.eventId&&seenAgentEvents.has(ev.eventId))return; if(ev.eventId){seenAgentEvents.add(ev.eventId);if(seenAgentEvents.size>1200)seenAgentEvents.delete(seenAgentEvents.values().next().value);}
-          if(ev.kind==='accepted'||ev.kind==='started') streamStartUI();
+          if(ev.kind==='accepted'||ev.kind==='started') streamStartUI(ev.at);
           else if(ev.kind==='thinking') streamThinking(ev.text);
           else if(/^tool_/.test(ev.kind)&&ev.tool){ const t=ev.tool; streamTool(t.name,t.summary,t.callId,t.parentId,t.path,t.adds,t.dels,t.rows,t.detail,t.status,t.error); if(t.path)touchFile(t.path,/Edit$|^Write$/.test(t.name)?(t.name==='Write'?'write':'edit'):'read',t.adds,t.dels); }
           else if(ev.kind==='text_delta'||ev.kind==='text_block'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.tool&&ev.tool.parentId); }
           else if(ev.kind==='plan') streamTool('Plan',ev.plan&&ev.plan.title||ev.text||'Plano atualizado',null,null,null,0,0,null,null,'completed');
-          else if(ev.kind==='usage'){ turnUsage=ev.usage||turnUsage; if(ev.usage){E.usage.textContent=usageSummary(ev.usage);if(ev.usage.inputTokens){lastInputTokens=ev.usage.inputTokens;updUsagePill();}} }
+          else if(ev.kind==='usage'){ turnUsage=ev.usage||turnUsage; if(ev.usage){E.usage.textContent=usageSummary(ev.usage);if(ev.usage.contextTokens||ev.usage.inputTokens)lastInputTokens=ev.usage.contextTokens||ev.usage.inputTokens;if(ev.usage.contextWindowTokens)lastContextWindow=ev.usage.contextWindowTokens;updUsagePill();} }
           else if(ev.kind==='completed'){ clearRestorable(m.sessionId); if(typeof m.sessionCost==='number'){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text,turnUsage); onTurnEnd(m.sessionId); }
           else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
           else if(ev.kind==='failed'){ streamErr(ev.text); onTurnEnd(m.sessionId); } }
@@ -1253,8 +1253,8 @@
           const d=toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows,m.detail);
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); autoScroll(); }
-        else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=usageSummary(m.usage); if(m.usage.inputTokens){lastInputTokens=m.usage.inputTokens; updUsagePill();} } }
-        else if(m.t==='usage_info'){ planUsage=m.plan||null; if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
+        else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=usageSummary(m.usage); if(m.usage.contextTokens||m.usage.inputTokens)lastInputTokens=m.usage.contextTokens||m.usage.inputTokens; if(m.usage.contextWindowTokens)lastContextWindow=m.usage.contextWindowTokens; updUsagePill(); } }
+        else if(m.t==='usage_info'){ planUsage=m.plan||null; planStatus=m.planStatus||null; if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
         else if(m.t==='session'){ if(m.sessionId===currentSession && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
         else if(m.t==='deleted'){ const inCur = m.sessionId===currentSession || (Array.isArray(m.ids)&&m.ids.includes(currentSession));
           if(inCur){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); }

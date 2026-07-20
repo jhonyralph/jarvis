@@ -74,6 +74,7 @@ export interface UsageRecord {
   cachedInputTokens?: number;
   outputTokens?: number;
   contextTokens?: number;
+  contextWindowTokens?: number;
   costUsd?: number;
   costKind: CostKind;
   source: string;

@@ -11,7 +11,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { platform, homedir, tmpdir } from "node:os";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, readdirSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { toolFileStat } from "./native.js";
@@ -62,6 +62,7 @@ export interface AgentReply {
     cachedInputTokens?: number;
     outputTokens?: number;
     contextTokens?: number;
+    contextWindowTokens?: number;
     costKind?: CostKind;
     source?: string;
     model?: string;
@@ -88,6 +89,8 @@ export interface AgentUsage {
   fiveHour?: UsageWindow;
   sevenDay?: UsageWindow;
   extra?: Array<{ label: string } & UsageWindow>;
+  label?: string;
+  source?: string;
 }
 
 export interface AgentCaps {
@@ -506,9 +509,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
  *  defaults are GPT-5-class ballpark figures, NOT a quoted OpenAI price. `input_tokens` already
  *  includes the cached prefix — it's the FULL turn input, which is exactly the context-window figure
  *  the usage gauge needs (same role as Claude's fresh+cache_creation+cache_read sum). */
-export function codexUsage(u: any): AgentReply["usage"] | undefined {
+export function codexUsage(u: any, previous?: any, telemetry?: CodexTelemetry): AgentReply["usage"] | undefined {
   if (!u) return undefined;
-  const input = u.input_tokens || 0, cached = u.cached_input_tokens || 0, output = u.output_tokens || 0;
+  const input = Math.max(0, (u.input_tokens || 0) - (previous?.input_tokens || 0));
+  const cached = Math.max(0, (u.cached_input_tokens || 0) - (previous?.cached_input_tokens || 0));
+  const output = Math.max(0, (u.output_tokens || 0) - (previous?.output_tokens || 0));
   if (!input && !output) return undefined;
   const envNum = (v: string | undefined, d: number): number => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
   const pIn = envNum(process.env.JARVIS_CODEX_PRICE_IN, 1.25);            // USD / 1M non-cached input
@@ -516,7 +521,77 @@ export function codexUsage(u: any): AgentReply["usage"] | undefined {
   const pOut = envNum(process.env.JARVIS_CODEX_PRICE_OUT, 10);            // USD / 1M output (incl. reasoning)
   const costUsd = (Math.max(0, input - cached) * pIn + cached * pCached + output * pOut) / 1e6;
   const pricing = process.env.JARVIS_CODEX_PRICING_VERSION || "jarvis-ballpark-v1";
-  return { costUsd, inputTokens: input || undefined, cachedInputTokens: cached || undefined, contextTokens: input || undefined, outputTokens: output || undefined, costKind: "estimated_api_equivalent", source: `codex exec --json tokens × JARVIS_CODEX_PRICE_* (${pricing})` };
+  const currentInput = telemetry?.last?.input_tokens || input || undefined;
+  return { costUsd, inputTokens: input || undefined, cachedInputTokens: cached || undefined, contextTokens: currentInput, contextWindowTokens: telemetry?.contextWindow, outputTokens: output || undefined, costKind: "estimated_api_equivalent", source: `codex exec --json token delta × JARVIS_CODEX_PRICE_* (${pricing})`, model: telemetry?.model };
+}
+
+export interface CodexTelemetry {
+  total?: any;
+  last?: any;
+  contextWindow?: number;
+  model?: string;
+  rateLimits?: any;
+}
+
+/** Extract the latest effective model, context and rate-limit snapshot from a Codex rollout. */
+export function codexTelemetryFromLines(lines: string[]): CodexTelemetry | undefined {
+  const out: CodexTelemetry = {};
+  for (const line of lines) {
+    let row: any; try { row = JSON.parse(line); } catch { continue; }
+    if (row?.type === "turn_context" && row.payload?.model) out.model = String(row.payload.model);
+    const p = row?.type === "event_msg" ? row.payload : undefined;
+    if (p?.type === "token_count" && p.info) {
+      out.total = p.info.total_token_usage || out.total;
+      out.last = p.info.last_token_usage || out.last;
+      out.contextWindow = Number(p.info.model_context_window) || out.contextWindow;
+      out.rateLimits = p.rate_limits || out.rateLimits;
+    }
+  }
+  return out.total || out.model || out.rateLimits ? out : undefined;
+}
+
+function codexRolloutFiles(dir = join(homedir(), ".codex", "sessions")): string[] {
+  const found: string[] = [];
+  const walk = (d: string): void => { let entries: any[] = []; try { entries = readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of entries) { const p = join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.jsonl$/i.test(e.name)) found.push(p); } };
+  walk(dir); return found.sort((a, b) => { try { return statSync(b).mtimeMs - statSync(a).mtimeMs; } catch { return 0; } });
+}
+
+function codexThreadFile(threadId?: string): string | undefined {
+  const files = codexRolloutFiles(); return threadId ? files.find((p) => p.includes(threadId)) : files[0];
+}
+
+function codexThreadTelemetry(threadId?: string): CodexTelemetry | undefined {
+  const file = codexThreadFile(threadId);
+  if (!file) return undefined;
+  try { return codexTelemetryFromLines(readFileSync(file, "utf8").split(/\r?\n/)); } catch { return undefined; }
+}
+
+/** Authoritative file metadata emitted to the native rollout after apply_patch. */
+export function codexPatchEventsFromLines(lines: string[]): StreamEvent[] {
+  const events: StreamEvent[] = [];
+  for (const line of lines) {
+    let row: any; try { row = JSON.parse(line); } catch { continue; }
+    const p = row?.type === "event_msg" && row.payload?.type === "patch_apply_end" ? row.payload : undefined;
+    if (!p?.changes || typeof p.changes !== "object") continue;
+    for (const [path, change] of Object.entries(p.changes) as Array<[string, any]>) {
+      const raw = String(change?.unified_diff || "");
+      const rows = raw.split(/\r?\n/).filter(Boolean).map((s): { t: " " | "+" | "-" | "@"; s: string } => ({ t: s.startsWith("@@") ? "@" : s.startsWith("+") && !s.startsWith("+++") ? "+" : s.startsWith("-") && !s.startsWith("---") ? "-" : " ", s }));
+      const adds = rows.filter((r) => r.t === "+").length, dels = rows.filter((r) => r.t === "-").length;
+      const write = change?.type === "add";
+      events.push({ kind: "tool", name: write ? "Write" : "Edit", summary: `${write ? "Criando" : "Editando"} ${path.split(/[\\/]/).pop() || path}`, toolId: `${p.call_id || "patch"}:${path}`, status: p.success === false ? "failed" : "completed", error: p.success === false ? String(p.stderr || "patch falhou") : undefined, path, adds, dels, rows: rows.length <= 300 ? rows : undefined, providerEvent: "patch_apply_end" });
+    }
+  }
+  return events;
+}
+
+export function codexPlanUsage(t?: CodexTelemetry): AgentUsage | null {
+  const rl = t?.rateLimits; if (!rl) return null;
+  const windows: Array<{ label: string; pct: number; minutes?: number; resetsAt?: string }> = [];
+  for (const [label, value] of [["Principal", rl.primary], ["Secundário", rl.secondary]] as const) if (value && Number.isFinite(Number(value.used_percent))) windows.push({ label, pct: Number(value.used_percent), minutes: Number(value.window_minutes) || undefined, resetsAt: value.resets_at ? new Date(Number(value.resets_at) * 1000).toISOString() : undefined });
+  const result: AgentUsage = { label: rl.plan_type ? `Codex · ${rl.plan_type}` : "Codex", source: "Codex rollout token_count.rate_limits", extra: [] };
+  for (const w of windows) { const target = { pct: w.pct, resetsAt: w.resetsAt }; if (w.minutes === 300) result.fiveHour = target; else if (w.minutes === 10080) result.sevenDay = target; else result.extra!.push({ label: `${w.label}${w.minutes ? ` · ${w.minutes} min` : ""}`, ...target }); }
+  if (!result.extra?.length) delete result.extra;
+  return result;
 }
 
 /** Map ONE codex `--json` item to the StreamEvents Jarvis renders (SAME vocabulary Claude emits, so
@@ -540,8 +615,10 @@ export function codexItemToEvents(it: any, isCompleted: boolean): { events: Stre
     return { events: [{ kind: "tool", name: "Bash", summary: "Bash: " + cmd.replace(/\s+/g, " ").slice(0, 90), detail: cmd.length > 90 ? cmd : undefined, toolId: it.id, status, error: failed ? String(it?.error?.message || it?.error || it?.aggregated_output || "comando falhou") : undefined }] };
   }
   if (type === "file_change" || type === "patch" || type === "apply_patch") {
-    const changes = Array.isArray(it.changes) ? it.changes : Array.isArray(it.files) ? it.files : (it.path ? [{ path: it.path, kind: it.kind }] : []);
-    if (!changes.length) return { events: [{ kind: "tool", name: "Edit", summary: "Editando arquivos", toolId: it.id, status, error: failed ? String(it?.error || "edição falhou") : undefined }] };
+    const changes = Array.isArray(it.changes) ? it.changes : Array.isArray(it.files) ? it.files : (it.path ? [{ path: it.path, kind: it.kind, unified_diff: it.unified_diff, diff: it.diff, rows: it.rows }] : []);
+    // Codex's stdout item commonly omits the unified diff. In that case wait for the authoritative
+    // patch_apply_end from the rollout instead of rendering a duplicate row without +/- metadata.
+    if (!changes.length || !changes.some((ch: any) => ch?.unified_diff || ch?.diff || ch?.rows)) return { events: [] };
     return { events: changes.map((ch: any): StreamEvent => {
       const p = String(ch?.path ?? ch?.file ?? "");
       const write = /add|create|new/i.test(String(ch?.kind ?? ch?.type ?? ""));
@@ -640,6 +717,8 @@ export class CodexAdapter implements AgentAdapter {
     }
   }
 
+  async usage(): Promise<AgentUsage | null> { return codexPlanUsage(codexThreadTelemetry()); }
+
   async descriptor(): Promise<AgentDescriptor> {
     const caps = await this.capabilities();
     const version = await cliVersion("codex");
@@ -678,6 +757,10 @@ export class CodexAdapter implements AgentAdapter {
     let threadId: string | undefined;
     const finalParts: string[] = [];   // agent_message texts, in order (preâmbulo + resposta final)
     let usage: AgentReply["usage"];
+    let rawUsage: any;
+    const beforeTelemetry = prev ? codexThreadTelemetry(prev) : undefined;
+    const beforeRollout = prev ? codexThreadFile(prev) : undefined;
+    const beforeLineCount = beforeRollout ? (() => { try { return readFileSync(beforeRollout, "utf8").split(/\r?\n/).filter(Boolean).length; } catch { return 0; } })() : 0;
     let streamError = "";
     const seen = new Map<string, string>(); // allow started -> completed/failed; reject duplicate frames
 
@@ -700,7 +783,7 @@ export class CodexAdapter implements AgentAdapter {
       let o: any; try { o = JSON.parse(line); } catch { return; }
       switch (o.type) {
         case "thread.started": if (o.thread_id) threadId = o.thread_id; break;
-        case "turn.completed": if (o.usage) usage = { ...codexUsage(o.usage), model: opts?.model }; break;
+        case "turn.completed": if (o.usage) rawUsage = o.usage; break;
         case "turn.failed": case "error": streamError = o.error?.message || o.message || streamError; break;
         case "item.started": emitItem(o.item, false); break;
         case "item.completed": emitItem(o.item, true); break;
@@ -714,6 +797,13 @@ export class CodexAdapter implements AgentAdapter {
       ? await runStream("codex", args, cwd, text, handleLine, opts?.signal)
       : await run("codex", args, cwd, text, opts?.signal);
     if (!onEvent) for (const line of out.split("\n")) { const t = line.trim(); if (t) handleLine(t); }
+
+    const afterTelemetry = codexThreadTelemetry(threadId || prev);
+    if (rawUsage) usage = codexUsage(rawUsage, beforeTelemetry?.total, afterTelemetry);
+    if (onEvent) {
+      const rollout = codexThreadFile(threadId || prev);
+      if (rollout) { try { const lines = readFileSync(rollout, "utf8").split(/\r?\n/).filter(Boolean).slice(beforeLineCount); for (const ev of codexPatchEventsFromLines(lines)) onEvent(ev); } catch { /* rollout enrichment is best-effort */ } }
+    }
 
     this.started.add(sessionId);
     if (streamError && !finalParts.length) throw new Error(streamError);
@@ -782,7 +872,14 @@ function tokenUsage(value: any, source: string, costKind: CostKind = "tokens_onl
 
 function toolEvent(name: string, args: any, id?: string, status: StreamEvent["status"] = "started", error?: string, providerEvent?: string): StreamEvent {
   const normalized = /shell|command|terminal|exec|bash/i.test(name) ? "Bash" : name;
-  return { kind: "tool", name: normalized, summary: toolSummary(normalized, args), detail: toolDetail(normalized, args), toolId: id, status, error, providerEvent };
+  const stat = fileToolStat(normalized, args);
+  const explicitPath = args && typeof args === "object" ? String(args.file_path || args.path || args.filename || args.file || "") || undefined : undefined;
+  const explicitAdds = Number(args?.adds ?? args?.additions), explicitDels = Number(args?.dels ?? args?.deletions);
+  return { kind: "tool", name: normalized, summary: toolSummary(normalized, args), detail: toolDetail(normalized, args), toolId: id, status, error, providerEvent,
+    path: explicitPath || stat.path,
+    adds: Number.isFinite(explicitAdds) ? explicitAdds : stat.adds,
+    dels: Number.isFinite(explicitDels) ? explicitDels : stat.dels,
+    rows: Array.isArray(args?.rows) ? args.rows : stat.rows as any };
 }
 
 /** Pure provider parsers. Unknown fields/types are ignored, never promoted to invented progress. */

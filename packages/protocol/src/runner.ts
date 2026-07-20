@@ -25,6 +25,8 @@ export interface RunnerInfo {
   agents: string[]; // available adapter names, e.g. ["claude-code","codex","mock"]
   /** Canonical adapter descriptors. `agents` remains for backward compatibility with v1 Hubs. */
   agentDescriptors?: unknown[];
+  /** Account-plan snapshots by adapter; null means the CLI exposes no usable limit data. */
+  agentUsage?: Record<string, unknown | null>;
   protocolVersion?: number;
   version?: string;
   /** short git HEAD sha of the runner's checkout ("+dirty" suffix if uncommitted) — lets the Hub
@@ -76,6 +78,7 @@ export interface RunnerMsg {
     cachedInputTokens?: number;
     outputTokens?: number;
     contextTokens?: number;
+    contextWindowTokens?: number;
   };
 }
 
@@ -126,6 +129,9 @@ export type RunnerToHub =
       total: number;
       /** underlying native session id (e.g. the real claude session, for `claude --resume`) */
       nativeId?: string;
+      inputTokens?: number;
+      contextWindowTokens?: number;
+      model?: string;
       /** files touched by tools in this session (real paths, for the viewer/diff panel) */
       files?: TouchedFileMeta[];
     }

@@ -652,7 +652,7 @@ export interface HistMsg { role: MsgRole; text: string; ts: number; name?: strin
 // response, which is why "os arquivos demoram a aparecer"). Cache the PARSED VIEW keyed on the
 // jsonl's mtime+size (not the file bytes): an idle session re-opens instantly, a live one whose
 // jsonl just grew re-parses. Bounded so memory can't run away.
-type NativeHist = { agent: string; cwd: string; title: string; messages: HistMsg[]; inputTokens?: number; model?: string; effort?: string };
+type NativeHist = { agent: string; cwd: string; title: string; messages: HistMsg[]; inputTokens?: number; contextWindowTokens?: number; model?: string; effort?: string };
 const histCache = new Map<string, { key: string; data: NativeHist }>();
 // Contexto de entrada (fresh + cache) do último turno do thread principal — pro medidor de consumo
 // aparecer JÁ ao abrir a sessão, não só depois da 1ª mensagem nova. Mesma conta de agents.ts.
@@ -812,7 +812,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   }
   noteParse(f.path, raw.length, messages.length); // format-drift telemetry (non-empty file, 0 msgs)
   const codexInput = !f.claude && lastUsage ? Number(lastUsage.input_tokens || 0) || undefined : undefined;
-  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: f.claude ? inputContextOf(lastUsage) : codexInput, model: lastModel || undefined, effort: lastEffort || undefined };
+  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: f.claude ? inputContextOf(lastUsage) : codexInput, contextWindowTokens: !f.claude ? Number(lastUsage?.model_context_window) || undefined : undefined, model: lastModel || undefined, effort: lastEffort || undefined };
   if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
   return data;
 }

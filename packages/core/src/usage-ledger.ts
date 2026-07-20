@@ -14,6 +14,9 @@ export interface UsageRollup {
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
+  contextTokens?: number;
+  contextWindowTokens?: number;
+  model?: string;
   byKind: Partial<Record<CostKind, number>>;
 }
 
@@ -31,13 +34,24 @@ export class UsageLedger {
       // unavailable rather than rewriting historical estimates as billed spend.
       for (const [sessionId, value] of Object.entries(raw as Record<string, any>)) if (Number(value?.cost) > 0) this.entries.push({ sessionId, agent: "unknown", at: Number(value.ts || now), costUsd: Number(value.cost), costKind: "unavailable", source: "legacy session-cost.json" });
     }
+    // Before the canonical Codex telemetry fix, `turn.completed.usage` was cumulative for the
+    // whole native thread and every snapshot was appended as a new turn. Convert repeated
+    // snapshots to deltas in memory so totals are not multiplied. The first observed snapshot is
+    // retained as the historical baseline; subsequent entries become non-negative differences.
+    const codexTotals = new Map<string, { cost: number; input: number; cached: number; output: number }>();
+    for (const e of this.entries) if (e.agent === "codex" && /codex exec --json tokens ×/i.test(e.source || "")) {
+      const current = { cost: e.costUsd || 0, input: e.inputTokens || 0, cached: e.cachedInputTokens || 0, output: e.outputTokens || 0 }, prev = codexTotals.get(e.sessionId);
+      codexTotals.set(e.sessionId, current);
+      if (prev) { e.costUsd = Math.max(0, current.cost - prev.cost); e.inputTokens = Math.max(0, current.input - prev.input); e.cachedInputTokens = Math.max(0, current.cached - prev.cached); e.outputTokens = Math.max(0, current.output - prev.output); }
+      e.contextTokens = undefined; e.contextWindowTokens = undefined; e.source = "migrated Codex cumulative snapshot → delta";
+    }
     this.trim(now);
   }
   record(sessionId: string, agent: string, usage?: Partial<UsageRecord>): void {
     if (!usage) return;
     const hasValue = [usage.costUsd, usage.inputTokens, usage.cachedInputTokens, usage.outputTokens].some((v) => Number(v) > 0);
     if (!hasValue) return;
-    this.entries.push({ sessionId, agent, at: Date.now(), costKind: usage.costKind || "unavailable", source: usage.source || "adapter did not declare source", model: usage.model, costUsd: finite(usage.costUsd), inputTokens: finite(usage.inputTokens), cachedInputTokens: finite(usage.cachedInputTokens), outputTokens: finite(usage.outputTokens), contextTokens: finite(usage.contextTokens) });
+    this.entries.push({ sessionId, agent, at: Date.now(), costKind: usage.costKind || "unavailable", source: usage.source || "adapter did not declare source", model: usage.model, costUsd: finite(usage.costUsd), inputTokens: finite(usage.inputTokens), cachedInputTokens: finite(usage.cachedInputTokens), outputTokens: finite(usage.outputTokens), contextTokens: finite(usage.contextTokens), contextWindowTokens: finite(usage.contextWindowTokens) });
     this.trim(Date.now()); this.flush();
   }
   session(sessionId: string): UsageRollup { return roll(this.entries.filter((e) => e.sessionId === sessionId)); }
@@ -65,5 +79,6 @@ function roll(entries: UsageLedgerEntry[]): UsageRollup {
     if (e.costKind === "billed") out.billableUsd += cost;
     else if (e.costKind === "estimated_api_equivalent") out.estimatedUsd += cost;
   }
+  const latest = entries.at(-1); if (latest) { out.contextTokens = latest.contextTokens; out.contextWindowTokens = latest.contextWindowTokens; out.model = latest.model; }
   return out;
 }

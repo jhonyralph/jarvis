@@ -11,6 +11,22 @@ export interface TurnUsage {
   cachedInputTokens?: number;
   outputTokens?: number;
   contextTokens?: number;
+  contextWindowTokens?: number;
+}
+
+export interface TurnTouchedFile { path: string; action: "read" | "edit" | "write"; adds: number; dels: number; }
+
+/** Rebuild the Files menu from persisted canonical/legacy activity for every adapter. */
+export function touchedFilesFromMessages(messages: Array<{ activity?: unknown[] }>): TurnTouchedFile[] {
+  const calls = new Map<string, any>(); let anonymous = 0;
+  for (const message of messages) for (const raw of (Array.isArray(message.activity) ? message.activity : [])) {
+    const e: any = raw, t = e?.tool || e; if (!t?.path) continue;
+    const key = String(t.callId || t.toolId || e.eventId || `anon:${++anonymous}`);
+    const prior = calls.get(key); if (!prior || e.kind === "tool_completed" || e.kind === "tool_failed" || t.status === "completed" || t.status === "failed") calls.set(key, t);
+  }
+  const files = new Map<string, TurnTouchedFile>();
+  for (const t of calls.values()) { const name = String(t.name || ""), action: TurnTouchedFile["action"] = name === "Write" ? "write" : /Edit$|Patch|Write/.test(name) ? "edit" : "read"; const f = files.get(t.path) || { path: t.path, action, adds: 0, dels: 0 }; if (action === "edit" || action === "write") f.action = action; f.adds += Number(t.adds) || 0; f.dels += Number(t.dels) || 0; files.set(t.path, f); }
+  return [...files.values()].reverse();
 }
 
 export interface TurnStoredMessage {

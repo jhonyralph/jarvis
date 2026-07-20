@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, MockAgentAdapter, agentPermissionMode, codexUsage, codexItemToEvents, codexConfigModel, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs } from "./agents.js";
+import { AgentRegistry, AiderAdapter, MockAgentAdapter, agentPermissionMode, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("permission mode is explicit and defaults conservatively to the historical full-access behavior", () => {
@@ -39,6 +39,13 @@ test("Gemini stream-json maps assistant, tool, terminal usage and errors", () =>
   assert.equal(parseGeminiCliEvent({ type: "tool_result", tool_name: "read_file", tool_id: "t1" }).events?.[0].status, "completed");
   assert.equal(parseGeminiCliEvent({ type: "result", response: "fim", stats: { input_tokens: 7, output_tokens: 2 } }).usage?.inputTokens, 7);
   assert.match(parseGeminiCliEvent({ type: "error", message: "quota" }).error || "", /quota/);
+});
+
+test("structured providers inherit provider-neutral file paths and computed +/- metadata", () => {
+  const edit = parseGeminiCliEvent({ type: "tool_use", tool_name: "Edit", tool_id: "e1", parameters: { file_path: "src/a.ts", old_string: "old\nkeep", new_string: "new\nkeep\nmore" } }).events?.[0];
+  assert.deepEqual({ path: edit?.path, adds: edit?.adds, dels: edit?.dels }, { path: "src/a.ts", adds: 2, dels: 1 });
+  const write = parseQwenCliEvent({ type: "assistant", message: { content: [{ type: "tool_use", id: "w1", name: "Write", input: { file_path: "src/new.ts", content: "one\ntwo" } }] } }).events?.[0];
+  assert.deepEqual({ path: write?.path, adds: write?.adds, dels: write?.dels }, { path: "src/new.ts", adds: 2, dels: 0 });
 });
 
 test("Cursor stream-json correlates the full tool lifecycle", () => {
@@ -143,6 +150,16 @@ test("codexUsage honors env-configurable prices and ignores an empty turn", () =
   assert.equal(codexUsage(undefined), undefined);
 });
 
+test("Codex usage uses per-turn deltas while context and plan come from rollout telemetry", () => {
+  const telemetry = codexTelemetryFromLines([
+    JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.6-sol" } }),
+    JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 1500, cached_input_tokens: 700, output_tokens: 140 }, last_token_usage: { input_tokens: 600, cached_input_tokens: 500, output_tokens: 40 }, model_context_window: 258400 }, rate_limits: { plan_type: "pro", primary: { used_percent: 12, window_minutes: 10080, resets_at: 1800000000 } } } }),
+  ]);
+  const usage = codexUsage(telemetry!.total, { input_tokens: 1000, cached_input_tokens: 500, output_tokens: 100 }, telemetry);
+  assert.equal(usage!.inputTokens, 500); assert.equal(usage!.contextTokens, 600); assert.equal(usage!.contextWindowTokens, 258400); assert.equal(usage!.model, "gpt-5.6-sol");
+  const plan = codexPlanUsage(telemetry); assert.equal(plan!.sevenDay!.pct, 12); assert.match(plan!.label || "", /pro/);
+});
+
 // --- Codex item → StreamEvent mapping (same vocabulary Claude emits) ---
 test("codexItemToEvents: agent_message becomes text (only when completed) and is accumulated", () => {
   const done = codexItemToEvents({ type: "agent_message", text: "feito" }, true);
@@ -165,12 +182,22 @@ test("codexItemToEvents: command_execution → Bash, with untruncated detail onl
   assert.equal(big.detail, long, "long command keeps the full text in detail");
 });
 test("codexItemToEvents: file_change → one Edit/Write row per changed path", () => {
-  const evs = codexItemToEvents({ type: "file_change", changes: [{ path: "src/a.ts", kind: "modify" }, { path: "src/b.ts", kind: "add" }] }, true).events;
+  const evs = codexItemToEvents({ type: "file_change", changes: [{ path: "src/a.ts", kind: "modify", unified_diff: "@@ -1 +1 @@\n-old\n+new" }, { path: "src/b.ts", kind: "add", unified_diff: "@@ -0,0 +1 @@\n+new" }] }, true).events;
   assert.equal(evs.length, 2);
   assert.equal(evs[0].name, "Edit"); assert.equal(evs[0].path, "src/a.ts"); assert.match(evs[0].summary!, /Editando a\.ts/);
   assert.equal(evs[1].name, "Write"); assert.match(evs[1].summary!, /Criando b\.ts/);
-  const single = codexItemToEvents({ type: "patch", path: "only.ts" }, true).events;
+  const single = codexItemToEvents({ type: "patch", path: "only.ts", unified_diff: "@@ -1 +1 @@\n-a\n+b" }, true).events;
   assert.deepEqual(single.map((e) => e.name), ["Edit"]);
+});
+test("Codex transcript patch completion supplies authoritative file paths and +/- counts", () => {
+  const lines = [JSON.stringify({ type: "event_msg", payload: { type: "patch_apply_end", call_id: "p1", success: true, changes: {
+    "src/a.ts": { type: "update", unified_diff: "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,2 +1,3 @@\n-old\n keep\n+new\n+more" },
+    "src/new.ts": { type: "add", unified_diff: "--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1,2 @@\n+one\n+two" },
+  } } })];
+  const events = codexPatchEventsFromLines(lines);
+  assert.equal(events.length, 2);
+  assert.deepEqual({ path: events[0].path, adds: events[0].adds, dels: events[0].dels, status: events[0].status }, { path: "src/a.ts", adds: 2, dels: 1, status: "completed" });
+  assert.deepEqual({ name: events[1].name, path: events[1].path, adds: events[1].adds, dels: events[1].dels }, { name: "Write", path: "src/new.ts", adds: 2, dels: 0 });
 });
 test("codexItemToEvents: tool calls + web search map to a tool row; unknowns are ignored", () => {
   assert.equal(codexItemToEvents({ type: "mcp_tool_call", name: "fetch" }, false).events[0].summary, "Ferramenta: fetch");

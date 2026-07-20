@@ -23,7 +23,7 @@ import {
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory,
-  buildTurnAttachments, imageDataUrl, runManagedTurn, createAgentEventBridge, createEventSequencer,
+  buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, createAgentEventBridge, createEventSequencer,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent,
 } from "@jarvis/core";
 
@@ -152,20 +152,22 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
   if (isNativeId(sessionId)) {
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
-    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId) });
+    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, model: h.model, total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId) });
     startTail(sessionId); // live-mirror new turns (external CLI) to the Hub
   } else {
     const s = store.ensure(sessionId);
     const all = store.history(s.id);
     const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+    const nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null;
+    const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
     send({
       t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd,
-      writable: true, total: all.length, nativeId: nid,
+      writable: true, total: all.length, nativeId: nid, inputTokens: nh?.inputTokens, contextWindowTokens: nh?.contextWindowTokens, model: nh?.model,
       messages: all.map((m: any) => ({
         role: m.role, text: m.text, ts: m.ts, agent: m.agent, speaker: m.speaker,
         images: m.images, files: m.files, activity: m.activity, usage: m.usage,
       })),
-      files: nid ? sessionFiles(nativeIdForAgent(s.agent, nid) || "") : [],
+      files: [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))],
     });
   }
 }
@@ -306,9 +308,11 @@ function connect(): void {
     // Publish the full catalog (including not_installed/unauthenticated reasons). `agents` remains
     // the executable allow-list; descriptors let the UI explain why another adapter is unavailable.
     const descriptors = await agents.describe();
+    const agentUsage: Record<string, unknown | null> = {};
+    for (const name of agents.names()) { const a = agents.get(name); try { agentUsage[name] = a.usage ? await a.usage() : null; } catch { agentUsage[name] = null; } }
     const info: RunnerInfo = {
       runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: available,
-      agentDescriptors: descriptors, protocolVersion: RUNNER_PROTOCOL_VERSION,
+      agentDescriptors: descriptors, agentUsage, protocolVersion: RUNNER_PROTOCOL_VERSION,
       version: VERSION, commit: await repoCommit(RUNNER_ROOT), label: process.env.JARVIS_LABEL || undefined,
     };
     send({ t: "register", token: TOKEN, info });
