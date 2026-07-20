@@ -71,6 +71,15 @@ async function git(root: string, args: string[], timeoutMs = 20000): Promise<str
   return String(stdout).trim();
 }
 
+async function dependencyManifestsChanged(root: string, from: string, to: string): Promise<boolean> {
+  const files = await git(root, [
+    "diff", "--name-only", from, to, "--",
+    "package.json", "package-lock.json", "npm-shrinkwrap.json",
+    "apps/*/package.json", "packages/*/package.json",
+  ], 30000);
+  return files.split(/\r?\n/).some(Boolean);
+}
+
 /** The repo's origin URL (for showing the right `git clone …` command), or "". */
 export async function repoRemoteUrl(root: string): Promise<string> {
   try { return (await git(root, ["remote", "get-url", "origin"])).replace(/\.git$/, ""); } catch { return ""; }
@@ -193,6 +202,7 @@ export async function updateApply(root: string, opts?: { force?: boolean; target
     try { mkdirSync(updateDir(), { recursive: true }); if (previous !== desiredFull || !existsSync(prevFile(root))) writeFileSync(prevFile(root), previous); } catch { /* rollback remains best-effort */ }
     let log = "";
     let moved = false;
+    let depsChanged = false;
     try {
       if (opts?.force && (!st.clean || aheadTarget > 0)) {
         // reset (not pull): a pull can't move a dirty/divergent tree. This line throws away local
@@ -205,12 +215,13 @@ export async function updateApply(root: string, opts?: { force?: boolean; target
       } else if (behindTarget > 0) {
         // Merge the durable deployment target, not today's origin tip. A runner may reconnect after
         // a newer push; it still has to finish and prove the exact deployment the Hub queued.
+        depsChanged = await dependencyManifestsChanged(root, previous, desiredFull);
         log += "git fast-forward para o alvo solicitado:\n" + (await git(root, ["merge", "--ff-only", desiredFull], 60000)) + "\n";
         moved = true;
       } else {
         log += "git: código já aponta para o alvo solicitado; validando antes de reparar dependências\n";
       }
-      log += moved ? await installAndVerify(root) : await verifyOrRepair(root);
+      log += (moved && depsChanged) ? await installAndVerify(root) : await verifyOrRepair(root);
       const current = await git(root, ["rev-parse", "--short", "HEAD"]);
       return { ok: true, log, prev: previous, behind: behindTarget, changed: moved, restartRequired: true, current };
     } catch (e: any) {
