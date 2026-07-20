@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cosine, MemoryStore, type MemoryEntry } from "./memory.js";
+import { classifyMemoryText, cosine, MemoryStore, type MemoryEntry } from "./memory.js";
 
 test("cosine: identical vectors = 1, orthogonal = 0, opposite = -1", () => {
   assert.equal(cosine([1, 0], [1, 0]), 1);
@@ -68,5 +68,39 @@ test("persists across reload", () => {
   try {
     new MemoryStore(d).upsertMany([entry("a", [1, 0]), entry("b", [0, 1])]);
     assert.equal(new MemoryStore(d).size(), 2);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("classifies personal topics without leaking them into project scope", () => {
+  const recipe = classifyMemoryText({ text: "Receita de bolo com farinha e forno", cwd: "C:/repo/jarvis" });
+  assert.equal(recipe.scope, "personal");
+  assert.equal(recipe.topic, "recipe");
+  assert.ok(recipe.namespaces.includes("topic:recipe"));
+  assert.equal(recipe.projectKey, undefined);
+
+  const sports = classifyMemoryText({ text: "placar do jogo de futebol" });
+  assert.equal(sports.scope, "personal");
+  assert.equal(sports.topic, "sports");
+});
+
+test("classifies project memories with normalized project keys", () => {
+  const c = classifyMemoryText({ text: "Fix typecheck in packages core module", cwd: "C:\\Repo\\Jarvis\\packages\\core\\" });
+  assert.equal(c.scope, "project");
+  assert.equal(c.topic, "project");
+  assert.equal(c.projectKey, "c:/repo/jarvis/packages/core");
+  assert.ok(c.namespaces.includes("project:c:/repo/jarvis/packages/core"));
+});
+
+test("search can isolate namespaces even when vectors are similar", () => {
+  const d = mkdtempSync(join(tmpdir(), "jarvis-mem-"));
+  try {
+    const m = new MemoryStore(d);
+    m.upsert(entry("recipe", [1, 0], { text: "Receita de massa no forno", cwd: "/repo" }));
+    m.upsert(entry("sports", [1, 0], { text: "Jogo de futebol do time", cwd: "/repo" }));
+    m.upsert(entry("project", [1, 0], { text: "Fix API test in repo", cwd: "/repo/apps/api" }));
+
+    assert.deepEqual(m.search([1, 0], { namespaces: ["topic:recipe"] }).map((h) => h.id), ["recipe"]);
+    assert.deepEqual(m.search([1, 0], { scope: "project" }).map((h) => h.id), ["project"]);
+    assert.deepEqual(m.search([1, 0], { projectKey: "/repo/apps/api" }).map((h) => h.id), ["project"]);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

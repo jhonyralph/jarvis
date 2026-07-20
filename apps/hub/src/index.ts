@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -2970,8 +2970,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const q = msg.query;
       try {
         const vec = await embedOne(q);
-        const hits = vec.length ? memory.search(vec, { topK: 10, minScore: 0.2 }) : [];
-        send(ws, { t: "memory_result", query: q, hits: hits.map((h) => ({ id: h.id, title: h.title, agent: h.agent, cwd: h.cwd, snippet: h.text, score: Math.round(h.score * 100) })) });
+        const sid = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+        const cls = classifyMemoryText({ text: q, cwd: sessionCwd(sid) });
+        const scoped = vec.length ? memory.search(vec, { topK: 10, minScore: 0.2, namespaces: cls.namespaces }) : [];
+        const hits = scoped.length ? scoped : (vec.length ? memory.search(vec, { topK: 10, minScore: 0.2 }) : []);
+        send(ws, { t: "memory_result", query: q, classification: cls, hits: hits.map((h) => ({ id: h.id, title: h.title, agent: h.agent, cwd: h.cwd, snippet: h.text, score: Math.round(h.score * 100), namespaces: h.namespaces, scope: h.scope, topic: h.topic })) });
       } catch { send(ws, { t: "memory_result", query: q, hits: [], error: "memória local indisponível — instale sentence-transformers na máquina do Hub (pip install sentence-transformers)" }); }
       return;
     }
@@ -2981,7 +2984,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         try {
           const jobs = store.list().map((s) => { const full = store.get(s.id); if (!full || !full.messages.length) return null; const lu = [...full.messages].reverse().find((m) => m.role === "user")?.text || ""; const la = [...full.messages].reverse().find((m) => m.role === "assistant")?.text || ""; return { meta: s, text: `${s.title}\n${lu}\n${la}`.slice(0, 2000) }; }).filter(Boolean) as Array<{ meta: any; text: string }>;
           const vecs = await embed(jobs.map((j) => j.text));
-          memory.upsertMany(jobs.map((j, i) => ({ id: j.meta.id, sessionId: j.meta.id, agent: j.meta.agent, cwd: j.meta.cwd, title: j.meta.title, text: j.text.slice(0, 400), ts: j.meta.updatedAt, vec: vecs[i] || [] })).filter((e) => e.vec.length));
+          memory.upsertMany(jobs.map((j, i) => ({ id: j.meta.id, sessionId: j.meta.id, agent: j.meta.agent, cwd: j.meta.cwd, title: j.meta.title, text: j.text.slice(0, 400), ts: j.meta.updatedAt, vec: vecs[i] || [], ...classifyMemoryText({ text: j.text, cwd: j.meta.cwd }) })).filter((e) => e.vec.length));
           send(ws, { t: "memory_reindexed", count: memory.size() });
         } catch (e: any) { send(ws, { t: "error", message: "reindex da memória falhou: " + String(e?.message ?? e) }); }
       })();
