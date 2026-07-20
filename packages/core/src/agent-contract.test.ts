@@ -7,7 +7,7 @@ const descriptor = (over: Partial<AgentDescriptor> = {}): AgentDescriptor => ({
   label: "Sample",
   support: "unverified",
   cli: { command: "sample", version: "1.0.0" },
-  capabilities: { ...LIMITED_CAPABILITIES, stream: "block" },
+  capabilities: { ...LIMITED_CAPABILITIES, stream: "block", modelCatalog: "runtime", modelControl: "per_turn" },
   models: [{ id: "m1", label: "M1", source: "cli", visibility: "public", efforts: ["low", "high"], defaultEffort: "low", modalities: ["text"], discoveredAt: 1 }],
   defaultModel: "m1",
   discoveredAt: 1,

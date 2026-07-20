@@ -20,7 +20,7 @@ import QRCode from "qrcode";
 import { PushCenter } from "./push.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, createAgentEventBridge, createEventSequencer, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
 import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
@@ -496,6 +496,23 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "sessions") { const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
   if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId, sessionCost: costOf(m.sessionId), sessionUsage: usageLedger.session(m.sessionId) }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })), files: m.files }); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
+  if (m.t === "agent_event") {
+    const event = m.event as AgentEvent, sid = m.sessionId, mkey = rc.id + "\0" + sid;
+    if (event.kind === "accepted") { activityBuf.set(sid, []); remoteTurnStart.set(mkey, Date.now()); }
+    const b = activityBuf.get(sid); if (b && b.length < 600) b.push(event);
+    if (event.kind === "usage" && event.usage) addUsage(sid, m.agent || "remote-unknown", event.usage);
+    if (event.kind === "completed" || event.kind === "cancelled" || event.kind === "failed") {
+      activityBuf.delete(sid);
+      const t0 = remoteTurnStart.get(mkey);
+      if (t0 && event.kind !== "cancelled") metrics.record({ runnerId: rc.id, agent: m.agent, model: event.usage?.model, ms: Date.now() - t0, ok: event.kind === "completed", ts: Date.now() });
+      remoteTurnStart.delete(mkey);
+    }
+    for (const c of clientsOn(rc.id)) send(c, { t: "agent_event", sessionId: sid, event, sessionCost: costOf(sid), sessionUsage: usageLedger.session(sid) });
+    const label = runnerLabels[rc.id] || rc.info.host || rc.id;
+    if (event.kind === "completed") notifyEvent("done", `${label} · sessão concluída`, event.text || "", sid);
+    else if (event.kind === "failed") notifyEvent("error", `${label} · falhou`, event.text || "", sid);
+    return;
+  }
   if (m.t === "stream") {
     // Buffer a atividade viva do runner por sessão (igual ao local) pra um refresh no meio do
     // turno remoto reexibir "processando" + as ferramentas em vez de esperar em branco.
@@ -554,8 +571,13 @@ function endRunnerRuns(rid: string): void {
   runnerActive.delete(rid);
   if (!active || !active.size) return;
   for (const sid of active) {
+    const buf = activityBuf.get(sid) || [];
     activityBuf.delete(sid);
-    for (const c of clientsOn(rid)) send(c, { t: "stream", sessionId: sid, ev: { kind: "cancelled" } });
+    const last = [...buf].reverse().find((ev: any) => ev?.schemaVersion === AGENT_EVENT_SCHEMA_VERSION) as AgentEvent | undefined;
+    for (const c of clientsOn(rid)) {
+      if (last) send(c, { t: "agent_event", sessionId: sid, event: { schemaVersion: AGENT_EVENT_SCHEMA_VERSION, turnId: last.turnId, eventId: `${last.turnId}:${last.seq + 1}`, seq: last.seq + 1, at: Date.now(), kind: "cancelled", errorCode: "RUNNER_OFFLINE" } });
+      else send(c, { t: "stream", sessionId: sid, ev: { kind: "cancelled" } });
+    }
   }
 }
 
@@ -1086,12 +1108,21 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   pendingAsk.delete(sid); if (asking.delete(sid)) broadcast(sid, { t: "asking", sessionId: sid, on: false });
   const buf: any[] = []; activityBuf.set(sid, buf);
   const t0 = Date.now();
-  broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "start" } });
+  const turnId = opts.turnId || randomUUID();
+  const sequencer = createEventSequencer(turnId);
+  const bridge = createAgentEventBridge(turnId, sequencer);
+  const emit = (event: AgentEvent): void => {
+    if (buf.length < 600) buf.push(event);
+    broadcast(sid, { t: "agent_event", sessionId: sid, event, sessionCost: costOf(sid), sessionUsage: usageLedger.session(sid) });
+  };
+  emit(bridge.accepted()); emit(bridge.started());
   try {
-    const reply = await agent.send(sid, agentText, cwd, { ...opts, signal: ctrl.signal }, (ev) => { if (buf.length < 600) buf.push(ev); broadcast(sid, { t: "stream", sessionId: sid, ev }); });
+    const prior = store.history(sid).slice(0, -1).filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
+    const reply = await agent.send(sid, agentText, cwd, { ...opts, turnId, history: prior, signal: ctrl.signal }, (ev) => emit(bridge.provider(ev)));
     addUsage(sid, agent.name, reply.usage);
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: reply.usage?.model || opts.model, ms: Date.now() - t0, ok: true, ts: Date.now() });
-    broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage, sessionCost: costOf(sid), sessionUsage: usageLedger.session(sid) });
+    if (reply.usage) emit(bridge.usage(reply.usage));
+    emit(bridge.completed(reply.text));
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
     const nativeId = agent.nativeSessionId?.(sid);
     if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
@@ -1105,11 +1136,11 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   } catch (e) {
     // A user-initiated cancel is not a failure: tell the UI it stopped, and don't notify an error.
     if (ctrl.signal.aborted || String((e as any)?.message) === ABORTED) {
-      broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "cancelled" } });
+      if (!sequencer.terminal) emit(bridge.cancelled());
       throw e;
     }
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: opts.model, ms: Date.now() - t0, ok: false, ts: Date.now() });
-    broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "error" } });
+    if (!sequencer.terminal) emit(bridge.failed(String((e as any)?.message ?? e), "PROVIDER_ERROR"));
     notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid);
     throw e;
   } finally {
@@ -1156,8 +1187,12 @@ function replayActivity(ws: WebSocket, sid: string): void {
   if (!sessionActive(sid)) return;
   const buf = activityBuf.get(sid);
   if (!buf) return;
-  send(ws, { t: "stream", sessionId: sid, ev: { kind: "start" } });
-  for (const ev of buf) send(ws, { t: "stream", sessionId: sid, ev });
+  if (buf.some((ev: any) => ev?.schemaVersion === AGENT_EVENT_SCHEMA_VERSION)) {
+    for (const event of buf) send(ws, { t: "agent_event", sessionId: sid, event });
+  } else {
+    send(ws, { t: "stream", sessionId: sid, ev: { kind: "start" } });
+    for (const ev of buf) send(ws, { t: "stream", sessionId: sid, ev });
+  }
 }
 /** Abort a live turn. Local session → kill its agent process; remote → relay to the owning runner.
  *  Returns false only if nothing was running here to cancel. */

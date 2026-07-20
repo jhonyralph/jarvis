@@ -22,8 +22,11 @@ const rows = await Promise.all(registry.names().map(async (id) => {
     id, label: descriptor.label, support: descriptor.support, reason: descriptor.reason,
     cli: descriptor.cli, permissionMode: descriptor.capabilities.permissionMode,
     stream: descriptor.capabilities.stream, tools: descriptor.capabilities.tools,
-    nativeResume: descriptor.capabilities.nativeResume, usage: descriptor.capabilities.usage,
-    models: descriptor.models.map((m) => ({ id: m.id, efforts: m.efforts, effortsVerified: m.effortsVerified, contextTokens: m.contextTokens, contextVerified: m.contextVerified, source: m.source })),
+    toolLifecycle: descriptor.capabilities.toolLifecycle,
+    nativeResume: descriptor.capabilities.nativeResume, sessionContinuity: descriptor.capabilities.sessionContinuity,
+    usage: descriptor.capabilities.usage, cost: descriptor.capabilities.cost,
+    modelCatalog: descriptor.capabilities.modelCatalog, modelControl: descriptor.capabilities.modelControl,
+    models: descriptor.models.map((m) => ({ id: m.id, selectable: m.selectable !== false, efforts: m.efforts, effortsVerified: m.effortsVerified, contextTokens: m.contextTokens, contextVerified: m.contextVerified, source: m.source })),
     problems: descriptorProblems(descriptor),
   };
 }));
@@ -33,7 +36,7 @@ else {
   console.log("Jarvis — relatório de conformidade (sem turnos de IA)\n");
   for (const r of rows) {
     const cli = "cli" in r && r.cli ? `${r.cli.command}${r.cli.version ? ` ${r.cli.version}` : " (ausente)"}` : "sem CLI";
-    console.log(`${r.id}: ${r.support} · ${cli} · stream=${"stream" in r ? r.stream : "none"} · modelos=${"models" in r ? r.models.length : 0}`);
+    console.log(`${r.id}: ${r.support} · ${cli} · stream=${"stream" in r ? r.stream : "none"} · tools=${"toolLifecycle" in r ? r.toolLifecycle : "none"} · sessão=${"sessionContinuity" in r ? r.sessionContinuity : "none"} · modelos=${"models" in r ? `${r.models.length}/${r.modelCatalog}/${r.modelControl}` : "0"}`);
     if ("reason" in r && r.reason) console.log(`  motivo: ${r.reason}`);
     if (r.problems.length) console.log(`  contrato: ${r.problems.join("; ")}`);
   }

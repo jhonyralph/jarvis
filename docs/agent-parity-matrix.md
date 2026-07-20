@@ -14,14 +14,14 @@ documentação continua `unverified` até um probe autenticado daquela versão.
 
 | Área | Estado após a rodada | Evidência/gap residual |
 |---|---|---|
-| contrato/descriptor/eventos | implementado | schema, validação e sequenciamento testados |
+| contrato/descriptor/eventos | implementado no pacote de protocolo | `AgentEvent` é o wire contract real de Hub, Runner, browser e histórico; `stream` fica apenas para rolling upgrade |
 | lifecycle local/remoto | implementado | serviço único, anexos/activity/usage/histórico compartilhados |
 | handshake Runner | implementado | protocolo v2; versão incompatível é recusada |
 | Claude Code | referência `complete` | esforços são CLI-wide e marcados não verificados por modelo |
 | Codex | `limited` | stream/native/resume/files/diff/modelos implementados; certificar todos os event types por versão |
 | Gemini/Cursor/Copilot/OpenCode/Cline/Qwen | `unverified` ou `not_installed` | adapters/fixtures prontos; faltam binário+auth para probes reais nesta máquina |
 | Continue/Kiro/Antigravity/Aider | `limited` ou `not_installed` | saída final apenas ou sessão/usage sem prova suficiente |
-| modelos | implementado sem invenção silenciosa | descoberta por CLI/API; ausência vira automático/vazio; origem/verificação expostas |
+| modelos | implementado sem invenção silenciosa | catálogo e controle são separados: `runtime`, `configured`, `provider_dynamic`, `none` × `per_turn`, `configuration_only`, `provider_default`, `none` |
 | usage/custo | implementado | ledger separa billed/estimado/assinatura/tokens/indisponível |
 | comandos/skills/MCP/memória | implementado best-effort | homônimos coexistem; fonte não documentada não promove certificação |
 | voz/rotinas | registry-aware | modelo validado; rotina escolhe máquina/agente/modelo/pasta |
@@ -124,14 +124,14 @@ web send
   → Hub runManagedTurn
     → persiste/broadcast da mensagem do usuário
     → agentTurn
-      → stream:start
+      → agent_event:accepted/started
       → AgentAdapter.send(onEvent)
-      → stream:text/tool/thinking
-      → stream:done/error/cancelled
+      → agent_event:text/tool/thinking/plan/usage
+      → agent_event:completed/failed/cancelled
     → persiste resposta + activity
 ```
 
-O `activity` persistido na mensagem do assistente é a única razão pela qual um
+O `activity` persistido na mensagem do assistente guarda o lifecycle canônico completo; é a razão pela qual um
 reload consegue reconstruir ferramentas e subagentes vistos durante o stream.
 Adapters que não emitem eventos deixam esse campo vazio.
 
@@ -281,7 +281,7 @@ deve expor os seguintes grupos.
 
 ### P0 encontrados na auditoria — resolvidos nesta rodada
 
-1. Contrato canônico único no core; sketches antigos saíram do barrel público.
+1. Contrato canônico único em `@jarvis/protocol`, reexportado pelo core; Hub, Runner, browser e histórico consomem o mesmo envelope.
 2. Lifecycle gerenciado compartilhado entre Hub e Runner.
 3. Status `complete/limited/unverified/unauthenticated/not_installed` impede
    adapter final-only de se passar por completo.
@@ -339,12 +339,12 @@ CLIs externos estavam `not_installed`.
 | Cursor Agent | adapter `stream-json` + fixtures | delta/tools, sem thinking | session id/resume previsto | indisponível no schema auditado | `unverified` |
 | GitHub Copilot CLI | adapter JSONL defensivo | delta/tools quando publicados | resume previsto | tipado conforme evento | `unverified` |
 | OpenCode | `run --format json`, catálogo `models` | eventos JSON | session id | tokens/equivalente, nunca “billed” sem prova | `unverified` |
-| Cline CLI | parser JSONL `ask/say` | delta/reasoning | `--id` | indisponível até probe | `unverified` |
+| Cline CLI | parser JSONL `ask/say` | snapshot/delta/reasoning | continuidade pelo histórico isolado do Jarvis; nenhum resume por ID público foi encontrado | indisponível até probe | `unverified` |
 | Qwen Code | `stream-json` + partials | delta/tools/reasoning/plan | session id/resume | tokens quando publicados | `unverified` |
-| Continue CLI | final JSON | final-only | não certificada | indisponível | `limited` |
-| Kiro CLI | headless final | final-only | não certificada | indisponível | `limited` |
+| Continue CLI | final JSON | final-only | histórico isolado do Jarvis; `--resume` global/latest não é usado para evitar cruzar sessões | indisponível | `limited` |
+| Kiro CLI | headless final | final-only | histórico isolado do Jarvis; catálogo é informativo e modelo é configurado no CLI | indisponível | `limited` |
 | Antigravity CLI | TUI `agy` detectável | desativado no Jarvis | não certificada | indisponível | `limited`, não executável |
-| Aider | mensagem headless | final-only | histórico por cwd, não isolado | indisponível | `limited` |
+| Aider | mensagem headless | final-only | histórico limitado injetado pelo Jarvis; não usa restore global por cwd | indisponível | `limited` |
 | Mock | fixture determinística test-only | thinking/tool/text | gerenciada | `tokens_only` | nunca produção |
 
 ## 9. Snapshot atual dos modelos
@@ -393,12 +393,13 @@ ser revisto para permitir “automático/do CLI” sem substituir profiles/routi
 
 ### 9.3 Aider e demais agentes
 
-Aider, Gemini, Cursor, Copilot, Cline, Qwen, Continue, Kiro e Antigravity retornam
-catálogo vazio enquanto o CLI não fornece uma fonte verificável integrada.
-OpenCode consulta `opencode models`. Todos possuem adapter, mas catálogo vazio
-significa “automático do fornecedor”, não uma lista inventada. A UI não envia
-modelo manual desconhecido a partir do picker; quando um catálogo existe, modelo
-e effort são validados antes do spawn.
+Gemini, Cursor, Cline, Qwen e Continue têm catálogo dinâmico/configurado pelo
+fornecedor e não recebem uma lista hardcoded. Copilot consulta a ajuda account-aware;
+OpenCode consulta `opencode models`; Kiro consulta `--list-models`, mas marca cada
+modelo `selectable=false` porque o headless público não documenta seleção por turno.
+Aider expõe somente o modelo configurado, quando detectável. Antigravity não possui
+controle headless público. A UI distingue ausência de catálogo, catálogo informativo
+e seleção por turno; nunca transforma uma lista vazia em modelos inventados.
 
 ## 10. Contrato obrigatório por modelo
 
@@ -532,7 +533,8 @@ agentes/plugins/MCP, sessões e arquivos.
 ### 11.9 Cline
 
 `--json` emite uma mensagem por linha com `ask`/`say`, texto, reasoning opcional
-e flag partial; `--id` retoma sessão. O adapter deve normalizar asks como estado
+e flag partial. A referência pública auditada não documenta um argumento de resume
+por ID; por isso o adapter injeta histórico Jarvis limitado e isolado. O adapter normaliza asks como estado
 de interação/erro quando não puder haver input programático, e mapear provider,
 modelo, thinking e permissões.
 
@@ -551,8 +553,8 @@ integração via API/ACP que cumpra o contrato.
 
 ### 11.12 Kiro CLI
 
-Há headless, seleção de modelo/esforço, listagem e resume de sessões, mas não foi
-documentado stream estruturado de ferramentas. Deve permanecer limitado até
+Há headless, seleção de esforço, listagem de modelos e resume por ID, mas não foi
+documentada seleção de modelo por turno nem stream estruturado de ferramentas. Deve permanecer limitado até
 existir um protocolo verificável; stdout final não é paridade.
 
 ### 11.13 Mock

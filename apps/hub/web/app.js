@@ -138,6 +138,13 @@
     // estrutura visual (caixas de subagente com contagem, linhas de ferramenta), mas com estado local
     // (não usa strFlow/subAgents globais) e sem re-mostrar o texto de nível raiz (já é m.text acima);
     // só o texto do PRÓPRIO subagente (preview) entra, pois esse não está em m.text.
+    function normalizeActivity(events){ const out=[], tools={};
+      (events||[]).forEach(ev=>{ if(ev&&ev.schemaVersion===1){
+          if(ev.kind==='text_delta'||ev.kind==='text_block') out.push({kind:'text',text:ev.text||''});
+          else if(ev.kind==='thinking') out.push({kind:'thinking',text:ev.text});
+          else if(/^tool_/.test(ev.kind)&&ev.tool){ const t={kind:'tool',name:ev.tool.name,summary:ev.tool.summary,detail:ev.tool.detail,path:ev.tool.path,adds:ev.tool.adds,dels:ev.tool.dels,rows:ev.tool.rows,toolId:ev.tool.callId,parentId:ev.tool.parentId,status:ev.tool.status,error:ev.tool.error}; const old=tools[t.toolId]; if(old)Object.assign(old,t);else{tools[t.toolId]=t;out.push(t);} }
+          else if(ev.kind==='plan') out.push({kind:'tool',name:'Plan',summary:ev.plan&&ev.plan.title||ev.text||'Plano atualizado',status:'completed'});
+        } else out.push(ev); }); return out; }
     function renderActivityBlock(events){
       const flow=document.createElement('div'); flow.className='strflow acthist';
       const subAgents={}; let curTextEl=null, curTextRaw='';
@@ -150,7 +157,7 @@
         head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
         closeTextBlock(); flow.appendChild(wrap);
         const rec={wrap,body,title,countEl,count:0,preview:null,previewText:''}; subAgents[id]=rec; return rec; }
-      (events||[]).forEach(ev=>{
+      normalizeActivity(events).forEach(ev=>{
         if(ev.kind==='tool'){
           if(ev.parentId){ const sa=ensureSA(ev.parentId); sa.body.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail)); sa.count++; sa.countEl.textContent=sa.count; return; }
           if((ev.name==='Task'||ev.name==='Agent')&&ev.toolId){ ensureSA(ev.toolId,(ev.summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); return; }
@@ -159,7 +166,7 @@
           const t=ev.text||''; if(!t)return; const sa=ensureSA(ev.parentId);
           if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); }
           sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240);
-        }
+        } else if(ev.kind==='thinking'){ closeTextBlock(); flow.appendChild(toolRowEl('Thinking',ev.text||'Pensando…',null,0,0,true)); }
       });
       return flow.childNodes.length?flow:null; }
     // Trocar de sessão custa DUAS travessias de rede quando ela vive em outra máquina
@@ -187,7 +194,7 @@
       currentAgent=(m.session||{}).agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null;   // modelo/esforço reais da sessão da máquina (só nativas mandam)
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
-      E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
+      E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
       updateStopStatus();   // reflete o "parando…" da sessão ATUAL (por sessão, não global)
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
@@ -310,11 +317,11 @@
       upd(); pendingTimer=setInterval(upd,1000); E.log.appendChild(pendingEl); autoScroll(); }
     function clearPending(){ if(pendingTimer){ clearInterval(pendingTimer); pendingTimer=null; } if(pendingEl){ pendingEl.remove(); pendingEl=null; } }
     // ---- streaming (atividade ao vivo: ferramentas + texto) ----
-    const toolIcon = n => ({Bash:'🖥',Read:'📄',Edit:'✏️',Write:'✏️',NotebookEdit:'✏️',MultiEdit:'✏️',Grep:'🔎',Glob:'📁',Task:'🤖',Agent:'🤖',WebFetch:'🌐',WebSearch:'🌐'}[n]||'🔧');
+    const toolIcon = n => ({Bash:'🖥',Read:'📄',Edit:'✏️',Write:'✏️',NotebookEdit:'✏️',MultiEdit:'✏️',Grep:'🔎',Glob:'📁',Task:'🤖',Agent:'🤖',WebFetch:'🌐',WebSearch:'🌐',Thinking:'◔',Plan:'📋'}[n]||'🔧');
     // strFlow = container ordenado; curTextEl = bloco de texto aberto (null após uma ferramenta,
     // pra o próximo texto virar um bloco NOVO); curTextRaw = markdown acumulado desse bloco.
-    let strEl=null, strFlow=null, curTextEl=null, curTextRaw='', sawText=false, strTimer=null, strStart=0, strTimeEl=null, subAgents={}, cleanCancel=false;
-    function streamStartUI(){ clearPending(); curTextEl=null; curTextRaw=''; sawText=false; strStart=Date.now(); subAgents={};
+    let strEl=null, strFlow=null, curTextEl=null, curTextRaw='', sawText=false, strTimer=null, strStart=0, strTimeEl=null, subAgents={}, liveTools={}, turnUsage=null, seenAgentEvents=new Set(), liveTurnId=null, cleanCancel=false;
+    function streamStartUI(){ if(strEl)return; clearPending(); curTextEl=null; curTextRaw=''; sawText=false; strStart=Date.now(); subAgents={}; liveTools={}; turnUsage=null;
       strEl=document.createElement('div'); strEl.className='msg bot streaming';
       // loading + timer FICAM NO FIM do bloco (abaixo da atividade): strflow primeiro, strhead depois.
       strEl.innerHTML='<div class="strflow"></div><div class="strhead"><span class="spin"></span><span class="strtime">0s</span></div>';
@@ -332,10 +339,12 @@
       head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
       closeTextBlock(); strFlow.appendChild(wrap);
       const rec={wrap,body,title,countEl,count:0,preview:null,previewText:''}; subAgents[id]=rec; return rec; }
-    function streamTool(name,summary,toolId,parentId,path,adds,dels,rows,detail){ if(!strFlow)streamStartUI();
-      if(parentId){ const sa=ensureSubAgent(parentId); flipDone(sa.body); sa.body.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
+    function streamTool(name,summary,toolId,parentId,path,adds,dels,rows,detail,status,error){ if(!strFlow)streamStartUI();
+      if(toolId&&status!=='started'&&liveTools[toolId]){ const row=liveTools[toolId]; setToolDone(row); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} autoScroll(); return; }
+      if(parentId){ const sa=ensureSubAgent(parentId); flipDone(sa.body); const row=toolRowEl(name,summary,path,adds,dels,status!=='started',rows,detail); sa.body.appendChild(row); if(toolId)liveTools[toolId]=row; sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
       if((name==='Task'||name==='Agent')&&toolId){ flipDone(strFlow); ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente'); autoScroll(); return; }
-      closeTextBlock(); flipDone(strFlow); strFlow.appendChild(toolRowEl(name,summary,path,adds,dels,false,rows,detail)); autoScroll(); }
+      closeTextBlock(); flipDone(strFlow); const row=toolRowEl(name,summary,path,adds,dels,status!=='started',rows,detail); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} strFlow.appendChild(row); if(toolId)liveTools[toolId]=row; autoScroll(); }
+    function streamThinking(text){ streamTool('Thinking',text||'Pensando…','thinking:'+Object.keys(liveTools).length,null,null,0,0,null,null,'started'); }
     function streamText(t,parentId){
       if(parentId){ const sa=ensureSubAgent(parentId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); autoScroll(); return; }
       if(!strFlow)streamStartUI();
@@ -343,7 +352,7 @@
       // Um novo bloco de texto significa que as ferramentas anteriores já terminaram → passa pra passado.
       if(!curTextEl){ flipDone(strFlow); curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; strFlow.appendChild(curTextEl); }
       curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); sawText=true; autoScroll(); }
-    function streamFinish(){ strEl=strFlow=curTextEl=strTimeEl=null; curTextRaw=''; sawText=false; }
+    function streamFinish(){ strEl=strFlow=curTextEl=strTimeEl=null; curTextRaw=''; sawText=false; liveTools={}; turnUsage=null; }
     function usageCostText(usage,digits=4){ if(!usage||!(usage.costUsd>=0))return''; const p=usage.costKind==='billed'?'$':usage.costKind==='estimated_api_equivalent'?'≈$':'Σ$'; return p+Number(usage.costUsd||0).toFixed(digits); }
     function usageSummary(usage){ if(!usage)return''; const cost=usageCostText(usage); const toks=usage.outputTokens||0; const kind=usage.costKind==='billed'?'cobrado reportado':usage.costKind==='estimated_api_equivalent'?'equivalente estimado':usage.costKind==='subscription_included'?'incluído na assinatura':usage.costKind==='tokens_only'?'somente tokens':'custo indisponível'; return `${cost?cost+' · ':''}${toks} tokens · ${kind}`; }
     function streamDone(finalText,usage){ if(strTimer){clearInterval(strTimer);strTimer=null;}
@@ -368,7 +377,7 @@
         const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ interrompido'; strEl.appendChild(n);
         streamFinish(); }
       else addErr('⏹ interrompido'); autoScroll(); }
-    function streamErr(){ if(strTimer){clearInterval(strTimer);strTimer=null;} if(strEl)strEl.remove(); streamFinish(); }
+    function streamErr(message){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending(); if(strEl){ const head=strEl.querySelector('.strhead'); if(head)head.remove(); strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone); const n=document.createElement('div'); n.className='usage err'; n.textContent='⚠ '+(message||'Falha na execução'); strEl.appendChild(n); streamFinish(); } else addErr(message||'Falha na execução'); autoScroll(); }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
       (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
@@ -559,7 +568,8 @@
     const routineCaps=()=>{ const m=machines.find(x=>x.id===E.rtRunner.value), all=(m&&m.agentDescriptors&&m.agentDescriptors.length)?m.agentDescriptors:caps, available=m&&Array.isArray(m.agents)?m.agents:all.map(c=>c.name); return all.filter(c=>available.includes(c.name)); };
     const routineCapsFor=n=>routineCaps().find(c=>c.name===n)||{models:[],defaultModel:null,autoModel:false};
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
-    const modelObj=(agent,id)=>{ if(!id)return null; const ms=capsFor(agent).models; return ms.find(m=>m.id===id)||null; };
+    const selectableModels=c=>(c.models||[]).filter(m=>m.selectable!==false);
+    const modelObj=(agent,id)=>{ if(!id)return null; const ms=capsFor(agent).models||[]; return ms.find(m=>m.id===id)||null; };
     function fillEfforts(effSel,agent,modelId,val){ const m=modelObj(agent,modelId); const efs=(m&&m.efforts)||[]; fillSel(effSel,efs, (efs.includes(val)&&val)||(m&&m.defaultEffort)||efs[0]); }
     // footer pill state: model/effort vary per-message; agent/folder lock once the session starts
     let curModel=null, curEffort=null, curCwd='', curStarted=false;
@@ -581,8 +591,9 @@
       // Prioridade do modelo: escolha explícita do usuário nesta sessão > o que a sessão realmente usa
       // (nativa) > default global salvo > default do agente. Assim uma sessão da máquina abre já com o
       // modelo/esforço dela, mas se você trocar pelo seletor a SUA escolha manda dali em diante.
-      const okM=id=>id&&c.models.some(m=>m.id===id);
-      curModel = okM(pref.model)?pref.model : (okM(sessDeclModel)?sessDeclModel : (okM(cfg.model)?cfg.model : (c.defaultModel||(c.autoModel?null:(c.models[0]||{}).id)||null)));
+      const perTurn=c.modelControl==='per_turn', models=selectableModels(c);
+      const okM=id=>id&&models.some(m=>m.id===id);
+      curModel = perTurn ? (okM(pref.model)?pref.model : (okM(sessDeclModel)?sessDeclModel : (okM(cfg.model)?cfg.model : (okM(c.defaultModel)?c.defaultModel:(c.autoModel?null:(models[0]||{}).id)||null)))) : null;
       const efs=effortsFor(currentAgent,curModel);
       const okE=e=>e&&efs.includes(e);
       curEffort = okE(pref.effort)?pref.effort : (okE(sessDeclEffort)?sessDeclEffort : (okE(cfg.effort)?cfg.effort : ((modelObj(currentAgent,curModel)||{}).defaultEffort||efs[efs.length-1]||null)));
@@ -590,11 +601,13 @@
     function renderControls(){
       E.agentName.textContent=currentAgent||'—';
       E.cwdName.textContent=base(curCwd)||'—';
-      E.modelName.textContent=modelLabel(currentAgent,curModel);
+      const c=capsFor(currentAgent), perTurn=c.modelControl==='per_turn';
+      E.modelName.textContent=perTurn?modelLabel(currentAgent,curModel):(c.modelControl==='configuration_only'?'Configurado na IA':'Automático');
       E.effortName.textContent=effLabel(curEffort);
       if(typeof updUsagePill==='function') updUsagePill();
       E.agentBtn.classList.toggle('lock',curStarted||curNative); E.cwdBtn.classList.toggle('lock',curStarted||curNative);
-      E.modelBtn.classList.remove('lock'); E.effortBtn.classList.remove('lock'); // modelo/esforço: sempre trocáveis (por mensagem)
+      E.modelBtn.classList.toggle('lock',!perTurn); E.effortBtn.classList.toggle('lock',!perTurn||!effortsFor(currentAgent,curModel).length);
+      E.modelBtn.title=perTurn?'Modelo por mensagem':(c.modelControl==='configuration_only'?'Modelo definido na configuração da própria IA':'A IA escolhe o modelo');
       E.agentBtn.title=(curStarted||curNative)?'Agente (travado)':'Agente / IA — clique para trocar (só em sessão nova)';
       E.cwdBtn.title=(curStarted||curNative)?((curCwd||'')+' — travada'):((curCwd||'')+' — clique para escolher (só em sessão nova)'); }
 
@@ -904,7 +917,7 @@
         if(ok) o.onclick=()=>{ closePop(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); };
         p.appendChild(o); }); }
 
-    function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); if(c.autoModel){ const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); curModel=null; curEffort=null; const pref=sessionPrefs[currentSession]||{}; delete pref.model; delete pref.effort; sessionPrefs[currentSession]=pref; saveSessionPrefs(); renderControls(); }; p.appendChild(a); } (c.models||[]).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
+    function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); if(c.modelControl!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=c.modelControl==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } if(c.autoModel){ const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); curModel=null; curEffort=null; const pref=sessionPrefs[currentSession]||{}; delete pref.model; delete pref.effort; sessionPrefs[currentSession]=pref; saveSessionPrefs(); renderControls(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
       o.onclick=()=>{ closePop(); curModel=mm.id; const efs=effortsFor(currentAgent,mm.id); if(!efs.includes(curEffort)) curEffort=((modelObj(currentAgent,mm.id)||{}).defaultEffort||efs[efs.length-1]||null); setSessionPref(curModel,curEffort); renderControls(); }; p.appendChild(o); }); }
 
@@ -967,7 +980,7 @@
 
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ const mc=availableMachineCaps(); fillSel(E.setAgent,mc.map(c=>({id:c.name,label:c.label||c.name})),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
-      fillSel(E.setModel,(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(c.models||[]),cfg.model||c.defaultModel||''); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
+      fillSel(E.setModel,c.modelControl==='per_turn'?(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(selectableModels(c)):[],cfg.model||c.defaultModel||''); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
@@ -975,7 +988,7 @@
       tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang;
       E.settings.classList.remove('hidden'); };
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
-    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(c.models||[]),c.defaultModel||''); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
+    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.modelControl==='per_turn'?(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(selectableModels(c)):[],c.defaultModel||''); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     // ---------- rotinas agendadas (owner) ----------
     function renderRoutines(list){ if(!E.routinesList)return;
       if(!list||!list.length){ E.routinesList.textContent='Nenhuma rotina ainda.'; return; }
@@ -991,7 +1004,7 @@
     E.rtAdd.onclick=()=>{ const name=(E.rtName.value||'').trim(), prompt=(E.rtPrompt.value||'').trim(); if(!name||!prompt){ toast(t('tRtFill')); return; }
       const t=(E.rtTime.value||'08:00').split(':'); const hour=parseInt(t[0]||'8',10)||0, minute=parseInt(t[1]||'0',10)||0;
       tx({t:'routine_add',routine:{name,prompt,hour,minute,runnerId:E.rtRunner.value||'local',agent:E.rtAgent.value||undefined,model:E.rtModel.value||undefined,cwd:(E.rtCwd.value||'').trim()||undefined,speak:E.rtSpeak.checked}}); E.rtName.value=''; E.rtPrompt.value=''; E.rtCwd.value=''; E.rtSpeak.checked=false; };
-    function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value); fillSel(E.rtModel,(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(c.models||[]),c.defaultModel||''); }
+    function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value); fillSel(E.rtModel,c.modelControl==='per_turn'?(c.autoModel?[{id:'',label:'Automático'}]:[]).concat((c.models||[]).filter(m=>m.selectable!==false)):[],c.defaultModel||''); }
     function fillRoutineAgents(){ const cs=routineCaps(); fillSel(E.rtAgent,cs.map(c=>({id:c.name,label:c.label||c.name})),cs.some(c=>c.name===(cfg.agent||currentAgent))?(cfg.agent||currentAgent):(cs[0]&&cs[0].name)||''); fillRoutineModels(); }
     E.rtRunner.onchange=fillRoutineAgents;
     E.rtAgent.onchange=fillRoutineModels;
@@ -1214,8 +1227,21 @@
         else if(m.t==='queue'){ queueBySession[m.sessionId]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession) renderQueue(); }
         else if(m.t==='asking'){ if(m.on) askingSids.add(m.sessionId); else askingSids.delete(m.sessionId); if(m.sessionId===currentSession){ if(m.on) status('busy','Consolidando o resultado…'); else if(!askActive) status(''); refreshComposer(); } renderRecents(); }
         else if(m.t==='ask'){ askingSids.delete(m.sessionId); saveAsk(m.sessionId,m.questions||[]); if(m.sessionId===currentSession){ status(''); renderAskCard(m.questions||[]); refreshComposer(); } else { unread.add(m.sessionId); renderRecents(); } }
+        else if(m.t==='agent_event'){ if(m.sessionId!==currentSession)return; const ev=m.event||{};
+          if(liveTurnId!==ev.turnId){ liveTurnId=ev.turnId; seenAgentEvents.clear(); }
+          if(ev.eventId&&seenAgentEvents.has(ev.eventId))return; if(ev.eventId){seenAgentEvents.add(ev.eventId);if(seenAgentEvents.size>1200)seenAgentEvents.delete(seenAgentEvents.values().next().value);}
+          if(ev.kind==='accepted'||ev.kind==='started') streamStartUI();
+          else if(ev.kind==='thinking') streamThinking(ev.text);
+          else if(/^tool_/.test(ev.kind)&&ev.tool){ const t=ev.tool; streamTool(t.name,t.summary,t.callId,t.parentId,t.path,t.adds,t.dels,t.rows,t.detail,t.status,t.error); if(t.path)touchFile(t.path,/Edit$|^Write$/.test(t.name)?(t.name==='Write'?'write':'edit'):'read',t.adds,t.dels); }
+          else if(ev.kind==='text_delta'||ev.kind==='text_block'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.tool&&ev.tool.parentId); }
+          else if(ev.kind==='plan') streamTool('Plan',ev.plan&&ev.plan.title||ev.text||'Plano atualizado',null,null,null,0,0,null,null,'completed');
+          else if(ev.kind==='usage'){ turnUsage=ev.usage||turnUsage; if(ev.usage){E.usage.textContent=usageSummary(ev.usage);if(ev.usage.inputTokens){lastInputTokens=ev.usage.inputTokens;updUsagePill();}} }
+          else if(ev.kind==='completed'){ clearRestorable(m.sessionId); if(typeof m.sessionCost==='number'){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text,turnUsage); onTurnEnd(m.sessionId); }
+          else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
+          else if(ev.kind==='failed'){ streamErr(ev.text); onTurnEnd(m.sessionId); } }
         else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
+          else if(ev.kind==='thinking') streamThinking(ev.text);
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
           else if(ev.kind==='text'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.parentId); }
           else if(ev.kind==='done'){ clearRestorable(m.sessionId); if(typeof m.sessionCost==='number'&&m.sessionId===currentSession){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }

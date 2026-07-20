@@ -10,6 +10,7 @@
  * Correlation: request-scoped Hub->Runner messages carry a `reqId`; the Runner
  * echoes it on the matching reply so the Hub can route back to the right client.
  */
+import type { AgentEvent } from "./agent.js";
 
 export type RunnerOS = "linux" | "darwin" | "win32" | string;
 
@@ -129,6 +130,9 @@ export type RunnerToHub =
       files?: TouchedFileMeta[];
     }
   | { t: "filediff"; reqId: string; path: string; name: string; rows?: DiffRowMeta[]; adds?: number; dels?: number; error?: string }
+  /** Canonical v2 lifecycle. New Hubs/Runners must use this; `stream` remains read-only migration input. */
+  | { t: "agent_event"; sessionId: string; agent?: string; event: AgentEvent }
+  /** @deprecated v1 compatibility during rolling upgrades. */
   | { t: "stream"; sessionId: string; agent?: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
   | { t: "activity"; sessionId: string; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[] }

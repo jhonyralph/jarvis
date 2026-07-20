@@ -7,10 +7,11 @@ Fonte de verdade: [`../agent-parity-matrix.md`](../agent-parity-matrix.md)
 
 ## Resultado
 
-**Aprovado para merge da infraestrutura comum, com certificação externa
-pendente por adapter.** Nenhum adapter sem prova real é promovido a `complete`.
-Claude Code é a referência completa nesta máquina; Codex permanece `limited`;
-os CLIs ausentes ficam `not_installed`.
+**Aprovado para merge da infraestrutura após uma segunda auditoria adversarial.** A
+aprovação anterior era prematura: o contrato canônico ainda não era o transporte
+real e diversos adapters superestimavam resume, lifecycle ou seleção de modelo.
+Esses gaps foram corrigidos e o gate foi regenerado; CLIs ausentes continuam
+`not_installed` e jamais são promovidos por fixtures.
 
 ## Findings e resolução
 
@@ -24,7 +25,10 @@ os CLIs ausentes ficam `not_installed`.
 | P1 | UI remota mostrava modelos/esforços do Hub em vez do Runner | descriptors completos por máquina; `capsFor` e rotinas usam a máquina dona |
 | P1 | Rotina podia oferecer agente/modelo indisponível na máquina escolhida | seletores filtrados pela allow-list executável do Runner |
 | P1 | Default direto do Hub era `mock`, divergindo de README/scripts | default restaurado para `claude-code`; mock exige opt-in |
-| P1 | Continue/OpenCode usavam flags desatualizadas | Continue `--allow "*"`; OpenCode `--auto`/`--variant`, conforme docs oficiais atuais |
+| P0 | `AgentEvent` existia, mas Hub/Runner/web ainda transportavam `stream` legado | contrato movido para `@jarvis/protocol`; lifecycle canônico é emitido, persistido, retransmitido e renderizado ponta a ponta |
+| P0 | Adapters sem resume seguro podiam misturar conversas por cwd/latest | Cline/Continue/Aider usam histórico Jarvis limitado e isolado; flags de resume não documentadas foram removidas |
+| P1 | Continue/OpenCode usavam flags desatualizadas | Continue usa `--auto`; OpenCode usa `--auto`/`--variant`, conforme docs oficiais atuais |
+| P1 | Catálogo de modelo era confundido com seleção por turno | capabilities separam fonte do catálogo e modo de controle; Kiro publica catálogo informativo não selecionável |
 | P1 | Kiro não aproveitava catálogo oficial | `chat --list-models --format json`, parser defensivo e fallback vazio |
 | P1 | Dólar sem proveniência podia ficar classificado como `tokens_only` | passa a `estimated_api_equivalent`; somente fonte explicitamente billed usa `billed` |
 | P1 | Validação de modelo não era chamada nos adapters estruturados/final-only | validação pré-spawn aplicada; catálogo vazio mantém apenas seleção automática do provedor |
@@ -50,9 +54,8 @@ os CLIs ausentes ficam `not_installed`.
 
 ## Riscos residuais aceitos
 
-- O schema canônico existe e a versão é negociada, mas o web transport ainda
-  carrega o shape compatível `stream`; migrar toda a UI para `AgentEvent` é uma
-  evolução de protocolo, não requisito para a equivalência visual entregue.
+- O shape legado `stream` permanece aceito somente para rolling upgrade; novos
+  Hub/Runner emitem `agent_event`, e o browser deduplica por `eventId`/`callId`.
 - E2E prova processos Hub/Runner/WebSocket/store com fixture determinística; não
   prova DOM, reconnect/restart no meio de ferramenta ou dois browsers.
 - Parsers de Gemini/Cursor/Copilot/OpenCode/Cline/Qwen são fixtures/documentação,

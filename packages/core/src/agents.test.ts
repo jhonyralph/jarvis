@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, MockAgentAdapter, agentPermissionMode, codexUsage, codexItemToEvents, codexConfigModel, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseGenericJsonlEvent, finalOnlyText } from "./agents.js";
+import { AgentRegistry, AiderAdapter, MockAgentAdapter, agentPermissionMode, codexUsage, codexItemToEvents, codexConfigModel, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs } from "./agents.js";
+import { createEventSequencer } from "./agent-contract.js";
 
 test("permission mode is explicit and defaults conservatively to the historical full-access behavior", () => {
   assert.equal(agentPermissionMode(undefined), "full_access");
@@ -35,14 +36,15 @@ test("Gemini stream-json maps assistant, tool, terminal usage and errors", () =>
   assert.equal(parseGeminiCliEvent({ type: "init", session_id: "g1" }).sessionId, "g1");
   assert.equal(parseGeminiCliEvent({ type: "message", role: "assistant", content: "oi" }).text, "oi");
   assert.equal(parseGeminiCliEvent({ type: "tool_use", tool_name: "read_file", parameters: { path: "a.ts" }, tool_id: "t1" }).events?.[0].toolId, "t1");
+  assert.equal(parseGeminiCliEvent({ type: "tool_result", tool_name: "read_file", tool_id: "t1" }).events?.[0].status, "completed");
   assert.equal(parseGeminiCliEvent({ type: "result", response: "fim", stats: { input_tokens: 7, output_tokens: 2 } }).usage?.inputTokens, 7);
   assert.match(parseGeminiCliEvent({ type: "error", message: "quota" }).error || "", /quota/);
 });
 
-test("Cursor stream-json correlates tool start and does not duplicate completion", () => {
+test("Cursor stream-json correlates the full tool lifecycle", () => {
   const started = parseCursorCliEvent({ type: "tool_call", subtype: "started", call_id: "c1", tool_call: { readToolCall: { args: { path: "README.md" } } } });
   assert.equal(started.events?.[0].toolId, "c1");
-  assert.equal(parseCursorCliEvent({ type: "tool_call", subtype: "completed", call_id: "c1" }).events, undefined);
+  assert.equal(parseCursorCliEvent({ type: "tool_call", subtype: "completed", call_id: "c1" }).events?.[0].status, "completed");
   assert.equal(parseCursorCliEvent({ type: "result", subtype: "success", result: "ok", session_id: "s" }).finalText, "ok");
 });
 
@@ -50,12 +52,48 @@ test("Cline JSONL surfaces reasoning, interaction requests and text", () => {
   const p = parseClineCliEvent({ type: "say", say: "text", text: "fazendo", reasoning: "internal", partial: true });
   assert.equal(p.text, "fazendo"); assert.equal(p.events?.[0].kind, "thinking");
   assert.equal(parseClineCliEvent({ type: "ask", ask: "followup", text: "qual arquivo?" }).events?.[0].name, "InputRequired");
+  assert.equal(parseClineCliEvent({ type: "say", say: "text", text: "snapshot", partial: true }).textMode, "snapshot");
 });
 
 test("Qwen stream-json maps message tools and terminal usage", () => {
   const p = parseQwenCliEvent({ type: "assistant", message: { content: [{ type: "text", text: "vou " }, { type: "tool_use", id: "q1", name: "Read", input: { file_path: "a" } }], usage: { input_tokens: 9 } } });
   assert.equal(p.text, "vou "); assert.equal(p.events?.[0].toolId, "q1"); assert.equal(p.usage?.inputTokens, 9);
   assert.equal(parseQwenCliEvent({ type: "result", result: "fim", session_id: "q" }).sessionId, "q");
+  assert.equal(parseQwenCliEvent({ event: { type: "content_block_delta", delta: { type: "text_delta", text: "x" } } }).text, "x");
+});
+
+test("Copilot and OpenCode documented JSONL fixtures preserve lifecycle and usage", () => {
+  assert.equal(parseCopilotCliEvent({ type: "tool_call", status: "completed", call_id: "cp1", name: "shell" }).events?.[0].status, "completed");
+  assert.equal(parseOpenCodeCliEvent({ type: "tool_use", sessionID: "oc", part: { type: "tool", callID: "o1", tool: "read", state: { status: "completed", input: { path: "a" } } } }).events?.[0].toolId, "o1");
+  assert.equal(parseOpenCodeCliEvent({ type: "step_finish", part: { type: "step-finish", tokens: { input: 3, output: 2 } } }).providerEvent, "step_finish");
+});
+
+test("dynamic model and prompt inputs accept provider slugs but reject argv injection", () => {
+  assert.equal(safeProviderValue("openai/gpt-5:fast"), "openai/gpt-5:fast");
+  assert.equal(safeProviderValue("--danger"), undefined);
+  assert.equal(parseCopilotHelpModels("  --model=<model> one of: auto, gpt-5.1, claude-sonnet-4").length, 3);
+  const prompt = withManagedHistory("nova", [{ role: "user", text: "antiga" }, { role: "assistant", text: "resposta" }], 1000);
+  assert.match(prompt, /antiga/); assert.match(prompt, /resposta/); assert.match(prompt, /nova/);
+});
+
+test("documented argv contracts are deterministic for every external headless CLI", () => {
+    assert.deepEqual(buildGeminiArgs("p", "C:/w", "g1", { model: "gemini-2" }), ["--output-format", "stream-json", "--yolo", "--resume", "g1", "--model", "gemini-2", "--prompt", "p"]);
+    assert.deepEqual(buildCursorArgs("p", "C:/w", "c1", { model: "auto" }), ["--print", "--output-format", "stream-json", "--force", "--resume", "c1", "--model", "auto", "p"]);
+    assert.deepEqual(buildCopilotArgs("p", "C:/w", "cp1", { model: "gpt-5", effort: "high" }), ["--prompt", "p", "--output-format=json", "--stream=on", "--no-ask-user", "-C", "C:/w", "--yolo", "--resume=cp1", "--model=gpt-5", "--effort=high"]);
+    assert.deepEqual(buildOpenCodeArgs("p", "C:/w", "o1", { model: "openai/gpt", effort: "fast" }), ["run", "--format", "json", "--auto", "--session", "o1", "--model", "openai/gpt", "--variant", "fast", "p"]);
+    assert.ok(!buildClineArgs("p", "C:/w", "ignored", {}).includes("--id"), "Cline has no invented resume flag");
+    assert.deepEqual(buildQwenArgs("p", "C:/w", "q1", {}), ["--output-format", "stream-json", "--include-partial-messages", "--approval-mode", "yolo", "--resume", "q1", "--prompt", "p"]);
+    assert.deepEqual(buildContinueArgs("p", { model: "m" }), ["-p", "p", "--format", "json", "--auto", "--model", "m"]);
+    assert.deepEqual(buildKiroArgs("p", { effort: "high" }), ["chat", "--no-interactive", "--trust-all-tools", "--effort", "high", "p"]);
+});
+
+test("provider events bridge to one canonical ordered lifecycle", () => {
+  const seq = createEventSequencer("turn-x", () => 1);
+  const bridge = createAgentEventBridge("turn-x", seq);
+  assert.equal(bridge.accepted().kind, "accepted"); assert.equal(bridge.started().kind, "started");
+  assert.equal(bridge.provider({ kind: "tool", name: "Read", summary: "lendo", toolId: "r1", status: "completed" })?.kind, "tool_completed");
+  assert.equal(bridge.completed("ok").kind, "completed");
+  assert.throws(() => bridge.failed("late"), /terminated/);
 });
 
 test("generic JSONL parser is forward-compatible and only labels explicit costs as billed", () => {

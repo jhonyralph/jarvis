@@ -21,6 +21,8 @@ import {
   descriptorProblems,
   type AgentCapabilities,
   type AgentDescriptor,
+  type AgentEvent,
+  type EventSequencer,
   type CostKind,
   type ModelDescriptor,
   type ModelSource,
@@ -75,6 +77,8 @@ export interface ModelInfo {
   context?: number; // max input tokens (context window) — for the usage gauge
   effortsVerified?: boolean;
   contextVerified?: boolean;
+  selectable?: boolean;
+  source?: ModelSource;
 }
 
 /** One usage window (a % used + when it resets). */
@@ -97,6 +101,12 @@ export interface SendOpts {
   effort?: string;
   /** Abort the underlying agent process (user hit "parar"). Rejects the send with ABORTED. */
   signal?: AbortSignal;
+  /** Provider-neutral continuity for CLIs without a safely addressable native session. The current
+   * user message is not included; adapters prepend this bounded history only when they declare
+   * `sessionContinuity: jarvis_history`. */
+  history?: Array<{ role: "user" | "assistant"; text: string }>;
+  /** Stable Jarvis turn id used by the canonical event envelope; never forwarded to a provider. */
+  turnId?: string;
 }
 
 /** Reject stale/foreign picker values before spawning a potentially billable CLI turn. */
@@ -116,6 +126,31 @@ export const ABORTED = "__aborted__";
  *  (defence in depth — with shell:false there is no shell to inject, but a junk value still errors). */
 const safeIdent = (v?: string): string | undefined =>
   (typeof v === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(v) ? v : undefined);
+
+/** Provider/model slugs commonly contain `/`, `:` or `@`. They are argv entries (shell:false), but
+ * control characters and option-looking values are still rejected to prevent accidental flag
+ * injection or malformed billable requests when a provider has no enumerable catalog. */
+export function safeProviderValue(v?: string): string | undefined {
+  return typeof v === "string" && !v.startsWith("-") && /^[A-Za-z0-9._:/@+-]{1,160}$/.test(v) ? v : undefined;
+}
+
+/** Bounded, session-isolated continuity for CLIs that have no addressable native resume id. */
+export function withManagedHistory(text: string, history?: SendOpts["history"], maxChars = Number(process.env.JARVIS_MANAGED_CONTEXT_CHARS || 16_000)): string {
+  if (!history?.length) return text;
+  const cap = Number.isFinite(maxChars) && maxChars >= 1_000 ? Math.floor(maxChars) : 16_000;
+  const rows = history
+    .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.text === "string" && m.text.trim())
+    .map((m) => `${m.role === "user" ? "Usuário" : "Assistente"}: ${m.text.trim()}`);
+  const selected: string[] = [];
+  let used = 0;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (used + row.length + 2 > cap) break;
+    selected.unshift(row); used += row.length + 2;
+  }
+  if (!selected.length) return text;
+  return `Contexto anterior desta conversa Jarvis (não repita respostas já dadas):\n${selected.join("\n\n")}\n\nMensagem atual do usuário:\n${text}`;
+}
 
 /** Kill a spawned process AND its children. On Windows a shell:true spawn wraps the real CLI in
  *  cmd.exe, and killing only the wrapper orphans the agent (it keeps running, and keeps costing) —
@@ -138,15 +173,56 @@ function wireAbort(p: { pid?: number; kill: (s?: NodeJS.Signals) => boolean }, s
 
 /** Live activity while an agent works (for the streaming UI). */
 export interface StreamEvent {
-  kind: "text" | "tool" | "thinking";
+  kind: "text" | "tool" | "thinking" | "plan";
   text?: string; // for kind:"text" — a chunk of the reply
   name?: string; // for kind:"tool" — the tool name (Bash, Edit, Read…)
   summary?: string; // for kind:"tool" — a human one-liner (e.g. "Editando foo.ts")
   detail?: string; // for kind:"tool" — the FULL command/args (untruncated), shown when the row is expanded
   toolId?: string; parentId?: string; // sub-agent linkage (Task/Agent → its nested tools)
   path?: string; adds?: number; dels?: number; rows?: any[]; // file tools: touched path + diff
+  status?: "started" | "completed" | "failed";
+  error?: string;
+  providerEvent?: string;
 }
 export type OnEvent = (ev: StreamEvent) => void;
+
+export interface AgentEventBridge {
+  accepted(): AgentEvent;
+  started(): AgentEvent;
+  provider(ev: StreamEvent): AgentEvent;
+  usage(usage: NonNullable<AgentReply["usage"]>): AgentEvent;
+  completed(text: string): AgentEvent;
+  failed(message: string, errorCode?: string): AgentEvent;
+  cancelled(): AgentEvent;
+}
+
+/** Single provider-progress → canonical-event boundary used by both Hub and Runner. */
+export function createAgentEventBridge(turnId: string, sequencer: EventSequencer): AgentEventBridge {
+  let anonymousTool = 0;
+  const tool = (ev: StreamEvent) => ({
+    callId: ev.toolId || `${turnId}:tool:${++anonymousTool}`,
+    name: ev.name || "Tool",
+    summary: ev.summary || ev.name || "Ferramenta",
+    detail: ev.detail,
+    status: ev.status || "started" as const,
+    parentId: ev.parentId, path: ev.path, adds: ev.adds, dels: ev.dels, rows: ev.rows, error: ev.error,
+  });
+  return {
+    accepted: () => sequencer.next("accepted"),
+    started: () => sequencer.next("started"),
+    provider: (ev) => {
+      if (ev.kind === "text") return sequencer.next("text_delta", { text: ev.text || "", providerEvent: ev.providerEvent });
+      if (ev.kind === "thinking") return sequencer.next("thinking", { text: ev.text, providerEvent: ev.providerEvent });
+      if (ev.kind === "plan") return sequencer.next("plan", { text: ev.text, providerEvent: ev.providerEvent });
+      const t = tool(ev), kind = t.status === "failed" ? "tool_failed" : t.status === "completed" ? "tool_completed" : "tool_started";
+      return sequencer.next(kind, { tool: t, providerEvent: ev.providerEvent });
+    },
+    usage: (usage) => sequencer.next("usage", { usage: { ...usage, costKind: usage.costKind || "unavailable", source: usage.source || "provider did not identify usage source" } }),
+    completed: (text) => sequencer.next("completed", { text }),
+    failed: (message, errorCode) => sequencer.next("failed", { text: message, errorCode }),
+    cancelled: () => sequencer.next("cancelled"),
+  };
+}
 
 export interface AgentAdapter {
   readonly name: string;
@@ -227,7 +303,7 @@ export class MockAgentAdapter implements AgentAdapter {
     return { text: '{"answer":"(busca mock — defina JARVIS_SEARCH_AGENT=claude-code para busca real)","matches":[],"action":null}' };
   }
   async descriptor(): Promise<AgentDescriptor> {
-    return makeDescriptor({ id: this.name, label: "Mock (testes)", command: "internal", support: "limited", reason: "adapter interno de testes; não é uma IA de produção", capabilities: { ...LIMITED_CAPABILITIES, stream: "delta", tools: true, thinking: true, usage: true, remote: true }, caps: await this.capabilities() });
+    return makeDescriptor({ id: this.name, label: "Mock (testes)", command: "internal", support: "limited", reason: "adapter interno de testes; não é uma IA de produção", capabilities: { ...LIMITED_CAPABILITIES, stream: "delta", tools: true, thinking: true, usage: true, remote: true, toolLifecycle: "full", sessionContinuity: "jarvis_history" }, caps: await this.capabilities() });
   }
 }
 
@@ -332,6 +408,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
         cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
         commands: true, skills: true, mcp: true, oneShot: true, remote: true,
+        modelCatalog: "runtime", modelControl: "per_turn", sessionContinuity: "native_id", toolLifecycle: "start_only",
       },
       caps, source: "api",
     });
@@ -450,6 +527,8 @@ export function codexUsage(u: any): AgentReply["usage"] | undefined {
  *  types return no events (forward-compatible with future codex item kinds). */
 export function codexItemToEvents(it: any, isCompleted: boolean): { events: StreamEvent[]; text?: string } {
   const type = it?.type; if (!type) return { events: [] };
+  const failed = isCompleted && (it?.status === "failed" || Number(it?.exit_code) > 0 || !!it?.error);
+  const status: StreamEvent["status"] = isCompleted ? (failed ? "failed" : "completed") : "started";
   if (type === "agent_message") {
     if (!isCompleted) return { events: [] };
     const txt = String(it.text ?? "").trim();
@@ -458,22 +537,22 @@ export function codexItemToEvents(it: any, isCompleted: boolean): { events: Stre
   if (type === "reasoning") return isCompleted ? { events: [{ kind: "thinking" }] } : { events: [] };
   if (type === "command_execution") {
     const cmd = String(it.command ?? "");
-    return { events: [{ kind: "tool", name: "Bash", summary: "Bash: " + cmd.replace(/\s+/g, " ").slice(0, 90), detail: cmd.length > 90 ? cmd : undefined }] };
+    return { events: [{ kind: "tool", name: "Bash", summary: "Bash: " + cmd.replace(/\s+/g, " ").slice(0, 90), detail: cmd.length > 90 ? cmd : undefined, toolId: it.id, status, error: failed ? String(it?.error?.message || it?.error || it?.aggregated_output || "comando falhou") : undefined }] };
   }
   if (type === "file_change" || type === "patch" || type === "apply_patch") {
     const changes = Array.isArray(it.changes) ? it.changes : Array.isArray(it.files) ? it.files : (it.path ? [{ path: it.path, kind: it.kind }] : []);
-    if (!changes.length) return { events: [{ kind: "tool", name: "Edit", summary: "Editando arquivos" }] };
+    if (!changes.length) return { events: [{ kind: "tool", name: "Edit", summary: "Editando arquivos", toolId: it.id, status, error: failed ? String(it?.error || "edição falhou") : undefined }] };
     return { events: changes.map((ch: any): StreamEvent => {
       const p = String(ch?.path ?? ch?.file ?? "");
       const write = /add|create|new/i.test(String(ch?.kind ?? ch?.type ?? ""));
-      return { kind: "tool", name: write ? "Write" : "Edit", summary: (write ? "Criando " : "Editando ") + (p.split(/[\\/]/).pop() || p || "arquivo"), path: p || undefined };
+      return { kind: "tool", name: write ? "Write" : "Edit", summary: (write ? "Criando " : "Editando ") + (p.split(/[\\/]/).pop() || p || "arquivo"), path: p || undefined, toolId: `${it.id || type}:${p}`, status, error: failed ? String(it?.error || "edição falhou") : undefined };
     }) };
   }
   if (type === "mcp_tool_call" || type === "custom_tool_call" || type === "tool_call" || type === "function_call") {
     const tn = String(it.name ?? it.tool ?? it.tool_name ?? "ferramenta");
-    return { events: [{ kind: "tool", name: tn, summary: "Ferramenta: " + tn.slice(0, 60) }] };
+    return { events: [{ kind: "tool", name: tn, summary: "Ferramenta: " + tn.slice(0, 60), toolId: it.id, status, error: failed ? String(it?.error || "ferramenta falhou") : undefined }] };
   }
-  if (type === "web_search") return { events: [{ kind: "tool", name: "WebSearch", summary: "Pesquisando: " + String(it.query ?? "").slice(0, 60) }] };
+  if (type === "web_search") return { events: [{ kind: "tool", name: "WebSearch", summary: "Pesquisando: " + String(it.query ?? "").slice(0, 60), toolId: it.id, status, error: failed ? String(it?.error || "pesquisa falhou") : undefined }] };
   return { events: [] }; // unknown item type — ignore
 }
 
@@ -574,6 +653,7 @@ export class CodexAdapter implements AgentAdapter {
         nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
         cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
         commands: true, skills: true, mcp: true, oneShot: true, remote: true,
+        modelCatalog: "runtime", modelControl: "per_turn", sessionContinuity: "native_id", toolLifecycle: "full",
       },
       caps, source: "cli",
     });
@@ -599,17 +679,21 @@ export class CodexAdapter implements AgentAdapter {
     const finalParts: string[] = [];   // agent_message texts, in order (preâmbulo + resposta final)
     let usage: AgentReply["usage"];
     let streamError = "";
-    const seen = new Set<string>();     // item ids already surfaced — item.started + item.completed = ONE row
+    const seen = new Map<string, string>(); // allow started -> completed/failed; reject duplicate frames
 
     const emitItem = (it: any, isCompleted: boolean): void => {
       const id = String(it?.id ?? "");
       const isAgentMsg = it?.type === "agent_message";
-      if (!isAgentMsg && id && seen.has(id)) return;     // tool-ish item already surfaced (started + completed = one row)
       const { events, text } = codexItemToEvents(it, isCompleted);
       if (!events.length) return;
-      if (!isAgentMsg && id) seen.add(id);               // agent_message may legitimately repeat (preâmbulo + resposta)
       if (text) finalParts.push(text);
-      for (const e of events) onEvent?.(e);
+      for (const e of events) {
+        const key = String(e.toolId || id || `${it?.type}:${e.path || e.name || ""}`);
+        const phase = String(e.status || (isCompleted ? "completed" : "started"));
+        if (!isAgentMsg && key && seen.get(key) === phase) continue;
+        if (!isAgentMsg && key) seen.set(key, phase);
+        onEvent?.(e);
+      }
     };
 
     const handleLine = (line: string): void => {
@@ -666,6 +750,8 @@ export interface StructuredCliEvent {
   sessionId?: string;
   usage?: AgentReply["usage"];
   error?: string;
+  textMode?: "delta" | "snapshot";
+  providerEvent?: string;
 }
 
 function textOf(value: any): string {
@@ -677,9 +763,16 @@ function textOf(value: any): string {
 function tokenUsage(value: any, source: string, costKind: CostKind = "tokens_only"): AgentReply["usage"] | undefined {
   const u = value?.usage || value?.stats || value;
   if (!u || typeof u !== "object") return undefined;
-  const input = Number(u.input_tokens ?? u.inputTokens ?? u.prompt_tokens ?? u.promptTokens ?? u.input ?? 0) || 0;
-  const cached = Number(u.cached_input_tokens ?? u.cachedInputTokens ?? 0) || 0;
-  const output = Number(u.output_tokens ?? u.outputTokens ?? u.completion_tokens ?? u.completionTokens ?? u.output ?? 0) || 0;
+  let input = Number(u.input_tokens ?? u.inputTokens ?? u.prompt_tokens ?? u.promptTokens ?? u.input ?? 0) || 0;
+  let cached = Number(u.cached_input_tokens ?? u.cachedInputTokens ?? u.cached_tokens ?? 0) || 0;
+  let output = Number(u.output_tokens ?? u.outputTokens ?? u.completion_tokens ?? u.completionTokens ?? u.output ?? 0) || 0;
+  if (!input && !output) {
+    const nested = Array.isArray(u.models) ? u.models : (u.models && typeof u.models === "object" ? Object.values(u.models) : []);
+    for (const item of nested) {
+      const child = tokenUsage(item, source, costKind);
+      input += child?.inputTokens || 0; cached += child?.cachedInputTokens || 0; output += child?.outputTokens || 0;
+    }
+  }
   if (!input && !output && u.cost == null && u.cost_usd == null) return undefined;
   const rawCost = Number(u.cost_usd ?? u.costUsd ?? u.cost);
   const costUsd = Number.isFinite(rawCost) && rawCost >= 0 ? rawCost : undefined;
@@ -687,18 +780,22 @@ function tokenUsage(value: any, source: string, costKind: CostKind = "tokens_onl
   return { inputTokens: input || undefined, cachedInputTokens: cached || undefined, contextTokens: input || undefined, outputTokens: output || undefined, costUsd, costKind: resolvedKind, source };
 }
 
-function toolEvent(name: string, args: any, id?: string): StreamEvent {
+function toolEvent(name: string, args: any, id?: string, status: StreamEvent["status"] = "started", error?: string, providerEvent?: string): StreamEvent {
   const normalized = /shell|command|terminal|exec|bash/i.test(name) ? "Bash" : name;
-  return { kind: "tool", name: normalized, summary: toolSummary(normalized, args), detail: toolDetail(normalized, args), toolId: id };
+  return { kind: "tool", name: normalized, summary: toolSummary(normalized, args), detail: toolDetail(normalized, args), toolId: id, status, error, providerEvent };
 }
 
 /** Pure provider parsers. Unknown fields/types are ignored, never promoted to invented progress. */
 export function parseGeminiCliEvent(o: any): StructuredCliEvent {
-  if (o?.type === "init") return { sessionId: o.session_id || o.sessionId };
-  if (o?.type === "message" && (o.role === "assistant" || o.message?.role === "assistant")) return { text: textOf(o.content ?? o.message?.content ?? o.message) };
-  if (o?.type === "tool_use") { const name = String(o.tool_name || o.name || "Tool"); return { events: [toolEvent(name, o.parameters || o.args || o.input, o.tool_id || o.id)] }; }
+  if (o?.type === "init") return { sessionId: o.session_id || o.sessionId, providerEvent: "init" };
+  if (o?.type === "message" && (o.role === "assistant" || o.message?.role === "assistant")) return { text: textOf(o.content ?? o.message?.content ?? o.message), textMode: o.partial ? "snapshot" : "delta", providerEvent: "message" };
+  if (o?.type === "tool_use") { const name = String(o.tool_name || o.name || "Tool"); return { events: [toolEvent(name, o.parameters || o.args || o.input, o.tool_id || o.id, "started", undefined, "tool_use")], providerEvent: "tool_use" }; }
+  if (o?.type === "tool_result") {
+    const name = String(o.tool_name || o.name || "Tool"), error = o.error ? String(o.error?.message || o.error) : undefined;
+    return { events: [toolEvent(name, o.parameters || o.args || o.input || {}, o.tool_id || o.id, error ? "failed" : "completed", error, "tool_result")], providerEvent: "tool_result" };
+  }
   if (o?.type === "error") return { error: String(o.error?.message || o.message || o.error || "Gemini CLI error") };
-  if (o?.type === "result") return { finalText: String(o.response ?? o.result ?? ""), usage: tokenUsage(o.stats || o.usage, "gemini stream-json") };
+  if (o?.type === "result") return { finalText: String(o.response ?? o.result ?? ""), usage: tokenUsage(o.stats || o.usage, "gemini stream-json"), providerEvent: "result" };
   return {};
 }
 
@@ -707,7 +804,12 @@ export function parseCursorCliEvent(o: any): StructuredCliEvent {
   if (o?.type === "assistant") return { text: textOf(o.message?.content ?? o.content) };
   if (o?.type === "tool_call" && o.subtype === "started") {
     const body = o.tool_call || {}; const key = Object.keys(body)[0] || "Tool"; const call = body[key] || {};
-    return { events: [toolEvent(key.replace(/ToolCall$/i, ""), call.args || call, o.call_id)] };
+    return { events: [toolEvent(key.replace(/ToolCall$/i, ""), call.args || call, o.call_id, "started", undefined, "tool_call.started")], providerEvent: "tool_call.started" };
+  }
+  if (o?.type === "tool_call" && o.subtype === "completed") {
+    const body = o.tool_call || {}; const key = Object.keys(body)[0] || "Tool"; const call = body[key] || {};
+    const failed = call.result?.error || call.error; const error = failed ? String(failed?.message || failed) : undefined;
+    return { events: [toolEvent(key.replace(/ToolCall$/i, ""), call.args || call, o.call_id, error ? "failed" : "completed", error, "tool_call.completed")], providerEvent: "tool_call.completed" };
   }
   if (o?.type === "result") return { sessionId: o.session_id, finalText: String(o.result || ""), error: o.is_error ? String(o.result || "Cursor Agent error") : undefined };
   return {};
@@ -719,16 +821,28 @@ export function parseClineCliEvent(o: any): StructuredCliEvent {
   if (o?.type === "ask") events.push({ kind: "tool", name: "InputRequired", summary: String(o.text || o.ask || "Cline requer interação").slice(0, 100) });
   if (o?.type === "say" && o.say && o.say !== "text" && o.say !== "completion_result") events.push(toolEvent(String(o.say), { text: o.text }));
   const isText = o?.type === "say" && (!o.say || o.say === "text" || o.say === "completion_result");
-  return { events, text: isText ? String(o.text || "") : undefined, sessionId: o.session_id || o.taskId, usage: tokenUsage(o.usage, "cline --json") };
+  return { events, text: isText ? String(o.text || "") : undefined, textMode: o.partial ? "snapshot" : "delta", sessionId: o.session_id || o.taskId, usage: tokenUsage(o.usage, "cline --json"), providerEvent: `${o?.type || "unknown"}${o?.say ? "." + o.say : ""}` };
 }
 
 export function parseQwenCliEvent(o: any): StructuredCliEvent {
+  const pe = o?.event;
+  if (pe?.type === "content_block_delta") {
+    const delta = pe.delta || pe.content_block || {};
+    if (delta.type === "text_delta" || typeof delta.text === "string") return { text: String(delta.text || ""), textMode: "delta", providerEvent: "content_block_delta" };
+    if (delta.type === "thinking_delta") return { events: [{ kind: "thinking", providerEvent: "content_block_delta" }], providerEvent: "content_block_delta" };
+  }
+  if (pe?.type === "content_block_start" && pe.content_block?.type === "tool_use") {
+    const b = pe.content_block; return { events: [toolEvent(String(b.name || "Tool"), b.input, b.id, "started", undefined, "content_block_start")], providerEvent: "content_block_start" };
+  }
+  if (pe?.type === "content_block_stop" && (pe.content_block?.type === "tool_use" || pe.tool_use_id)) {
+    const b = pe.content_block || {}; return { events: [toolEvent(String(b.name || "Tool"), b.input, b.id || pe.tool_use_id, "completed", undefined, "content_block_stop")], providerEvent: "content_block_stop" };
+  }
   if (o?.type === "system" && /session_start|init/.test(String(o.subtype))) return { sessionId: o.session_id || o.uuid };
   if (o?.type === "assistant" || (o?.type === "message" && o.message?.role === "assistant")) {
     const message = o.message || o;
     const events: StreamEvent[] = [];
     for (const part of (Array.isArray(message.content) ? message.content : [])) if (part?.type === "tool_use") events.push(toolEvent(String(part.name || "Tool"), part.input, part.id));
-    return { events, text: textOf(message.content), usage: tokenUsage(message.usage, "qwen stream-json") };
+    return { events, text: textOf(message.content), textMode: o.partial ? "snapshot" : "delta", usage: tokenUsage(message.usage, "qwen stream-json"), providerEvent: "assistant" };
   }
   if (o?.type === "result") return { sessionId: o.session_id, finalText: String(o.result || ""), error: o.is_error ? String(o.result || "Qwen Code error") : undefined, usage: tokenUsage(o.usage, "qwen stream-json") };
   return {};
@@ -736,13 +850,47 @@ export function parseQwenCliEvent(o: any): StructuredCliEvent {
 
 export function parseGenericJsonlEvent(o: any, source: string, billedCost = false): StructuredCliEvent {
   const sessionId = o?.session_id || o?.sessionID || o?.sessionId;
-  if (o?.type === "assistant" || o?.role === "assistant" || o?.type === "text") return { sessionId, text: textOf(o.message?.content ?? o.content ?? o.text ?? o.message), usage: tokenUsage(o.usage, source, billedCost ? "billed" : "tokens_only") };
-  if (/tool|command|step/.test(String(o?.type || "")) && !/result|output|completed/.test(String(o?.subtype || o?.type || ""))) {
-    return { sessionId, events: [toolEvent(String(o.name || o.tool || o.part?.tool || "Tool"), o.args || o.input || o.part?.state?.input || {}, o.call_id || o.id)] };
+  const type = String(o?.type || ""), subtype = String(o?.subtype || o?.status || o?.part?.state?.status || "");
+  if (type === "assistant" || o?.role === "assistant" || type === "text" || /assistant.*(delta|message)/i.test(type)) return { sessionId, text: textOf(o.message?.content ?? o.content ?? o.text ?? o.message ?? o.data?.content ?? o.part?.text), textMode: o.partial ? "snapshot" : "delta", usage: tokenUsage(o.usage, source, billedCost ? "billed" : "tokens_only"), providerEvent: type };
+  if (/tool|command/i.test(type)) {
+    const state = /fail|error/i.test(subtype) ? "failed" : /complete|success|done|result|output/i.test(subtype || type) ? "completed" : "started";
+    const err = state === "failed" ? String(o.error?.message || o.error || o.part?.state?.error || "tool failed") : undefined;
+    return { sessionId, events: [toolEvent(String(o.name || o.tool || o.part?.tool || "Tool"), o.args || o.input || o.part?.state?.input || {}, o.call_id || o.callId || o.part?.callID || o.id, state, err, `${type}${subtype ? "." + subtype : ""}`)], providerEvent: type };
   }
-  if (o?.type === "result" || o?.type === "done" || o?.type === "task_complete") return { sessionId, finalText: String(o.result || o.text || o.message || ""), error: o.is_error ? String(o.error || o.result || "agent error") : undefined, usage: tokenUsage(o.usage || o.stats, source, billedCost ? "billed" : "tokens_only") };
-  if (o?.type === "error") return { sessionId, error: String(o.error?.message || o.message || o.error || "agent error") };
+  if (type === "result" || type === "done" || type === "task_complete" || /step[_-]?finish/i.test(type)) return { sessionId, finalText: String(o.result || o.text || o.message || ""), error: o.is_error ? String(o.error || o.result || "agent error") : undefined, usage: tokenUsage(o.usage || o.stats || o.part, source, billedCost ? "billed" : "tokens_only"), providerEvent: type };
+  if (type === "error") return { sessionId, error: String(o.error?.message || o.message || o.error || "agent error"), providerEvent: type };
   return { sessionId };
+}
+
+export function parseCopilotCliEvent(o: any): StructuredCliEvent {
+  return parseGenericJsonlEvent(o, "copilot --output-format=json");
+}
+
+export function parseOpenCodeCliEvent(o: any): StructuredCliEvent {
+  const part = o?.part;
+  if (o?.type === "text" && part?.type === "text") return { sessionId: o.sessionID || part.sessionID, text: String(part.text || ""), textMode: "delta", providerEvent: "text" };
+  if (o?.type === "tool_use" && part?.type === "tool") {
+    const status = /fail|error/i.test(String(part.state?.status)) ? "failed" : /complete|success|done/i.test(String(part.state?.status)) ? "completed" : "started";
+    const error = status === "failed" ? String(part.state?.error || "tool failed") : undefined;
+    return { sessionId: o.sessionID || part.sessionID, events: [toolEvent(String(part.tool || "Tool"), part.state?.input || {}, part.callID || part.id, status, error, `tool_use.${part.state?.status || "started"}`)], providerEvent: "tool_use" };
+  }
+  if (o?.type === "step_finish" || part?.type === "step-finish") return { sessionId: o.sessionID || part?.sessionID, usage: tokenUsage(part || o, "opencode run --format json"), providerEvent: "step_finish" };
+  return parseGenericJsonlEvent(o, "opencode run --format json");
+}
+
+/** GitHub documents `copilot help` as the account-aware source of model strings. Keep parsing
+ * deliberately narrow: only values in the --model option block and known provider-style slugs. */
+export function parseCopilotHelpModels(help: string): ModelInfo[] {
+  const lines = help.split(/\r?\n/);
+  const start = lines.findIndex((line) => /--model(?:=|\s)/.test(line));
+  if (start < 0) return [];
+  const block: string[] = [];
+  for (let i = start; i < Math.min(lines.length, start + 14); i++) {
+    if (i > start && /^\s{0,3}--[a-z]/i.test(lines[i])) break;
+    block.push(lines[i]);
+  }
+  const found = block.join(" ").match(/\b(?:auto|gpt-[a-z0-9._-]+|claude-[a-z0-9._-]+|gemini-[a-z0-9._-]+|mai-[a-z0-9._-]+|raptor-[a-z0-9._-]+|kimi-[a-z0-9._-]+)\b/gi) || [];
+  return [...new Set(found.map((id) => id.toLowerCase()))].map((id) => ({ id, label: id, efforts: [], effortsVerified: false, source: "cli" as const }));
 }
 
 interface StructuredCliSpec {
@@ -778,8 +926,10 @@ class StructuredCliAdapter implements AgentAdapter {
   }
   async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
     validateModelSelection(await this.capabilities(), opts);
-    const previous = this.sessions.get(sessionId);
-    const args = this.spec.args(text, cwd, previous, opts);
+    const nativeContinuity = this.spec.capabilities.sessionContinuity === "native_id";
+    const previous = nativeContinuity ? this.sessions.get(sessionId) : undefined;
+    const effectiveText = this.spec.capabilities.sessionContinuity === "jarvis_history" ? withManagedHistory(text, opts?.history) : text;
+    const args = this.spec.args(effectiveText, cwd, previous, opts);
     const parts: string[] = [];
     let snapshot = "", finalText = "", nativeId = previous, usage: AgentReply["usage"], failure = "";
     const handle = (line: string): void => {
@@ -790,11 +940,13 @@ class StructuredCliAdapter implements AgentAdapter {
       if (item.error) failure = item.error;
       for (const event of item.events || []) onEvent?.(event);
       if (item.text) {
-        // Some CLIs publish growing snapshots (`partial:true`), others true deltas. Emit only the
-        // unseen suffix when it is a snapshot; otherwise preserve the provider's delta verbatim.
-        const chunk = item.text.startsWith(snapshot) ? item.text.slice(snapshot.length) : item.text;
-        snapshot = item.text.startsWith(snapshot) ? item.text : snapshot + item.text;
-        if (chunk) { parts.push(chunk); onEvent?.({ kind: "text", text: chunk }); }
+        // Snapshot/delta is provider-declared. Guessing from prefix equality corrupts legitimate
+        // deltas that happen to start like the accumulated text.
+        const chunk = item.textMode === "snapshot"
+          ? (item.text.startsWith(snapshot) ? item.text.slice(snapshot.length) : item.text)
+          : item.text;
+        snapshot = item.textMode === "snapshot" ? item.text : snapshot + item.text;
+        if (chunk) { parts.push(chunk); onEvent?.({ kind: "text", text: chunk, providerEvent: item.providerEvent }); }
       }
       if (item.finalText) finalText = item.finalText;
     };
@@ -803,7 +955,7 @@ class StructuredCliAdapter implements AgentAdapter {
       : await run(this.spec.command, args, cwd, "", opts?.signal);
     if (!onEvent) for (const line of out.split(/\r?\n/)) if (line.trim()) handle(line);
     if (failure && !finalText && !parts.length) throw new Error(failure);
-    if (!sessionId.startsWith("__oneshot_") && nativeId && nativeId !== previous) { this.sessions.set(sessionId, nativeId); this.saveSessions(); }
+    if (nativeContinuity && !sessionId.startsWith("__oneshot_") && nativeId && nativeId !== previous) { this.sessions.set(sessionId, nativeId); this.saveSessions(); }
     if (usage && !usage.model) usage.model = opts?.model;
     return { text: (finalText || parts.join("") || out).trim(), usage };
   }
@@ -812,31 +964,37 @@ class StructuredCliAdapter implements AgentAdapter {
 
 const structuredCaps = (over: Partial<AgentCapabilities> = {}): AgentCapabilities => ({
   ...LIMITED_CAPABILITIES, permissionMode: agentPermissionMode(), stream: "delta", tools: true, nativeSessions: true, nativeResume: true,
-  files: true, attachments: ["text", "file", "image"], oneShot: true, remote: true, ...over,
+  files: true, attachments: ["text", "file", "image"], oneShot: true, remote: true,
+  modelCatalog: "provider_dynamic", modelControl: "per_turn", sessionContinuity: "native_id", toolLifecycle: "start_only", ...over,
 });
 
+export function buildGeminiArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--output-format", "stream-json"]; if (fullAccess()) a.push("--yolo"); if (sid) a.push("--resume", sid); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); a.push("--prompt", text); return a; }
+export function buildCursorArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--print", "--output-format", "stream-json"]; if (fullAccess()) a.push("--force"); if (sid) a.push("--resume", sid); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); a.push(text); return a; }
+export function buildCopilotArgs(text: string, cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--prompt", text, "--output-format=json", "--stream=on", "--no-ask-user", "-C", cwd]; if (fullAccess()) a.push("--yolo"); if (sid) a.push(`--resume=${sid}`); const model = safeProviderValue(opts?.model), effort = safeIdent(opts?.effort); if (model) a.push(`--model=${model}`); if (effort) a.push(`--effort=${effort}`); return a; }
+export function buildOpenCodeArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["run", "--format", "json"]; if (fullAccess()) a.push("--auto"); if (sid) a.push("--session", sid); const model = safeProviderValue(opts?.model), effort = safeProviderValue(opts?.effort); if (model) a.push("--model", model); if (effort) a.push("--variant", effort); a.push(text); return a; }
+export function buildClineArgs(text: string, cwd: string, _sid?: string, opts?: SendOpts): string[] { const a = ["--json", "--auto-approve", fullAccess() ? "true" : "false", "--cwd", cwd]; const model = safeProviderValue(opts?.model), effort = safeIdent(opts?.effort); if (model) a.push("--model", model); if (effort) a.push("--thinking", effort); a.push(text); return a; }
+export function buildQwenArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--output-format", "stream-json", "--include-partial-messages", "--approval-mode", fullAccess() ? "yolo" : "default"]; if (sid) a.push("--resume", sid); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); a.push("--prompt", text); return a; }
+export function buildContinueArgs(text: string, opts?: SendOpts): string[] { const a = ["-p", text, "--format", "json"]; if (fullAccess()) a.push("--auto"); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); return a; }
+export function buildKiroArgs(text: string, opts?: SendOpts): string[] { const a = ["chat", "--no-interactive"]; if (fullAccess()) a.push("--trust-all-tools"); const effort = safeIdent(opts?.effort); if (effort) a.push("--effort", effort); a.push(text); return a; }
+
 export class GeminiCliAdapter extends StructuredCliAdapter {
-  constructor() { super({ id: "gemini", label: "Google Gemini CLI", command: "gemini", parser: parseGeminiCliEvent, source: "gemini stream-json", capabilities: structuredCaps({ usage: true, mcp: true, commands: true, skills: true }), args: (text, _cwd, sid, opts) => {
-    const a = ["--output-format", "stream-json"]; if (fullAccess()) a.push("--yolo");
-    if (sid) a.push("--resume", sid); if (opts?.model) a.push("--model", opts.model); a.push("--prompt", text); return a;
-  } }); }
+  constructor() { super({ id: "gemini", label: "Google Gemini CLI", command: "gemini", parser: parseGeminiCliEvent, source: "gemini stream-json", capabilities: structuredCaps({ usage: true, mcp: true, commands: true, skills: true, toolLifecycle: "full" }), args: buildGeminiArgs }); }
 }
 export class CursorAgentAdapter extends StructuredCliAdapter {
-  constructor() { super({ id: "cursor", label: "Cursor Agent", command: "cursor-agent", parser: parseCursorCliEvent, source: "cursor stream-json", capabilities: structuredCaps({ thinking: false, usage: false }), args: (_text, _cwd, sid, opts) => {
-    const a = ["--print", "--output-format", "stream-json"]; if (fullAccess()) a.push("--force");
-    if (sid) a.push("--resume", sid); if (opts?.model) a.push("--model", opts.model); a.push(_text); return a;
-  } }); }
+  constructor() { super({ id: "cursor", label: "Cursor Agent", command: "cursor-agent", parser: parseCursorCliEvent, source: "cursor stream-json", capabilities: structuredCaps({ thinking: false, usage: false, toolLifecycle: "full" }), args: buildCursorArgs }); }
 }
 export class CopilotCliAdapter extends StructuredCliAdapter {
-  constructor() { super({ id: "copilot", label: "GitHub Copilot CLI", command: "copilot", parser: (o) => parseGenericJsonlEvent(o, "copilot JSONL"), source: "copilot JSONL", capabilities: structuredCaps({ usage: true, mcp: true, skills: true }), args: (text, cwd, sid, opts) => {
-    const a = ["--prompt", text, "--output-format=json", "--stream=on", "--no-ask-user", "-C", cwd]; if (fullAccess()) a.push("--yolo");
-    if (sid) a.push(`--resume=${sid}`); if (opts?.model) a.push(`--model=${opts.model}`); if (opts?.effort) a.push(`--effort=${opts.effort}`); return a;
-  } }); }
+  constructor() { super({ id: "copilot", label: "GitHub Copilot CLI", command: "copilot", parser: parseCopilotCliEvent, source: "copilot JSONL", capabilities: structuredCaps({ usage: true, mcp: true, skills: true, modelCatalog: "runtime" }), args: buildCopilotArgs }); }
+  override async capabilities(): Promise<AgentCaps> {
+    try {
+      const out = await run("copilot", ["help"], homedir(), "");
+      const models = parseCopilotHelpModels(out);
+      return { models, defaultModel: models.find((m) => m.id === process.env.COPILOT_MODEL)?.id, autoModel: true };
+    } catch { return { models: [], autoModel: true }; }
+  }
 }
 export class OpenCodeAdapter extends StructuredCliAdapter {
-  constructor() { super({ id: "opencode", label: "OpenCode", command: "opencode", parser: (o) => parseGenericJsonlEvent(o, "opencode run --format json"), source: "opencode JSON", capabilities: structuredCaps({ usage: true, cost: "estimated_api_equivalent", mcp: true, commands: true, skills: true }), args: (text, _cwd, sid, opts) => {
-    const a = ["run", "--format", "json"]; if (fullAccess()) a.push("--auto"); if (sid) a.push("--session", sid); if (opts?.model) a.push("--model", opts.model); if (opts?.effort) a.push("--variant", opts.effort); a.push(text); return a;
-  } }); }
+  constructor() { super({ id: "opencode", label: "OpenCode", command: "opencode", parser: parseOpenCodeCliEvent, source: "opencode JSON", capabilities: structuredCaps({ usage: true, cost: "estimated_api_equivalent", mcp: true, commands: true, skills: true, modelCatalog: "runtime", toolLifecycle: "full" }), args: buildOpenCodeArgs }); }
   override async capabilities(): Promise<AgentCaps> {
     try {
       const out = await run("opencode", ["models"], homedir(), "");
@@ -846,15 +1004,10 @@ export class OpenCodeAdapter extends StructuredCliAdapter {
   }
 }
 export class ClineCliAdapter extends StructuredCliAdapter {
-  constructor() { super({ id: "cline", label: "Cline CLI", command: "cline", parser: parseClineCliEvent, source: "cline --json", capabilities: structuredCaps({ thinking: true, usage: false, mcp: true, skills: true }), args: (text, cwd, sid, opts) => {
-    const a = ["--json", "--auto-approve", fullAccess() ? "true" : "false", "--cwd", cwd]; if (sid) a.push("--id", sid); if (opts?.model) a.push("--model", opts.model); if (opts?.effort) a.push("--thinking", opts.effort); a.push(text); return a;
-  } }); }
+  constructor() { super({ id: "cline", label: "Cline CLI", command: "cline", parser: parseClineCliEvent, source: "cline --json", capabilities: structuredCaps({ thinking: true, usage: false, mcp: true, skills: true, nativeSessions: false, nativeResume: false, sessionContinuity: "jarvis_history", modelCatalog: "configured" }), args: buildClineArgs }); }
 }
 export class QwenCodeAdapter extends StructuredCliAdapter {
-  constructor() { super({ id: "qwen", label: "Qwen Code", command: "qwen", parser: parseQwenCliEvent, source: "qwen stream-json", capabilities: structuredCaps({ thinking: true, usage: true, plans: true, subagents: true, mcp: true, skills: true }), args: (text, _cwd, sid, opts) => {
-    const a = ["--output-format", "stream-json", "--include-partial-messages", "--approval-mode", fullAccess() ? "yolo" : "default"];
-    if (sid) a.push("--resume", sid); if (opts?.model) a.push("--model", opts.model); a.push("--prompt", text); return a;
-  } }); }
+  constructor() { super({ id: "qwen", label: "Qwen Code", command: "qwen", parser: parseQwenCliEvent, source: "qwen stream-json", capabilities: structuredCaps({ thinking: true, usage: true, plans: true, subagents: true, mcp: true, skills: true, toolLifecycle: "full", modelCatalog: "configured" }), args: buildQwenArgs }); }
 }
 
 /** Extract a useful terminal response from final-only JSON without exposing the envelope in chat. */
@@ -872,32 +1025,44 @@ export function finalOnlyText(output: string): string {
 
 /** Detectable but intentionally final-only: these CLIs do not expose a verified live tool stream. */
 class LimitedFinalCliAdapter implements AgentAdapter {
-  constructor(readonly name: string, private label: string, private command: string, private args: (text: string, opts?: SendOpts) => string[]) {}
+  constructor(readonly name: string, private label: string, private command: string, private args: (text: string, opts?: SendOpts) => string[], protected declaredCapabilities: AgentCapabilities) {}
   async capabilities(): Promise<AgentCaps> { return { models: [], autoModel: true }; }
   async available(): Promise<boolean> { return !!(await cliVersion(this.command)); }
-  async send(_sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> { validateModelSelection(await this.capabilities(), opts); return { text: finalOnlyText(await run(this.command, this.args(text, opts), cwd, "", opts?.signal)) }; }
-  async descriptor(): Promise<AgentDescriptor> { const version = await cliVersion(this.command); return makeDescriptor({ id: this.name, label: this.label, command: this.command, version, support: version ? "limited" : "not_installed", reason: version ? "CLI só tem saída final verificada; sem stream estruturado de ferramentas" : `CLI ${this.command} não encontrado`, capabilities: { ...LIMITED_CAPABILITIES, oneShot: true, remote: true }, caps: await this.capabilities() }); }
+  async send(_sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
+    if (opts?.model && this.declaredCapabilities.modelControl !== "per_turn") throw new Error(`o agente ${this.name} não permite selecionar modelo por turno; configure o modelo na própria CLI`);
+    validateModelSelection(await this.capabilities(), opts);
+    const prompt = this.declaredCapabilities.sessionContinuity === "jarvis_history" ? withManagedHistory(text, opts?.history) : text;
+    return { text: finalOnlyText(await run(this.command, this.args(prompt, opts), cwd, "", opts?.signal)) };
+  }
+  async descriptor(): Promise<AgentDescriptor> { const version = await cliVersion(this.command); return makeDescriptor({ id: this.name, label: this.label, command: this.command, version, support: version ? "limited" : "not_installed", reason: version ? "execução headless disponível, mas o fornecedor não expõe lifecycle estruturado de ferramentas" : `CLI ${this.command} não encontrado`, capabilities: this.declaredCapabilities, caps: await this.capabilities() }); }
 }
-export class ContinueCliAdapter extends LimitedFinalCliAdapter { constructor() { super("continue", "Continue CLI", "cn", (text) => { const a = ["-p", text, "--format", "json"]; if (fullAccess()) a.push("--allow", "*"); return a; }); } }
+const finalToolCaps = (over: Partial<AgentCapabilities> = {}): AgentCapabilities => ({
+  ...LIMITED_CAPABILITIES, permissionMode: agentPermissionMode(), tools: true, files: true, oneShot: true, remote: true,
+  modelCatalog: "configured", modelControl: "per_turn", sessionContinuity: "jarvis_history", toolLifecycle: "unobservable", ...over,
+});
+export class ContinueCliAdapter extends LimitedFinalCliAdapter {
+  constructor() { super("continue", "Continue CLI", "cn", buildContinueArgs, finalToolCaps({ mcp: true, skills: true, commands: true })); }
+}
 export class KiroCliAdapter extends LimitedFinalCliAdapter {
-  constructor() { super("kiro", "Kiro CLI", "kiro-cli", (text, opts) => { const a = ["chat", "--no-interactive"]; if (fullAccess()) a.push("--trust-all-tools"); if (opts?.effort) a.push("--effort", opts.effort); a.push(text); return a; }); }
+  constructor() { super("kiro", "Kiro CLI", "kiro-cli", buildKiroArgs, finalToolCaps({ modelCatalog: "runtime", modelControl: "configuration_only", mcp: true, skills: true, commands: true })); }
   override async capabilities(): Promise<AgentCaps> {
     try {
       const raw = await run("kiro-cli", ["chat", "--list-models", "--format", "json"], homedir(), "");
       const parsed = JSON.parse(raw); const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.models) ? parsed.models : [];
-      const models = items.map((x: any) => typeof x === "string" ? { id: x, label: x, efforts: [] } : {
+      const models = items.map((x: any): ModelInfo => typeof x === "string" ? { id: x, label: x, efforts: [], selectable: false, source: "cli" } : {
         id: String(x.id || x.modelId || x.name || ""), label: String(x.label || x.displayName || x.name || x.id || ""),
         efforts: Array.isArray(x.efforts || x.supportedEfforts) ? [...(x.efforts || x.supportedEfforts)] : [], effortsVerified: false,
+        selectable: false, source: "cli" as const,
       }).filter((x: ModelInfo) => !!x.id);
       return { models, autoModel: true };
     } catch { return { models: [], autoModel: true }; }
   }
 }
 export class AntigravityCliAdapter extends LimitedFinalCliAdapter {
-  constructor() { super("antigravity", "Google Antigravity CLI", "agy", (text) => [text]); }
+  constructor() { super("antigravity", "Google Antigravity CLI", "agy", (text) => [text], { ...LIMITED_CAPABILITIES, tools: true, files: true, diffs: true, plans: true, subagents: true, mcp: true, skills: true, commands: true, oneShot: false, remote: false, modelCatalog: "none", modelControl: "none", sessionContinuity: "none", toolLifecycle: "unobservable" }); }
   override async available(): Promise<boolean> { return false; }
   override async send(): Promise<AgentReply> { throw new Error("Antigravity CLI não expõe um modo headless estruturado verificável; use o TUI agy diretamente"); }
-  override async descriptor(): Promise<AgentDescriptor> { const version = await cliVersion("agy"); return makeDescriptor({ id: this.name, label: "Google Antigravity CLI", command: "agy", version, support: version ? "limited" : "not_installed", reason: version ? "TUI instalado, mas sem modo headless público verificável; execução pelo Jarvis desativada" : "CLI agy não encontrado", capabilities: { ...LIMITED_CAPABILITIES, oneShot: false, remote: false }, caps: await this.capabilities() }); }
+  override async descriptor(): Promise<AgentDescriptor> { const version = await cliVersion("agy"); return makeDescriptor({ id: this.name, label: "Google Antigravity CLI", command: "agy", version, support: version ? "limited" : "not_installed", reason: version ? "TUI e transcripts detectáveis, mas sem envio headless público; execução pelo Jarvis permanece desativada" : "CLI agy não encontrado", capabilities: this.declaredCapabilities, caps: await this.capabilities() }); }
 }
 
 // ---------------------------------------------------------------------------
@@ -909,20 +1074,20 @@ export class AntigravityCliAdapter extends LimitedFinalCliAdapter {
  * WRITTEN TO SPEC — VERIFY ON FIRST RUN (it was authored without a local `aider` to test against):
  *  - Requires `aider` on PATH and a model key in the env / ~/.aider.conf.yml (aider picks the provider).
  *  - Runs inside a git repo (aider expects one); a non-repo cwd may make it warn/refuse.
- *  - CONTINUITY is per-CWD via aider's own chat history (`--restore-chat-history`), NOT per Jarvis
- *    session — two sessions sharing a folder share context. (Claude/Codex bind a native session id;
- *    aider has no equivalent per-invocation handle, so this is the honest v1 approximation.)
+ *  - CONTINUITY is injected from the bounded Jarvis session history. We intentionally do NOT use
+ *    aider's cwd-global `--restore-chat-history`, which would mix two Jarvis sessions in one repo.
  *  - No streaming/tool events yet (final text only).
- *  - capabilities() returns NO models on purpose — aider spans many providers and inventing an id
- *    catalog would be a guess; pass opts.model to pick one, else aider uses its configured default.
+ *  - The configured model (AIDER_MODEL or top-level ~/.aider.conf.yml `model:`) is discoverable;
+ *    the full provider-spanning catalog remains dynamic and is never hardcoded.
  * Flags used: --message (one-shot), --yes-always (auto-confirm), --no-stream + --no-pretty (clean
- * stdout capture), --restore-chat-history (continuity), --model (optional). Adjust here if a flag
+ * stdout capture), --model (optional). Adjust here if a flag
  * name differs in your aider version.
  */
 export class AiderAdapter implements AgentAdapter {
   readonly name = "aider";
   async capabilities(): Promise<AgentCaps> {
-    return { models: [] };
+    const configured = aiderConfiguredModel();
+    return { models: configured ? [{ id: configured, label: configured, efforts: [], source: "config" }] : [], defaultModel: configured, autoModel: !configured };
   }
   async available(): Promise<boolean> {
     try { const r = await runRaw("aider", ["--version"], homedir(), ""); return r.code === 0; }
@@ -933,10 +1098,10 @@ export class AiderAdapter implements AgentAdapter {
     // The chat message goes via --message-file, not --message <text>: the text is user input, and on
     // the old shell:true path a message with `;`/`&`/`$()` ran as a shell command. A temp file keeps
     // it entirely off the command line (belt-and-braces with spawnCli's shell:false).
-    const mf = tempTextFile("jarvis_aider", text);
+    const mf = tempTextFile("jarvis_aider", withManagedHistory(text, opts?.history));
     try {
-      const args = ["--message-file", mf.path, "--no-stream", "--no-pretty", "--restore-chat-history"]; if (fullAccess()) args.push("--yes-always");
-      const model = safeIdent(opts?.model); if (model) args.push("--model", model);
+      const args = ["--message-file", mf.path, "--no-stream", "--no-pretty"]; if (fullAccess()) args.push("--yes-always");
+      const model = safeProviderValue(opts?.model); if (model) args.push("--model", model);
       const out = await run("aider", args, cwd, "", opts?.signal);
       return { text: out.trim() };
     } finally { mf.cleanup(); }
@@ -946,7 +1111,7 @@ export class AiderAdapter implements AgentAdapter {
     const mf = tempTextFile("jarvis_aider", text);
     try {
       const args = ["--message-file", mf.path, "--no-stream", "--no-pretty", "--no-auto-commits"]; if (fullAccess()) args.push("--yes-always");
-      const model = safeIdent(opts?.model); if (model) args.push("--model", model);
+      const model = safeProviderValue(opts?.model); if (model) args.push("--model", model);
       const out = await run("aider", args, ONESHOT_CWD, "");
       return { text: out.trim() };
     } finally { mf.cleanup(); }
@@ -956,10 +1121,19 @@ export class AiderAdapter implements AgentAdapter {
     return makeDescriptor({
       id: this.name, label: "Aider", command: "aider", version,
       support: version ? "limited" : "not_installed",
-      reason: version ? "sem stream estruturado, sessão isolada e usage verificados" : "CLI aider não encontrado",
-      capabilities: { ...LIMITED_CAPABILITIES }, caps: await this.capabilities(), source: "config",
+      reason: version ? "continuidade isolada pelo Jarvis; saída final sem lifecycle estruturado ou usage verificável" : "CLI aider não encontrado",
+      capabilities: finalToolCaps({ modelCatalog: "configured" }), caps: await this.capabilities(), source: "config",
     });
   }
+}
+
+export function aiderConfiguredModel(configText?: string): string | undefined {
+  const envModel = safeProviderValue(process.env.AIDER_MODEL);
+  if (envModel) return envModel;
+  try {
+    const text = configText ?? readFileSync(join(homedir(), ".aider.conf.yml"), "utf8");
+    return safeProviderValue(/^\s*model\s*:\s*["']?([^\s"'#]+)["']?\s*(?:#.*)?$/m.exec(text)?.[1]);
+  } catch { return undefined; }
 }
 
 // ---------------------------------------------------------------------------
@@ -994,13 +1168,14 @@ function makeDescriptor(opts: {
   const models: ModelDescriptor[] = opts.caps.models.map((m) => ({
     id: m.id,
     label: m.label || m.id,
-    source,
+    source: m.source || source,
     visibility: "public",
     contextTokens: m.context,
     efforts: [...m.efforts],
     defaultEffort: m.defaultEffort,
     effortsVerified: m.effortsVerified,
     contextVerified: m.contextVerified,
+    selectable: m.selectable ?? opts.capabilities.modelControl === "per_turn",
     modalities: opts.capabilities.attachments.includes("image") ? ["text", "image", "file"] : ["text", "file"],
     discoveredAt,
   }));

@@ -34,7 +34,7 @@ export interface TurnCtx {
   broadcast(sid: string, msg: unknown): void;
   pushSessions(): void;
   now(): number;
-  runAgentTurn(sid: string, agentName: string, agentText: string, cwd: string, opts: { model?: string; effort?: string }): Promise<TurnReply>;
+  runAgentTurn(sid: string, agentName: string, agentText: string, cwd: string, opts: { model?: string; effort?: string; turnId?: string }): Promise<TurnReply>;
   speak(sid: string, replyText: string, also?: string[]): Promise<void>;
   checkBudget?(sid: string): { blocked: boolean; message?: string };
   seen?(turnId: string): boolean;
@@ -73,7 +73,7 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
   ctx.broadcast(sid, { t: "message", message: { sessionId: sid, ...userMsg } });
   ctx.pushSessions();
   try {
-    const reply = await ctx.runAgentTurn(sid, session.agent, o.agentText ?? o.showText, session.cwd, { model: o.model, effort: o.effort });
+    const reply = await ctx.runAgentTurn(sid, session.agent, o.agentText ?? o.showText, session.cwd, { model: o.model, effort: o.effort, turnId: o.turnId });
     ctx.add(sid, {
       role: "assistant", text: reply.text, ts: ctx.now(), agent: agentName,
       activity: reply.activity, usage: reply.usage,

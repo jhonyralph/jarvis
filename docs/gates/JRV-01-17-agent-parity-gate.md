@@ -1,7 +1,7 @@
 # Gate — JRV-01…17 paridade de agentes
 
 Data: 2026-07-20  
-Decisão: **PASS condicional por adapter**
+Decisão: **PASS da infraestrutura e fixtures; certificação real continua bloqueada por CLI ausente**
 
 ## Critérios de merge
 
@@ -11,8 +11,8 @@ Decisão: **PASS condicional por adapter**
 | Matriz funcional/minuciosa | PASS — inventário, contrato, comportamento por IA/modelo e gaps residuais |
 | TypeScript | PASS — `npm run typecheck` exit 0 |
 | Web JS | PASS — `node --check apps/hub/web/app.js` exit 0 |
-| Testes | PASS — `npm test`: 151/151 |
-| E2E Hub↔Runner | PASS — envio, start, thinking, tool, text, done, usage e reabertura rica |
+| Testes | PASS — `npm test`: 155/155 |
+| E2E Hub↔Runner | PASS — `agent_event` accepted→started→thinking→tool→text→usage→completed e reabertura canônica |
 | Report de adapters | PASS — sem inferência; Claude complete, Codex limited, demais externos ausentes |
 | Diff hygiene | PASS — `git diff --check` sem erro (apenas aviso LF→CRLF do Git) |
 | Bash/PowerShell syntax | PASS — `bash -n` em 5 scripts; parser PowerShell em 6 scripts |
@@ -40,9 +40,9 @@ Decisão: **PASS condicional por adapter**
 ## Evidência executada
 
 - `npm run typecheck` — exit 0.
-- `npm run test:agents` — 40/40.
-- `npm run test:e2e` — 1/1, processos reais Hub/Runner e WebSocket.
-- `npm test` — 151/151.
+- fixtures/argv de Gemini, Cursor, Copilot, OpenCode, Cline, Qwen, Continue e Kiro — cobertas na suíte sem executar CLIs ausentes.
+- E2E — 1/1, processos reais Hub/Runner e WebSocket com lifecycle canônico.
+- `npm test` — 155/155.
 - `node --check apps/hub/web/app.js` — exit 0.
 - `npm run agents:report` — exit 0, sem prompt/inferência.
 - `bash -n scripts/install-hub.sh scripts/install-runner.sh scripts/jarvis-doctor.sh scripts/jarvis-setup.sh scripts/start-hub.sh` — exit 0.

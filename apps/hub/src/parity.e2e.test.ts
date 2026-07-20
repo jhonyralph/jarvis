@@ -85,21 +85,22 @@ test("remote Runner preserves the same progress, terminal and rich history lifec
 
     inbox.send({ t: "send", sessionId: sid, text: "paridade", msgId: "e2e-turn-1" });
     await inbox.take((m) => m.t === "message" && m.message?.sessionId === sid && m.message?.role === "user");
-    await inbox.take((m) => m.t === "stream" && m.sessionId === sid && m.ev?.kind === "start");
-    await inbox.take((m) => m.t === "stream" && m.sessionId === sid && m.ev?.kind === "thinking");
-    await inbox.take((m) => m.t === "stream" && m.sessionId === sid && m.ev?.kind === "tool" && m.ev?.name === "FixtureTool");
-    await inbox.take((m) => m.t === "stream" && m.sessionId === sid && m.ev?.kind === "text");
-    const done = await inbox.take((m) => m.t === "stream" && m.sessionId === sid && m.ev?.kind === "done");
-    assert.equal(done.usage.costKind, "tokens_only");
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "started");
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "thinking");
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "tool_started" && m.event?.tool?.name === "FixtureTool");
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "text_delta");
+    const usage = await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "usage");
+    assert.equal(usage.event.usage.costKind, "tokens_only");
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "completed");
 
     let history: any;
     for (let i = 0; i < 20; i++) {
       inbox.send({ t: "open", sessionId: sid }); history = await inbox.take((m) => m.t === "history" && m.sessionId === sid);
-      if (history.messages?.some((m: any) => m.role === "assistant" && m.activity?.length === 3)) break;
+      if (history.messages?.some((m: any) => m.role === "assistant" && m.activity?.some((e: any) => e.kind === "completed"))) break;
       await new Promise((r) => setTimeout(r, 50));
     }
     const assistant = history.messages.find((m: any) => m.role === "assistant");
-    assert.equal(assistant.activity.length, 3, "reload rebuilds the same thinking/tool/text trace");
+    assert.deepEqual(assistant.activity.map((e: any) => e.kind), ["accepted", "started", "thinking", "tool_started", "text_delta", "usage", "completed"], "reload preserves the complete canonical lifecycle in order");
     assert.equal(assistant.usage.costKind, "tokens_only");
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.stack : error}\n--- hub ---\n${hub.logs()}\n--- runner ---\n${runner?.logs() || "not started"}`);

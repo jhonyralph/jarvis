@@ -23,8 +23,8 @@ import {
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory,
-  buildTurnAttachments, imageDataUrl, runManagedTurn,
-  type AgentAdapter, type SendOpts, type TurnCtx,
+  buildTurnAttachments, imageDataUrl, runManagedTurn, createAgentEventBridge, createEventSequencer,
+  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent,
 } from "@jarvis/core";
 
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
@@ -79,7 +79,7 @@ let ws: WebSocket | null = null;
 const outbox = new Outbox<RunnerToHub>(3000);
 function send(m: RunnerToHub): void {
   if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(m)); return; }
-  if (m.t === "stream" || m.t === "message") outbox.push(m);
+  if (m.t === "agent_event" || m.t === "stream" || m.t === "message") outbox.push(m);
 }
 /** Replay turn output buffered during an outage. Called right after a reconnect's `welcome` (socket
  *  OPEN again), before the fresh session/caps push, so the resumed stream lands in order. */
@@ -176,6 +176,30 @@ function sessAgent(sid?: string): string | undefined { if (!sid) return undefine
 
 // Live turns on this machine, so a {t:cancel} from the Hub can kill the actual agent process.
 const runAborts = new Map<string, AbortController>();
+
+async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter, agentInput: string, cwd: string, opts: SendOpts, ctrl: AbortController): Promise<Awaited<ReturnType<AgentAdapter["send"]>> & { activity: AgentEvent[] }> {
+  const turnId = opts.turnId || randomUUID();
+  const sequencer = createEventSequencer(turnId);
+  const bridge = createAgentEventBridge(turnId, sequencer);
+  const activity: AgentEvent[] = [];
+  const emit = (event: AgentEvent): void => {
+    if (activity.length < 600) activity.push(event);
+    send({ t: "agent_event", sessionId, agent: selected.name, event });
+  };
+  emit(bridge.accepted()); emit(bridge.started());
+  try {
+    const prior = store.history(sessionId).slice(0, -1).filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
+    const reply = await selected.send(sessionId, agentInput, cwd, { ...opts, turnId, history: prior, signal: ctrl.signal }, (ev) => emit(bridge.provider(ev)));
+    if (reply.usage) emit(bridge.usage(reply.usage));
+    emit(bridge.completed(reply.text));
+    return { ...reply, activity };
+  } catch (e: any) {
+    if (ctrl.signal.aborted || String(e?.message) === ABORTED) { if (!sequencer.terminal) emit(bridge.cancelled()); }
+    else if (!sequencer.terminal) emit(bridge.failed(String(e?.message ?? e), "PROVIDER_ERROR"));
+    throw e;
+  }
+}
+
 async function doSend(
   sessionId: string,
   text: string,
@@ -210,16 +234,10 @@ async function doSend(
         previewImage: (name, bytes) => imageDataUrl(name, bytes),
       });
       send({ t: "message", sessionId, message: { role: "user", text: built.showText, ts: Date.now(), agent: agent.name, images: built.images, files: built.files } });
-      send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "start" } });
-      const activity: unknown[] = [];
       const bang = await expandBang(built.agentText, useCwd);
       const cmdExp = bang ? null : expandCommand(built.agentText, useCwd, cmdAgentOf(agent.name));
       const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : built.agentText);
-      const reply = await agent.send(sessionId, agentInput, useCwd, { ...opts, signal: ctrl.signal }, (ev) => {
-        if (activity.length < 600) activity.push(ev);
-        send({ t: "stream", sessionId, agent: streamAgent, ev });
-      });
-      send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "done", text: reply.text, usage: reply.usage } });
+      await executeRunnerAgentTurn(sessionId, agent, agentInput, useCwd, { ...opts, turnId }, ctrl);
     } else {
       const s = store.ensure(sessionId, agentName ? { agent: agentName, cwd: cwd || CWD } : undefined);
       agent = agents.get(s.agent); streamAgent = agent.name; useCwd = s.cwd || CWD;
@@ -241,34 +259,23 @@ async function doSend(
         speak: async () => {},
         runAgentTurn: async (sid, name, agentText, turnCwd, turnOpts) => {
           const selected = agents.get(name);
-          const activity: unknown[] = [];
-          send({ t: "stream", sessionId: sid, agent: selected.name, ev: { kind: "start" } });
           const bang = await expandBang(agentText, turnCwd);
           const cmdExp = bang ? null : expandCommand(agentText, turnCwd, cmdAgentOf(selected.name));
           const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
-          const reply = await selected.send(sid, agentInput, turnCwd, { ...turnOpts, signal: ctrl.signal }, (ev) => {
-            if (activity.length < 600) activity.push(ev);
-            send({ t: "stream", sessionId: sid, agent: selected.name, ev });
-          });
-          send({ t: "stream", sessionId: sid, agent: selected.name, ev: { kind: "done", text: reply.text, usage: reply.usage } });
-          return { ...reply, activity };
+          return executeRunnerAgentTurn(sid, selected, agentInput, turnCwd, turnOpts, ctrl);
         },
       };
       await runManagedTurn(ctx, sessionId, {
-        showText: built.showText, agentText: built.agentText, model: opts?.model, effort: opts?.effort,
+        showText: built.showText, agentText: built.agentText, model: opts?.model, effort: opts?.effort, turnId,
         images: built.images, files: built.files,
         onError: (message) => {
-          if (ctrl.signal.aborted || message === ABORTED) send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "cancelled" } });
-          else { send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "error", text: message } }); send({ t: "error", message }); }
+          if (!(ctrl.signal.aborted || message === ABORTED)) send({ t: "error", message });
         },
       });
     }
   } catch (e: any) {
     // User-initiated cancel: not an error — tell the UI it stopped and stay quiet otherwise.
-    if (ctrl.signal.aborted || String(e?.message) === ABORTED) {
-      send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "cancelled" } });
-    } else {
-      send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "error", text: String(e?.message ?? e) } });
+    if (!(ctrl.signal.aborted || String(e?.message) === ABORTED)) {
       send({ t: "error", message: String(e?.message ?? e) });
     }
   } finally {
