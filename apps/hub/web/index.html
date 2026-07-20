@@ -276,6 +276,36 @@
     .modal label > input:not([type=checkbox]):focus, .modal label > select:focus, #gate .gatebox input:focus { outline:none; border-color:var(--me); box-shadow:0 0 0 3px #2563eb33; }
     .modal label > input::placeholder, #gate .gatebox input::placeholder { color:#64748b; }
     .modal input[type=text] { background:var(--bg); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:11px 13px; font:inherit; }
+    /* Settings is a dense control surface: give it hierarchy, predictable controls and a mobile
+       sheet layout instead of one long stream of unrelated fields. */
+    #settings { padding:clamp(0px,2vw,20px); }
+    #settings .settings-card { width:min(680px,100%); padding:0 22px 18px; gap:12px; scrollbar-gutter:stable; }
+    #settings .settings-title { position:sticky; top:0; z-index:2; display:flex; align-items:center; min-height:58px; margin:0 -22px 2px; padding:0 22px; background:linear-gradient(var(--panel) 78%,transparent); font-size:19px; letter-spacing:-.2px; }
+    #settings .sec { border-top:1px solid var(--line); margin:10px 0 0; padding-top:18px; color:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.75px; }
+    #settings label { gap:7px; color:#aeb9c8; font-size:13px; }
+    #settings input:not([type=checkbox]), #settings select { width:100%; min-width:0; min-height:46px; box-sizing:border-box; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:10px; padding:10px 13px; font:inherit; font-size:14px; }
+    #settings select { appearance:none; -webkit-appearance:none; padding-right:34px; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2394a3b8' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>"); background-repeat:no-repeat; background-position:right 12px center; }
+    #settings input:not([type=checkbox]):focus, #settings select:focus { outline:none; border-color:#4f83ff; box-shadow:0 0 0 3px #2563eb30; }
+    #settings input::placeholder { color:#788494; opacity:1; }
+    #settings .settings-actions { position:sticky; bottom:-18px; z-index:2; margin:8px -22px -18px; padding:14px 22px calc(14px + env(safe-area-inset-bottom)); background:linear-gradient(transparent 0,var(--panel) 22%); }
+    #settings .settings-actions button { min-width:112px; min-height:44px; }
+    #routinesSection { background:#ffffff05; border:1px solid var(--line); border-radius:14px; padding:0 14px 14px; margin-top:4px; }
+    #routinesSection .sec { border-top:0; margin-top:0; }
+    .routine-builder { display:flex; flex-direction:column; gap:12px; }
+    .routine-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .routine-actions { display:grid; grid-template-columns:minmax(145px,.7fr) auto 1fr; gap:12px; align-items:end; }
+    .routine-actions > button { justify-self:end; min-height:46px; min-width:122px; }
+    .routine-toggle { min-height:46px; margin:0!important; align-self:end; }
+    @media (max-width:600px){
+      #settings { align-items:stretch; justify-content:stretch; padding:0; }
+      #settings .settings-card { width:100%; max-height:100dvh; height:100dvh; border:0; border-radius:0; padding:0 18px 18px; }
+      #settings .settings-title { min-height:62px; margin:0 -18px 2px; padding:0 18px; }
+      #settings .settings-actions { margin:8px -18px -18px; padding-left:18px; padding-right:18px; }
+      .routine-grid { grid-template-columns:1fr; }
+      .routine-actions { grid-template-columns:1fr auto; }
+      .routine-actions .routine-time { grid-column:1/-1; }
+      .routine-actions > button { width:100%; }
+    }
     .pop { max-height:70vh; overflow:auto; }
     button.danger { background:#dc2626; }
     /* recents: agent badge + native tag */
@@ -549,8 +579,8 @@
     <div class="row"><button id="searchGo">Buscar</button><button id="searchClose" class="ghost">Fechar</button></div>
   </div></div>
 
-  <div id="settings" class="modal hidden"><div class="card">
-    <b>Configurações</b>
+  <div id="settings" class="modal hidden"><div class="card settings-card">
+    <b class="settings-title">Configurações</b>
     <label style="margin-top:6px"><span data-i18n="language">Idioma</span> <select id="setLang"><option value="pt">Português</option><option value="en">English</option><option value="es">Español</option></select></label>
     <div class="sec" data-i18n="secUpdate">Atualização</div>
     <div id="updStatus" class="mut" style="font-size:12px">—</div>
@@ -593,16 +623,19 @@
     <div id="routinesSection" class="hidden">
       <div class="sec"><span data-i18n="secRoutines">Rotinas agendadas</span> <span class="soon">roda sozinho e te avisa</span></div>
       <div id="routinesList" class="mut" style="font-size:12px;margin:4px 0">—</div>
-      <div style="display:flex;flex-direction:column;gap:5px">
-        <input id="rtName" placeholder="Nome (ex.: Briefing da manhã)" autocomplete="off">
-        <input id="rtPrompt" placeholder="O que rodar (ex.: rode os testes e me resuma)" autocomplete="off">
-        <div class="row" style="gap:5px"><select id="rtRunner" title="Máquina"></select><select id="rtAgent" title="IA"></select><select id="rtModel" title="Modelo"></select></div>
-        <input id="rtCwd" placeholder="Pasta de trabalho (opcional)" autocomplete="off">
-        <div class="row" style="align-items:center;gap:8px">
-          <input id="rtTime" type="time" value="08:00" style="flex:none;width:auto">
-          <label class="row" style="margin:0;flex:none"><input type="checkbox" id="rtSpeak"> falar</label>
-          <span class="spacer"></span>
-          <button id="rtAdd" type="button">Adicionar</button>
+      <div class="routine-builder">
+        <label>Nome da rotina<input id="rtName" placeholder="Ex.: Briefing da manhã" autocomplete="off"></label>
+        <label>Instrução<input id="rtPrompt" placeholder="Ex.: rode os testes e me resuma" autocomplete="off"></label>
+        <div class="routine-grid">
+          <label>Máquina<select id="rtRunner"></select></label>
+          <label>IA<select id="rtAgent"></select></label>
+          <label>Modelo<select id="rtModel"></select></label>
+        </div>
+        <label>Pasta de trabalho <span class="mut">opcional</span><input id="rtCwd" placeholder="Ex.: C:\Workspace\projeto" autocomplete="off"></label>
+        <div class="routine-actions">
+          <label class="routine-time">Horário<input id="rtTime" type="time" value="08:00"></label>
+          <label class="row routine-toggle"><input type="checkbox" id="rtSpeak"> Falar resultado</label>
+          <button id="rtAdd" type="button">Adicionar rotina</button>
         </div>
       </div>
     </div>
@@ -615,7 +648,7 @@
     <label>IA <select id="setSumAgent"></select></label>
     <label>Modelo <select id="setSumModel"></select></label>
     <label>Esforço <select id="setSumEffort"></select></label>
-    <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="setCancel" class="ghost" type="button">Fechar</button><button id="setClose" type="button">Salvar</button></div>
+    <div class="row settings-actions" style="justify-content:flex-end"><button id="setCancel" class="ghost" type="button">Fechar</button><button id="setClose" type="button">Salvar</button></div>
   </div></div>
 
   <div id="secModal" class="modal hidden"><div class="card">
