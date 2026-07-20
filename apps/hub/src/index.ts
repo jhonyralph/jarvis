@@ -467,7 +467,7 @@ const runnerLabels: Record<string, string> = (() => { try { return JSON.parse(re
 for (const runnerId of Object.keys(runnerLabels)) if (runnerId !== "local") mirrorExecutionStore(runnerId);
 function saveRunnerLabels(): void { try { writeJsonAtomic(RUNNERS_FILE, runnerLabels, { pretty: true }); } catch { /* ignore */ } }
 interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastSeen: number; local: boolean; }
-interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; fromCommit?: string; lastAttemptAt?: number; lastError?: string; }
+interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; }
 const UPDATE_RETRY_MS = Math.max(30_000, Number(process.env.JARVIS_UPDATE_RETRY_SEC || 300) * 1000);
 const pendingRunnerUpdates: Record<string, PendingRunnerUpdate> = (() => {
   try {
@@ -478,7 +478,7 @@ const pendingRunnerUpdates: Record<string, PendingRunnerUpdate> = (() => {
       const value: any = candidate;
       if (!id || !value || typeof value.requestId !== "string" || typeof value.targetCommit !== "string") continue;
       const state: PendingRunnerUpdate["state"] = ["queued", "sent", "awaiting_restart", "blocked"].includes(value.state) ? value.state : "queued";
-      out[id] = { requestId: value.requestId, targetCommit: value.targetCommit, requestedAt: Number(value.requestedAt) || Date.now(), state,
+      out[id] = { requestId: value.requestId, targetCommit: value.targetCommit, requestedAt: Number(value.requestedAt) || Date.now(), state, force: value.force === true,
         fromCommit: typeof value.fromCommit === "string" ? value.fromCommit : undefined, lastAttemptAt: Number.isFinite(value.lastAttemptAt) ? Number(value.lastAttemptAt) : undefined, lastError: typeof value.lastError === "string" ? value.lastError : undefined };
     }
     return out;
@@ -629,10 +629,13 @@ if (OFFLINE_ALERT_MS > 0) setInterval(() => {
 function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList(w) }); } }
 function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.ws.readyState === WebSocket.OPEN) { rc.ws.send(JSON.stringify(obj)); return true; } return false; }
 
-function queueRunnerUpdate(runnerId: string, targetCommit: string): PendingRunnerUpdate {
+function queueRunnerUpdate(runnerId: string, targetCommit: string, opts?: { force?: boolean }): PendingRunnerUpdate {
   const existing = pendingRunnerUpdates[runnerId];
-  if (existing && commitMatches(existing.targetCommit, targetCommit) && existing.state !== "blocked") return existing;
-  const pending: PendingRunnerUpdate = { requestId: randomUUID(), targetCommit: targetCommit.replace("+dirty", ""), requestedAt: Date.now(), state: "queued" };
+  if (existing && commitMatches(existing.targetCommit, targetCommit) && existing.state !== "blocked") {
+    if (opts?.force && !existing.force) { existing.force = true; savePendingRunnerUpdates(); }
+    return existing;
+  }
+  const pending: PendingRunnerUpdate = { requestId: randomUUID(), targetCommit: targetCommit.replace("+dirty", ""), requestedAt: Date.now(), state: "queued", force: opts?.force === true };
   pendingRunnerUpdates[runnerId] = pending; savePendingRunnerUpdates(); return pending;
 }
 function updateMachineNotice(runnerId: string, payload: Record<string, unknown>): void {
@@ -645,7 +648,8 @@ function deliverPendingRunnerUpdate(rc: RunnerConn, opts?: { force?: boolean; al
   if (!pending || !rc.ws || rc.ws.readyState !== WebSocket.OPEN) return false;
   if (pending.state === "blocked" && !opts?.allowBlocked) return false;
   if (pending.lastAttemptAt && Date.now() - pending.lastAttemptAt < 30_000 && !opts?.retryNow) return false;
-  const sent = sendToRunner(rc, { t: "update", requestId: pending.requestId, targetCommit: pending.targetCommit, force: !!opts?.force });
+  if (opts?.force && !pending.force) { pending.force = true; savePendingRunnerUpdates(); }
+  const sent = sendToRunner(rc, { t: "update", requestId: pending.requestId, targetCommit: pending.targetCommit, force: !!(opts?.force || pending.force) });
   if (sent) { if (!pending.fromCommit && rc.info.commit) pending.fromCommit = rc.info.commit; pending.state = "sent"; pending.lastAttemptAt = Date.now(); pending.lastError = undefined; savePendingRunnerUpdates(); updateMachineNotice(rc.id, { state: "sent", queued: true, ok: false, log: "solicitação entregue; máquina drenando" }); }
   return sent;
 }
@@ -695,7 +699,7 @@ async function applyHubUpdate(force: boolean, allMachines: boolean): Promise<any
   const remoteIds = allMachines ? knownRemoteRunnerIds() : [];
   // Hub already healthy/current: runners can be repaired independently without bouncing the Hub.
   if (allMachines && preflight.behind === 0 && preflight.clean && (preflight.ahead || 0) === 0) {
-    for (const id of remoteIds) { queueRunnerUpdate(id, target); const rc = runners.get(id); if (rc) deliverPendingRunnerUpdate(rc); }
+    for (const id of remoteIds) { queueRunnerUpdate(id, target, { force: true }); const rc = runners.get(id); if (rc) deliverPendingRunnerUpdate(rc); }
     broadcastMachines();
     return { ok: true, behind: 0, restartRequired: false, log: remoteIds.length ? `Hub já está atualizado; ${remoteIds.length} máquina(s) enfileirada(s), inclusive as offline` : "Hub atualizado; nenhuma máquina remota cadastrada" };
   }
@@ -704,7 +708,7 @@ async function applyHubUpdate(force: boolean, allMachines: boolean): Promise<any
   const drainError = await drainHubForUpdate();
   if (drainError) { hubUpdateInProgress = false; return { ok: false, log: drainError }; }
   const created: Array<[string, string]> = [];
-  if (allMachines) for (const id of remoteIds) { const before = pendingRunnerUpdates[id]?.requestId; const p = queueRunnerUpdate(id, target); if (p.requestId !== before) created.push([id, p.requestId]); }
+  if (allMachines) for (const id of remoteIds) { const before = pendingRunnerUpdates[id]?.requestId; const p = queueRunnerUpdate(id, target, { force: true }); if (p.requestId !== before) created.push([id, p.requestId]); }
   if (allMachines) { broadcastMachines(); broadcastAll({ t: "update_progress", message: `Hub drenado; ${remoteIds.length} máquina(s) ficaram na fila persistente. Preparando o Hub…`, queued: remoteIds.map((id) => runnerLabels[id] || id) }); }
   const result = await updateApply(UPDATE_ROOT, { force, targetCommit: target });
   if (!result.ok) {
@@ -720,7 +724,7 @@ async function queueAllRemoteRunnerUpdates(): Promise<{ ok: boolean; queued: num
   if (!status.supported || status.error) return { ok: false, queued: 0, delivered: 0, error: status.error || "auto-update não suportado" };
   const target = (status.latest?.sha || status.current || hubCommit).replace("+dirty", "");
   let delivered = 0; const ids = knownRemoteRunnerIds();
-  for (const id of ids) { queueRunnerUpdate(id, target); const rc = runners.get(id); if (rc && deliverPendingRunnerUpdate(rc)) delivered++; }
+  for (const id of ids) { queueRunnerUpdate(id, target, { force: true }); const rc = runners.get(id); if (rc && deliverPendingRunnerUpdate(rc)) delivered++; }
   broadcastMachines(); return { ok: true, queued: ids.length, delivered, target };
 }
 // Lost update_done and transient Git/network failures must self-heal even when the runner's WebSocket
@@ -3088,7 +3092,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (force && (!rc.ws || rc.ws.readyState !== WebSocket.OPEN)) { send(ws, { t: "update_machine", runnerId: msg.runnerId, label, ok: false, dirty: false, log: "force não é guardado para execução futura: aguarde a máquina ficar online e confirme novamente" }); return; }
         auth.audit("update_apply", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: rc.id, detail: `${label}${force ? " (forçado — descarta local)" : ""}` });
         const latest = await updateCheck(UPDATE_ROOT, true), target = (latest.latest?.sha || latest.current || hubCommit).replace("+dirty", "");
-        queueRunnerUpdate(rc.id, target);
+        queueRunnerUpdate(rc.id, target, { force });
         if (deliverPendingRunnerUpdate(rc, { force, allowBlocked: force, retryNow: true })) send(ws, { t: "update_machine", runnerId: rc.id, label, ok: false, state: "sent", queued: true, log: "solicitação entregue; máquina drenando" });
         else { const online = !!rc.ws && rc.ws.readyState === WebSocket.OPEN, state = online ? (pendingRunnerUpdates[rc.id]?.state || "sent") : "queued"; send(ws, { t: "update_machine", runnerId: rc.id, label, ok: false, state, queued: true, log: online ? "atualização já está em andamento" : "máquina offline — atualização guardada para a próxima conexão" }); }
         return;

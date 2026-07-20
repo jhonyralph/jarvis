@@ -45,11 +45,25 @@ async function npmStep(root: string, args: string): Promise<string> {
   return String(stdout).trim().split(/\r?\n/).slice(-1)[0] || "done";
 }
 
+async function verifyStep(root: string): Promise<string> {
+  return npmStep(root, "run update:verify --if-present");
+}
+
 async function installAndVerify(root: string): Promise<string> {
   const install = existsSync(join(root, "package-lock.json")) ? "ci" : "install";
   const installed = await npmStep(root, install);
-  const verified = await npmStep(root, "run update:verify --if-present");
+  const verified = await verifyStep(root);
   return `npm ${install}: ok (${installed})\nverificação: ok (${verified})`;
+}
+
+async function verifyOrRepair(root: string): Promise<string> {
+  try {
+    const verified = await verifyStep(root);
+    return `verificação: ok (${verified})`;
+  } catch (e: any) {
+    const reason = String(e?.stderr ?? e?.message ?? e).slice(0, 240).replace(/\s+/g, " ").trim();
+    return `verificação inicial falhou; reparando dependências${reason ? ` (${reason})` : ""}\n` + await installAndVerify(root);
+  }
 }
 
 async function git(root: string, args: string[], timeoutMs = 20000): Promise<string> {
@@ -185,6 +199,8 @@ export async function updateApply(root: string, opts?: { force?: boolean; target
         // work and is reachable only from the owner's explicit, per-machine force confirmation.
         log += "descartando alterações locais/divergentes (git reset --hard " + desiredFull.slice(0, 12) + "):\n";
         log += (await git(root, ["reset", "--hard", desiredFull], 30000)) + "\n";
+        log += "descartando arquivos locais não rastreados (git clean -fd):\n";
+        log += (await git(root, ["clean", "-fd"], 30000) || "ok") + "\n";
         moved = previous !== desiredFull;
       } else if (behindTarget > 0) {
         // Merge the durable deployment target, not today's origin tip. A runner may reconnect after
@@ -192,9 +208,9 @@ export async function updateApply(root: string, opts?: { force?: boolean; target
         log += "git fast-forward para o alvo solicitado:\n" + (await git(root, ["merge", "--ff-only", desiredFull], 60000)) + "\n";
         moved = true;
       } else {
-        log += "git: código já aponta para o alvo solicitado; reparando dependências e validando\n";
+        log += "git: código já aponta para o alvo solicitado; validando antes de reparar dependências\n";
       }
-      log += await installAndVerify(root);
+      log += moved ? await installAndVerify(root) : await verifyOrRepair(root);
       const current = await git(root, ["rev-parse", "--short", "HEAD"]);
       return { ok: true, log, prev: previous, behind: behindTarget, changed: moved, restartRequired: true, current };
     } catch (e: any) {

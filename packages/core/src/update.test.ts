@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runnerSelfUpdateDecision, updateApply, updateCheck, updateRollback } from "./update.js";
@@ -75,11 +75,18 @@ test("git updater is repeatable, transactional and detects dirty/divergent check
 
     writeFileSync(join(checkout, "dirty.txt"), "not committed");
     const dirty = await updateApply(checkout); assert.equal(dirty.ok, false); assert.equal(dirty.dirty, true);
-    rmSync(join(checkout, "dirty.txt"));
+    const forcedDirty = await updateApply(checkout, { force: true, targetCommit: v4 });
+    assert.equal(forcedDirty.ok, true, forcedDirty.log);
+    assert.equal(existsSync(join(checkout, "dirty.txt")), false, "force discards untracked local files on disposable runners");
+    assert.equal(git(checkout, "status", "--porcelain"), "", "forced repair leaves the checkout clean");
 
     writeFileSync(join(checkout, "local.txt"), "local commit"); git(checkout, "add", "."); git(checkout, "commit", "-m", "local only");
     const status = await updateCheck(checkout, true); assert.equal(status.ahead, 1); assert.equal(status.behind, 0);
     const divergent = await updateApply(checkout); assert.equal(divergent.ok, false); assert.equal(divergent.dirty, true); assert.match(divergent.log, /commit\(s\) fora do alvo/);
+    const forcedDivergent = await updateApply(checkout, { force: true, targetCommit: v4 });
+    assert.equal(forcedDivergent.ok, true, forcedDivergent.log);
+    assert.equal(git(checkout, "rev-parse", "HEAD"), v4, "force resets divergent local commits to the deployment target");
+    assert.equal(existsSync(join(checkout, "local.txt")), false, "force discards files introduced only by local commits");
   } finally {
     if (priorHome === undefined) delete process.env.JARVIS_HOME; else process.env.JARVIS_HOME = priorHome;
     rmSync(base, { recursive: true, force: true });

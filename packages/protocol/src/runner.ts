@@ -207,7 +207,8 @@ export type HubToRunner =
   | { t: "stop"; sessionId: string }
   | { t: "cancel"; sessionId: string } // abort a live turn (user hit "parar")
   /** `requestId` correlates a durable Hub deployment; old runners may ignore the extra fields.
-   *  force discards local changes and is intentionally never persisted for offline execution. */
+   *  force discards local changes on disposable child machines and may be persisted by the Hub
+   *  for offline fleet updates. The Hub's own checkout remains conservative unless forced there. */
   | { t: "update"; requestId?: string; targetCommit?: string; force?: boolean }
   | { t: "ping" }
   | ExecutionHubToRunner;
