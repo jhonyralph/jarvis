@@ -1448,22 +1448,22 @@
       stopping[currentSession]=true; refreshComposer(); updateStopStatus(); };
     // ---------- composer triggers: "/" commands+skills+mcp · "@" files · "#" memory ----------
     let cmdList=[], cmdListFor=null, cmdReqPending=false;   // "/" catalog (per machine)
-    let fileList=[], mentionT=null, fileAt=null;            // "@" last results + debounce + insert range
+    let fileList=[], mentionT=null, fileAt=null, slashAt=null;   // "@" results/debounce/range + "/" range
     let trigMode=null, trigItems=[], trigIdx=-1;            // shared trigger-popover state (distinct from the E.pop popover)
     const slashOn=()=> cfg.slashMenu!==false;               // default ON; the toggle governs ALL trigger popovers
     function requestCommands(){ if(slashOn() && !cmdReqPending){ cmdReqPending=true; tx({t:'commands'}); } }
     function cmdAgentSel(){ const a=currentAgent||''; return a==='claude-code'?'claude':a==='codex'?'codex':null; }
     function trigOpen(){ return !E.cmdPop.classList.contains('hidden'); }
     function closeTrig(){ if(trigOpen()){ E.cmdPop.classList.add('hidden'); E.cmdPop.innerHTML=''; } trigMode=null; trigItems=[]; trigIdx=-1; }
-    // "/word" = the whole (trimmed) input; "@frag" = a path fragment right before the cursor.
-    function slashTok(){ const m=/^\s*\/([\w:.\-]*)$/.exec(E.input.value); return m?m[1]:null; }
+    // "/word" at the START OF ANY LINE (up to the cursor); "@frag" = a path fragment before the cursor.
+    function slashTok(){ const p=E.input.selectionStart||0; const m=/(?:^|\n)[ \t]*\/([\w:.\-]*)$/.exec(E.input.value.slice(0,p)); return m?{tok:m[1],start:p-m[1].length-1,end:p}:null; }
     function atTok(){ const p=E.input.selectionStart||0; const m=/(?:^|\s)@([\w./\-]*)$/.exec(E.input.value.slice(0,p)); return m?{tok:m[1],start:p-m[1].length-1,end:p}:null; }
     function filterCmds(tok){ const q=(tok||'').toLowerCase(); const ag=cmdAgentSel();
       let arr=ag?cmdList.filter(c=>c.agent===ag):[];
       arr=arr.filter(c=> !q || c.name.toLowerCase().includes(q) || (c.description||'').toLowerCase().includes(q));
       arr.sort((a,b)=>{ const ap=a.name.toLowerCase().startsWith(q)?0:1, bp=b.name.toLowerCase().startsWith(q)?0:1; return ap-bp || a.name.localeCompare(b.name); });
       return arr.slice(0,50); }
-    const kindBadge=(k)=> k==='skill'?'skill':k==='mcp'?'mcp':'cmd';
+    const kindBadge=(k)=> k==='skill'?'skill':k==='mcp'?'mcp':k==='builtin'?'built-in':'cmd';
     function renderTrig(){
       if(!trigItems.length){ E.cmdPop.innerHTML='<div class="cmdempty">'+(trigMode==='file'?'Nenhum arquivo.':'Nenhum comando/skill.')+'</div>'; E.cmdPop.classList.remove('hidden'); return; }
       const rows=trigItems.map((it,i)=> trigMode==='file'
@@ -1483,13 +1483,15 @@
       renderTrig(); }
     function updateTrig(){
       if(!slashOn()){ closeTrig(); return; }
-      const st=slashTok(); if(st!==null){ trigMode='cmd'; openCmd(st); return; }
+      const st=slashTok(); if(st){ trigMode='cmd'; slashAt=st; openCmd(st.tok); return; }
       const at=atTok(); if(at){ trigMode='file'; fileAt=at; openMention(at.tok); return; }
       closeTrig(); }
     function moveTrig(d){ if(!trigItems.length)return; trigIdx=(trigIdx+d+trigItems.length)%trigItems.length; renderTrig(); }
     function selectTrig(i){ const it=trigItems[i]; if(it==null)return;
       if(trigMode==='file'){ const at=fileAt||atTok(); if(!at){ closeTrig(); return; } const v=E.input.value; E.input.value=v.slice(0,at.start)+it+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} return; }
-      E.input.value='/'+it.name+' '; closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} }
+      // cmd mode: replace just the "/tok" on its line with "/name " (keeps preceding lines/text intact)
+      const at=slashAt||atTok()||{start:0,end:E.input.value.length}; const v=E.input.value;
+      E.input.value=v.slice(0,at.start)+'/'+it.name+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} }
 
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; updateTrig(); };
     E.input.onkeydown=(e)=>{

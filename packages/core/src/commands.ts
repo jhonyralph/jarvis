@@ -24,9 +24,9 @@ export interface SlashCommand {
   name: string;              // "flow:discovery" (Claude), "flow-discovery" (Codex), or a skill name
   description: string;
   argHint?: string;
-  kind: "skill" | "command" | "mcp";
+  kind: "skill" | "command" | "mcp" | "builtin";
   agent: CmdAgent;
-  source: "user" | "project";
+  source: "user" | "project" | "builtin";
   /** File to read for expansion — internal; stripped by listCommandsPublic before it reaches a client. */
   path: string;
 }
@@ -114,9 +114,37 @@ function scanMcp(cwd: string | undefined, out: SlashCommand[]): void {
   if (cwd) { try { const j = JSON.parse(readFileSync(join(cwd, ".mcp.json"), "utf8")); add(j.mcpServers || j, "project", ".mcp.json"); } catch { /* none */ } }
 }
 
-// Lower = higher priority. Claude beats Codex on a name clash; a project entry beats a user one.
-const prio = (c: SlashCommand): number => (c.agent === "claude" ? 0 : 10) + (c.source === "project" ? 0 : 1);
+// Claude Code's BUILT-IN slash-commands are baked into the binary (not files) and aren't enumerable,
+// so this is a small CURATED set of the useful headless ones. They PASS THROUGH unexpanded — inside
+// `claude -p`, "/name" resolves as a built-in skill (verified via `claude --help`: "Skills still
+// resolve via /skill-name"). Curated on purpose; may drift with Claude Code versions.
+const BUILTIN_CLAUDE: Array<{ name: string; description: string }> = [
+  { name: "code-review", description: "Revisar o diff atual (correção + limpeza)" },
+  { name: "review", description: "Revisar um pull request do GitHub" },
+  { name: "security-review", description: "Revisão de segurança das mudanças pendentes" },
+  { name: "init", description: "Gerar/atualizar o CLAUDE.md do projeto" },
+];
+function scanBuiltins(out: SlashCommand[]): void {
+  for (const b of BUILTIN_CLAUDE) out.push({ name: b.name, description: b.description, kind: "builtin", agent: "claude", source: "builtin", path: "" });
+}
+
+// Lower = higher priority. Claude beats Codex on a name clash; project > user > builtin within an agent.
+const prio = (c: SlashCommand): number => (c.agent === "claude" ? 0 : 10) + (c.source === "project" ? 0 : c.source === "user" ? 1 : 2);
 const leafOf = (name: string): string => name.split(":").pop() || name;
+function findCmd(all: SlashCommand[], typed: string): SlashCommand | undefined {
+  return all.find((c) => c.name === typed) || all.find((c) => leafOf(c.name) === leafOf(typed));
+}
+/** The prompt a matched command/skill/mcp expands to. null = pass the raw "/name" through unchanged
+ *  (built-ins — Claude resolves them itself; or an unreadable command file). */
+function expandOne(cmd: SlashCommand, args: string): string | null {
+  if (cmd.kind === "builtin") return null;
+  if (cmd.kind === "skill") return `Use the "${cmd.name}" skill.` + (args ? ` Context: ${args}` : "");
+  if (cmd.kind === "mcp") return `Use the "${cmd.name}" MCP server's tools.` + (args ? ` ${args}` : "");
+  let body = "";
+  try { body = splitFrontmatter(readFileSync(cmd.path, "utf8")).body; } catch { return null; }
+  return body.replace(/\$ARGUMENTS\b/g, args).replace(/\$\{ARGUMENTS\}/g, args).replace(/\$@/g, args).replace(/\$1\b/g, args).trim()
+    || (`/${cmd.name}` + (args ? ` ${args}` : ""));
+}
 
 /** Map an ADAPTER name (as stored on a session: "claude-code" | "codex" | "aider" | "mock") to the
  *  command-owning agent, or null for adapters with no command system. Used to show/expand only the
@@ -144,6 +172,7 @@ export function listCommands(cwd?: string): SlashCommand[] {
   scanSkills(join(xh, "skills"), "codex", "user", out);
   scanCommands(join(xh, "prompts"), "codex", "user", out);   // Codex prompts are the equivalent of slash-commands
   scanMcp(cwd, out);
+  scanBuiltins(out);
   if (cwd) { scanSkills(join(cwd, ".claude", "skills"), "claude", "project", out); scanCommands(join(cwd, ".claude", "commands"), "claude", "project", out); }
   out.sort((a, b) => prio(a) - prio(b) || a.name.localeCompare(b.name));
   const byName = new Map<string, SlashCommand>();
@@ -163,21 +192,22 @@ export function listCommandsPublic(cwd?: string): Array<Omit<SlashCommand, "path
  *  given, ONLY that agent's entries are considered (a Codex turn never runs a Claude command); pass
  *  the session's adapter name via cmdAgentOf. null when it isn't one — the caller sends `text` as-is. */
 export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | null): { name: string; expanded: string } | null {
-  const m = /^\/([A-Za-z0-9:_.-]+)(?:[ \t]+([\s\S]*))?$/.exec((text || "").trim());
-  if (!m) return null;
-  const typed = m[1], args = (m[2] || "").trim();
-  let all = listCommands(cwd);   // priority-sorted-then-alpha; find() returns the preferred on ties
+  if (agent === null) return null;   // adapter with no command system → nothing to expand
+  let all = listCommands(cwd);       // priority-sorted-then-alpha; find() returns the preferred on ties
   if (agent) all = all.filter((c) => c.agent === agent);
-  else if (agent === null) return null;   // adapter with no command system → nothing to expand
-  const cmd = all.find((c) => c.name === typed) || all.find((c) => leafOf(c.name) === leafOf(typed));
-  if (!cmd) return null;
-  if (cmd.kind === "skill") return { name: cmd.name, expanded: `Use the "${cmd.name}" skill.` + (args ? ` Context: ${args}` : "") };
-  if (cmd.kind === "mcp") return { name: cmd.name, expanded: `Use the "${cmd.name}" MCP server's tools.` + (args ? ` ${args}` : "") };
-  let body = "";
-  try { body = splitFrontmatter(readFileSync(cmd.path, "utf8")).body; } catch { return null; }
-  const expanded = body
-    .replace(/\$ARGUMENTS\b/g, args).replace(/\$\{ARGUMENTS\}/g, args)
-    .replace(/\$@/g, args).replace(/\$1\b/g, args)
-    .trim();
-  return { name: cmd.name, expanded: expanded || (`/${cmd.name}` + (args ? ` ${args}` : "")) };
+  // A "/command" may sit on ANY line (start of the message, or its own line mid-message). Expand the
+  // first such line whose command has a prompt; the rest of the message is kept as context. Built-ins
+  // (expandOne → null) are left raw so `claude -p` resolves "/name" itself.
+  const lines = (text || "").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*\/([A-Za-z0-9:_.-]+)(?:[ \t]+(.*))?$/.exec(lines[i]);
+    if (!m) continue;
+    const cmd = findCmd(all, m[1]);
+    if (!cmd) continue;
+    const exp = expandOne(cmd, (m[2] || "").trim());
+    if (exp == null) continue;   // built-in / unreadable → leave the line raw, keep scanning
+    const out = [...lines]; out[i] = exp;
+    return { name: cmd.name, expanded: out.join("\n").trim() };
+  }
+  return null;
 }

@@ -121,6 +121,21 @@ test("MCP servers from ~/.claude.json are listed (kind:mcp, Claude) and expand t
   assert.equal(expandCommand("/my-mcp", undefined, "codex"), null, "not offered under Codex");
 });
 
+test("Claude built-in commands are listed and pass through unexpanded", () => {
+  const cr = listCommands().find((c) => c.name === "code-review");
+  assert.ok(cr, "code-review listed");
+  assert.equal(cr!.kind, "builtin");
+  assert.equal(cr!.agent, "claude");
+  assert.equal(expandCommand("/code-review", undefined, "claude"), null, "built-in passes through raw (Claude resolves it)");
+});
+
+test("expandCommand finds a /command on any line and keeps the rest as context", () => {
+  const r = expandCommand("contexto antes\n/flow:discovery meu epico", undefined, "claude");
+  assert.ok(r, "command on a later line is expanded");
+  assert.match(r!.expanded, /Run discovery for: meu epico/);
+  assert.match(r!.expanded, /contexto antes/, "preceding lines are preserved");
+});
+
 test("expandCommand returns null for non-commands and unknown names", () => {
   assert.equal(expandCommand("just a normal message"), null);
   assert.equal(expandCommand("/nope-not-real args"), null);
