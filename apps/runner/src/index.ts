@@ -64,6 +64,15 @@ function readUpdateResult(): RunnerInfo["updateResult"] | undefined {
 function clearUpdateResult(): void {
   try { unlinkSync(UPDATE_RESULT_FILE); } catch { /* ignore */ }
 }
+function cleanupRunnerUpdateScripts(): void {
+  try {
+    const files = readdirSync(JDIR)
+      .filter((name) => /^runner-update-\d+\.ps1$/.test(name))
+      .map((name) => ({ name, path: join(JDIR, name), mtime: statSync(join(JDIR, name)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const file of files) try { unlinkSync(file.path); } catch { /* ignore locked/stale */ }
+  } catch { /* ignore */ }
+}
 const EXECUTIONS_ENABLED = process.env.JARVIS_EXECUTIONS !== "0";
 const EXECUTION_RETENTION_DAYS = Math.max(1, Math.min(3650, Number(process.env.JARVIS_EXECUTION_RETENTION_DAYS || 30)));
 const EXECUTION_MAX_EVENTS = Math.max(100, Math.min(100_000, Number(process.env.JARVIS_EXECUTION_MAX_EVENTS || 5_000)));
@@ -219,6 +228,12 @@ function Verify-Or-Repair([bool]$DepsChanged) {
   Npm @("run", "update:verify", "--if-present")
 }
 function Write-Result([bool]$Ok, [bool]$RolledBack, [string]$Current) {
+  $lines = @($Log.ToArray())
+  if ($lines.Count -gt 240) {
+    $head = @($lines | Select-Object -First 80)
+    $tail = @($lines | Select-Object -Last 160)
+    $lines = @($head + ("... log truncado: " + $lines.Count + " linhas; mantendo início e fim ...") + $tail)
+  }
   $obj = [ordered]@{
     requestId = $RequestId
     ok = $Ok
@@ -227,7 +242,7 @@ function Write-Result([bool]$Ok, [bool]$RolledBack, [string]$Current) {
     targetCommit = $Target
     restartRequired = $true
     preparedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    log = ($Log -join "\`n")
+    log = ($lines -join "\`n")
   }
   $dir = Split-Path -Parent $ResultFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -274,7 +289,6 @@ try {
   $current = Git-Out @("rev-parse", "--short", "HEAD")
   $receipt = [ordered]@{ requestId = $RequestId; targetCommit = $Target; current = $current; preparedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
   $receipt | ConvertTo-Json -Depth 5 | Set-Content -Path $ReceiptFile -Encoding UTF8
-  Write-Result $true $false $current
 } catch {
   Add-Log ("ERRO na preparação: " + $_)
   if ($previous) {
@@ -294,6 +308,7 @@ try {
   Write-Result $false $rolledBack $current
 } finally {
   Start-Runner
+  try { if ($PSCommandPath) { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } } catch {}
 }
 `;
 }
@@ -303,6 +318,7 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
   const requestId = typeof m.requestId === "string" && m.requestId ? m.requestId : `update:${Date.now()}`;
   const targetCommit = typeof m.targetCommit === "string" && m.targetCommit ? m.targetCommit.replace("+dirty", "") : (await repoCommit(RUNNER_ROOT)).replace("+dirty", "");
   const scriptPath = join(JDIR, `runner-update-${Date.now()}.ps1`);
+  cleanupRunnerUpdateScripts();
   writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, pid: process.pid, force: !!m.force }), "utf8");
   spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   console.log("[runner] update entregue ao script externo; encerrando processo para liberar node_modules");
