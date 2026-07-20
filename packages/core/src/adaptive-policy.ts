@@ -1,4 +1,5 @@
 import { readJson, writeJsonAtomic } from "./persist.js";
+import type { ManagedExecutionPolicyInput } from "./execution-policy.js";
 
 export type PolicyScope = "global" | "project" | "subscope" | "session" | "task";
 export type MemoryWriteTarget = "jarvis_only" | "repo_allowed" | "repo_required" | "disabled";
@@ -83,6 +84,8 @@ export interface AdaptiveRunDecision {
   action: AdaptiveRunAction;
   reason: string;
 }
+
+export type AdaptiveManagedUnknownEstimatePolicy = "allow" | "reject";
 
 const SCOPES = new Set<PolicyScope>(["global", "project", "subscope", "session", "task"]);
 const WRITE_TARGETS = new Set<MemoryWriteTarget>(["jarvis_only", "repo_allowed", "repo_required", "disabled"]);
@@ -248,6 +251,15 @@ function minDefined(a: number | undefined, b: number | undefined): number | unde
   return Math.min(a, b);
 }
 
+function stricterManagedUnknown(
+  a: AdaptiveManagedUnknownEstimatePolicy | undefined,
+  b: AdaptiveManagedUnknownEstimatePolicy | undefined,
+): AdaptiveManagedUnknownEstimatePolicy | undefined {
+  if (a === "reject" || b === "reject") return "reject";
+  if (a === "allow" || b === "allow") return "allow";
+  return undefined;
+}
+
 function mergeRestrictive(base: AdaptivePolicy, next: AdaptivePolicy): AdaptivePolicy {
   return {
     ...base,
@@ -367,6 +379,28 @@ export function decideAdaptiveRun(policy: AdaptivePolicy, request: AdaptiveRunRe
     return { action: "ask", reason: "risk_requires_approval" };
   }
   return { action: "allow", reason: "policy_allows" };
+}
+
+export function managedUnknownEstimateFromAdaptive(policy: AdaptivePolicy): AdaptiveManagedUnknownEstimatePolicy {
+  return policy.budget.unknownEstimate === "allow" ? "allow" : "reject";
+}
+
+export function mergeAdaptiveManagedPolicy(
+  input: ManagedExecutionPolicyInput | undefined,
+  adaptive: AdaptivePolicy,
+): ManagedExecutionPolicyInput {
+  const adaptiveUnknown = managedUnknownEstimateFromAdaptive(adaptive);
+  const maxCostUsd = minDefined(input?.budget?.maxCostUsd, adaptive.budget.maxCostUsd);
+  const maxTokens = minDefined(input?.budget?.maxTokens, adaptive.budget.maxTokens);
+  return {
+    ...input,
+    budget: {
+      ...input?.budget,
+      ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+      ...(maxTokens === undefined ? {} : { maxTokens }),
+      unknownEstimate: stricterManagedUnknown(input?.budget?.unknownEstimate, adaptiveUnknown),
+    },
+  };
 }
 
 export function loadAdaptivePolicyDocument(file: string, now = Date.now()): AdaptivePolicyDocument {

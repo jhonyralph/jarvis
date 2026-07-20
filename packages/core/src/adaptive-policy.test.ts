@@ -9,6 +9,7 @@ import {
   decideAdaptiveRun,
   decideMemoryWrite,
   loadAdaptivePolicyDocument,
+  mergeAdaptiveManagedPolicy,
   normalizeAdaptivePolicyDocument,
   resolveAdaptivePolicy,
   saveAdaptivePolicyDocument,
@@ -95,4 +96,25 @@ test("adaptive run decision gates risk, unknown estimates, budgets and autonomy"
   assert.deepEqual(decideAdaptiveRun(policy({ budget: { maxCostUsd: 1, unknownEstimate: "allow" } as any }), { estimatedCostUsd: 2 }), { action: "reject", reason: "cost_budget_exceeded" });
   assert.deepEqual(decideAdaptiveRun(policy({ autonomy: { allowQueueAutoplay: false } as any }), { queueAutoplay: true }), { action: "reject", reason: "queue_autoplay_disabled" });
   assert.deepEqual(decideAdaptiveRun(policy({ autonomy: { allowBackgroundTurns: false } as any }), { background: true }), { action: "reject", reason: "background_turns_disabled" });
+});
+
+test("adaptive managed policy merge keeps the strictest budget", () => {
+  const adaptive = policy({ budget: { maxCostUsd: 2, maxTokens: 1000, unknownEstimate: "ask" } });
+  assert.deepEqual(mergeAdaptiveManagedPolicy(undefined, adaptive), {
+    budget: { maxCostUsd: 2, maxTokens: 1000, unknownEstimate: "reject" },
+  });
+
+  assert.deepEqual(mergeAdaptiveManagedPolicy({
+    maxConcurrency: 4,
+    budget: { maxCostUsd: 1, maxTokens: 2000, unknownEstimate: "allow" },
+  }, adaptive), {
+    maxConcurrency: 4,
+    budget: { maxCostUsd: 1, maxTokens: 1000, unknownEstimate: "reject" },
+  });
+
+  assert.deepEqual(mergeAdaptiveManagedPolicy({
+    budget: { maxCostUsd: 4, deadlineAt: 123, unknownEstimate: "reject" },
+  }, policy({ budget: { unknownEstimate: "allow" } as any })), {
+    budget: { maxCostUsd: 4, deadlineAt: 123, unknownEstimate: "reject" },
+  });
 });
