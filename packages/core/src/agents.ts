@@ -268,13 +268,13 @@ export class AgentRegistry {
     return this.byName.get("claude-code") || this.get();
   }
   /** Backward-compatible UI catalog enriched with the canonical descriptor. */
-  async describe(): Promise<Array<{ name: string } & AgentCaps & Partial<Pick<AgentDescriptor, "label" | "support" | "reason" | "cli" | "capabilities" | "discoveredAt">>>> {
+  async describe(): Promise<Array<{ name: string; modelControl?: AgentCapabilities["modelControl"] } & AgentCaps & Partial<Pick<AgentDescriptor, "label" | "support" | "reason" | "cli" | "capabilities" | "discoveredAt">>>> {
     return Promise.all([...this.byName.values()].map(async (a) => {
       const caps = await a.capabilities();
       if (!a.descriptor) return { name: a.name, ...caps, support: "limited" as const, reason: "adapter sem descriptor canônico" };
       const d = await a.descriptor();
       const problems = descriptorProblems(d);
-      return { name: a.name, ...caps, label: d.label, support: problems.length ? "limited" as const : d.support, reason: problems.length ? `descriptor inválido: ${problems.join("; ")}` : d.reason, cli: d.cli, capabilities: d.capabilities, discoveredAt: d.discoveredAt };
+      return { name: a.name, ...caps, modelControl: d.capabilities.modelControl, label: d.label, support: problems.length ? "limited" as const : d.support, reason: problems.length ? `descriptor inválido: ${problems.join("; ")}` : d.reason, cli: d.cli, capabilities: d.capabilities, discoveredAt: d.discoveredAt };
     }));
   }
   setDefault(name: string): void {

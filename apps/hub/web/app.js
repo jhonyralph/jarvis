@@ -573,6 +573,7 @@
     const routineCapsFor=n=>routineCaps().find(c=>c.name===n)||{models:[],defaultModel:null,autoModel:false};
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
     const selectableModels=c=>(c.models||[]).filter(m=>m.selectable!==false);
+    const modelControlOf=c=>c.modelControl||(c.capabilities&&c.capabilities.modelControl)||((c.models||[]).some(m=>m.selectable!==false)?'per_turn':'none');
     const modelObj=(agent,id)=>{ if(!id)return null; const ms=capsFor(agent).models||[]; return ms.find(m=>m.id===id)||null; };
     function fillEfforts(effSel,agent,modelId,val){ const m=modelObj(agent,modelId); const efs=(m&&m.efforts)||[]; fillSel(effSel,efs, (efs.includes(val)&&val)||(m&&m.defaultEffort)||efs[0]); }
     // footer pill state: model/effort vary per-message; agent/folder lock once the session starts
@@ -595,7 +596,7 @@
       // Prioridade do modelo: escolha explícita do usuário nesta sessão > o que a sessão realmente usa
       // (nativa) > default global salvo > default do agente. Assim uma sessão da máquina abre já com o
       // modelo/esforço dela, mas se você trocar pelo seletor a SUA escolha manda dali em diante.
-      const perTurn=c.modelControl==='per_turn', models=selectableModels(c);
+      const perTurn=modelControlOf(c)==='per_turn', models=selectableModels(c);
       const okM=id=>id&&models.some(m=>m.id===id);
       const inheritedModel=okM(pref.model)?pref.model:(okM(sessDeclModel)?sessDeclModel:(okM(cfg.model)?cfg.model:(okM(c.defaultModel)?c.defaultModel:((models[0]||{}).id||null))));
       curModel=perTurn?(pref.model===AUTO_MODEL?null:inheritedModel):null;
@@ -606,13 +607,13 @@
     function renderControls(){
       E.agentName.textContent=currentAgent||'—';
       E.cwdName.textContent=base(curCwd)||'—';
-      const c=capsFor(currentAgent), perTurn=c.modelControl==='per_turn';
-      E.modelName.textContent=perTurn?(curModel?modelLabel(currentAgent,curModel):('Automático'+(sessDeclModel?' · '+modelLabel(currentAgent,sessDeclModel):''))):(c.modelControl==='configuration_only'?'Configurado na IA':'Automático');
+      const c=capsFor(currentAgent), control=modelControlOf(c), perTurn=control==='per_turn';
+      E.modelName.textContent=perTurn?(curModel?modelLabel(currentAgent,curModel):('Automático'+(sessDeclModel?' · '+modelLabel(currentAgent,sessDeclModel):''))):(control==='configuration_only'?'Configurado na IA':'Automático');
       E.effortName.textContent=effLabel(curEffort);
       if(typeof updUsagePill==='function') updUsagePill();
       E.agentBtn.classList.toggle('lock',curStarted||curNative); E.cwdBtn.classList.toggle('lock',curStarted||curNative);
       E.modelBtn.classList.toggle('lock',!perTurn); E.effortBtn.classList.toggle('lock',!perTurn||!effortsFor(currentAgent,curModel).length);
-      E.modelBtn.title=perTurn?'Modelo por mensagem':(c.modelControl==='configuration_only'?'Modelo definido na configuração da própria IA':'A IA escolhe o modelo');
+      E.modelBtn.title=perTurn?'Modelo por mensagem':(control==='configuration_only'?'Modelo definido na configuração da própria IA':'A IA escolhe o modelo');
       E.agentBtn.title=(curStarted||curNative)?'Agente (travado)':'Agente / IA — clique para trocar (só em sessão nova)';
       E.cwdBtn.title=(curStarted||curNative)?((curCwd||'')+' — travada'):((curCwd||'')+' — clique para escolher (só em sessão nova)'); }
 
@@ -922,7 +923,7 @@
         if(ok) o.onclick=()=>{ closePop(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); };
         p.appendChild(o); }); }
 
-    function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); if(c.modelControl!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=c.modelControl==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } if(c.autoModel){ const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const pref=Object.assign({},sessionPrefs[currentSession]); pref.model=AUTO_MODEL; sessionPrefs[currentSession]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
+    function buildModelPop(p){ const c=capsFor(currentAgent), control=modelControlOf(c); p.appendChild(ph('Modelo')); if(control!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=control==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } if(c.autoModel){ const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const pref=Object.assign({},sessionPrefs[currentSession]); pref.model=AUTO_MODEL; sessionPrefs[currentSession]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
       o.onclick=()=>{ closePop(); const pref=Object.assign({},sessionPrefs[currentSession]), efs=effortsFor(currentAgent,mm.id); pref.model=mm.id; if(pref.effort&&pref.effort!==AUTO_EFFORT&&!efs.includes(pref.effort))pref.effort=AUTO_EFFORT; sessionPrefs[currentSession]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(o); }); }
 
@@ -984,14 +985,14 @@
     // ---------- settings (persistente) ----------
     E.settingsBtn.onclick=()=>{ E.settings.classList.remove('hidden'); const mc=availableMachineCaps(); fillSel(E.setAgent,mc.map(c=>({id:c.name,label:c.label||c.name})),cfg.agent||currentAgent); const c=mc.find(x=>x.name===E.setAgent.value)||capsFor(E.setAgent.value);
       const sm=selectableModels(c), defaultModel=(sm.some(m=>m.id===cfg.model)&&cfg.model)||(sm.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(sm[0]||{}).id||'';
-      fillSel(E.setModel,c.modelControl==='per_turn'?sm:[],defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
+      fillSel(E.setModel,modelControlOf(c)==='per_turn'?sm:[],defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
       const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner){ fillRoutineMachines(); validateRoutineCron(); tx({t:'routines'}); }
       tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang; };
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
-    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value), ms=selectableModels(c), model=(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.setModel,c.modelControl==='per_turn'?ms:[],model); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
+    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value), ms=selectableModels(c), model=(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.setModel,modelControlOf(c)==='per_turn'?ms:[],model); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     // ---------- rotinas agendadas (owner) ----------
     function renderRoutines(list){ if(!E.routinesList)return;
       if(!list||!list.length){ E.routinesList.textContent='Nenhuma rotina ainda.'; return; }
@@ -1011,7 +1012,7 @@
     function fillRoutineChoice(sel,items,val,emptyLabel){ fillSel(sel,items,val); if(!items.length){ const o=document.createElement('option'); o.value=''; o.textContent=emptyLabel; sel.appendChild(o); sel.classList.remove('hidden'); sel.disabled=true; } else sel.disabled=false; }
     function fillRoutineMachines(){ const desired=E.rtRunner.value||(currentMachine==='all'?routedMachine:currentMachine), preferred=machines.some(m=>m.id===desired)?desired:(machines.some(m=>m.id==='local')?'local':(machines[0]||{}).id); fillSel(E.rtRunner,machines.map(m=>({id:m.id,label:(m.label||m.id)+(m.online?'':' · offline')})),preferred); fillRoutineAgents(); }
     function fillRoutineEfforts(){ const c=routineCapsFor(E.rtAgent.value), m=(c.models||[]).find(x=>x.id===E.rtModel.value), efs=m?(m.efforts||[]):[...new Set((c.models||[]).flatMap(x=>x.efforts||[]))], old=E.rtEffort.value, items=efs.length?[{id:'',label:'Automático'},...efs.map(id=>({id,label:effLabel(id)}))]:[], effort=old===''?'':(efs.includes(old)?old:''); fillRoutineChoice(E.rtEffort,items,effort,'Automático / não aplicável'); }
-    function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value), ms=(c.models||[]).filter(m=>m.selectable!==false), old=E.rtModel.value, selectable=c.modelControl==='per_turn'?((c.autoModel?[{id:'',label:'Automático'}]:[]).concat(ms)):[], model=selectable.some(m=>m.id===old)?old:((c.autoModel?'':((ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''))); fillRoutineChoice(E.rtModel,selectable,model,c.modelControl==='configuration_only'?'Configurado na IA':'Automático'); fillRoutineEfforts(); }
+    function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value), control=modelControlOf(c), ms=(c.models||[]).filter(m=>m.selectable!==false), old=E.rtModel.value, selectable=control==='per_turn'?((c.autoModel?[{id:'',label:'Automático'}]:[]).concat(ms)):[], model=selectable.some(m=>m.id===old)?old:((c.autoModel?'':((ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''))); fillRoutineChoice(E.rtModel,selectable,model,control==='configuration_only'?'Configurado na IA':'Automático'); fillRoutineEfforts(); }
     function fillRoutineAgents(){ const cs=routineCaps(), old=E.rtAgent.value, preferred=cs.some(c=>c.name===old)?old:(cs.some(c=>c.name===(cfg.agent||currentAgent))?(cfg.agent||currentAgent):(cs[0]&&cs[0].name)||''); fillRoutineChoice(E.rtAgent,cs.map(c=>({id:c.name,label:c.label||c.name})),preferred,'Nenhuma IA disponível'); fillRoutineModels(); }
     E.rtRunner.onchange=()=>{ E.rtCwd.value=''; fillRoutineAgents(); };
     E.rtAgent.onchange=fillRoutineModels;

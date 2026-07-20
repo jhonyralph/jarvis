@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, MockAgentAdapter, agentPermissionMode, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs } from "./agents.js";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("permission mode is explicit and defaults conservatively to the historical full-access behavior", () => {
@@ -22,6 +22,13 @@ test("AgentRegistry registers aider alongside the built-ins and routes by name",
   assert.ok(reg.names().includes("aider"));
   assert.equal(reg.get("aider").name, "aider");
   assert.throws(() => reg.get("nope"), /não registrado/, "an explicit unknown provider never silently runs the default");
+});
+
+test("AgentRegistry UI catalog exposes modelControl at the legacy top level and canonically nested", async () => {
+  const [codex] = await new AgentRegistry("codex").register(new CodexAdapter()).describe();
+  assert.equal(codex.modelControl, "per_turn");
+  assert.equal(codex.capabilities?.modelControl, "per_turn");
+  assert.ok(codex.models.length > 0);
 });
 
 test("model selection rejects a stale model or unsupported effort before spawn", () => {
