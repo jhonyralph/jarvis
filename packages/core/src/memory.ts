@@ -42,6 +42,19 @@ export interface MemoryEntry {
 
 export interface MemoryHit extends MemoryEntry { score: number; }
 
+export interface MemoryProjectStats {
+  projectKey: string;
+  count: number;
+  latestTs: number;
+}
+
+export interface MemoryStats {
+  total: number;
+  byScope: Record<string, number>;
+  byTopic: Record<string, number>;
+  projects: MemoryProjectStats[];
+}
+
 /** Cosine similarity in [-1, 1]. 0 when either vector is empty/zero. */
 export function cosine(a: number[], b: number[]): number {
   const n = Math.min(a.length, b.length);
@@ -67,6 +80,8 @@ export interface MemorySearchOpts {
   topic?: string;
   /** restrict to a normalized project key */
   projectKey?: string;
+  /** restrict to a normalized project prefix, useful for monorepos */
+  projectPrefix?: string;
 }
 
 const PROJECT_WORDS = [
@@ -148,6 +163,19 @@ export class MemoryStore {
   has(id: string): boolean { return this.data.some((e) => e.id === id); }
   size(): number { return this.data.length; }
   ids(): Set<string> { return new Set(this.data.map((e) => e.id)); }
+  stats(): MemoryStats {
+    const byScope: Record<string, number> = {}, byTopic: Record<string, number> = {}, projects = new Map<string, MemoryProjectStats>();
+    for (const e of this.data) {
+      const scope = e.scope || "general", topic = e.topic || "general";
+      byScope[scope] = (byScope[scope] || 0) + 1;
+      byTopic[topic] = (byTopic[topic] || 0) + 1;
+      if (e.projectKey) {
+        const p = projects.get(e.projectKey) || { projectKey: e.projectKey, count: 0, latestTs: 0 };
+        p.count++; p.latestTs = Math.max(p.latestTs, e.ts || 0); projects.set(e.projectKey, p);
+      }
+    }
+    return { total: this.data.length, byScope, byTopic, projects: [...projects.values()].sort((a, b) => (b.count - a.count) || (b.latestTs - a.latestTs)) };
+  }
 
   /** Cosine top-K over the query vector, newest-first as the tiebreak, with optional filters. */
   search(vec: number[], opts: MemorySearchOpts = {}): MemoryHit[] {
@@ -160,6 +188,10 @@ export class MemoryStore {
       if (opts.scope && e.scope !== opts.scope) continue;
       if (opts.topic && e.topic !== opts.topic) continue;
       if (opts.projectKey && e.projectKey !== projectMemoryKey(opts.projectKey)) continue;
+      if (opts.projectPrefix) {
+        const prefix = projectMemoryKey(opts.projectPrefix);
+        if (!prefix || !e.projectKey || (e.projectKey !== prefix && !e.projectKey.startsWith(prefix + "/"))) continue;
+      }
       if (namespaces.length && !namespaces.some((ns) => (e.namespaces || []).includes(ns))) continue;
       const score = cosine(vec, e.vec);
       if (score >= minScore) hits.push({ ...e, score });

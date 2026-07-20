@@ -104,3 +104,20 @@ test("search can isolate namespaces even when vectors are similar", () => {
     assert.deepEqual(m.search([1, 0], { projectKey: "/repo/apps/api" }).map((h) => h.id), ["project"]);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+test("memory stats and project prefixes support monorepo partitions", () => {
+  const d = mkdtempSync(join(tmpdir(), "jarvis-mem-"));
+  try {
+    const m = new MemoryStore(d);
+    m.upsert(entry("core", [1, 0], { text: "Fix test in TypeScript package", cwd: "/repo/packages/core", ts: 10 }));
+    m.upsert(entry("web", [1, 0], { text: "Fix frontend component test", cwd: "/repo/apps/web", ts: 20 }));
+    m.upsert(entry("recipe", [1, 0], { text: "Receita de bolo", cwd: "/repo/apps/web", ts: 30 }));
+
+    assert.deepEqual(m.search([1, 0], { projectPrefix: "/repo/packages" }).map((h) => h.id), ["core"]);
+    const stats = m.stats();
+    assert.equal(stats.total, 3);
+    assert.equal(stats.byScope.project, 2);
+    assert.equal(stats.byTopic.recipe, 1);
+    assert.deepEqual(stats.projects.map((p) => p.projectKey).sort(), ["/repo/apps/web", "/repo/packages/core"]);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

@@ -3083,10 +3083,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const vec = await embedOne(q);
         const sid = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
         const cls = classifyMemoryText({ text: q, cwd: sessionCwd(sid) });
-        const scoped = vec.length ? memory.search(vec, { topK: 10, minScore: 0.2, namespaces: cls.namespaces }) : [];
+        const projectPrefix = typeof msg.projectPrefix === "string" ? msg.projectPrefix : undefined;
+        const scoped = vec.length ? memory.search(vec, { topK: 10, minScore: 0.2, namespaces: cls.namespaces, projectPrefix }) : [];
         const hits = scoped.length ? scoped : (vec.length ? memory.search(vec, { topK: 10, minScore: 0.2 }) : []);
-        send(ws, { t: "memory_result", query: q, classification: cls, hits: hits.map((h) => ({ id: h.id, title: h.title, agent: h.agent, cwd: h.cwd, snippet: h.text, score: Math.round(h.score * 100), namespaces: h.namespaces, scope: h.scope, topic: h.topic })) });
+        send(ws, { t: "memory_result", query: q, classification: cls, stats: memory.stats(), hits: hits.map((h) => ({ id: h.id, title: h.title, agent: h.agent, cwd: h.cwd, snippet: h.text, score: Math.round(h.score * 100), namespaces: h.namespaces, scope: h.scope, topic: h.topic, projectKey: h.projectKey })) });
       } catch { send(ws, { t: "memory_result", query: q, hits: [], error: "memória local indisponível — instale sentence-transformers na máquina do Hub (pip install sentence-transformers)" }); }
+      return;
+    }
+    if (msg.t === "memory_stats") {
+      send(ws, { t: "memory_stats", stats: memory.stats() });
       return;
     }
     if (msg.t === "memory_reindex") {
@@ -3096,7 +3101,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           const jobs = store.list().map((s) => { const full = store.get(s.id); if (!full || !full.messages.length) return null; const lu = [...full.messages].reverse().find((m) => m.role === "user")?.text || ""; const la = [...full.messages].reverse().find((m) => m.role === "assistant")?.text || ""; return { meta: s, text: `${s.title}\n${lu}\n${la}`.slice(0, 2000) }; }).filter(Boolean) as Array<{ meta: any; text: string }>;
           const vecs = await embed(jobs.map((j) => j.text));
           memory.upsertMany(jobs.map((j, i) => ({ id: j.meta.id, sessionId: j.meta.id, agent: j.meta.agent, cwd: j.meta.cwd, title: j.meta.title, text: j.text.slice(0, 400), ts: j.meta.updatedAt, vec: vecs[i] || [], ...classifyMemoryText({ text: j.text, cwd: j.meta.cwd }) })).filter((e) => e.vec.length));
-          send(ws, { t: "memory_reindexed", count: memory.size() });
+          send(ws, { t: "memory_reindexed", count: memory.size(), stats: memory.stats() });
         } catch (e: any) { send(ws, { t: "error", message: "reindex da memória falhou: " + String(e?.message ?? e) }); }
       })();
       return;

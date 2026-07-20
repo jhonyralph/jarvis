@@ -1494,7 +1494,8 @@
         else if(m.t==='memory_result'){ if(E.searchModal.classList.contains('hidden'))return;
           if(m.error){ E.searchResults.innerHTML='<div class="mut">'+esc(m.error)+'</div>'; return; }
           const hits=(m.hits||[]).map(h=>({id:h.id,title:h.title,agent:h.agent,cwd:h.cwd,where:'content',snippet:'['+(h.score||0)+'%] '+(h.snippet||'')}));
-          renderHits(E.searchResults,{query:m.query,hits,done:true}); }
+          renderHits(E.searchResults,{query:m.query,hits,done:true}); if(m.stats){ const ps=(m.stats.projects||[]).slice(0,3).map(p=>p.projectKey+' ('+p.count+')').join(' · '), d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;margin-top:6px'; d.textContent='Memória: '+(m.stats.total||0)+' itens'+(ps?' · '+ps:''); E.searchResults.appendChild(d); } }
+        else if(m.t==='memory_stats'){ toast('Memória: '+((m.stats&&m.stats.total)||0)+' itens.'); }
         else if(m.t==='memory_reindexed'){ toast('✓ Memória reindexada: '+(m.count||0)+' sessões.'); }
         else if(m.t==='stage'){ if(m.done){ hideStage(); } else showStage({draft:m.draft,say:m.say}); }
         else if(m.t==='stage_heard'){ if(stageEl) showStage({heard:m.text}); }
