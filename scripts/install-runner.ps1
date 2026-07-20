@@ -17,19 +17,23 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
-if (-not (Get-Command node -EA SilentlyContinue)) { Write-Host 'Node.js não encontrado. Instale Node >= 22 e rode de novo.' -ForegroundColor Red; exit 1 }
+if (-not (Get-Command node -EA SilentlyContinue)) { Write-Host 'Node.js nao encontrado. Instale Node >= 22 e rode de novo.' -ForegroundColor Red; exit 1 }
 $agentCommands = @('claude','codex','gemini','cursor-agent','copilot','opencode','cline','qwen','cn','kiro-cli','agy','aider')
 $hasAgent = $agentCommands | Where-Object { Get-Command $_ -EA SilentlyContinue } | Select-Object -First 1
 if (-not $hasAgent) { Write-Host 'Aviso: nenhuma CLI suportada encontrada. Instale/autentique ao menos uma; veja docs/agent-parity-matrix.md.' -ForegroundColor Yellow }
 
-Write-Host 'Instalando dependências (npm install)...'
+Write-Host 'Instalando dependencias (npm install)...'
 Set-Location $root
 & npm.cmd install | Out-Null
 
 $dir = Join-Path $env:USERPROFILE '.jarvis'
 New-Item -ItemType Directory -Force $dir | Out-Null
 $envFile = Join-Path $dir 'runner.env'
-"JARVIS_HUB=$Hub`r`nJARVIS_TOKEN=$Token`r`nJARVIS_LABEL=`"$Label`"" | Set-Content -Encoding UTF8 $envFile
+@(
+  "JARVIS_HUB=$Hub"
+  "JARVIS_TOKEN=$Token"
+  "JARVIS_LABEL=$Label"
+) | Set-Content -Encoding UTF8 $envFile
 Write-Host "Config gravada em $envFile"
 
 # O serviço tem que ser a ÚNICA instância. -MultipleInstances IgnoreNew só impede a *task* de
@@ -40,12 +44,21 @@ try { Stop-ScheduledTask -TaskName 'JarvisRunner' -ErrorAction Stop } catch { <#
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
   Where-Object { $_.CommandLine -and $_.CommandLine -match 'apps[\\/]runner[\\/]src[\\/]index\.ts' } |
   ForEach-Object {
-    Write-Host "Encerrando runner já em execução (pid $($_.ProcessId)) — o serviço assume a partir de agora." -ForegroundColor Yellow
+    Write-Host "Encerrando runner ja em execucao (pid $($_.ProcessId)) - o servico assume a partir de agora." -ForegroundColor Yellow
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
   }
 
 $startPs = Join-Path $root 'scripts\start-runner.ps1'
-$action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startPs`""
+$taskArgs = @(
+  '-NoProfile'
+  '-WindowStyle'
+  'Hidden'
+  '-ExecutionPolicy'
+  'Bypass'
+  '-File'
+  ('"{0}"' -f $startPs)
+) -join ' '
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArgs
 # -User $env:USERNAME é o que permite registrar SEM admin: um trigger AtLogOn genérico (sem -User)
 # exige elevação; especificar "rode como EU MESMO" é permitido a qualquer usuário padrão. Testado
 # e confirmado nesta máquina sem sessão elevada (mesmo padrão do install-autostart.ps1 do Hub).
@@ -61,4 +74,4 @@ if (-not (Get-ScheduledTask -TaskName 'JarvisRunner' -ErrorAction SilentlyContin
   exit 1
 }
 Start-ScheduledTask -TaskName 'JarvisRunner'
-Write-Host 'Runner instalado e iniciado (task JarvisRunner). Deve aparecer no seletor de máquina do Hub.' -ForegroundColor Green
+Write-Host 'Runner instalado e iniciado (task JarvisRunner). Deve aparecer no seletor de maquina do Hub.' -ForegroundColor Green
