@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, UsageLedger, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, UsageLedger, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, type RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -828,10 +828,11 @@ async function runRoutine(r: Routine): Promise<void> {
 }
 /** Owner-only routine management (list / add / update / delete / run-now). */
 function handleRoutineMsg(ws: WebSocket, msg: any): boolean {
-  const listMsg = () => ({ t: "routines" as const, routines: routines.list().map((r) => ({ ...r, label: scheduleLabel(r) })) });
+  const listMsg = () => ({ t: "routines" as const, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "local do Hub", routines: routines.list().map((r) => ({ ...r, label: scheduleLabel(r) })) });
   if (msg.t === "routines") { if (!requireOwner(ws)) return true; send(ws, listMsg()); return true; }
-  if (msg.t === "routine_add") { if (!requireOwner(ws)) return true; routines.add(msg.routine || {}); send(ws, listMsg()); return true; }
-  if (msg.t === "routine_update" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; routines.update(msg.id, msg.patch || {}); send(ws, listMsg()); return true; }
+  if (msg.t === "routine_validate") { if (!requireOwner(ws)) return true; const cron = String(msg.cron || ""); send(ws, { t: "cron_validation", cron, ...validateCron(cron) }); return true; }
+  if (msg.t === "routine_add") { if (!requireOwner(ws)) return true; try { routines.add(msg.routine || {}); send(ws, listMsg()); } catch (e: any) { send(ws, { t: "error", message: "Cron inválido: " + String(e?.message || e) }); } return true; }
+  if (msg.t === "routine_update" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; try { routines.update(msg.id, msg.patch || {}); send(ws, listMsg()); } catch (e: any) { send(ws, { t: "error", message: "Cron inválido: " + String(e?.message || e) }); } return true; }
   if (msg.t === "routine_del" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; routines.remove(msg.id); send(ws, listMsg()); return true; }
   if (msg.t === "routine_run" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; const r = routines.get(msg.id); if (r) void runRoutine(r); send(ws, listMsg()); return true; }
   return false;

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isDue, scheduleLabel, RoutineStore, type Routine } from "./routines.js";
+import { isDue, scheduleLabel, validateCron, RoutineStore, type Routine } from "./routines.js";
 
 function routine(over: Partial<Routine> = {}): Routine {
   return { id: "r1", name: "Testes noturnos", prompt: "rode os testes", hour: 8, minute: 0, enabled: true, createdAt: 0, ...over };
@@ -40,16 +40,46 @@ test("scheduleLabel is human-readable", () => {
   assert.equal(scheduleLabel(routine({ days: [1, 2, 3, 4, 5], hour: 9, minute: 30 })), "seg,ter,qua,qui,sex 09:30");
 });
 
+test("cron supports steps, ranges, lists, aliases and common macros", () => {
+  assert.equal(isDue(routine({ cron: "*/15 8-10 * * MON-FRI" }), new Date(2026, 6, 15, 9, 30)), true);
+  assert.equal(isDue(routine({ cron: "*/15 8-10 * * MON-FRI" }), new Date(2026, 6, 15, 9, 31)), false);
+  assert.equal(isDue(routine({ cron: "0 8,12 * JAN,JUL *" }), new Date(2026, 6, 15, 12, 0)), true);
+  assert.equal(isDue(routine({ cron: "@weekly" }), new Date(2026, 6, 19, 0, 0)), true, "Sunday midnight");
+});
+
+test("cron follows standard day-of-month OR day-of-week semantics", () => {
+  const r = routine({ cron: "0 8 15 * 1" });
+  assert.equal(isDue(r, new Date(2026, 6, 15, 8, 0)), true, "the 15th matches even on Wednesday");
+  assert.equal(isDue(r, new Date(2026, 6, 20, 8, 0)), true, "Monday matches even when it is not the 15th");
+  assert.equal(isDue(r, new Date(2026, 6, 21, 8, 0)), false);
+});
+
+test("cron validation returns normalized descriptions and actionable field errors", () => {
+  assert.deepEqual(validateCron("  0   8 * * 1-5 "), { ok: true, expression: "0 8 * * 1-5", description: "Seg–sex às 08:00" });
+  assert.deepEqual(validateCron("@daily"), { ok: true, expression: "0 0 * * *", description: "Todo dia às 00:00" });
+  const badMinute = validateCron("60 8 * * *"), badFields = validateCron("0 8 * *"), badStep = validateCron("*/0 * * * *");
+  assert.match(badMinute.ok ? "" : badMinute.error, /minuto.*0–59/);
+  assert.match(badFields.ok ? "" : badFields.error, /5 campos/);
+  assert.match(badStep.ok ? "" : badStep.error, /passo inválido/);
+});
+
+test("cron keeps the at-most-once guard and has readable labels", () => {
+  const now = new Date(2026, 6, 15, 8, 0);
+  assert.equal(isDue(routine({ cron: "0 8 * * *", lastRunAt: now.getTime() }), now), false);
+  assert.equal(scheduleLabel(routine({ cron: "*/15 * * * *" })), "A cada 15 minutos");
+});
+
 test("RoutineStore: CRUD round-trips and persists", () => {
   const dir = mkdtempSync(join(tmpdir(), "jarvis-routines-"));
   try {
     const s = new RoutineStore(dir);
-    const r = s.add({ name: "Manhã", prompt: "resumo", hour: 9, minute: 0, days: [1, 2, 3, 4, 5], runnerId: "machine-2", agent: "gemini", model: "auto", cwd: "/repo", speak: true });
+    const r = s.add({ name: "Manhã", prompt: "resumo", hour: 9, minute: 0, cron: "0 9 * * 1-5", days: [1, 2, 3, 4, 5], runnerId: "machine-2", agent: "gemini", model: "auto", cwd: "/repo", speak: true });
     assert.ok(r.id);
     assert.equal(r.enabled, true);
     assert.equal(s.list().length, 1);
     assert.equal(r.runnerId, "machine-2");
     assert.equal(r.agent, "gemini");
+    assert.equal(r.cron, "0 9 * * 1-5");
     s.update(r.id, { minute: 30, enabled: false });
     assert.equal(s.get(r.id)?.minute, 30);
     assert.equal(s.get(r.id)?.enabled, false);
@@ -79,5 +109,16 @@ test("RoutineStore clamps out-of-range hour/minute", () => {
     const r = new RoutineStore(dir).add({ name: "x", prompt: "p", hour: 99, minute: -5 });
     assert.equal(r.hour, 23);
     assert.equal(r.minute, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("RoutineStore rejects invalid cron without partially mutating a routine", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-routines-"));
+  try {
+    const s = new RoutineStore(dir), r = s.add({ name: "original", prompt: "p", hour: 8, minute: 0, cron: "0 8 * * *" });
+    assert.throws(() => s.add({ name: "bad", prompt: "p", hour: 0, minute: 0, cron: "99 * * * *" }), /minuto/);
+    assert.throws(() => s.update(r.id, { name: "mutated", cron: "bad" }), /5 campos/);
+    assert.equal(s.get(r.id)?.name, "original");
+    assert.equal(s.list().length, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

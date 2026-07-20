@@ -295,7 +295,12 @@
     .routine-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
     .routine-path { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:end; }
     .routine-path button { min-height:46px; white-space:nowrap; }
-    .routine-actions { display:grid; grid-template-columns:minmax(145px,.7fr) auto 1fr; gap:12px; align-items:end; }
+    .cron-box { display:flex; flex-direction:column; gap:7px; }
+    .cron-help { min-height:18px; font-size:12px; }
+    .cron-help.ok { color:#55d187; } .cron-help.err { color:#ff7b72; }
+    .cron-examples { display:flex; flex-wrap:wrap; gap:6px; }
+    .cron-examples button { padding:6px 9px; min-height:0; font-size:11px; }
+    .routine-actions { display:grid; grid-template-columns:auto 1fr; gap:12px; align-items:end; }
     .routine-actions > button { justify-self:end; min-height:46px; min-width:122px; }
     .routine-toggle { min-height:46px; margin:0!important; align-self:end; }
     @media (max-width:600px){
@@ -306,7 +311,6 @@
       .routine-grid { grid-template-columns:1fr; }
       .routine-path { grid-template-columns:1fr; }
       .routine-actions { grid-template-columns:1fr auto; }
-      .routine-actions .routine-time { grid-column:1/-1; }
       .routine-actions > button { width:100%; }
     }
     .pop { max-height:70vh; overflow:auto; }
@@ -642,10 +646,10 @@
           <label>Esforço<select id="rtEffort"></select></label>
         </div>
         <div class="routine-path"><label>Pasta de trabalho <span class="mut">opcional</span><input id="rtCwd" placeholder="Ex.: C:\Workspace\projeto" autocomplete="off"></label><button id="rtBrowse" class="ghost" type="button">📁 Escolher pasta</button></div>
+        <div class="cron-box"><label>Agenda cron<input id="rtCron" value="0 8 * * 1-5" placeholder="minuto hora dia mês semana" spellcheck="false" autocomplete="off"></label><div id="rtCronHelp" class="cron-help mut">Cinco campos: minuto, hora, dia do mês, mês e dia da semana (0=domingo, 1=segunda).</div><div id="rtCronExamples" class="cron-examples"><button type="button" class="ghost" data-cron="0 8 * * *">Todo dia, 08:00</button><button type="button" class="ghost" data-cron="0 8 * * 1-5">Dias úteis, 08:00</button><button type="button" class="ghost" data-cron="*/15 * * * *">A cada 15 min</button><button type="button" class="ghost" data-cron="0 9 1 * *">Todo dia 1, 09:00</button><button type="button" class="ghost" data-cron="@weekly">Semanal</button></div></div>
         <div class="routine-actions">
-          <label class="routine-time">Horário<input id="rtTime" type="time" value="08:00"></label>
           <label class="row routine-toggle"><input type="checkbox" id="rtSpeak"> Falar resultado</label>
-          <button id="rtAdd" type="button">Adicionar rotina</button>
+          <button id="rtAdd" type="button" disabled>Adicionar rotina</button>
         </div>
       </div>
     </div>

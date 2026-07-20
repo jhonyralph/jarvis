@@ -5,7 +5,7 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -371,7 +371,7 @@
       const f=document.createElement('div'); f.className='strdone';
       f.innerHTML=`<span class="dchk">✓</span><span>Concluído · ${tstr}</span>`+(usageCostText(usage)?` · <span class="dcost">${usageCostText(usage)}</span>`:'');
       strEl.appendChild(f);
-      if(usage){ E.usage.textContent=usageSummary(usage); if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
+      if(usage){ E.usage.textContent=usageSummary(usage); const context=usage.contextTokens||usage.inputTokens; if(context){lastInputTokens=context; if(usage.contextWindowTokens)lastContextWindow=usage.contextWindowTokens; updUsagePill();} }
       streamFinish(); autoScroll(); }
     function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
       if(currentSession) delete stopping[currentSession]; updateStopStatus();   // parou → limpa o "parando…" da sessão
@@ -608,7 +608,7 @@
       E.agentName.textContent=currentAgent||'—';
       E.cwdName.textContent=base(curCwd)||'—';
       const c=capsFor(currentAgent), perTurn=c.modelControl==='per_turn';
-      E.modelName.textContent=perTurn?modelLabel(currentAgent,curModel):(c.modelControl==='configuration_only'?'Configurado na IA':'Automático');
+      E.modelName.textContent=perTurn?(curModel?modelLabel(currentAgent,curModel):('Automático'+(sessDeclModel?' · '+modelLabel(currentAgent,sessDeclModel):''))):(c.modelControl==='configuration_only'?'Configurado na IA':'Automático');
       E.effortName.textContent=effLabel(curEffort);
       if(typeof updUsagePill==='function') updUsagePill();
       E.agentBtn.classList.toggle('lock',curStarted||curNative); E.cwdBtn.classList.toggle('lock',curStarted||curNative);
@@ -962,7 +962,7 @@
       return `<div class="urow"><span>esta sessão${pct!=null?` · ${pct}% do total`:''}</span><b>${p}${sessCost.toFixed(4)}</b></div>`
         +(costTotalAll>0?`<div class="umut ureset">total acumulado (todas as sessões): Σ$${costTotalAll.toFixed(2)} · classes separadas em Uso & custo</div>`:'');
     }
-    function modelContext(){ return lastContextWindow||((modelObj(currentAgent,curModel)||{}).context||0); }
+    function modelContext(){ return lastContextWindow||((modelObj(currentAgent,curModel||sessDeclModel)||{}).context||0); }
     function ctxPct(){ const c=modelContext(); return c?Math.min(100,Math.round(lastInputTokens/c*100)):0; }
     function updUsagePill(){ if(!E.usageName)return; E.usageName.textContent=(modelContext()&&lastInputTokens)?ctxPct()+'%':'—'; }
     const kfmt=n=>n>=1e6?(n/1e6).toFixed(n%1e6?1:0)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n||0);
@@ -992,7 +992,7 @@
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
-      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner){ const online=machines.filter(m=>m.online), desired=E.rtRunner.value||(currentMachine==='all'?routedMachine:currentMachine), preferred=online.some(m=>m.id===desired)?desired:(online.some(m=>m.id==='local')?'local':(online[0]||{}).id); fillSel(E.rtRunner,online.map(m=>({id:m.id,label:m.label||m.id})),preferred); fillRoutineAgents(); tx({t:'routines'}); }
+      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner){ const online=machines.filter(m=>m.online), desired=E.rtRunner.value||(currentMachine==='all'?routedMachine:currentMachine), preferred=online.some(m=>m.id===desired)?desired:(online.some(m=>m.id==='local')?'local':(online[0]||{}).id); fillSel(E.rtRunner,online.map(m=>({id:m.id,label:m.label||m.id})),preferred); fillRoutineAgents(); validateRoutineCron(); tx({t:'routines'}); }
       tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang; };
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value), ms=selectableModels(c), model=(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.setModel,c.modelControl==='per_turn'?ms:[],model); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
@@ -1008,9 +1008,10 @@
         d.appendChild(mk(r.enabled?'⏸':'▶️', r.enabled?'Pausar':'Ativar', ()=>tx({t:'routine_update',id:r.id,patch:{enabled:!r.enabled}})));
         d.appendChild(mk('🗑','Remover',async()=>{ if(await dialog({title:`Remover a rotina "${r.name}"?`,okText:'Remover',danger:true})) tx({t:'routine_del',id:r.id}); }));
         E.routinesList.appendChild(d); }); }
-    E.rtAdd.onclick=()=>{ const name=(E.rtName.value||'').trim(), prompt=(E.rtPrompt.value||'').trim(); if(!name||!prompt){ toast(t('tRtFill')); return; }
-      const t=(E.rtTime.value||'08:00').split(':'); const hour=parseInt(t[0]||'8',10)||0, minute=parseInt(t[1]||'0',10)||0;
-      tx({t:'routine_add',routine:{name,prompt,hour,minute,runnerId:E.rtRunner.value||'local',agent:E.rtAgent.value||undefined,model:E.rtModel.value||undefined,effort:E.rtEffort.value||undefined,cwd:(E.rtCwd.value||'').trim()||undefined,speak:E.rtSpeak.checked}}); E.rtName.value=''; E.rtPrompt.value=''; E.rtCwd.value=''; E.rtSpeak.checked=false; };
+    let cronOk=false, cronTimer=null, routineTimezone='local do Hub';
+    function validateRoutineCron(){ clearTimeout(cronTimer); cronOk=false; E.rtAdd.disabled=true; E.rtCronHelp.className='cron-help mut'; E.rtCronHelp.textContent='Validando…'; cronTimer=setTimeout(()=>tx({t:'routine_validate',cron:(E.rtCron.value||'').trim()}),180); }
+    E.rtAdd.onclick=()=>{ const name=(E.rtName.value||'').trim(), prompt=(E.rtPrompt.value||'').trim(), cron=(E.rtCron.value||'').trim(); if(!name||!prompt){ toast(t('tRtFill')); return; } if(!cronOk){ toast('Corrija a agenda cron antes de adicionar.'); validateRoutineCron(); return; }
+      tx({t:'routine_add',routine:{name,prompt,cron,hour:0,minute:0,runnerId:E.rtRunner.value||'local',agent:E.rtAgent.value||undefined,model:E.rtModel.value||undefined,effort:E.rtEffort.value||undefined,cwd:(E.rtCwd.value||'').trim()||undefined,speak:E.rtSpeak.checked}}); E.rtName.value=''; E.rtPrompt.value=''; E.rtCwd.value=''; E.rtSpeak.checked=false; };
     function fillRoutineChoice(sel,items,val,emptyLabel){ fillSel(sel,items,val); if(!items.length){ const o=document.createElement('option'); o.value=''; o.textContent=emptyLabel; sel.appendChild(o); sel.classList.remove('hidden'); sel.disabled=true; } else sel.disabled=false; }
     function fillRoutineEfforts(){ const c=routineCapsFor(E.rtAgent.value), m=(c.models||[]).find(x=>x.id===E.rtModel.value), efs=(m&&m.efforts)||[], old=E.rtEffort.value, effort=efs.includes(old)?old:(m&&m.defaultEffort)||efs[0]||''; fillRoutineChoice(E.rtEffort,efs,effort,'Automático / não aplicável'); }
     function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value), ms=(c.models||[]).filter(m=>m.selectable!==false), old=E.rtModel.value, model=(ms.some(m=>m.id===old)&&old)||(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillRoutineChoice(E.rtModel,c.modelControl==='per_turn'?ms:[],model,c.modelControl==='configuration_only'?'Configurado na IA':'Automático'); fillRoutineEfforts(); }
@@ -1019,6 +1020,8 @@
     E.rtAgent.onchange=fillRoutineModels;
     E.rtModel.onchange=fillRoutineEfforts;
     E.rtBrowse.onclick=()=>togglePop(E.rtBrowse,p=>buildFolderBrowser(p,{runnerId:E.rtRunner.value||'local',initial:E.rtCwd.value||'',onUse:b=>{ E.rtCwd.value=b; }}));
+    E.rtCron.oninput=validateRoutineCron;
+    E.rtCronExamples.onclick=e=>{ const b=e.target.closest('[data-cron]'); if(!b)return; E.rtCron.value=b.dataset.cron; validateRoutineCron(); };
     // ---------- config do refino por voz (escalada de modelo) ----------
     let currentVoiceCfg={};
     function fillVoiceModels(cfg){ const c=localCapsFor(E.setVoiceAgent.value), models=selectableModels(c); fillSel(E.setVoiceModel,models,(cfg&&cfg.model)||c.defaultModel||(models[0]||{}).id||''); const m=models.find(x=>x.id===E.setVoiceModel.value); fillSel(E.setVoiceEffort,(m&&m.efforts)||[],(cfg&&cfg.effort)||(m&&m.defaultEffort)||''); }
@@ -1206,7 +1209,7 @@
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
         else if(m.t==='voice_cfg'){ renderVoiceCfg(m.cfg||{}); }
-        else if(m.t==='routines'){ renderRoutines(m.routines||[]); }
+        else if(m.t==='routines'){ routineTimezone=m.timezone||routineTimezone; renderRoutines(m.routines||[]); validateRoutineCron(); }
         else if(m.t==='fleet'){ renderFleet(m); }
         else if(m.t==='update_status'){ updState=m.status; renderUpdate(); }
         else if(m.t==='update_progress'){ if(E.updStatus) E.updStatus.textContent='… '+(m.message||'atualizando'); toast('🔄 '+(m.message||''));
@@ -1227,6 +1230,7 @@
         else if(m.t==='filediff'){ showDiff(m); }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
           if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',runnerId:browseRunner,path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
+        else if(m.t==='cron_validation'){ if(String(m.cron||'').trim()!==(E.rtCron.value||'').trim())return; cronOk=!!m.ok; E.rtAdd.disabled=!cronOk; E.rtCronHelp.className='cron-help '+(cronOk?'ok':'err'); E.rtCronHelp.textContent=cronOk?('✓ '+m.description+' · '+m.expression+' · fuso '+routineTimezone):('⚠ '+m.error); }
         else if(m.t==='sessions'){
           // visão unificada: só o agregado (runnerId 'all') alimenta a lista; listas de máquina única
           // que chegam por troca de runner (ao abrir) são ignoradas aqui pra não sobrescrever o agregado.
@@ -1252,7 +1256,7 @@
           else if(/^tool_/.test(ev.kind)&&ev.tool){ const t=ev.tool; streamTool(t.name,t.summary,t.callId,t.parentId,t.path,t.adds,t.dels,t.rows,t.detail,t.status,t.error); if(t.path)touchFile(t.path,/Edit$|^Write$/.test(t.name)?(t.name==='Write'?'write':'edit'):'read',t.adds,t.dels); }
           else if(ev.kind==='text_delta'||ev.kind==='text_block'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.tool&&ev.tool.parentId); }
           else if(ev.kind==='plan') streamTool('Plan',ev.plan&&ev.plan.title||ev.text||'Plano atualizado',null,null,null,0,0,null,null,'completed');
-          else if(ev.kind==='usage'){ turnUsage=ev.usage||turnUsage; if(ev.usage){E.usage.textContent=usageSummary(ev.usage);if(ev.usage.contextTokens||ev.usage.inputTokens)lastInputTokens=ev.usage.contextTokens||ev.usage.inputTokens;if(ev.usage.contextWindowTokens)lastContextWindow=ev.usage.contextWindowTokens;updUsagePill();} }
+          else if(ev.kind==='usage'){ turnUsage=ev.usage||turnUsage; if(ev.usage){E.usage.textContent=usageSummary(ev.usage);if(ev.usage.contextTokens||ev.usage.inputTokens)lastInputTokens=ev.usage.contextTokens||ev.usage.inputTokens;if(ev.usage.contextWindowTokens)lastContextWindow=ev.usage.contextWindowTokens;if(ev.usage.model){sessDeclModel=ev.usage.model;renderControls();}updUsagePill();} }
           else if(ev.kind==='completed'){ clearRestorable(m.sessionId); if(typeof m.sessionCost==='number'){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text,turnUsage); onTurnEnd(m.sessionId); }
           else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
           else if(ev.kind==='failed'){ streamErr(ev.text); onTurnEnd(m.sessionId); } }
