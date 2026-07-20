@@ -661,12 +661,12 @@ function completePendingRunnerUpdate(rc: RunnerConn, m: any): void {
   if (pending && (!m.requestId || m.requestId === pending.requestId)) {
     const blocked = !!m.dirty || m.retryable === false;
     if (m.ok) { pending.state = "awaiting_restart"; pending.lastError = undefined; }
-    else { pending.state = blocked ? "blocked" : "queued"; pending.lastError = String(m.log || "falha sem detalhe").slice(0, 600); }
+    else { pending.state = blocked ? "blocked" : "queued"; pending.lastError = String(m.log || "falha sem detalhe").slice(0, 3000); }
     savePendingRunnerUpdates();
     if (!m.ok && !blocked) setTimeout(() => { const current = pendingRunnerUpdates[rc.id]; if (current?.requestId === pending.requestId && current.state === "queued") deliverPendingRunnerUpdate(rc, { retryNow: true }); }, UPDATE_RETRY_MS).unref?.();
   }
   const state = m.ok ? "awaiting_restart" : ((m.dirty || m.retryable === false) ? "blocked" : "queued");
-  updateMachineNotice(rc.id, { ok: !!m.ok, dirty: !!m.dirty, behind: m.behind ?? 0, state, queued: !m.ok, log: String(m.log || "").slice(0, 600), rolledBack: !!m.rolledBack });
+  updateMachineNotice(rc.id, { ok: !!m.ok, dirty: !!m.dirty, behind: m.behind ?? 0, state, queued: !m.ok, log: String(m.log || "").slice(0, 3000), rolledBack: !!m.rolledBack });
 }
 function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
   const pending = pendingRunnerUpdates[rc.id]; if (!pending) return;
@@ -1178,7 +1178,9 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       auth.audit("runner_online", { runnerId: rid, detail: info.host });
       console.log(`[hub] runner online: ${rid} (${info.host})`);
       broadcastMachines();
-      verifyOrDeliverRunnerUpdate(runners.get(rid)!);
+      const registered = runners.get(rid)!;
+      if (info.updateResult && typeof info.updateResult.requestId === "string") completePendingRunnerUpdate(registered, info.updateResult);
+      verifyOrDeliverRunnerUpdate(registered);
       return;
     }
     if (!rid) return;

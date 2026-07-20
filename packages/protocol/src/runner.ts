@@ -35,6 +35,8 @@ export interface RunnerInfo {
   commit?: string;
   /** Durable proof that dependencies/validation completed for a correlated update before restart. */
   updateReceipt?: { requestId: string; targetCommit: string; current: string; preparedAt: number };
+  /** Durable failure/success log produced by an external updater before the runner restarted. */
+  updateResult?: { requestId: string; ok: boolean; log?: string; current?: string; restartRequired?: boolean; rolledBack?: boolean; retryable?: boolean; preparedAt?: number };
   /** friendly name set at install (JARVIS_LABEL); the Hub uses it as the initial label */
   label?: string;
   /** true for the Hub's own embedded runner ("machine 0") */

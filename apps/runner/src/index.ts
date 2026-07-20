@@ -14,7 +14,8 @@
  */
 import WebSocket from "ws";
 import { hostname, homedir, platform } from "node:os";
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -41,6 +42,7 @@ const JDIR = join(process.env.JARVIS_HOME || homedir(), ".jarvis");
 try { mkdirSync(JDIR, { recursive: true }); } catch { /* ignore */ }
 const ID_FILE = join(JDIR, "runner-id");
 const UPDATE_RECEIPT_FILE = join(JDIR, "update-receipt.json");
+const UPDATE_RESULT_FILE = join(JDIR, "update-result.json");
 
 function runnerId(): string {
   try { const v = readFileSync(ID_FILE, "utf8").trim(); if (v) return v; } catch { /* new */ }
@@ -52,6 +54,15 @@ const RUNNER_ID = runnerId();
 function updateReceipt(): RunnerInfo["updateReceipt"] {
   try { const value = JSON.parse(readFileSync(UPDATE_RECEIPT_FILE, "utf8")); return value && typeof value.requestId === "string" && typeof value.targetCommit === "string" && typeof value.current === "string" ? value : undefined; }
   catch { return undefined; }
+}
+function readUpdateResult(): RunnerInfo["updateResult"] | undefined {
+  try {
+    const value = JSON.parse(readFileSync(UPDATE_RESULT_FILE, "utf8"));
+    return value && typeof value.requestId === "string" && typeof value.ok === "boolean" ? value : undefined;
+  } catch { return undefined; }
+}
+function clearUpdateResult(): void {
+  try { unlinkSync(UPDATE_RESULT_FILE); } catch { /* ignore */ }
 }
 const EXECUTIONS_ENABLED = process.env.JARVIS_EXECUTIONS !== "0";
 const EXECUTION_RETENTION_DAYS = Math.max(1, Math.min(3650, Number(process.env.JARVIS_EXECUTION_RETENTION_DAYS || 30)));
@@ -160,6 +171,143 @@ async function maybeSelfUpdate(reason: string, forceCheck = false): Promise<void
   send({ t: "update_done", requestId, ok: result.ok, dirty: !!result.dirty, behind: result.behind ?? 0, log: result.log.slice(0, 600), current: result.current, restartRequired: result.restartRequired, rolledBack: result.rolledBack, retryable: result.retryable });
   if (result.ok && result.restartRequired !== false) void drainAndExit();
   else updateInProgress = false;
+}
+
+function psQuote(value: string): string {
+  return "'" + value.replace(/'/g, "''") + "'";
+}
+
+function detachedWindowsRunnerUpdateScript(input: { requestId: string; targetCommit: string; root: string; resultFile: string; receiptFile: string; pid: number; force: boolean }): string {
+  return `
+$ErrorActionPreference = 'Stop'
+$Root = ${psQuote(input.root)}
+$RequestId = ${psQuote(input.requestId)}
+$Target = ${psQuote(input.targetCommit)}
+$ResultFile = ${psQuote(input.resultFile)}
+$ReceiptFile = ${psQuote(input.receiptFile)}
+$RunnerPid = ${input.pid}
+$Force = ${input.force ? "$true" : "$false"}
+$TaskName = 'JarvisRunner'
+$Log = New-Object System.Collections.Generic.List[string]
+
+function Add-Log([string]$Text) { $script:Log.Add($Text) }
+function Run-Step([string]$Exe, [string[]]$Args) {
+  Add-Log ("> " + $Exe + " " + ($Args -join " "))
+  $out = & $Exe @Args 2>&1
+  $code = $LASTEXITCODE
+  foreach ($line in $out) { Add-Log ([string]$line) }
+  if ($code -ne 0) { throw ($Exe + " saiu com código " + $code) }
+}
+function Git([string[]]$Args) { Run-Step "git" $Args }
+function Npm([string[]]$Args) { Run-Step "npm.cmd" $Args }
+function Git-Out([string[]]$Args) {
+  $out = & git @Args 2>&1
+  $code = $LASTEXITCODE
+  if ($code -ne 0) { foreach ($line in $out) { Add-Log ([string]$line) }; throw ("git " + ($Args -join " ") + " saiu com código " + $code) }
+  return (($out | Out-String).Trim())
+}
+function Dependency-Manifests-Changed([string]$From, [string]$To) {
+  $files = & git diff --name-only $From $To -- package.json package-lock.json npm-shrinkwrap.json 'apps/*/package.json' 'packages/*/package.json'
+  if ($LASTEXITCODE -ne 0) { return $true }
+  return [bool]($files | Where-Object { $_ })
+}
+function Verify-Or-Repair([bool]$DepsChanged) {
+  if (-not $DepsChanged) {
+    try { Npm @("run", "update:verify", "--if-present"); return } catch { Add-Log ("verificação inicial falhou; tentando npm ci: " + $_) }
+  }
+  Npm @("ci")
+  Npm @("run", "update:verify", "--if-present")
+}
+function Write-Result([bool]$Ok, [bool]$RolledBack, [string]$Current) {
+  $obj = [ordered]@{
+    requestId = $RequestId
+    ok = $Ok
+    rolledBack = $RolledBack
+    current = $Current
+    targetCommit = $Target
+    restartRequired = $true
+    preparedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    log = ($Log -join "\`n")
+  }
+  $dir = Split-Path -Parent $ResultFile
+  if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  $obj | ConvertTo-Json -Depth 5 | Set-Content -Path $ResultFile -Encoding UTF8
+}
+function Start-Runner() {
+  try {
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    Add-Log ("scheduled task iniciado: " + $TaskName)
+  } catch {
+    Add-Log ("Start-ScheduledTask falhou; fallback npm start: " + $_)
+    Start-Process -FilePath "npm.cmd" -ArgumentList "start" -WorkingDirectory (Join-Path $Root "apps\\runner") -WindowStyle Hidden | Out-Null
+  }
+}
+
+$previous = ""
+$current = ""
+$rolledBack = $false
+try {
+  Add-Log "parando runner antes do upgrade"
+  try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
+  Start-Sleep -Seconds 1
+  try { Stop-Process -Id $RunnerPid -Force -ErrorAction SilentlyContinue } catch {}
+  Start-Sleep -Seconds 2
+  Set-Location $Root
+  try { & git config --global --add safe.directory $Root 2>$null } catch {}
+  $branch = Git-Out @("rev-parse", "--abbrev-ref", "HEAD")
+  Git @("fetch", "--quiet", "origin", $branch)
+  $desired = Git-Out @("rev-parse", ($Target + "^{commit}"))
+  $previous = Git-Out @("rev-parse", "HEAD")
+  $depsChanged = Dependency-Manifests-Changed $previous $desired
+  if ($Force) {
+    Git @("reset", "--hard", $desired)
+    Git @("clean", "-fd")
+  } else {
+    $dirty = Git-Out @("status", "--porcelain")
+    if ($dirty) { throw "checkout com alterações locais; update sem force recusado" }
+    $counts = Git-Out @("rev-list", "--left-right", "--count", ("HEAD..." + $desired))
+    $ahead = [int](($counts -split "\\s+")[0])
+    if ($ahead -gt 0) { throw ("checkout possui " + $ahead + " commit(s) locais fora do alvo") }
+    Git @("merge", "--ff-only", $desired)
+  }
+  Verify-Or-Repair $depsChanged
+  $current = Git-Out @("rev-parse", "--short", "HEAD")
+  $receipt = [ordered]@{ requestId = $RequestId; targetCommit = $Target; current = $current; preparedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+  $receipt | ConvertTo-Json -Depth 5 | Set-Content -Path $ReceiptFile -Encoding UTF8
+  Write-Result $true $false $current
+} catch {
+  Add-Log ("ERRO na preparação: " + $_)
+  if ($previous) {
+    try {
+      Set-Location $Root
+      Git @("reset", "--hard", $previous)
+      Git @("clean", "-fd")
+      Npm @("ci")
+      Npm @("run", "update:verify", "--if-present")
+      $rolledBack = $true
+      Add-Log "rollback automático concluído"
+    } catch {
+      Add-Log ("ERRO também no rollback: " + $_)
+    }
+  }
+  try { $current = Git-Out @("rev-parse", "--short", "HEAD") } catch { $current = "" }
+  Write-Result $false $rolledBack $current
+} finally {
+  Start-Runner
+}
+`;
+}
+
+async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  const requestId = typeof m.requestId === "string" && m.requestId ? m.requestId : `update:${Date.now()}`;
+  const targetCommit = typeof m.targetCommit === "string" && m.targetCommit ? m.targetCommit.replace("+dirty", "") : (await repoCommit(RUNNER_ROOT)).replace("+dirty", "");
+  const scriptPath = join(JDIR, `runner-update-${Date.now()}.ps1`);
+  writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, pid: process.pid, force: !!m.force }), "utf8");
+  spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  console.log("[runner] update entregue ao script externo; encerrando processo para liberar node_modules");
+  setTimeout(() => process.exit(0), 500).unref();
+  return true;
 }
 
 // --- live mirror of native CLI sessions: tail the jsonl and push new turns as an
@@ -572,7 +720,7 @@ function connect(): void {
     const info: RunnerInfo = {
       runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: available,
       agentDescriptors: descriptors, agentUsage, protocolVersion: RUNNER_PROTOCOL_VERSION,
-      version: VERSION, commit: await repoCommit(RUNNER_ROOT), updateReceipt: updateReceipt(), label: process.env.JARVIS_LABEL || undefined,
+      version: VERSION, commit: await repoCommit(RUNNER_ROOT), updateReceipt: updateReceipt(), updateResult: readUpdateResult(), label: process.env.JARVIS_LABEL || undefined,
     };
     send({ t: "register", token: TOKEN, info });
   });
@@ -583,6 +731,7 @@ function connect(): void {
     try {
       if (m.t === "welcome") {
         console.log(`[runner] registered as ${RUNNER_ID} (${hostname()})`);
+        clearUpdateResult();
         flushOutbox();
         pushExecutionManifest(`welcome:${RUNNER_ID}`);
         pushSessions(); pushRuns(); send({ t: "caps", agent: DEFAULT_AGENT, caps: await agents.describe() });
@@ -714,6 +863,7 @@ function connect(): void {
           const log = `não foi possível drenar ${activeRuns.size + managedRuns.size} trabalho(s) em 120s; nenhum arquivo foi alterado`;
           send({ t: "update_done", requestId: m.requestId, ok: false, log }); updateInProgress = false; return;
         }
+        if (await handoffWindowsRunnerUpdate(m)) return;
         let r: UpdateResult;
         try { r = await updateApply(RUNNER_ROOT, { force: !!m.force, targetCommit: typeof m.targetCommit === "string" ? m.targetCommit : undefined }); }
         catch (error: any) { const log = "falha inesperada ao preparar atualização: " + String(error?.message ?? error); send({ t: "update_done", requestId: m.requestId, ok: false, log }); updateInProgress = false; return; }
