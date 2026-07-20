@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -2581,8 +2581,22 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (isInternalExecutionSession(ar, sid)) { send(ws, { t: "error", message: "sessão interna não aceita memória pelo chat" }); return; }
       if (ar !== LOCAL_ID) { if (canUseRunner(ws, ar)) { const rc = runners.get(ar); if (rc?.ws) sendToRunner(rc, { t: "memory_append", text: msg.text, sessionId: sid }); } return; }
       try {
-        const r = appendMemory(msg.text, sessionCwd(sid), cmdAgentOf(sessionAgent(sid)));
-        const note = { t: "message" as const, message: { sessionId: sid || "", role: "assistant", text: "📝 Anotado em " + r.file, ts: Date.now() } };
+        const cwd = sessionCwd(sid);
+        const agent = sessionAgent(sid);
+        const decision = decideMemoryWrite(effectivePolicyFor(sid).policy, { repoAvailable: true });
+        if (decision.action === "reject") { send(ws, { t: "error", message: "memória bloqueada pela política: " + decision.reason }); return; }
+        let text = "";
+        if (decision.action === "repo") {
+          const r = appendMemory(msg.text, cwd, cmdAgentOf(agent));
+          text = "📝 Anotado em " + r.file;
+        } else {
+          const cls = classifyMemoryText({ text: msg.text, cwd });
+          let vec: number[] = [];
+          try { vec = await embedOne(msg.text); } catch { vec = []; }
+          memory.upsert({ id: `note:${sid || "global"}:${Date.now()}`, sessionId: sid || "memory", agent, cwd, title: "Memória Jarvis", text: msg.text.slice(0, 400), ts: Date.now(), vec, ...cls });
+          text = "📝 Anotado na memória do Jarvis";
+        }
+        const note = { t: "message" as const, message: { sessionId: sid || "", role: "assistant", text, ts: Date.now() } };
         if (sid) broadcast(sid, note); else send(ws, note);
       } catch (e: any) { send(ws, { t: "error", message: "memória: " + String(e?.message ?? e) }); }
       return;

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   defaultAdaptivePolicy,
   defaultAdaptivePolicyDocument,
+  decideMemoryWrite,
   loadAdaptivePolicyDocument,
   normalizeAdaptivePolicyDocument,
   resolveAdaptivePolicy,
@@ -74,4 +75,13 @@ test("corrupt policy file falls back to safe defaults and can be saved atomicall
     saveAdaptivePolicyDocument(f, loaded);
     assert.equal(loadAdaptivePolicyDocument(f, 1).global.label, "Edited");
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("memory write decision follows target, repo availability and preview policy", () => {
+  assert.deepEqual(decideMemoryWrite(policy({ memory: { writeTarget: "disabled" } as any })), { action: "reject", reason: "memory_disabled" });
+  assert.deepEqual(decideMemoryWrite(policy({ memory: { writeTarget: "jarvis_only" } as any })), { action: "jarvis", reason: "jarvis_only" });
+  assert.deepEqual(decideMemoryWrite(policy({ memory: { writeTarget: "repo_allowed" } as any })), { action: "jarvis", reason: "repo_unavailable_fallback" });
+  assert.deepEqual(decideMemoryWrite(policy({ memory: { writeTarget: "repo_required" } as any })), { action: "reject", reason: "repo_required_unavailable" });
+  assert.deepEqual(decideMemoryWrite(policy({ memory: { writeTarget: "repo_allowed" } as any, write: { allowRepoWrites: true, requireDiffPreview: false } as any }), { repoAvailable: true }), { action: "repo", reason: "repo_allowed" });
+  assert.deepEqual(decideMemoryWrite(policy({ memory: { writeTarget: "repo_required" } as any, write: { allowRepoWrites: true, requireDiffPreview: true } as any }), { repoAvailable: true }), { action: "reject", reason: "repo_preview_required" });
 });

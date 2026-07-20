@@ -62,6 +62,13 @@ export interface ResolvedAdaptivePolicy {
   warnings: string[];
 }
 
+export type MemoryWriteAction = "reject" | "jarvis" | "repo";
+
+export interface MemoryWriteDecision {
+  action: MemoryWriteAction;
+  reason: string;
+}
+
 const SCOPES = new Set<PolicyScope>(["global", "project", "subscope", "session", "task"]);
 const WRITE_TARGETS = new Set<MemoryWriteTarget>(["jarvis_only", "repo_allowed", "repo_required", "disabled"]);
 const AUTONOMY = new Set<AutonomyMode>(["manual", "assisted", "controlled_autonomy"]);
@@ -292,6 +299,25 @@ export function resolveAdaptivePolicy(doc: AdaptivePolicyDocument, input: Resolv
   const scores = projectMatches.map(matchScore);
   if (new Set(scores).size !== scores.length) warnings.push("há políticas de projeto/subescopo com a mesma especificidade; revise cwdPattern/projectRoot");
   return { policy, chain, warnings };
+}
+
+export function decideMemoryWrite(policy: AdaptivePolicy, input: { repoAvailable?: boolean } = {}): MemoryWriteDecision {
+  const target = policy.memory.writeTarget;
+  if (target === "disabled") return { action: "reject", reason: "memory_disabled" };
+  if (target === "jarvis_only") return { action: "jarvis", reason: "jarvis_only" };
+  if (!input.repoAvailable) {
+    if (target === "repo_required") return { action: "reject", reason: "repo_required_unavailable" };
+    return { action: "jarvis", reason: "repo_unavailable_fallback" };
+  }
+  if (!policy.write.allowRepoWrites) {
+    if (target === "repo_required") return { action: "reject", reason: "repo_required_but_writes_blocked" };
+    return { action: "jarvis", reason: "repo_writes_blocked_fallback" };
+  }
+  if (policy.write.requireDiffPreview) {
+    if (target === "repo_required") return { action: "reject", reason: "repo_preview_required" };
+    return { action: "jarvis", reason: "repo_preview_required_fallback" };
+  }
+  return { action: "repo", reason: target };
 }
 
 export function loadAdaptivePolicyDocument(file: string, now = Date.now()): AdaptivePolicyDocument {
