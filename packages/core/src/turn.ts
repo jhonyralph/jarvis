@@ -16,6 +16,8 @@ export interface TurnUsage {
 }
 
 export interface TurnTouchedFile { path: string; action: "read" | "edit" | "write"; adds: number; dels: number; }
+export interface TurnDiffRow { t: " " | "+" | "-" | "@" | string; s: string; }
+export interface TurnFileDiff { path: string; name: string; rows?: TurnDiffRow[]; adds?: number; dels?: number; error?: string; }
 
 /** Rebuild the Files menu from persisted canonical/legacy activity for every adapter. */
 export function touchedFilesFromMessages(messages: Array<{ activity?: unknown[] }>): TurnTouchedFile[] {
@@ -28,6 +30,31 @@ export function touchedFilesFromMessages(messages: Array<{ activity?: unknown[] 
   const files = new Map<string, TurnTouchedFile>();
   for (const t of calls.values()) { const name = String(t.name || ""), action: TurnTouchedFile["action"] = name === "Write" ? "write" : /Edit$|Patch|Write/.test(name) ? "edit" : "read"; const f = files.get(t.path) || { path: t.path, action, adds: 0, dels: 0 }; if (action === "edit" || action === "write") f.action = action; f.adds += Number(t.adds) || 0; f.dels += Number(t.dels) || 0; files.set(t.path, f); }
   return [...files.values()].reverse();
+}
+
+/** Rebuild a per-file diff from provider-neutral persisted activity. Native transcript readers still
+ * win when available, but this keeps Gemini/Cursor/Copilot/OpenCode/Cline/Qwen/Aider-style managed
+ * sessions from losing their inline/file-panel diffs after reload. */
+export function fileDiffFromMessages(messages: Array<{ activity?: unknown[] }>, path: string): TurnFileDiff {
+  const name = path.split(/[\\/]/).pop() || path;
+  const calls = new Map<string, any>(); let anonymous = 0;
+  for (const message of messages) for (const raw of (Array.isArray(message.activity) ? message.activity : [])) {
+    const e: any = raw, t = e?.tool || e; if (!t?.path || t.path !== path) continue;
+    const key = String(t.callId || t.toolId || e.eventId || `anon:${++anonymous}`);
+    const prior = calls.get(key);
+    if (!prior || e.kind === "tool_completed" || e.kind === "tool_failed" || t.status === "completed" || t.status === "failed") calls.set(key, t);
+  }
+  const rows: TurnDiffRow[] = []; let adds = 0, dels = 0;
+  for (const t of calls.values()) {
+    adds += Number(t.adds) || 0; dels += Number(t.dels) || 0;
+    if (Array.isArray(t.rows) && t.rows.length) {
+      if (rows.length) rows.push({ t: "@", s: "-- alteração seguinte --" });
+      for (const r of t.rows) if (r && typeof r.s === "string") rows.push({ t: String(r.t || " ") as TurnDiffRow["t"], s: r.s });
+    }
+  }
+  if (rows.length) return { path, name, rows, adds, dels };
+  if (adds || dels) return { path, name, adds, dels, error: "diff detalhado não publicado pelo adapter" };
+  return { path, name, error: "sem diff publicado nesta sessão" };
 }
 
 export interface TurnStoredMessage {

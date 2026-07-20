@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, type TurnStoredMessage } from "./index.js";
+import { buildTurnAttachments, fileDiffFromMessages, imageDataUrl, runManagedTurn, touchedFilesFromMessages, type TurnStoredMessage } from "./index.js";
 
 test("managed lifecycle persists the same rich user and assistant history", async () => {
   const stored: TurnStoredMessage[] = [], broadcast: unknown[] = [];
@@ -46,4 +46,16 @@ test("Files menu is rebuilt provider-neutrally and does not double-count tool li
   assert.deepEqual(files.find((f) => f.path === "src/a.ts"), { path: "src/a.ts", action: "edit", adds: 3, dels: 1 });
   assert.deepEqual(files.find((f) => f.path === "src/new.ts"), { path: "src/new.ts", action: "write", adds: 2, dels: 0 });
   assert.deepEqual(files.find((f) => f.path === "README.md"), { path: "README.md", action: "read", adds: 0, dels: 0 });
+});
+
+test("File diffs are rebuilt provider-neutrally from persisted activity", () => {
+  const messages = [{ activity: [
+    { kind: "tool_started", eventId: "e1", tool: { callId: "p1", name: "Edit", path: "src/a.ts", adds: 0, dels: 0, status: "running" } },
+    { kind: "tool_completed", eventId: "e2", tool: { callId: "p1", name: "Edit", path: "src/a.ts", adds: 1, dels: 1, status: "completed", rows: [{ t: "-", s: "old" }, { t: "+", s: "new" }] } },
+  ] }];
+  const diff = fileDiffFromMessages(messages, "src/a.ts");
+  assert.equal(diff.adds, 1);
+  assert.equal(diff.dels, 1);
+  assert.deepEqual(diff.rows?.map((r) => r.t + r.s), ["-old", "+new"]);
+  assert.match(fileDiffFromMessages(messages, "missing.ts").error || "", /sem diff/);
 });

@@ -1068,6 +1068,19 @@ function toolEvent(name: string, args: any, id?: string, status: StreamEvent["st
     rows: Array.isArray(args?.rows) ? args.rows : stat.rows as any };
 }
 
+export function cliLifecycleEvent(agent: string, label: string, status: StreamEvent["status"], error?: string, turnId?: string): StreamEvent {
+  return {
+    kind: "tool",
+    name: "JarvisCLI",
+    summary: status === "started" ? `Executando ${label}` : status === "failed" ? `${label} falhou` : `${label} finalizado`,
+    detail: label,
+    toolId: `${turnId || agent}:cli`,
+    status,
+    error,
+    providerEvent: `jarvis.${agent}.cli.${status}`,
+  };
+}
+
 /** Pure provider parsers. Unknown fields/types are ignored, never promoted to invented progress. */
 export function parseGeminiCliEvent(o: any): StructuredCliEvent {
   if (o?.type === "init") return { sessionId: o.session_id || o.sessionId, providerEvent: "init" };
@@ -1218,6 +1231,7 @@ class StructuredCliAdapter implements AgentAdapter {
     const args = this.spec.args(effectiveText, cwd, previous, opts);
     const parts: string[] = [];
     let snapshot = "", finalText = "", nativeId = previous, usage: AgentReply["usage"], failure = "";
+    const lifecycleTurn = opts?.turnId || sessionId;
     const handle = (line: string): void => {
       let parsed: any; try { parsed = JSON.parse(line); } catch { return; }
       if ((EXECUTION_ADAPTER_IDS as readonly string[]).includes(this.spec.id)) {
@@ -1239,9 +1253,17 @@ class StructuredCliAdapter implements AgentAdapter {
       }
       if (item.finalText) finalText = item.finalText;
     };
-    const out = onEvent
-      ? await runStream(this.spec.command, args, cwd, "", handle, opts?.signal)
-      : await run(this.spec.command, args, cwd, "", opts?.signal);
+    onEvent?.(cliLifecycleEvent(this.name, this.spec.label, "started", undefined, lifecycleTurn));
+    let out = "";
+    try {
+      out = onEvent
+        ? await runStream(this.spec.command, args, cwd, "", handle, opts?.signal)
+        : await run(this.spec.command, args, cwd, "", opts?.signal);
+      onEvent?.(cliLifecycleEvent(this.name, this.spec.label, "completed", undefined, lifecycleTurn));
+    } catch (e: any) {
+      onEvent?.(cliLifecycleEvent(this.name, this.spec.label, "failed", String(e?.message ?? e), lifecycleTurn));
+      throw e;
+    }
     if (!onEvent) for (const line of out.split(/\r?\n/)) if (line.trim()) handle(line);
     if (failure && !finalText && !parts.length) throw new Error(failure);
     if (nativeContinuity && !sessionId.startsWith("__oneshot_") && nativeId && nativeId !== previous) { this.sessions.set(sessionId, nativeId); this.saveSessions(); }
@@ -1317,14 +1339,23 @@ class LimitedFinalCliAdapter implements AgentAdapter {
   constructor(readonly name: string, private label: string, private command: string, private args: (text: string, opts?: SendOpts) => string[], protected declaredCapabilities: AgentCapabilities) {}
   async capabilities(): Promise<AgentCaps> { return { models: [], autoModel: true }; }
   async available(): Promise<boolean> { return !!(await cliVersion(this.command)); }
-  async send(_sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
+  async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
     if (opts?.managed) managedAdapterSecurityArgs(this.name, opts.managed);
     if (opts?.model && this.declaredCapabilities.modelControl !== "per_turn") throw new Error(`o agente ${this.name} não permite selecionar modelo por turno; configure o modelo na própria CLI`);
     validateModelSelection(await this.capabilities(), opts);
     const prompt = this.declaredCapabilities.sessionContinuity === "jarvis_history" ? withManagedHistory(text, opts?.history) : text;
-    return { text: finalOnlyText(await run(this.command, this.args(prompt, opts), cwd, "", opts?.signal)) };
+    const lifecycleTurn = opts?.turnId || sessionId;
+    onEvent?.(cliLifecycleEvent(this.name, this.label, "started", undefined, lifecycleTurn));
+    try {
+      const out = await run(this.command, this.args(prompt, opts), cwd, "", opts?.signal);
+      onEvent?.(cliLifecycleEvent(this.name, this.label, "completed", undefined, lifecycleTurn));
+      return { text: finalOnlyText(out) };
+    } catch (e: any) {
+      onEvent?.(cliLifecycleEvent(this.name, this.label, "failed", String(e?.message ?? e), lifecycleTurn));
+      throw e;
+    }
   }
-  async descriptor(): Promise<AgentDescriptor> { const version = await cliVersion(this.command); return makeDescriptor({ id: this.name, label: this.label, command: this.command, version, support: version ? "limited" : "not_installed", reason: version ? "execução headless disponível, mas o fornecedor não expõe lifecycle estruturado de ferramentas" : `CLI ${this.command} não encontrado`, capabilities: this.declaredCapabilities, caps: await this.capabilities() }); }
+  async descriptor(): Promise<AgentDescriptor> { const version = await cliVersion(this.command); return makeDescriptor({ id: this.name, label: this.label, command: this.command, version, support: version ? "limited" : "not_installed", reason: version ? "execução headless disponível com lifecycle de processo Jarvis; fornecedor não expõe lifecycle estruturado de ferramentas" : `CLI ${this.command} não encontrado`, capabilities: this.declaredCapabilities, caps: await this.capabilities() }); }
 }
 const finalToolCaps = (over: Partial<AgentCapabilities> = {}): AgentCapabilities => ({
   ...LIMITED_CAPABILITIES, permissionMode: agentPermissionMode(), tools: true, files: true, oneShot: true, remote: true,

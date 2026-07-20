@@ -23,7 +23,7 @@ import {
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory,
-  buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, createAgentEventBridge, createEventSequencer,
+  buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, fileDiffFromMessages, createAgentEventBridge, createEventSequencer,
   ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult,
 } from "@jarvis/core";
@@ -572,7 +572,8 @@ function connect(): void {
       if (m.t === "readdiff" && typeof m.path === "string" && typeof m.sessionId === "string") {
         if (store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não expõe diff pelo chat" }); return; }
         const diffId = isNativeId(m.sessionId) ? m.sessionId : (() => { const s = store.get(m.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return s && nid ? (nativeIdForAgent(s.agent, nid) || "") : ""; })();
-        send({ t: "filediff", reqId: m.reqId, ...(diffId ? sessionFileDiff(diffId, m.path) : { path: m.path, name: m.path.split(/[\\/]/).pop() || m.path, error: "sem sessão nativa vinculada" }) });
+        const managed = !diffId ? store.history(m.sessionId) : [];
+        send({ t: "filediff", reqId: m.reqId, ...(diffId ? sessionFileDiff(diffId, m.path) : fileDiffFromMessages(managed, m.path)) });
         return;
       }
       if (m.t === "delete" && (typeof m.sessionId === "string" || Array.isArray(m.sessionIds))) {

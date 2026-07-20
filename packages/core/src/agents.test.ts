@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs } from "./agents.js";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("permission mode is explicit and defaults conservatively to the historical full-access behavior", () => {
@@ -168,6 +168,15 @@ test("generic JSONL parser is forward-compatible and only labels explicit costs 
   assert.equal(done.usage?.costKind, "billed"); assert.equal(done.usage?.costUsd, 0.1);
   const unverified = parseGenericJsonlEvent({ type: "result", result: "ok", usage: { cost: 0.1 } }, "fixture");
   assert.equal(unverified.usage?.costKind, "estimated_api_equivalent", "an unlabeled dollar is never promoted to billed");
+});
+
+test("all non-native CLI adapters share a visible Jarvis process lifecycle event", () => {
+  const started = cliLifecycleEvent("gemini", "Google Gemini CLI", "started", undefined, "turn-1");
+  assert.deepEqual({ kind: started.kind, name: started.name, status: started.status, toolId: started.toolId }, { kind: "tool", name: "JarvisCLI", status: "started", toolId: "turn-1:cli" });
+  assert.match(started.summary || "", /Executando Google Gemini CLI/);
+  const failed = cliLifecycleEvent("continue", "Continue CLI", "failed", "exit 1", "turn-2");
+  assert.equal(failed.error, "exit 1");
+  assert.match(failed.providerEvent || "", /jarvis\.continue\.cli\.failed/);
 });
 
 test("final-only adapters unwrap common JSON envelopes but preserve unknown output", () => {
