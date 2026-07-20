@@ -86,6 +86,21 @@ export interface AdaptiveRunDecision {
 }
 
 export type AdaptiveManagedUnknownEstimatePolicy = "allow" | "reject";
+export type AdaptiveApprovalAction = "routine_background" | "risk" | "budget";
+export type AdaptiveApprovalStatus = "pending" | "approved" | "rejected";
+
+export interface AdaptiveApprovalRequest {
+  schemaVersion: 1;
+  id: string;
+  action: AdaptiveApprovalAction;
+  title: string;
+  reason: string;
+  policyId: string;
+  sessionId?: string;
+  createdAt: number;
+  expiresAt?: number;
+  status: AdaptiveApprovalStatus;
+}
 
 const SCOPES = new Set<PolicyScope>(["global", "project", "subscope", "session", "task"]);
 const WRITE_TARGETS = new Set<MemoryWriteTarget>(["jarvis_only", "repo_allowed", "repo_required", "disabled"]);
@@ -400,6 +415,31 @@ export function mergeAdaptiveManagedPolicy(
       ...(maxTokens === undefined ? {} : { maxTokens }),
       unknownEstimate: stricterManagedUnknown(input?.budget?.unknownEstimate, adaptiveUnknown),
     },
+  };
+}
+
+export function createAdaptiveApprovalRequest(input: {
+  id: string;
+  action: AdaptiveApprovalAction;
+  title: string;
+  reason: string;
+  policy: AdaptivePolicy;
+  sessionId?: string;
+  now?: number;
+  ttlMs?: number;
+}): AdaptiveApprovalRequest {
+  const createdAt = input.now ?? Date.now();
+  return {
+    schemaVersion: 1,
+    id: stringValue(input.id, `approval-${createdAt}`, 200),
+    action: input.action,
+    title: stringValue(input.title, "Aprovação pendente"),
+    reason: stringValue(input.reason, "policy_requires_approval", 200),
+    policyId: input.policy.id,
+    sessionId: optionalString(input.sessionId, 200),
+    createdAt,
+    expiresAt: input.ttlMs && input.ttlMs > 0 ? createdAt + input.ttlMs : undefined,
+    status: "pending",
   };
 }
 

@@ -1085,6 +1085,21 @@
     E.setSumModel.onchange=()=>{ fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); saveSum(); };
     E.setSumEffort.onchange=saveSum;
     let adaptivePolicyDoc=null;
+    let adaptiveApprovalEl=null;
+    function renderAdaptiveApprovals(items){
+      const rows=Array.isArray(items)?items:[];
+      if(!rows.length){ if(adaptiveApprovalEl){ adaptiveApprovalEl.remove(); adaptiveApprovalEl=null; } return; }
+      if(!adaptiveApprovalEl){ adaptiveApprovalEl=document.createElement('div'); adaptiveApprovalEl.className='toast'; adaptiveApprovalEl.style.cssText='right:14px;left:auto;bottom:82px;max-width:min(420px,calc(100vw - 28px));display:flex;flex-direction:column;gap:8px;align-items:stretch'; document.body.appendChild(adaptiveApprovalEl); }
+      adaptiveApprovalEl.innerHTML='<b>Precisa de aprovação</b>';
+      rows.slice(0,5).forEach(a=>{
+        const row=document.createElement('div'); row.style.cssText='display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;border-top:1px solid #ffffff24;padding-top:7px';
+        const txt=document.createElement('div'); txt.innerHTML='<div style="font-weight:600">'+esc(a.title||'Ação pendente')+'</div><div style="font-size:11.5px;opacity:.8">'+esc(a.reason||'policy_requires_approval')+'</div>'; row.appendChild(txt);
+        const acts=document.createElement('div'); acts.style.cssText='display:flex;gap:6px';
+        const no=document.createElement('button'); no.type='button'; no.className='ghost'; no.textContent='Rejeitar'; no.onclick=()=>tx({t:'adaptive_approval',id:a.id,action:'reject'});
+        const yes=document.createElement('button'); yes.type='button'; yes.textContent='Aprovar'; yes.onclick=()=>tx({t:'adaptive_approval',id:a.id,action:'approve'});
+        acts.appendChild(no); acts.appendChild(yes); row.appendChild(acts); adaptiveApprovalEl.appendChild(row);
+      });
+    }
     function renderAdaptivePolicy(m){ adaptivePolicyDoc=m.doc||adaptivePolicyDoc||{}; const g=adaptivePolicyDoc.global||{}, mem=g.memory||{}, au=g.autonomy||{}, bu=g.budget||{}, wr=g.write||{}, eff=(m.effective&&m.effective.policy)||g, chain=(m.effective&&m.effective.chain)||[];
       E.setPolicyMode.value=au.mode||'assisted'; E.setPolicyMemoryTarget.value=mem.writeTarget||'jarvis_only'; E.setPolicyRisk.value=au.requireApprovalAboveRisk||'medium'; E.setPolicyUnknown.value=bu.unknownEstimate||'ask';
       E.setPolicyCost.value=bu.maxCostUsd==null?'':bu.maxCostUsd; E.setPolicyTokens.value=bu.maxTokens==null?'':bu.maxTokens;
@@ -1361,6 +1376,7 @@
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
         else if(m.t==='adaptive_policy'){ renderAdaptivePolicy(m); }
+        else if(m.t==='adaptive_approvals'){ renderAdaptiveApprovals(m.approvals||[]); }
         else if(m.t==='execution_cfg'){ const c=m.cfg||{}; E.setExecEnabled.checked=c.enabled!==false; E.setExecRetention.value=c.retentionDays||30; E.setExecMaxEvents.value=c.maxEvents||5000; E.setExecConcurrency.value=c.maxConcurrency||6; E.setExecDepth.value=c.maxDepth||3; E.setExecDefaultWrite.checked=!!c.defaultWrite; E.setExecWorktree.value=c.worktreeRoot||'';
           E.execCfgNote.textContent=m.saved?(m.restartRequired?'✓ Política salva. Reinicie o Hub para aplicar: '+(m.restartFields||[]).join(', ')+'.':'✓ Política salva e aplicada para novas delegações.'):'Ativação, retenção, limite do diário e raiz de worktrees exigem reinício; concorrência, profundidade e escrita padrão valem para novas delegações.'; }
         else if(m.t==='voice_cfg'){ renderVoiceCfg(m.cfg||{}); }

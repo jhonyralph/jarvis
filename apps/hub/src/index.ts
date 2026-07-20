@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -102,6 +102,34 @@ function saveAdaptivePolicy(): void { saveAdaptivePolicyDocument(ADAPTIVE_POLICY
 function effectivePolicyFor(sessionId?: string): ReturnType<typeof resolveAdaptivePolicy> {
   const cwd = sessionId ? sessionCwd(sessionId) : undefined;
   return resolveAdaptivePolicy(adaptivePolicyDoc, { sessionId, cwd });
+}
+interface PendingAdaptiveApproval { approval: AdaptiveApprovalRequest; routineId: string; }
+const pendingAdaptiveApprovals = new Map<string, PendingAdaptiveApproval>();
+function adaptiveApprovalList(): AdaptiveApprovalRequest[] {
+  const now = Date.now();
+  for (const [id, item] of pendingAdaptiveApprovals) {
+    if (item.approval.expiresAt && item.approval.expiresAt <= now) pendingAdaptiveApprovals.delete(id);
+  }
+  return [...pendingAdaptiveApprovals.values()].map((item) => item.approval).sort((a, b) => a.createdAt - b.createdAt);
+}
+function broadcastAdaptiveApprovals(): void { broadcastAll({ t: "adaptive_approvals", approvals: adaptiveApprovalList() }); }
+function queueRoutineApproval(r: Routine, reason: string): void {
+  const sid = "routine-" + r.id;
+  const existing = [...pendingAdaptiveApprovals.values()].find((item) => item.routineId === r.id);
+  if (existing) { broadcastAdaptiveApprovals(); return; }
+  const resolved = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: r.cwd || CWD, sessionId: sid });
+  const approval = createAdaptiveApprovalRequest({
+    id: `routine:${r.id}:${Date.now()}`,
+    action: "routine_background",
+    title: "⏰ " + r.name,
+    reason,
+    policy: resolved.policy,
+    sessionId: sid,
+    ttlMs: 12 * 60 * 60 * 1000,
+  });
+  pendingAdaptiveApprovals.set(approval.id, { approval, routineId: r.id });
+  notifyEvent("machine", "Rotina aguardando aprovação", `${r.name}: ${reason}`, sid);
+  broadcastAdaptiveApprovals();
 }
 interface ExecutionRuntimeConfig { enabled: boolean; retentionDays: number; maxEvents: number; maxConcurrency: number; maxDepth: number; defaultWrite: boolean; worktreeRoot: string; }
 const executionCfg: ExecutionRuntimeConfig = (() => {
@@ -1250,9 +1278,21 @@ async function deliverTurn(sid: string, opts: { showText: string; agentText?: st
  *  turn lifecycle, so agentTurn's own "done" push notification fires — the user gets briefed even
  *  with the app closed. NOTE: the session's agent/cwd lock on first run; editing a routine's
  *  agent/folder later won't move an existing routine session (delete+recreate to change those). */
-async function runRoutine(r: Routine): Promise<void> {
+async function runRoutine(r: Routine, approved = false): Promise<void> {
   const sid = "routine-" + r.id;
   const flags = autoFlags(r.auto);
+  if (!approved) {
+    const resolved = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: r.cwd || CWD, sessionId: sid });
+    const decision = decideAdaptiveRun(resolved.policy, { background: true, risk: "medium" });
+    if (decision.action === "reject") {
+      notifyEvent("error", "⏰ " + r.name, "bloqueada pela política: " + decision.reason, sid);
+      return;
+    }
+    if (decision.action === "ask") {
+      queueRoutineApproval(r, decision.reason);
+      return;
+    }
+  }
   if (r.runnerId && r.runnerId !== LOCAL_ID) {
     const rc = runners.get(r.runnerId);
     if (!rc?.ws) { notifyEvent("error", "⏰ " + r.name, "máquina da rotina está offline", sid); return; }
@@ -1281,7 +1321,7 @@ function handleRoutineMsg(ws: WebSocket, msg: any): boolean {
   if (msg.t === "routine_add") { if (!requireOwner(ws)) return true; try { routines.add(msg.routine || {}); send(ws, listMsg()); } catch (e: any) { send(ws, { t: "error", message: "Cron inválido: " + String(e?.message || e) }); } return true; }
   if (msg.t === "routine_update" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; try { routines.update(msg.id, msg.patch || {}); send(ws, listMsg()); } catch (e: any) { send(ws, { t: "error", message: "Cron inválido: " + String(e?.message || e) }); } return true; }
   if (msg.t === "routine_del" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; routines.remove(msg.id); send(ws, listMsg()); return true; }
-  if (msg.t === "routine_run" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; const r = routines.get(msg.id); if (r) void runRoutine(r); send(ws, listMsg()); return true; }
+  if (msg.t === "routine_run" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; const r = routines.get(msg.id); if (r) void runRoutine(r, true); send(ws, listMsg()); return true; }
   return false;
 }
 // Scheduler: every 30s, fire any routine whose local HH:MM matches now (markRun BEFORE running so a
@@ -2906,6 +2946,28 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
       send(ws, { t: "adaptive_policy", doc: adaptivePolicyDoc, effective: effectivePolicyFor(sessionId), sessionId });
+      send(ws, { t: "adaptive_approvals", approvals: adaptiveApprovalList() });
+      return;
+    }
+    if (msg.t === "adaptive_approvals") {
+      if (!requireOwner(ws)) return;
+      send(ws, { t: "adaptive_approvals", approvals: adaptiveApprovalList() });
+      return;
+    }
+    if (msg.t === "adaptive_approval" && typeof msg.id === "string") {
+      if (!requireOwner(ws)) return;
+      const pending = pendingAdaptiveApprovals.get(msg.id);
+      if (!pending) { send(ws, { t: "adaptive_approvals", approvals: adaptiveApprovalList() }); return; }
+      pendingAdaptiveApprovals.delete(msg.id);
+      if (msg.action === "approve") {
+        const routine = routines.get(pending.routineId);
+        if (routine) void runRoutine(routine, true);
+        auth.audit("adaptive_approval", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: `${pending.approval.id}: approved` });
+      } else {
+        notifyEvent("machine", "Aprovação recusada", pending.approval.title, pending.approval.sessionId);
+        auth.audit("adaptive_approval", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: `${pending.approval.id}: rejected` });
+      }
+      broadcastAdaptiveApprovals();
       return;
     }
     if (msg.t === "set_adaptive_policy") {

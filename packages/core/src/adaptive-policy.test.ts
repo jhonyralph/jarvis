@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   defaultAdaptivePolicy,
   defaultAdaptivePolicyDocument,
+  createAdaptiveApprovalRequest,
   decideAdaptiveRun,
   decideMemoryWrite,
   loadAdaptivePolicyDocument,
@@ -116,5 +117,29 @@ test("adaptive managed policy merge keeps the strictest budget", () => {
     budget: { maxCostUsd: 4, deadlineAt: 123, unknownEstimate: "reject" },
   }, policy({ budget: { unknownEstimate: "allow" } as any })), {
     budget: { maxCostUsd: 4, deadlineAt: 123, unknownEstimate: "reject" },
+  });
+});
+
+test("adaptive approval request is normalized and starts pending", () => {
+  assert.deepEqual(createAdaptiveApprovalRequest({
+    id: "ap-1",
+    action: "routine_background",
+    title: "Rotina diária",
+    reason: "background_turns_disabled",
+    policy: policy({ id: "project", label: "Project" }),
+    sessionId: "routine-1",
+    now: 10,
+    ttlMs: 90,
+  }), {
+    schemaVersion: 1,
+    id: "ap-1",
+    action: "routine_background",
+    title: "Rotina diária",
+    reason: "background_turns_disabled",
+    policyId: "project",
+    sessionId: "routine-1",
+    createdAt: 10,
+    expiresAt: 100,
+    status: "pending",
   });
 });
