@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -2972,6 +2972,28 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         auth.audit("adaptive_approval", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: `${pending.approval.id}: rejected` });
       }
       broadcastAdaptiveApprovals();
+      return;
+    }
+    if (msg.t === "set_adaptive_policy_scope") {
+      if (!requireOwner(ws)) return;
+      try {
+        adaptivePolicyDoc = upsertAdaptivePolicyScope(adaptivePolicyDoc, msg.policy || {});
+        saveAdaptivePolicy();
+        const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+        auth.audit("set_adaptive_policy_scope", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: String(msg.policy?.id || msg.policy?.scope || "") });
+        send(ws, adaptivePolicyPayload(sessionId, true));
+      } catch (e: any) {
+        send(ws, { t: "error", message: "Política inválida: " + String(e?.message || e) });
+      }
+      return;
+    }
+    if (msg.t === "remove_adaptive_policy_scope" && typeof msg.scope === "string" && typeof msg.id === "string") {
+      if (!requireOwner(ws)) return;
+      adaptivePolicyDoc = removeAdaptivePolicyScope(adaptivePolicyDoc, msg.scope as PolicyScope, msg.id);
+      saveAdaptivePolicy();
+      const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+      auth.audit("remove_adaptive_policy_scope", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: `${msg.scope}:${msg.id}` });
+      send(ws, adaptivePolicyPayload(sessionId, true));
       return;
     }
     if (msg.t === "set_adaptive_policy") {

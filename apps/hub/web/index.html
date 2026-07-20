@@ -773,6 +773,10 @@
       <label class="row"><input type="checkbox" id="setPolicyDiff" checked> Exigir preview/diff antes de escrever no repo</label>
       <label class="row"><input type="checkbox" id="setPolicyAutoplay"> Permitir rodar fila automaticamente</label>
       <label class="row"><input type="checkbox" id="setPolicyBackground"> Permitir turnos em background</label>
+      <div class="row" style="gap:6px;flex-wrap:wrap">
+        <button id="setPolicyProject" class="ghost" type="button">Salvar para pasta atual</button>
+        <button id="setPolicySession" class="ghost" type="button">Salvar para sessão atual</button>
+      </div>
       <label>Overrides avançados por projeto/subescopo/sessão/tarefa <span class="mut">JSON</span><textarea id="setPolicyOverrides" spellcheck="false" rows="5" placeholder='{"projects":[],"sessions":[],"tasks":[]}'></textarea></label>
     </div>
     <div class="sec" data-i18n="secVoice">Voz</div>

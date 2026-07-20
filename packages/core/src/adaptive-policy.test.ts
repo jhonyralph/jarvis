@@ -13,8 +13,10 @@ import {
   loadAdaptivePolicyDocument,
   mergeAdaptiveManagedPolicy,
   normalizeAdaptivePolicyDocument,
+  removeAdaptivePolicyScope,
   resolveAdaptivePolicy,
   saveAdaptivePolicyDocument,
+  upsertAdaptivePolicyScope,
   type AdaptivePolicy,
 } from "./adaptive-policy.js";
 
@@ -164,4 +166,30 @@ test("adaptive policy explanation reports effective control states", () => {
   assert.equal(controls.background_turns.state, "allow");
   assert.deepEqual([controls.high_risk.state, controls.high_risk.reason], ["ask", "risk_requires_approval"]);
   assert.deepEqual([controls.budget_unknown.state, controls.budget_unknown.reason], ["ask", "tokens_estimate_unknown"]);
+});
+
+test("adaptive policy scope upsert replaces project keys and removes scoped overrides", () => {
+  let doc = defaultAdaptivePolicyDocument(1);
+  doc = upsertAdaptivePolicyScope(doc, {
+    scope: "project",
+    id: "repo",
+    label: "Repo",
+    projectRoot: "C:/Work/Jarvis",
+    autonomy: { allowQueueAutoplay: true } as any,
+  }, 10);
+  doc = upsertAdaptivePolicyScope(doc, {
+    scope: "project",
+    id: "repo-renamed",
+    label: "Repo renomeado",
+    projectRoot: "c:\\work\\jarvis\\",
+    memory: { writeTarget: "disabled" } as any,
+  }, 20);
+  assert.equal(doc.projects.length, 1);
+  assert.equal(doc.projects[0].id, "repo-renamed");
+  assert.equal(resolveAdaptivePolicy(doc, { cwd: "C:/Work/Jarvis/apps/hub" }).policy.memory.writeTarget, "disabled");
+
+  doc = upsertAdaptivePolicyScope(doc, { scope: "session", id: "s-policy", label: "Sessão", sessionId: "s1", budget: { maxTokens: 500 } as any }, 30);
+  assert.equal(resolveAdaptivePolicy(doc, { cwd: "C:/Work/Jarvis", sessionId: "s1" }).policy.budget.maxTokens, 500);
+  doc = removeAdaptivePolicyScope(doc, "session", "s-policy", 40);
+  assert.equal(resolveAdaptivePolicy(doc, { cwd: "C:/Work/Jarvis", sessionId: "s1" }).policy.budget.maxTokens, undefined);
 });

@@ -50,6 +50,8 @@ export interface AdaptivePolicyDocument {
   tasks: AdaptivePolicy[];
 }
 
+export type AdaptivePolicyScopeUpsert = Partial<AdaptivePolicy> & { scope: PolicyScope };
+
 export interface ResolvePolicyInput {
   cwd?: string;
   sessionId?: string;
@@ -334,6 +336,55 @@ function matchProject(policy: AdaptivePolicy, cwd: string): boolean {
 
 function matchScore(policy: AdaptivePolicy): number {
   return normalizePathKey(policy.cwdPattern || policy.projectRoot || "").length;
+}
+
+function scopeKey(policy: Pick<AdaptivePolicy, "scope" | "id" | "projectRoot" | "cwdPattern" | "sessionId" | "taskId">): string {
+  if (policy.scope === "project") return `project:${normalizePathKey(policy.projectRoot || policy.cwdPattern || policy.id)}`;
+  if (policy.scope === "subscope") return `subscope:${normalizePathKey(policy.cwdPattern || policy.projectRoot || policy.id)}`;
+  if (policy.scope === "session") return `session:${policy.sessionId || policy.id}`;
+  if (policy.scope === "task") return `task:${policy.taskId || policy.id}`;
+  return "global";
+}
+
+function assertPolicyScope(policy: AdaptivePolicy): void {
+  if (policy.scope === "project" && !normalizePathKey(policy.projectRoot || policy.cwdPattern)) throw new Error("project policy requires projectRoot or cwdPattern");
+  if (policy.scope === "subscope" && !normalizePathKey(policy.cwdPattern || policy.projectRoot)) throw new Error("subscope policy requires cwdPattern or projectRoot");
+  if (policy.scope === "session" && !policy.sessionId) throw new Error("session policy requires sessionId");
+  if (policy.scope === "task" && !policy.taskId) throw new Error("task policy requires taskId");
+}
+
+function policyListFor(doc: AdaptivePolicyDocument, scope: PolicyScope): AdaptivePolicy[] {
+  if (scope === "session") return doc.sessions;
+  if (scope === "task") return doc.tasks;
+  return doc.projects;
+}
+
+export function upsertAdaptivePolicyScope(doc: AdaptivePolicyDocument, input: AdaptivePolicyScopeUpsert, now = Date.now()): AdaptivePolicyDocument {
+  const clean = normalizeAdaptivePolicyDocument(doc, now);
+  const scope = enumValue(input.scope, SCOPES, "global");
+  if (scope === "global") {
+    return normalizeAdaptivePolicyDocument({ ...clean, global: { ...clean.global, ...input, scope: "global", id: input.id || clean.global.id, updatedAt: now } }, now);
+  }
+  const fallback = { ...clean.global, id: input.id || `${scope}-${now}`, label: input.label || scope, scope, updatedAt: now };
+  const next = normalizePolicy({ ...input, scope, updatedAt: now }, fallback, scope);
+  assertPolicyScope(next);
+  const list = policyListFor(clean, scope);
+  const key = scopeKey(next);
+  const replaced = list.filter((p) => p.id !== next.id && scopeKey(p) !== key);
+  replaced.push(next);
+  if (scope === "session") return { ...clean, sessions: replaced };
+  if (scope === "task") return { ...clean, tasks: replaced };
+  return { ...clean, projects: replaced.sort((a, b) => matchScore(a) - matchScore(b)) };
+}
+
+export function removeAdaptivePolicyScope(doc: AdaptivePolicyDocument, scope: PolicyScope, idOrKey: string, now = Date.now()): AdaptivePolicyDocument {
+  const clean = normalizeAdaptivePolicyDocument(doc, now);
+  const normalizedKey = normalizePathKey(idOrKey);
+  const keep = (p: AdaptivePolicy) => p.id !== idOrKey && normalizePathKey(scopeKey(p)) !== normalizedKey && normalizePathKey(p.projectRoot || p.cwdPattern || p.sessionId || p.taskId || "") !== normalizedKey;
+  if (scope === "global") return clean;
+  if (scope === "session") return { ...clean, sessions: clean.sessions.filter(keep) };
+  if (scope === "task") return { ...clean, tasks: clean.tasks.filter(keep) };
+  return { ...clean, projects: clean.projects.filter((p) => p.scope !== scope || keep(p)) };
 }
 
 export function resolveAdaptivePolicy(doc: AdaptivePolicyDocument, input: ResolvePolicyInput = {}): ResolvedAdaptivePolicy {
