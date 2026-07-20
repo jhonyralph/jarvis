@@ -34,7 +34,7 @@ Set-Location "$root\apps\runner"
 while ($true) {
   Log 'iniciando runner...'
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\runner\src\index.ts" *>> $log }
-  else { Log 'tsx nao encontrado na raiz — caindo pro npm'; & npm.cmd --prefix "$root\apps\runner" start *>> $log }
-  Log 'runner encerrou — reiniciando em 3s'
+  else { Log 'tsx nao encontrado na raiz - caindo pro npm'; & npm.cmd --prefix "$root\apps\runner" start *>> $log }
+  Log 'runner encerrou - reiniciando em 3s'
   Start-Sleep -Seconds 3
 }
