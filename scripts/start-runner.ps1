@@ -19,6 +19,8 @@ if (Test-Path $envFile) {
     if ($_ -match '^\s*([A-Z_]+)\s*=\s*(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim().Trim('"'), 'Process') }
   }
 }
+$stateRoot = if ($env:JARVIS_HOME) { $env:JARVIS_HOME } else { $env:USERPROFILE }
+$updateLock = Join-Path $stateRoot '.jarvis\runner-update.lock'
 # `npm start` aqui seria `npm.cmd`, um batch — e chamar batch faz nascer um cmd.exe intermediário
 # só pra encadear o node. É um console a mais que a task precisa manter escondido; se qualquer
 # elo perder o -WindowStyle Hidden, ele vira janela na cara do usuário. Chamamos o tsx direto pelo
@@ -29,9 +31,35 @@ if (Test-Path $envFile) {
 # nada que inspeciona processos (a evicção dos instaladores) consegue dizer quem é quem.
 $tsx = Join-Path $root 'node_modules\tsx\dist\cli.mjs'
 Set-Location "$root\apps\runner"
+$lastUpdateWaitLog = [DateTimeOffset]::MinValue
 # Loop de supervisão: NUNCA sai. (Re)sobe o runner em foreground; quando o node encerra,
 # registra e reinicia após um pequeno backoff.
 while ($true) {
+  if (Test-Path $updateLock) {
+    try {
+      $age = ((Get-Date) - (Get-Item -LiteralPath $updateLock).LastWriteTime).TotalMinutes
+      if ($age -gt 30) {
+        Log 'lock de update antigo removido'
+        Remove-Item -LiteralPath $updateLock -Force -ErrorAction SilentlyContinue
+      } else {
+        $now = [DateTimeOffset]::Now
+        if (($now - $lastUpdateWaitLog).TotalSeconds -ge 60) {
+          Log 'update em andamento - aguardando script externo terminar'
+          $lastUpdateWaitLog = $now
+        }
+        Start-Sleep -Seconds 3
+        continue
+      }
+    } catch {
+      $now = [DateTimeOffset]::Now
+      if (($now - $lastUpdateWaitLog).TotalSeconds -ge 60) {
+        Log 'update em andamento - aguardando script externo terminar'
+        $lastUpdateWaitLog = $now
+      }
+      Start-Sleep -Seconds 3
+      continue
+    }
+  }
   Log 'iniciando runner...'
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\runner\src\index.ts" *>> $log }
   else { Log 'tsx nao encontrado na raiz - caindo pro npm'; & npm.cmd --prefix "$root\apps\runner" start *>> $log }

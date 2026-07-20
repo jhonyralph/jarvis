@@ -43,6 +43,7 @@ try { mkdirSync(JDIR, { recursive: true }); } catch { /* ignore */ }
 const ID_FILE = join(JDIR, "runner-id");
 const UPDATE_RECEIPT_FILE = join(JDIR, "update-receipt.json");
 const UPDATE_RESULT_FILE = join(JDIR, "update-result.json");
+const UPDATE_LOCK_FILE = join(JDIR, "runner-update.lock");
 
 function runnerId(): string {
   try { const v = readFileSync(ID_FILE, "utf8").trim(); if (v) return v; } catch { /* new */ }
@@ -194,6 +195,7 @@ $RequestId = ${psQuote(input.requestId)}
 $Target = ${psQuote(input.targetCommit)}
 $ResultFile = ${psQuote(input.resultFile)}
 $ReceiptFile = ${psQuote(input.receiptFile)}
+$LockFile = ${psQuote(UPDATE_LOCK_FILE)}
 $RunnerPid = ${input.pid}
 $Force = ${input.force ? "$true" : "$false"}
 $TaskName = 'JarvisRunner'
@@ -308,6 +310,7 @@ try {
   Write-Result $false $rolledBack $current
 } finally {
   Start-Runner
+  try { Remove-Item -LiteralPath $LockFile -Force -ErrorAction SilentlyContinue } catch {}
   try { if ($PSCommandPath) { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } } catch {}
 }
 `;
@@ -319,8 +322,15 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
   const targetCommit = typeof m.targetCommit === "string" && m.targetCommit ? m.targetCommit.replace("+dirty", "") : (await repoCommit(RUNNER_ROOT)).replace("+dirty", "");
   const scriptPath = join(JDIR, `runner-update-${Date.now()}.ps1`);
   cleanupRunnerUpdateScripts();
-  writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, pid: process.pid, force: !!m.force }), "utf8");
-  spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  try {
+    writeFileSync(UPDATE_LOCK_FILE, JSON.stringify({ requestId, targetCommit, pid: process.pid, at: Date.now() }), "utf8");
+    writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, pid: process.pid, force: !!m.force }), "utf8");
+    spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  } catch (error: any) {
+    try { unlinkSync(UPDATE_LOCK_FILE); } catch { /* ignore */ }
+    console.warn("[runner] update externo Windows indisponível:", String(error?.message ?? error).slice(0, 160));
+    return false;
+  }
   console.log("[runner] update entregue ao script externo; encerrando processo para liberar node_modules");
   setTimeout(() => process.exit(0), 500).unref();
   return true;
