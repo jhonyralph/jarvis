@@ -1,7 +1,7 @@
 # Jarvis — security model & hardening
 
-Jarvis drives coding agents with `bypassPermissions`, i.e. **arbitrary code
-execution** on every machine it controls. Access to the Hub is therefore access
+Jarvis defaults to provider-specific unattended/full-access flags, i.e. **arbitrary
+code execution** on every machine it controls. Access to the Hub is therefore access
 to a shell. This document is the threat model, the layers in place, and the
 checklist for exposing it beyond a private network.
 
@@ -80,7 +80,8 @@ access to a runner can make the agent do anything on that machine. So:
 `JARVIS_AUTH` (on/off) · `JARVIS_TRUST_PROXY` · `JARVIS_REQUIRE_TLS` ·
 `JARVIS_MAX_CONN_PER_IP` (40) · `JARVIS_MAX_CONN` (800) · `JARVIS_MAX_PAYLOAD_MB` (20) ·
 `JARVIS_ALLOWED_ORIGINS` · `JARVIS_DEVICE_TTL_DAYS` (0 = never) ·
-`JARVIS_ADMIN_PORT` (4578, loopback).
+`JARVIS_ADMIN_PORT` (4578, loopback) · `JARVIS_AGENT_PERMISSION_MODE`
+(`full-access` or `provider-default`).
 
 ## Owner passphrase (2FA)
 
@@ -93,9 +94,11 @@ locally for convenience, or not (re-enter each page load). Recovery if forgotten
 
 ## Residual risks / not done
 
-- **No in-app restricted-no-bypass mode** — headless agents need
-  `bypassPermissions` to run tools, so containment is per-machine sharing + audit,
-  plus **sandboxed runners** (container/VM) for guests: see
+- **Provider-default is not a Jarvis sandbox.** Setting
+  `JARVIS_AGENT_PERMISSION_MODE=provider-default` stops Jarvis from adding bypass
+  flags, but the effective policy is whatever that CLI/config/version implements;
+  it may also block unattended work. Strong containment still requires a
+  **sandboxed runner** (container/VM): see
   [runner-sandbox.md](runner-sandbox.md) (`Dockerfile.runner`).
 - **CSP still allows inline styles** (`style-src 'unsafe-inline'`) — the UI uses
   `style="…"` attributes; low risk, could be tightened with hashed styles.

@@ -34,7 +34,7 @@ echo "  Node $NV"
 step "Configuração ($JDIR/hub.env)"
 mkdir -p "$JDIR"
 if [ -f "$JDIR/hub.env" ]; then echo "  hub.env já existe — mantido."; else
-  { echo "JARVIS_AGENT=$AGENT"; echo "JARVIS_PORT=$PORT";
+  { echo "JARVIS_AGENT=$AGENT"; echo "JARVIS_PORT=$PORT"; echo "JARVIS_AGENT_PERMISSION_MODE=full-access";
     if [ -n "$URL" ]; then echo "JARVIS_PUBLIC_URL=$URL"; else echo "# JARVIS_PUBLIC_URL=https://<seu-host>  # p/ links de convite completos"; fi
   } > "$JDIR/hub.env"
   echo "  hub.env criado (agent=$AGENT, porta=$PORT)."

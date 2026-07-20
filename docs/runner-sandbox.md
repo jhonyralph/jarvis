@@ -1,7 +1,7 @@
 # Sandboxed runner (sharing safely)
 
 Authentication says *who* and *which machine*; it does **not** sandbox. An agent
-runs with `bypassPermissions`, so anyone you let onto a machine can make it do
+runs in `full-access` mode by default, so anyone you let onto a machine can make it do
 anything on that machine. To share with someone you don't fully trust, give them
 a **sandboxed runner** — a container/VM with nothing sensitive — instead of your
 main box.

@@ -86,10 +86,10 @@ test("Codex prompts are discovered (flat, first-line description) alongside Clau
   assert.equal(skill!.agent, "claude");
 });
 
-test("on a name clash Claude wins; expanding it uses the Claude file", () => {
+test("same-named commands remain visible per agent; unscoped expansion keeps deterministic Claude priority", () => {
   const plain = listCommands().filter((c) => c.name === "plain");
-  assert.equal(plain.length, 1, "deduped to a single 'plain'");
-  assert.equal(plain[0].agent, "claude", "Claude takes preference over Codex");
+  assert.equal(plain.length, 2, "homonymous provider commands must not hide one another");
+  assert.deepEqual(new Set(plain.map((c) => c.agent)), new Set(["claude", "codex"]));
   assert.match(expandCommand("/plain X")!.expanded, /no frontmatter, with X/, "the Claude body is expanded, not Codex's");
 });
 

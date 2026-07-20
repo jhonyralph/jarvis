@@ -7,7 +7,7 @@
   Uso:
       .\scripts\install-runner.ps1 -Hub "wss://<hub>/" -Token "<token>" -Label "Este PC"
 
-  Pré-requisitos nesta máquina: Node >= 22, e `claude login` / `codex login`.
+  Pré-requisitos: Node >= 22 e ao menos uma CLI suportada/autenticada.
 #>
 param(
   [Parameter(Mandatory)][string]$Hub,
@@ -18,8 +18,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
 if (-not (Get-Command node -EA SilentlyContinue)) { Write-Host 'Node.js não encontrado. Instale Node >= 22 e rode de novo.' -ForegroundColor Red; exit 1 }
-$hasAgent = (Get-Command claude -EA SilentlyContinue) -or (Get-Command codex -EA SilentlyContinue)
-if (-not $hasAgent) { Write-Host "Aviso: nenhum agente (claude/codex) encontrado. Instale e autentique pelo menos um nesta máquina." -ForegroundColor Yellow }
+$agentCommands = @('claude','codex','gemini','cursor-agent','copilot','opencode','cline','qwen','cn','kiro-cli','agy','aider')
+$hasAgent = $agentCommands | Where-Object { Get-Command $_ -EA SilentlyContinue } | Select-Object -First 1
+if (-not $hasAgent) { Write-Host 'Aviso: nenhuma CLI suportada encontrada. Instale/autentique ao menos uma; veja docs/agent-parity-matrix.md.' -ForegroundColor Yellow }
 
 Write-Host 'Instalando dependências (npm install)...'
 Set-Location $root

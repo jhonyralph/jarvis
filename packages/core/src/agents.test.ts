@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, MockAgentAdapter, codexUsage, codexItemToEvents, codexConfigModel } from "./agents.js";
+import { AgentRegistry, AiderAdapter, MockAgentAdapter, agentPermissionMode, codexUsage, codexItemToEvents, codexConfigModel, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseGenericJsonlEvent, finalOnlyText } from "./agents.js";
+
+test("permission mode is explicit and defaults conservatively to the historical full-access behavior", () => {
+  assert.equal(agentPermissionMode(undefined), "full_access");
+  assert.equal(agentPermissionMode("provider-default"), "provider_default");
+  assert.equal(agentPermissionMode("provider_default"), "provider_default");
+  assert.equal(agentPermissionMode("typo"), "full_access");
+});
 
 test("AiderAdapter: name + empty (uninvented) model catalog", async () => {
   const a = new AiderAdapter();
@@ -13,7 +20,56 @@ test("AgentRegistry registers aider alongside the built-ins and routes by name",
   const reg = new AgentRegistry("mock").register(new MockAgentAdapter()).register(new AiderAdapter());
   assert.ok(reg.names().includes("aider"));
   assert.equal(reg.get("aider").name, "aider");
-  assert.equal(reg.get("nope").name, "mock", "unknown name falls back to the default");
+  assert.throws(() => reg.get("nope"), /não registrado/, "an explicit unknown provider never silently runs the default");
+});
+
+test("model selection rejects a stale model or unsupported effort before spawn", () => {
+  const caps = { models: [{ id: "m1", efforts: ["low", "high"] }] };
+  assert.throws(() => validateModelSelection(caps, { model: "gone" }), /não existe/);
+  assert.throws(() => validateModelSelection(caps, { model: "m1", effort: "ultra" }), /não é suportado/);
+  assert.doesNotThrow(() => validateModelSelection(caps, { model: "m1", effort: "high" }));
+  assert.doesNotThrow(() => validateModelSelection({ models: [] }, { model: "provider/configured" }));
+});
+
+test("Gemini stream-json maps assistant, tool, terminal usage and errors", () => {
+  assert.equal(parseGeminiCliEvent({ type: "init", session_id: "g1" }).sessionId, "g1");
+  assert.equal(parseGeminiCliEvent({ type: "message", role: "assistant", content: "oi" }).text, "oi");
+  assert.equal(parseGeminiCliEvent({ type: "tool_use", tool_name: "read_file", parameters: { path: "a.ts" }, tool_id: "t1" }).events?.[0].toolId, "t1");
+  assert.equal(parseGeminiCliEvent({ type: "result", response: "fim", stats: { input_tokens: 7, output_tokens: 2 } }).usage?.inputTokens, 7);
+  assert.match(parseGeminiCliEvent({ type: "error", message: "quota" }).error || "", /quota/);
+});
+
+test("Cursor stream-json correlates tool start and does not duplicate completion", () => {
+  const started = parseCursorCliEvent({ type: "tool_call", subtype: "started", call_id: "c1", tool_call: { readToolCall: { args: { path: "README.md" } } } });
+  assert.equal(started.events?.[0].toolId, "c1");
+  assert.equal(parseCursorCliEvent({ type: "tool_call", subtype: "completed", call_id: "c1" }).events, undefined);
+  assert.equal(parseCursorCliEvent({ type: "result", subtype: "success", result: "ok", session_id: "s" }).finalText, "ok");
+});
+
+test("Cline JSONL surfaces reasoning, interaction requests and text", () => {
+  const p = parseClineCliEvent({ type: "say", say: "text", text: "fazendo", reasoning: "internal", partial: true });
+  assert.equal(p.text, "fazendo"); assert.equal(p.events?.[0].kind, "thinking");
+  assert.equal(parseClineCliEvent({ type: "ask", ask: "followup", text: "qual arquivo?" }).events?.[0].name, "InputRequired");
+});
+
+test("Qwen stream-json maps message tools and terminal usage", () => {
+  const p = parseQwenCliEvent({ type: "assistant", message: { content: [{ type: "text", text: "vou " }, { type: "tool_use", id: "q1", name: "Read", input: { file_path: "a" } }], usage: { input_tokens: 9 } } });
+  assert.equal(p.text, "vou "); assert.equal(p.events?.[0].toolId, "q1"); assert.equal(p.usage?.inputTokens, 9);
+  assert.equal(parseQwenCliEvent({ type: "result", result: "fim", session_id: "q" }).sessionId, "q");
+});
+
+test("generic JSONL parser is forward-compatible and only labels explicit costs as billed", () => {
+  assert.deepEqual(parseGenericJsonlEvent({ type: "future_event", payload: 1 }, "fixture"), { sessionId: undefined });
+  const done = parseGenericJsonlEvent({ type: "result", result: "ok", usage: { input_tokens: 2, cost: 0.1 } }, "opencode", true);
+  assert.equal(done.usage?.costKind, "billed"); assert.equal(done.usage?.costUsd, 0.1);
+  const unverified = parseGenericJsonlEvent({ type: "result", result: "ok", usage: { cost: 0.1 } }, "fixture");
+  assert.equal(unverified.usage?.costKind, "estimated_api_equivalent", "an unlabeled dollar is never promoted to billed");
+});
+
+test("final-only adapters unwrap common JSON envelopes but preserve unknown output", () => {
+  assert.equal(finalOnlyText('{"response":"feito"}'), "feito");
+  assert.equal(finalOnlyText('{"data":[{"message":{"content":"último"}}]}'), '{"data":[{"message":{"content":"último"}}]}', "unknown envelope is not guessed");
+  assert.equal(finalOnlyText("texto simples"), "texto simples");
 });
 
 // --- Codex config: the user's own default model, top-level key only ---

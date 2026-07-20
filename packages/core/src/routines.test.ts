@@ -44,15 +44,18 @@ test("RoutineStore: CRUD round-trips and persists", () => {
   const dir = mkdtempSync(join(tmpdir(), "jarvis-routines-"));
   try {
     const s = new RoutineStore(dir);
-    const r = s.add({ name: "Manhã", prompt: "resumo", hour: 9, minute: 0, days: [1, 2, 3, 4, 5], speak: true });
+    const r = s.add({ name: "Manhã", prompt: "resumo", hour: 9, minute: 0, days: [1, 2, 3, 4, 5], runnerId: "machine-2", agent: "gemini", model: "auto", cwd: "/repo", speak: true });
     assert.ok(r.id);
     assert.equal(r.enabled, true);
     assert.equal(s.list().length, 1);
+    assert.equal(r.runnerId, "machine-2");
+    assert.equal(r.agent, "gemini");
     s.update(r.id, { minute: 30, enabled: false });
     assert.equal(s.get(r.id)?.minute, 30);
     assert.equal(s.get(r.id)?.enabled, false);
     // survives a reload from disk
     assert.equal(new RoutineStore(dir).get(r.id)?.minute, 30);
+    assert.equal(new RoutineStore(dir).get(r.id)?.runnerId, "machine-2");
     assert.equal(s.remove(r.id), true);
     assert.equal(s.list().length, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }

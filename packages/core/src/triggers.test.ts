@@ -26,13 +26,17 @@ test("listMentionFiles finds files under cwd, skips node_modules, matches a quer
   assert.deepEqual(q, ["src/helper.ts"]);
 });
 
-test("appendMemory writes the note to CLAUDE.md (claude) / AGENTS.md (codex)", () => {
+test("appendMemory uses each provider's canonical project instruction file", () => {
   const r1 = appendMemory("# lembre disso", ROOT, "claude");
   assert.equal(r1.file, join(ROOT, "CLAUDE.md"));
   assert.match(readFileSync(r1.file, "utf8"), /- lembre disso/);
   const r2 = appendMemory("nota codex", ROOT, "codex");
   assert.equal(r2.file, join(ROOT, "AGENTS.md"));
   assert.ok(existsSync(r2.file));
+  const r3 = appendMemory("nota gemini", ROOT, "gemini");
+  assert.equal(r3.file, join(ROOT, "GEMINI.md"));
+  const r4 = appendMemory("nota cursor", ROOT, "cursor");
+  assert.equal(r4.file, join(ROOT, "AGENTS.md"));
 });
 
 test("expandBang runs the command and injects its output; null when not a bang", async () => {

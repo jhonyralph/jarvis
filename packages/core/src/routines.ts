@@ -18,6 +18,8 @@ export interface Routine {
   minute: number;  // 0–59
   /** weekdays it may run on (0=Sun … 6=Sat); empty/omitted = every day */
   days?: number[];
+  /** Machine that owns execution. Omitted/"local" means the Hub machine. */
+  runnerId?: string;
   agent?: string;
   model?: string;
   effort?: string;
@@ -54,7 +56,7 @@ export function scheduleLabel(r: Routine): string {
 
 export interface NewRoutine {
   name: string; prompt: string; hour: number; minute: number;
-  days?: number[]; agent?: string; model?: string; effort?: string; cwd?: string; speak?: boolean; enabled?: boolean;
+  days?: number[]; runnerId?: string; agent?: string; model?: string; effort?: string; cwd?: string; speak?: boolean; enabled?: boolean;
 }
 
 export class RoutineStore {
@@ -73,7 +75,7 @@ export class RoutineStore {
       name: n.name || "Rotina", prompt: n.prompt || "",
       hour: clamp(n.hour, 0, 23), minute: clamp(n.minute, 0, 59),
       days: Array.isArray(n.days) ? n.days.filter((d) => d >= 0 && d <= 6) : undefined,
-      agent: n.agent, model: n.model, effort: n.effort, cwd: n.cwd, speak: !!n.speak,
+      runnerId: n.runnerId, agent: n.agent, model: n.model, effort: n.effort, cwd: n.cwd, speak: !!n.speak,
       enabled: n.enabled !== false, createdAt: Date.now(),
     };
     this.data.push(r); this.flush();
@@ -87,7 +89,7 @@ export class RoutineStore {
     if (patch.hour !== undefined) r.hour = clamp(patch.hour, 0, 23);
     if (patch.minute !== undefined) r.minute = clamp(patch.minute, 0, 59);
     if (patch.days !== undefined) r.days = Array.isArray(patch.days) ? patch.days.filter((d) => d >= 0 && d <= 6) : undefined;
-    for (const k of ["agent", "model", "effort", "cwd"] as const) if (patch[k] !== undefined) (r as any)[k] = patch[k];
+    for (const k of ["runnerId", "agent", "model", "effort", "cwd"] as const) if (patch[k] !== undefined) (r as any)[k] = patch[k];
     if (patch.speak !== undefined) r.speak = !!patch.speak;
     if (patch.enabled !== undefined) r.enabled = !!patch.enabled;
     this.flush();

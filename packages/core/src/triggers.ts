@@ -2,8 +2,8 @@
  * Composer power-triggers that transform a message before/instead of a normal turn:
  *   - "!cmd"  runs cmd on THIS machine in the session cwd and INJECTS its output into the turn prompt
  *             (the model then sees the output as context). The chat still shows the raw "!cmd".
- *   - "#note" APPENDS the note to the session's memory file (CLAUDE.md for Claude / AGENTS.md for
- *             Codex) in the cwd — no turn; the client confirms first.
+ *   - "#note" APPENDS the note to the session's instruction file (CLAUDE.md for Claude,
+ *             GEMINI.md for Gemini, AGENTS.md for the other registered CLIs) — no turn; confirms first.
  * Both act on the machine that owns the session (hub for local, runner for remote).
  */
 import { spawn } from "node:child_process";
@@ -41,11 +41,11 @@ export function expandBang(text: string, cwd: string, timeoutMs = 30000): Promis
   });
 }
 
-/** Append a "#" note to the session's memory file for `agent` (CLAUDE.md / AGENTS.md) under `cwd`.
+/** Append a "#" note to the session's instruction file under `cwd`.
  *  Returns the file written and the cleaned note. Never invoked without the user confirming first. */
-export function appendMemory(text: string, cwd: string, agent: "claude" | "codex" | null): { file: string; note: string } {
+export function appendMemory(text: string, cwd: string, agent: string | null): { file: string; note: string } {
   const note = text.replace(/^\s*#+\s*/, "").trim();
-  const fname = agent === "codex" ? "AGENTS.md" : "CLAUDE.md";
+  const fname = agent === "claude" ? "CLAUDE.md" : agent === "gemini" ? "GEMINI.md" : "AGENTS.md";
   const file = join(cwd || process.cwd(), fname);
   if (note) appendFileSync(file, (existsSync(file) ? "\n" : "") + "- " + note + "\n", "utf8");
   return { file, note };

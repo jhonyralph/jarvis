@@ -49,3 +49,11 @@ test("bounded window drops oldest beyond cap", () => {
   // only the last three (ms 7,8,9) survive
   assert.equal(a.avgMs, 8);
 });
+
+test("telemetry rolls up independently by agent and model", () => {
+  const m = new Metrics();
+  m.record({ runnerId: "local", agent: "claude-code", model: "opus", ms: 100, ok: true, ts: 1 });
+  m.record({ runnerId: "remote", agent: "codex", model: "gpt", ms: 300, ok: false, ts: 2 });
+  assert.deepEqual(m.byAgent().map((x) => [x.key, x.turns]), [["codex", 1], ["claude-code", 1]]);
+  assert.equal(m.byModel().find((x) => x.key === "gpt")?.errorRate, 1);
+});

@@ -5,7 +5,7 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtCwd','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -39,7 +39,7 @@
     function machineHue(s){ let h=0; s=String(s||''); for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return h%360; }
     let allRefreshT=null; function scheduleAllRefresh(){ if(currentMachine!=='all')return; clearTimeout(allRefreshT); allRefreshT=setTimeout(()=>{ if(currentMachine==='all') tx({t:'listAll'}); }, 1500); }
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
-    const agentIcon = a => a==='codex'?'🟢':a==='claude-code'?'🟣':a==='mock'?'⚪':'🔹';
+    const agentIcon = a => ({'claude-code':'🟣',codex:'🟢',gemini:'🔵',cursor:'⚫',copilot:'🟪',opencode:'🟠',cline:'🔴',qwen:'🔷',continue:'🟡',kiro:'🟤',antigravity:'🛸',aider:'🔹',mock:'⚪'})[a]||'🔹';
     let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
     const askingSids=new Set();  // sessões na fase "consolidando" pós-turno (servidor → {t:asking}); trava o composer
     // ---- config (persisted; refresh não perde estado) ----
@@ -184,7 +184,7 @@
       const prevSession=currentSession, switchingSession=prevSession!==m.sessionId;
       if(switchingSession && prevSession!=null){ draftBySession[prevSession]=E.input.value; saveDrafts(); }
       currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId); updateOfflineBanner();
-      currentAgent=(m.session||{}).agent||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
+      currentAgent=(m.session||{}).agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null;   // modelo/esforço reais da sessão da máquina (só nativas mandam)
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
       E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearPending(); streamErr(); E.log.innerHTML='';
@@ -200,7 +200,7 @@
         const lastMsg=msgs[msgs.length-1];
         if(lastMsg && lastMsg.role==='assistant') clearRestorable(m.sessionId); else showRestoreBar(m.sessionId);
       }
-      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; sessCost=(m.session||{}).sessionCost||0; updUsagePill(); renderRecents(); closePop();
+      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; sessCost=(m.session||{}).sessionCost||0; sessUsage=(m.session||{}).sessionUsage||null; updUsagePill(); renderRecents(); closePop();
       curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
@@ -344,6 +344,8 @@
       if(!curTextEl){ flipDone(strFlow); curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; strFlow.appendChild(curTextEl); }
       curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); sawText=true; autoScroll(); }
     function streamFinish(){ strEl=strFlow=curTextEl=strTimeEl=null; curTextRaw=''; sawText=false; }
+    function usageCostText(usage,digits=4){ if(!usage||!(usage.costUsd>=0))return''; const p=usage.costKind==='billed'?'$':usage.costKind==='estimated_api_equivalent'?'≈$':'Σ$'; return p+Number(usage.costUsd||0).toFixed(digits); }
+    function usageSummary(usage){ if(!usage)return''; const cost=usageCostText(usage); const toks=usage.outputTokens||0; const kind=usage.costKind==='billed'?'cobrado reportado':usage.costKind==='estimated_api_equivalent'?'equivalente estimado':usage.costKind==='subscription_included'?'incluído na assinatura':usage.costKind==='tokens_only'?'somente tokens':'custo indisponível'; return `${cost?cost+' · ':''}${toks} tokens · ${kind}`; }
     function streamDone(finalText,usage){ if(strTimer){clearInterval(strTimer);strTimer=null;}
       if(!strEl){ addMsg({role:'assistant',text:finalText||''}); return; }
       const head=strEl.querySelector('.strhead'); if(head) head.remove();
@@ -354,9 +356,9 @@
       // Marcador CLARO de conclusão (o resultado é o texto logo acima) — "não sei se terminou" resolvido.
       const secs=strStart?Math.round((Date.now()-strStart)/1000):0; const tstr=secs>=60?`${Math.floor(secs/60)}m ${secs%60}s`:`${secs}s`;
       const f=document.createElement('div'); f.className='strdone';
-      f.innerHTML=`<span class="dchk">✓</span><span>Concluído · ${tstr}</span>`+(usage?` · <span class="dcost">~$${(usage.costUsd||0).toFixed(4)}</span>`:'');
+      f.innerHTML=`<span class="dchk">✓</span><span>Concluído · ${tstr}</span>`+(usageCostText(usage)?` · <span class="dcost">${usageCostText(usage)}</span>`:'');
       strEl.appendChild(f);
-      if(usage){ E.usage.textContent=`custo ~$${(usage.costUsd||0).toFixed(4)} · ${usage.outputTokens||0} tokens`; if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
+      if(usage){ E.usage.textContent=usageSummary(usage); if(usage.inputTokens){lastInputTokens=usage.inputTokens; updUsagePill();} }
       streamFinish(); autoScroll(); }
     function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
       if(currentSession) delete stopping[currentSession]; updateStopStatus();   // parou → limpa o "parando…" da sessão
@@ -528,7 +530,7 @@
         // versão (commit git) da máquina + aviso de disparidade com o servidor
         const ver = m.commit ? '<span class="mver" title="Build desta máquina'+(m.hubCommit?' · servidor: '+esc(m.hubCommit):'')+'">'+esc(m.commit)+'</span>' : '';
         const drift = m.stale ? '<span class="mtag warn" title="Versão diferente do servidor ('+esc(m.hubCommit||'?')+') — atualize esta máquina">⚠ desatualizada</span>' : '';
-        it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+ver+(m.local?'<span class="mtag">servidor</span>':(m.online?'':'<span class="mtag">offline</span>'))+drift+(noAI?'<span class="mtag warn" title="Nenhuma IA autenticada nesta máquina — rode `claude login` nela">⚠ sem IA</span>':'');
+        it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+ver+(m.local?'<span class="mtag">servidor</span>':(m.online?'':'<span class="mtag">offline</span>'))+drift+(noAI?'<span class="mtag warn" title="Nenhuma CLI suportada e autenticada foi detectada nesta máquina">⚠ sem IA</span>':'');
         it.onclick=(e)=>{ e.stopPropagation(); selectMachine(m.id); };
         if(authUser&&authUser.role==='owner'){ const pen=document.createElement('button'); pen.className='mpen'; pen.textContent='✏'; pen.title='Renomear';
           pen.onclick=async(e)=>{ e.stopPropagation(); const v=await dialog({title:'Renomear máquina',input:true,value:m.label,placeholder:'Nome da máquina'}); if(v&&v.trim()) tx({t:'rename_runner',runnerId:m.id,label:v.trim()}); };
@@ -550,13 +552,18 @@
       if(off) el.textContent='⚠ '+(mac.label||'Máquina')+' '+t('machineOffline');
     }
 
-    const capsFor = n => caps.find(c=>c.name===n)||{models:[],defaultModel:null};
+    const localCapsFor=n=>caps.find(c=>c.name===n)||{models:[],defaultModel:null,autoModel:false};
+    function machineCaps(){ const id=currentMachine==='all'?routedMachine:currentMachine; const m=machines.find(x=>x.id===id); return (m&&m.agentDescriptors&&m.agentDescriptors.length)?m.agentDescriptors:caps; }
+    function availableMachineCaps(){ const available=machineAgents(); return machineCaps().filter(c=>available.includes(c.name)); }
+    const capsFor = n => machineCaps().find(c=>c.name===n)||{models:[],defaultModel:null,autoModel:false};
+    const routineCaps=()=>{ const m=machines.find(x=>x.id===E.rtRunner.value), all=(m&&m.agentDescriptors&&m.agentDescriptors.length)?m.agentDescriptors:caps, available=m&&Array.isArray(m.agents)?m.agents:all.map(c=>c.name); return all.filter(c=>available.includes(c.name)); };
+    const routineCapsFor=n=>routineCaps().find(c=>c.name===n)||{models:[],defaultModel:null,autoModel:false};
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
-    const modelObj=(agent,id)=>{ const ms=capsFor(agent).models; return ms.find(m=>m.id===id)||ms[0]; };
+    const modelObj=(agent,id)=>{ if(!id)return null; const ms=capsFor(agent).models; return ms.find(m=>m.id===id)||null; };
     function fillEfforts(effSel,agent,modelId,val){ const m=modelObj(agent,modelId); const efs=(m&&m.efforts)||[]; fillSel(effSel,efs, (efs.includes(val)&&val)||(m&&m.defaultEffort)||efs[0]); }
     // footer pill state: model/effort vary per-message; agent/folder lock once the session starts
     let curModel=null, curEffort=null, curCwd='', curStarted=false;
-    const modelLabel=(agent,id)=>{ const m=modelObj(agent,id); return m?(m.label||m.id):(id||'—'); };
+    const modelLabel=(agent,id)=>{ const m=modelObj(agent,id); return m?(m.label||m.id):(id||'Automático'); };
     const effortsFor=(agent,id)=>{ const m=modelObj(agent,id); return (m&&m.efforts)||[]; };
     const EFF_PT={minimal:'Mínimo',low:'Baixo',medium:'Médio',high:'Alto',xhigh:'Muito alto',max:'Máximo',ultra:'Ultra',ultracode:'Ultracode'};
     const effLabel=v=>v?(EFF_PT[v]||v):'—';
@@ -575,7 +582,7 @@
       // (nativa) > default global salvo > default do agente. Assim uma sessão da máquina abre já com o
       // modelo/esforço dela, mas se você trocar pelo seletor a SUA escolha manda dali em diante.
       const okM=id=>id&&c.models.some(m=>m.id===id);
-      curModel = okM(pref.model)?pref.model : (okM(sessDeclModel)?sessDeclModel : (okM(cfg.model)?cfg.model : (c.defaultModel||(c.models[0]||{}).id||null)));
+      curModel = okM(pref.model)?pref.model : (okM(sessDeclModel)?sessDeclModel : (okM(cfg.model)?cfg.model : (c.defaultModel||(c.autoModel?null:(c.models[0]||{}).id)||null)));
       const efs=effortsFor(currentAgent,curModel);
       const okE=e=>e&&efs.includes(e);
       curEffort = okE(pref.effort)?pref.effort : (okE(sessDeclEffort)?sessDeclEffort : (okE(cfg.effort)?cfg.effort : ((modelObj(currentAgent,curModel)||{}).defaultEffort||efs[efs.length-1]||null)));
@@ -663,28 +670,29 @@
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">${mm.filter(x=>x.online).length}/${mm.length}</div><div class="mut" style="font-size:11px">máquinas online</div></div>
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">${T.active||0}</div><div class="mut" style="font-size:11px">rodando agora</div></div>
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">${T.sessions||0}</div><div class="mut" style="font-size:11px">sessões</div></div>
-        <div><div style="font-size:20px;font-weight:700;color:var(--text)">~$${(T.costTotal||0).toFixed(2)}</div><div class="mut" style="font-size:11px">custo acumulado</div></div>
-        <div title="Consumo de LLM atribuído à voz"><div style="font-size:20px;font-weight:700;color:#a78bfa">~$${(T.voiceCost||0).toFixed(2)}</div><div class="mut" style="font-size:11px">🎙 voz${T.voicePct?` · ${T.voicePct}% do total`:''}</div></div></div>`;
-      // Custo POR IA e POR SESSÃO — a cobrança acumula por agente/sessão; ~$ = estimado (Codex é tokens×preço).
-      const agLabel=a=>({'claude-code':'Claude','codex':'Codex','aider':'Aider','outro':'Outros'})[a]||a;
-      const agColor=a=>({'claude-code':'#d97757','codex':'#22c55e','aider':'#60a5fa'})[a]||'#9aa0a6';
+        <div><div style="font-size:20px;font-weight:700;color:var(--text)">$${(T.billableTotal||0).toFixed(2)}</div><div class="mut" style="font-size:11px">cobrado reportado</div></div>
+        <div><div style="font-size:20px;font-weight:700;color:var(--text)">≈$${(T.estimatedTotal||0).toFixed(2)}</div><div class="mut" style="font-size:11px">equivalente estimado</div></div>
+        <div title="Consumo de LLM atribuído à voz"><div style="font-size:20px;font-weight:700;color:#a78bfa">≈$${(T.voiceCost||0).toFixed(2)}</div><div class="mut" style="font-size:11px">🎙 voz${T.voicePct?` · ${T.voicePct}% do total`:''}</div></div></div>`;
+      const agLabel=a=>({'claude-code':'Claude','codex':'Codex','gemini':'Gemini','cursor':'Cursor','copilot':'Copilot','opencode':'OpenCode','cline':'Cline','qwen':'Qwen','continue':'Continue','kiro':'Kiro','antigravity':'Antigravity','aider':'Aider','outro':'Outros'})[a]||a;
+      const agColor=a=>({'claude-code':'#d97757','codex':'#22c55e','gemini':'#4285f4','cursor':'#e5e7eb','copilot':'#a78bfa','opencode':'#f59e0b','cline':'#ef4444','qwen':'#60a5fa','aider':'#38bdf8'})[a]||'#9aa0a6';
+      const costFmt=u=>u&&u.billableUsd>0&&u.estimatedUsd<=0?'$'+u.costUsd.toFixed(2):u&&u.estimatedUsd>0&&u.billableUsd<=0?'≈$'+u.costUsd.toFixed(2):'Σ$'+((u&&u.costUsd)||0).toFixed(2);
       const agRows=Object.entries(T.byAgent||{}).sort((x,y)=>y[1]-x[1]);
       if(agRows.length){ h+='<div class="sec" style="margin:6px 0 4px">Custo por IA</div>';
         const tot=agRows.reduce((s,r)=>s+r[1],0)||1;
         agRows.forEach(([a,v])=>{ const pct=Math.round(v/tot*100);
           h+=`<div style="display:flex;align-items:center;gap:8px;padding:2px 0;font-size:12px">
             <span style="width:8px;height:8px;border-radius:2px;background:${agColor(a)};flex:none"></span>
-            <span style="flex:1">${esc(agLabel(a))}</span><span class="mut">${pct}%</span><span style="color:var(--text);font-weight:600">~$${v.toFixed(2)}</span></div>
+            <span style="flex:1">${esc(agLabel(a))}</span><span class="mut">${pct}%</span><span style="color:var(--text);font-weight:600">${costFmt((T.byAgentUsage||{})[a])}</span></div>
             <div style="height:4px;border-radius:3px;background:var(--line);overflow:hidden;margin:0 0 3px"><div style="height:100%;width:${pct}%;background:${agColor(a)}"></div></div>`; }); }
       const ts=T.topSessions||[];
       if(ts.length){ h+='<div class="sec" style="margin:8px 0 4px">Sessões mais caras</div>';
         ts.forEach(s=>{ h+=`<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">
           <span class="mtag" style="border-color:${agColor(s.agent)};color:${agColor(s.agent)}">${esc(agLabel(s.agent))}</span>
           <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.title||s.id)}</span>
-          <span style="color:var(--text);font-weight:600">~$${(s.cost||0).toFixed(2)}</span></div>`; }); }
+          <span style="color:var(--text);font-weight:600">${costFmt(s.usage)}</span></div>`; }); }
       h+='<div class="sec" style="margin:6px 0 4px">Máquinas</div>';
       mm.forEach(x=>{ const badges=[]; if(x.local)badges.push('<span class="mtag">servidor</span>'); if(!x.online)badges.push(`<span class="mtag">offline${x.offlineMs>60000?` há ${Math.round(x.offlineMs/60000)}m`:''}</span>`);
-        if(x.online&&Array.isArray(x.agents)&&!x.agents.length)badges.push('<span class="mtag warn">⚠ sem IA</span>'); if(x.stale)badges.push('<span class="mtag warn">⚠ desatualizada</span>');
+        if(x.online&&Array.isArray(x.agents)&&!x.agents.length)badges.push('<span class="mtag warn">⚠ sem IA</span>'); if(x.compatible===false)badges.push('<span class="mtag warn">⚠ protocolo incompatível</span>'); if(x.stale)badges.push('<span class="mtag warn">⚠ desatualizada</span>');
         if(x.active>0)badges.push(`<span class="mtag" style="color:#22c55e">▶ ${x.active}</span>`);
         h+=`<div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid var(--line)">
           <span class="mdot ${x.online?'on':'off'}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.label||x.id)}${x.commit?` <span class="mut" style="font-size:10.5px">${esc(x.commit)}</span>`:''}</span>${badges.join(' ')}</div>`; });
@@ -699,7 +707,9 @@
         byR.forEach(r=>{ h+=`<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">
           <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(labelOf(r.runnerId))}</span>
           <span class="mut">${r.turns}t</span><span class="mut">p50 ${fmtMs(r.p50ms)}</span><span class="mut">p95 ${fmtMs(r.p95ms)}</span>
-          <span style="color:${erColor(r.errorRate)}">${Math.round(r.errorRate*100)}%</span></div>`; }); }
+          <span style="color:${erColor(r.errorRate)}">${Math.round(r.errorRate*100)}%</span></div>`; });
+        const dims=[['Por IA',M.agents||[],x=>agLabel(x.key)],['Por modelo',M.models||[],x=>x.key]];
+        dims.forEach(([title,rows,label])=>{ if(!rows.length)return; h+=`<div class="mut" style="font-size:11px;margin-top:6px">${title}</div>`; rows.forEach(r=>{h+=`<div style="display:flex;gap:8px;font-size:11.5px;padding:2px 0"><span style="flex:1">${esc(label(r))}</span><span class="mut">${r.turns}t · p50 ${fmtMs(r.p50ms)}</span><span style="color:${erColor(r.errorRate)}">${Math.round(r.errorRate*100)}%</span></div>`;}); }); }
       if(m.plan&&(m.plan.fiveHour||m.plan.sevenDay)){ h+='<div class="sec" style="margin:10px 0 4px">Uso do plano (Claude)</div>';
         if(m.plan.fiveHour){ h+=`<div class="mut" style="font-size:11.5px">Janela de 5h</div>${pctBar(m.plan.fiveHour)}`; }
         if(m.plan.sevenDay){ h+=`<div class="mut" style="font-size:11.5px;margin-top:5px">Semanal</div>${pctBar(m.plan.sevenDay)}`; }
@@ -886,14 +896,15 @@
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape') closePop(); });
     const ph=(t)=>{ const d=document.createElement('div'); d.className='ph'; d.textContent=t; return d; };
 
-    function machineAgents(){ const m=machines.find(x=>x.id===currentMachine); return (m&&Array.isArray(m.agents)&&m.agents.length)?m.agents:caps.map(c=>c.name); }
+    function machineAgents(){ const id=currentMachine==='all'?routedMachine:currentMachine, m=machines.find(x=>x.id===id); return m&&Array.isArray(m.agents)?m.agents:caps.map(c=>c.name); }
     function buildAgentPop(p){ p.appendChild(ph('Agente / IA')); const avail=machineAgents();
-      caps.forEach(c=>{ const ok=avail.includes(c.name); const o=document.createElement('div'); o.className='opt'+(c.name===currentAgent?' sel':'')+(ok?'':' disabled');
-        o.innerHTML='🤖 '+esc(c.name)+(c.name===currentAgent?'<span class="r">atual</span>':(ok?'':'<span class="r">indisponível</span>'));
+      machineCaps().forEach(c=>{ const ok=avail.includes(c.name); const o=document.createElement('div'); o.className='opt'+(c.name===currentAgent?' sel':'')+(ok?'':' disabled');
+        const state=c.support==='limited'?'limitado':c.support==='unverified'?'não verificado':c.support==='unauthenticated'?'sem login':c.support==='not_installed'?'não instalado':''; o.title=c.reason||'';
+        o.innerHTML='🤖 '+esc(c.label||c.name)+(c.name===currentAgent?'<span class="r">atual</span>':(!ok?'<span class="r">indisponível</span>':(state?'<span class="r">'+esc(state)+'</span>':'')));
         if(ok) o.onclick=()=>{ closePop(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); };
         p.appendChild(o); }); }
 
-    function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); (c.models||[]).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
+    function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); if(c.autoModel){ const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); curModel=null; curEffort=null; const pref=sessionPrefs[currentSession]||{}; delete pref.model; delete pref.effort; sessionPrefs[currentSession]=pref; saveSessionPrefs(); renderControls(); }; p.appendChild(a); } (c.models||[]).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
       o.onclick=()=>{ closePop(); curModel=mm.id; const efs=effortsFor(currentAgent,mm.id); if(!efs.includes(curEffort)) curEffort=((modelObj(currentAgent,mm.id)||{}).defaultEffort||efs[efs.length-1]||null); setSessionPref(curModel,curEffort); renderControls(); }; p.appendChild(o); }); }
 
@@ -921,14 +932,15 @@
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
-    let lastInputTokens=0, planUsage=null, sessCost=0, costTotalAll=0;
+    let lastInputTokens=0, planUsage=null, sessCost=0, sessUsage=null, costTotalAll=0;
     // Custo da sessão como PARCELA do total acumulado — um $ isolado (ainda mais num plano, onde é só
     // um equivalente-API, não dinheiro real) não dá pra comparar; % do total dá.
     function sessCostRow(){
       if(!(sessCost>0)) return '<div class="umut">sem custo ainda nesta sessão</div>';
       const pct=costTotalAll>0?Math.round(sessCost/costTotalAll*100):null;
-      return `<div class="urow"><span>esta sessão${pct!=null?` · ${pct}% do total`:''}</span><b>~$${sessCost.toFixed(4)}</b></div>`
-        +(costTotalAll>0?`<div class="umut ureset">total acumulado (todas as sessões): ~$${costTotalAll.toFixed(2)} · estimativa equivalente-API</div>`:'');
+      const p=sessUsage&&sessUsage.billableUsd>0&&sessUsage.estimatedUsd<=0?'$':sessUsage&&sessUsage.estimatedUsd>0&&sessUsage.billableUsd<=0?'≈$':'Σ$';
+      return `<div class="urow"><span>esta sessão${pct!=null?` · ${pct}% do total`:''}</span><b>${p}${sessCost.toFixed(4)}</b></div>`
+        +(costTotalAll>0?`<div class="umut ureset">total acumulado (todas as sessões): Σ$${costTotalAll.toFixed(2)} · classes separadas em Uso & custo</div>`:'');
     }
     function modelContext(){ return (modelObj(currentAgent,curModel)||{}).context||0; }
     function ctxPct(){ const c=modelContext(); return c?Math.min(100,Math.round(lastInputTokens/c*100)):0; }
@@ -954,22 +966,23 @@
     E.usageBtn.onclick=()=>togglePop(E.usageBtn,buildUsagePop);
 
     // ---------- settings (persistente) ----------
-    E.settingsBtn.onclick=()=>{ fillSel(E.setAgent,caps.map(c=>c.name),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
-      fillSel(E.setModel,c.models,cfg.model||c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
+    E.settingsBtn.onclick=()=>{ const mc=availableMachineCaps(); fillSel(E.setAgent,mc.map(c=>({id:c.name,label:c.label||c.name})),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
+      fillSel(E.setModel,(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(c.models||[]),cfg.model||c.defaultModel||''); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
-      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner) tx({t:'routines'});
+      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner){ fillSel(E.rtRunner,machines.filter(m=>m.online).map(m=>({id:m.id,label:m.label||m.id})),currentRunner); fillRoutineAgents(); tx({t:'routines'}); }
       tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang;
       E.settings.classList.remove('hidden'); };
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
-    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.models,c.defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
+    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(c.models||[]),c.defaultModel||''); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     // ---------- rotinas agendadas (owner) ----------
     function renderRoutines(list){ if(!E.routinesList)return;
       if(!list||!list.length){ E.routinesList.textContent='Nenhuma rotina ainda.'; return; }
       E.routinesList.innerHTML='';
       list.forEach(r=>{ const d=document.createElement('div'); d.style.cssText='display:flex;align-items:center;gap:4px;padding:3px 0';
-        d.innerHTML=`<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.enabled?'':'⏸ '}<b>${esc(r.name)}</b> <span class="mut">· ${esc(r.label||'')}</span>${r.speak?' 🔊':''}</span>`;
+        const machine=(machines.find(m=>m.id===(r.runnerId||'local'))||{}).label||r.runnerId||'servidor';
+        d.innerHTML=`<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.enabled?'':'⏸ '}<b>${esc(r.name)}</b> <span class="mut">· ${esc(r.label||'')} · ${esc(machine)} · ${esc(r.agent||'padrão')}</span>${r.speak?' 🔊':''}</span>`;
         const mk=(txt,title,fn)=>{ const b=document.createElement('button'); b.className='ghost'; b.textContent=txt; b.title=title; b.style.cssText='padding:2px 7px;flex:none'; b.onclick=fn; return b; };
         d.appendChild(mk('↻','Rodar agora',()=>{ tx({t:'routine_run',id:r.id}); toast('Rodando “'+r.name+'”…'); }));
         d.appendChild(mk(r.enabled?'⏸':'▶️', r.enabled?'Pausar':'Ativar', ()=>tx({t:'routine_update',id:r.id,patch:{enabled:!r.enabled}})));
@@ -977,9 +990,13 @@
         E.routinesList.appendChild(d); }); }
     E.rtAdd.onclick=()=>{ const name=(E.rtName.value||'').trim(), prompt=(E.rtPrompt.value||'').trim(); if(!name||!prompt){ toast(t('tRtFill')); return; }
       const t=(E.rtTime.value||'08:00').split(':'); const hour=parseInt(t[0]||'8',10)||0, minute=parseInt(t[1]||'0',10)||0;
-      tx({t:'routine_add',routine:{name,prompt,hour,minute,speak:E.rtSpeak.checked}}); E.rtName.value=''; E.rtPrompt.value=''; E.rtSpeak.checked=false; };
+      tx({t:'routine_add',routine:{name,prompt,hour,minute,runnerId:E.rtRunner.value||'local',agent:E.rtAgent.value||undefined,model:E.rtModel.value||undefined,cwd:(E.rtCwd.value||'').trim()||undefined,speak:E.rtSpeak.checked}}); E.rtName.value=''; E.rtPrompt.value=''; E.rtCwd.value=''; E.rtSpeak.checked=false; };
+    function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value); fillSel(E.rtModel,(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(c.models||[]),c.defaultModel||''); }
+    function fillRoutineAgents(){ const cs=routineCaps(); fillSel(E.rtAgent,cs.map(c=>({id:c.name,label:c.label||c.name})),cs.some(c=>c.name===(cfg.agent||currentAgent))?(cfg.agent||currentAgent):(cs[0]&&cs[0].name)||''); fillRoutineModels(); }
+    E.rtRunner.onchange=fillRoutineAgents;
+    E.rtAgent.onchange=fillRoutineModels;
     // ---------- config do refino por voz (escalada de modelo) ----------
-    function renderVoiceCfg(cfg){ if(!E.setVoiceEscalate)return; const models=(capsFor('claude-code').models||[]).map(x=>x.id);
+    function renderVoiceCfg(cfg){ if(!E.setVoiceEscalate)return; const models=(localCapsFor((cfg&&cfg.agent)||currentAgent).models||[]).map(x=>x.id);
       const opts=[['ask','Sempre perguntar'],['auto','Automático (deixar decidir)']].concat(models.map(m=>[m,'Sempre: '+m]));
       E.setVoiceEscalate.innerHTML=''; opts.forEach(([v,l])=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; if(v===((cfg&&cfg.escalate)||'ask')) o.selected=true; E.setVoiceEscalate.appendChild(o); });
       if(E.setVoiceRelevance) E.setVoiceRelevance.checked=((cfg&&cfg.relevance)||'on')!=='off'; }
@@ -988,9 +1005,9 @@
     E.setModel.onchange=()=>fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value);
     // resumo/digest one-shot config (roda no Hub; barato por padrão)
     let sumCfg={agent:'claude-code',model:'haiku',effort:'low'};
-    function fillSumSelects(){ if(!E.setSumAgent||!caps.length)return; fillSel(E.setSumAgent,caps.map(c=>c.name),sumCfg.agent); const c=capsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,sumCfg.model); fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value,sumCfg.effort); }
+    function fillSumSelects(){ if(!E.setSumAgent||!caps.length)return; fillSel(E.setSumAgent,caps.map(c=>c.name),sumCfg.agent); const c=localCapsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,sumCfg.model); const m=(c.models||[]).find(x=>x.id===E.setSumModel.value); fillSel(E.setSumEffort,(m&&m.efforts)||[],sumCfg.effort); }
     function saveSum(){ tx({t:'set_summary_cfg',agent:E.setSumAgent.value,model:E.setSumModel.value,effort:E.setSumEffort.value}); }
-    E.setSumAgent.onchange=()=>{ const c=capsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,c.defaultModel); fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); saveSum(); };
+    E.setSumAgent.onchange=()=>{ const c=localCapsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,c.defaultModel); const m=(c.models||[]).find(x=>x.id===E.setSumModel.value); fillSel(E.setSumEffort,(m&&m.efforts)||[],m&&m.defaultEffort); saveSum(); };
     E.setSumModel.onchange=()=>{ fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); saveSum(); };
     E.setSumEffort.onchange=saveSum;
     // ---- atualização do sistema (git) ----
@@ -1149,7 +1166,7 @@
         // Auto-recarregar quando a UI muda no servidor: guarda a 1ª versão recebida (a do HTML que
         // esta pagina carregou); se depois chegar outra, o arquivo mudou -> esta pagina esta velha.
         // Espera o turno atual terminar pra nao recarregar no meio de uma resposta.
-        if(m.t==='version'){ if(myVer==null){ myVer=m.v; } else if(m.v!==myVer){ needReload=true; maybeReload(); } return; }
+        if(m.t==='version'){ if(m.contractVersion!==1){ addErr(`Cliente incompatível com o contrato de eventos ${m.contractVersion}; recarregue a página.`); E.sendBtn.disabled=true; return; } if(myVer==null){ myVer=m.v; } else if(m.v!==myVer){ needReload=true; maybeReload(); } return; }
         if(m.t==='authinfo'){ showGate(m.claimed); }
         else if(m.t==='authed'){ if(m.token){ authToken=m.token; localStorage.setItem('jarvis_token',authToken); } authUser=m.user||authUser; updateOwnerUI(); enter(); }
         else if(m.t==='need_pass'){ if(m.error){ authPass=''; localStorage.removeItem('jarvis_pass'); showVerify(m.error); } else if(authPass){ tx({t:'verify',pass:authPass}); } else { showVerify(''); } }
@@ -1201,7 +1218,7 @@
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
           else if(ev.kind==='text'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.parentId); }
-          else if(ev.kind==='done'){ clearRestorable(m.sessionId); if(typeof m.sessionCost==='number'&&m.sessionId===currentSession) sessCost=m.sessionCost; streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
+          else if(ev.kind==='done'){ clearRestorable(m.sessionId); if(typeof m.sessionCost==='number'&&m.sessionId===currentSession){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
           else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
           else if(ev.kind==='error'){ streamErr(); onTurnEnd(m.sessionId); } }
         else if(m.t==='activity'){ if(m.sessionId!==currentSession)return;
@@ -1210,7 +1227,7 @@
           const d=toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows,m.detail);
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); autoScroll(); }
-        else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=`custo ~$${(m.usage.costUsd||0).toFixed(4)} · ${m.usage.outputTokens||0} tokens`; if(m.usage.inputTokens){lastInputTokens=m.usage.inputTokens; updUsagePill();} } }
+        else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=usageSummary(m.usage); if(m.usage.inputTokens){lastInputTokens=m.usage.inputTokens; updUsagePill();} } }
         else if(m.t==='usage_info'){ planUsage=m.plan||null; if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
         else if(m.t==='session'){ if(m.sessionId===currentSession && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
         else if(m.t==='deleted'){ const inCur = m.sessionId===currentSession || (Array.isArray(m.ids)&&m.ids.includes(currentSession));
@@ -1472,7 +1489,7 @@
     let trigMode=null, trigItems=[], trigIdx=-1;            // shared trigger-popover state (distinct from the E.pop popover)
     const slashOn=()=> cfg.slashMenu!==false;               // default ON; the toggle governs ALL trigger popovers
     function requestCommands(){ if(slashOn() && !cmdReqPending){ cmdReqPending=true; tx({t:'commands'}); } }
-    function cmdAgentSel(){ const a=currentAgent||''; return a==='claude-code'?'claude':a==='codex'?'codex':null; }
+    function cmdAgentSel(){ const a=currentAgent||''; return a==='claude-code'?'claude':(['codex','gemini','cursor','copilot','opencode','cline','qwen'].includes(a)?a:null); }
     function trigOpen(){ return !E.cmdPop.classList.contains('hidden'); }
     function closeTrig(){ if(trigOpen()){ E.cmdPop.classList.add('hidden'); E.cmdPop.innerHTML=''; } trigMode=null; trigItems=[]; trigIdx=-1; }
     // "/word" at the START OF ANY LINE (up to the cursor); "@frag" = a path fragment before the cursor.
@@ -1503,7 +1520,7 @@
       renderTrig(); }
     // "#"/"!" agem só no INÍCIO da mensagem (é onde o servidor os trata) → mostram um hint (e o "!" o histórico).
     function openMem(){ trigItems=[]; trigIdx=-1;
-      E.cmdPop.innerHTML='<div class="cmdhint">📝 Anexar à memória do projeto ('+(cmdAgentSel()==='codex'?'AGENTS.md':'CLAUDE.md')+') — Enter confirma · Esc cancela</div>';
+      const ag=cmdAgentSel(); const mf=ag==='claude'?'CLAUDE.md':ag==='gemini'?'GEMINI.md':'AGENTS.md'; E.cmdPop.innerHTML='<div class="cmdhint">📝 Anexar à memória do projeto ('+mf+') — Enter confirma · Esc cancela</div>';
       E.cmdPop.classList.remove('hidden'); }
     function openBang(frag){ const q=frag.toLowerCase();
       trigItems=bangHist.filter(c=>!q||c.toLowerCase().includes(q)).slice(0,20); trigIdx=trigItems.length?0:-1;

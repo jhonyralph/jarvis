@@ -51,6 +51,19 @@ test("parseNativeEvents: codex response_item message → message event", () => {
   assert.equal((ev[0] as any).text, "resposta do codex");
 });
 
+test("parseNativeEvents: codex command + web search survive native tail", () => {
+  const cmd = parseNativeEvents(JSON.stringify({ type: "response_item", payload: { type: "custom_tool_call", name: "exec", call_id: "c", input: "npm test" } }), false)[0] as any;
+  assert.equal(cmd.name, "Bash"); assert.match(cmd.summary, /npm test/);
+  const web = parseNativeEvents(JSON.stringify({ type: "event_msg", payload: { type: "web_search_end", query: "official docs" } }), false)[0] as any;
+  assert.equal(web.name, "WebSearch");
+});
+
+test("parseNativeEvents: codex patch preserves path, counts and inline rows", () => {
+  const [event] = parseNativeEvents(JSON.stringify({ type: "event_msg", payload: { type: "patch_apply_end", changes: { "C:\\repo\\a.ts": { type: "update", unified_diff: "@@ -1 +1 @@\n-old\n+new" } } } }), false) as any[];
+  assert.equal(event.name, "Edit"); assert.equal(event.path, "C:\\repo\\a.ts");
+  assert.equal(event.adds, 1); assert.equal(event.dels, 1); assert.equal(event.rows.length, 3);
+});
+
 test("parseNativeEvents: malformed JSON line → [] (never throws)", () => {
   assert.deepEqual(parseNativeEvents("{ this is not json", true), []);
   assert.deepEqual(parseNativeEvents("", false), []);

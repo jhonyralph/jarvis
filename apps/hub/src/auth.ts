@@ -1,7 +1,7 @@
 /**
  * Jarvis auth — device pairing by invite (decision 4a–4e in docs/multi-runner.md).
  *
- * Access to the Hub == a shell on the target machine (agents run bypassPermissions),
+ * Access to the Hub normally == a shell on the target machine (full-access is the default),
  * so auth is mandatory for any non-loopback access. Model:
  *  - per-DEVICE tokens (high-entropy random); only a SHA-256 hash is stored.
  *  - first run is UNCLAIMED: a one-time claim code (also stored hashed, plaintext

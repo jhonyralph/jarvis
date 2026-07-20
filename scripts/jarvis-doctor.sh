@@ -35,11 +35,15 @@ if have node; then
   if [ "${MAJ:-0}" -ge 22 ] 2>/dev/null; then pass "Node $NV"; else fail "Node $NV é antigo (precisa >= 22)." "Atualize o Node para 22+ (o hub/runner roda via tsx)."; fi
 else fail "Node.js não encontrado no PATH." "Instale Node >= 22 (nodejs.org)."; fi
 
-# 2) Agent CLI presente (login não é checável sem gastar um turno)
+# 2) CLIs: presence/version is read-only. Tier is the adapter certification state.
 ANY=0
-for a in claude codex; do if have "$a"; then pass "Agent CLI '$a' no PATH"; ANY=1; fi; done
-if [ "$ANY" -eq 0 ]; then fail "Nenhuma CLI de agente (claude/codex) no PATH." "Instale ao menos uma e faça login (ex.: 'claude login')."; \
-else warn "Login da CLI não é verificável aqui." "Se os turnos derem 401, rode 'claude login' / 'codex login' nesta máquina."; fi
+for entry in 'claude:claude-code:complete' 'codex:codex:limited' 'gemini:gemini:unverified' 'cursor-agent:cursor:unverified' 'copilot:copilot:unverified' 'opencode:opencode:unverified' 'cline:cline:unverified' 'qwen:qwen:unverified' 'cn:continue:limited' 'kiro-cli:kiro:limited' 'agy:antigravity:limited' 'aider:aider:limited'; do
+  cmd=${entry%%:*}; rest=${entry#*:}; id=${rest%%:*}; tier=${entry##*:}
+  if have "$cmd"; then ver=$("$cmd" --version 2>&1 | head -n 1); pass "Agent '$id' [$tier] — $cmd $ver"; ANY=1; fi
+done
+if [ "$ANY" -eq 0 ]; then fail "Nenhuma CLI de agente suportada no PATH." "Instale e autentique ao menos uma; veja docs/agent-parity-matrix.md."; \
+else warn "Presença/versão não prova autenticação nem paridade." "Rode npm run agents:report e um probe real antes de promover unverified/limited."; fi
+case "${JARVIS_AGENT_PERMISSION_MODE:-full-access}" in provider-default|provider_default) pass "Política de ferramentas: provider-default";; *) warn "Política de ferramentas: full-access — agentes podem executar código com acesso total." "Use JARVIS_AGENT_PERMISSION_MODE=provider-default para aprovações/sandbox do provedor.";; esac
 
 # 3) Repo + deps
 if [ -f "$REPO/package.json" ]; then

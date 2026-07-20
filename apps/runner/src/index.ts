@@ -19,15 +19,16 @@ import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
-  AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED,
-  listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
+  AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED,
+  listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory,
-  type AgentAdapter, type SendOpts,
+  buildTurnAttachments, imageDataUrl, runManagedTurn,
+  type AgentAdapter, type SendOpts, type TurnCtx,
 } from "@jarvis/core";
 
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
-import type { RunnerInfo, RunnerSession, RunnerToHub } from "@jarvis/protocol";
+import { RUNNER_PROTOCOL_VERSION, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/+$/, "");
 const HUB_URL = HUB + "/runner";
@@ -50,6 +51,15 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new ClaudeCodeAdapter())
   .register(new CodexAdapter())
   .register(new AiderAdapter())
+  .register(new GeminiCliAdapter())
+  .register(new CursorAgentAdapter())
+  .register(new CopilotCliAdapter())
+  .register(new OpenCodeAdapter())
+  .register(new ClineCliAdapter())
+  .register(new QwenCodeAdapter())
+  .register(new ContinueCliAdapter())
+  .register(new KiroCliAdapter())
+  .register(new AntigravityCliAdapter())
   .register(new MockAgentAdapter());
 const store = new Store({ agent: DEFAULT_AGENT, cwd: CWD });
 const activeRuns = new Set<string>();
@@ -110,9 +120,8 @@ function startTail(sid: string): void {
 }
 function stopTail(sid: string): void { const t = tails.get(sid); if (t) { clearInterval(t.timer); tails.delete(sid); } }
 
-// Probing availability spawns a real `claude -p` per agent, so it is CACHED: register runs on
-// every reconnect, and re-probing each time was both slow and (on older builds) left one
-// throwaway "ok" session per reconnect — thousands of them on a flapping link.
+// Availability is cached because register runs on every reconnect. Probes are read-only
+// version/login-status checks and must never create an inference turn or throwaway session.
 // A negative result must NOT stick: probing right before the user runs `claude auth login` would
 // otherwise pin the machine to "no AI" for the whole TTL. Success is cached for an hour, failure
 // only long enough to avoid a probe storm, so the machine recovers on its own after a login.
@@ -133,7 +142,7 @@ async function availableAgents(): Promise<string[]> {
 function allSessions(): RunnerSession[] {
   const own = store.list().map((s: any) => ({ id: s.id, title: s.title, agent: s.agent, cwd: s.cwd, updatedAt: s.updatedAt, source: "managed" as const, writable: true }));
   const ownIds = new Set(own.map((s) => s.id));
-  const native = listNative().filter((n) => !ownIds.has(n.id)).map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, updatedAt: n.updatedAt, source: "native" as const, writable: n.agent === "claude-code" }));
+  const native = listNative().filter((n) => !ownIds.has(n.id)).map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, updatedAt: n.updatedAt, source: "native" as const, writable: n.agent === "claude-code" || n.agent === "codex" }));
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 function pushSessions(): void { send({ t: "sessions", sessions: allSessions() }); }
@@ -143,13 +152,21 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
   if (isNativeId(sessionId)) {
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
-    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code", total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId) });
+    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId) });
     startTail(sessionId); // live-mirror new turns (external CLI) to the Hub
   } else {
     const s = store.ensure(sessionId);
     const all = store.history(s.id);
     const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-    send({ t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: all.length, nativeId: nid, messages: all.map((m: any) => ({ role: m.role, text: m.text, ts: m.ts })), files: nid ? sessionFiles("claude:" + nid) : [] });
+    send({
+      t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd,
+      writable: true, total: all.length, nativeId: nid,
+      messages: all.map((m: any) => ({
+        role: m.role, text: m.text, ts: m.ts, agent: m.agent, speaker: m.speaker,
+        images: m.images, files: m.files, activity: m.activity, usage: m.usage,
+      })),
+      files: nid ? sessionFiles(nativeIdForAgent(s.agent, nid) || "") : [],
+    });
   }
 }
 
@@ -159,7 +176,16 @@ function sessAgent(sid?: string): string | undefined { if (!sid) return undefine
 
 // Live turns on this machine, so a {t:cancel} from the Hub can kill the actual agent process.
 const runAborts = new Map<string, AbortController>();
-async function doSend(sessionId: string, text: string, agentName?: string, cwd?: string, opts?: SendOpts): Promise<void> {
+async function doSend(
+  sessionId: string,
+  text: string,
+  agentName?: string,
+  cwd?: string,
+  opts?: SendOpts,
+  attachments: Array<{ name: string; content: string; image?: boolean }> = [],
+  turnId?: string,
+): Promise<void> {
+  if (turnId && !seenTurns.add(turnId)) { console.log(`[runner] turno duplicado ignorado (turnId=${turnId})`); return; }
   // One turn per session (authoritative): a second send while one runs = two agents on one repo.
   if (activeRuns.has(sessionId)) { send({ t: "busy", message: "Já há um processamento nesta sessão — aguarde terminar ou toque em Parar." }); return; }
   const ctrl = new AbortController();
@@ -168,37 +194,81 @@ async function doSend(sessionId: string, text: string, agentName?: string, cwd?:
   // pause the native tail so our own turn isn't double-broadcast (already streamed below)
   const tail = isNativeId(sessionId) ? tails.get(sessionId) : undefined;
   if (tail) tail.paused = true;
+  let streamAgent: string | undefined;
   try {
     let agent: AgentAdapter, useCwd: string;
     if (isNativeId(sessionId)) {
       const info = nativeInfo(sessionId);
       if (!info) throw new Error("sessão nativa não encontrada");
-      agent = agents.get(info.agent); useCwd = info.cwd || CWD;
-      send({ t: "message", sessionId, message: { role: "user", text, ts: Date.now() } });
+      agent = agents.get(info.agent); streamAgent = agent.name; useCwd = info.cwd || CWD;
+      const built = buildTurnAttachments(attachments, text, {
+        saveImage: (name, bytes) => {
+          const dir = join(JDIR, "pasted"); mkdirSync(dir, { recursive: true });
+          const p = join(dir, `${Date.now()}-${String(name || "img").replace(/[^\w.-]/g, "_")}`);
+          writeFileSync(p, bytes); return p;
+        },
+        previewImage: (name, bytes) => imageDataUrl(name, bytes),
+      });
+      send({ t: "message", sessionId, message: { role: "user", text: built.showText, ts: Date.now(), agent: agent.name, images: built.images, files: built.files } });
+      send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "start" } });
+      const activity: unknown[] = [];
+      const bang = await expandBang(built.agentText, useCwd);
+      const cmdExp = bang ? null : expandCommand(built.agentText, useCwd, cmdAgentOf(agent.name));
+      const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : built.agentText);
+      const reply = await agent.send(sessionId, agentInput, useCwd, { ...opts, signal: ctrl.signal }, (ev) => {
+        if (activity.length < 600) activity.push(ev);
+        send({ t: "stream", sessionId, agent: streamAgent, ev });
+      });
+      send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "done", text: reply.text, usage: reply.usage } });
     } else {
       const s = store.ensure(sessionId, agentName ? { agent: agentName, cwd: cwd || CWD } : undefined);
-      agent = agents.get(s.agent); useCwd = s.cwd || CWD;
-      store.add(sessionId, { role: "user", text, ts: Date.now(), agent: agent.name });
-      send({ t: "message", sessionId, message: { role: "user", text, ts: Date.now() } });
-      pushSessions();
+      agent = agents.get(s.agent); streamAgent = agent.name; useCwd = s.cwd || CWD;
+      const built = buildTurnAttachments(attachments, text, {
+        saveImage: (name, bytes) => {
+          const dir = join(JDIR, "pasted"); mkdirSync(dir, { recursive: true });
+          const p = join(dir, `${Date.now()}-${String(name || "img").replace(/[^\w.-]/g, "_")}`);
+          writeFileSync(p, bytes); return p;
+        },
+        previewImage: (name, bytes) => imageDataUrl(name, bytes),
+      });
+      const ctx: TurnCtx = {
+        ensure: (sid) => store.ensure(sid),
+        resolveAgentName: (name) => agents.get(name).name,
+        add: (sid, msg) => store.add(sid, msg),
+        broadcast: (sid, message) => send({ t: "message", sessionId: sid, message: (message as any).message }),
+        pushSessions,
+        now: () => Date.now(),
+        speak: async () => {},
+        runAgentTurn: async (sid, name, agentText, turnCwd, turnOpts) => {
+          const selected = agents.get(name);
+          const activity: unknown[] = [];
+          send({ t: "stream", sessionId: sid, agent: selected.name, ev: { kind: "start" } });
+          const bang = await expandBang(agentText, turnCwd);
+          const cmdExp = bang ? null : expandCommand(agentText, turnCwd, cmdAgentOf(selected.name));
+          const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
+          const reply = await selected.send(sid, agentInput, turnCwd, { ...turnOpts, signal: ctrl.signal }, (ev) => {
+            if (activity.length < 600) activity.push(ev);
+            send({ t: "stream", sessionId: sid, agent: selected.name, ev });
+          });
+          send({ t: "stream", sessionId: sid, agent: selected.name, ev: { kind: "done", text: reply.text, usage: reply.usage } });
+          return { ...reply, activity };
+        },
+      };
+      await runManagedTurn(ctx, sessionId, {
+        showText: built.showText, agentText: built.agentText, model: opts?.model, effort: opts?.effort,
+        images: built.images, files: built.files,
+        onError: (message) => {
+          if (ctrl.signal.aborted || message === ABORTED) send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "cancelled" } });
+          else { send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "error", text: message } }); send({ t: "error", message }); }
+        },
+      });
     }
-    // Only NOW: "start" makes the UI drop its pending placeholder and open the reply bubble, so
-    // emitting it before the user echo above left the echo landing *below* the reply.
-    send({ t: "stream", sessionId, ev: { kind: "start" } });
-    // Power-triggers for the agent (echo stays raw): "!cmd" runs + injects output; else "/cmd" expands
-    // to its prompt (only THIS agent's commands).
-    const bang = await expandBang(text, useCwd);
-    const cmdExp = bang ? null : expandCommand(text, useCwd, cmdAgentOf(agent.name));
-    const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : text);
-    const reply = await agent.send(sessionId, agentInput, useCwd, { ...opts, signal: ctrl.signal }, (ev) => send({ t: "stream", sessionId, ev }));
-    if (!isNativeId(sessionId)) { store.add(sessionId, { role: "assistant", text: reply.text, ts: Date.now(), agent: agent.name }); pushSessions(); }
-    send({ t: "stream", sessionId, ev: { kind: "done", text: reply.text, usage: reply.usage } });
   } catch (e: any) {
     // User-initiated cancel: not an error — tell the UI it stopped and stay quiet otherwise.
     if (ctrl.signal.aborted || String(e?.message) === ABORTED) {
-      send({ t: "stream", sessionId, ev: { kind: "cancelled" } });
+      send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "cancelled" } });
     } else {
-      send({ t: "stream", sessionId, ev: { kind: "error", text: String(e?.message ?? e) } });
+      send({ t: "stream", sessionId, agent: streamAgent, ev: { kind: "error", text: String(e?.message ?? e) } });
       send({ t: "error", message: String(e?.message ?? e) });
     }
   } finally {
@@ -225,7 +295,15 @@ function connect(): void {
   hb.unref?.();
   sock.on("open", async () => {
     reconnectDelay = 1000;
-    const info: RunnerInfo = { runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: await availableAgents(), version: VERSION, commit: await repoCommit(RUNNER_ROOT), label: process.env.JARVIS_LABEL || undefined };
+    const available = await availableAgents();
+    // Publish the full catalog (including not_installed/unauthenticated reasons). `agents` remains
+    // the executable allow-list; descriptors let the UI explain why another adapter is unavailable.
+    const descriptors = await agents.describe();
+    const info: RunnerInfo = {
+      runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: available,
+      agentDescriptors: descriptors, protocolVersion: RUNNER_PROTOCOL_VERSION,
+      version: VERSION, commit: await repoCommit(RUNNER_ROOT), label: process.env.JARVIS_LABEL || undefined,
+    };
     send({ t: "register", token: TOKEN, info });
   });
   sock.on("message", async (data) => {
@@ -247,7 +325,7 @@ function connect(): void {
       }
       if (m.t === "readfile" && typeof m.path === "string") { send({ t: "filecontent", reqId: m.reqId, ...readProjectFile(m.path, m.cwd) }); return; }
       if (m.t === "readdiff" && typeof m.path === "string" && typeof m.sessionId === "string") {
-        const diffId = isNativeId(m.sessionId) ? m.sessionId : (() => { const s = store.get(m.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return nid ? "claude:" + nid : ""; })();
+        const diffId = isNativeId(m.sessionId) ? m.sessionId : (() => { const s = store.get(m.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return s && nid ? (nativeIdForAgent(s.agent, nid) || "") : ""; })();
         send({ t: "filediff", reqId: m.reqId, ...(diffId ? sessionFileDiff(diffId, m.path) : { path: m.path, name: m.path.split(/[\\/]/).pop() || m.path, error: "sem sessão nativa vinculada" }) });
         return;
       }
@@ -259,7 +337,7 @@ function connect(): void {
             const s = store.get(sid);
             if (s) {
               const ag = agents.get(s.agent);
-              if (m.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); if (nid) deleteNative("claude:" + nid); }
+              if (m.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); const key = nid && nativeIdForAgent(s.agent, nid); if (key) deleteNative(key); }
               ag.forgetSession?.(sid);
             }
             store.delete(sid);
@@ -290,9 +368,12 @@ function connect(): void {
         return;
       }
       if (m.t === "send" && typeof m.sessionId === "string") {
-        // idempotency: skip a turnId we already executed (dedupe re-delivery — see seenTurns).
-        if (typeof m.turnId === "string" && m.turnId && !seenTurns.add(m.turnId)) { console.log(`[runner] turno duplicado ignorado (turnId=${m.turnId})`); return; }
-        await doSend(m.sessionId, String(m.text ?? ""), m.agent, m.cwd, m.opts);
+        await doSend(
+          m.sessionId, String(m.text ?? ""), m.agent, m.cwd,
+          { model: m.model ?? m.opts?.model, effort: m.effort ?? m.opts?.effort },
+          Array.isArray(m.attachments) ? m.attachments : [],
+          typeof m.turnId === "string" ? m.turnId : undefined,
+        );
         return;
       }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }

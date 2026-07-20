@@ -22,10 +22,10 @@ a machine can't reach the remote, package it instead:
   NOT configure anything per secondary machine on it. It: serves the web UI,
   **stores everything locally** (`~/.jarvis/` = auth, devices, runner tokens,
   sessions, audit; `~/.claude` / `~/.codex` = the agents' own native sessions),
-  runs agents locally ("machine 0"), and **listens for runners** on `…/runner`.
+  runs supported agent CLIs locally ("machine 0"), and **listens for runners** on `…/runner`.
   There is exactly **one Hub**.
 - **Secondary machines = runners.** Each runs the headless `apps/runner`, dials
-  the Hub, and runs its own local `claude`/`codex`. To add one you just mint a
+  the Hub, and runs its own installed agent adapters. To add one you just mint a
   token on the Hub and run the installer on the machine — no Hub-side per-machine
   service to set up.
 - **Clients** = any browser (phone/desktop) opening the Hub's URL.
@@ -43,8 +43,9 @@ The installers **check** these but do not install them (installing Node/agents i
 interactive per-OS):
 
 1. **Node.js ≥ 22** — nodejs.org, or `winget install OpenJS.NodeJS` / `brew install node` / your distro's package.
-2. **The agent CLI + login** — install Claude Code and/or Codex and run
-   `claude login` / `codex login`. **Each machine authenticates its own agent;
+2. **An agent CLI + login** — choose from the current support matrix and run its
+   authentication flow. `npm run agents:report` verifies presence/version without
+   spending a turn. **Each machine authenticates its own agent;
    no credentials cross the network.** A machine with no authed agent shows up
    but its agents are greyed out in the picker.
 3. **A way to reach the Hub** — same private network. Default: **Tailscale** on

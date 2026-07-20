@@ -4,10 +4,6 @@
 # matando a porta 4577 pra aplicar código novo — o loop ressuscita em segundos.
 # Como tsx roda direto do source, o restart já pega o código atualizado. Instância
 # única garantida pelo teste da porta 4577. Log em ~/.jarvis/hub.log.
-#
-# Por que o warmup: no boot o token OAuth do Claude pode estar expirado. O Hub faz um
-# GET /v1/models direto e NÃO sabe renovar o token; só o CLI `claude` renova (refresh
-# token). Então "aquecemos" o token com uma chamada trivial ANTES de subir o Hub.
 $ErrorActionPreference = 'Continue'
 $root = Split-Path $PSScriptRoot -Parent            # ...\jarvis
 $hub  = Join-Path $root 'apps\hub'
@@ -15,7 +11,7 @@ $log  = Join-Path $env:USERPROFILE '.jarvis\hub.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
 function Log($m) { Add-Content -Path $log -Value ("[launcher] {0} {1}" -f (Get-Date -Format o), $m) }
 
-# garante que node/npm/claude resolvem, independente do PATH da tarefa
+# garante que node/npm/CLIs resolvem, independente do PATH da tarefa
 $env:PATH = "C:\Program Files\nodejs;$env:USERPROFILE\.local\bin;$env:PATH"
 
 # instância única: se já há um Hub na 4577 (ex.: o logon dispara de novo com o supervisor
@@ -40,26 +36,12 @@ if (-not $env:JARVIS_SEARCH_MODEL) { $env:JARVIS_SEARCH_MODEL = 'haiku' }
 if (-not $env:JARVIS_AUTH)         { $env:JARVIS_AUTH = 'on' }
 $env:JARVIS_CWD = $root
 
-# aquece o token do Claude (best-effort, com teto de tempo para nunca travar o boot)
-function Warm-Token {
-  try {
-    Log 'aquecendo token do Claude...'
-    $osdir = Join-Path $env:USERPROFILE '.jarvis\oneshot'; New-Item -ItemType Directory -Force $osdir | Out-Null
-    $j = Start-Job { param($d) Set-Location $d; 'ping' | & claude -p --model haiku 2>&1 } -ArgumentList $osdir
-    if (Wait-Job $j -Timeout 90) { Log ('warmup ok: ' + (((Receive-Job $j) -join ' ').Trim())) }
-    else { Stop-Job $j; Log 'warmup atingiu o teto de tempo (segue mesmo assim)' }
-    Remove-Job $j -Force -ErrorAction SilentlyContinue
-  } catch { Log "warmup falhou (segue mesmo assim): $_" }
-}
-
 Set-Location $hub
 # Chama o tsx direto pelo node em vez de `npm.cmd start`: npm no Windows é batch, e batch faz
 # nascer um cmd.exe intermediário — um console a mais pra manter escondido, por nada. Fallback
 # pro npm se o tsx não estiver hoisted na raiz.
 $tsx = Join-Path $root 'node_modules\tsx\dist\cli.mjs'
-$lastWarm = [datetime]::MinValue
-# Loop de supervisão: NUNCA sai. Cada iteração garante token fresco (reaquece se passou
-# de 30min desde a última vez) e (re)sobe o Hub em foreground. Quando o node encerra,
+# Loop de supervisão: NUNCA sai. Cada iteração (re)sobe o Hub em foreground. Quando o node encerra,
 # registra e reinicia após um pequeno backoff.
 while ($true) {
   # Limpa STT órfão da instância anterior: o node é morto com -Force (no restart) e o Windows NÃO
@@ -68,7 +50,6 @@ while ($true) {
   Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match 'whisper_service' } |
     ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Log "STT orfao encerrado (pid $($_.ProcessId))" } catch {} }
-  if (((Get-Date) - $lastWarm).TotalMinutes -ge 30) { Warm-Token; $lastWarm = Get-Date }
   Log 'iniciando hub...'
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\hub\src\index.ts" *>> $log }
   else { Log 'tsx nao encontrado na raiz — caindo pro npm'; & npm.cmd start *>> $log }

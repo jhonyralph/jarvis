@@ -6,6 +6,8 @@
  */
 export interface TurnSample {
   runnerId: string;
+  agent?: string;
+  model?: string;
   /** wall-clock duration of the turn in ms */
   ms: number;
   /** true = completed, false = errored (cancelled turns are NOT recorded — a user abort is neither) */
@@ -23,6 +25,8 @@ export interface RunnerMetric {
   p95ms: number;
   lastTs: number;
 }
+
+export interface DimensionMetric extends Omit<RunnerMetric, "runnerId"> { key: string; }
 
 /** Nearest-rank percentile over an ASCENDING-sorted array (p in 0..1). Empty → 0. */
 export function percentile(sortedAsc: number[], p: number): number {
@@ -54,6 +58,14 @@ export class Metrics {
     const ids = [...new Set(this.samples.map((s) => s.runnerId))];
     return ids.map((id) => this.stat(this.samples.filter((s) => s.runnerId === id), id)).sort((a, b) => b.lastTs - a.lastTs);
   }
+
+  private byDimension(field: "agent" | "model"): DimensionMetric[] {
+    const keys = [...new Set(this.samples.map((s) => s[field]).filter((x): x is string => !!x))];
+    return keys.map((key) => { const { runnerId: _runnerId, ...stat } = this.stat(this.samples.filter((s) => s[field] === key), key); return { key, ...stat }; }).sort((a, b) => b.lastTs - a.lastTs);
+  }
+
+  byAgent(): DimensionMetric[] { return this.byDimension("agent"); }
+  byModel(): DimensionMetric[] { return this.byDimension("model"); }
 
   /** Fleet-wide rollup across every runner (runnerId "*"). */
   overall(): RunnerMetric {

@@ -10,7 +10,7 @@ $log  = Join-Path $env:USERPROFILE '.jarvis\runner.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
 function Log($m) { Add-Content -Path $log -Value ("[launcher] {0} {1}" -f (Get-Date -Format o), $m) }
 
-# garante que node/npm/claude resolvem, independente do PATH da tarefa
+# garante que node/npm/CLIs resolvem, independente do PATH da tarefa
 $env:PATH = "C:\Program Files\nodejs;$env:USERPROFILE\.local\bin;$env:PATH"
 
 $envFile = Join-Path $env:USERPROFILE '.jarvis\runner.env'

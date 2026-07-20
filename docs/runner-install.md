@@ -16,7 +16,8 @@ per-machine and revocable; see docs/security.md.)
 ## 2. On the new machine — prerequisites
 
 - **Node.js >= 22**.
-- **The agent CLI, authenticated**: `claude login` and/or `codex login`. The
+- **At least one supported agent CLI, authenticated**. Run `npm run agents:report`
+  for the complete list and certification state. The
   runner uses the agent installed *on that machine* — no credentials cross the wire.
 - **Reach the Hub**: same private network (e.g. Tailscale) or a TLS URL.
 - **The repo**: `git clone` the jarvis repo (the runner shares its code).
@@ -58,7 +59,7 @@ The machine then appears in the Hub's machine selector. Pick it to run agents th
 ## Notes / limits
 
 - The runner is **headless** — no voice/UI there; the single UI is the Hub.
-- Sharing a machine = giving a shell on it (agents run with `bypassPermissions`).
+- Sharing a machine normally means giving a shell on it (`full-access` is the default).
   For guests, run the runner in a container/VM. See docs/security.md.
 - Full parity with the local machine: browse folders, pick agent/cwd for new
   sessions, open native CLI sessions, and watch them update live. **Voice (STT/TTS)

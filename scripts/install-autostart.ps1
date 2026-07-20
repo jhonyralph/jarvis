@@ -21,7 +21,7 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyCon
   }
 
 Register-ScheduledTask -TaskName 'JarvisHub' `
-  -Description 'Sobe o Jarvis Hub no logon (com warmup do token do Claude).' `
+  -Description 'Sobe e supervisiona o Jarvis Hub no logon.' `
   -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force | Out-Null
 
 Write-Host 'OK: tarefa "JarvisHub" registrada (gatilho: logon do usuario).'

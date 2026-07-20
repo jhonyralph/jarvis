@@ -53,7 +53,11 @@ export async function parseVoiceIntent(opts: {
 }): Promise<VoiceIntent> {
   const agent = opts.agents.searchAgent();
   const prompt = buildVoicePrompt(opts);
-  const sendOpts = { model: process.env.JARVIS_VOICE_INTENT_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
+  const caps = await agent.capabilities();
+  const requested = process.env.JARVIS_VOICE_INTENT_MODEL || process.env.JARVIS_SEARCH_MODEL;
+  const model = requested && caps.models.some((m) => m.id === requested) ? requested : undefined;
+  const modelInfo = model ? caps.models.find((m) => m.id === model) : undefined;
+  const sendOpts = { model, effort: modelInfo?.efforts.includes("low") ? "low" : undefined };
   const fallback: VoiceIntent = { agent: null, model: null, effort: null, folder: null, sessionAction: null, task: opts.text };
   try {
     const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__voice__", prompt, process.cwd(), sendOpts);

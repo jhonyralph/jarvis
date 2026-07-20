@@ -13,12 +13,18 @@
 
 export type RunnerOS = "linux" | "darwin" | "win32" | string;
 
+/** Increment when a protocol change affects observable turn/history semantics. */
+export const RUNNER_PROTOCOL_VERSION = 2;
+
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
   runnerId: string;
   host: string; // os.hostname()
   os: RunnerOS;
   agents: string[]; // available adapter names, e.g. ["claude-code","codex","mock"]
+  /** Canonical adapter descriptors. `agents` remains for backward compatibility with v1 Hubs. */
+  agentDescriptors?: unknown[];
+  protocolVersion?: number;
   version?: string;
   /** short git HEAD sha of the runner's checkout ("+dirty" suffix if uncommitted) — lets the Hub
    *  spot a runner drifting behind (or ahead of) the Hub's own build. */
@@ -56,6 +62,20 @@ export interface RunnerMsg {
   /** role:"assistant" — the turn's grouped tool/sub-agent activity, so native history renders the
    *  same nested flow shown live (see @jarvis/core HistEvent). Opaque to the protocol layer. */
   activity?: unknown[];
+  agent?: string;
+  speaker?: string;
+  images?: string[];
+  files?: Array<{ name: string; content?: string }>;
+  usage?: {
+    costUsd?: number;
+    costKind?: "billed" | "estimated_api_equivalent" | "subscription_included" | "tokens_only" | "unavailable";
+    source?: string;
+    model?: string;
+    inputTokens?: number;
+    cachedInputTokens?: number;
+    outputTokens?: number;
+    contextTokens?: number;
+  };
 }
 
 /** Live activity while an agent works, mirrored to the streaming UI. */
@@ -65,7 +85,7 @@ export interface RunnerStreamEvent {
   name?: string; // tool name (Bash, Edit, Read…)
   summary?: string; // tool one-liner ("Editando foo.ts")
   detail?: string; // tool FULL command/args (untruncated), shown when the row is expanded
-  usage?: { costUsd?: number; inputTokens?: number; outputTokens?: number };
+  usage?: RunnerMsg["usage"];
   /** tool_use id — lets sub-agent (Task) activity be correlated to a parent block */
   toolId?: string;
   /** parent_tool_use_id — set when this event happens INSIDE a spawned sub-agent (Task) */
@@ -109,7 +129,7 @@ export type RunnerToHub =
       files?: TouchedFileMeta[];
     }
   | { t: "filediff"; reqId: string; path: string; name: string; rows?: DiffRowMeta[]; adds?: number; dels?: number; error?: string }
-  | { t: "stream"; sessionId: string; ev: RunnerStreamEvent }
+  | { t: "stream"; sessionId: string; agent?: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
   | { t: "activity"; sessionId: string; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[] }
   | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; truncated?: boolean; error?: string }
@@ -158,7 +178,7 @@ export type HubToRunner =
   | { t: "commands"; reqId: string }
   /** "@" file-mention search under a session's cwd (reply: mention_list) */
   | { t: "mention"; reqId: string; q?: string; sessionId?: string }
-  /** "#note" → append to the session's memory file (CLAUDE.md/AGENTS.md); no reply beyond a message */
+  /** "#note" → append to the provider instruction file (CLAUDE.md/GEMINI.md/AGENTS.md) */
   | { t: "memory_append"; text: string; sessionId?: string }
   | { t: "stop"; sessionId: string }
   | { t: "cancel"; sessionId: string } // abort a live turn (user hit "parar")

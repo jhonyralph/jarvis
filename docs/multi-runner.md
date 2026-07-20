@@ -20,7 +20,7 @@ itself) runs a **Runner** that executes agents locally and streams back.
                                   runners dial the hub (outbound WS)
                                         ▼
                     Ubuntu runner            macOS runner            Windows runner
-                    • claude/codex LOCAL     • claude/codex LOCAL    • claude/codex LOCAL
+                    • agent CLIs LOCAL       • agent CLIs LOCAL      • agent CLIs LOCAL
                     • native sessions        • native sessions       • native sessions
                     • headless               • headless              • headless
 ```
@@ -30,7 +30,7 @@ itself) runs a **Runner** that executes agents locally and streams back.
 1. **Runner dials the Hub** (outbound WS), never the reverse. Runners may be
    laptops that sleep, roam networks, or sit behind NAT; the Hub has a stable
    address. Reuses the existing WS infra.
-2. **Each Runner uses its own local agent CLI** (`claude` / `codex`), authed on
+2. **Each Runner uses its own supported local agent CLI**, authenticated on
    that machine. The Hub never proxies inference credentials — only orchestration
    crosses the wire. Keeps the "only inference leaves the machine" property
    per-machine, and isolates blast radius.
@@ -43,7 +43,7 @@ itself) runs a **Runner** that executes agents locally and streams back.
    loopback access. Credentials never travel over a non-loopback `ws://`.
 4a. **Authentication is MANDATORY (not optional).** The moment Jarvis may be
    shared with other people, "no auth" is untenable: the Hub runs agents with
-   `bypassPermissions`, so access == a shell on the target machine. Auth makes
+   full-access flags by default, so access == a shell on the target machine. Auth makes
    that access *accountable and revocable*; it does NOT sandbox it (see 4d).
    - **Auth primitive: device pairing by invite.** Per-device tokens, revocable.
      The owner mints a one-time **invite** (code/link, TTL, role, allowed
@@ -73,8 +73,8 @@ itself) runs a **Runner** that executes agents locally and streams back.
 4d. **Containment (the honest limit):** sharing a runner = giving a shell on that
    machine. Chosen posture: **per-machine, explicit + audited** — share only what
    you accept giving shell to; every action is attributed in an append-only audit
-   log (`~/.jarvis/audit.log`). (Sandbox-runner / restricted-no-bypass modes are
-   possible later but out of scope now.)
+   log (`~/.jarvis/audit.log`). `provider-default` omits Jarvis bypass flags, but
+   strong containment still requires a sandboxed runner.
 4e. **Runner↔Hub auth (infra, separate from users):** per-runner token, minted by
    the owner via "Add machine" and baked into the installer (`runner.env`).
    Revocable per machine. Hub stores only the hash.
@@ -111,11 +111,11 @@ itself) runs a **Runner** that executes agents locally and streams back.
 
 ### Prereqs per runner machine (installer checks, cannot do — interactive)
 - The chosen network layer joined (e.g. `tailscale up`), if any.
-- `claude login` / `codex login` on that machine.
+- At least one supported/authenticated CLI on that machine (`npm run agents:report`).
 - Node.js >= 22.
 
 ## Negative scope (not in this work)
 - No cross-runner session migration or file sync between machines.
 - No SSO / OAuth; no password accounts in v1 (device-pairing + optional password
-  later). No runner sandboxing / restricted-no-bypass mode yet (see 4d).
+  later). `provider-default` is available, but it is not a Jarvis sandbox (see 4d).
 - Voice / STT / TTS / push stay Hub-only; runners are headless.

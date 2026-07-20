@@ -1,13 +1,12 @@
 /**
  * Slash-command / skill discovery + expansion for the composer's "/" autocomplete.
  *
- * Sources are the UNION across the agents Jarvis drives that HAVE a command system — Claude and
- * Codex (Aider has no custom-command files; Cursor is an IDE, not a headless CLI). Per machine:
+ * Sources are the union across adapters that expose discoverable local command/skill files.
  *   - Claude: ~/.claude/skills/<name>/SKILL.md, ~/.claude/commands/**\/*.md (namespaced "ns:cmd"),
  *             and the project's .claude/{skills,commands}.
  *   - Codex:  ~/.codex/skills/<name>/SKILL.md (best-effort) and ~/.codex/prompts/*.md.
- * On a NAME CLASH, Claude wins (Claude is mandatory and takes preference); within one agent, a
- * project entry beats a user one. Marketplace plugins are still out of scope (no reliable enabled map).
+ * Homonyms from different providers coexist; within one provider, project beats user/builtin.
+ * Directories not documented by a provider are best-effort and never imply runtime certification.
  *
  * Expansion ("(b)"): a command's markdown body IS its prompt template, so we substitute the args
  * ($ARGUMENTS / $@ / $1) ourselves and send the expanded prompt to the agent — works even headless.
@@ -19,7 +18,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 
-export type CmdAgent = "claude" | "codex";
+export type CmdAgent = "claude" | "codex" | "gemini" | "cursor" | "copilot" | "opencode" | "cline" | "qwen" | "continue" | "kiro" | "antigravity" | "aider";
 export interface SlashCommand {
   name: string;              // "flow:discovery" (Claude), "flow-discovery" (Codex), or a skill name
   description: string;
@@ -126,6 +125,15 @@ function scanCodexMcp(out: SlashCommand[]): void {
   }
 }
 
+function scanJsonMcp(path: string, agent: CmdAgent, source: SlashCommand["source"], label: string, out: SlashCommand[]): void {
+  try {
+    const json = JSON.parse(readFileSync(path, "utf8"));
+    const servers = json.mcpServers || json.mcp || json.servers;
+    if (!servers || typeof servers !== "object") return;
+    for (const name of Object.keys(servers)) out.push({ name, description: `Servidor MCP · ${label}`, kind: "mcp", agent, source, path: "" });
+  } catch { /* absent or provider-owned non-JSON config */ }
+}
+
 // Claude Code's BUILT-IN slash-commands are baked into the binary (not files) and aren't enumerable,
 // so this is a small CURATED set of the useful headless ones. They PASS THROUGH unexpanded — inside
 // `claude -p`, "/name" resolves as a built-in skill (verified via `claude --help`: "Skills still
@@ -140,8 +148,8 @@ function scanBuiltins(out: SlashCommand[]): void {
   for (const b of BUILTIN_CLAUDE) out.push({ name: b.name, description: b.description, kind: "builtin", agent: "claude", source: "builtin", path: "" });
 }
 
-// Lower = higher priority. Claude beats Codex on a name clash; project > user > builtin within an agent.
-const prio = (c: SlashCommand): number => (c.agent === "claude" ? 0 : 10) + (c.source === "project" ? 0 : c.source === "user" ? 1 : 2);
+// Lower = higher priority within one provider: project > user > builtin.
+const prio = (c: SlashCommand): number => (c.source === "project" ? 0 : c.source === "user" ? 1 : 2);
 const leafOf = (name: string): string => name.split(":").pop() || name;
 function findCmd(all: SlashCommand[], typed: string): SlashCommand | undefined {
   return all.find((c) => c.name === typed) || all.find((c) => leafOf(c.name) === leafOf(typed));
@@ -158,22 +166,31 @@ function expandOne(cmd: SlashCommand, args: string): string | null {
     || (`/${cmd.name}` + (args ? ` ${args}` : ""));
 }
 
-/** Map an ADAPTER name (as stored on a session: "claude-code" | "codex" | "aider" | "mock") to the
+/** Map an adapter id to the provider that owns its local command system.
  *  command-owning agent, or null for adapters with no command system. Used to show/expand only the
  *  selected AI's skills+commands — a Codex turn must not run a Claude command, and vice-versa. */
 export function cmdAgentOf(adapterName?: string): CmdAgent | null {
   if (adapterName === "claude-code") return "claude";
-  if (adapterName === "codex") return "codex";
+  if (adapterName && ["codex", "gemini", "cursor", "copilot", "opencode", "cline", "qwen"].includes(adapterName)) return adapterName as CmdAgent;
   return null;
 }
 
 const cache = new Map<string, { key: string; data: SlashCommand[] }>();
-/** All available skills + commands for `cwd` across Claude + Codex, deduped by name (Claude wins).
+/** All available skills + commands for `cwd`, deduped by (provider,name).
  *  Cached, keyed on the source dirs' mtimes so a newly added command shows up without a restart. */
 export function listCommands(cwd?: string): SlashCommand[] {
   const ch = claudeHome(), xh = codexHome();
-  const dirs = [join(ch, "skills"), join(ch, "commands"), join(xh, "skills"), join(xh, "prompts"), claudeJson(), process.env.JARVIS_CODEX_CONFIG || join(xh, "config.toml")];
-  if (cwd) dirs.push(join(cwd, ".claude", "skills"), join(cwd, ".claude", "commands"), join(cwd, ".mcp.json"));
+  const ah = join(homedir(), ".agents");
+  const providerDirs: Array<[CmdAgent, string, string]> = [
+    ["gemini", join(homedir(), ".gemini", "skills"), join(homedir(), ".gemini", "commands")],
+    ["cursor", join(homedir(), ".cursor", "skills"), join(homedir(), ".cursor", "commands")],
+    ["copilot", join(homedir(), ".copilot", "skills"), join(homedir(), ".copilot", "commands")],
+    ["opencode", join(homedir(), ".opencode", "skills"), join(homedir(), ".opencode", "commands")],
+    ["cline", join(homedir(), ".cline", "data", "settings", "skills"), join(homedir(), ".cline", "commands")],
+    ["qwen", join(homedir(), ".qwen", "skills"), join(homedir(), ".qwen", "commands")],
+  ];
+  const dirs = [join(ch, "skills"), join(ch, "commands"), join(xh, "skills"), join(xh, "prompts"), join(ah, "skills"), claudeJson(), process.env.JARVIS_CODEX_CONFIG || join(xh, "config.toml"), ...providerDirs.flatMap((x) => [x[1], x[2]])];
+  if (cwd) dirs.push(join(cwd, ".claude", "skills"), join(cwd, ".claude", "commands"), join(cwd, ".agents", "skills"), join(cwd, ".mcp.json"), join(cwd, ".cline", "mcp.json"), join(cwd, ".cursor", "mcp.json"));
   const key = dirs.map((d) => { try { return d + ":" + statSync(d).mtimeMs; } catch { return d + ":0"; } }).join("|");
   const ck = cwd || "";
   const hit = cache.get(ck);
@@ -182,14 +199,28 @@ export function listCommands(cwd?: string): SlashCommand[] {
   scanSkills(join(ch, "skills"), "claude", "user", out);
   scanCommands(join(ch, "commands"), "claude", "user", out);
   scanSkills(join(xh, "skills"), "codex", "user", out);
+  scanSkills(join(ah, "skills"), "codex", "user", out); // official cross-agent/Codex skill home
   scanCommands(join(xh, "prompts"), "codex", "user", out);   // Codex prompts are the equivalent of slash-commands
+  for (const [agent, skills, commands] of providerDirs) { scanSkills(skills, agent, "user", out); scanCommands(commands, agent, "user", out); }
   scanMcp(cwd, out);
   scanCodexMcp(out);
   scanBuiltins(out);
-  if (cwd) { scanSkills(join(cwd, ".claude", "skills"), "claude", "project", out); scanCommands(join(cwd, ".claude", "commands"), "claude", "project", out); }
+  if (cwd) {
+    scanSkills(join(cwd, ".claude", "skills"), "claude", "project", out); scanCommands(join(cwd, ".claude", "commands"), "claude", "project", out);
+    scanSkills(join(cwd, ".agents", "skills"), "codex", "project", out);
+    scanSkills(join(cwd, ".cline", "skills"), "cline", "project", out);
+    scanSkills(join(cwd, ".qwen", "skills"), "qwen", "project", out);
+    scanCommands(join(cwd, ".cursor", "commands"), "cursor", "project", out);
+    scanCommands(join(cwd, ".opencode", "commands"), "opencode", "project", out);
+    scanJsonMcp(join(cwd, ".mcp.json"), "copilot", "project", ".mcp.json", out);
+    scanJsonMcp(join(cwd, ".cursor", "mcp.json"), "cursor", "project", ".cursor/mcp.json", out);
+    scanJsonMcp(join(cwd, ".cline", "mcp.json"), "cline", "project", ".cline/mcp.json", out);
+    scanJsonMcp(join(cwd, ".gemini", "settings.json"), "gemini", "project", ".gemini/settings.json", out);
+    scanJsonMcp(join(cwd, ".qwen", "settings.json"), "qwen", "project", ".qwen/settings.json", out);
+  }
   out.sort((a, b) => prio(a) - prio(b) || a.name.localeCompare(b.name));
   const byName = new Map<string, SlashCommand>();
-  for (const c of out) if (!byName.has(c.name)) byName.set(c.name, c);   // first (highest-priority) wins
+  for (const c of out) { const key = `${c.agent}\0${c.name}`; if (!byName.has(key)) byName.set(key, c); }
   const data = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   if (cache.size > 16) cache.clear();
   cache.set(ck, { key, data });

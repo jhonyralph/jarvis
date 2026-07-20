@@ -1,7 +1,7 @@
 # Jarvis
 
-Self-hosted, **agent-agnostic**, voice-first control plane for coding agents
-(Claude Code, Codex). Drive your agents from **your phone or any desktop**, with
+Self-hosted, **agent-agnostic**, voice-first control plane for coding-agent CLIs.
+Drive them from **your phone or any desktop**, with
 a **local voice** — and keep every byte on your own machines.
 
 > Codename `jarvis` = the whole control plane, not just the voice.
@@ -11,15 +11,15 @@ a **local voice** — and keep every byte on your own machines.
 Off-the-shelf options are archived, pre-release, or keep your data on someone
 else's servers. This is the opposite:
 
-- **Nothing on third parties.** Sessions, transcripts and audio stay on your
+- **Control-plane data stays local.** Sessions, transcripts and audio stay on your
   machines, as plain files under `~/.jarvis`. The network is **Tailscale only**
   by default — a private WireGuard mesh, nothing exposed publicly.
 - **Voice is local** (Piper TTS on your hardware). No ElevenLabs.
-- The only thing leaving your machine is the **agent's own inference** (Claude /
-  Codex) — which you already use directly today.
-- **It reads your real sessions.** Jarvis doesn't invent its own history: it
-  opens the same `~/.claude` sessions your terminal uses, so a conversation
-  started in the CLI continues on your phone, and vice-versa.
+- The only application traffic leaving your machine is the **chosen provider
+  CLI's own inference/integrations** — subject to that provider's terms and config.
+- **It reads supported native sessions.** Claude Code (`~/.claude`) and Codex
+  (`~/.codex`) transcripts can be opened and resumed from the same UI; other
+  providers remain managed-only until their native format is verified.
 
 ## How it works
 
@@ -34,7 +34,7 @@ else's servers. This is the opposite:
         ┌──────────────┼──────────────┐   (each machine registers as a Runner)
         ▼              ▼              ▼
     RUNNER A       RUNNER B       RUNNER C
-   claude-code      codex        claude-code      … N machines
+   Claude/Codex     Gemini/etc.   Cursor/etc.      … N machines
 ```
 
 - **Hub** — one machine (your always-on desktop). Serves the UI, holds the data,
@@ -42,9 +42,8 @@ else's servers. This is the opposite:
   its own machine.
 - **Runner** — any other machine you want to drive. Headless; runs the agent CLI
   locally, so it uses *that* machine's files, repos and agent login.
-- **Client** — the web UI, in any mobile or desktop browser. No app store, no
-  build step. (A service worker powers push notifications; there's no manifest,
-  so it isn't an installable PWA — you just open the URL.)
+- **Client** — the web UI, in any mobile or desktop browser. No app store or
+  build step; service worker + manifest allow installation as a PWA.
 
 Everything external enters through a swappable adapter (`AgentAdapter`,
 `TTSAdapter`, `Transport`) — see [`packages/protocol`](packages/protocol/src) and
@@ -55,20 +54,22 @@ Everything external enters through a swappable adapter (`AgentAdapter`,
 | | |
 |---|---|
 | **Talk to it** | Push-to-talk or wake word; replies spoken back with a local voice. Long replies are summarised aloud instead of read out in full. |
-| **Your real sessions** | Reads and continues native `claude` sessions. Start in the terminal, continue on the phone. |
+| **Your real sessions** | Reads and continues native Claude Code and Codex sessions. Other adapters expose resume only when their CLI provides a verified session id. |
 | **Many machines** | Switch machines in the UI; each runs on its own hardware and agent login. |
 | **See the work** | Live tool activity (editing/creating/reading), sub-agents, `+3 −5` line counts, inline diffs, and a file viewer with syntax highlighting. |
 | **Ask what's up** | Spoken digest across all sessions and machines, or a summary of one conversation. |
-| **Stay in budget** | Context window + plan-limit (5h / weekly) indicator. |
+| **Stay in budget** | Context window, typed token/cost history for every adapter that reports usage, and Claude plan-limit (5h / weekly) indicator. |
 | **Locked down** | Device pairing by invite, owner passphrase (2nd factor), expiring access, audit log, rate limiting. |
 | **Self-healing** | Hub and runners come back on their own after a crash or reboot; update from the UI. |
 
 ## Requirements
 
 - **Node.js >= 22** on every machine.
-- **An agent CLI, logged in**, on every machine that should do work:
-  `claude` ([Claude Code](https://claude.com/claude-code)) and/or `codex`.
-  Verify with `claude -p "ok"` — if that fails, Jarvis can't run it either.
+- **At least one supported agent CLI, installed and authenticated**, on every
+  machine that should do work. Run `npm run agents:report`; support is deliberately
+  labeled `complete`, `unverified`, `limited`, `unauthenticated` or `not_installed`.
+  The exhaustive behavior/model matrix is in
+  [docs/agent-parity-matrix.md](docs/agent-parity-matrix.md).
 - **[Tailscale](https://tailscale.com)** (recommended) so your devices reach the
   Hub privately.
 - Voice (optional): Python + [Piper](https://github.com/rhasspy/piper) — see
@@ -199,13 +200,15 @@ Everything is an env var — no secrets in the repo.
 |---|---|---|
 | `JARVIS_PORT` | `4577` | UI + WebSocket port |
 | `JARVIS_ADMIN_PORT` | `4578` | Loopback-only admin API |
-| `JARVIS_AGENT` | `mock` | Default agent (`claude-code`, `codex`, `aider`, `mock`). The installer writes `claude-code` into `hub.env`, so that's what you get in practice. `aider` is experimental (needs `aider` installed + a model key; continuity is per-folder — verify on first run) |
+| `JARVIS_AGENT` | `claude-code` | Default adapter: `claude-code`, `codex`, `gemini`, `cursor`, `copilot`, `opencode`, `cline`, `qwen`, `continue`, `kiro`, `antigravity` or `aider`. `antigravity` detects the official `agy` TUI but is not executable until a public headless contract exists; `mock` is test-only unless explicitly enabled |
+| `JARVIS_AGENT_PERMISSION_MODE` | `full-access` | `full-access` injects the provider's unattended/bypass flags. `provider-default` omits them and delegates sandbox/approval behavior to the CLI (which may refuse or wait in headless mode) |
+| `JARVIS_CODEX_PRICE_IN` / `_CACHED` / `_OUT` | estimativa Jarvis v1 | USD por 1M tokens para o equivalente estimado do Codex; defina `JARVIS_CODEX_PRICING_VERSION` para identificar a tabela usada |
 | `JARVIS_AUTH` | `on` | Device auth. **Only** turn this off on a trusted private network |
 | `JARVIS_CWD` | process cwd | Default working directory for agents |
 | `JARVIS_VOICE` | — | Piper voice model |
 | `JARVIS_SUMMARY_MODEL` | `haiku` | Model for spoken summaries/digest (cheap on purpose) |
 | `JARVIS_HISTORY_CAP` | `120` | Messages sent when opening a session |
-| `JARVIS_SESSION_COST_CAP` | `0` | Per-session USD spend cap (`0` = off). A turn is refused before it runs once the session's cumulative cost reaches this — a runaway can't keep spending unattended |
+| `JARVIS_SESSION_COST_CAP` | `0` | Per-session **billed USD** cap (`0` = off). Estimates and subscription usage stay visible but do not masquerade as invoice spend or trigger this cap |
 | `JARVIS_PUBLIC_URL` | — | Base URL used in invite links |
 | `JARVIS_REQUIRE_TLS` / `JARVIS_TRUST_PROXY` | off | Set both when behind a TLS proxy |
 | `JARVIS_AUDIT_MAX_MB` | `5` | Audit-log rotation cap. At the size the current `audit.log` becomes `audit.log.1` (one generation kept) and a fresh log starts |
@@ -222,7 +225,7 @@ from the environment — `grep -r JARVIS_ apps packages` for the full list.
 
 | Symptom | Cause |
 |---|---|
-| Machine shows **⚠ sem IA** | The agent isn't authenticated *there*. Run `claude auth login` on that machine and confirm with `claude -p "ok"`. |
+| Machine shows **⚠ sem IA** | No supported CLI was both found and usable there. Run `npm run agents:report` on that machine, then authenticate the selected provider. |
 | `401 ... OAuth access token has been revoked` | Same thing — that's the agent CLI's login, not a Jarvis token. `claude auth logout && claude auth login`. |
 | Update says *"alterações locais não commitadas"* | That machine's clone is dirty. Working as intended: commit, or `git reset --hard origin/main` there. |
 | Switching sessions is slow on a remote machine | Usually the network, not the code. `tailscale status`: if the peer says `relay` instead of `direct`, traffic is bouncing through a DERP relay. `tailscale netcheck` on both ends shows which side blocks UDP. |

@@ -3,13 +3,13 @@
 # it serves the UI, stores everything locally, and accepts runners. Secondary machines
 # use install-runner.sh instead.
 #
-# Prereqs: Node >= 22, and `claude login` / `codex login` on this machine.
+# Prereqs: Node >= 22 and at least one supported/authenticated agent CLI.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 command -v node >/dev/null 2>&1 || { echo "Node.js >= 22 requerido. Instale e rode de novo."; exit 1; }
-if ! command -v claude >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1; then
-  echo "Aviso: nenhum agente (claude/codex) encontrado/autenticado — o Hub sobe, mas sem IA até logar um."
-fi
+HAS_AGENT=0
+for cmd in claude codex gemini cursor-agent copilot opencode cline qwen cn kiro-cli agy aider; do command -v "$cmd" >/dev/null 2>&1 && HAS_AGENT=1; done
+[ "$HAS_AGENT" -eq 1 ] || echo "Aviso: nenhuma CLI suportada encontrada — o Hub sobe, mas sem IA até instalar/autenticar uma."
 
 echo "Instalando dependências (npm install)..."
 ( cd "$ROOT" && npm install >/dev/null )
@@ -20,6 +20,7 @@ mkdir -p "$HOME/.jarvis"
 JARVIS_AGENT=claude-code
 JARVIS_AUTH=on
 JARVIS_SEARCH_MODEL=haiku
+JARVIS_AGENT_PERMISSION_MODE=full-access
 # JARVIS_PUBLIC_URL=https://<seu-host>   # para links de convite completos
 # JARVIS_REQUIRE_TLS=on JARVIS_TRUST_PROXY=on   # se expor publicamente atrás de proxy TLS
 EOF

@@ -1,14 +1,21 @@
 # Architecture
 
+The implementation and validation source of truth for cross-agent/model parity is
+[`agent-parity-matrix.md`](agent-parity-matrix.md). An adapter is not considered
+fully supported merely because it can return a final answer; it must satisfy the
+streaming, persistence, history, model and local/remote conformance contract
+defined there.
+
 ## Principles
 
-1. **Security first.** No third-party storage. All data local (crash-safe JSON
-   snapshots + files; see `packages/core/src/persist.ts`).
-   Transport is **Tailscale only** (private WireGuard, no public exposure).
+1. **Security first.** Jarvis state is local (crash-safe JSON snapshots + files;
+   see `packages/core/src/persist.ts`). Provider CLIs still call their own cloud
+   services. Tailscale/private networking is recommended; TLS proxy exposure is
+   supported only with the documented auth/proxy controls.
 2. **Agnostic.** Never lock to one agent, one voice engine, or one transport.
    Everything external is behind a swappable **adapter**.
 3. **Voice local.** STT + TTS run on the user's machine. The only external
-   dependency is the agent's own inference (Claude/Codex).
+   dependency is the selected agent CLI's own inference and configured integrations.
 4. **Multi-client, multi-desktop.** One chat, reachable from the phone and any
    number of desktops. Any client may also be a passive **listener**.
 
@@ -21,54 +28,57 @@
   services (STT/TTS). Registers Runners and **routes** messages. Reached over
   Tailscale.
 - **Runner** — one per desktop. Registers with the Hub and runs `AgentAdapter`s
-  locally (Claude Code, Codex). Executes/streams agent sessions on that machine.
-  Desktop A can run Claude while Desktop B runs Codex — same chat.
+  locally. Executes/streams supported agent sessions on that machine. Desktop A
+  can run Claude while Desktop B runs Gemini or Cursor Agent — same lifecycle.
 - **Client** — the Hub's PWA (mobile + desktop browsers), later a native app.
   Thin: shows chat, sends text, push-to-talk audio, and can subscribe as a
   **listener** to play spoken (TTS) responses.
 
-## Adapters (the agnostic core) — `packages/protocol`
+## Adapters (the agnostic core) — `packages/core`
 
-- `AgentAdapter` — `start` · `send` · `onOutput` · `resume` · `stop`.
-  Implementations: `claude-code`, `codex`, … Adding an agent = one adapter.
-- `STTAdapter` / `TTSAdapter` — swappable voice engines
-  (`faster-whisper`, `piper`, `kokoro`, …), chosen by config.
-- `Transport` — Tailscale by default; abstracted so it can change.
+- `AgentAdapter` — `capabilities` · `available` · `send(onEvent)` · `oneShot`
+  plus optional native binding/usage/descriptor. Implementations and support
+  levels are enumerated in the parity matrix.
+- `packages/core/src/turn.ts` — managed lifecycle shared by Hub and Runner.
+- `packages/core/src/agent-contract.ts` — descriptors, models, usage and event
+  schema; the current web transport still carries the compatible `stream` shape.
+- `packages/protocol/src/runner.ts` — actual Hub↔Runner WebSocket contract.
 
 ## Voice pipeline (local)
 
 ```
 wake word (openWakeWord "Jarvis")
   → STT (faster-whisper, small)      -- audio → text
-  → AgentAdapter (Claude/Codex)      -- text → response
-  → TTS (kokoro | piper)             -- response → audio
-  → listeners (any subscribed client plays it)
+  → AgentAdapter + canonical event contract -- text → live events → response
+  → TTS (Piper)                       -- response → audio
+  → clients viewing the target session
 ```
 
 An optional **orchestrator** — a headless agent session that interprets voice
 intent ("open project X, run tests") and routes — is itself just a special
 `AgentAdapter`, and is **not** shown in the chat UI.
 
-## "Listener" mode
+## Audio delivery
 
-TTS audio for a session is a **subscribable channel**. Clients send
-`{ t: 'listen', sessionId, audio: true }`; the Hub broadcasts `{ t: 'tts', ... }`
-audio chunks to all listeners. This decouples *where the agent runs* and *where
-a command is issued* from *where the response is heard* — e.g., issue from
-desktop A, hear it on the phone and desktop B.
+TTS is generated on the Hub and broadcast to clients subscribed to the target
+chat session. The wake/voice session can additionally receive the same audio
+when it is controlling another conversation. There is no separate public
+`listen` protocol today.
 
 ## Data & security model
 
-- **Storage:** crash-safe (atomic) JSON snapshots + local files on the Hub
-  machine. Nothing leaves.
-- **Network:** Tailscale tailnet only. No ports exposed publicly.
-- **Encryption:** Tailscale (WireGuard) end-to-end on the wire.
-- **External calls:** only the agent's inference API (Claude/Codex). Voice is
+- **Storage:** crash-safe (atomic) JSON snapshots + local files on each machine
+  that owns sessions; provider-native transcripts remain in provider homes.
+- **Network:** private Tailscale is recommended; reverse proxy/TLS is optional.
+- **Encryption:** supplied by Tailscale or the operator's TLS proxy.
+- **External calls:** the selected provider CLI's inference/integrations. Voice is
   fully offline.
 
-## Build phases
+## Current implementation milestones
 
-1. **Local voice on the machine** — prove STT+TTS locally. *(TTS ✅)*
-2. **Hub** — local store (atomic JSON) + WS server + Runner registration + one `ClaudeCodeAdapter`.
-3. **PWA** — chat on mobile + desktop over Tailscale; push-to-talk + listener.
-4. **Codex adapter + multi-desktop + wake word.**
+1. Local voice, PWA, auth, push and managed sessions.
+2. Hub + multi-machine Runner protocol v2.
+3. Shared provider-neutral turn lifecycle and typed usage ledger.
+4. Claude/Codex native integration plus registered adapters/status for the wider
+   CLI matrix. External adapters remain unverified until their installed version
+   passes the real probe gate.

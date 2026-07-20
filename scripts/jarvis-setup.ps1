@@ -44,7 +44,7 @@ $hubEnv = Join-Path $jdir 'hub.env'
 if (Test-Path $hubEnv) { Write-Host '  hub.env já existe — mantido (edite à mão se quiser).' -ForegroundColor DarkGray }
 else {
   $lines = New-Object System.Collections.Generic.List[string]
-  $lines.Add("JARVIS_AGENT=$Agent"); $lines.Add("JARVIS_PORT=$Port")
+  $lines.Add("JARVIS_AGENT=$Agent"); $lines.Add("JARVIS_PORT=$Port"); $lines.Add('JARVIS_AGENT_PERMISSION_MODE=full-access')
   if ($PublicUrl) { $lines.Add("JARVIS_PUBLIC_URL=$PublicUrl") } else { $lines.Add('# JARVIS_PUBLIC_URL=https://<seu-host>  # p/ links de convite completos') }
   [System.IO.File]::WriteAllLines($hubEnv, $lines)
   Write-Host "  hub.env criado (agent=$Agent, porta=$Port)." -ForegroundColor Green

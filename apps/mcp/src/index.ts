@@ -57,7 +57,7 @@ const send = (msg: unknown) => { if (ws && ws.readyState === WebSocket.OPEN) ws.
 const tools: McpTool[] = [
   {
     name: "jarvis_list_machines",
-    description: "Lista as máquinas (runners) da frota Jarvis: online/offline, IA autenticada, versão.",
+    description: "Lista as máquinas (runners) do Jarvis: online/offline, IA autenticada e versão.",
     inputSchema: { type: "object", properties: {} },
     handler: async () => {
       await ready;
@@ -74,9 +74,10 @@ const tools: McpTool[] = [
       await ready;
       const m = await request({ t: "fleet" }, "fleet");
       const T = m.totals || {}, mm = m.machines || [];
-      let out = `Frota: ${mm.filter((x: any) => x.online).length}/${mm.length} online · ${T.active || 0} rodando · ${T.sessions || 0} sessões · ~$${(T.costTotal || 0).toFixed(2)} acumulado\n`;
-      const agName: Record<string, string> = { "claude-code": "Claude", codex: "Codex", aider: "Aider", outro: "Outros" };
-      const agLine = Object.entries(T.byAgent || {}).sort((a, b) => (b[1] as number) - (a[1] as number)).map(([a, v]) => `${agName[a] || a} ~$${(v as number).toFixed(2)}`).join(" · ");
+      let out = `Uso & custo: ${mm.filter((x: any) => x.online).length}/${mm.length} máquinas online · ${T.active || 0} rodando · ${T.sessions || 0} sessões · $${(T.billableTotal || 0).toFixed(2)} cobrado reportado · ≈$${(T.estimatedTotal || 0).toFixed(2)} equivalente estimado\n`;
+      const agName: Record<string, string> = { "claude-code": "Claude", codex: "Codex", gemini: "Gemini", cursor: "Cursor", copilot: "Copilot", opencode: "OpenCode", cline: "Cline", qwen: "Qwen", continue: "Continue", kiro: "Kiro", antigravity: "Antigravity", aider: "Aider", outro: "Outros" };
+      const usageFmt = (u: any) => u?.billableUsd > 0 && u?.estimatedUsd <= 0 ? `$${u.costUsd.toFixed(2)}` : u?.estimatedUsd > 0 && u?.billableUsd <= 0 ? `≈$${u.costUsd.toFixed(2)}` : `Σ$${Number(u?.costUsd || 0).toFixed(2)}`;
+      const agLine = Object.entries(T.byAgentUsage || {}).sort((a, b) => Number((b[1] as any)?.costUsd || 0) - Number((a[1] as any)?.costUsd || 0)).map(([a, u]) => `${agName[a] || a} ${usageFmt(u)}`).join(" · ");
       if (agLine) out += `Custo por IA: ${agLine}\n`;
       out += mm.map((x: any) => `- ${x.label}: ${x.online ? "online" : "offline"}${x.active ? ` · ${x.active} rodando` : ""}${x.stale ? " · desatualizada" : ""}`).join("\n");
       if (m.plan?.fiveHour) out += `\nPlano 5h: ${Math.round(m.plan.fiveHour.pct)}%` + (m.plan.sevenDay ? ` · semanal: ${Math.round(m.plan.sevenDay.pct)}%` : "");
@@ -102,7 +103,7 @@ const tools: McpTool[] = [
       properties: {
         prompt: { type: "string", description: "a instrução para o agente" },
         machine: { type: "string", description: "id da máquina (veja jarvis_list_machines); padrão 'local'" },
-        agent: { type: "string", description: "nome do agente (claude-code / codex)" },
+        agent: { type: "string", description: "id do adapter (claude-code, codex, gemini, cursor, copilot, opencode, cline, qwen, continue, kiro, antigravity ou aider)" },
         cwd: { type: "string", description: "pasta de trabalho" },
       },
       required: ["prompt"],

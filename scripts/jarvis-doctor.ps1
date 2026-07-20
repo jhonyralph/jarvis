@@ -41,11 +41,23 @@ try {
   }
 } catch { Fail 'Node.js não encontrado no PATH.' 'Instale Node >= 22 (nodejs.org).' }
 
-# 2) Agent CLI presente (login não dá pra checar sem gastar um turno; só presença)
+# 2) CLIs de agentes: presença + versão sem gastar turno. O suporte real continua explícito:
+# complete = referência verificada; unverified = parser implementado, falta probe autenticado;
+# limited = sem stream estruturado suficiente para paridade.
 $anyAgent = $false
-foreach ($a in @('claude', 'codex')) { if (Have $a) { Pass "Agent CLI '$a' no PATH"; $anyAgent = $true } }
-if (-not $anyAgent) { Fail 'Nenhuma CLI de agente (claude/codex) no PATH.' "Instale ao menos uma e faça login (ex.: 'claude login'). Sem isso os turnos falham com 401." }
-else { Warn 'Login da CLI não é verificável aqui (não gasto um turno).' "Se os turnos derem 401, rode 'claude login' / 'codex login' nesta máquina." }
+$agents = @(
+  @{ Cmd='claude'; Id='claude-code'; Tier='complete' }, @{ Cmd='codex'; Id='codex'; Tier='limited' },
+  @{ Cmd='gemini'; Id='gemini'; Tier='unverified' }, @{ Cmd='cursor-agent'; Id='cursor'; Tier='unverified' },
+  @{ Cmd='copilot'; Id='copilot'; Tier='unverified' }, @{ Cmd='opencode'; Id='opencode'; Tier='unverified' },
+  @{ Cmd='cline'; Id='cline'; Tier='unverified' }, @{ Cmd='qwen'; Id='qwen'; Tier='unverified' },
+  @{ Cmd='cn'; Id='continue'; Tier='limited' }, @{ Cmd='kiro-cli'; Id='kiro'; Tier='limited' },
+  @{ Cmd='agy'; Id='antigravity'; Tier='limited' }, @{ Cmd='aider'; Id='aider'; Tier='limited' }
+)
+foreach ($a in $agents) { $cmd = $a.Cmd; if (Have $cmd) { $v = (& $cmd --version 2>&1 | Select-Object -First 1); Pass "Agent '$($a.Id)' [$($a.Tier)] — $cmd $v"; $anyAgent = $true } }
+if (-not $anyAgent) { Fail 'Nenhuma CLI de agente suportada no PATH.' 'Instale e autentique ao menos uma; veja docs/agent-parity-matrix.md.' }
+else { Warn 'Presença/versão não prova autenticação nem paridade.' 'Rode npm run agents:report e um probe real antes de promover unverified/limited.' }
+$perm = if ($env:JARVIS_AGENT_PERMISSION_MODE) { $env:JARVIS_AGENT_PERMISSION_MODE } else { 'full-access (padrão)' }
+if ($perm -match '^provider[-_]default$') { Pass "Política de ferramentas: provider-default" } else { Warn "Política de ferramentas: $perm — os agentes podem executar código com acesso total." 'Para usar aprovações/sandbox do provedor: JARVIS_AGENT_PERMISSION_MODE=provider-default.' }
 
 # 3) Repo é um checkout do Jarvis + dependências instaladas
 if (Test-Path (Join-Path $repo 'package.json')) {

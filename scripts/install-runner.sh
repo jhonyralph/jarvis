@@ -7,7 +7,7 @@
 # Uso:
 #     ./scripts/install-runner.sh -h "wss://<hub>/" -t "<token>" -l "Meu Mac"
 #
-# Pré-requisitos: Node >= 22 e `claude login` / `codex login` nesta máquina.
+# Pré-requisitos: Node >= 22 e ao menos uma CLI suportada/autenticada.
 set -e
 HUB=""; TOKEN=""; LABEL=""
 while [ $# -gt 0 ]; do
@@ -22,9 +22,9 @@ done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 command -v node >/dev/null 2>&1 || { echo "Node.js não encontrado (>=22). Instale e rode de novo."; exit 1; }
-if ! command -v claude >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1; then
-  echo "Aviso: nenhum agente (claude/codex) encontrado/autenticado nesta máquina."
-fi
+HAS_AGENT=0
+for cmd in claude codex gemini cursor-agent copilot opencode cline qwen cn kiro-cli agy aider; do command -v "$cmd" >/dev/null 2>&1 && HAS_AGENT=1; done
+[ "$HAS_AGENT" -eq 1 ] || echo "Aviso: nenhuma CLI suportada encontrada. Veja docs/agent-parity-matrix.md."
 
 echo "Instalando dependências (npm install)..."
 ( cd "$ROOT" && npm install >/dev/null )

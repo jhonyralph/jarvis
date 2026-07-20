@@ -1,7 +1,7 @@
 {
   "name": "Jarvis",
   "short_name": "Jarvis",
-  "description": "Painel de controle self-hosted, por voz, para agentes de código (Claude Code / Codex).",
+  "description": "Painel self-hosted e por voz para agentes de código, com capacidades verificadas por adapter.",
   "lang": "pt-BR",
   "start_url": "/",
   "scope": "/",

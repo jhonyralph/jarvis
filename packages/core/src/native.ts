@@ -468,8 +468,32 @@ export function parseNativeEvents(line: string, claude: boolean): NativeEvent[] 
       const t = contentText(o.payload.content);
       if (t && !(role === "user" && isInjected(t))) out.push({ kind: "message", role, text: t, ts: Date.parse(o.timestamp) || 0 });
     }
+  } else if (o.type === "response_item" && o.payload?.type === "reasoning") {
+    out.push({ kind: "tool", name: "Thinking", summary: "Pensando" });
+  } else if (o.type === "response_item" && o.payload?.type === "custom_tool_call") {
+    const name = String(o.payload.name || "Tool");
+    const input = String(o.payload.input || "");
+    out.push({ kind: "tool", name: name === "exec" ? "Bash" : name, summary: name === "exec" ? `Bash: ${input.replace(/\s+/g, " ").slice(0, 90)}` : `Ferramenta: ${name}`, detail: input || undefined });
+  } else if (o.type === "response_item" && o.payload?.type === "function_call") {
+    const name = String(o.payload.name || "Tool");
+    out.push({ kind: "tool", name, summary: `Ferramenta: ${name}`, detail: typeof o.payload.arguments === "string" ? o.payload.arguments : undefined });
+  } else if (o.type === "event_msg" && o.payload?.type === "web_search_end") {
+    out.push({ kind: "tool", name: "WebSearch", summary: `Pesquisando: ${String(o.payload.query || "").slice(0, 60)}` });
+  } else if (o.type === "event_msg" && o.payload?.type === "patch_apply_end") {
+    for (const [path, change] of Object.entries(o.payload.changes || {}) as Array<[string, any]>) {
+      const rows = codexChangeRows(change);
+      out.push({ kind: "tool", name: change?.type === "add" ? "Write" : "Edit", summary: `${change?.type === "add" ? "Criando" : "Editando"} ${basename(path)}`, path, adds: rows.filter((r) => r.t === "+").length, dels: rows.filter((r) => r.t === "-").length, rows: rows.length <= 300 ? rows : undefined });
+    }
   }
   return out;
+}
+
+/** Build a native transcript id only for providers whose on-disk format Jarvis can read. */
+export function nativeIdForAgent(agent: string, nativeId: string): string | null {
+  if (!nativeId) return null;
+  if (agent === "claude-code") return `claude:${nativeId}`;
+  if (agent === "codex") return `codex:${nativeId}`;
+  return null;
 }
 
 // ------------------------- files touched in a session -------------------------
@@ -502,10 +526,10 @@ export function editCounts(oldStr: string, newStr: string): { adds: number; dels
   return { adds, dels };
 }
 
-interface FileOp { action: "read" | "edit" | "write"; edits: Array<{ old: string; new: string }>; content?: string; adds: number; dels: number; }
-function resolveClaudeJsonl(id: string): string | null {
-  const f = findFileById(id.startsWith("claude:") ? id : "claude:" + id);
-  return f && f.claude ? f.path : null;
+interface FileOp { action: "read" | "edit" | "write"; edits: Array<{ old: string; new: string }>; content?: string; rows?: DiffRow[]; adds: number; dels: number; }
+function resolveNativeJsonl(id: string): { path: string; claude: boolean } | null {
+  if (isNativeId(id)) return findFileById(id);
+  return findFileById("claude:" + id) || findFileById("codex:" + id);
 }
 /** Walk a claude session jsonl and aggregate per-file tool activity (Read/Edit/Write/MultiEdit). */
 // Aggregating a session costs a full re-read plus an LCS diff per edit, and it is hit on every
@@ -540,20 +564,56 @@ function claudeFileOps(jsonlPath: string): Map<string, FileOp> {
   if (stamp) { if (opsCache.size > 40) opsCache.clear(); opsCache.set(jsonlPath, { key: stamp, ops }); }
   return ops;
 }
+function codexChangeRows(change: any): DiffRow[] {
+  if (change?.type === "add" && typeof change.content === "string") return change.content.split("\n").map((s: string) => ({ t: "+" as const, s }));
+  const diff = String(change?.unified_diff || "");
+  const rows: DiffRow[] = [];
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith("@@")) rows.push({ t: "@", s: line });
+    else if (line.startsWith("+") && !line.startsWith("+++")) rows.push({ t: "+", s: line.slice(1) });
+    else if (line.startsWith("-") && !line.startsWith("---")) rows.push({ t: "-", s: line.slice(1) });
+    else if (line.startsWith(" ")) rows.push({ t: " ", s: line.slice(1) });
+  }
+  return rows;
+}
+function codexFileOps(jsonlPath: string): Map<string, FileOp> {
+  let stamp = "";
+  try { const s = statSync(jsonlPath); stamp = `${s.mtimeMs}:${s.size}`; } catch { /* fresh read */ }
+  const hit = opsCache.get(jsonlPath); if (hit && stamp && hit.key === stamp) return hit.ops;
+  const ops = new Map<string, FileOp>();
+  let raw = ""; try { raw = readFileSync(jsonlPath, "utf8"); } catch { return ops; }
+  eachLine(raw, (o) => {
+    if (o.type !== "event_msg" || o.payload?.type !== "patch_apply_end") return;
+    for (const [path, change] of Object.entries(o.payload.changes || {}) as Array<[string, any]>) {
+      const rows = codexChangeRows(change);
+      const prev = ops.get(path);
+      const merged = [...(prev?.rows || []), ...(prev?.rows?.length ? [{ t: "@" as const, s: "— alteração seguinte —" }] : []), ...rows];
+      ops.set(path, {
+        action: change?.type === "add" ? "write" : "edit", edits: [], rows: merged,
+        adds: (prev?.adds || 0) + rows.filter((r) => r.t === "+").length,
+        dels: (prev?.dels || 0) + rows.filter((r) => r.t === "-").length,
+      });
+    }
+  });
+  if (stamp) { if (opsCache.size > 40) opsCache.clear(); opsCache.set(jsonlPath, { key: stamp, ops }); }
+  return ops;
+}
 /** Files touched in a session (real absolute paths + action + +/- counts). id: "claude:<uuid>" or a raw claude session_id. */
 export function sessionFiles(id: string): TouchedFile[] {
-  const jsonl = resolveClaudeJsonl(id);
-  if (!jsonl) return [];
-  return [...claudeFileOps(jsonl).entries()]
+  const resolved = resolveNativeJsonl(id);
+  if (!resolved) return [];
+  const ops = resolved.claude ? claudeFileOps(resolved.path) : codexFileOps(resolved.path);
+  return [...ops.entries()]
     .map(([path, o]) => ({ path, action: o.action, adds: o.adds, dels: o.dels }))
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 /** The unified diff rows for ONE edited file in a session (concatenates multiple edits). */
 export function sessionFileDiff(id: string, path: string): { path: string; name: string; rows?: DiffRow[]; adds?: number; dels?: number; error?: string } {
-  const jsonl = resolveClaudeJsonl(id);
-  if (!jsonl) return { path, name: basename(path), error: "sessão não encontrada" };
-  const o = claudeFileOps(jsonl).get(path);
-  if (!o || o.action !== "edit" || !o.edits.length) return { path, name: basename(path), error: "sem diff (não foi editado nesta sessão)" };
+  const resolved = resolveNativeJsonl(id);
+  if (!resolved) return { path, name: basename(path), error: "sessão não encontrada" };
+  const o = (resolved.claude ? claudeFileOps(resolved.path) : codexFileOps(resolved.path)).get(path);
+  if (!o || o.action !== "edit" || (!o.edits.length && !o.rows?.length)) return { path, name: basename(path), error: "sem diff (não foi editado nesta sessão)" };
+  if (o.rows?.length) return { path, name: basename(path), rows: o.rows, adds: o.adds, dels: o.dels };
   const rows: DiffRow[] = [];
   o.edits.forEach((e, idx) => { if (idx) rows.push({ t: "@", s: `— edição ${idx + 1} de ${o.edits.length} —` }); for (const r of lineDiff(e.old, e.new)) rows.push(r); });
   return { path, name: basename(path), rows, adds: o.adds, dels: o.dels };
@@ -715,9 +775,33 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
     } else {
       if (o.type === "session_meta" && o.payload) cwd = o.payload.cwd || cwd;
       else if (o.type === "turn_context" && o.payload) { if (typeof o.payload.model === "string" && o.payload.model) lastModel = o.payload.model; if (typeof o.payload.effort === "string" && o.payload.effort) lastEffort = o.payload.effort; }
+      else if (o.type === "event_msg" && o.payload?.type === "token_count" && o.payload.info) {
+        lastUsage = { ...o.payload.info.last_token_usage, model_context_window: o.payload.info.model_context_window };
+      }
       else if (o.type === "response_item" && o.payload?.type === "message" && (o.payload.role === "user" || o.payload.role === "assistant")) {
         const t = contentText(o.payload.content);
-        if (t && !(o.payload.role === "user" && isInjected(t))) messages.push({ role: o.payload.role, text: t, ts: Date.parse(o.timestamp) || 0 });
+        if (!t || (o.payload.role === "user" && isInjected(t))) return;
+        const ts = Date.parse(o.timestamp) || 0;
+        if (o.payload.role === "user") { flushPend(); messages.push({ role: "user", text: t, ts }); }
+        else { if (!pend) pend = { text: "", activity: [], ts }; pend.text += t; }
+      } else if (o.type === "response_item" && o.payload?.type === "reasoning") {
+        if (!pend) pend = { text: "", activity: [], ts: Date.parse(o.timestamp) || 0 };
+        pend.activity.push({ kind: "thinking" });
+      } else if (o.type === "response_item" && (o.payload?.type === "custom_tool_call" || o.payload?.type === "function_call")) {
+        if (!pend) pend = { text: "", activity: [], ts: Date.parse(o.timestamp) || 0 };
+        const rawName = String(o.payload.name || "Tool");
+        const name = rawName === "exec" ? "Bash" : rawName;
+        const detail = String(o.payload.input ?? o.payload.arguments ?? "");
+        pend.activity.push({ kind: "tool", name, summary: name === "Bash" ? `Bash: ${detail.replace(/\s+/g, " ").slice(0, 90)}` : `Ferramenta: ${name}`, detail: detail || undefined, toolId: o.payload.call_id || o.payload.id });
+      } else if (o.type === "event_msg" && o.payload?.type === "web_search_end") {
+        if (!pend) pend = { text: "", activity: [], ts: Date.parse(o.timestamp) || 0 };
+        pend.activity.push({ kind: "tool", name: "WebSearch", summary: `Pesquisando: ${String(o.payload.query || "").slice(0, 60)}`, toolId: o.payload.call_id });
+      } else if (o.type === "event_msg" && o.payload?.type === "patch_apply_end") {
+        if (!pend) pend = { text: "", activity: [], ts: Date.parse(o.timestamp) || 0 };
+        for (const [path, change] of Object.entries(o.payload.changes || {}) as Array<[string, any]>) {
+          const rows = codexChangeRows(change);
+          pend.activity.push({ kind: "tool", name: change?.type === "add" ? "Write" : "Edit", summary: `${change?.type === "add" ? "Criando" : "Editando"} ${basename(path)}`, path, adds: rows.filter((r) => r.t === "+").length, dels: rows.filter((r) => r.t === "-").length, rows: rows.length <= 300 ? rows : undefined, toolId: o.payload.call_id });
+        }
       }
     }
   });
@@ -727,7 +811,8 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
     r.ev.path = st.path; r.ev.adds = st.adds; r.ev.dels = st.dels; r.ev.rows = st.rows;
   }
   noteParse(f.path, raw.length, messages.length); // format-drift telemetry (non-empty file, 0 msgs)
-  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: inputContextOf(lastUsage), model: lastModel || undefined, effort: lastEffort || undefined };
+  const codexInput = !f.claude && lastUsage ? Number(lastUsage.input_tokens || 0) || undefined : undefined;
+  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: f.claude ? inputContextOf(lastUsage) : codexInput, model: lastModel || undefined, effort: lastEffort || undefined };
   if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
   return data;
 }

@@ -1,5 +1,5 @@
 /**
- * Jarvis Hub (v1) — local server: serves the chat PWA + a WebSocket that routes
+ * Jarvis Hub — local server: serves the chat PWA + a WebSocket that routes
  * messages to an AgentAdapter and (optionally) speaks the reply via local TTS.
  *
  * Runs NATIVELY (no WSL). Cross-platform (Windows/Linux/Mac).
@@ -8,7 +8,8 @@
  *   JARVIS_PORT   (default 4577)
  *   JARVIS_CWD    working dir for the agent (default: process.cwd())
  *   JARVIS_VOICE  Piper voice (default en_GB-alan-medium)
- *   JARVIS_AGENT  "claude" to use native Claude Code; anything else => mock
+ *   JARVIS_AGENT  default registered adapter id
+ *   JARVIS_AGENT_PERMISSION_MODE  full-access | provider-default
  */
 import { createServer } from "node:http";
 import { randomUUID, randomBytes } from "node:crypto";
@@ -19,17 +20,17 @@ import QRCode from "qrcode";
 import { PushCenter } from "./push.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, ABORTED, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, type AgentAdapter, type AgentReply, type SendOpts } from "@jarvis/core";
 import { synthesize } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, UsageLedger, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
-import type { RunnerInfo } from "@jarvis/protocol";
+import { RUNNER_PROTOCOL_VERSION, type RunnerInfo } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
 import { startAdminApi } from "./adminApi.js";
@@ -43,11 +44,20 @@ const VOICE = process.env.JARVIS_VOICE || "en_GB-alan-medium";
 const HISTORY_CAP = Number(process.env.JARVIS_HISTORY_CAP || 120);
 
 // Agnostic registry — every agent is registered; clients pick per message.
-const DEFAULT_AGENT = process.env.JARVIS_AGENT || "mock";
+const DEFAULT_AGENT = process.env.JARVIS_AGENT || "claude-code";
 const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new ClaudeCodeAdapter())
   .register(new CodexAdapter())
   .register(new AiderAdapter())
+  .register(new GeminiCliAdapter())
+  .register(new CursorAgentAdapter())
+  .register(new CopilotCliAdapter())
+  .register(new OpenCodeAdapter())
+  .register(new ClineCliAdapter())
+  .register(new QwenCodeAdapter())
+  .register(new ContinueCliAdapter())
+  .register(new KiroCliAdapter())
+  .register(new AntigravityCliAdapter())
   .register(new MockAgentAdapter());
 const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });
@@ -219,8 +229,22 @@ let voicePending: { task: string } | null = null;
 let voiceTarget = "";
 let voiceResolve: { task: string; speak: boolean; speaker?: string; suggestId?: string } | null = null;
 // cheap gate: only spend an LLM intent pass when the utterance plausibly carries a command
-const VOICE_HINT = /\b(codex|claude|gpt|opus|sonnet|haiku|fable|terra|luna|sol|modelo|model|esfor[çc]o|effort|pasta|diret[óo]rio|folder|sess[ãa]o|nov[ao]|continu|seguir|trocar|usar?|use|come[çc]ar)\b/i;
+const VOICE_HINT = /\b(modelo|model|esfor[çc]o|effort|pasta|diret[óo]rio|folder|sess[ãa]o|nov[ao]|continu|seguir|trocar|usar?|use|come[çc]ar)\b/i;
 const PT_EFFORT: Record<string, string> = { minimal: "mínimo", low: "baixo", medium: "médio", high: "alto", xhigh: "muito alto", max: "máximo", ultra: "ultra", ultracode: "ultracode" };
+
+async function compatibleAgentOpts(agent: AgentAdapter, requestedModel?: string, requestedEffort?: string): Promise<SendOpts> {
+  const caps = await agent.capabilities();
+  const model = requestedModel && caps.models.some((m) => m.id === requestedModel) ? requestedModel : undefined;
+  const selected = model ? caps.models.find((m) => m.id === model) : undefined;
+  const effort = requestedEffort && selected?.efforts.includes(requestedEffort) ? requestedEffort : undefined;
+  return { model, effort };
+}
+const summaryAgent = (): AgentAdapter => agents.has(summaryCfg.agent) ? agents.get(summaryCfg.agent) : agents.searchAgent();
+
+function voiceMentionsCatalog(text: string, desc: Awaited<ReturnType<AgentRegistry["describe"]>>): boolean {
+  const lower = text.toLocaleLowerCase();
+  return VOICE_HINT.test(text) || desc.some((a) => [a.name, a.label, ...a.models.flatMap((m) => [m.id, m.label])].some((v) => v && String(v).length > 2 && lower.includes(String(v).toLocaleLowerCase())));
+}
 
 function send(ws: WebSocket, obj: unknown): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -318,7 +342,7 @@ interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastS
 const runners = new Map<string, RunnerConn>();
 const runnerSockets = new Set<WebSocket>();
 const LOCAL_ID = "local";
-runners.set(LOCAL_ID, { id: LOCAL_ID, ws: null, local: true, lastSeen: Date.now(), info: { runnerId: LOCAL_ID, host: hostname(), os: process.platform, agents: agents.names(), local: true } });
+runners.set(LOCAL_ID, { id: LOCAL_ID, ws: null, local: true, lastSeen: Date.now(), info: { runnerId: LOCAL_ID, host: hostname(), os: process.platform, agents: [], protocolVersion: RUNNER_PROTOCOL_VERSION, local: true } });
 const clientRunner = new WeakMap<WebSocket, string>();
 const runnerActive = new Map<string, Set<string>>(); // runnerId -> session ids running there
 // When each currently-offline runner dropped (cleared on reconnect), so the fleet view can show
@@ -333,11 +357,16 @@ const pendingReq = new Map<string, WebSocket>();
 let reqSeq = 0;
 // which agents are actually usable on THIS (local) machine — probes availability, so the
 // UI can disable agents that aren't installed/authenticated here.
-let localAgents: string[] = agents.names();
+let localAgents: string[] = [];
 async function refreshLocalAgents(): Promise<void> {
   const out: string[] = [];
   for (const n of agents.names()) { try { if (await agents.get(n).available()) out.push(n); } catch { /* skip */ } }
-  const next = out.length ? out : agents.names();
+  const next = out;
+  const local = runners.get(LOCAL_ID);
+  if (local) {
+    local.info.agents = next;
+    local.info.agentDescriptors = await agents.describe();
+  }
   if (next.join() !== localAgents.join()) { localAgents = next; broadcastMachines(); }
   else localAgents = next;
 }
@@ -390,7 +419,7 @@ function canUseRunner(ws: WebSocket, rid: string): boolean {
 const RUNNER_OPS = new Set(["list", "open", "send", "new", "listdir", "configure", "readfile", "readdiff", "delete"]);
 // Ops that ALWAYS read or execute the LOCAL (Hub) machine's own sessions, regardless of which runner
 // is selected — they never take the remote-forward path. These were NOT in RUNNER_OPS, so a member
-// without local access reached them: `sendTo`/`voice` execute a turn ON THE HUB (bypassPermissions),
+// without local access reached them: `sendTo`/`voice` execute a turn ON THE HUB (normally full-access),
 // and search/summary read every local session. Gate them on LOCAL_ID like any other machine op.
 const LOCAL_OPS = new Set(["sendTo", "dropLast", "search", "memory_search", "voice"]);
 // Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
@@ -414,7 +443,12 @@ function machineList(ws?: WebSocket): any[] {
     const stale = !r.local && online && !!commit && !!hubCommit && !sameBuild(commit, hubCommit);
     const since = offlineSince.get(r.id);
     const offlineMs = online || !since ? 0 : Date.now() - since;
-    return { id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os, agents: r.local ? localAgents : (r.info.agents || []), online, local: !!r.local, commit, hubCommit, stale, offlineMs };
+    return {
+      id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os,
+      agents: r.local ? localAgents : (r.info.agents || []), agentDescriptors: r.info.agentDescriptors || [],
+      protocolVersion: r.info.protocolVersion || 1, compatible: (r.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION,
+      online, local: !!r.local, commit, hubCommit, stale, offlineMs,
+    };
   });
 }
 // Prolonged-offline alert: the immediate drop already pushes once; this fires a SECOND alert when a
@@ -460,7 +494,7 @@ function runnerSessions(rc: RunnerConn): Promise<any[]> {
 function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "pong") return; // heartbeat ack — rc.lastSeen already refreshed by the caller
   if (m.t === "sessions") { const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
-  if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: m.agent, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })), files: m.files }); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
+  if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId, sessionCost: costOf(m.sessionId), sessionUsage: usageLedger.session(m.sessionId) }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })), files: m.files }); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "stream") {
     // Buffer a atividade viva do runner por sessão (igual ao local) pra um refresh no meio do
@@ -471,12 +505,12 @@ function relayRunner(rc: RunnerConn, m: any): void {
       else if (ev.kind === "tool" || ev.kind === "text" || ev.kind === "thinking") { const b = activityBuf.get(sid); if (b && b.length < 600) b.push(ev); }
       else if (ev.kind === "done" || ev.kind === "cancelled" || ev.kind === "error") {
         activityBuf.delete(sid);
-        if (ev.kind === "done") addCost(sid, ev.usage?.costUsd); // remote turns count toward session cost + fleet total (any agent)
+        if (ev.kind === "done") addUsage(sid, m.agent || "remote-unknown", ev.usage); // typed remote usage, any agent
         const t0 = remoteTurnStart.get(mkey);
-        if (t0 && ev.kind !== "cancelled") metrics.record({ runnerId: rc.id, ms: Date.now() - t0, ok: ev.kind === "done", ts: Date.now() });
+        if (t0 && ev.kind !== "cancelled") metrics.record({ runnerId: rc.id, agent: m.agent, model: ev.usage?.model, ms: Date.now() - t0, ok: ev.kind === "done", ts: Date.now() });
         remoteTurnStart.delete(mkey);
       } }
-    for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage });
+    for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage, sessionCost: costOf(m.sessionId), sessionUsage: usageLedger.session(m.sessionId) });
     // Turnos de máquina remota terminavam em silêncio: só o cliente conectado ficava sabendo.
     const label = runnerLabels[rc.id] || rc.info.host || rc.id;
     if (m.ev?.kind === "done") notifyEvent("done", `${label} · sessão concluída`, m.ev.text || "", m.sessionId);
@@ -484,7 +518,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     return;
   }
   if (m.t === "busy") { for (const c of clientsOn(rc.id)) send(c, { t: "busy", message: m.message }); return; }
-  if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, role: m.message?.role, text: m.message?.text, ts: m.message?.ts } }); return; }
+  if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, ...m.message } }); return; }
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows }); return; }
   if (m.t === "runs") {
     const prev = runnerActive.get(rc.id) || new Set<string>();
@@ -552,6 +586,11 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       const info: RunnerInfo = m.info || {};
       const declaredId = info.runnerId || null;
       if (!declaredId) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
+      if ((info.protocolVersion || 1) !== RUNNER_PROTOCOL_VERSION) {
+        send(ws, { t: "reject", reason: `protocolo incompatível (runner=${info.protocolVersion || 1}, hub=${RUNNER_PROTOCOL_VERSION}); atualize o Runner` });
+        try { ws.close(); } catch { /* ignore */ }
+        return;
+      }
       // Machine 0 (this host) is always LOCAL_ID; a remote runner may not claim that reserved id and
       // overwrite the in-process entry.
       if (declaredId === LOCAL_ID) { send(ws, { t: "reject", reason: "runnerId reservado" }); try { ws.close(); } catch { /* ignore */ } return; }
@@ -638,7 +677,7 @@ function allSessions(): any[] {
   // id "claude:<uuid>" (≠ id do hub), então sem isto apareceria DUPLICADA na lista (a do hub + a
   // nativa). Junta os ids nativos vinculados e os exclui — a do hub é a canônica.
   const boundNative = new Set<string>();
-  for (const s of own) { try { const nid = agents.get(s.agent)?.nativeSessionId?.(s.id); if (nid) boundNative.add((s.agent === "codex" ? "codex:" : "claude:") + nid); } catch { /* ignore */ } }
+  for (const s of own) { try { const nid = agents.get(s.agent).nativeSessionId?.(s.id); const key = nid && nativeIdForAgent(s.agent, nid); if (key) boundNative.add(key); } catch { /* unknown/removed adapter */ } }
   const native = listNative()
     .filter((n) => !ownIds.has(n.id) && !boundNative.has(n.id))
     .map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, createdAt: n.updatedAt, updatedAt: n.updatedAt, lastMessage: "", count: n.count }));
@@ -683,9 +722,10 @@ async function speechForReply(replyText: string): Promise<string> {
   if (spoken.length <= 600) return spoken; // already short when spoken → read as-is
   const prompt = `Resuma em 1 a 3 frases CURTAS e faladas (português do Brasil, sem markdown, sem listas, sem código) o texto abaixo — como quem conta o resultado em voz alta, direto ao ponto:\n\n${(replyText || "").slice(0, 4000)}`;
   try {
-    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
-    const opts = { model: summaryCfg.model, effort: summaryCfg.effort };
+    const agent = summaryAgent();
+    const opts = await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort);
     const reply = agent.oneShot ? await agent.oneShot(prompt, opts) : await agent.send("__speaksum__", prompt, process.cwd(), opts);
+    addUsage("__spoken_summary__", agent.name, reply.usage);
     const s = speechify((reply.text || "").trim());
     return s || speechifyCapped(replyText);
   } catch { return speechifyCapped(replyText); }
@@ -717,7 +757,7 @@ const turnCtx: TurnCtx = {
   // behavior change). Stops a runaway session from spending indefinitely without a human in the loop.
   checkBudget: (sid) => {
     const cap = Number(process.env.JARVIS_SESSION_COST_CAP) || 0;
-    const spent = costOf(sid);
+    const spent = usageLedger.session(sid).billableUsd;
     if (cap > 0 && spent >= cap) return { blocked: true, message: `Esta sessão já custou $${spent.toFixed(2)} (limite $${cap.toFixed(2)}). Ajuste JARVIS_SESSION_COST_CAP ou continue em outra sessão.` };
     return { blocked: false };
   },
@@ -738,7 +778,17 @@ async function deliverTurn(sid: string, opts: { showText: string; agentText?: st
  *  agent/folder later won't move an existing routine session (delete+recreate to change those). */
 async function runRoutine(r: Routine): Promise<void> {
   const sid = "routine-" + r.id;
-  store.ensure(sid, { agent: r.agent || agents.default, cwd: r.cwd || CWD, title: "⏰ " + r.name });
+  if (r.runnerId && r.runnerId !== LOCAL_ID) {
+    const rc = runners.get(r.runnerId);
+    if (!rc?.ws) { notifyEvent("error", "⏰ " + r.name, "máquina da rotina está offline", sid); return; }
+    const agentName = r.agent || rc.info.agents[0];
+    if (!agentName || !rc.info.agents.includes(agentName)) { notifyEvent("error", "⏰ " + r.name, `agente '${agentName || "(nenhum)"}' indisponível nessa máquina`, sid); return; }
+    sendToRunner(rc, { t: "send", sessionId: sid, text: r.prompt, agent: agentName, cwd: r.cwd, opts: { model: r.model, effort: r.effort }, turnId: `routine:${r.id}:${r.lastRunAt || Date.now()}` });
+    return;
+  }
+  const localAgent = r.agent || agents.default;
+  if (!agents.has(localAgent)) { notifyEvent("error", "⏰ " + r.name, `agente '${localAgent}' não registrado`, sid); return; }
+  store.ensure(sid, { agent: localAgent, cwd: r.cwd || CWD, title: "⏰ " + r.name });
   await runManagedTurn(turnCtx, sid, {
     showText: r.prompt, model: r.model, effort: r.effort, speak: !!r.speak,
     onError: (message) => notifyEvent("error", "⏰ " + r.name, message, sid),
@@ -786,8 +836,9 @@ async function stageRefinePass(sid: string, utterance: string, model: string, ef
   const e = staging.get(sid)!;
   const prompt = buildRefinePrompt({ context: stageContext(sid), turns: e.turns, utterance });
   const agent = agents.searchAgent();
-  const reply = agent.oneShot ? await agent.oneShot(prompt, { model, effort }) : await agent.send("__stage__", prompt, process.cwd(), { model, effort });
-  addCost(WAKE_SESSION, reply.usage?.costUsd); // atribui custo à voz
+  const sendOpts = await compatibleAgentOpts(agent, model, effort);
+  const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__stage__", prompt, process.cwd(), sendOpts);
+  addUsage(WAKE_SESSION, agent.name, reply.usage); // atribui usage/custo tipado à voz
   return parseRefine(reply.text);
 }
 async function stageHandle(sid: string, utterance: string): Promise<void> {
@@ -883,9 +934,10 @@ async function relevanceGate(text: string, context: string): Promise<boolean> {
   if (voiceCfg.relevance === "off") return true;
   if (!text || text.trim().length < 2) return false;
   try {
-    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    const agent = summaryAgent();
     if (!agent?.oneShot) return true;
-    const reply = await agent.oneShot(buildRelevancePrompt(text, context), { model: voiceCfg.fastModel, effort: voiceCfg.fastEffort });
+    const reply = await agent.oneShot(buildRelevancePrompt(text, context), await compatibleAgentOpts(agent, voiceCfg.fastModel, voiceCfg.fastEffort));
+    addUsage(WAKE_SESSION, agent.name, reply.usage);
     const v = parseRelevanceVerdict(String(reply?.text ?? ""));
     if (!v.relevant) console.log(`[voz] descartado (irrelevante${v.reason ? ": " + v.reason : ""}): "${text.slice(0, 60)}"`);
     return v.relevant;
@@ -896,9 +948,10 @@ async function relevanceGate(text: string, context: string): Promise<boolean> {
 async function voicePreflight(rawText: string, context: string): Promise<{ text: string; relevant: boolean }> {
   if (!rawText || rawText.trim().length < 2) return { text: rawText, relevant: false };
   try {
-    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    const agent = summaryAgent();
     if (!agent?.oneShot) return { text: rawText, relevant: true };
-    const reply = await agent.oneShot(buildVoicePreflightPrompt(rawText, context), { model: voiceCfg.fastModel, effort: voiceCfg.fastEffort });
+    const reply = await agent.oneShot(buildVoicePreflightPrompt(rawText, context), await compatibleAgentOpts(agent, voiceCfg.fastModel, voiceCfg.fastEffort));
+    addUsage(WAKE_SESSION, agent.name, reply.usage);
     const r = parseVoicePreflight(String(reply?.text ?? ""), rawText);
     if (!r.relevant) console.log(`[voz] descartado (irrelevante): "${rawText.slice(0, 60)}"`);
     return r;
@@ -931,12 +984,13 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
     if (/\bcontinu|\bsegu|\bmesm[ao]\b|manter/i.test(text)) { voicePending = null; await runVoiceTask(t, speak, speaker); return; }
     voicePending = { task: text }; await voiceSay("Não entendi. Diga 'continuar' para seguir, ou 'nova' para começar do zero."); return;
   }
-  // plain task, fresh session -> RESOLVE (sugere a sessão certa via memória; overlay decide)
-  if (!inProgress && !VOICE_HINT.test(text)) { await resolveVoice(text, speak, speaker); return; }
-  // plain task, in progress -> ask new-vs-continue
-  if (inProgress && !VOICE_HINT.test(text)) { voicePending = { task: text }; await voiceSay("Já tenho uma conversa em andamento. Quer continuar ou começar uma nova?"); return; }
-  // command-ish utterance -> one LLM intent pass
   const desc = await agents.describe();
+  const hasControl = voiceMentionsCatalog(text, desc);
+  // plain task, fresh session -> RESOLVE (sugere a sessão certa via memória; overlay decide)
+  if (!inProgress && !hasControl) { await resolveVoice(text, speak, speaker); return; }
+  // plain task, in progress -> ask new-vs-continue
+  if (inProgress && !hasControl) { voicePending = { task: text }; await voiceSay("Já tenho uma conversa em andamento. Quer continuar ou começar uma nova?"); return; }
+  // command-ish utterance -> one LLM intent pass
   const catalog = desc.map((a) => `${a.name} — modelos: ${a.models.map((m) => m.id).join(", ")} — esforços: ${[...new Set(a.models.flatMap((m) => m.efforts))].join(", ")}`).join("\n");
   const intent = await parseVoiceIntent({ text, catalog, recent: recentDirsList(20), inProgress, config: voiceConfig, agents });
   const empty = store.ensure(WAKE_SESSION).messages.length === 0;
@@ -1000,36 +1054,29 @@ function loadQueues(): void {
   } catch { /* ignore */ }
 }
 // Custo ACUMULADO por sessão (o que passou pelo Jarvis), persistido pra sobreviver a reload/restart.
-const sessionCost = new Map<string, { cost: number; ts: number }>();
 const COST_FILE = join(JARVIS_DIR, "session-cost.json");
-function costOf(sid: string): number { return sessionCost.get(sid)?.cost || 0; }
-function addCost(sid: string, usd?: number): void {
-  if (!usd || !isFinite(usd)) return;
-  const e = sessionCost.get(sid) || { cost: 0, ts: 0 };
-  e.cost += usd; e.ts = Date.now(); sessionCost.set(sid, e);
-  try { const obj: Record<string, { cost: number; ts: number }> = {}; for (const [s, v] of sessionCost) obj[s] = v; writeJsonAtomic(COST_FILE, obj); } catch { /* ignore */ }
-}
+const usageLedger = new UsageLedger(COST_FILE);
+function costOf(sid: string): number { return usageLedger.session(sid).costUsd; }
+function addUsage(sid: string, agent: string, usage?: AgentReply["usage"]): void { usageLedger.record(sid, agent, usage); }
 /** Reconcile a hub session against its bound NATIVE transcript. If the hub was killed mid-turn
- *  (restart, crash), the spawned `claude -p --resume <id>` child can keep running as an orphan
+ *  (restart, crash), the provider CLI child can keep running as an orphan
  *  (Windows doesn't kill children when the parent is force-killed) and finish writing the reply
- *  straight into ~/.claude — but the in-memory `await agent.send()` that would call store.add()
+ *  straight into its native transcript — but the in-memory `await agent.send()` that would call store.add()
  *  never resumes (the whole Node process died), so the reply is invisible in Jarvis even though
  *  `claude --resume` has it. If the store's last message is a user turn with no reply, and the
  *  native transcript has a NEWER assistant reply, backfill it. Never touches a session that's
  *  currently running (a live turn's own store.add will land normally when it finishes). */
 function reconcileFromNative(s: ReturnType<typeof store.ensure>): void {
-  if (s.agent !== "claude-code" || activeRuns.has(s.id)) return;
+  if (activeRuns.has(s.id)) return;
   const last = store.history(s.id).at(-1);
   if (!last || last.role !== "user") return; // already answered, or nothing sent yet — nothing to reconcile
   const nid = agents.get(s.agent).nativeSessionId?.(s.id);
   if (!nid) return;
-  const h = nativeHistory("claude:" + nid);
+  const nativeKey = nativeIdForAgent(s.agent, nid); if (!nativeKey) return;
+  const h = nativeHistory(nativeKey);
   if (!h) return;
   const nativeReply = [...h.messages].reverse().find((m) => m.role === "assistant" && m.ts > last.ts);
   if (nativeReply?.text) store.add(s.id, { role: "assistant", text: nativeReply.text, ts: nativeReply.ts, agent: s.agent });
-}
-function loadSessionCost(): void {
-  try { const obj = JSON.parse(readFileSync(COST_FILE, "utf8")); const now = Date.now(), TTL = 30 * 24 * 3600 * 1000; for (const s of Object.keys(obj)) { const e = obj[s]; if (e && now - (e.ts || 0) < TTL) sessionCost.set(s, { cost: e.cost || 0, ts: e.ts || now }); } } catch { /* ignore */ }
 }
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply & { activity?: any[] }> {
   const ctrl = new AbortController();
@@ -1042,9 +1089,9 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "start" } });
   try {
     const reply = await agent.send(sid, agentText, cwd, { ...opts, signal: ctrl.signal }, (ev) => { if (buf.length < 600) buf.push(ev); broadcast(sid, { t: "stream", sessionId: sid, ev }); });
-    addCost(sid, reply.usage?.costUsd);
-    metrics.record({ runnerId: LOCAL_ID, ms: Date.now() - t0, ok: true, ts: Date.now() });
-    broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage, sessionCost: costOf(sid) });
+    addUsage(sid, agent.name, reply.usage);
+    metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: reply.usage?.model || opts.model, ms: Date.now() - t0, ok: true, ts: Date.now() });
+    broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "done", text: reply.text }, usage: reply.usage, sessionCost: costOf(sid), sessionUsage: usageLedger.session(sid) });
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
     const nativeId = agent.nativeSessionId?.(sid);
     if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
@@ -1061,7 +1108,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
       broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "cancelled" } });
       throw e;
     }
-    metrics.record({ runnerId: LOCAL_ID, ms: Date.now() - t0, ok: false, ts: Date.now() });
+    metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: opts.model, ms: Date.now() - t0, ok: false, ts: Date.now() });
     broadcast(sid, { t: "stream", sessionId: sid, ev: { kind: "error" } });
     notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid);
     throw e;
@@ -1126,31 +1173,16 @@ function cancelTurn(sid: string, ws: WebSocket): boolean {
  *  the chat (a 📎 chip for files, a served /pasted URL preview for images). Used by every turn. */
 const ATTACH_PERSIST_MAX = 256 * 1024; // 256KB — same order as the file viewer's own cap (files.ts MAX)
 function buildAttachments(attachments: Array<{ name: string; content: string; image?: boolean }>, text: string): { agentText: string; showText: string; images?: string[]; files?: Array<{ name: string; content?: string }> } {
-  if (!attachments.length) return { agentText: text, showText: text };
-  const parts: string[] = [], imgPaths: string[] = [], imageUrls: string[] = [];
-  const files: Array<{ name: string; content?: string }> = [];
-  for (const a of attachments) {
-    if (a.image) {
-      try {
-        mkdirSync(PASTED_DIR, { recursive: true });
-        const p = join(PASTED_DIR, `${Date.now()}-${String(a.name || "img").replace(/[^\w.-]/g, "_")}`);
-        writeFileSync(p, Buffer.from(a.content, "base64"));
-        imgPaths.push(p); imageUrls.push("/pasted/" + basename(p));
-      } catch { /* skip */ }
-    } else {
-      parts.push(`--- arquivo anexado: ${a.name} ---\n${a.content}`);
-      // Persisted so the chip in the chat can be opened later (viewer) — capped so a huge paste
-      // doesn't bloat sessions.json; past the cap the chip still shows but isn't openable.
-      files.push({ name: a.name, content: a.content.length <= ATTACH_PERSIST_MAX ? a.content : undefined });
-    }
-  }
-  if (imgPaths.length) parts.push(`Imagens anexadas — use a ferramenta Read para vê-las:\n${imgPaths.join("\n")}`);
-  return {
-    agentText: parts.length ? `${parts.join("\n\n")}\n\n${text}` : text,
-    showText: text,
-    images: imageUrls.length ? imageUrls : undefined,
-    files: files.length ? files : undefined,
-  };
+  return buildTurnAttachments(attachments, text, {
+    persistMax: ATTACH_PERSIST_MAX,
+    saveImage: (name, bytes) => {
+      mkdirSync(PASTED_DIR, { recursive: true });
+      const p = join(PASTED_DIR, `${Date.now()}-${String(name || "img").replace(/[^\w.-]/g, "_")}`);
+      writeFileSync(p, bytes);
+      return p;
+    },
+    previewImage: (_name, _bytes, savedPath) => "/pasted/" + basename(savedPath),
+  });
 }
 
 /** Continue a NATIVE CLI session (claude:<uuid>) by resuming the real claude session.
@@ -1161,12 +1193,13 @@ function buildAttachments(attachments: Array<{ name: string; content: string; im
 async function correctTranscript(text: string): Promise<string> {
   if (process.env.JARVIS_STT_CORRECT === "0" || !text || text.trim().length < 3) return text;
   try {
-    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    const agent = summaryAgent();
     if (!agent?.oneShot) return text;
     const prompt =
       "Você corrige transcrições de VOZ (pt/en/es) de um assistente de desenvolvimento. Conserte SOMENTE erros de reconhecimento — em especial termos técnicos em inglês ditos dentro do português (Docker, Kubernetes, git, commit, push, deploy, runner, hub, endpoint, API, Claude, Codex, PowerShell, etc.). NÃO responda, NÃO comente, NÃO traduza, NÃO adicione nada: devolva APENAS o texto corrigido, no mesmo idioma. Se já estiver correto, devolva idêntico.\n\nTranscrição:\n" +
       text;
-    const reply = await agent.oneShot(prompt, { model: summaryCfg.model, effort: summaryCfg.effort });
+    const reply = await agent.oneShot(prompt, await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort));
+    addUsage(WAKE_SESSION, agent.name, reply.usage);
     const fixed = String(reply?.text ?? "").trim();
     return fixed || text;
   } catch {
@@ -1183,7 +1216,7 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
   const t = (replyText || "").trim();
   if (t.length < 12 || !t.includes("?")) return [];
   try {
-    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    const agent = summaryAgent();
     if (!agent?.oneShot) return [];
     const prompt =
       "Você analisa a RESPOSTA de um assistente de desenvolvimento e detecta se ela PEDE decisões ao usuário (escolher alternativas, priorizar itens, confirmar rumo, preencher lacunas).\n" +
@@ -1197,7 +1230,8 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
       "- NÃO inclua 'Outros' (a UI adiciona).\n" +
       'Se a resposta NÃO pede decisão, devolva {"questions":[]}. Responda APENAS o JSON.\n\nRESPOSTA:\n' +
       t.slice(0, 4000);
-    const reply = await agent.oneShot(prompt, { model: summaryCfg.model, effort: summaryCfg.effort });
+    const reply = await agent.oneShot(prompt, await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort));
+    addUsage("__decision_detection__", agent.name, reply.usage);
     const m = String(reply?.text ?? "").match(/\{[\s\S]*\}/);
     if (!m) return [];
     const qs = JSON.parse(m[0])?.questions;
@@ -1239,14 +1273,14 @@ async function interpretAskVoice(transcript: string, question: string, options: 
   if (/\b(avan[çc]ar|pr[óo]xim\w*|continuar|seguir|pronto|enviar|finalizar|confirmar)\b/.test(low)) return { action: "next" };
   if (/\b(repetir|repete|de novo|n[ãa]o entendi|repita)\b/.test(low)) return { action: "repeat" };
   try {
-    const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
+    const agent = summaryAgent();
     if (!agent?.oneShot) return { action: "other", other: t };
     const list = options.map((o, i) => `${i}: ${o.label}`).join("\n");
     const prompt =
       "O usuário respondeu POR VOZ a uma pergunta com opções. Mapeie a fala para as opções.\n" +
       `Pergunta: ${question}\nOpções:\n${list}\nMulti-seleção: ${multi ? "sim" : "não"}\nFala: "${t}"\n` +
       'Responda JSON: {"action":"choose"|"other","indices":[índices],"other":"texto livre"}. Se a fala casa com opção(ões), use "choose" e os índices (um só se não for multi). Se é instrução/algo fora das opções, use "other" com o texto. Só o JSON.';
-    const r = await agent.oneShot(prompt, { model: summaryCfg.model, effort: summaryCfg.effort });
+    const r = await agent.oneShot(prompt, await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort));
     const m = String(r?.text ?? "").match(/\{[\s\S]*\}/);
     if (!m) return { action: "other", other: t };
     const o = JSON.parse(m[0]);
@@ -1263,7 +1297,7 @@ async function interpretAskVoice(transcript: string, question: string, options: 
 async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }> }): Promise<void> {
   const info = nativeInfo(sid);
   if (!info) { if (ws) send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
-  if (info.agent !== "claude-code") { if (ws) send(ws, { t: "error", message: "continuar sessão nativa só é suportado no claude-code por enquanto" }); return; }
+  if (info.agent !== "claude-code" && info.agent !== "codex") { if (ws) send(ws, { t: "error", message: "este adapter não oferece retomada nativa importada" }); return; }
   const agent = agents.get(info.agent);
   const now = Date.now();
   const { agentText, showText, images, files } = buildAttachments(Array.isArray(opts.attachments) ? opts.attachments : [], text);
@@ -1361,11 +1395,12 @@ async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Pr
     `Resuma em 1 a 3 frases CURTAS e faladas (português do Brasil, sem markdown, sem listas) a ÚLTIMA resposta desta conversa — ` +
     `referente ao último comando enviado. Vá direto ao ponto; NÃO resuma a conversa inteira.\n\n` +
     `Título: ${title}\n\nÚltimo comando: ${lastU.slice(0, 800)}\n\nÚltima resposta: ${lastA.slice(0, 2500)}`;
-  const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
-  const sendOpts = { model: summaryCfg.model, effort: summaryCfg.effort };
+  const agent = summaryAgent();
+    const sendOpts = await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort);
   let text = "";
   try {
     const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__summary__", prompt, process.cwd(), sendOpts);
+    addUsage("__summary__", agent.name, reply.usage);
     text = (reply.text || "").trim();
   } catch (e: any) {
     send(ws, { t: "error", message: "resumo: " + String(e?.message ?? e) });
@@ -1411,11 +1446,12 @@ async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
       ? `\n\nOUTRAS MÁQUINAS (todas as listadas abaixo estão ONLINE e conectadas neste momento; ` +
         `"0 em execução" significa apenas que nada está rodando agora — NUNCA diga que estão inativas, offline ou desconectadas):\n${remoteLines}`
       : "");
-  const agent = agents.get(summaryCfg.agent) || agents.searchAgent();
-  const sendOpts = { model: summaryCfg.model, effort: summaryCfg.effort };
+  const agent = summaryAgent();
+    const sendOpts = await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort);
   let text = "";
   try {
     const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__digest__", prompt, process.cwd(), sendOpts);
+    addUsage("__digest__", agent.name, reply.usage);
     text = (reply.text || "").trim();
   } catch (e: any) {
     send(ws, { t: "error", message: "digest: " + String(e?.message ?? e) });
@@ -1439,11 +1475,11 @@ async function broadcastVoiceState(): Promise<void> {
 // "this browser is now running stale UI". Sent on connect and pushed whenever it changes.
 function webVersion(): string { try { return String(Math.floor(statSync(join(WEB, "index.html")).mtimeMs)); } catch { return "0"; } }
 let lastWebVersion = webVersion();
-setInterval(() => { const v = webVersion(); if (v !== lastWebVersion) { lastWebVersion = v; broadcastAll({ t: "version", v }); } }, 15_000).unref?.();
+setInterval(() => { const v = webVersion(); if (v !== lastWebVersion) { lastWebVersion = v; broadcastAll({ t: "version", v, contractVersion: AGENT_EVENT_SCHEMA_VERSION, runnerProtocolVersion: RUNNER_PROTOCOL_VERSION }); } }, 15_000).unref?.();
 
 /** Push the app's initial state to a (now authenticated) client. */
 async function sendInitialState(ws: WebSocket): Promise<void> {
-  send(ws, { t: "version", v: webVersion() });
+  send(ws, { t: "version", v: webVersion(), contractVersion: AGENT_EVENT_SCHEMA_VERSION, runnerProtocolVersion: RUNNER_PROTOCOL_VERSION });
   send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
   send(ws, { t: "machines", machines: machineList(ws) });
   send(ws, { t: "update_status", status: updateStatus });
@@ -1637,8 +1673,8 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
     await runVoiceTask(rp.task, rp.speak, rp.speaker);
     return true;
   }
-  if (msg.t === "voice_cfg") { send(ws, { t: "voice_cfg", cfg: voiceCfg }); return true; }
-  if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return true; if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; if (typeof msg.relevance === "string") voiceCfg.relevance = msg.relevance; saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: voiceCfg }); return true; }
+  if (msg.t === "voice_cfg") { send(ws, { t: "voice_cfg", cfg: { ...voiceCfg, agent: summaryCfg.agent } }); return true; }
+  if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return true; if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; if (typeof msg.relevance === "string") voiceCfg.relevance = msg.relevance; saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: { ...voiceCfg, agent: summaryCfg.agent } }); return true; }
   return false;
 }
 
@@ -1850,7 +1886,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           const ag = agents.get(s.agent);
           // Prefixo era fixo em "claude:" — sempre errado pra codex (procurava um arquivo claude com
           // um uuid de thread codex, então nunca achava nada e a exclusão nativa falhava em silêncio).
-          if (msg.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); if (nid) deleteNative((s.agent === "codex" ? "codex:" : "claude:") + nid); }
+          if (msg.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); const key = nid && nativeIdForAgent(s.agent, nid); if (key) deleteNative(key); }
           ag.forgetSession?.(sid);
         }
         return store.delete(sid);
@@ -1864,12 +1900,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // plan usage (5h / weekly windows) — account-level, from the local agent's usage endpoint
     if (msg.t === "get_usage") {
-      const name = typeof msg.agent === "string" && agents.names().includes(msg.agent) ? msg.agent : "claude-code";
+      const name = typeof msg.agent === "string" && agents.names().includes(msg.agent) ? msg.agent : agents.default;
       let plan = null;
       try { const a = agents.get(name); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
       // total accumulated across all sessions, so the client can show THIS session as a share of it
       // (a raw $ on a plan has no baseline to compare against — a % does).
-      let costTotal = 0; for (const v of sessionCost.values()) costTotal += v.cost || 0;
+      const costTotal = usageLedger.total().costUsd;
       send(ws, { t: "usage_info", agent: name, plan, total: costTotal });
       return;
     }
@@ -1882,7 +1918,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // read the diff of an edited file, reconstructed from the session's claude jsonl — local machine
     if (msg.t === "readdiff" && typeof msg.path === "string" && typeof msg.sessionId === "string") {
-      const diffId = isNativeId(msg.sessionId) ? msg.sessionId : (() => { const s = store.get(msg.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return nid ? "claude:" + nid : ""; })();
+      const diffId = isNativeId(msg.sessionId) ? msg.sessionId : (() => { const s = store.get(msg.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return s && nid ? (nativeIdForAgent(s.agent, nid) || "") : ""; })();
       send(ws, { t: "filediff", ...(diffId ? sessionFileDiff(diffId, msg.path) : { path: msg.path, name: msg.path.split(/[\\/]/).pop() || msg.path, error: "sem sessão nativa vinculada" }) });
       return;
     }
@@ -1908,7 +1944,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, {
         t: "history",
         sessionId: msg.sessionId,
-        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code", inputTokens: h.inputTokens, sessionCost: costOf(msg.sessionId), model: h.model, effort: h.effort },
+        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, sessionCost: costOf(msg.sessionId), sessionUsage: usageLedger.session(msg.sessionId), model: h.model, effort: h.effort },
         total: h.messages.length,
         messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })),
         files: sessionFiles(msg.sessionId),
@@ -1925,7 +1961,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       reconcileFromNative(s); // backfill a reply an orphaned turn (killed by a prior hub restart) already wrote natively
       const all = store.history(s.id);
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles("claude:" + nid) : [] });
+      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: usageLedger.session(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files: nid ? sessionFiles(nativeIdForAgent(s.agent, nid) || "") : [] });
       replayActivity(ws, s.id);
       sendPendingAsk(ws, s.id);
       send(ws, { t: "queue", sessionId: s.id, items: queueOf(s.id).map((q) => ({ text: q.text, atts: q.atts })) });
@@ -2059,16 +2095,16 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const machines = machineList(ws).map((m: any) => ({ ...m, active: m.local ? activeRuns.size : (runnerActive.get(m.id)?.size || 0) }));
       // Custo por IA e por sessão (não só o total): a cobrança acumula por sessão, e cada sessão tem
       // um agente — some por agente para o gráfico "por IA" e ranqueie as sessões mais caras.
-      let costTotal = 0;
-      const byAgent: Record<string, number> = {};
+      const overallUsage = usageLedger.total();
+      const costTotal = overallUsage.costUsd;
+      const byAgentUsage = usageLedger.byAgent();
+      const byAgent: Record<string, number> = Object.fromEntries(Object.entries(byAgentUsage).map(([agent, usage]) => [agent, usage.costUsd]));
       const perSession: Array<{ id: string; cost: number; agent: string; title: string }> = [];
-      for (const [sid, v] of sessionCost) {
-        const cost = v.cost || 0; if (!cost) continue;
-        costTotal += cost;
-        const agent = sessionAgent(sid) || "outro";
-        byAgent[agent] = (byAgent[agent] || 0) + cost;
+      for (const entry of usageLedger.topSessions(50)) {
+        const sid = entry.id, cost = entry.usage.costUsd; if (!cost) continue;
+        const agent = entry.agent || sessionAgent(sid) || "outro";
         const title = sid === WAKE_SESSION ? "Voz (Jarvis)" : (store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : sid));
-        perSession.push({ id: sid, cost, agent, title });
+        perSession.push({ id: sid, cost, agent, title, usage: entry.usage } as any);
       }
       perSession.sort((a, b) => b.cost - a.cost);
       const topSessions = perSession.slice(0, 6);
@@ -2078,7 +2114,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       let remoteActive = 0; for (const s of runnerActive.values()) remoteActive += s.size;
       let plan = null; try { const a = agents.get("claude-code"); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
       const runnerMetrics = metrics.byRunner().filter((r) => canUseRunner(ws, r.runnerId)); // don't leak ids of machines they can't see
-      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, voiceCost, voicePct, byAgent, topSessions }, metrics: { overall: metrics.overall(), runners: runnerMetrics }, parseHealth: nativeParseHealth(), plan });
+      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, billableTotal: overallUsage.billableUsd, estimatedTotal: overallUsage.estimatedUsd, byKind: overallUsage.byKind, voiceCost, voicePct, byAgent, byAgentUsage, topSessions }, metrics: { overall: metrics.overall(), runners: runnerMetrics, agents: metrics.byAgent(), models: metrics.byModel() }, parseHealth: nativeParseHealth(), plan });
       return;
     }
     // --- semantic memory: search by MEANING (local embeddings) + owner reindex ---
@@ -2298,17 +2334,16 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 startAdminApi({ updateRoot: UPDATE_ROOT, port: PORT, scheduleRestart, dropRevoked, refreshPrincipalRole, runners, runnerLabels, pendingRunnerList, sendToRunner });
 
 void refreshLocalAgents();
-setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min — availability rarely changes; each probe spawns a real `claude -p`
+setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min; probes are version/login-status checks, never inference turns
 setTimeout(() => void refreshUpdate(true), 8_000); // first update check shortly after boot
 setInterval(() => void refreshUpdate(true), 6 * 3600_000); // then every 6h
 try { const purged = purgeProbeJunk(); if (purged) console.log(`[hub] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
 try { const s = purgeScratch(); if (s) console.log(`[hub] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
 try { loadQueues(); const n = [...queues.values()].reduce((a, q) => a + q.length, 0); if (n) console.log(`[hub] fila restaurada: ${n} mensagem(ns) (cache com TTL)`); } catch { /* ignore */ }
-try { loadSessionCost(); } catch { /* ignore */ }
 // A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
 // — fix them all proactively at boot, not just when the user happens to reopen one.
 try { let n = 0; for (const meta of store.list()) { const s = store.ensure(meta.id); const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) n++; } if (n) console.log(`[hub] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`); } catch { /* ignore */ }
-// Graceful shutdown: the Hub is also a runner (it spawns local agent CLIs with bypassPermissions).
+// Graceful shutdown: the Hub is also a runner (it spawns local agent CLIs under the configured permission mode).
 // A service stop / SIGTERM would orphan them — abort every live local turn (killTree fires via the
 // AbortSignal) before exiting, mirroring the runner.
 let hubShuttingDown = false;

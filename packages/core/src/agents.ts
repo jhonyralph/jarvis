@@ -16,6 +16,30 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { toolFileStat } from "./native.js";
 import { writeJsonAtomic } from "./persist.js";
+import {
+  LIMITED_CAPABILITIES,
+  descriptorProblems,
+  type AgentCapabilities,
+  type AgentDescriptor,
+  type CostKind,
+  type ModelDescriptor,
+  type ModelSource,
+  type PermissionMode,
+  type SupportLevel,
+} from "./agent-contract.js";
+
+/** Effective unattended execution policy. The historical default is full access; operators can
+ * opt into each provider's own sandbox/approval behavior without changing adapter code. */
+export function agentPermissionMode(value = process.env.JARVIS_AGENT_PERMISSION_MODE): PermissionMode {
+  return value === "provider-default" || value === "provider_default" ? "provider_default" : "full_access";
+}
+const fullAccess = (): boolean => agentPermissionMode() === "full_access";
+const effectiveCaps = (caps: AgentCapabilities): AgentCapabilities => ({ ...caps, permissionMode: agentPermissionMode() });
+const claudeInputContext = (u: any): number | undefined => {
+  if (!u) return undefined;
+  const n = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+  return n || undefined;
+};
 
 /** For a file tool_use, extract the real path, +/- counts and this edit's diff rows, live. */
 function fileToolStat(name: string, input: any): { path?: string; adds?: number; dels?: number; rows?: unknown[] } {
@@ -30,7 +54,16 @@ try { mkdirSync(ONESHOT_CWD, { recursive: true }); } catch { /* ignore */ }
 
 export interface AgentReply {
   text: string;
-  usage?: { costUsd?: number; inputTokens?: number; outputTokens?: number };
+  usage?: {
+    costUsd?: number;
+    inputTokens?: number;
+    cachedInputTokens?: number;
+    outputTokens?: number;
+    contextTokens?: number;
+    costKind?: CostKind;
+    source?: string;
+    model?: string;
+  };
 }
 
 /** A model + the effort levels IT supports (efforts can differ per model). */
@@ -40,6 +73,8 @@ export interface ModelInfo {
   efforts: string[];
   defaultEffort?: string;
   context?: number; // max input tokens (context window) — for the usage gauge
+  effortsVerified?: boolean;
+  contextVerified?: boolean;
 }
 
 /** One usage window (a % used + when it resets). */
@@ -54,6 +89,7 @@ export interface AgentUsage {
 export interface AgentCaps {
   models: ModelInfo[];
   defaultModel?: string;
+  autoModel?: boolean;
 }
 
 export interface SendOpts {
@@ -61,6 +97,14 @@ export interface SendOpts {
   effort?: string;
   /** Abort the underlying agent process (user hit "parar"). Rejects the send with ABORTED. */
   signal?: AbortSignal;
+}
+
+/** Reject stale/foreign picker values before spawning a potentially billable CLI turn. */
+export function validateModelSelection(caps: AgentCaps, opts?: SendOpts): void {
+  if (!opts?.model || !caps.models.length) return;
+  const model = caps.models.find((m) => m.id === opts.model);
+  if (!model) throw new Error(`modelo '${opts.model}' não existe no catálogo atual deste agente`);
+  if (opts.effort && model.efforts.length && !model.efforts.includes(opts.effort)) throw new Error(`esforço '${opts.effort}' não é suportado por ${opts.model}`);
 }
 
 /** Thrown when a run is cancelled via its AbortSignal — distinct from a real failure, so the
@@ -117,6 +161,8 @@ export interface AgentAdapter {
   forgetSession?(sessionId: string): void;
   /** Account plan usage (5h / weekly windows), if the agent exposes it. */
   usage?(): Promise<AgentUsage | null>;
+  /** Versioned support/capability snapshot. Legacy adapters without it are always limited. */
+  descriptor?(): Promise<AgentDescriptor>;
 }
 
 export class AgentRegistry {
@@ -127,10 +173,12 @@ export class AgentRegistry {
     return this;
   }
   get(name?: string): AgentAdapter {
-    const a = this.byName.get(name || this.defaultName) || this.byName.get(this.defaultName);
-    if (!a) throw new Error(`no agent '${name}' and no default '${this.defaultName}'`);
+    const selected = name || this.defaultName;
+    const a = this.byName.get(selected);
+    if (!a) throw new Error(`agente não registrado: '${selected}'`);
     return a;
   }
+  has(name: string): boolean { return this.byName.has(name); }
   names(): string[] {
     return [...this.byName.keys()];
   }
@@ -140,9 +188,15 @@ export class AgentRegistry {
     if (pref && this.byName.has(pref)) return this.byName.get(pref)!;
     return this.byName.get("claude-code") || this.get();
   }
-  /** [{ name, models:[{id,label,efforts,defaultEffort}], defaultModel }] for the UI pickers */
-  async describe(): Promise<Array<{ name: string } & AgentCaps>> {
-    return Promise.all([...this.byName.values()].map(async (a) => ({ name: a.name, ...(await a.capabilities()) })));
+  /** Backward-compatible UI catalog enriched with the canonical descriptor. */
+  async describe(): Promise<Array<{ name: string } & AgentCaps & Partial<Pick<AgentDescriptor, "label" | "support" | "reason" | "cli" | "capabilities" | "discoveredAt">>>> {
+    return Promise.all([...this.byName.values()].map(async (a) => {
+      const caps = await a.capabilities();
+      if (!a.descriptor) return { name: a.name, ...caps, support: "limited" as const, reason: "adapter sem descriptor canônico" };
+      const d = await a.descriptor();
+      const problems = descriptorProblems(d);
+      return { name: a.name, ...caps, label: d.label, support: problems.length ? "limited" as const : d.support, reason: problems.length ? `descriptor inválido: ${problems.join("; ")}` : d.reason, cli: d.cli, capabilities: d.capabilities, discoveredAt: d.discoveredAt };
+    }));
   }
   setDefault(name: string): void {
     if (this.byName.has(name)) this.defaultName = name;
@@ -160,13 +214,20 @@ export class MockAgentAdapter implements AgentAdapter {
     return { models: [] };
   }
   async available(): Promise<boolean> {
-    return true;
+    return process.env.JARVIS_ENABLE_MOCK === "1" || process.env.NODE_ENV === "test";
   }
-  async send(_sid: string, text: string): Promise<AgentReply> {
-    return { text: `Recebi: "${text}". (agente mock — Hub/chat/voz OK.)` };
+  async send(_sid: string, text: string, _cwd?: string, _opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
+    const reply = `Recebi: "${text}". (agente mock — Hub/chat/voz OK.)`;
+    onEvent?.({ kind: "thinking" });
+    onEvent?.({ kind: "tool", name: "FixtureTool", summary: "Validando fluxo de progresso", toolId: "mock-tool-1" });
+    onEvent?.({ kind: "text", text: reply });
+    return { text: reply, usage: { inputTokens: 1, outputTokens: 1, costKind: "tokens_only", source: "mock fixture" } };
   }
   async oneShot(): Promise<AgentReply> {
     return { text: '{"answer":"(busca mock — defina JARVIS_SEARCH_AGENT=claude-code para busca real)","matches":[],"action":null}' };
+  }
+  async descriptor(): Promise<AgentDescriptor> {
+    return makeDescriptor({ id: this.name, label: "Mock (testes)", command: "internal", support: "limited", reason: "adapter interno de testes; não é uma IA de produção", capabilities: { ...LIMITED_CAPABILITIES, stream: "delta", tools: true, thinking: true, usage: true, remote: true }, caps: await this.capabilities() });
   }
 }
 
@@ -229,17 +290,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         headers: { authorization: `Bearer ${token}`, "anthropic-version": "2023-06-01", "anthropic-beta": "oauth-2025-04-20" },
       });
       const json: any = await res.json();
-      models = (json?.data || []).map((m: any) => ({ id: m.id, label: m.display_name, efforts, defaultEffort: "high", context: m.max_input_tokens }));
+      models = (json?.data || []).map((m: any) => ({ id: m.id, label: m.display_name, efforts, defaultEffort: "high", context: m.max_input_tokens, effortsVerified: false, contextVerified: Number.isFinite(m.max_input_tokens) }));
       // family aliases up front (opus/sonnet/haiku/fable resolve to the newest of each);
       // give each alias the largest context window seen in its family.
       const famCtx = (fam: string) => { const c = models.filter((m) => m.id.includes(fam)).map((m) => m.context || 0); return c.length ? Math.max(...c) : undefined; };
       models = [
-        ...["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high", context: famCtx(id) })),
+        ...["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high", context: famCtx(id), effortsVerified: false, contextVerified: !!famCtx(id) })),
         ...models,
       ];
       if (models.length <= 4) throw new Error("empty models");
     } catch {
-      models = ["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high" }));
+      models = ["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high", effortsVerified: false, contextVerified: false }));
     }
     const caps: AgentCaps = { models, defaultModel: process.env.ANTHROPIC_MODEL || "opus" };
     this.capsCache = { at: Date.now(), caps };
@@ -248,17 +309,36 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async available(): Promise<boolean> {
     try {
-      // MUST run in ONESHOT_CWD (not homedir): every probe leaves a persistent `claude -p`
-      // session file, and only the oneshot cwd is excluded from the native-session list —
-      // otherwise the availability probe litters the sidebar with one "ok" session per run.
-      const out = await run(this.bin, ["-p", "ok", "--output-format", "json"], ONESHOT_CWD, "");
-      return !JSON.parse(out).is_error;
+      const r = await runRaw(this.bin, ["--version"], homedir(), "");
+      const token = JSON.parse(readFileSync(join(homedir(), ".claude", ".credentials.json"), "utf8"))?.claudeAiOauth?.accessToken;
+      return r.code === 0 && !!token;
     } catch {
       return false;
     }
   }
 
+  async descriptor(): Promise<AgentDescriptor> {
+    const caps = await this.capabilities();
+    const version = await cliVersion(this.bin);
+    const installed = !!version;
+    let authenticated = false;
+    try { authenticated = !!JSON.parse(readFileSync(join(homedir(), ".claude", ".credentials.json"), "utf8"))?.claudeAiOauth?.accessToken; } catch { /* no credentials */ }
+    const support: SupportLevel = !installed ? "not_installed" : !authenticated ? "unauthenticated" : "complete";
+    return makeDescriptor({
+      id: this.name, label: "Claude Code", command: this.bin, version, support,
+      reason: support === "not_installed" ? "CLI claude não encontrado" : support === "unauthenticated" ? "execute claude login nesta máquina" : undefined,
+      capabilities: {
+        permissionMode: agentPermissionMode(), stream: "delta", tools: true, thinking: true, plans: false, subagents: true,
+        nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
+        cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
+        commands: true, skills: true, mcp: true, oneShot: true, remote: true,
+      },
+      caps, source: "api",
+    });
+  }
+
   async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
+    validateModelSelection(await this.capabilities(), opts);
     // native imported sessions ("claude:<uuid>") resume the underlying real claude session
     const prev = this.sessions.get(sessionId) || (sessionId.startsWith("claude:") ? sessionId.slice("claude:".length) : undefined);
     const fmt = onEvent ? ["--output-format", "stream-json", "--verbose"] : ["--output-format", "json"];
@@ -270,7 +350,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // it silently falls back to plain markdown output, which agents.ts's JSON.parse(line) then
     // silently discards, so every tool-using turn would come back empty. Stdin has neither problem,
     // and as a bonus removes the CLI's own "no stdin data received in 3s" wait on every turn.
-    const args = ["-p", ...fmt, "--permission-mode", "bypassPermissions"];
+    const args = ["-p", ...fmt];
+    if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("--model", model);
     if (effort) args.push("--effort", effort === "ultracode" ? "xhigh" : effort); // ultracode -> xhigh
@@ -311,7 +392,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           if (o.session_id) sessionOut = o.session_id;
           if (o.result && !finalText) finalText = o.result;
           if (o.is_error) streamError = o.result || "claude error";
-          usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens };
+          usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model };
         }
       }, opts?.signal);
       if (streamError) throw new Error(streamError);
@@ -325,18 +406,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (json.session_id) { this.sessions.set(sessionId, json.session_id); this.saveSessions(); }
     return {
       text: json.result ?? "",
-      usage: { costUsd: json.total_cost_usd, inputTokens: inputContext(json.usage), outputTokens: json.usage?.output_tokens },
+      usage: { costUsd: json.total_cost_usd, inputTokens: inputContext(json.usage), contextTokens: inputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model },
     };
   }
 
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
-    const args = ["-p", "--output-format", "json", "--permission-mode", "bypassPermissions"]; // prompt via stdin — see send()
+    validateModelSelection(await this.capabilities(), opts);
+    const args = ["-p", "--output-format", "json"]; // prompt via stdin — see send()
+    if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
     const raw = await run(this.bin, args, ONESHOT_CWD, text); // stateless + isolated cwd (excluded from native list)
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
-    return { text: json.result ?? "" };
+    return { text: json.result ?? "", usage: { costUsd: json.total_cost_usd, inputTokens: claudeInputContext(json.usage), contextTokens: claudeInputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model } };
   }
 }
 
@@ -355,7 +438,8 @@ export function codexUsage(u: any): AgentReply["usage"] | undefined {
   const pCached = envNum(process.env.JARVIS_CODEX_PRICE_CACHED, pIn / 10); // cached input bills cheaper
   const pOut = envNum(process.env.JARVIS_CODEX_PRICE_OUT, 10);            // USD / 1M output (incl. reasoning)
   const costUsd = (Math.max(0, input - cached) * pIn + cached * pCached + output * pOut) / 1e6;
-  return { costUsd, inputTokens: input || undefined, outputTokens: output || undefined };
+  const pricing = process.env.JARVIS_CODEX_PRICING_VERSION || "jarvis-ballpark-v1";
+  return { costUsd, inputTokens: input || undefined, cachedInputTokens: cached || undefined, contextTokens: input || undefined, outputTokens: output || undefined, costKind: "estimated_api_equivalent", source: `codex exec --json tokens × JARVIS_CODEX_PRICE_* (${pricing})` };
 }
 
 /** Map ONE codex `--json` item to the StreamEvents Jarvis renders (SAME vocabulary Claude emits, so
@@ -434,7 +518,7 @@ export class CodexAdapter implements AgentAdapter {
     const mapModels = (arr: any[]): ModelInfo[] =>
       (arr || [])
         .filter((m) => m.visibility === "list")
-        .map((m) => ({ id: m.slug, label: m.display_name, efforts: (m.supported_reasoning_levels || []).map((e: any) => e.effort), defaultEffort: m.default_reasoning_level, context: m.context_window || m.max_context_window }));
+        .map((m) => ({ id: m.slug, label: m.display_name, efforts: (m.supported_reasoning_levels || []).map((e: any) => e.effort), defaultEffort: m.default_reasoning_level, context: m.context_window || m.max_context_window, effortsVerified: true, contextVerified: !!(m.context_window || m.max_context_window) }));
     let models: ModelInfo[] = [];
     try {
       const out = await run("codex", ["debug", "models"], homedir(), "");
@@ -448,11 +532,11 @@ export class CodexAdapter implements AgentAdapter {
         // visibility:list models, with their real per-model efforts, default efforts and context.
         const eff = ["low", "medium", "high", "xhigh"];
         models = [
-          { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: [...eff, "max", "ultra"], defaultEffort: "low", context: 272000 },
-          { id: "gpt-5.6-terra", label: "GPT-5.6-Terra", efforts: [...eff, "max", "ultra"], defaultEffort: "medium", context: 272000 },
-          { id: "gpt-5.6-luna", label: "GPT-5.6-Luna", efforts: [...eff, "max"], defaultEffort: "medium", context: 272000 },
-          { id: "gpt-5.5", label: "GPT-5.5", efforts: eff, defaultEffort: "medium", context: 272000 },
-          { id: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark", efforts: eff, defaultEffort: "high", context: 128000 },
+          { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: [...eff, "max", "ultra"], defaultEffort: "low", context: 272000, effortsVerified: true, contextVerified: true },
+          { id: "gpt-5.6-terra", label: "GPT-5.6-Terra", efforts: [...eff, "max", "ultra"], defaultEffort: "medium", context: 272000, effortsVerified: true, contextVerified: true },
+          { id: "gpt-5.6-luna", label: "GPT-5.6-Luna", efforts: [...eff, "max"], defaultEffort: "medium", context: 272000, effortsVerified: true, contextVerified: true },
+          { id: "gpt-5.5", label: "GPT-5.5", efforts: eff, defaultEffort: "medium", context: 272000, effortsVerified: true, contextVerified: true },
+          { id: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark", efforts: eff, defaultEffort: "high", context: 128000, effortsVerified: true, contextVerified: true },
         ];
       }
     }
@@ -460,8 +544,8 @@ export class CodexAdapter implements AgentAdapter {
     // runs. Honor the user's own `model = "…"` in ~/.codex/config.toml when it names a known model
     // (same choice codex itself would make); otherwise the catalog's priority order (models[0]).
     const cfgModel = codexConfigModel();
-    const defaultModel = (cfgModel && models.find((m) => m.id === cfgModel)) ? cfgModel : models[0]?.id;
-    const caps: AgentCaps = { models, defaultModel };
+    const defaultModel = (cfgModel && models.find((m) => m.id === cfgModel)) ? cfgModel : undefined;
+    const caps: AgentCaps = { models, defaultModel, autoModel: !defaultModel };
     this.capsCache = { at: Date.now(), caps };
     return caps;
   }
@@ -477,14 +561,32 @@ export class CodexAdapter implements AgentAdapter {
     }
   }
 
+  async descriptor(): Promise<AgentDescriptor> {
+    const caps = await this.capabilities();
+    const version = await cliVersion("codex");
+    const authenticated = version ? await this.available() : false;
+    const support: SupportLevel = !version ? "not_installed" : !authenticated ? "unauthenticated" : "limited";
+    return makeDescriptor({
+      id: this.name, label: "OpenAI Codex", command: "codex", version, support,
+      reason: support === "not_installed" ? "CLI codex não encontrado" : support === "unauthenticated" ? "execute codex login nesta máquina" : "stream e modelos funcionam, mas todos os tipos de evento ainda precisam de certificação real por versão do CLI",
+      capabilities: {
+        permissionMode: agentPermissionMode(), stream: "block", tools: true, thinking: true, plans: false, subagents: false,
+        nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
+        cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
+        commands: true, skills: true, mcp: true, oneShot: true, remote: true,
+      },
+      caps, source: "cli",
+    });
+  }
+
   async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
+    validateModelSelection(await this.capabilities(), opts);
     // Resume the bound thread if we have one — continuity, and dedupe (see nativeSessionId above).
     // `resume` has no --cd of its own: it continues in the thread's original cwd. Confirmed
     // directly: `codex exec resume <id> --json` correctly recalls prior turns in the same thread.
-    const prev = this.sessions.get(sessionId);
-    const args = prev
-      ? ["exec", "resume", prev, "--json", "--dangerously-bypass-approvals-and-sandbox"]
-      : ["exec", "--cd", cwd, "--json", "--dangerously-bypass-approvals-and-sandbox"];
+    const prev = this.sessions.get(sessionId) || (sessionId.startsWith("codex:") ? sessionId.slice("codex:".length) : undefined);
+    const args = prev ? ["exec", "resume", prev, "--json"] : ["exec", "--cd", cwd, "--json"];
+    if (fullAccess()) args.push("--dangerously-bypass-approvals-and-sandbox");
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
@@ -514,7 +616,7 @@ export class CodexAdapter implements AgentAdapter {
       let o: any; try { o = JSON.parse(line); } catch { return; }
       switch (o.type) {
         case "thread.started": if (o.thread_id) threadId = o.thread_id; break;
-        case "turn.completed": if (o.usage) usage = codexUsage(o.usage); break;
+        case "turn.completed": if (o.usage) usage = { ...codexUsage(o.usage), model: opts?.model }; break;
         case "turn.failed": case "error": streamError = o.error?.message || o.message || streamError; break;
         case "item.started": emitItem(o.item, false); break;
         case "item.completed": emitItem(o.item, true); break;
@@ -536,22 +638,273 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
+    validateModelSelection(await this.capabilities(), opts);
     // run in ONESHOT_CWD (excluded from the native list) so throwaway prompts don't litter the sidebar
-    const args = ["exec", "--cd", ONESHOT_CWD, "--dangerously-bypass-approvals-and-sandbox"];
+    const args = ["exec", "--cd", ONESHOT_CWD, "--json"];
+    if (fullAccess()) args.push("--dangerously-bypass-approvals-and-sandbox");
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
     const out = await run("codex", args, ONESHOT_CWD, text); // stateless: no this.started
-    return { text: out.trim() };
+    const textParts: string[] = []; let usage: AgentReply["usage"];
+    for (const line of out.split(/\r?\n/)) {
+      let o: any; try { o = JSON.parse(line); } catch { continue; }
+      if (o.type === "item.completed" && o.item?.type === "agent_message" && o.item.text) textParts.push(String(o.item.text));
+      if (o.type === "turn.completed" && o.usage) usage = { ...codexUsage(o.usage), model: opts?.model };
+      if (o.type === "turn.failed" || o.type === "error") throw new Error(o.error?.message || o.message || "codex error");
+    }
+    return { text: textParts.join("\n\n").trim(), usage };
   }
 }
 
 // ---------------------------------------------------------------------------
 
+export interface StructuredCliEvent {
+  events?: StreamEvent[];
+  text?: string;
+  finalText?: string;
+  sessionId?: string;
+  usage?: AgentReply["usage"];
+  error?: string;
+}
+
+function textOf(value: any): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map((part) => typeof part === "string" ? part : (part?.type === "text" ? part.text : part?.text) || "").join("");
+  return typeof value?.text === "string" ? value.text : "";
+}
+
+function tokenUsage(value: any, source: string, costKind: CostKind = "tokens_only"): AgentReply["usage"] | undefined {
+  const u = value?.usage || value?.stats || value;
+  if (!u || typeof u !== "object") return undefined;
+  const input = Number(u.input_tokens ?? u.inputTokens ?? u.prompt_tokens ?? u.promptTokens ?? u.input ?? 0) || 0;
+  const cached = Number(u.cached_input_tokens ?? u.cachedInputTokens ?? 0) || 0;
+  const output = Number(u.output_tokens ?? u.outputTokens ?? u.completion_tokens ?? u.completionTokens ?? u.output ?? 0) || 0;
+  if (!input && !output && u.cost == null && u.cost_usd == null) return undefined;
+  const rawCost = Number(u.cost_usd ?? u.costUsd ?? u.cost);
+  const costUsd = Number.isFinite(rawCost) && rawCost >= 0 ? rawCost : undefined;
+  const resolvedKind: CostKind = costUsd == null ? "tokens_only" : (costKind === "tokens_only" ? "estimated_api_equivalent" : costKind);
+  return { inputTokens: input || undefined, cachedInputTokens: cached || undefined, contextTokens: input || undefined, outputTokens: output || undefined, costUsd, costKind: resolvedKind, source };
+}
+
+function toolEvent(name: string, args: any, id?: string): StreamEvent {
+  const normalized = /shell|command|terminal|exec|bash/i.test(name) ? "Bash" : name;
+  return { kind: "tool", name: normalized, summary: toolSummary(normalized, args), detail: toolDetail(normalized, args), toolId: id };
+}
+
+/** Pure provider parsers. Unknown fields/types are ignored, never promoted to invented progress. */
+export function parseGeminiCliEvent(o: any): StructuredCliEvent {
+  if (o?.type === "init") return { sessionId: o.session_id || o.sessionId };
+  if (o?.type === "message" && (o.role === "assistant" || o.message?.role === "assistant")) return { text: textOf(o.content ?? o.message?.content ?? o.message) };
+  if (o?.type === "tool_use") { const name = String(o.tool_name || o.name || "Tool"); return { events: [toolEvent(name, o.parameters || o.args || o.input, o.tool_id || o.id)] }; }
+  if (o?.type === "error") return { error: String(o.error?.message || o.message || o.error || "Gemini CLI error") };
+  if (o?.type === "result") return { finalText: String(o.response ?? o.result ?? ""), usage: tokenUsage(o.stats || o.usage, "gemini stream-json") };
+  return {};
+}
+
+export function parseCursorCliEvent(o: any): StructuredCliEvent {
+  if (o?.type === "system" && o.subtype === "init") return { sessionId: o.session_id };
+  if (o?.type === "assistant") return { text: textOf(o.message?.content ?? o.content) };
+  if (o?.type === "tool_call" && o.subtype === "started") {
+    const body = o.tool_call || {}; const key = Object.keys(body)[0] || "Tool"; const call = body[key] || {};
+    return { events: [toolEvent(key.replace(/ToolCall$/i, ""), call.args || call, o.call_id)] };
+  }
+  if (o?.type === "result") return { sessionId: o.session_id, finalText: String(o.result || ""), error: o.is_error ? String(o.result || "Cursor Agent error") : undefined };
+  return {};
+}
+
+export function parseClineCliEvent(o: any): StructuredCliEvent {
+  const events: StreamEvent[] = [];
+  if (typeof o?.reasoning === "string" && o.reasoning) events.push({ kind: "thinking" });
+  if (o?.type === "ask") events.push({ kind: "tool", name: "InputRequired", summary: String(o.text || o.ask || "Cline requer interação").slice(0, 100) });
+  if (o?.type === "say" && o.say && o.say !== "text" && o.say !== "completion_result") events.push(toolEvent(String(o.say), { text: o.text }));
+  const isText = o?.type === "say" && (!o.say || o.say === "text" || o.say === "completion_result");
+  return { events, text: isText ? String(o.text || "") : undefined, sessionId: o.session_id || o.taskId, usage: tokenUsage(o.usage, "cline --json") };
+}
+
+export function parseQwenCliEvent(o: any): StructuredCliEvent {
+  if (o?.type === "system" && /session_start|init/.test(String(o.subtype))) return { sessionId: o.session_id || o.uuid };
+  if (o?.type === "assistant" || (o?.type === "message" && o.message?.role === "assistant")) {
+    const message = o.message || o;
+    const events: StreamEvent[] = [];
+    for (const part of (Array.isArray(message.content) ? message.content : [])) if (part?.type === "tool_use") events.push(toolEvent(String(part.name || "Tool"), part.input, part.id));
+    return { events, text: textOf(message.content), usage: tokenUsage(message.usage, "qwen stream-json") };
+  }
+  if (o?.type === "result") return { sessionId: o.session_id, finalText: String(o.result || ""), error: o.is_error ? String(o.result || "Qwen Code error") : undefined, usage: tokenUsage(o.usage, "qwen stream-json") };
+  return {};
+}
+
+export function parseGenericJsonlEvent(o: any, source: string, billedCost = false): StructuredCliEvent {
+  const sessionId = o?.session_id || o?.sessionID || o?.sessionId;
+  if (o?.type === "assistant" || o?.role === "assistant" || o?.type === "text") return { sessionId, text: textOf(o.message?.content ?? o.content ?? o.text ?? o.message), usage: tokenUsage(o.usage, source, billedCost ? "billed" : "tokens_only") };
+  if (/tool|command|step/.test(String(o?.type || "")) && !/result|output|completed/.test(String(o?.subtype || o?.type || ""))) {
+    return { sessionId, events: [toolEvent(String(o.name || o.tool || o.part?.tool || "Tool"), o.args || o.input || o.part?.state?.input || {}, o.call_id || o.id)] };
+  }
+  if (o?.type === "result" || o?.type === "done" || o?.type === "task_complete") return { sessionId, finalText: String(o.result || o.text || o.message || ""), error: o.is_error ? String(o.error || o.result || "agent error") : undefined, usage: tokenUsage(o.usage || o.stats, source, billedCost ? "billed" : "tokens_only") };
+  if (o?.type === "error") return { sessionId, error: String(o.error?.message || o.message || o.error || "agent error") };
+  return { sessionId };
+}
+
+interface StructuredCliSpec {
+  id: string; label: string; command: string;
+  parser(o: any): StructuredCliEvent;
+  args(text: string, cwd: string, nativeId: string | undefined, opts?: SendOpts): string[];
+  capabilities: AgentCapabilities;
+  source: string;
+}
+
+class StructuredCliAdapter implements AgentAdapter {
+  readonly name: string;
+  private readonly sessionsFile: string;
+  private sessions: Map<string, string>;
+  constructor(private readonly spec: StructuredCliSpec) {
+    this.name = spec.id;
+    this.sessionsFile = join(homedir(), ".jarvis", `${spec.id}-sessions.json`);
+    try { this.sessions = new Map(Object.entries(JSON.parse(readFileSync(this.sessionsFile, "utf8")))); } catch { this.sessions = new Map(); }
+  }
+  private saveSessions(): void { try { writeJsonAtomic(this.sessionsFile, Object.fromEntries(this.sessions)); } catch { /* ignore */ } }
+  nativeSessionId(sessionId: string): string | undefined { return this.sessions.get(sessionId); }
+  forgetSession(sessionId: string): void { if (this.sessions.delete(sessionId)) this.saveSessions(); }
+  async capabilities(): Promise<AgentCaps> { return { models: [], autoModel: true }; }
+  async available(): Promise<boolean> { return !!(await cliVersion(this.spec.command)); }
+  async descriptor(): Promise<AgentDescriptor> {
+    const version = await cliVersion(this.spec.command);
+    return makeDescriptor({
+      id: this.name, label: this.spec.label, command: this.spec.command, version,
+      support: version ? "unverified" : "not_installed",
+      reason: version ? "adapter implementado pela documentação oficial; falta probe real autenticado nesta versão" : `CLI ${this.spec.command} não encontrado`,
+      capabilities: effectiveCaps(this.spec.capabilities), caps: await this.capabilities(), source: "cli",
+    });
+  }
+  async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
+    validateModelSelection(await this.capabilities(), opts);
+    const previous = this.sessions.get(sessionId);
+    const args = this.spec.args(text, cwd, previous, opts);
+    const parts: string[] = [];
+    let snapshot = "", finalText = "", nativeId = previous, usage: AgentReply["usage"], failure = "";
+    const handle = (line: string): void => {
+      let parsed: any; try { parsed = JSON.parse(line); } catch { return; }
+      const item = this.spec.parser(parsed);
+      if (item.sessionId) nativeId = item.sessionId;
+      if (item.usage) usage = item.usage;
+      if (item.error) failure = item.error;
+      for (const event of item.events || []) onEvent?.(event);
+      if (item.text) {
+        // Some CLIs publish growing snapshots (`partial:true`), others true deltas. Emit only the
+        // unseen suffix when it is a snapshot; otherwise preserve the provider's delta verbatim.
+        const chunk = item.text.startsWith(snapshot) ? item.text.slice(snapshot.length) : item.text;
+        snapshot = item.text.startsWith(snapshot) ? item.text : snapshot + item.text;
+        if (chunk) { parts.push(chunk); onEvent?.({ kind: "text", text: chunk }); }
+      }
+      if (item.finalText) finalText = item.finalText;
+    };
+    const out = onEvent
+      ? await runStream(this.spec.command, args, cwd, "", handle, opts?.signal)
+      : await run(this.spec.command, args, cwd, "", opts?.signal);
+    if (!onEvent) for (const line of out.split(/\r?\n/)) if (line.trim()) handle(line);
+    if (failure && !finalText && !parts.length) throw new Error(failure);
+    if (!sessionId.startsWith("__oneshot_") && nativeId && nativeId !== previous) { this.sessions.set(sessionId, nativeId); this.saveSessions(); }
+    if (usage && !usage.model) usage.model = opts?.model;
+    return { text: (finalText || parts.join("") || out).trim(), usage };
+  }
+  async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> { return this.send(`__oneshot_${randomUUID()}`, text, ONESHOT_CWD, opts); }
+}
+
+const structuredCaps = (over: Partial<AgentCapabilities> = {}): AgentCapabilities => ({
+  ...LIMITED_CAPABILITIES, permissionMode: agentPermissionMode(), stream: "delta", tools: true, nativeSessions: true, nativeResume: true,
+  files: true, attachments: ["text", "file", "image"], oneShot: true, remote: true, ...over,
+});
+
+export class GeminiCliAdapter extends StructuredCliAdapter {
+  constructor() { super({ id: "gemini", label: "Google Gemini CLI", command: "gemini", parser: parseGeminiCliEvent, source: "gemini stream-json", capabilities: structuredCaps({ usage: true, mcp: true, commands: true, skills: true }), args: (text, _cwd, sid, opts) => {
+    const a = ["--output-format", "stream-json"]; if (fullAccess()) a.push("--yolo");
+    if (sid) a.push("--resume", sid); if (opts?.model) a.push("--model", opts.model); a.push("--prompt", text); return a;
+  } }); }
+}
+export class CursorAgentAdapter extends StructuredCliAdapter {
+  constructor() { super({ id: "cursor", label: "Cursor Agent", command: "cursor-agent", parser: parseCursorCliEvent, source: "cursor stream-json", capabilities: structuredCaps({ thinking: false, usage: false }), args: (_text, _cwd, sid, opts) => {
+    const a = ["--print", "--output-format", "stream-json"]; if (fullAccess()) a.push("--force");
+    if (sid) a.push("--resume", sid); if (opts?.model) a.push("--model", opts.model); a.push(_text); return a;
+  } }); }
+}
+export class CopilotCliAdapter extends StructuredCliAdapter {
+  constructor() { super({ id: "copilot", label: "GitHub Copilot CLI", command: "copilot", parser: (o) => parseGenericJsonlEvent(o, "copilot JSONL"), source: "copilot JSONL", capabilities: structuredCaps({ usage: true, mcp: true, skills: true }), args: (text, cwd, sid, opts) => {
+    const a = ["--prompt", text, "--output-format=json", "--stream=on", "--no-ask-user", "-C", cwd]; if (fullAccess()) a.push("--yolo");
+    if (sid) a.push(`--resume=${sid}`); if (opts?.model) a.push(`--model=${opts.model}`); if (opts?.effort) a.push(`--effort=${opts.effort}`); return a;
+  } }); }
+}
+export class OpenCodeAdapter extends StructuredCliAdapter {
+  constructor() { super({ id: "opencode", label: "OpenCode", command: "opencode", parser: (o) => parseGenericJsonlEvent(o, "opencode run --format json"), source: "opencode JSON", capabilities: structuredCaps({ usage: true, cost: "estimated_api_equivalent", mcp: true, commands: true, skills: true }), args: (text, _cwd, sid, opts) => {
+    const a = ["run", "--format", "json"]; if (fullAccess()) a.push("--auto"); if (sid) a.push("--session", sid); if (opts?.model) a.push("--model", opts.model); if (opts?.effort) a.push("--variant", opts.effort); a.push(text); return a;
+  } }); }
+  override async capabilities(): Promise<AgentCaps> {
+    try {
+      const out = await run("opencode", ["models"], homedir(), "");
+      const models = out.split(/\r?\n/).map((id) => id.trim()).filter((id) => /^[^\s/]+\/[^\s]+$/.test(id)).map((id) => ({ id, label: id, efforts: [] }));
+      return { models, autoModel: true };
+    } catch { return { models: [], autoModel: true }; }
+  }
+}
+export class ClineCliAdapter extends StructuredCliAdapter {
+  constructor() { super({ id: "cline", label: "Cline CLI", command: "cline", parser: parseClineCliEvent, source: "cline --json", capabilities: structuredCaps({ thinking: true, usage: false, mcp: true, skills: true }), args: (text, cwd, sid, opts) => {
+    const a = ["--json", "--auto-approve", fullAccess() ? "true" : "false", "--cwd", cwd]; if (sid) a.push("--id", sid); if (opts?.model) a.push("--model", opts.model); if (opts?.effort) a.push("--thinking", opts.effort); a.push(text); return a;
+  } }); }
+}
+export class QwenCodeAdapter extends StructuredCliAdapter {
+  constructor() { super({ id: "qwen", label: "Qwen Code", command: "qwen", parser: parseQwenCliEvent, source: "qwen stream-json", capabilities: structuredCaps({ thinking: true, usage: true, plans: true, subagents: true, mcp: true, skills: true }), args: (text, _cwd, sid, opts) => {
+    const a = ["--output-format", "stream-json", "--include-partial-messages", "--approval-mode", fullAccess() ? "yolo" : "default"];
+    if (sid) a.push("--resume", sid); if (opts?.model) a.push("--model", opts.model); a.push("--prompt", text); return a;
+  } }); }
+}
+
+/** Extract a useful terminal response from final-only JSON without exposing the envelope in chat. */
+export function finalOnlyText(output: string): string {
+  const raw = output.trim(); if (!raw) return "";
+  const pick = (value: any): string => {
+    if (typeof value === "string") return value;
+    if (Array.isArray(value)) { for (const item of [...value].reverse()) { const found = pick(item); if (found) return found; } return ""; }
+    if (!value || typeof value !== "object") return "";
+    for (const key of ["response", "result", "answer", "text", "content", "message", "output"]) { const found = pick(value[key]); if (found) return found; }
+    return "";
+  };
+  try { return pick(JSON.parse(raw)).trim() || raw; } catch { return raw; }
+}
+
+/** Detectable but intentionally final-only: these CLIs do not expose a verified live tool stream. */
+class LimitedFinalCliAdapter implements AgentAdapter {
+  constructor(readonly name: string, private label: string, private command: string, private args: (text: string, opts?: SendOpts) => string[]) {}
+  async capabilities(): Promise<AgentCaps> { return { models: [], autoModel: true }; }
+  async available(): Promise<boolean> { return !!(await cliVersion(this.command)); }
+  async send(_sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> { validateModelSelection(await this.capabilities(), opts); return { text: finalOnlyText(await run(this.command, this.args(text, opts), cwd, "", opts?.signal)) }; }
+  async descriptor(): Promise<AgentDescriptor> { const version = await cliVersion(this.command); return makeDescriptor({ id: this.name, label: this.label, command: this.command, version, support: version ? "limited" : "not_installed", reason: version ? "CLI só tem saída final verificada; sem stream estruturado de ferramentas" : `CLI ${this.command} não encontrado`, capabilities: { ...LIMITED_CAPABILITIES, oneShot: true, remote: true }, caps: await this.capabilities() }); }
+}
+export class ContinueCliAdapter extends LimitedFinalCliAdapter { constructor() { super("continue", "Continue CLI", "cn", (text) => { const a = ["-p", text, "--format", "json"]; if (fullAccess()) a.push("--allow", "*"); return a; }); } }
+export class KiroCliAdapter extends LimitedFinalCliAdapter {
+  constructor() { super("kiro", "Kiro CLI", "kiro-cli", (text, opts) => { const a = ["chat", "--no-interactive"]; if (fullAccess()) a.push("--trust-all-tools"); if (opts?.effort) a.push("--effort", opts.effort); a.push(text); return a; }); }
+  override async capabilities(): Promise<AgentCaps> {
+    try {
+      const raw = await run("kiro-cli", ["chat", "--list-models", "--format", "json"], homedir(), "");
+      const parsed = JSON.parse(raw); const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.models) ? parsed.models : [];
+      const models = items.map((x: any) => typeof x === "string" ? { id: x, label: x, efforts: [] } : {
+        id: String(x.id || x.modelId || x.name || ""), label: String(x.label || x.displayName || x.name || x.id || ""),
+        efforts: Array.isArray(x.efforts || x.supportedEfforts) ? [...(x.efforts || x.supportedEfforts)] : [], effortsVerified: false,
+      }).filter((x: ModelInfo) => !!x.id);
+      return { models, autoModel: true };
+    } catch { return { models: [], autoModel: true }; }
+  }
+}
+export class AntigravityCliAdapter extends LimitedFinalCliAdapter {
+  constructor() { super("antigravity", "Google Antigravity CLI", "agy", (text) => [text]); }
+  override async available(): Promise<boolean> { return false; }
+  override async send(): Promise<AgentReply> { throw new Error("Antigravity CLI não expõe um modo headless estruturado verificável; use o TUI agy diretamente"); }
+  override async descriptor(): Promise<AgentDescriptor> { const version = await cliVersion("agy"); return makeDescriptor({ id: this.name, label: "Google Antigravity CLI", command: "agy", version, support: version ? "limited" : "not_installed", reason: version ? "TUI instalado, mas sem modo headless público verificável; execução pelo Jarvis desativada" : "CLI agy não encontrado", capabilities: { ...LIMITED_CAPABILITIES, oneShot: false, remote: false }, caps: await this.capabilities() }); }
+}
+
+// ---------------------------------------------------------------------------
+
 /**
- * Aider (https://aider.chat) — a third pluggable agent, headless one message per turn. Modeled on the
- * CodexAdapter (non-streaming: spawn, wait, return the final text). Proves the "adding an agent = one
- * adapter + register it" claim beyond the two built-ins, and is the copy-me template for the next one.
+ * Aider (https://aider.chat) — a pluggable, final-only agent running one headless message per turn.
+ * It remains explicitly LIMITED; the structured adapters above are the template for live parity.
  *
  * WRITTEN TO SPEC — VERIFY ON FIRST RUN (it was authored without a local `aider` to test against):
  *  - Requires `aider` on PATH and a model key in the env / ~/.aider.conf.yml (aider picks the provider).
@@ -559,7 +912,7 @@ export class CodexAdapter implements AgentAdapter {
  *  - CONTINUITY is per-CWD via aider's own chat history (`--restore-chat-history`), NOT per Jarvis
  *    session — two sessions sharing a folder share context. (Claude/Codex bind a native session id;
  *    aider has no equivalent per-invocation handle, so this is the honest v1 approximation.)
- *  - No streaming/tool events yet (final text only), same as codex here.
+ *  - No streaming/tool events yet (final text only).
  *  - capabilities() returns NO models on purpose — aider spans many providers and inventing an id
  *    catalog would be a guess; pass opts.model to pick one, else aider uses its configured default.
  * Flags used: --message (one-shot), --yes-always (auto-confirm), --no-stream + --no-pretty (clean
@@ -576,12 +929,13 @@ export class AiderAdapter implements AgentAdapter {
     catch { return false; }
   }
   async send(_sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
+    validateModelSelection(await this.capabilities(), opts);
     // The chat message goes via --message-file, not --message <text>: the text is user input, and on
     // the old shell:true path a message with `;`/`&`/`$()` ran as a shell command. A temp file keeps
     // it entirely off the command line (belt-and-braces with spawnCli's shell:false).
     const mf = tempTextFile("jarvis_aider", text);
     try {
-      const args = ["--message-file", mf.path, "--yes-always", "--no-stream", "--no-pretty", "--restore-chat-history"];
+      const args = ["--message-file", mf.path, "--no-stream", "--no-pretty", "--restore-chat-history"]; if (fullAccess()) args.push("--yes-always");
       const model = safeIdent(opts?.model); if (model) args.push("--model", model);
       const out = await run("aider", args, cwd, "", opts?.signal);
       return { text: out.trim() };
@@ -591,11 +945,20 @@ export class AiderAdapter implements AgentAdapter {
     // stateless throwaway (no history restore, no commits) in the excluded oneshot dir
     const mf = tempTextFile("jarvis_aider", text);
     try {
-      const args = ["--message-file", mf.path, "--yes-always", "--no-stream", "--no-pretty", "--no-auto-commits"];
+      const args = ["--message-file", mf.path, "--no-stream", "--no-pretty", "--no-auto-commits"]; if (fullAccess()) args.push("--yes-always");
       const model = safeIdent(opts?.model); if (model) args.push("--model", model);
       const out = await run("aider", args, ONESHOT_CWD, "");
       return { text: out.trim() };
     } finally { mf.cleanup(); }
+  }
+  async descriptor(): Promise<AgentDescriptor> {
+    const version = await cliVersion("aider");
+    return makeDescriptor({
+      id: this.name, label: "Aider", command: "aider", version,
+      support: version ? "limited" : "not_installed",
+      reason: version ? "sem stream estruturado, sessão isolada e usage verificados" : "CLI aider não encontrado",
+      capabilities: { ...LIMITED_CAPABILITIES }, caps: await this.capabilities(), source: "config",
+    });
   }
 }
 
@@ -606,6 +969,53 @@ export class AiderAdapter implements AgentAdapter {
  *  Cached per name. This is what lets us drop shell:true (below) without losing the shell's PATH
  *  lookup — the shell was only ever needed to FIND the binary, never to parse our arguments. */
 const binCache = new Map<string, string>();
+
+async function cliVersion(cmd: string): Promise<string | undefined> {
+  try {
+    const r = await runRaw(cmd, ["--version"], homedir(), "");
+    if (r.code !== 0) return undefined;
+    return (r.stdout || r.stderr).trim().split(/\r?\n/)[0]?.slice(0, 120) || "unknown";
+  } catch { return undefined; }
+}
+
+function makeDescriptor(opts: {
+  id: string;
+  label: string;
+  command: string;
+  version?: string;
+  support: SupportLevel;
+  reason?: string;
+  capabilities: AgentCapabilities;
+  caps: AgentCaps;
+  source?: ModelSource;
+}): AgentDescriptor {
+  const discoveredAt = Date.now();
+  const source = opts.source || "fallback";
+  const models: ModelDescriptor[] = opts.caps.models.map((m) => ({
+    id: m.id,
+    label: m.label || m.id,
+    source,
+    visibility: "public",
+    contextTokens: m.context,
+    efforts: [...m.efforts],
+    defaultEffort: m.defaultEffort,
+    effortsVerified: m.effortsVerified,
+    contextVerified: m.contextVerified,
+    modalities: opts.capabilities.attachments.includes("image") ? ["text", "image", "file"] : ["text", "file"],
+    discoveredAt,
+  }));
+  return {
+    id: opts.id,
+    label: opts.label,
+    support: opts.support,
+    reason: opts.reason,
+    cli: { command: opts.command, version: opts.version },
+    capabilities: effectiveCaps(opts.capabilities),
+    models,
+    defaultModel: opts.caps.defaultModel,
+    discoveredAt,
+  };
+}
 function resolveBin(cmd: string): string {
   if (cmd.includes("/") || cmd.includes("\\")) return cmd; // already an explicit path
   const cached = binCache.get(cmd); if (cached) return cached;
@@ -714,8 +1124,8 @@ function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLi
     p.on("close", (code) => {
       if (wasAborted()) { reject(new Error(ABORTED)); return; }
       if (buf.trim()) onLine(buf);
-      if (code === 0 || out.trim()) resolve(out);
-      else reject(new Error(err.trim() || `${cmd} exited with ${code}`));
+      if (code === 0) resolve(out);
+      else reject(new Error(err.trim() || out.trim() || `${cmd} exited with ${code}`));
     });
   });
 }
