@@ -139,12 +139,19 @@
         if(m.files&&m.files.length){ const w=document.createElement('div'); w.className='msgfiles'; m.files.forEach(f=>{ const c=document.createElement('button'); c.type='button'; c.className='filechip'+(f.content==null?' nocontent':''); c.title=f.content==null?'Anexo grande demais para reabrir':'Abrir '+f.name; c.textContent='📎 '+f.name; c.onclick=()=>openAttachedFile(f); w.appendChild(c); }); d.appendChild(w); }
         const showTxt=m.text&&!((m.images&&m.images.length||m.files&&m.files.length)&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); }
       else { d.className='msg bot';
-        if(m.activity&&m.activity.length){ const af=renderActivityBlock(m.activity); if(af) d.appendChild(af); }
-        const tx=document.createElement('div'); tx.innerHTML=md(m.text); d.appendChild(tx); } return d; }
+        const af=(m.activity&&m.activity.length)?renderActivityBlock(m.activity):null;
+        if(af) d.appendChild(af);
+        // Se o histórico já tem os blocos text_delta/text_block dentro de activity, renderiza esses
+        // textos intercalados no fluxo e NÃO duplica a resposta final no fim. Adapters que só
+        // publicam texto final continuam caindo aqui.
+        if(!(af&&af.dataset.rootText==='1')){
+          const tx=document.createElement('div'); tx.innerHTML=md(m.text); d.appendChild(tx);
+        } } return d; }
     // Réplica ESTÁTICA (histórico) do que streamTool/streamText/ensureSubAgent fazem AO VIVO — mesma
     // estrutura visual (caixas de subagente com contagem, linhas de ferramenta), mas com estado local
-    // (não usa strFlow/subAgents globais) e sem re-mostrar o texto de nível raiz (já é m.text acima);
-    // só o texto do PRÓPRIO subagente (preview) entra, pois esse não está em m.text.
+    // (não usa strFlow/subAgents globais). Quando o histórico carrega text_delta/text_block,
+    // renderiza o texto de nível raiz INTERCALADO no fluxo; quando o adapter só salvou texto final,
+    // buildMsgEl ainda mostra m.text ao fim como fallback.
     function normalizeActivity(events){ const out=[], tools={};
       (events||[]).forEach(ev=>{ if(ev&&ev.schemaVersion===1){
           if(ev.kind==='text_delta'||ev.kind==='text_block') out.push({kind:'text',text:ev.text||'',parentId:ev.parentId||(ev.tool&&ev.tool.parentId),executionId:ev.executionId});
@@ -154,7 +161,7 @@
         } else out.push(ev); }); return out; }
     function renderActivityBlock(events){
       const flow=document.createElement('div'); flow.className='strflow acthist';
-      const subAgents={}; let curTextEl=null, curTextRaw='';
+      const subAgents={}; let curTextEl=null, curTextRaw='', rootText=false;
       function closeTextBlock(){ curTextEl=null; curTextRaw=''; }
       function ensureSA(id,desc,executionId){ if(subAgents[id]){ if(desc)subAgents[id].title.textContent=desc; if(executionId)bindInlineWork(subAgents[id],executionId); return subAgents[id]; }
         const wrap=document.createElement('div'); wrap.className='subagent'; wrap.dataset.id=id;
@@ -169,12 +176,19 @@
           if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); sa.body.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail)); sa.count++; sa.countEl.textContent=sa.count; return; }
           if((ev.name==='Task'||ev.name==='Agent')&&ev.toolId){ ensureSA(ev.toolId,(ev.summary||'').replace(/^Subagente:\s*/,'')||'sub-agente',ev.executionId); return; }
           closeTextBlock(); flow.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail));
-        } else if(ev.kind==='text'&&ev.parentId){   // só o texto do SUBAGENTE — o de nível raiz já é m.text
-          const t=ev.text||''; if(!t)return; const sa=ensureSA(ev.parentId,null,ev.executionId);
-          if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); }
-          sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240);
+        } else if(ev.kind==='text'){
+          const t=ev.text||''; if(!t)return;
+          if(ev.parentId){
+            const sa=ensureSA(ev.parentId,null,ev.executionId);
+            if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); }
+            sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240);
+          } else {
+            if(!curTextEl){ flipDone(flow); curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; flow.appendChild(curTextEl); }
+            curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); rootText=true;
+          }
         } else if(ev.kind==='thinking'){ if(ev.parentId){const sa=ensureSA(ev.parentId,null,ev.executionId);sa.body.appendChild(toolRowEl('Thinking',ev.text||'Pensando…',null,0,0,true));sa.count++;sa.countEl.textContent=sa.count;}else{closeTextBlock();flow.appendChild(toolRowEl('Thinking',ev.text||'Pensando…',null,0,0,true));} }
       });
+      if(rootText) flow.dataset.rootText='1';
       return flow.childNodes.length?flow:null; }
     // Trocar de sessão custa DUAS travessias de rede quando ela vive em outra máquina
     // (browser → hub → runner → hub → browser), e esse enlace pode ser um relay: medido entre
@@ -977,7 +991,7 @@
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
-    let lastInputTokens=0, lastContextWindow=0, planUsage=null, planStatus=null, sessCost=0, sessUsage=null, costTotalAll=0;
+    let lastInputTokens=0, lastContextWindow=0, planUsage=null, planStatus=null, planKey='', sessCost=0, sessUsage=null, costTotalAll=0;
     // Custo da sessão como PARCELA do total acumulado — um $ isolado (ainda mais num plano, onde é só
     // um equivalente-API, não dinheiro real) não dá pra comparar; % do total dá.
     function sessCostRow(){
@@ -1001,7 +1015,8 @@
       else h+='<div class="umut">envie uma mensagem para medir</div>';
       h+='<div class="uh" style="margin-top:12px">Custo da sessão</div><div id="usessc">'+sessCostRow()+'</div>';
       h+='<div class="uh" style="margin-top:12px">Limites do plano</div><div id="uplan" class="umut">carregando…</div></div>';
-      p.innerHTML=h; renderPlan(planUsage); tx({t:'get_usage',agent:currentAgent,runnerId:(currentMachine==='all'?routedMachine:currentMachine)}); }
+      const usageRunner=currentMachine==='all'?routedMachine:currentMachine, usageAgent=currentAgent||availableMachineCaps()[0]?.name||caps[0]?.name||'';
+      p.innerHTML=h; if(planKey===usageRunner+'\0'+usageAgent) renderPlan(planUsage); tx({t:'get_usage',agent:usageAgent,runnerId:usageRunner}); }
     function renderPlan(plan){ const el=document.getElementById('uplan'); if(!el)return;
       if(!plan){ el.className='umut'; el.textContent=planStatus==='unsupported'?'o CLI desta IA não publica limites de conta':planStatus==='error'?'erro ao consultar o provedor':'nenhum limite foi reportado pelo provedor'; return; }
       const w=(lbl,x,color)=> x?`<div class="urow"><span>${esc(lbl)}</span><b>${x.pct}%</b></div>`+ubar(x.pct,color)+(x.resetsAt?`<div class="umut ureset">reinicia ${fmtReset(x.resetsAt)}</div>`:''):'';
@@ -1420,7 +1435,7 @@
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); autoScroll(); }
         else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=usageSummary(m.usage); if(m.usage.contextTokens||m.usage.inputTokens)lastInputTokens=m.usage.contextTokens||m.usage.inputTokens; if(m.usage.contextWindowTokens)lastContextWindow=m.usage.contextWindowTokens; updUsagePill(); } }
-        else if(m.t==='usage_info'){ planUsage=m.plan||null; planStatus=m.planStatus||null; if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
+        else if(m.t==='usage_info'){ planUsage=m.plan||null; planStatus=m.planStatus||null; planKey=(m.runnerId||'local')+'\0'+(m.agent||''); if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
         else if(m.t==='session'){ if(m.sessionId===currentSession && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
         else if(m.t==='deleted'){ const deleted=Array.isArray(m.ids)?m.ids:[], inCur=deleted.includes(currentSession);
           if(inCur){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); }

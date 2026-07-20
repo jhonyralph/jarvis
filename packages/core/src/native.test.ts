@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseNativeEvents, lineDiff, editCounts, toolFileStat } from "./native.js";
+import { filterUnboundNativeSessions, parseNativeEvents, lineDiff, editCounts, toolFileStat } from "./native.js";
 
 const TS = "2024-06-01T10:00:00.000Z";
 const claudeLine = (o: object) => JSON.stringify({ timestamp: TS, ...o });
@@ -114,4 +114,21 @@ test("toolFileStat: MultiEdit aggregates counts across edits", () => {
   assert.equal(st.path, "/x/z.ts");
   assert.equal(st.adds, 1);
   assert.equal(st.dels, 1);
+});
+
+test("filterUnboundNativeSessions hides provider transcripts already bound to managed sessions", () => {
+  const native = [
+    { id: "claude:native-1", title: "backing transcript" },
+    { id: "codex:native-2", title: "standalone codex" },
+    { id: "managed-3", title: "accidental exact duplicate" },
+  ];
+  const managed = [
+    { id: "managed-1", native: "claude:native-1" },
+    { id: "managed-3", native: null },
+  ];
+
+  assert.deepEqual(
+    filterUnboundNativeSessions(native, managed, (s) => s.native).map((s) => s.id),
+    ["codex:native-2"],
+  );
 });

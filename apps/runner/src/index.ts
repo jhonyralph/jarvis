@@ -20,8 +20,8 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED,
-  listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
-  updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
+  listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
+  updateCheck, updateApply, restartService, runnerSelfUpdateDecision, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory,
   buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, fileDiffFromMessages, createAgentEventBridge, createEventSequencer,
   ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
@@ -89,6 +89,13 @@ if (EXECUTIONS_ENABLED) for (const snapshot of executionStore.rootsForSession())
 const activeRuns = new Set<string>();
 const managedRuns = new Set<string>();
 let updateInProgress = false;
+const RUNNER_SELF_UPDATE_MS = (() => {
+  const raw = process.env.JARVIS_RUNNER_SELF_UPDATE_MS;
+  if (raw === "0") return 0;
+  const n = Number(raw || 10 * 60_000);
+  return Number.isFinite(n) ? Math.max(60_000, Math.min(24 * 60 * 60_000, n)) : 10 * 60_000;
+})();
+let lastSelfUpdateCheckAt = 0;
 // Idempotency: turnIds already executed here. `activeRuns` only blocks a CONCURRENT duplicate;
 // this makes a re-delivered send (reconnect resend / queue re-flush / WS redelivery) run at most once.
 const seenTurns = createSeenSet();
@@ -114,6 +121,45 @@ function flushOutbox(): void {
   const pending = outbox.drain();
   console.log(`[runner] reconectado — reenviando ${pending.length} evento(s) de turno bufferizados`);
   for (const m of pending) send(m);
+}
+
+async function maybeSelfUpdate(reason: string, forceCheck = false): Promise<void> {
+  if (RUNNER_SELF_UPDATE_MS <= 0) return;
+  const now = Date.now();
+  if (!forceCheck && now - lastSelfUpdateCheckAt < Math.min(RUNNER_SELF_UPDATE_MS, 60_000)) return;
+  lastSelfUpdateCheckAt = now;
+  let status;
+  try { status = await updateCheck(RUNNER_ROOT, true); }
+  catch (error: any) { console.warn(`[runner] auto-update (${reason}): check falhou: ${String(error?.message ?? error).slice(0, 160)}`); return; }
+  const decision = runnerSelfUpdateDecision(status, {
+    busy: activeRuns.size > 0 || managedRuns.size > 0,
+    updateInProgress,
+  });
+  if (!decision.update) {
+    if (decision.retryable || /rejeit|desconect/i.test(reason)) console.warn(`[runner] auto-update (${reason}): ${decision.reason}`);
+    return;
+  }
+  updateInProgress = true;
+  const requestId = `self:${Date.now()}`;
+  console.warn(`[runner] auto-update (${reason}): ${decision.reason}; alvo ${decision.targetCommit}`);
+  let result: UpdateResult;
+  try { result = await updateApply(RUNNER_ROOT, { targetCommit: decision.targetCommit }); }
+  catch (error: any) { result = { ok: false, retryable: true, log: "falha inesperada no auto-update: " + String(error?.message ?? error) }; }
+  console.log("[runner] auto-update:", result.ok ? "ok" : "falhou", "-", result.log.replace(/\n/g, " ").slice(0, 180));
+  if (result.ok) {
+    try {
+      writeJsonAtomic(UPDATE_RECEIPT_FILE, {
+        requestId, targetCommit: String(decision.targetCommit || result.current || ""),
+        current: String(result.current || await repoCommit(RUNNER_ROOT)).replace("+dirty", ""),
+        preparedAt: Date.now(), autonomous: true, reason,
+      }, { pretty: true });
+    } catch (error: any) {
+      result = { ok: false, log: result.log + "\nERRO ao persistir comprovante do auto-update: " + String(error?.message ?? error), behind: result.behind };
+    }
+  }
+  send({ t: "update_done", requestId, ok: result.ok, dirty: !!result.dirty, behind: result.behind ?? 0, log: result.log.slice(0, 600), current: result.current, restartRequired: result.restartRequired, rolledBack: result.rolledBack, retryable: result.retryable });
+  if (result.ok && result.restartRequired !== false) void drainAndExit();
+  else updateInProgress = false;
 }
 
 // --- live mirror of native CLI sessions: tail the jsonl and push new turns as an
@@ -167,8 +213,12 @@ async function availableAgents(): Promise<string[]> {
 
 function allSessions(): RunnerSession[] {
   const own = store.list().map((s: any) => ({ id: s.id, title: s.title, agent: s.agent, cwd: s.cwd, updatedAt: s.updatedAt, source: "managed" as const, writable: true, started: s.count > 0 }));
-  const ownIds = new Set(own.map((s) => s.id));
-  const native = listNative().filter((n) => !ownIds.has(n.id)).map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, updatedAt: n.updatedAt, source: "native" as const, writable: n.agent === "claude-code" || n.agent === "codex", started: true }));
+  const native = filterUnboundNativeSessions(listNative(), own, (s) => {
+    try {
+      const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+      return nid ? nativeIdForAgent(s.agent, nid) : null;
+    } catch { return null; }
+  }).map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, updatedAt: n.updatedAt, source: "native" as const, writable: n.agent === "claude-code" || n.agent === "codex", started: true }));
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 function pushSessions(): void { send({ t: "sessions", sessions: allSessions() }); }
@@ -538,7 +588,12 @@ function connect(): void {
         pushSessions(); pushRuns(); send({ t: "caps", agent: DEFAULT_AGENT, caps: await agents.describe() });
         return;
       }
-      if (m.t === "reject") { console.error(`[runner] rejected by hub: ${m.reason}`); sock.close(); return; }
+      if (m.t === "reject") {
+        console.error(`[runner] rejected by hub: ${m.reason}`);
+        void maybeSelfUpdate(`rejeitado pelo Hub: ${String(m.reason || "").slice(0, 120)}`, true);
+        sock.close();
+        return;
+      }
       if (m.t === "ping") { send({ t: "pong" }); return; }
       if (updateInProgress && ["send", "execution_delegate", "new", "configure"].includes(m.t)) {
         send({ t: "error", reqId: m.reqId, message: "máquina drenando para atualização — tente novamente após ela reconectar" }); return;
@@ -629,6 +684,18 @@ function connect(): void {
         return;
       }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }
+      if (m.t === "usage" && typeof m.reqId === "string") {
+        const name = typeof m.agent === "string" && agents.names().includes(m.agent) ? m.agent : DEFAULT_AGENT;
+        const adapter = agents.get(name);
+        if (!adapter.usage) { send({ t: "usage_info", reqId: m.reqId, agent: name, plan: null, planStatus: "unsupported" }); return; }
+        try {
+          const plan = await adapter.usage();
+          send({ t: "usage_info", reqId: m.reqId, agent: name, plan, planStatus: plan ? "available" : "not_reported" });
+        } catch {
+          send({ t: "usage_info", reqId: m.reqId, agent: name, plan: null, planStatus: "error" });
+        }
+        return;
+      }
       if (m.t === "commands") { send({ t: "command_list", reqId: m.reqId, commands: listCommandsPublic(CWD) }); return; }
       if (m.t === "mention") { if (typeof m.sessionId === "string" && store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não expõe arquivos pelo chat" }); return; } send({ t: "mention_list", reqId: m.reqId, files: listMentionFiles(sessCwd(m.sessionId), typeof m.q === "string" ? m.q : "") }); return; }
       if (m.t === "memory_append" && typeof m.text === "string") {
@@ -665,7 +732,12 @@ function connect(): void {
       if ((m.t === "cancel" || m.t === "stop") && typeof m.sessionId === "string") { runAborts.get(m.sessionId)?.abort(); return; }
     } catch (e: any) { send({ t: "error", reqId: m?.reqId, message: String(e?.message ?? e) }); }
   });
-  sock.on("close", () => { clearInterval(hb); ws = null; setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 15000); console.log(`[runner] disconnected; retrying in ${reconnectDelay / 1000}s`); });
+  sock.on("close", () => {
+    clearInterval(hb); ws = null;
+    void maybeSelfUpdate("desconectado");
+    setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+    console.log(`[runner] disconnected; retrying in ${reconnectDelay / 1000}s`);
+  });
   sock.on("error", (e: any) => { console.error("[runner] ws error:", e?.message ?? e); });
 }
 
@@ -707,3 +779,8 @@ try { const s = purgeScratch(); if (s) console.log(`[runner] limpei ${s} transcr
 connect();
 // keep native/managed session list fresh (native sessions can change out-of-band)
 setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) pushSessions(); }, 6000);
+if (RUNNER_SELF_UPDATE_MS > 0) {
+  setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) void maybeSelfUpdate("checagem periódica desconectada");
+  }, RUNNER_SELF_UPDATE_MS).unref?.();
+}

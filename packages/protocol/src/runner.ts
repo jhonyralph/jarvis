@@ -159,6 +159,8 @@ export type RunnerToHub =
   | { t: "command_list"; reqId?: string; commands: unknown[] }
   /** "@" file-mention matches under a session's cwd (reply to Hub->Runner "mention") */
   | { t: "mention_list"; reqId?: string; files: string[] }
+  /** Live account-plan snapshot for one adapter (reply to Hub->Runner "usage"). */
+  | { t: "usage_info"; reqId: string; agent: string; plan: unknown | null; planStatus: "available" | "not_reported" | "unsupported" | "error" }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" }
   | ExecutionRunnerToHub;
@@ -194,6 +196,8 @@ export type HubToRunner =
   | { t: "readfile"; reqId: string; path: string; cwd?: string }
   | { t: "readdiff"; reqId: string; sessionId: string; path: string }
   | { t: "caps"; agent?: string }
+  /** Query this machine's live account-plan usage for an adapter. */
+  | { t: "usage"; reqId: string; agent?: string }
   /** enumerate this machine's slash-commands / skills (reply: command_list) */
   | { t: "commands"; reqId: string }
   /** "@" file-mention search under a session's cwd (reply: mention_list) */

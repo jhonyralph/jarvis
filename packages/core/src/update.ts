@@ -86,6 +86,36 @@ export interface UpdateStatus {
   error?: string;
 }
 
+export interface RunnerSelfUpdateDecision {
+  update: boolean;
+  reason: string;
+  targetCommit?: string;
+  retryable?: boolean;
+}
+
+/**
+ * Conservative autonomous runner update policy.
+ *
+ * The Hub remains the primary coordinator. This fallback is for a runner that is alive but unable
+ * to register/stay connected after the Hub moved forward. It only fast-forwards a clean checkout
+ * with no local-only commits and no active work; otherwise it reports why it refused.
+ */
+export function runnerSelfUpdateDecision(
+  status: Pick<UpdateStatus, "supported" | "error" | "clean" | "behind" | "ahead" | "latest" | "current">,
+  opts?: { busy?: boolean; updateInProgress?: boolean },
+): RunnerSelfUpdateDecision {
+  if (opts?.updateInProgress) return { update: false, reason: "atualização já em andamento" };
+  if (opts?.busy) return { update: false, reason: "há turnos/trabalhos ativos" };
+  if (!status.supported) return { update: false, reason: status.error || "auto-update não suportado", retryable: false };
+  if (status.error) return { update: false, reason: status.error, retryable: true };
+  if (!status.clean) return { update: false, reason: "checkout com alterações locais", retryable: false };
+  if ((status.ahead || 0) > 0) return { update: false, reason: "checkout possui commits locais fora do origin", retryable: false };
+  if ((status.behind || 0) <= 0) return { update: false, reason: "já está atualizado" };
+  const targetCommit = status.latest?.sha;
+  if (!targetCommit) return { update: false, reason: "origin tem atualização, mas o commit alvo não foi resolvido", retryable: true };
+  return { update: true, reason: `${status.behind} commit(s) atrás de origin`, targetCommit };
+}
+
 export async function updateCheck(root: string, fetch = true): Promise<UpdateStatus> {
   let branch = "?", current = "?", currentFull = "";
   try {
@@ -210,8 +240,9 @@ export function restartService(kind: "hub" | "runner"): void {
     const cmd = kind === "hub"
       ? `Start-Sleep 3; $c=Get-NetTCPConnection -LocalPort 4577 -State Listen -EA SilentlyContinue; if($c){Stop-Process -Id $c.OwningProcess -Force -EA SilentlyContinue}; Start-ScheduledTask -TaskName '${task}' -EA SilentlyContinue`
       // The scheduled task's PowerShell launcher is already a supervisor loop. Exiting this Node
-      // process is enough; only start the task if the supervisor itself is genuinely not running.
-      : `Start-Sleep 5; $t=Get-ScheduledTask -TaskName '${task}' -EA SilentlyContinue; if($t -and $t.State -ne 'Running'){Start-ScheduledTask -TaskName '${task}' -EA SilentlyContinue}`;
+      // process is enough. Start-ScheduledTask is still fired unconditionally as a fallback for a
+      // stale/dead supervisor; the task is installed with IgnoreNew, so this is a no-op if alive.
+      : `Start-Sleep 5; Start-ScheduledTask -TaskName '${task}' -EA SilentlyContinue`;
     spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", cmd], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } else if (p === "darwin") {
     const label = kind === "hub" ? "com.jarvis.hub" : "com.jarvis.runner";

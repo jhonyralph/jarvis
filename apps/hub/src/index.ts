@@ -26,7 +26,7 @@ import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
@@ -668,6 +668,7 @@ const pendingRunnerList = new Map<string, (sessions: any[]) => void>();
 // reqId, resolved by the runner's {t:history}/{t:sessions} reply, and always timed out so a
 // silent runner degrades instead of hanging the single-flight voice lock.
 const pendingRunnerHist = new Map<string, (h: any) => void>();
+const pendingRunnerUsage = new Map<string, (u: any) => void>();
 interface ExecutionReplayRequest { runnerId: string; rootExecutionId: string; replace: boolean; events: ExecutionEvent[]; }
 const executionReplayRequests = new Map<string, ExecutionReplayRequest>();
 function requestExecutionReplay(rc: RunnerConn, rootExecutionId: string, afterSeq: number, replace = false, prior: ExecutionEvent[] = []): void {
@@ -707,6 +708,10 @@ function runnerHistory(rc: RunnerConn, sessionId: string): Promise<any> {
 function runnerSessions(rc: RunnerConn): Promise<any[]> {
   return askRunner<any[]>(pendingRunnerList, rc.id, () => sendToRunner(rc, { t: "list" }), [], 6000);
 }
+function runnerUsage(rc: RunnerConn, agent: string, fallback: any): Promise<any> {
+  const reqId = "usage-" + randomUUID().slice(0, 8);
+  return askRunner<any>(pendingRunnerUsage, reqId, () => sendToRunner(rc, { t: "usage", reqId, agent }), fallback, 6000);
+}
 
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
@@ -740,6 +745,15 @@ function relayRunner(rc: RunnerConn, m: any): void {
     return;
   }
   if (m.t === "execution_usage_record") { addUsage(String(m.sessionId || m.rootExecutionId), String(m.agent || "remote-unknown"), m.usage); return; }
+  if (m.t === "usage_info") {
+    const cb = pendingRunnerUsage.get(m.reqId);
+    if (cb) { pendingRunnerUsage.delete(m.reqId); cb(m); }
+    if (typeof m.agent === "string") {
+      rc.info.agentUsage = rc.info.agentUsage || {};
+      rc.info.agentUsage[m.agent] = m.plan || null;
+    }
+    return;
+  }
   if (m.t === "execution_delegate_result") {
     const prior = executionUiState.commands[m.requestId];
     if (prior?.ok === false && /tempo esgotado/.test(String(prior.error || "")) && m.ok && m.rootExecutionId) {
@@ -757,7 +771,35 @@ function relayRunner(rc: RunnerConn, m: any): void {
   }
   if (m.t === "sessions") { runnerSessionState.set(rc.id, new Map((m.sessions || []).map((s: any) => [s.id, s]))); const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
   if (m.t === "deleted") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); for (const sid of m.ids || []) mirrorExecutionStore(rc.id).deleteSession(sid); send(c, { t: "deleted", sessionId: m.sessionId, ids: m.ids || [], ok: !!m.ok, okCount: Number(m.okCount) || 0 }); } return; }
-  if (m.t === "history") { const states = runnerSessionState.get(rc.id) || new Map<string, any>(); states.set(m.sessionId, { ...(states.get(m.sessionId) || {}), id: m.sessionId, agent: m.agent, cwd: m.cwd, started: Number(m.total) > 0, source: /^(claude:|codex:)/.test(m.sessionId || "") ? "native" : "managed" }); runnerSessionState.set(rc.id, states); const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""), su = usageLedger.session(m.sessionId); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId, sessionCost: costOf(m.sessionId), sessionUsage: su, inputTokens: m.inputTokens || su.contextTokens, contextWindowTokens: m.contextWindowTokens || su.contextWindowTokens, model: m.model || su.model, effort: m.effort || su.effort }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })), files: m.files }); replayRoute(c, m.sessionId); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
+  if (m.t === "history") {
+    const states = runnerSessionState.get(rc.id) || new Map<string, any>();
+    states.set(m.sessionId, { ...(states.get(m.sessionId) || {}), id: m.sessionId, agent: m.agent, cwd: m.cwd, started: Number(m.total) > 0, source: /^(claude:|codex:)/.test(m.sessionId || "") ? "native" : "managed" });
+    runnerSessionState.set(rc.id, states);
+    const hcb = pendingRunnerHist.get(m.reqId);
+    if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; }
+    const c = pendingReq.get(m.reqId);
+    if (c) {
+      pendingReq.delete(m.reqId);
+      const native = /^(claude:|codex:)/.test(m.sessionId || "");
+      const messages = Array.isArray(m.messages) ? m.messages : [];
+      const su = effectiveSessionUsage(m.sessionId, messages);
+      send(c, {
+        t: "history", sessionId: m.sessionId,
+        session: {
+          agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId,
+          sessionCost: su.costUsd, sessionUsage: su,
+          inputTokens: m.inputTokens || su.contextTokens, contextWindowTokens: m.contextWindowTokens || su.contextWindowTokens,
+          model: m.model || su.model, effort: m.effort || su.effort,
+        },
+        total: m.total,
+        messages: messages.map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })),
+        files: m.files,
+      });
+      replayRoute(c, m.sessionId); replayActivity(c, m.sessionId);
+      send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
+    }
+    return;
+  }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "agent_event") {
     const event = m.event as AgentEvent, sid = m.sessionId, mkey = rc.id + "\0" + sid;
@@ -1094,14 +1136,14 @@ function syncTails(): void {
 /** Jarvis's own sessions merged with imported native Claude/Codex sessions (agent-tagged, newest first). */
 function allSessions(): any[] {
   const own = store.list();
-  const ownIds = new Set(own.map((s) => s.id));
-  // Uma sessão do hub que roda um turno cria (via `claude -p`) uma sessão NATIVA vinculada. Ela tem
-  // id "claude:<uuid>" (≠ id do hub), então sem isto apareceria DUPLICADA na lista (a do hub + a
-  // nativa). Junta os ids nativos vinculados e os exclui — a do hub é a canônica.
-  const boundNative = new Set<string>();
-  for (const s of own) { try { const nid = agents.get(s.agent).nativeSessionId?.(s.id); const key = nid && nativeIdForAgent(s.agent, nid); if (key) boundNative.add(key); } catch { /* unknown/removed adapter */ } }
-  const native = listNative()
-    .filter((n) => !ownIds.has(n.id) && !boundNative.has(n.id))
+  // Uma sessão gerenciada pode criar um transcript NATIVO vinculado com outro id
+  // (ex.: id Jarvis + `claude:<uuid>`). A sessão gerenciada é a linha canônica.
+  const native = filterUnboundNativeSessions(listNative(), own, (s) => {
+    try {
+      const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+      return nid ? nativeIdForAgent(s.agent, nid) : null;
+    } catch { return null; }
+  })
     .map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, createdAt: n.updatedAt, updatedAt: n.updatedAt, lastMessage: "", count: n.count }));
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -1494,6 +1536,37 @@ const COST_FILE = join(JARVIS_DIR, "session-cost.json");
 const usageLedger = new UsageLedger(COST_FILE);
 function costOf(sid: string): number { return usageLedger.session(sid).costUsd; }
 function addUsage(sid: string, agent: string, usage?: AgentReply["usage"]): void { usageLedger.record(sid, agent, usage); }
+function usageFromMessages(messages: any[] = []): ReturnType<UsageLedger["session"]> {
+  const out: ReturnType<UsageLedger["session"]> = { costUsd: 0, billableUsd: 0, estimatedUsd: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, byKind: {} };
+  for (const msg of messages) {
+    const u = msg?.usage; if (!u || typeof u !== "object") continue;
+    out.inputTokens += Number(u.inputTokens) || 0; out.cachedInputTokens += Number(u.cachedInputTokens) || 0; out.outputTokens += Number(u.outputTokens) || 0;
+    const cost = Number(u.costUsd) || 0, kind = String(u.costKind || "unavailable") as keyof typeof out.byKind;
+    out.costUsd += cost; out.byKind[kind] = (out.byKind[kind] || 0) + cost;
+    if (kind === "billed") out.billableUsd += cost;
+    else if (kind === "estimated_api_equivalent") out.estimatedUsd += cost;
+    if (Number(u.contextTokens) > 0) out.contextTokens = Number(u.contextTokens);
+    if (Number(u.contextWindowTokens) > 0) out.contextWindowTokens = Number(u.contextWindowTokens);
+    if (typeof u.model === "string" && u.model) out.model = u.model;
+    if (typeof u.effort === "string" && u.effort) out.effort = u.effort;
+  }
+  return out;
+}
+function effectiveSessionUsage(sid: string, messages: any[] = []): ReturnType<UsageLedger["session"]> {
+  const ledger = usageLedger.session(sid), hist = usageFromMessages(messages);
+  const out = { ...ledger, byKind: { ...ledger.byKind } };
+  if (hist.costUsd > out.costUsd) {
+    out.costUsd = hist.costUsd; out.billableUsd = hist.billableUsd; out.estimatedUsd = hist.estimatedUsd; out.byKind = hist.byKind;
+  }
+  if (!out.inputTokens && hist.inputTokens) out.inputTokens = hist.inputTokens;
+  if (!out.cachedInputTokens && hist.cachedInputTokens) out.cachedInputTokens = hist.cachedInputTokens;
+  if (!out.outputTokens && hist.outputTokens) out.outputTokens = hist.outputTokens;
+  out.contextTokens ||= hist.contextTokens;
+  out.contextWindowTokens ||= hist.contextWindowTokens;
+  out.model ||= hist.model;
+  out.effort ||= hist.effort;
+  return out;
+}
 
 function autoFlags(value: unknown): AutoRouteFlags {
   const v: any = value;
@@ -2613,12 +2686,21 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const name = typeof msg.agent === "string" && agents.names().includes(msg.agent) ? msg.agent : agents.default;
       const requestedRunner = typeof msg.runnerId === "string" ? msg.runnerId : LOCAL_ID;
       let plan = null; const a = agents.get(name); let supportsUsage = !!a.usage;
-      if (requestedRunner !== LOCAL_ID) { const rc = runners.get(requestedRunner); plan = (rc?.info.agentUsage?.[name] as any) || null; supportsUsage = Object.prototype.hasOwnProperty.call(rc?.info.agentUsage || {}, name); }
-      else try { plan = a.usage ? await a.usage() : null; } catch { plan = null; }
+      let planStatus: "available" | "not_reported" | "unsupported" | "error" = supportsUsage ? "not_reported" : "unsupported";
+      if (requestedRunner !== LOCAL_ID) {
+        const rc = runners.get(requestedRunner), snapHas = Object.prototype.hasOwnProperty.call(rc?.info.agentUsage || {}, name);
+        const fallback: { agent: string; plan: any; planStatus: "available" | "not_reported" | "unsupported" | "error" } = { agent: name, plan: (rc?.info.agentUsage?.[name] as any) || null, planStatus: !snapHas ? "unsupported" : (rc?.info.agentUsage?.[name] ? "available" : "not_reported") };
+        if (rc?.ws && rc.ws.readyState === WebSocket.OPEN) {
+          const live = await runnerUsage(rc, name, fallback);
+          plan = live?.plan || null; planStatus = live?.planStatus || fallback.planStatus;
+        } else { plan = fallback.plan; planStatus = fallback.planStatus; }
+        supportsUsage = planStatus !== "unsupported";
+      }
+      else try { plan = a.usage ? await a.usage() : null; planStatus = supportsUsage ? (plan ? "available" : "not_reported") : "unsupported"; } catch { plan = null; planStatus = "error"; }
       // total accumulated across all sessions, so the client can show THIS session as a share of it
       // (a raw $ on a plan has no baseline to compare against — a % does).
       const costTotal = usageLedger.total().costUsd;
-      send(ws, { t: "usage_info", agent: name, plan, planStatus: supportsUsage ? (plan ? "available" : "not_reported") : "unsupported", total: costTotal });
+      send(ws, { t: "usage_info", agent: name, runnerId: requestedRunner, plan, planStatus, total: costTotal });
       return;
     }
     // wake-word + speaker-id/voice-gate → handleVoiceDeviceMsg (extração verbatim, mesma ordem)

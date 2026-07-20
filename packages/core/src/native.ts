@@ -496,6 +496,28 @@ export function nativeIdForAgent(agent: string, nativeId: string): string | null
   return null;
 }
 
+/**
+ * Remove native provider sessions that are already represented by managed Jarvis sessions.
+ *
+ * A managed Jarvis session may be backed by a provider transcript with a different id
+ * (for example `session-123` -> `claude:<uuid>`). Listing both is a duplicate UX row:
+ * the managed session is the canonical writable row, while the native row is only the
+ * provider's backing file.
+ */
+export function filterUnboundNativeSessions<N extends { id: string }, M extends { id: string }>(
+  native: N[],
+  managed: M[],
+  boundNativeId: (managed: M) => string | null | undefined,
+): N[] {
+  const managedIds = new Set(managed.map((s) => s.id));
+  const bound = new Set<string>();
+  for (const s of managed) {
+    const id = boundNativeId(s);
+    if (id) bound.add(id);
+  }
+  return native.filter((n) => !managedIds.has(n.id) && !bound.has(n.id));
+}
+
 // ------------------------- files touched in a session -------------------------
 export interface TouchedFile { path: string; action: "read" | "edit" | "write"; adds: number; dels: number; }
 export interface DiffRow { t: " " | "+" | "-" | "@"; s: string; }

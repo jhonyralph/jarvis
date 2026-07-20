@@ -4,10 +4,23 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { updateApply, updateCheck, updateRollback } from "./update.js";
+import { runnerSelfUpdateDecision, updateApply, updateCheck, updateRollback } from "./update.js";
 
 const run = (cwd: string, command: string, args: string[] = []): string => String(execFileSync(command, args, { cwd, windowsHide: true, encoding: "utf8" })).trim();
 const git = (cwd: string, ...args: string[]): string => run(cwd, "git", args);
+
+test("runnerSelfUpdateDecision only auto-updates clean idle runners behind origin", () => {
+  const base = { supported: true, current: "aaa", clean: true, behind: 2, ahead: 0, latest: { sha: "bbb", subject: "v2", date: "2026-07-20T00:00:00Z" } };
+
+  assert.deepEqual(runnerSelfUpdateDecision(base), { update: true, reason: "2 commit(s) atrás de origin", targetCommit: "bbb" });
+  assert.equal(runnerSelfUpdateDecision(base, { busy: true }).update, false);
+  assert.equal(runnerSelfUpdateDecision(base, { updateInProgress: true }).update, false);
+  assert.equal(runnerSelfUpdateDecision({ ...base, clean: false }).update, false);
+  assert.equal(runnerSelfUpdateDecision({ ...base, ahead: 1 }).update, false);
+  assert.equal(runnerSelfUpdateDecision({ ...base, behind: 0 }).update, false);
+  assert.deepEqual(runnerSelfUpdateDecision({ ...base, latest: undefined }), { update: false, reason: "origin tem atualização, mas o commit alvo não foi resolvido", retryable: true });
+  assert.deepEqual(runnerSelfUpdateDecision({ ...base, error: "fetch falhou" }), { update: false, reason: "fetch falhou", retryable: true });
+});
 
 function writeFixture(root: string, verifyOk: boolean, marker: string): void {
   const pkg = { name: "jarvis-update-fixture", version: "1.0.0", private: true, scripts: { "update:verify": "node verify.mjs" } };
