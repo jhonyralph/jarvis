@@ -340,6 +340,70 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 }
 
+/** Codex reports TOKENS, never a price — so estimate a cost from configurable per-1M rates and the
+ *  "custo" column works for Codex exactly like Claude (both render as ~$, i.e. approximate). Override
+ *  the rates for your plan via env (JARVIS_CODEX_PRICE_IN/_CACHED/_OUT, USD per 1M tokens); the
+ *  defaults are GPT-5-class ballpark figures, NOT a quoted OpenAI price. `input_tokens` already
+ *  includes the cached prefix — it's the FULL turn input, which is exactly the context-window figure
+ *  the usage gauge needs (same role as Claude's fresh+cache_creation+cache_read sum). */
+export function codexUsage(u: any): AgentReply["usage"] | undefined {
+  if (!u) return undefined;
+  const input = u.input_tokens || 0, cached = u.cached_input_tokens || 0, output = u.output_tokens || 0;
+  if (!input && !output) return undefined;
+  const envNum = (v: string | undefined, d: number): number => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
+  const pIn = envNum(process.env.JARVIS_CODEX_PRICE_IN, 1.25);            // USD / 1M non-cached input
+  const pCached = envNum(process.env.JARVIS_CODEX_PRICE_CACHED, pIn / 10); // cached input bills cheaper
+  const pOut = envNum(process.env.JARVIS_CODEX_PRICE_OUT, 10);            // USD / 1M output (incl. reasoning)
+  const costUsd = (Math.max(0, input - cached) * pIn + cached * pCached + output * pOut) / 1e6;
+  return { costUsd, inputTokens: input || undefined, outputTokens: output || undefined };
+}
+
+/** Map ONE codex `--json` item to the StreamEvents Jarvis renders (SAME vocabulary Claude emits, so
+ *  the live flow is identical) plus, for an agent_message, the assistant text to accumulate. Pure +
+ *  exported so the mapping is unit-tested without spawning codex. `isCompleted` = the item came from
+ *  `item.completed` (vs `item.started`); reasoning/agent_message only surface once completed, tool
+ *  actions surface on first sighting (the caller dedupes started+completed by item id). Unknown item
+ *  types return no events (forward-compatible with future codex item kinds). */
+export function codexItemToEvents(it: any, isCompleted: boolean): { events: StreamEvent[]; text?: string } {
+  const type = it?.type; if (!type) return { events: [] };
+  if (type === "agent_message") {
+    if (!isCompleted) return { events: [] };
+    const txt = String(it.text ?? "").trim();
+    return txt ? { events: [{ kind: "text", text: txt }], text: txt } : { events: [] };
+  }
+  if (type === "reasoning") return isCompleted ? { events: [{ kind: "thinking" }] } : { events: [] };
+  if (type === "command_execution") {
+    const cmd = String(it.command ?? "");
+    return { events: [{ kind: "tool", name: "Bash", summary: "Bash: " + cmd.replace(/\s+/g, " ").slice(0, 90), detail: cmd.length > 90 ? cmd : undefined }] };
+  }
+  if (type === "file_change" || type === "patch" || type === "apply_patch") {
+    const changes = Array.isArray(it.changes) ? it.changes : Array.isArray(it.files) ? it.files : (it.path ? [{ path: it.path, kind: it.kind }] : []);
+    if (!changes.length) return { events: [{ kind: "tool", name: "Edit", summary: "Editando arquivos" }] };
+    return { events: changes.map((ch: any): StreamEvent => {
+      const p = String(ch?.path ?? ch?.file ?? "");
+      const write = /add|create|new/i.test(String(ch?.kind ?? ch?.type ?? ""));
+      return { kind: "tool", name: write ? "Write" : "Edit", summary: (write ? "Criando " : "Editando ") + (p.split(/[\\/]/).pop() || p || "arquivo"), path: p || undefined };
+    }) };
+  }
+  if (type === "mcp_tool_call" || type === "custom_tool_call" || type === "tool_call" || type === "function_call") {
+    const tn = String(it.name ?? it.tool ?? it.tool_name ?? "ferramenta");
+    return { events: [{ kind: "tool", name: tn, summary: "Ferramenta: " + tn.slice(0, 60) }] };
+  }
+  if (type === "web_search") return { events: [{ kind: "tool", name: "WebSearch", summary: "Pesquisando: " + String(it.query ?? "").slice(0, 60) }] };
+  return { events: [] }; // unknown item type — ignore
+}
+
+/** The user's own default model from ~/.codex/config.toml (`model = "…"`), if set. Only the TOP-LEVEL
+ *  key counts — a `model` under a `[profile.x]`/`[projects.y]` table belongs to that table, not the
+ *  default. Pass `tomlText` in tests; reads the real config when omitted. */
+export function codexConfigModel(tomlText?: string): string | undefined {
+  try {
+    const text = tomlText ?? readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
+    const topLevel = text.split(/^\s*\[/m)[0]; // everything before the first [table]
+    return /^\s*model\s*=\s*"([^"]+)"/m.exec(topLevel)?.[1];
+  } catch { return undefined; }
+}
+
 /** Native OpenAI Codex, headless (`codex exec`). Requires `codex login`. */
 export class CodexAdapter implements AgentAdapter {
   readonly name = "codex";
@@ -370,7 +434,7 @@ export class CodexAdapter implements AgentAdapter {
     const mapModels = (arr: any[]): ModelInfo[] =>
       (arr || [])
         .filter((m) => m.visibility === "list")
-        .map((m) => ({ id: m.slug, label: m.display_name, efforts: (m.supported_reasoning_levels || []).map((e: any) => e.effort), defaultEffort: m.default_reasoning_level }));
+        .map((m) => ({ id: m.slug, label: m.display_name, efforts: (m.supported_reasoning_levels || []).map((e: any) => e.effort), defaultEffort: m.default_reasoning_level, context: m.context_window || m.max_context_window }));
     let models: ModelInfo[] = [];
     try {
       const out = await run("codex", ["debug", "models"], homedir(), "");
@@ -380,15 +444,24 @@ export class CodexAdapter implements AgentAdapter {
         const cache = JSON.parse(readFileSync(join(homedir(), ".codex", "models_cache.json"), "utf8"));
         models = mapModels(cache.models);
       } catch {
+        // Pinned mirror of the live catalog (verified via `codex debug models`, jul/2026): the 5
+        // visibility:list models, with their real per-model efforts, default efforts and context.
         const eff = ["low", "medium", "high", "xhigh"];
         models = [
-          { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: [...eff, "max"], defaultEffort: "medium" },
-          { id: "gpt-5.6-terra", label: "GPT-5.6-Terra", efforts: [...eff, "max", "ultra"], defaultEffort: "medium" },
-          { id: "gpt-5.6-luna", label: "GPT-5.6-Luna", efforts: [...eff, "max"], defaultEffort: "medium" },
+          { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: [...eff, "max", "ultra"], defaultEffort: "low", context: 272000 },
+          { id: "gpt-5.6-terra", label: "GPT-5.6-Terra", efforts: [...eff, "max", "ultra"], defaultEffort: "medium", context: 272000 },
+          { id: "gpt-5.6-luna", label: "GPT-5.6-Luna", efforts: [...eff, "max"], defaultEffort: "medium", context: 272000 },
+          { id: "gpt-5.5", label: "GPT-5.5", efforts: eff, defaultEffort: "medium", context: 272000 },
+          { id: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark", efforts: eff, defaultEffort: "high", context: 128000 },
         ];
       }
     }
-    const caps: AgentCaps = { models, defaultModel: models[0]?.id };
+    // The UI always resolves a concrete model and passes `-m` — so THIS default is what actually
+    // runs. Honor the user's own `model = "…"` in ~/.codex/config.toml when it names a known model
+    // (same choice codex itself would make); otherwise the catalog's priority order (models[0]).
+    const cfgModel = codexConfigModel();
+    const defaultModel = (cfgModel && models.find((m) => m.id === cfgModel)) ? cfgModel : models[0]?.id;
+    const caps: AgentCaps = { models, defaultModel };
     this.capsCache = { at: Date.now(), caps };
     return caps;
   }
@@ -404,7 +477,7 @@ export class CodexAdapter implements AgentAdapter {
     }
   }
 
-  async send(sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
+  async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
     // Resume the bound thread if we have one — continuity, and dedupe (see nativeSessionId above).
     // `resume` has no --cd of its own: it continues in the thread's original cwd. Confirmed
     // directly: `codex exec resume <id> --json` correctly recalls prior turns in the same thread.
@@ -415,22 +488,51 @@ export class CodexAdapter implements AgentAdapter {
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
-    const out = await run("codex", args, cwd, text, opts?.signal);
+
+    // `codex exec --json` is NDJSON with the SAME lifecycle Claude streams, just different names:
+    //   thread.started{thread_id} · turn.started · item.started/item.completed{item:{type,…}} · turn.completed{usage}
+    // Mapping every activity item to the same StreamEvents Claude emits is what makes the live flow
+    // identical for both agents (reasoning→pensando, command_execution→Bash, file_change→Edit, …).
+    let threadId: string | undefined;
+    const finalParts: string[] = [];   // agent_message texts, in order (preâmbulo + resposta final)
+    let usage: AgentReply["usage"];
+    let streamError = "";
+    const seen = new Set<string>();     // item ids already surfaced — item.started + item.completed = ONE row
+
+    const emitItem = (it: any, isCompleted: boolean): void => {
+      const id = String(it?.id ?? "");
+      const isAgentMsg = it?.type === "agent_message";
+      if (!isAgentMsg && id && seen.has(id)) return;     // tool-ish item already surfaced (started + completed = one row)
+      const { events, text } = codexItemToEvents(it, isCompleted);
+      if (!events.length) return;
+      if (!isAgentMsg && id) seen.add(id);               // agent_message may legitimately repeat (preâmbulo + resposta)
+      if (text) finalParts.push(text);
+      for (const e of events) onEvent?.(e);
+    };
+
+    const handleLine = (line: string): void => {
+      let o: any; try { o = JSON.parse(line); } catch { return; }
+      switch (o.type) {
+        case "thread.started": if (o.thread_id) threadId = o.thread_id; break;
+        case "turn.completed": if (o.usage) usage = codexUsage(o.usage); break;
+        case "turn.failed": case "error": streamError = o.error?.message || o.message || streamError; break;
+        case "item.started": emitItem(o.item, false); break;
+        case "item.completed": emitItem(o.item, true); break;
+      }
+    };
+
+    // Streaming when the caller wants live activity; plain capture-then-parse for internal one-offs.
+    // Either way the SAME handleLine parses the SAME NDJSON — so thread id, final text and usage come
+    // out identically; onEvent is simply absent (a no-op) on the non-streaming path.
+    const out = onEvent
+      ? await runStream("codex", args, cwd, text, handleLine, opts?.signal)
+      : await run("codex", args, cwd, text, opts?.signal);
+    if (!onEvent) for (const line of out.split("\n")) { const t = line.trim(); if (t) handleLine(t); }
+
     this.started.add(sessionId);
-    // --json is NDJSON: pull the thread id (to bind/resume next turn) and the final agent message
-    // out of the event stream. Falls back to the raw trimmed output if parsing finds nothing (keeps
-    // working even if a future codex version changes the event shape).
-    let threadId: string | undefined, finalText = "";
-    for (const line of out.split("\n")) {
-      const t = line.trim();
-      if (!t) continue;
-      let o: any;
-      try { o = JSON.parse(t); } catch { continue; }
-      if (o.type === "thread.started" && o.thread_id) threadId = o.thread_id;
-      else if (o.type === "item.completed" && o.item?.type === "agent_message" && typeof o.item.text === "string") finalText = o.item.text;
-    }
+    if (streamError && !finalParts.length) throw new Error(streamError);
     if (threadId && threadId !== prev) { this.sessions.set(sessionId, threadId); this.saveSessions(); }
-    return { text: finalText || out.trim() };
+    return { text: finalParts.join("\n\n").trim() || out.trim(), usage };
   }
 
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {

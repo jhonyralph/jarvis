@@ -68,13 +68,16 @@ const tools: McpTool[] = [
   },
   {
     name: "jarvis_fleet_status",
-    description: "Painel da frota: máquinas online, turnos rodando, sessões, custo acumulado e uso do plano.",
+    description: "Uso & custo: máquinas online, turnos rodando, sessões, custo estimado por IA e uso do plano.",
     inputSchema: { type: "object", properties: {} },
     handler: async () => {
       await ready;
       const m = await request({ t: "fleet" }, "fleet");
       const T = m.totals || {}, mm = m.machines || [];
       let out = `Frota: ${mm.filter((x: any) => x.online).length}/${mm.length} online · ${T.active || 0} rodando · ${T.sessions || 0} sessões · ~$${(T.costTotal || 0).toFixed(2)} acumulado\n`;
+      const agName: Record<string, string> = { "claude-code": "Claude", codex: "Codex", aider: "Aider", outro: "Outros" };
+      const agLine = Object.entries(T.byAgent || {}).sort((a, b) => (b[1] as number) - (a[1] as number)).map(([a, v]) => `${agName[a] || a} ~$${(v as number).toFixed(2)}`).join(" · ");
+      if (agLine) out += `Custo por IA: ${agLine}\n`;
       out += mm.map((x: any) => `- ${x.label}: ${x.online ? "online" : "offline"}${x.active ? ` · ${x.active} rodando` : ""}${x.stale ? " · desatualizada" : ""}`).join("\n");
       if (m.plan?.fiveHour) out += `\nPlano 5h: ${Math.round(m.plan.fiveHour.pct)}%` + (m.plan.sevenDay ? ` · semanal: ${Math.round(m.plan.sevenDay.pct)}%` : "");
       return out;

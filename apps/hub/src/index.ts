@@ -471,6 +471,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
       else if (ev.kind === "tool" || ev.kind === "text" || ev.kind === "thinking") { const b = activityBuf.get(sid); if (b && b.length < 600) b.push(ev); }
       else if (ev.kind === "done" || ev.kind === "cancelled" || ev.kind === "error") {
         activityBuf.delete(sid);
+        if (ev.kind === "done") addCost(sid, ev.usage?.costUsd); // remote turns count toward session cost + fleet total (any agent)
         const t0 = remoteTurnStart.get(mkey);
         if (t0 && ev.kind !== "cancelled") metrics.record({ runnerId: rc.id, ms: Date.now() - t0, ok: ev.kind === "done", ts: Date.now() });
         remoteTurnStart.delete(mkey);
@@ -2056,14 +2057,28 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // --- fleet dashboard: a read-only snapshot of every machine + totals + plan + parse health ---
     if (msg.t === "fleet") {
       const machines = machineList(ws).map((m: any) => ({ ...m, active: m.local ? activeRuns.size : (runnerActive.get(m.id)?.size || 0) }));
-      let costTotal = 0; for (const v of sessionCost.values()) costTotal += v.cost || 0;
+      // Custo por IA e por sessão (não só o total): a cobrança acumula por sessão, e cada sessão tem
+      // um agente — some por agente para o gráfico "por IA" e ranqueie as sessões mais caras.
+      let costTotal = 0;
+      const byAgent: Record<string, number> = {};
+      const perSession: Array<{ id: string; cost: number; agent: string; title: string }> = [];
+      for (const [sid, v] of sessionCost) {
+        const cost = v.cost || 0; if (!cost) continue;
+        costTotal += cost;
+        const agent = sessionAgent(sid) || "outro";
+        byAgent[agent] = (byAgent[agent] || 0) + cost;
+        const title = sid === WAKE_SESSION ? "Voz (Jarvis)" : (store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : sid));
+        perSession.push({ id: sid, cost, agent, title });
+      }
+      perSession.sort((a, b) => b.cost - a.cost);
+      const topSessions = perSession.slice(0, 6);
       // custo atribuído à VOZ (a sessão de voz + o staging oculto usam o WAKE_SESSION) e sua fatia do total.
       const voiceCost = costOf(WAKE_SESSION);
       const voicePct = costTotal > 0 ? Math.round((voiceCost / costTotal) * 100) : 0;
       let remoteActive = 0; for (const s of runnerActive.values()) remoteActive += s.size;
       let plan = null; try { const a = agents.get("claude-code"); plan = a.usage ? await a.usage() : null; } catch { plan = null; }
       const runnerMetrics = metrics.byRunner().filter((r) => canUseRunner(ws, r.runnerId)); // don't leak ids of machines they can't see
-      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, voiceCost, voicePct }, metrics: { overall: metrics.overall(), runners: runnerMetrics }, parseHealth: nativeParseHealth(), plan });
+      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, voiceCost, voicePct, byAgent, topSessions }, metrics: { overall: metrics.overall(), runners: runnerMetrics }, parseHealth: nativeParseHealth(), plan });
       return;
     }
     // --- semantic memory: search by MEANING (local embeddings) + owner reindex ---
