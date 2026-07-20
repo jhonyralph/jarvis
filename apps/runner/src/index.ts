@@ -252,6 +252,15 @@ function Write-Result([bool]$Ok, [bool]$RolledBack, [string]$Current) {
 }
 function Start-Runner() {
   try {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if ($task.State -eq "Running") {
+      Add-Log ("scheduled task ja esta em execucao: " + $TaskName)
+      return
+    }
+  } catch {
+    Add-Log ("consulta da scheduled task falhou; tentando iniciar: " + $_)
+  }
+  try {
     Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
     Add-Log ("scheduled task iniciado: " + $TaskName)
   } catch {
@@ -309,8 +318,8 @@ try {
   try { $current = Git-Out @("rev-parse", "--short", "HEAD") } catch { $current = "" }
   Write-Result $false $rolledBack $current
 } finally {
-  Start-Runner
   try { Remove-Item -LiteralPath $LockFile -Force -ErrorAction SilentlyContinue } catch {}
+  Start-Runner
   try { if ($PSCommandPath) { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } } catch {}
 }
 `;
