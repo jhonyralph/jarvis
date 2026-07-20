@@ -193,6 +193,7 @@
     #imgModal .imgx { position:absolute; top:-12px; right:-12px; width:34px; height:34px; border-radius:50%; background:#000c; color:#fff; border:1px solid var(--line); cursor:pointer; font-size:15px; display:flex; align-items:center; justify-content:center; }
     #imgModal .imgx:hover { background:#ef4444; }
     .modal label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--mut); }
+    .modal textarea { width:100%; resize:vertical; min-height:92px; background:#0f141b; color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:9px 10px; font:12.5px ui-monospace,Menlo,Consolas,monospace; }
     .modal label.row { flex-direction:row; align-items:center; gap:8px; }
     .modal .row { display:flex; gap:8px; } .modal .sec { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin-top:6px; }
     /* checkbox -> toggle switch (visual mais limpo nas Configurações) */
@@ -208,7 +209,9 @@
     #queueRow.hidden { display:none; }
     /* a fila pode crescer: cabeçalho fixo, itens rolam. Limite pensado pra mobile (vh) e desktop (px). */
     #queueRow .qlist { display:flex; flex-direction:column; gap:5px; max-height:min(42vh,280px); overflow-y:auto; padding-right:2px; }
-    #queueRow .qhdr { display:flex; align-items:center; justify-content:space-between; font-size:11.5px; color:var(--mut); }
+    #queueRow .qhdr { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11.5px; color:var(--mut); }
+    #queueRow .qacts { display:flex; align-items:center; gap:7px; flex:none; }
+    #queueRow .qrun { background:#22c55e; color:#04210f; border:0; cursor:pointer; font-size:11.5px; padding:2px 7px; border-radius:7px; }
     #queueRow .qclr { background:none; border:0; color:#f0883e; cursor:pointer; font-size:11.5px; padding:2px 4px; }
     #queueRow .qitem { background:#ffffff0d; border:1px dashed var(--line); border-radius:9px; padding:6px 9px; }
     #queueRow .qhead { display:flex; align-items:center; gap:6px; }
@@ -753,6 +756,25 @@
     <label><span data-i18n="lblModel">Modelo padrão</span> <select id="setModel"></select></label>
     <label><span data-i18n="lblEffort">Esforço padrão</span> <select id="setEffort"></select></label>
     <label class="row"><input type="checkbox" id="setSlash" checked> <span data-i18n="lblSlash">Autocomplete e sugestões ao digitar “/”, “@”, “#” e “!”</span></label>
+    <div id="policySettings" class="hidden">
+      <div class="sec">Políticas adaptativas</div>
+      <div id="policyNote" class="mut" style="font-size:12px;margin-bottom:6px">Carregando política…</div>
+      <div class="routine-grid">
+        <label>Modo de autonomia<select id="setPolicyMode"><option value="manual">Manual</option><option value="assisted">Assistido</option><option value="controlled_autonomy">Autonomia controlada</option></select></label>
+        <label>Memória<select id="setPolicyMemoryTarget"><option value="jarvis_only">Só no Jarvis</option><option value="repo_allowed">Repo permitido</option><option value="repo_required">Repo obrigatório</option><option value="disabled">Desabilitada</option></select></label>
+        <label>Risco exige aprovação acima de<select id="setPolicyRisk"><option value="low">Baixo</option><option value="medium">Médio</option><option value="high">Alto</option></select></label>
+        <label>Estimativa desconhecida<select id="setPolicyUnknown"><option value="ask">Perguntar</option><option value="reject">Recusar</option><option value="allow">Permitir</option></select></label>
+      </div>
+      <div class="routine-grid">
+        <label>Custo máximo USD <span class="mut">opcional</span><input id="setPolicyCost" type="number" min="0" step="0.01" placeholder="sem limite"></label>
+        <label>Tokens máximos <span class="mut">opcional</span><input id="setPolicyTokens" type="number" min="0" step="1000" placeholder="sem limite"></label>
+      </div>
+      <label class="row"><input type="checkbox" id="setPolicyRepoWrites"> Permitir escrita no repo quando a política permitir</label>
+      <label class="row"><input type="checkbox" id="setPolicyDiff" checked> Exigir preview/diff antes de escrever no repo</label>
+      <label class="row"><input type="checkbox" id="setPolicyAutoplay"> Permitir rodar fila automaticamente</label>
+      <label class="row"><input type="checkbox" id="setPolicyBackground"> Permitir turnos em background</label>
+      <label>Overrides avançados por projeto/subescopo/sessão/tarefa <span class="mut">JSON</span><textarea id="setPolicyOverrides" spellcheck="false" rows="5" placeholder='{"projects":[],"sessions":[],"tasks":[]}'></textarea></label>
+    </div>
     <div class="sec" data-i18n="secVoice">Voz</div>
     <div class="mut">Configuração independente do chat para comandos e respostas iniciados por voz.</div>
     <div class="routine-grid">

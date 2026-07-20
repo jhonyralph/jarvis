@@ -1,0 +1,77 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  defaultAdaptivePolicy,
+  defaultAdaptivePolicyDocument,
+  loadAdaptivePolicyDocument,
+  normalizeAdaptivePolicyDocument,
+  resolveAdaptivePolicy,
+  saveAdaptivePolicyDocument,
+  type AdaptivePolicy,
+} from "./adaptive-policy.js";
+
+function policy(over: Partial<AdaptivePolicy>): AdaptivePolicy {
+  return { ...defaultAdaptivePolicy(1), id: "p", label: "P", ...over, memory: { ...defaultAdaptivePolicy(1).memory, ...(over.memory || {}) }, autonomy: { ...defaultAdaptivePolicy(1).autonomy, ...(over.autonomy || {}) }, budget: { ...defaultAdaptivePolicy(1).budget, ...(over.budget || {}) }, write: { ...defaultAdaptivePolicy(1).write, ...(over.write || {}) } };
+}
+
+test("default policy is conservative and asks on unknown estimates", () => {
+  const doc = defaultAdaptivePolicyDocument(1);
+  const resolved = resolveAdaptivePolicy(doc, { cwd: "C:/unknown" });
+  assert.equal(resolved.policy.memory.writeTarget, "jarvis_only");
+  assert.equal(resolved.policy.write.allowRepoWrites, false);
+  assert.equal(resolved.policy.budget.unknownEstimate, "ask");
+  assert.deepEqual(resolved.chain.map((x) => x.scope), ["global"]);
+});
+
+test("monorepo subscope with the longest cwd match wins over project", () => {
+  const doc = normalizeAdaptivePolicyDocument({
+    global: policy({ id: "global", scope: "global", label: "Global" }),
+    projects: [
+      policy({ id: "repo", scope: "project", label: "Repo", projectRoot: "C:/repo/jarvis", autonomy: { mode: "assisted" } as any }),
+      policy({ id: "core", scope: "subscope", label: "Core", cwdPattern: "C:/repo/jarvis/packages/core", autonomy: { mode: "manual" } as any }),
+    ],
+  }, 1);
+  const resolved = resolveAdaptivePolicy(doc, { cwd: "c:\\repo\\jarvis\\packages\\core\\src" });
+  assert.deepEqual(resolved.chain.map((x) => x.id), ["global", "repo", "core"]);
+  assert.equal(resolved.policy.autonomy.mode, "manual");
+});
+
+test("more specific policies cannot relax repo writes or approval strictness", () => {
+  const doc = normalizeAdaptivePolicyDocument({
+    global: policy({ id: "global", scope: "global", label: "Global", write: { allowRepoWrites: false, requireDiffPreview: true }, autonomy: { requireApprovalAboveRisk: "medium" } as any }),
+    projects: [policy({ id: "repo", scope: "project", label: "Repo", projectRoot: "/repo", write: { allowRepoWrites: true, requireDiffPreview: false }, autonomy: { requireApprovalAboveRisk: "high" } as any })],
+  }, 1);
+  const resolved = resolveAdaptivePolicy(doc, { cwd: "/repo/app" });
+  assert.equal(resolved.policy.write.allowRepoWrites, false);
+  assert.equal(resolved.policy.write.requireDiffPreview, true);
+  assert.equal(resolved.policy.autonomy.requireApprovalAboveRisk, "medium");
+});
+
+test("session and task overrides are applied after project scopes", () => {
+  const doc = normalizeAdaptivePolicyDocument({
+    global: policy({ id: "global", scope: "global", label: "Global", budget: { unknownEstimate: "allow" } as any }),
+    projects: [policy({ id: "repo", scope: "project", label: "Repo", projectRoot: "/repo", budget: { unknownEstimate: "ask" } as any })],
+    sessions: [policy({ id: "session", scope: "session", label: "Session", sessionId: "s1", budget: { maxTokens: 1000, unknownEstimate: "ask" } })],
+    tasks: [policy({ id: "task", scope: "task", label: "Task", taskId: "t1", budget: { maxTokens: 500, unknownEstimate: "reject" } as any })],
+  }, 1);
+  const resolved = resolveAdaptivePolicy(doc, { cwd: "/repo/app", sessionId: "s1", taskId: "t1" });
+  assert.deepEqual(resolved.chain.map((x) => x.scope), ["global", "project", "session", "task"]);
+  assert.equal(resolved.policy.budget.maxTokens, 500);
+  assert.equal(resolved.policy.budget.unknownEstimate, "reject");
+});
+
+test("corrupt policy file falls back to safe defaults and can be saved atomically", () => {
+  const d = mkdtempSync(join(tmpdir(), "jarvis-policy-"));
+  const f = join(d, "policies.json");
+  try {
+    writeFileSync(f, "{bad", "utf8");
+    const loaded = loadAdaptivePolicyDocument(f, 1);
+    assert.equal(loaded.global.id, "global");
+    loaded.global.label = "Edited";
+    saveAdaptivePolicyDocument(f, loaded);
+    assert.equal(loadAdaptivePolicyDocument(f, 1).global.label, "Edited");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

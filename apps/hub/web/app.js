@@ -5,7 +5,7 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -1032,7 +1032,7 @@
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
-      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); E.executionSettings.classList.toggle('hidden',!isOwner); if(isOwner){ fillRoutineMachines(); validateRoutineCron(); tx({t:'routines'}); tx({t:'execution_cfg'}); }
+      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); E.executionSettings.classList.toggle('hidden',!isOwner); if(E.policySettings)E.policySettings.classList.toggle('hidden',!isOwner); if(isOwner){ fillRoutineMachines(); validateRoutineCron(); tx({t:'routines'}); tx({t:'execution_cfg'}); tx({t:'policy_state',sessionId:currentSession}); }
       tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang; };
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value), ms=selectableModels(c), model=(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.setModel,modelControlOf(c)==='per_turn'?ms:[],model); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
@@ -1084,6 +1084,19 @@
     E.setSumAgent.onchange=()=>{ const c=localCapsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,c.defaultModel); const m=(c.models||[]).find(x=>x.id===E.setSumModel.value); fillSel(E.setSumEffort,(m&&m.efforts)||[],m&&m.defaultEffort); saveSum(); };
     E.setSumModel.onchange=()=>{ fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); saveSum(); };
     E.setSumEffort.onchange=saveSum;
+    let adaptivePolicyDoc=null;
+    function renderAdaptivePolicy(m){ adaptivePolicyDoc=m.doc||adaptivePolicyDoc||{}; const g=adaptivePolicyDoc.global||{}, mem=g.memory||{}, au=g.autonomy||{}, bu=g.budget||{}, wr=g.write||{}, eff=(m.effective&&m.effective.policy)||g, chain=(m.effective&&m.effective.chain)||[];
+      E.setPolicyMode.value=au.mode||'assisted'; E.setPolicyMemoryTarget.value=mem.writeTarget||'jarvis_only'; E.setPolicyRisk.value=au.requireApprovalAboveRisk||'medium'; E.setPolicyUnknown.value=bu.unknownEstimate||'ask';
+      E.setPolicyCost.value=bu.maxCostUsd==null?'':bu.maxCostUsd; E.setPolicyTokens.value=bu.maxTokens==null?'':bu.maxTokens;
+      E.setPolicyRepoWrites.checked=!!(wr.allowRepoWrites); E.setPolicyDiff.checked=wr.requireDiffPreview!==false; E.setPolicyAutoplay.checked=!!au.allowQueueAutoplay; E.setPolicyBackground.checked=!!au.allowBackgroundTurns;
+      E.setPolicyOverrides.value=JSON.stringify({projects:adaptivePolicyDoc.projects||[],sessions:adaptivePolicyDoc.sessions||[],tasks:adaptivePolicyDoc.tasks||[]},null,2);
+      const effBits=[eff.scope||'global',eff.label||'Global'].filter(Boolean).join(' · '), chainTxt=chain.length?chain.map(x=>x.label||x.id).join(' > '):'Global';
+      E.policyNote.textContent=(m.saved?'✓ Política salva. ':'')+'Efetiva agora: '+effBits+' · cadeia: '+chainTxt; }
+    function collectAdaptivePolicy(){ if(!adaptivePolicyDoc)return null; let extra; try{ extra=JSON.parse(E.setPolicyOverrides.value||'{}'); }catch(e){ toast('JSON de políticas avançadas inválido.'); E.setPolicyOverrides.focus(); return null; }
+      const global=Object.assign({},adaptivePolicyDoc.global||{}); global.memory=Object.assign({},global.memory||{}, {writeTarget:E.setPolicyMemoryTarget.value}); global.autonomy=Object.assign({},global.autonomy||{}, {mode:E.setPolicyMode.value,requireApprovalAboveRisk:E.setPolicyRisk.value,allowQueueAutoplay:E.setPolicyAutoplay.checked,allowBackgroundTurns:E.setPolicyBackground.checked}); global.budget=Object.assign({},global.budget||{}, {unknownEstimate:E.setPolicyUnknown.value}); global.write=Object.assign({},global.write||{}, {allowRepoWrites:E.setPolicyRepoWrites.checked,requireDiffPreview:E.setPolicyDiff.checked}); global.updatedAt=Date.now();
+      if(E.setPolicyCost.value.trim()==='') delete global.budget.maxCostUsd; else global.budget.maxCostUsd=Number(E.setPolicyCost.value);
+      if(E.setPolicyTokens.value.trim()==='') delete global.budget.maxTokens; else global.budget.maxTokens=Number(E.setPolicyTokens.value);
+      return {schemaVersion:1,global,projects:Array.isArray(extra.projects)?extra.projects:[],sessions:Array.isArray(extra.sessions)?extra.sessions:[],tasks:Array.isArray(extra.tasks)?extra.tasks:[]}; }
     // ---- atualização do sistema (git) ----
     let updState=null;
     // Uma maquina responde quando responde (pode estar ocupada, ou reiniciando). Guardamos por
@@ -1117,8 +1130,9 @@
     E.setEnroll.onclick=()=>enrollFlow();
     E.setClose.onclick=()=>{
       const isOwner=authUser&&authUser.role==='owner';
-      if(isOwner){ const numeric=[E.setExecRetention,E.setExecMaxEvents,E.setExecConcurrency,E.setExecDepth]; const invalid=numeric.find(x=>!x.checkValidity()); if(invalid){ invalid.reportValidity(); return; }
+      if(isOwner){ const numeric=[E.setExecRetention,E.setExecMaxEvents,E.setExecConcurrency,E.setExecDepth]; if(adaptivePolicyDoc) numeric.push(E.setPolicyCost,E.setPolicyTokens); const invalid=numeric.find(x=>!x.checkValidity()); if(invalid){ invalid.reportValidity(); return; }
         tx({t:'set_execution_cfg',enabled:E.setExecEnabled.checked,retentionDays:+E.setExecRetention.value,maxEvents:+E.setExecMaxEvents.value,maxConcurrency:+E.setExecConcurrency.value,maxDepth:+E.setExecDepth.value,defaultWrite:E.setExecDefaultWrite.checked,worktreeRoot:(E.setExecWorktree.value||'').trim()}); }
+      if(isOwner&&adaptivePolicyDoc){ const doc=collectAdaptivePolicy(); if(!doc)return; tx({t:'set_adaptive_policy',doc,sessionId:currentSession}); }
       if(E.setGate.checked && !speakers.length){ addErr('Cadastre sua voz antes de exigir voz cadastrada (senão o modo voz fica bloqueado).'); E.setGate.checked=false; }
       Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
       continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked,bioLock:!!(E.setBioLock&&E.setBioLock.checked),slashMenu:!E.setSlash||E.setSlash.checked});
@@ -1346,6 +1360,7 @@
         else if(m.t==='runner_token'){ showRunnerCmd(m.token,m.label); }
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
+        else if(m.t==='adaptive_policy'){ renderAdaptivePolicy(m); }
         else if(m.t==='execution_cfg'){ const c=m.cfg||{}; E.setExecEnabled.checked=c.enabled!==false; E.setExecRetention.value=c.retentionDays||30; E.setExecMaxEvents.value=c.maxEvents||5000; E.setExecConcurrency.value=c.maxConcurrency||6; E.setExecDepth.value=c.maxDepth||3; E.setExecDefaultWrite.checked=!!c.defaultWrite; E.setExecWorktree.value=c.worktreeRoot||'';
           E.execCfgNote.textContent=m.saved?(m.restartRequired?'✓ Política salva. Reinicie o Hub para aplicar: '+(m.restartFields||[]).join(', ')+'.':'✓ Política salva e aplicada para novas delegações.'):'Ativação, retenção, limite do diário e raiz de worktrees exigem reinício; concorrência, profundidade e escrita padrão valem para novas delegações.'; }
         else if(m.t==='voice_cfg'){ renderVoiceCfg(m.cfg||{}); }
@@ -1637,8 +1652,11 @@
     function onTurnEnd(sid){ if(!sid)return; justSent.delete(sid); delete stopping[sid]; if(sid===currentSession) updateStopStatus(); refreshComposer(); }
     function clearQueue(){ if(currentSession){ queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); } refreshComposer(); }
     function renderQueue(){ if(!E.queueRow)return; const q=queueOf(currentSession); E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!q.length); if(!q.length)return;
-      const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — enviadas juntas quando terminar'; hdr.appendChild(s);
-      const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[currentSession]=[]; renderQueue(); tx({t:'clearqueue',sessionId:currentSession}); }; hdr.appendChild(clr); E.queueRow.appendChild(hdr);
+      const canRun=!!currentSession&&!busy(currentSession);
+      const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — '+(canRun?'prontas para rodar':'enviadas juntas quando terminar'); hdr.appendChild(s);
+      const acts=document.createElement('div'); acts.className='qacts';
+      if(canRun){ const run=document.createElement('button'); run.type='button'; run.className='qrun'; run.textContent='▶ rodar fila'; run.onclick=()=>{ tx({t:'flushqueue',sessionId:currentSession}); }; acts.appendChild(run); }
+      const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[currentSession]=[]; renderQueue(); tx({t:'clearqueue',sessionId:currentSession}); }; acts.appendChild(clr); hdr.appendChild(acts); E.queueRow.appendChild(hdr);
       const list=document.createElement('div'); list.className='qlist';
       q.forEach((it0,i)=>{ const it=document.createElement('div'); it.className='qitem';
         const atts=it0.atts||[]; const imgs=atts.filter(a=>a.image).length, files=atts.length-imgs;

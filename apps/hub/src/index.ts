@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -96,6 +96,13 @@ const LOCAL_EXECUTION_DIR = join(JARVIS_DIR, "executions");
 const MIRROR_EXECUTION_DIR = join(JARVIS_DIR, "hub", "executions");
 const EXECUTION_UI_FILE = join(JARVIS_DIR, "hub", "execution-ui.json");
 const EXECUTION_CFG_FILE = join(JARVIS_DIR, "execution-config.json");
+const ADAPTIVE_POLICY_FILE = join(JARVIS_DIR, "policies.json");
+let adaptivePolicyDoc: AdaptivePolicyDocument = loadAdaptivePolicyDocument(ADAPTIVE_POLICY_FILE);
+function saveAdaptivePolicy(): void { saveAdaptivePolicyDocument(ADAPTIVE_POLICY_FILE, adaptivePolicyDoc); }
+function effectivePolicyFor(sessionId?: string): ReturnType<typeof resolveAdaptivePolicy> {
+  const cwd = sessionId ? sessionCwd(sessionId) : undefined;
+  return resolveAdaptivePolicy(adaptivePolicyDoc, { sessionId, cwd });
+}
 interface ExecutionRuntimeConfig { enabled: boolean; retentionDays: number; maxEvents: number; maxConcurrency: number; maxDepth: number; defaultWrite: boolean; worktreeRoot: string; }
 const executionCfg: ExecutionRuntimeConfig = (() => {
   const defaults: ExecutionRuntimeConfig = {
@@ -514,8 +521,8 @@ const LOCAL_OPS = new Set(["sendTo", "dropLast", "search", "memory_search", "voi
 // Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
-const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "cancel", "summarize"]);
-const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "execution_delegate", "summarize", "digest", "routine_run"]);
+const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize"]);
+const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "summarize", "digest", "routine_run"]);
 /** Client sockets (not runner sockets) currently viewing a given machine. */
 function clientsOn(runnerId: string): WebSocket[] {
   const out: WebSocket[] = [];
@@ -2872,6 +2879,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       Object.assign(executionCfg, next); saveExecutionCfg();
       send(ws, { t: "execution_cfg", cfg: executionCfg, saved: true, restartRequired: restartFields.length > 0, restartFields }); return;
     }
+    if (msg.t === "policy_state") {
+      if (!requireOwner(ws)) return;
+      const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+      send(ws, { t: "adaptive_policy", doc: adaptivePolicyDoc, effective: effectivePolicyFor(sessionId), sessionId });
+      return;
+    }
+    if (msg.t === "set_adaptive_policy") {
+      if (!requireOwner(ws)) return;
+      adaptivePolicyDoc = normalizeAdaptivePolicyDocument(msg.doc);
+      saveAdaptivePolicy();
+      const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+      send(ws, { t: "adaptive_policy", doc: adaptivePolicyDoc, effective: effectivePolicyFor(sessionId), sessionId, saved: true });
+      return;
+    }
     // --- self-update (git) ---
     if (msg.t === "update_check") { await refreshUpdate(false); send(ws, { t: "update_status", status: updateStatus }); return; }
     if (msg.t === "update_apply") {
@@ -2987,7 +3008,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       return;
     }
 
-    // Fila dona no hub: enfileirar / remover um / limpar. Sempre re-transmite a fila a todos que
+    // Fila dona no hub: enfileirar / remover um / limpar / rodar agora. Sempre re-transmite a fila a todos que
     // veem a sessão (sincroniza entre dispositivos). O flush em si roda no fim do turno (flushQueue).
     if (msg.t === "enqueue" && typeof msg.sessionId === "string" && (typeof msg.text === "string" || Array.isArray(msg.attachments))) {
       if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
@@ -3000,6 +3021,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       broadcastQueue(msg.sessionId); saveQueues(); return;
     }
     if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); saveQueues(); return; }
+    if (msg.t === "flushqueue" && typeof msg.sessionId === "string") { if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } void flushQueue(msg.sessionId); return; }
     // "voltar" mensagem cancelada: tira a última mensagem do usuário do store (sessão do hub) pra
     // ela não reaparecer no reload. Nativa não dá (o transcript é do claude) — some só na tela.
     if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; } if (!isNativeId(msg.sessionId)) { store.dropLastUser(msg.sessionId); pushSessions(); } return; }

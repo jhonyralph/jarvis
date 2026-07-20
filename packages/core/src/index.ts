@@ -30,3 +30,4 @@ export * from "./execution-worktree.js";
 export * from "./execution-redact.js";
 export * from "./managed-execution.js";
 export * from "./execution-usage.js";
+export * from "./adaptive-policy.js";
