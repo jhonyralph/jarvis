@@ -106,6 +106,13 @@ export interface AdaptivePolicyExplanation {
   controls: AdaptiveControlStatus[];
 }
 
+export interface AdaptiveAutonomyPreset {
+  mode: AutonomyMode;
+  allowQueueAutoplay: boolean;
+  allowBackgroundTurns: boolean;
+  requireApprovalAboveRisk: RiskLevel;
+}
+
 export interface AdaptiveApprovalRequest {
   schemaVersion: 1;
   id: string;
@@ -158,6 +165,16 @@ export function defaultAdaptivePolicy(now = Date.now()): AdaptivePolicy {
 
 export function defaultAdaptivePolicyDocument(now = Date.now()): AdaptivePolicyDocument {
   return { schemaVersion: 1, global: defaultAdaptivePolicy(now), projects: [], sessions: [], tasks: [] };
+}
+
+export function adaptiveAutonomyPreset(mode: AutonomyMode): AdaptiveAutonomyPreset {
+  if (mode === "manual") return { mode, allowQueueAutoplay: false, allowBackgroundTurns: false, requireApprovalAboveRisk: "low" };
+  if (mode === "controlled_autonomy") return { mode, allowQueueAutoplay: true, allowBackgroundTurns: true, requireApprovalAboveRisk: "high" };
+  return { mode: "assisted", allowQueueAutoplay: false, allowBackgroundTurns: false, requireApprovalAboveRisk: "medium" };
+}
+
+export function applyAdaptiveAutonomyPreset(policy: AdaptivePolicy, mode: AutonomyMode): AdaptivePolicy {
+  return { ...policy, autonomy: adaptiveAutonomyPreset(mode), updatedAt: Date.now() };
 }
 
 function stringValue(value: unknown, fallback: string, max = 300): string {

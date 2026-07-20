@@ -1100,6 +1100,9 @@
         acts.appendChild(no); acts.appendChild(yes); row.appendChild(acts); adaptiveApprovalEl.appendChild(row);
       });
     }
+    function applyPolicyModePreset(mode){ const p=mode==='manual'?{risk:'low',auto:false,bg:false}:mode==='controlled_autonomy'?{risk:'high',auto:true,bg:true}:{risk:'medium',auto:false,bg:false};
+      E.setPolicyRisk.value=p.risk; E.setPolicyAutoplay.checked=p.auto; E.setPolicyBackground.checked=p.bg; }
+    if(E.setPolicyMode) E.setPolicyMode.onchange=()=>applyPolicyModePreset(E.setPolicyMode.value);
     function renderAdaptivePolicy(m){ adaptivePolicyDoc=m.doc||adaptivePolicyDoc||{}; const g=adaptivePolicyDoc.global||{}, mem=g.memory||{}, au=g.autonomy||{}, bu=g.budget||{}, wr=g.write||{}, eff=(m.effective&&m.effective.policy)||g, chain=(m.effective&&m.effective.chain)||[], exp=(m.effective&&m.effective.explanation)||{};
       E.setPolicyMode.value=au.mode||'assisted'; E.setPolicyMemoryTarget.value=mem.writeTarget||'jarvis_only'; E.setPolicyRisk.value=au.requireApprovalAboveRisk||'medium'; E.setPolicyUnknown.value=bu.unknownEstimate||'ask';
       E.setPolicyCost.value=bu.maxCostUsd==null?'':bu.maxCostUsd; E.setPolicyTokens.value=bu.maxTokens==null?'':bu.maxTokens;

@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  adaptiveAutonomyPreset,
+  applyAdaptiveAutonomyPreset,
   defaultAdaptivePolicy,
   defaultAdaptivePolicyDocument,
   createAdaptiveApprovalRequest,
@@ -192,4 +194,15 @@ test("adaptive policy scope upsert replaces project keys and removes scoped over
   assert.equal(resolveAdaptivePolicy(doc, { cwd: "C:/Work/Jarvis", sessionId: "s1" }).policy.budget.maxTokens, 500);
   doc = removeAdaptivePolicyScope(doc, "session", "s-policy", 40);
   assert.equal(resolveAdaptivePolicy(doc, { cwd: "C:/Work/Jarvis", sessionId: "s1" }).policy.budget.maxTokens, undefined);
+});
+
+test("adaptive autonomy presets map modes to coherent controls", () => {
+  assert.deepEqual(adaptiveAutonomyPreset("manual"), { mode: "manual", allowQueueAutoplay: false, allowBackgroundTurns: false, requireApprovalAboveRisk: "low" });
+  assert.deepEqual(adaptiveAutonomyPreset("assisted"), { mode: "assisted", allowQueueAutoplay: false, allowBackgroundTurns: false, requireApprovalAboveRisk: "medium" });
+  assert.deepEqual(adaptiveAutonomyPreset("controlled_autonomy"), { mode: "controlled_autonomy", allowQueueAutoplay: true, allowBackgroundTurns: true, requireApprovalAboveRisk: "high" });
+
+  const applied = applyAdaptiveAutonomyPreset(policy({ autonomy: { mode: "manual", allowQueueAutoplay: false } as any }), "controlled_autonomy");
+  assert.equal(applied.autonomy.mode, "controlled_autonomy");
+  assert.equal(applied.autonomy.allowQueueAutoplay, true);
+  assert.equal(applied.autonomy.allowBackgroundTurns, true);
 });
