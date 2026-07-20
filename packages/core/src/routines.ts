@@ -25,6 +25,7 @@ export interface Routine {
   agent?: string;
   model?: string;
   effort?: string;
+  auto?: { agent?: boolean; model?: boolean; effort?: boolean };
   cwd?: string;
   /** also speak the result (TTS) in addition to the push notification */
   speak?: boolean;
@@ -62,7 +63,7 @@ export function scheduleLabel(r: Routine): string {
 
 export interface NewRoutine {
   name: string; prompt: string; hour: number; minute: number;
-  cron?: string; days?: number[]; runnerId?: string; agent?: string; model?: string; effort?: string; cwd?: string; speak?: boolean; enabled?: boolean;
+  cron?: string; days?: number[]; runnerId?: string; agent?: string; model?: string; effort?: string; auto?: { agent?: boolean; model?: boolean; effort?: boolean }; cwd?: string; speak?: boolean; enabled?: boolean;
 }
 
 const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
@@ -150,7 +151,7 @@ export class RoutineStore {
       name: n.name || "Rotina", prompt: n.prompt || "",
       hour: clamp(n.hour, 0, 23), minute: clamp(n.minute, 0, 59), cron: cron?.expression,
       days: Array.isArray(n.days) ? n.days.filter((d) => d >= 0 && d <= 6) : undefined,
-      runnerId: n.runnerId, agent: n.agent, model: n.model, effort: n.effort, cwd: n.cwd, speak: !!n.speak,
+      runnerId: n.runnerId, agent: n.agent, model: n.model, effort: n.effort, auto: n.auto ? { ...n.auto } : undefined, cwd: n.cwd, speak: !!n.speak,
       enabled: n.enabled !== false, createdAt: Date.now(),
     };
     this.data.push(r); this.flush();
@@ -168,6 +169,7 @@ export class RoutineStore {
     if (patch.cron !== undefined) r.cron = cron?.expression;
     if (patch.days !== undefined) r.days = Array.isArray(patch.days) ? patch.days.filter((d) => d >= 0 && d <= 6) : undefined;
     for (const k of ["runnerId", "agent", "model", "effort", "cwd"] as const) if (patch[k] !== undefined) (r as any)[k] = patch[k];
+    if (patch.auto !== undefined) r.auto = { ...patch.auto };
     if (patch.speak !== undefined) r.speak = !!patch.speak;
     if (patch.enabled !== undefined) r.enabled = !!patch.enabled;
     this.flush();

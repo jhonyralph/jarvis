@@ -21,6 +21,7 @@ export interface StoredMessage {
     costKind?: "billed" | "estimated_api_equivalent" | "subscription_included" | "tokens_only" | "unavailable";
     source?: string;
     model?: string;
+    effort?: string;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
@@ -47,6 +48,9 @@ interface SessionData {
   createdAt: number;
   updatedAt: number;
   messages: StoredMessage[];
+  hidden?: boolean;
+  rootExecutionId?: string;
+  executionId?: string;
 }
 
 /** Honors JARVIS_HOME (matches auth.ts) so a sandboxed runner / test run can relocate all state. */
@@ -73,12 +77,15 @@ export class Store {
         createdAt: s.createdAt ?? Date.now(),
         updatedAt: s.updatedAt ?? Date.now(),
         messages: s.messages ?? [],
+        hidden: s.hidden === true,
+        rootExecutionId: typeof s.rootExecutionId === "string" ? s.rootExecutionId : undefined,
+        executionId: typeof s.executionId === "string" ? s.executionId : undefined,
       };
     }
   }
 
   /** Create if missing. agent + cwd are set here and never change afterwards. */
-  ensure(id: string, opts?: { title?: string; agent?: string; cwd?: string }): SessionData {
+  ensure(id: string, opts?: { title?: string; agent?: string; cwd?: string; hidden?: boolean; rootExecutionId?: string; executionId?: string }): SessionData {
     let s = this.data[id];
     if (!s) {
       s = this.data[id] = {
@@ -89,6 +96,9 @@ export class Store {
         createdAt: Date.now(),
         updatedAt: Date.now(),
         messages: [],
+        hidden: opts?.hidden === true,
+        rootExecutionId: opts?.rootExecutionId,
+        executionId: opts?.executionId,
       };
       this.flush();
     }
@@ -98,6 +108,8 @@ export class Store {
   get(id: string): SessionData | undefined {
     return this.data[id];
   }
+
+  isHidden(id: string): boolean { return this.data[id]?.hidden === true; }
 
   /** Clear a session's messages and (re)bind its agent/cwd — used by the voice
    *  "nova sessão" flow to start the fixed voice session fresh. */
@@ -158,7 +170,7 @@ export class Store {
   /** Cheap cross-session context: the last N sessions (any agent) with title +
    *  last user/assistant message (truncated). Used by cross-session search. */
   digest(n = 8, cap = 220): Array<{ id: string; agent: string; cwd: string; title: string; updatedAt: number; lastUser: string; lastAssistant: string }> {
-    return Object.values(this.data)
+    return Object.values(this.data).filter((s) => !s.hidden)
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, n)
       .map((s) => ({
@@ -173,7 +185,7 @@ export class Store {
   }
 
   list(): SessionMeta[] {
-    return Object.values(this.data)
+    return Object.values(this.data).filter((s) => !s.hidden)
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .map((s) => ({
         id: s.id,

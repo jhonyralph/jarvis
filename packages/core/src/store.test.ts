@@ -81,6 +81,20 @@ test("list and digest are ordered newest-first by updatedAt", () => {
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test("hidden managed sessions persist but stay out of ordinary list and digest", () => {
+  const d = dir();
+  try {
+    const s = new Store(DEF, d);
+    s.ensure("hidden-1", { hidden: true, rootExecutionId: "root-1", executionId: "child-1" });
+    s.add("hidden-1", { role: "user", text: "interno", ts: 1 });
+    assert.equal(s.isHidden("hidden-1"), true); assert.equal(s.history("hidden-1").length, 1);
+    assert.equal(s.list().some((item) => item.id === "hidden-1"), false);
+    assert.equal(s.digest().some((item) => item.id === "hidden-1"), false);
+    const reopened = new Store(DEF, d);
+    assert.equal(reopened.isHidden("hidden-1"), true); assert.equal(reopened.list().length, 0);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 test("a corrupt sessions.json recovers from the .bak snapshot instead of wiping history", () => {
   const d = dir();
   try {

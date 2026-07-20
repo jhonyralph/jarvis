@@ -77,7 +77,8 @@ when it is controlling another conversation. There is no separate public
 ## Current implementation milestones
 
 1. Local voice, PWA, auth, push and managed sessions.
-2. Hub + multi-machine Runner protocol v2.
+2. Hub + multi-machine Runner protocol v3, including durable execution journals,
+   manifest/replay and provider-neutral subprocess trees.
 3. Shared provider-neutral turn lifecycle and typed usage ledger.
 4. Claude/Codex native integration plus registered adapters/status for the wider
    CLI matrix. External adapters remain unverified until their installed version

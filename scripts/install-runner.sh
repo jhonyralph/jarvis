@@ -22,12 +22,18 @@ done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 command -v node >/dev/null 2>&1 || { echo "Node.js não encontrado (>=22). Instale e rode de novo."; exit 1; }
+NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
+[ "$NODE_MAJOR" -ge 22 ] || { echo "Node.js >=22 obrigatório (encontrado: $(node --version))."; exit 1; }
+[ -d "$ROOT/.git" ] || { echo "Este runner precisa ser instalado de um git clone para receber atualizações remotas."; exit 1; }
+git -C "$ROOT" remote get-url origin >/dev/null 2>&1 || { echo "Git remote origin ausente. Configure-o antes de instalar o runner."; exit 1; }
+GIT_TERMINAL_PROMPT=0 git -C "$ROOT" fetch --dry-run --quiet origin || { echo "O serviço não consegue acessar origin sem prompt. Corrija URL/credenciais do Git."; exit 1; }
 HAS_AGENT=0
 for cmd in claude codex gemini cursor-agent copilot opencode cline qwen cn kiro-cli agy aider; do command -v "$cmd" >/dev/null 2>&1 && HAS_AGENT=1; done
 [ "$HAS_AGENT" -eq 1 ] || echo "Aviso: nenhuma CLI suportada encontrada. Veja docs/agent-parity-matrix.md."
 
-echo "Instalando dependências (npm install)..."
-( cd "$ROOT" && npm install >/dev/null )
+echo "Instalando dependências determinísticas e validando o checkout..."
+if [ -f "$ROOT/package-lock.json" ]; then ( cd "$ROOT" && npm ci >/dev/null ); else ( cd "$ROOT" && npm install >/dev/null ); fi
+( cd "$ROOT" && npm run update:verify --if-present >/dev/null )
 
 mkdir -p "$HOME/.jarvis"
 printf 'JARVIS_HUB=%s\nJARVIS_TOKEN=%s\nJARVIS_LABEL="%s"\n' "$HUB" "$TOKEN" "$LABEL" > "$HOME/.jarvis/runner.env"
@@ -58,6 +64,8 @@ if [ "$OS" = "Darwin" ]; then
 EOF
   launchctl unload "$PLIST" 2>/dev/null || true
   launchctl load "$PLIST"
+  sleep 2
+  launchctl print "gui/$(id -u)/com.jarvis.runner" >/dev/null 2>&1 || { echo "O serviço launchd não permaneceu ativo; consulte ~/.jarvis/runner.log."; exit 1; }
   echo "Runner instalado (launchd: com.jarvis.runner). Deve aparecer no seletor do Hub."
 else
   UNIT="$HOME/.config/systemd/user/jarvis-runner.service"
@@ -77,6 +85,8 @@ WantedBy=default.target
 EOF
   systemctl --user daemon-reload
   systemctl --user enable --now jarvis-runner.service
+  sleep 2
+  systemctl --user is-active --quiet jarvis-runner.service || { echo "O serviço systemd não permaneceu ativo; consulte journalctl --user -u jarvis-runner."; exit 1; }
   echo "Runner instalado (systemd --user: jarvis-runner). Deve aparecer no seletor do Hub."
   echo "Dica: rode 'loginctl enable-linger $USER' para o runner subir sem login gráfico."
 fi

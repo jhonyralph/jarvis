@@ -15,8 +15,12 @@
  *     "env": { "JARVIS_HUB": "ws://127.0.0.1:4577", "JARVIS_MCP_TOKEN": "<token>" } } } }
  */
 import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
 import { handleMcp, VERSION, type McpTool, type JsonRpcMessage } from "@jarvis/core";
+import { JARVIS_DELEGATE_INPUT_SCHEMA, normalizeDelegateRequest } from "./delegate.js";
+import { executeDelegate } from "./delegateTool.js";
+import { HubReplyWaiters } from "./replyWaiters.js";
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/$/, "");
 const TOKEN = process.env.JARVIS_MCP_TOKEN || "";
@@ -26,7 +30,7 @@ const log = (...a: unknown[]) => console.error("[jarvis-mcp]", ...a);
 let ws: WebSocket | null = null;
 let readyResolve: (() => void) | null = null;
 let ready: Promise<void> = new Promise((r) => (readyResolve = r));
-const waiters: Array<{ type: string; resolve: (m: any) => void }> = [];
+const waiters = new HubReplyWaiters();
 
 function connect(): void {
   ws = new WebSocket(HUB + "/");
@@ -35,21 +39,25 @@ function connect(): void {
     let m: any; try { m = JSON.parse(d.toString()); } catch { return; }
     if (m.t === "authed" || m.t === "machines" || m.t === "sessions") { if (readyResolve) { readyResolve(); readyResolve = null; } }
     if (m.t === "unauth" || (m.t === "need_pass")) log("auth falhou:", m.reason || m.t, "— confira JARVIS_MCP_TOKEN / passphrase");
-    for (let i = waiters.length - 1; i >= 0; i--) if (waiters[i].type === m.t) { waiters[i].resolve(m); waiters.splice(i, 1); }
+    // Resolve one matching request only. The old loop resolved every concurrent waiter of the
+    // same reply type with the first response, which is unsafe for correlated control/delegation.
+    waiters.resolve(m);
   });
-  ws.on("close", () => { ready = new Promise((r) => (readyResolve = r)); setTimeout(connect, 1500); });
+  ws.on("close", () => {
+    ready = new Promise((r) => (readyResolve = r));
+    waiters.rejectAll(new Error("Hub desconectou antes da resposta"));
+    setTimeout(connect, 1500);
+  });
   ws.on("error", (e) => log("ws erro:", (e as any)?.message || e));
 }
 
 /** Send `msg` and resolve with the next Hub message of type `replyType`. Times out. */
-function request(msg: unknown, replyType: string, ms = 15000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) { reject(new Error("Hub desconectado")); return; }
-    const w = { type: replyType, resolve };
-    waiters.push(w);
-    ws.send(JSON.stringify(msg));
-    setTimeout(() => { const i = waiters.indexOf(w); if (i >= 0) { waiters.splice(i, 1); reject(new Error(`timeout esperando "${replyType}" do Hub`)); } }, ms);
-  });
+function request(msg: unknown, replyType: string, ms = 15000, match?: (message: any) => boolean): Promise<any> {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Hub desconectado"));
+  const waiting = waiters.add(replyType, ms, match);
+  try { ws.send(JSON.stringify(msg)); }
+  catch (error) { waiting.cancel(error instanceof Error ? error : new Error(String(error))); }
+  return waiting.promise;
 }
 const send = (msg: unknown) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
 
@@ -117,6 +125,19 @@ const tools: McpTool[] = [
       const h = await request({ t: "new", agent: args.agent, cwd: args.cwd }, "history");
       send({ t: "send", sessionId: h.sessionId, text: prompt });   // routes to the active machine
       return `Tarefa iniciada na máquina "${machine}", sessão ${h.sessionId}. Acompanhe no Jarvis (o resultado chega por lá / push).`;
+    },
+  },
+  {
+    name: "jarvis_delegate",
+    description: "Executa um workflow provider-neutral de tarefas/subagentes na máquina explicitamente escolhida. Por padrão aguarda e devolve o relatório terminal; mode=background devolve só o aceite. Suporta DAG, modelo/esforço, orçamento e isolamento de escrita. A máquina nunca é escolhida ou trocada automaticamente.",
+    inputSchema: JARVIS_DELEGATE_INPUT_SCHEMA,
+    handler: async (args) => {
+      await ready;
+      return executeDelegate(normalizeDelegateRequest(args), {
+        createId: randomUUID,
+        waitFor: (type, timeoutMs, match) => waiters.add(type, timeoutMs, match),
+        request,
+      });
     },
   },
 ];

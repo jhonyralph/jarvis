@@ -2,22 +2,58 @@
  * Self-update via git — shared by the Hub and Runners. "New version" = new commits
  * on origin/<branch>. Only works when the install is a git clone (has .git + a remote);
  * pack/copy installs update manually. Safe by construction: fast-forward only, refuses
- * a dirty tree, records the previous commit for rollback, never restarts if `npm install`
- * failed. All git/npm calls are ASYNC so they never block the Hub's event loop.
+ * a dirty tree, records the previous commit per checkout, verifies dependencies/code and
+ * rolls Git + dependencies back when preparation fails. All git/npm calls are ASYNC so
+ * they never block the Hub's event loop.
  */
 import { execFile, exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, openSync, closeSync, unlinkSync, statSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const pExecFile = promisify(execFile);
 const pExec = promisify(exec);
 const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
-const PREV_FILE = join(homedir(), ".jarvis", "update-prev");
+function updateDir(): string { return join(process.env.JARVIS_HOME || homedir(), ".jarvis", "updates"); }
+function legacyPrevFile(): string { return join(process.env.JARVIS_HOME || homedir(), ".jarvis", "update-prev"); }
+
+function checkoutKey(root: string): string { const path = resolve(root); return createHash("sha256").update(process.platform === "win32" ? path.toLowerCase() : path).digest("hex").slice(0, 20); }
+function prevFile(root: string): string { return join(updateDir(), checkoutKey(root) + ".prev"); }
+function lockFile(root: string): string { return join(updateDir(), checkoutKey(root) + ".lock"); }
+
+/** Cross-process lock: Hub, Runner and recovery CLI may share a checkout. */
+function acquireUpdateLock(root: string): (() => void) | null {
+  mkdirSync(updateDir(), { recursive: true });
+  const file = lockFile(root);
+  try {
+    if (existsSync(file)) {
+      let stale = Date.now() - statSync(file).mtimeMs > 90 * 60_000;
+      try { const pid = Number(JSON.parse(readFileSync(file, "utf8")).pid); if (pid > 0) { try { process.kill(pid, 0); stale = false; } catch { stale = true; } } } catch { /* age fallback */ }
+      if (stale) unlinkSync(file);
+    }
+  } catch { /* race: the exclusive open below remains authoritative */ }
+  let fd: number;
+  try { fd = openSync(file, "wx"); } catch { return null; }
+  try { writeFileSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), root: resolve(root) })); } catch { /* lock itself is enough */ }
+  return () => { try { closeSync(fd); } catch { /* ignore */ } try { unlinkSync(file); } catch { /* ignore */ } };
+}
+
+async function npmStep(root: string, args: string): Promise<string> {
+  const { stdout } = await pExec(`${NPM} ${args}`, { cwd: root, timeout: 600_000, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+  return String(stdout).trim().split(/\r?\n/).slice(-1)[0] || "done";
+}
+
+async function installAndVerify(root: string): Promise<string> {
+  const install = existsSync(join(root, "package-lock.json")) ? "ci" : "install";
+  const installed = await npmStep(root, install);
+  const verified = await npmStep(root, "run update:verify --if-present");
+  return `npm ${install}: ok (${installed})\nverificação: ok (${verified})`;
+}
 
 async function git(root: string, args: string[], timeoutMs = 20000): Promise<string> {
-  const { stdout } = await pExecFile("git", args, { cwd: root, timeout: timeoutMs, windowsHide: true });
+  const { stdout } = await pExecFile("git", args, { cwd: root, timeout: timeoutMs, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
   return String(stdout).trim();
 }
 
@@ -40,8 +76,10 @@ export async function repoCommit(root: string): Promise<string> {
 export interface UpdateStatus {
   supported: boolean;      // git clone with a remote?
   current: string;         // short sha of HEAD
+  currentFull?: string;
   branch: string;
   behind: number;          // commits HEAD..origin/branch
+  ahead: number;           // commits that exist only in the checkout
   clean: boolean;          // working tree clean?
   latest?: { sha: string; subject: string; date: string };
   checkedAt?: number;
@@ -49,27 +87,30 @@ export interface UpdateStatus {
 }
 
 export async function updateCheck(root: string, fetch = true): Promise<UpdateStatus> {
-  let branch = "?", current = "?";
+  let branch = "?", current = "?", currentFull = "";
   try {
     branch = await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
     current = await git(root, ["rev-parse", "--short", "HEAD"]);
+    currentFull = await git(root, ["rev-parse", "HEAD"]);
   } catch {
-    return { supported: false, current, branch, behind: 0, clean: true, checkedAt: Date.now(), error: "não é um repositório git (instale via git clone para auto-update)" };
+    return { supported: false, current, currentFull, branch, behind: 0, ahead: 0, clean: true, checkedAt: Date.now(), error: "não é um repositório git (instale via git clone para auto-update)" };
   }
   try { await git(root, ["remote", "get-url", "origin"]); }
-  catch { return { supported: false, current, branch, behind: 0, clean: true, checkedAt: Date.now(), error: "sem remote git (instale via git clone para auto-update)" }; }
+  catch { return { supported: false, current, currentFull, branch, behind: 0, ahead: 0, clean: true, checkedAt: Date.now(), error: "sem remote git (instale via git clone para auto-update)" }; }
   if (fetch) {
     try { await git(root, ["fetch", "--quiet", "origin", branch], 30000); }
-    catch (e: any) { return { supported: true, current, branch, behind: 0, clean: true, checkedAt: Date.now(), error: "fetch falhou (rede?): " + String(e?.message ?? e).slice(0, 120) }; }
+    catch (e: any) { return { supported: true, current, currentFull, branch, behind: 0, ahead: 0, clean: true, checkedAt: Date.now(), error: "fetch falhou (rede?): " + String(e?.message ?? e).slice(0, 120) }; }
   }
-  let behind = 0, clean = true, latest: UpdateStatus["latest"];
-  try { behind = Number(await git(root, ["rev-list", "--count", `HEAD..origin/${branch}`]) || "0"); } catch { /* 0 */ }
-  try { clean = (await git(root, ["status", "--porcelain"])) === ""; } catch { /* true */ }
+  let behind = 0, ahead = 0, clean = true, latest: UpdateStatus["latest"];
+  try { const [a, b] = (await git(root, ["rev-list", "--left-right", "--count", `HEAD...origin/${branch}`])).split(/\s+/).map(Number); ahead = a || 0; behind = b || 0; }
+  catch (e: any) { return { supported: true, current, currentFull, branch, behind, ahead, clean, checkedAt: Date.now(), error: "não foi possível comparar com origin/" + branch + ": " + String(e?.message ?? e).slice(0, 120) }; }
+  try { clean = (await git(root, ["status", "--porcelain"])) === ""; }
+  catch (e: any) { return { supported: true, current, currentFull, branch, behind, ahead, clean: false, checkedAt: Date.now(), error: "não foi possível verificar alterações locais: " + String(e?.message ?? e).slice(0, 120) }; }
   try { const p = (await git(root, ["log", "-1", `origin/${branch}`, "--format=%h%x1f%s%x1f%cI"])).split("\x1f"); latest = { sha: p[0], subject: p[1], date: p[2] }; } catch { /* ignore */ }
-  return { supported: true, current, branch, behind, clean, latest, checkedAt: Date.now() };
+  return { supported: true, current, currentFull, branch, behind, ahead, clean, latest, checkedAt: Date.now() };
 }
 
-export interface UpdateResult { ok: boolean; log: string; prev?: string; behind?: number; dirty?: boolean; }
+export interface UpdateResult { ok: boolean; log: string; prev?: string; behind?: number; dirty?: boolean; changed?: boolean; restartRequired?: boolean; current?: string; rolledBack?: boolean; busy?: boolean; retryable?: boolean; }
 
 /**
  * `force` DISCARDS local changes (`git reset --hard origin/<branch>`) before pulling.
@@ -82,43 +123,79 @@ export interface UpdateResult { ok: boolean; log: string; prev?: string; behind?
  *
  * `dirty` is reported back so the caller can offer forcing instead of guessing from a log string.
  */
-export async function updateApply(root: string, opts?: { force?: boolean }): Promise<UpdateResult> {
-  const st = await updateCheck(root, true);
-  if (!st.supported) return { ok: false, log: st.error || "auto-update não suportado neste install" };
-  if (st.error) return { ok: false, log: st.error };
-  if (!st.clean && !opts?.force) return { ok: false, dirty: true, log: "há alterações locais não commitadas — abortando por segurança (rode `git status`)" };
-  if (st.behind === 0 && st.clean) return { ok: true, log: "já está na última versão", behind: 0 };
-  try { mkdirSync(join(homedir(), ".jarvis"), { recursive: true }); writeFileSync(PREV_FILE, st.current); } catch { /* ignore */ }
-  let log = "";
+export async function updateApply(root: string, opts?: { force?: boolean; targetCommit?: string }): Promise<UpdateResult> {
+  const release = acquireUpdateLock(root);
+  if (!release) return { ok: false, busy: true, retryable: true, log: "outra atualização já está em andamento neste checkout" };
   try {
-    if (opts?.force && !st.clean) {
-      // reset (not pull): a pull can't move a dirty tree. updateCheck already fetched, so
-      // origin/<branch> is current. This is the line that throws away local work — only ever
-      // reached because the caller explicitly asked for it.
-      log += "descartando alterações locais (git reset --hard origin/" + st.branch + "):\n";
-      log += (await git(root, ["reset", "--hard", `origin/${st.branch}`], 30000)) + "\n";
-    } else {
-      log += "git pull:\n" + (await git(root, ["pull", "--ff-only", "origin", st.branch], 60000)) + "\n";
+    const st = await updateCheck(root, true);
+    if (!st.supported) return { ok: false, retryable: false, log: st.error || "auto-update não suportado neste install" };
+    if (st.error) return { ok: false, retryable: true, log: st.error };
+    if (!st.clean && !opts?.force) return { ok: false, dirty: true, retryable: false, log: "há alterações locais não commitadas — abortando por segurança (rode `git status`)" };
+    const remoteFull = await git(root, ["rev-parse", `origin/${st.branch}`]);
+    let desiredFull = remoteFull;
+    if (opts?.targetCommit) {
+      const requested = opts.targetCommit.replace("+dirty", "");
+      try { desiredFull = await git(root, ["rev-parse", `${requested}^{commit}`]); }
+      catch { return { ok: false, retryable: false, log: `o commit que o Hub solicitou (${requested}) não existe neste checkout após o fetch` }; }
+      try { await git(root, ["merge-base", "--is-ancestor", desiredFull, remoteFull]); }
+      catch { return { ok: false, retryable: false, log: `o commit que o Hub solicitou (${desiredFull.slice(0, 12)}) não pertence mais a origin/${st.branch}` }; }
     }
-    // exec (shell) — Node 22 rejects execFile on npm.cmd (.cmd security change)
-    const { stdout } = await pExec(`${NPM} install`, { cwd: root, timeout: 300000, windowsHide: true });
-    log += "npm install: ok (" + (String(stdout).trim().split("\n").slice(-1)[0] || "done") + ")";
-    return { ok: true, log, prev: st.current, behind: st.behind };
-  } catch (e: any) {
-    return { ok: false, log: log + "\nERRO: " + String(e?.stderr ?? e?.message ?? e).slice(0, 400) };
-  }
+    let aheadTarget = 0, behindTarget = 0;
+    try { const [a, b] = (await git(root, ["rev-list", "--left-right", "--count", `HEAD...${desiredFull}`])).split(/\s+/).map(Number); aheadTarget = a || 0; behindTarget = b || 0; }
+    catch (e: any) { return { ok: false, retryable: false, log: "não foi possível comparar o checkout com o alvo solicitado: " + String(e?.message ?? e).slice(0, 180) }; }
+    if (aheadTarget > 0 && !opts?.force) return { ok: false, dirty: true, retryable: false, log: `checkout possui ${aheadTarget} commit(s) fora do alvo solicitado — force somente se este checkout for descartável` };
+    const previous = st.currentFull || await git(root, ["rev-parse", "HEAD"]);
+    // A repair of the current commit must not overwrite the last genuinely older rollback point.
+    try { mkdirSync(updateDir(), { recursive: true }); if (previous !== desiredFull || !existsSync(prevFile(root))) writeFileSync(prevFile(root), previous); } catch { /* rollback remains best-effort */ }
+    let log = "";
+    let moved = false;
+    try {
+      if (opts?.force && (!st.clean || aheadTarget > 0)) {
+        // reset (not pull): a pull can't move a dirty/divergent tree. This line throws away local
+        // work and is reachable only from the owner's explicit, per-machine force confirmation.
+        log += "descartando alterações locais/divergentes (git reset --hard " + desiredFull.slice(0, 12) + "):\n";
+        log += (await git(root, ["reset", "--hard", desiredFull], 30000)) + "\n";
+        moved = previous !== desiredFull;
+      } else if (behindTarget > 0) {
+        // Merge the durable deployment target, not today's origin tip. A runner may reconnect after
+        // a newer push; it still has to finish and prove the exact deployment the Hub queued.
+        log += "git fast-forward para o alvo solicitado:\n" + (await git(root, ["merge", "--ff-only", desiredFull], 60000)) + "\n";
+        moved = true;
+      } else {
+        log += "git: código já aponta para o alvo solicitado; reparando dependências e validando\n";
+      }
+      log += await installAndVerify(root);
+      const current = await git(root, ["rev-parse", "--short", "HEAD"]);
+      return { ok: true, log, prev: previous, behind: behindTarget, changed: moved, restartRequired: true, current };
+    } catch (e: any) {
+      const reason = String(e?.stderr ?? e?.message ?? e).slice(0, 800);
+      if (!moved) return { ok: false, retryable: false, log: log + "\nERRO na preparação: " + reason, behind: behindTarget };
+      let rollbackLog = "";
+      try {
+        rollbackLog += await git(root, ["reset", "--hard", previous], 30000);
+        rollbackLog += "\n" + await installAndVerify(root);
+        return { ok: false, retryable: false, rolledBack: true, log: log + "\nERRO na preparação: " + reason + "\nRollback automático concluído:\n" + rollbackLog, prev: previous, behind: behindTarget };
+      } catch (rollbackError: any) {
+        return { ok: false, retryable: false, rolledBack: false, log: log + "\nERRO na preparação: " + reason + "\nERRO também no rollback: " + String(rollbackError?.stderr ?? rollbackError?.message ?? rollbackError).slice(0, 800), prev: previous, behind: behindTarget };
+      }
+    }
+  } finally { release(); }
 }
 
 /** Roll back to the commit recorded before the last update. */
 export async function updateRollback(root: string): Promise<UpdateResult> {
   let prev = "";
-  try { prev = readFileSync(PREV_FILE, "utf8").trim(); } catch { /* none */ }
+  try { prev = readFileSync(prevFile(root), "utf8").trim(); }
+  catch { try { prev = readFileSync(legacyPrevFile(), "utf8").trim(); } catch { /* none */ } }
   if (!prev) return { ok: false, log: "sem ponto de rollback registrado" };
+  const release = acquireUpdateLock(root);
+  if (!release) return { ok: false, busy: true, log: "outra atualização já está em andamento neste checkout" };
   try {
     const log = await git(root, ["reset", "--hard", prev], 30000);
-    await pExec(`${NPM} install`, { cwd: root, timeout: 300000, windowsHide: true });
-    return { ok: true, log: `rollback para ${prev}: ${log}`, prev };
+    const prepared = await installAndVerify(root);
+    return { ok: true, restartRequired: true, log: `rollback para ${prev}: ${log}\n${prepared}`, prev };
   } catch (e: any) { return { ok: false, log: "rollback falhou: " + String(e?.message ?? e) }; }
+  finally { release(); }
 }
 
 /** Restart the OS service so the new code takes effect. Detached, survives our exit. */
@@ -132,7 +209,9 @@ export function restartService(kind: "hub" | "runner"): void {
     // when the supervisor is alive. This avoids the old Stop/Start race that left it down.
     const cmd = kind === "hub"
       ? `Start-Sleep 3; $c=Get-NetTCPConnection -LocalPort 4577 -State Listen -EA SilentlyContinue; if($c){Stop-Process -Id $c.OwningProcess -Force -EA SilentlyContinue}; Start-ScheduledTask -TaskName '${task}' -EA SilentlyContinue`
-      : `Start-Sleep 3; Stop-ScheduledTask -TaskName '${task}' -EA SilentlyContinue; Start-Sleep 1; Start-ScheduledTask -TaskName '${task}'`;
+      // The scheduled task's PowerShell launcher is already a supervisor loop. Exiting this Node
+      // process is enough; only start the task if the supervisor itself is genuinely not running.
+      : `Start-Sleep 5; $t=Get-ScheduledTask -TaskName '${task}' -EA SilentlyContinue; if($t -and $t.State -ne 'Running'){Start-ScheduledTask -TaskName '${task}' -EA SilentlyContinue}`;
     spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", cmd], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } else if (p === "darwin") {
     const label = kind === "hub" ? "com.jarvis.hub" : "com.jarvis.runner";

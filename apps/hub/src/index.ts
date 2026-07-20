@@ -12,7 +12,7 @@
  *   JARVIS_AGENT_PERMISSION_MODE  full-access | provider-default
  */
 import { createServer } from "node:http";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join, normalize, dirname, basename } from "node:path";
@@ -28,13 +28,15 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, UsageLedger, type Routine } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
-import { RUNNER_PROTOCOL_VERSION, type RunnerInfo } from "@jarvis/protocol";
+import { RUNNER_PROTOCOL_VERSION, isExecutionState, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
 import { startAdminApi } from "./adminApi.js";
 import { runManagedTurn, type TurnCtx } from "./turn.js";
+import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
+import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
@@ -89,7 +91,55 @@ store.ensure(WAKE_SESSION, { agent: process.env.JARVIS_WAKE_AGENT || agents.defa
 // ---- Web Push: notify when a turn finishes (works on a locked Android). VAPID keys
 // + subscriptions live locally; the push protocol relays via the browser's FCM/APNs
 // (payload is encrypted). ----
-const JARVIS_DIR = join(homedir(), ".jarvis");
+const JARVIS_DIR = join(process.env.JARVIS_HOME || homedir(), ".jarvis");
+const LOCAL_EXECUTION_DIR = join(JARVIS_DIR, "executions");
+const MIRROR_EXECUTION_DIR = join(JARVIS_DIR, "hub", "executions");
+const EXECUTION_UI_FILE = join(JARVIS_DIR, "hub", "execution-ui.json");
+const EXECUTION_CFG_FILE = join(JARVIS_DIR, "execution-config.json");
+interface ExecutionRuntimeConfig { enabled: boolean; retentionDays: number; maxEvents: number; maxConcurrency: number; maxDepth: number; defaultWrite: boolean; worktreeRoot: string; }
+const executionCfg: ExecutionRuntimeConfig = (() => {
+  const defaults: ExecutionRuntimeConfig = {
+    enabled: process.env.JARVIS_EXECUTIONS !== "0",
+    retentionDays: Math.max(1, Number(process.env.JARVIS_EXECUTION_RETENTION_DAYS || 30)),
+    maxEvents: Math.max(100, Number(process.env.JARVIS_EXECUTION_MAX_EVENTS || 5_000)),
+    maxConcurrency: Math.max(1, Number(process.env.JARVIS_EXECUTION_MAX_CONCURRENCY || 6)),
+    maxDepth: Math.max(1, Number(process.env.JARVIS_EXECUTION_MAX_DEPTH || 3)),
+    defaultWrite: process.env.JARVIS_EXECUTION_DEFAULT_WRITE === "1",
+    worktreeRoot: process.env.JARVIS_EXECUTION_WORKTREE_ROOT || join(JARVIS_DIR, "worktrees"),
+  };
+  let raw: any = {}; try { raw = JSON.parse(readFileSync(EXECUTION_CFG_FILE, "utf8")); } catch { /* defaults */ }
+  const value = { ...defaults, ...(raw && typeof raw === "object" ? raw : {}) };
+  return { enabled: value.enabled !== false, retentionDays: Math.max(1, Math.min(3650, Number(value.retentionDays) || defaults.retentionDays)),
+    maxEvents: Math.max(100, Math.min(100_000, Number(value.maxEvents) || defaults.maxEvents)),
+    maxConcurrency: Math.max(1, Math.min(32, Number(value.maxConcurrency) || defaults.maxConcurrency)),
+    maxDepth: Math.max(1, Math.min(10, Number(value.maxDepth) || defaults.maxDepth)), defaultWrite: value.defaultWrite === true,
+    worktreeRoot: typeof value.worktreeRoot === "string" && value.worktreeRoot.trim() ? value.worktreeRoot : defaults.worktreeRoot };
+})();
+function saveExecutionCfg(): void { try { writeJsonAtomic(EXECUTION_CFG_FILE, executionCfg, { pretty: true }); } catch { /* ignore */ } }
+const localExecutionStore = new ExecutionStore({ root: LOCAL_EXECUTION_DIR, maxEventsPerRoot: executionCfg.maxEvents });
+const compactedExecutions = localExecutionStore.compactBefore(Date.now() - executionCfg.retentionDays * 86_400_000);
+if (compactedExecutions.roots) console.log(`[hub] retenção de trabalhos: ${compactedExecutions.roots} diário(s) compactado(s), ${compactedExecutions.droppedEvents} evento(s) detalhado(s) removido(s)`);
+if (executionCfg.enabled) for (const snapshot of localExecutionStore.rootsForSession()) for (const node of snapshot.nodes) {
+  if (node.state !== "queued" && node.state !== "running" && node.state !== "waiting_input") continue;
+  try {
+    localExecutionStore.append(node.rootExecutionId, node.executionId, { kind: "state_changed", from: node.state, to: "orphaned", reason: "Hub reiniciou sem binding verificável para este processo" });
+    localExecutionStore.append(node.rootExecutionId, node.executionId, { kind: "diagnostic", level: "warning", code: "PROCESS_BINDING_LOST", message: "Estado preservado como órfão; nenhum terminal foi inferido" });
+  } catch { /* a corrupt root remains visible through the last valid projection */ }
+}
+const executionMirrors = new Map<string, ExecutionStore>();
+const executionUiState: { archives: Record<string, number>; commands: Record<string, any> } = (() => {
+  try { const value = JSON.parse(readFileSync(EXECUTION_UI_FILE, "utf8")); return { archives: value?.archives || {}, commands: value?.commands || {} }; }
+  catch { return { archives: {}, commands: {} }; }
+})();
+function saveExecutionUiState(): void {
+  const keys = Object.keys(executionUiState.commands); if (keys.length > 2_000) for (const key of keys.slice(0, keys.length - 2_000)) delete executionUiState.commands[key];
+  try { writeJsonAtomic(EXECUTION_UI_FILE, executionUiState, { pretty: true }); } catch { /* UI metadata is best-effort; journals remain authoritative */ }
+}
+function mirrorExecutionStore(runnerId: string): ExecutionStore {
+  let value = executionMirrors.get(runnerId); if (value) return value;
+  const key = createHash("sha256").update(runnerId).digest("hex");
+  value = new ExecutionStore({ root: join(MIRROR_EXECUTION_DIR, key), maxEventsPerRoot: executionCfg.maxEvents }); executionMirrors.set(runnerId, value); return value;
+}
 
 // Summary/digest one-shot config — cheap by default (it's a light task), user-tunable in Settings.
 const SUMMARY_FILE = join(JARVIS_DIR, "summary.json");
@@ -264,6 +314,7 @@ function broadcastAll(obj: unknown): void {
 
 // sessions with an in-flight Jarvis-driven turn — powers the "rodando agora" panel.
 const activeRuns = new Set<string>();
+const routeAborts = new Map<string, AbortController>();
 // Post-turn decision detection ("consolidating" → questions). `asking` = sessions whose reply is being
 // analysed (locks the composer); `pendingAsk` = questions awaiting an answer, kept so a client that
 // opens the session LATER (switched away, phone reopened) still sees them. Both LOCAL-session only.
@@ -338,13 +389,38 @@ function dropRevoked(): void {
 
 // ---- runner registry: machine 0 (this host, in-process) + remote runners (dial /runner) ----
 const RUNNERS_FILE = join(JARVIS_DIR, "runners.json");
+const RUNNER_UPDATES_FILE = join(JARVIS_DIR, "hub", "pending-runner-updates.json");
 const runnerLabels: Record<string, string> = (() => { try { return JSON.parse(readFileSync(RUNNERS_FILE, "utf8")); } catch { return {}; } })();
+for (const runnerId of Object.keys(runnerLabels)) if (runnerId !== "local") mirrorExecutionStore(runnerId);
 function saveRunnerLabels(): void { try { writeJsonAtomic(RUNNERS_FILE, runnerLabels, { pretty: true }); } catch { /* ignore */ } }
 interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastSeen: number; local: boolean; }
+interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; fromCommit?: string; lastAttemptAt?: number; lastError?: string; }
+const UPDATE_RETRY_MS = Math.max(30_000, Number(process.env.JARVIS_UPDATE_RETRY_SEC || 300) * 1000);
+const pendingRunnerUpdates: Record<string, PendingRunnerUpdate> = (() => {
+  try {
+    const raw = JSON.parse(readFileSync(RUNNER_UPDATES_FILE, "utf8"));
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out: Record<string, PendingRunnerUpdate> = {};
+    for (const [id, candidate] of Object.entries(raw)) {
+      const value: any = candidate;
+      if (!id || !value || typeof value.requestId !== "string" || typeof value.targetCommit !== "string") continue;
+      const state: PendingRunnerUpdate["state"] = ["queued", "sent", "awaiting_restart", "blocked"].includes(value.state) ? value.state : "queued";
+      out[id] = { requestId: value.requestId, targetCommit: value.targetCommit, requestedAt: Number(value.requestedAt) || Date.now(), state,
+        fromCommit: typeof value.fromCommit === "string" ? value.fromCommit : undefined, lastAttemptAt: Number.isFinite(value.lastAttemptAt) ? Number(value.lastAttemptAt) : undefined, lastError: typeof value.lastError === "string" ? value.lastError : undefined };
+    }
+    return out;
+  } catch { return {}; }
+})();
+function savePendingRunnerUpdates(): void { try { writeJsonAtomic(RUNNER_UPDATES_FILE, pendingRunnerUpdates, { pretty: true }); } catch (e) { console.error("[hub] não consegui persistir fila de atualização:", String((e as any)?.message ?? e)); } }
 const runners = new Map<string, RunnerConn>();
 const runnerSockets = new Set<WebSocket>();
 const LOCAL_ID = "local";
 runners.set(LOCAL_ID, { id: LOCAL_ID, ws: null, local: true, lastSeen: Date.now(), info: { runnerId: LOCAL_ID, host: hostname(), os: process.platform, agents: [], protocolVersion: RUNNER_PROTOCOL_VERSION, local: true } });
+// Labels are the durable machine inventory. Rebuild offline placeholders after every Hub restart so
+// they remain selectable and, critically, can retain a pending update until they reconnect.
+for (const [id, label] of Object.entries(runnerLabels)) if (id !== LOCAL_ID && !runners.has(id)) {
+  runners.set(id, { id, ws: null, local: false, lastSeen: 0, info: { runnerId: id, host: label || id, os: "unknown", agents: [], protocolVersion: RUNNER_PROTOCOL_VERSION } });
+}
 const clientRunner = new WeakMap<WebSocket, string>();
 const runnerActive = new Map<string, Set<string>>(); // runnerId -> session ids running there
 // When each currently-offline runner dropped (cleared on reconnect), so the fleet view can show
@@ -357,6 +433,7 @@ const OFFLINE_ALERT_MS = Math.max(0, Number(process.env.JARVIS_OFFLINE_ALERT_MIN
 const updateWatchers = new Set<WebSocket>();
 const pendingReq = new Map<string, WebSocket>();
 let reqSeq = 0;
+const runnerSessionState = new Map<string, Map<string, any>>();
 // which agents are actually usable on THIS (local) machine — probes availability, so the
 // UI can disable agents that aren't installed/authenticated here.
 let localAgents: string[] = [];
@@ -386,6 +463,7 @@ let hubCommit = "";
 void repoCommit(UPDATE_ROOT).then((c) => { hubCommit = c; });
 setInterval(() => { void repoCommit(UPDATE_ROOT).then((c) => { hubCommit = c; }); }, 60_000).unref?.();
 const sameBuild = (a: string, b: string) => !!a && !!b && a.replace("+dirty", "") === b.replace("+dirty", "");
+const commitMatches = (actual: string, target: string) => { const a = (actual || "").replace("+dirty", ""), t = (target || "").replace("+dirty", ""); return !!a && !!t && (a === t || a.startsWith(t) || t.startsWith(a)); };
 let updateStatus: any = { supported: true, behind: 0 };
 async function refreshUpdate(doBroadcast = true): Promise<void> {
   try { updateStatus = await updateCheck(UPDATE_ROOT, true); } catch (e: any) { updateStatus = { supported: false, error: String(e?.message ?? e) }; }
@@ -411,8 +489,9 @@ function sessionAgent(sid?: string): string | undefined { if (!sid) return undef
 /** Attribute legacy usage without pretending the old untyped ledger knew its provider. */
 function usageAgent(sid: string, recorded?: string): string {
   if (recorded && recorded !== "unknown" && recorded !== "remote-unknown") return recorded;
-  return sessionAgent(sid) || (sid.startsWith("claude:") ? "claude-code" : sid.startsWith("codex:") ? "codex" : "legacy-unattributed");
+  return sessionAgent(sid) || executionNodeBySession(sid)?.agent || (sid.startsWith("claude:") ? "claude-code" : sid.startsWith("codex:") ? "codex" : "legacy-unattributed");
 }
+function replayRoute(ws: WebSocket, sid: string): void { if (routeAborts.has(sid)) send(ws, { t: "auto_route", sessionId: sid, state: "started" }); }
 /** Per-runner authorization — the "access to the Hub == a shell on the machine" boundary. The owner
  *  reaches every machine; a member only the runners granted in their invite (auth.grants). Auth off =
  *  fully trusted. This is the DRIVE gate (select + act), enforced for BOTH the local machine and remote
@@ -436,6 +515,7 @@ const LOCAL_OPS = new Set(["sendTo", "dropLast", "search", "memory_search", "voi
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
 const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "cancel", "summarize"]);
+const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "execution_delegate", "summarize", "digest", "routine_run"]);
 /** Client sockets (not runner sockets) currently viewing a given machine. */
 function clientsOn(runnerId: string): WebSocket[] {
   const out: WebSocket[] = [];
@@ -457,7 +537,7 @@ function machineList(ws?: WebSocket): any[] {
       id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os,
       agents: r.local ? localAgents : (r.info.agents || []), agentDescriptors: r.info.agentDescriptors || [],
       protocolVersion: r.info.protocolVersion || 1, compatible: (r.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION,
-      online, local: !!r.local, commit, hubCommit, stale, offlineMs,
+      online, local: !!r.local, commit, hubCommit, stale, offlineMs, updatePending: pendingRunnerUpdates[r.id] || null,
     };
   });
 }
@@ -476,6 +556,111 @@ if (OFFLINE_ALERT_MS > 0) setInterval(() => {
 function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList(w) }); } }
 function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.ws.readyState === WebSocket.OPEN) { rc.ws.send(JSON.stringify(obj)); return true; } return false; }
 
+function queueRunnerUpdate(runnerId: string, targetCommit: string): PendingRunnerUpdate {
+  const existing = pendingRunnerUpdates[runnerId];
+  if (existing && commitMatches(existing.targetCommit, targetCommit) && existing.state !== "blocked") return existing;
+  const pending: PendingRunnerUpdate = { requestId: randomUUID(), targetCommit: targetCommit.replace("+dirty", ""), requestedAt: Date.now(), state: "queued" };
+  pendingRunnerUpdates[runnerId] = pending; savePendingRunnerUpdates(); return pending;
+}
+function updateMachineNotice(runnerId: string, payload: Record<string, unknown>): void {
+  const rc = runners.get(runnerId), label = runnerLabels[runnerId] || rc?.info.host || runnerId;
+  for (const c of updateWatchers) send(c, { t: "update_machine", runnerId, label, ...payload });
+  broadcastMachines();
+}
+function deliverPendingRunnerUpdate(rc: RunnerConn, opts?: { force?: boolean; allowBlocked?: boolean; retryNow?: boolean }): boolean {
+  const pending = pendingRunnerUpdates[rc.id];
+  if (!pending || !rc.ws || rc.ws.readyState !== WebSocket.OPEN) return false;
+  if (pending.state === "blocked" && !opts?.allowBlocked) return false;
+  if (pending.lastAttemptAt && Date.now() - pending.lastAttemptAt < 30_000 && !opts?.retryNow) return false;
+  const sent = sendToRunner(rc, { t: "update", requestId: pending.requestId, targetCommit: pending.targetCommit, force: !!opts?.force });
+  if (sent) { if (!pending.fromCommit && rc.info.commit) pending.fromCommit = rc.info.commit; pending.state = "sent"; pending.lastAttemptAt = Date.now(); pending.lastError = undefined; savePendingRunnerUpdates(); updateMachineNotice(rc.id, { state: "sent", queued: true, ok: false, log: "solicitação entregue; máquina drenando" }); }
+  return sent;
+}
+function completePendingRunnerUpdate(rc: RunnerConn, m: any): void {
+  const pending = pendingRunnerUpdates[rc.id];
+  const label = runnerLabels[rc.id] || rc.info.host || rc.id;
+  auth.audit("update_machine", { runnerId: rc.id, detail: `${label}: ${m.ok ? "preparada" : "falhou"}${m.dirty ? " (repo sujo)" : ""}` });
+  console.log(`[hub] update ${label}: ${m.ok ? "preparada" : "falhou"} — ${String(m.log || "").split("\n")[0]}`);
+  if (pending && (!m.requestId || m.requestId === pending.requestId)) {
+    const blocked = !!m.dirty || m.retryable === false;
+    if (m.ok) { pending.state = "awaiting_restart"; pending.lastError = undefined; }
+    else { pending.state = blocked ? "blocked" : "queued"; pending.lastError = String(m.log || "falha sem detalhe").slice(0, 600); }
+    savePendingRunnerUpdates();
+    if (!m.ok && !blocked) setTimeout(() => { const current = pendingRunnerUpdates[rc.id]; if (current?.requestId === pending.requestId && current.state === "queued") deliverPendingRunnerUpdate(rc, { retryNow: true }); }, UPDATE_RETRY_MS).unref?.();
+  }
+  const state = m.ok ? "awaiting_restart" : ((m.dirty || m.retryable === false) ? "blocked" : "queued");
+  updateMachineNotice(rc.id, { ok: !!m.ok, dirty: !!m.dirty, behind: m.behind ?? 0, state, queued: !m.ok, log: String(m.log || "").slice(0, 600), rolledBack: !!m.rolledBack });
+}
+function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
+  const pending = pendingRunnerUpdates[rc.id]; if (!pending) return;
+  if (pending.state === "blocked") return;
+  const receipt = rc.info.updateReceipt, clean = !!rc.info.commit && !rc.info.commit.includes("+dirty"), changedCommit = !!pending.fromCommit && !commitMatches(pending.fromCommit, pending.targetCommit);
+  const receiptMatches = !!receipt && receipt.requestId === pending.requestId && commitMatches(receipt.targetCommit, pending.targetCommit) && commitMatches(receipt.current, pending.targetCommit);
+  if (clean && commitMatches(rc.info.commit || "", pending.targetCommit) && (rc.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION && (receiptMatches || changedCommit)) {
+    delete pendingRunnerUpdates[rc.id]; savePendingRunnerUpdates();
+    auth.audit("update_machine_verified", { runnerId: rc.id, detail: `${runnerLabels[rc.id] || rc.info.host || rc.id}: ${rc.info.commit || pending.targetCommit}` });
+    updateMachineNotice(rc.id, { ok: true, verified: true, state: "verified", behind: 1, log: `reiniciou e reconectou em ${rc.info.commit || pending.targetCommit}` }); return;
+  }
+  deliverPendingRunnerUpdate(rc, { retryNow: true });
+}
+
+let hubUpdateInProgress = false;
+async function drainHubForUpdate(deadlineMs = 120_000): Promise<string | null> {
+  const started = Date.now();
+  while ((activeRuns.size || localManagedRuns.size || routeAborts.size || asking.size || voiceOpBusy) && Date.now() - started < deadlineMs) await new Promise((resolve) => setTimeout(resolve, 1000));
+  const remaining = activeRuns.size + localManagedRuns.size + routeAborts.size + asking.size + (voiceOpBusy ? 1 : 0);
+  return remaining ? `não foi possível drenar ${remaining} trabalho(s) local(is) em ${Math.round(deadlineMs / 1000)}s; nenhum arquivo foi alterado` : null;
+}
+function knownRemoteRunnerIds(): string[] { return [...new Set([...Object.keys(runnerLabels), ...runners.keys()])].filter((id) => id !== LOCAL_ID); }
+async function applyHubUpdate(force: boolean, allMachines: boolean): Promise<any> {
+  if (hubUpdateInProgress) return { ok: false, busy: true, log: "outra atualização do Hub já está em andamento" };
+  const preflight = await updateCheck(UPDATE_ROOT, true);
+  if (!preflight.supported || preflight.error) return { ok: false, log: preflight.error || "auto-update não suportado" };
+  if (!preflight.clean && !force) return { ok: false, dirty: true, log: "há alterações locais não commitadas no Hub — nenhuma máquina foi alterada" };
+  if ((preflight.ahead || 0) > 0 && !force) return { ok: false, dirty: true, log: `Hub possui ${preflight.ahead} commit(s) local(is) fora de origin/${preflight.branch} — nenhuma máquina foi alterada` };
+  const target = (preflight.latest?.sha || preflight.current || hubCommit).replace("+dirty", "");
+  const remoteIds = allMachines ? knownRemoteRunnerIds() : [];
+  // Hub already healthy/current: runners can be repaired independently without bouncing the Hub.
+  if (allMachines && preflight.behind === 0 && preflight.clean && (preflight.ahead || 0) === 0) {
+    for (const id of remoteIds) { queueRunnerUpdate(id, target); const rc = runners.get(id); if (rc) deliverPendingRunnerUpdate(rc); }
+    broadcastMachines();
+    return { ok: true, behind: 0, restartRequired: false, log: remoteIds.length ? `Hub já está atualizado; ${remoteIds.length} máquina(s) enfileirada(s), inclusive as offline` : "Hub atualizado; nenhuma máquina remota cadastrada" };
+  }
+  hubUpdateInProgress = true;
+  broadcastAll({ t: "update_progress", message: "Drenando trabalhos locais antes de atualizar…" });
+  const drainError = await drainHubForUpdate();
+  if (drainError) { hubUpdateInProgress = false; return { ok: false, log: drainError }; }
+  const created: Array<[string, string]> = [];
+  if (allMachines) for (const id of remoteIds) { const before = pendingRunnerUpdates[id]?.requestId; const p = queueRunnerUpdate(id, target); if (p.requestId !== before) created.push([id, p.requestId]); }
+  if (allMachines) { broadcastMachines(); broadcastAll({ t: "update_progress", message: `Hub drenado; ${remoteIds.length} máquina(s) ficaram na fila persistente. Preparando o Hub…`, queued: remoteIds.map((id) => runnerLabels[id] || id) }); }
+  const result = await updateApply(UPDATE_ROOT, { force, targetCommit: target });
+  if (!result.ok) {
+    for (const [id, requestId] of created) if (pendingRunnerUpdates[id]?.requestId === requestId) delete pendingRunnerUpdates[id];
+    if (created.length) savePendingRunnerUpdates();
+    hubUpdateInProgress = false; broadcastMachines(); return result;
+  }
+  if (result.restartRequired !== false) scheduleRestart(); else hubUpdateInProgress = false;
+  return result;
+}
+async function queueAllRemoteRunnerUpdates(): Promise<{ ok: boolean; queued: number; delivered: number; target?: string; error?: string }> {
+  const status = await updateCheck(UPDATE_ROOT, true);
+  if (!status.supported || status.error) return { ok: false, queued: 0, delivered: 0, error: status.error || "auto-update não suportado" };
+  const target = (status.latest?.sha || status.current || hubCommit).replace("+dirty", "");
+  let delivered = 0; const ids = knownRemoteRunnerIds();
+  for (const id of ids) { queueRunnerUpdate(id, target); const rc = runners.get(id); if (rc && deliverPendingRunnerUpdate(rc)) delivered++; }
+  broadcastMachines(); return { ok: true, queued: ids.length, delivered, target };
+}
+// Lost update_done and transient Git/network failures must self-heal even when the runner's WebSocket
+// stays connected (there would otherwise be no reconnect event to re-deliver the durable request).
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, pending] of Object.entries(pendingRunnerUpdates)) {
+    if (pending.state === "blocked" || pending.state === "awaiting_restart") continue;
+    if (pending.lastAttemptAt && now - pending.lastAttemptAt < UPDATE_RETRY_MS) continue;
+    const rc = runners.get(id); if (rc) deliverPendingRunnerUpdate(rc, { retryNow: true });
+  }
+}, Math.min(60_000, UPDATE_RETRY_MS)).unref?.();
+
 // admin: waiters for a runner's next session list (used by the remote "ok" purge)
 const pendingRunnerList = new Map<string, (sessions: any[]) => void>();
 // Voice features (resumir/digest) run ON THE HUB, so for a session that lives on another machine
@@ -483,6 +668,29 @@ const pendingRunnerList = new Map<string, (sessions: any[]) => void>();
 // reqId, resolved by the runner's {t:history}/{t:sessions} reply, and always timed out so a
 // silent runner degrades instead of hanging the single-flight voice lock.
 const pendingRunnerHist = new Map<string, (h: any) => void>();
+interface ExecutionReplayRequest { runnerId: string; rootExecutionId: string; replace: boolean; events: ExecutionEvent[]; }
+const executionReplayRequests = new Map<string, ExecutionReplayRequest>();
+function requestExecutionReplay(rc: RunnerConn, rootExecutionId: string, afterSeq: number, replace = false, prior: ExecutionEvent[] = []): void {
+  const reqId = `exec-${randomUUID()}`;
+  executionReplayRequests.set(reqId, { runnerId: rc.id, rootExecutionId, replace, events: prior });
+  if (!sendToRunner(rc, { t: "execution_read", reqId, rootExecutionId, afterSeq, limit: 500 })) executionReplayRequests.delete(reqId);
+  else setTimeout(() => { if (executionReplayRequests.delete(reqId)) { mirrorExecutionStore(rc.id).setConnection(rootExecutionId, "desynced"); broadcastExecutionConnection(rc.id, "desynced"); } }, 15_000).unref?.();
+}
+function reconcileExecutionManifest(rc: RunnerConn, entries: ExecutionManifestEntry[]): void {
+  const mirror = mirrorExecutionStore(rc.id), local = new Map(mirror.manifest().map((entry) => [entry.rootExecutionId, entry]));
+  let requested = false;
+  for (const remote of entries) {
+    const known = local.get(remote.rootExecutionId);
+    if (!known || known.journalId !== remote.journalId || known.lastSeq > remote.lastSeq) {
+      requested = true; mirror.setConnection(remote.rootExecutionId, "reconciling"); requestExecutionReplay(rc, remote.rootExecutionId, 0, true); continue;
+    }
+    if (known.lastSeq < remote.lastSeq) {
+      requested = true; mirror.setConnection(remote.rootExecutionId, "reconciling"); requestExecutionReplay(rc, remote.rootExecutionId, known.lastSeq); continue;
+    }
+    mirror.setConnection(remote.rootExecutionId, "online");
+  }
+  broadcastExecutionConnection(rc.id, requested ? "reconciling" : "online");
+}
 function askRunner<T>(map: Map<string, (v: any) => void>, key: string, sendIt: () => boolean, empty: T, ms = 8000): Promise<T> {
   return new Promise<T>((resolve) => {
     map.set(key, resolve as (v: any) => void);
@@ -503,8 +711,53 @@ function runnerSessions(rc: RunnerConn): Promise<any[]> {
 /** Relay a message from a remote runner to the clients currently viewing that machine. */
 function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "pong") return; // heartbeat ack — rc.lastSeen already refreshed by the caller
-  if (m.t === "sessions") { const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
-  if (m.t === "history") { const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""), su = usageLedger.session(m.sessionId); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId, sessionCost: costOf(m.sessionId), sessionUsage: su, inputTokens: m.inputTokens || su.contextTokens, contextWindowTokens: m.contextWindowTokens || su.contextWindowTokens, model: m.model || su.model }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })), files: m.files }); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
+  if (m.t === "execution_manifest") { reconcileExecutionManifest(rc, Array.isArray(m.entries) ? m.entries : []); return; }
+  if (m.t === "execution_event") {
+    const mirror = mirrorExecutionStore(rc.id), result = mirror.ingest(m.event as ExecutionEvent);
+    if (result.status === "applied") { mirror.setConnection(m.event.rootExecutionId, "online"); broadcastExecutionEvent(rc.id, result.event); }
+    else if (result.status === "gap") { mirror.setConnection(m.event.rootExecutionId, "reconciling"); broadcastExecutionConnection(rc.id, "reconciling"); requestExecutionReplay(rc, m.event.rootExecutionId, result.expectedSeq - 1); }
+    else if (result.status === "journal_mismatch") { mirror.setConnection(m.event.rootExecutionId, "reconciling"); broadcastExecutionConnection(rc.id, "reconciling"); requestExecutionReplay(rc, m.event.rootExecutionId, 0, true); }
+    else if (result.status === "invalid") { mirror.setConnection(m.event.rootExecutionId, "desynced"); broadcastExecutionConnection(rc.id, "desynced"); console.error(`[hub] evento de execução inválido de ${rc.id}: ${result.reason}`); }
+    return;
+  }
+  if (m.t === "execution_events") {
+    const pending = executionReplayRequests.get(m.reqId); if (!pending || pending.runnerId !== rc.id || pending.rootExecutionId !== m.rootExecutionId) return;
+    executionReplayRequests.delete(m.reqId);
+    const batch = Array.isArray(m.events) ? m.events as ExecutionEvent[] : [], mirror = mirrorExecutionStore(rc.id);
+    if (pending.replace) pending.events.push(...batch);
+    else for (const event of batch) {
+      const result = mirror.ingest(event);
+      if (result.status === "applied") broadcastExecutionEvent(rc.id, result.event);
+      else if (result.status !== "duplicate") { requestExecutionReplay(rc, pending.rootExecutionId, 0, true); broadcastExecutionConnection(rc.id, "reconciling"); return; }
+    }
+    if (typeof m.nextSeq === "number") { requestExecutionReplay(rc, pending.rootExecutionId, m.nextSeq, pending.replace, pending.events); return; }
+    if (pending.replace) {
+      const result = mirror.replaceFromReplay(pending.events);
+      if (result.status !== "applied") { mirror.setConnection(pending.rootExecutionId, "desynced"); broadcastExecutionConnection(rc.id, "desynced"); return; }
+      for (const event of pending.events) broadcastExecutionEvent(rc.id, event);
+    }
+    mirror.setConnection(pending.rootExecutionId, "online"); broadcastExecutionConnection(rc.id, "online");
+    return;
+  }
+  if (m.t === "execution_usage_record") { addUsage(String(m.sessionId || m.rootExecutionId), String(m.agent || "remote-unknown"), m.usage); return; }
+  if (m.t === "execution_delegate_result") {
+    const prior = executionUiState.commands[m.requestId];
+    if (prior?.ok === false && /tempo esgotado/.test(String(prior.error || "")) && m.ok && m.rootExecutionId) {
+      sendToRunner(rc, { t: "execution_control", requestId: `late-${randomUUID()}`, executionId: m.rootExecutionId, action: "cancel_subtree" });
+      return;
+    }
+    executionUiState.commands[m.requestId] = m; saveExecutionUiState();
+    const client = pendingReq.get(m.requestId); if (client) { pendingReq.delete(m.requestId); send(client, m); }
+    return;
+  }
+  if (m.t === "execution_control_result") {
+    executionUiState.commands[m.requestId] = m; saveExecutionUiState();
+    const client = pendingReq.get(m.requestId); if (client) { pendingReq.delete(m.requestId); send(client, m); }
+    return;
+  }
+  if (m.t === "sessions") { runnerSessionState.set(rc.id, new Map((m.sessions || []).map((s: any) => [s.id, s]))); const cb = pendingRunnerList.get(rc.id); if (cb) { pendingRunnerList.delete(rc.id); cb(m.sessions || []); } for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions: m.sessions, recentDirs: [], runnerId: rc.id }); return; }
+  if (m.t === "deleted") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); for (const sid of m.ids || []) mirrorExecutionStore(rc.id).deleteSession(sid); send(c, { t: "deleted", sessionId: m.sessionId, ids: m.ids || [], ok: !!m.ok, okCount: Number(m.okCount) || 0 }); } return; }
+  if (m.t === "history") { const states = runnerSessionState.get(rc.id) || new Map<string, any>(); states.set(m.sessionId, { ...(states.get(m.sessionId) || {}), id: m.sessionId, agent: m.agent, cwd: m.cwd, started: Number(m.total) > 0, source: /^(claude:|codex:)/.test(m.sessionId || "") ? "native" : "managed" }); runnerSessionState.set(rc.id, states); const hcb = pendingRunnerHist.get(m.reqId); if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; } const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); const native = /^(claude:|codex:)/.test(m.sessionId || ""), su = usageLedger.session(m.sessionId); send(c, { t: "history", sessionId: m.sessionId, session: { agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId, sessionCost: costOf(m.sessionId), sessionUsage: su, inputTokens: m.inputTokens || su.contextTokens, contextWindowTokens: m.contextWindowTokens || su.contextWindowTokens, model: m.model || su.model, effort: m.effort || su.effort }, total: m.total, messages: (m.messages || []).map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })), files: m.files }); replayRoute(c, m.sessionId); replayActivity(c, m.sessionId); send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) }); } return; }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "agent_event") {
     const event = m.event as AgentEvent, sid = m.sessionId, mkey = rc.id + "\0" + sid;
@@ -558,55 +811,162 @@ function relayRunner(rc: RunnerConn, m: any): void {
   // Update outcome of a machine. Goes to whoever asked (any owner watching the update panel),
   // not just clients on that machine — you fire the update from the Hub's own screen.
   if (m.t === "update_done") {
-    const label = runnerLabels[rc.id] || rc.info.host || rc.id;
-    auth.audit("update_machine", { runnerId: rc.id, detail: `${label}: ${m.ok ? "ok" : "falhou"}${m.dirty ? " (repo sujo)" : ""}` });
-    console.log(`[hub] update ${label}: ${m.ok ? "ok" : "falhou"} — ${String(m.log || "").split("\n")[0]}`);
-    for (const c of updateWatchers) send(c, { t: "update_machine", runnerId: rc.id, label, ok: !!m.ok, dirty: !!m.dirty, behind: m.behind ?? 0, log: String(m.log || "").slice(0, 600) });
-    return;
+    completePendingRunnerUpdate(rc, m); return;
   }
   if (m.t === "command_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "command_list", runnerId: rc.id, commands: m.commands || [] }); } return; }
   if (m.t === "mention_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "mention_list", files: m.files || [] }); } return; }
   if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries }); } return; }
   if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); } return; }
-  if (m.t === "error") { const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return; }
+  if (m.t === "error") {
+    const replay = m.reqId && executionReplayRequests.get(m.reqId);
+    if (replay) { executionReplayRequests.delete(m.reqId); mirrorExecutionStore(rc.id).setConnection(replay.rootExecutionId, "desynced"); broadcastExecutionConnection(rc.id, "desynced"); console.error(`[hub] replay de execução falhou em ${rc.id}: ${m.message}`); return; }
+    const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return;
+  }
 }
 
-/** A remote runner dropped (or was reaped): end any turns it had in flight so client spinners clear
- *  instead of hanging forever. On a mid-turn disconnect the hub otherwise leaves `runnerActive` stale
- *  and sends no terminating stream event, so a viewer sits on "processando…" indefinitely. We mark the
- *  turn 'cancelled' (interrupted) rather than 'error' (failed): if the runner merely lost the network
- *  and finishes the turn locally, the persisted reply reappears on the next history load. */
-function endRunnerRuns(rid: string): void {
-  const active = runnerActive.get(rid);
+/** A transport drop is not a provider terminal. Preserve in-flight activity and mark the durable
+ * execution roots offline; the Runner keeps working and reconciles its journal after reconnect. */
+function noteRunnerOffline(rid: string): void {
   runnerActive.delete(rid);
-  if (!active || !active.size) return;
-  for (const sid of active) {
-    const buf = activityBuf.get(sid) || [];
-    activityBuf.delete(sid);
-    const last = [...buf].reverse().find((ev: any) => ev?.schemaVersion === AGENT_EVENT_SCHEMA_VERSION) as AgentEvent | undefined;
-    for (const c of clientsOn(rid)) {
-      if (last) send(c, { t: "agent_event", sessionId: sid, event: { schemaVersion: AGENT_EVENT_SCHEMA_VERSION, turnId: last.turnId, eventId: `${last.turnId}:${last.seq + 1}`, seq: last.seq + 1, at: Date.now(), kind: "cancelled", errorCode: "RUNNER_OFFLINE" } });
-      else send(c, { t: "stream", sessionId: sid, ev: { kind: "cancelled" } });
-    }
+  const mirror = mirrorExecutionStore(rid);
+  for (const entry of mirror.manifest()) mirror.setConnection(entry.rootExecutionId, "offline");
+  broadcastExecutionConnection(rid, "offline");
+}
+type ExecutionLocation = { runnerId: string; store: ExecutionStore; rootExecutionId: string; node: ExecutionNode };
+function executionSources(): Array<{ runnerId: string; store: ExecutionStore }> {
+  if (!executionCfg.enabled) return [];
+  return [{ runnerId: LOCAL_ID, store: localExecutionStore }, ...[...executionMirrors].map(([runnerId, store]) => ({ runnerId, store }))];
+}
+function executionNodeBySession(sessionId: string): ExecutionNode | undefined {
+  for (const source of executionSources()) for (const entry of source.store.manifest()) {
+    const node = source.store.snapshot(entry.rootExecutionId)?.nodes.find((candidate) => candidate.sessionId === sessionId);
+    if (node) return node;
   }
+  return undefined;
+}
+function executionLocation(executionId: string): ExecutionLocation | undefined {
+  for (const source of executionSources()) { const found = source.store.findNode(executionId); if (found) return { ...source, ...found }; }
+  return undefined;
+}
+/** Managed workflow sessions are deliberately absent from ordinary chat. Local sessions are
+ * authoritative in Store; remote sessions are identified from the mirrored workflow graph so the
+ * Hub can reject them before forwarding. The Runner repeats the check against its authoritative
+ * Store because a mirror may be stale while reconnecting. */
+function isInternalExecutionSession(runnerId: string, sessionId: string | undefined): boolean {
+  if (!sessionId) return false;
+  if (runnerId === LOCAL_ID) return store.isHidden(sessionId);
+  const source = mirrorExecutionStore(runnerId);
+  for (const entry of source.manifest()) {
+    const snapshot = source.snapshot(entry.rootExecutionId);
+    const root = snapshot?.nodes.find((node) => node.executionId === entry.rootExecutionId);
+    if (root?.kind === "workflow" && root.origin === "jarvis_managed" && snapshot?.nodes.some((node) => node.sessionId === sessionId)) return true;
+  }
+  return false;
+}
+function executionNodeForUi(node: ExecutionNode): ExecutionNode {
+  return { ...node, capabilities: { ...node.capabilities }, metrics: { self: { ...node.metrics.self }, subtree: node.metrics.subtree ? { ...node.metrics.subtree } : undefined },
+    archivedAt: executionUiState.archives[node.executionId] || node.archivedAt };
+}
+function executionEventsForNode(store: ExecutionStore, rootExecutionId: string, executionId: string): ExecutionEvent[] {
+  const out: ExecutionEvent[] = []; let afterSeq = 0, pages = 0;
+  do {
+    const page = store.events(rootExecutionId, afterSeq, 1000);
+    for (const event of page.events) if (event.executionId === executionId) out.push(event);
+    if (page.nextSeq === undefined || page.nextSeq <= afterSeq) break;
+    afterSeq = page.nextSeq;
+  } while (++pages < 100);
+  return out;
+}
+function broadcastExecutionEvent(runnerId: string, event: ExecutionEvent): void {
+  for (const client of wss.clients) {
+    const ws = client as WebSocket;
+    if (!runnerSockets.has(ws) && canUseRunner(ws, runnerId)) send(ws, { t: "execution_delta", runnerId, event });
+  }
+}
+function broadcastExecutionConnection(runnerId: string, state: "online" | "offline" | "reconciling" | "desynced"): void {
+  const at = Date.now();
+  for (const client of wss.clients) { const ws = client as WebSocket; if (!runnerSockets.has(ws) && canUseRunner(ws, runnerId)) send(ws, { t: "execution_connection", runnerId, state, at }); }
+}
+
+const managedWorktrees = new ManagedWorktreeManager(executionCfg.worktreeRoot);
+const localManagedRuns = new Set<string>();
+function managedSecurityFor(agent: string, write: boolean): ManagedExecutionSecurity | undefined {
+  if (agent === "mock" && process.env.JARVIS_ENABLE_MOCK === "1" && !write) return { commitPrevention: "provider_config", readOnlyEnforcement: "provider_sandbox" };
+  if (agent === "claude-code") return { commitPrevention: "provider_config", readOnlyEnforcement: write ? undefined : "provider_sandbox" };
+  if (agent === "codex" && !write) return { commitPrevention: "provider_config", readOnlyEnforcement: "provider_sandbox" };
+  if (agent === "aider" && write) return { commitPrevention: "provider_config" };
+  return undefined;
+}
+const localManagedExecution = new ManagedExecutionService({
+  runnerId: LOCAL_ID, store: localExecutionStore, agents, worktrees: managedWorktrees,
+  hiddenSessions: {
+    async create(input) {
+      const existing = store.get(input.idHint);
+      if (existing) {
+        if (!store.isHidden(input.idHint) || existing.rootExecutionId !== input.rootExecutionId || existing.executionId !== input.executionId || existing.agent !== input.agent || existing.cwd !== input.cwd) {
+          throw new Error(`binding de sessão interna divergente para ${input.idHint}`);
+        }
+      } else store.ensure(input.idHint, { title: input.title, agent: input.agent, cwd: input.cwd, hidden: true, rootExecutionId: input.rootExecutionId, executionId: input.executionId });
+      return { sessionId: input.idHint };
+    },
+    append(sessionId, message) { store.add(sessionId, { role: message.role, text: message.text, ts: message.at }); },
+  },
+  securityFor: (task) => managedSecurityFor(task.agent, task.write === true),
+  invoke: async (input) => {
+    const reply = await input.adapter.send(input.sessionId, input.prompt, input.cwd, {
+      model: input.task.model, effort: input.task.effort, signal: input.signal,
+      managed: { workspaceAccess: input.lease.access, preventCommits: true },
+    }, input.onEvent);
+    addUsage(input.sessionId, input.task.agent, reply.usage); return reply;
+  },
+  onEvent: (event) => broadcastExecutionEvent(LOCAL_ID, event),
+  onChildUsage: (input) => addUsage(input.sessionId, input.agent, input.usage),
+});
+
+function boundedManagedPolicy(value: ManagedExecutionPolicyInput | undefined): ManagedExecutionPolicyInput {
+  return { ...value,
+    maxConcurrency: Math.min(executionCfg.maxConcurrency, value?.maxConcurrency ?? executionCfg.maxConcurrency),
+    maxDepth: Math.min(executionCfg.maxDepth, value?.maxDepth ?? executionCfg.maxDepth) };
+}
+
+function startLocalManagedExecution(input: { requestId: string; title?: string; plan: ManagedExecutionPlan; policy?: ManagedExecutionPolicyInput }, respond: (result: any) => void): void {
+  let responded = false;
+  const finish = (result: any): void => { if (responded) return; responded = true; executionUiState.commands[input.requestId] = result; saveExecutionUiState(); respond(result); };
+  const ctrl = new AbortController();
+  localManagedRuns.add(input.plan.rootExecutionId); localExecutionAborts.set(input.plan.rootExecutionId, ctrl);
+  void localManagedExecution.run(input.plan, {
+    title: input.title, policy: boundedManagedPolicy(input.policy), signal: ctrl.signal,
+    onAccepted: (rootExecutionId) => finish({ t: "execution_delegate_result", requestId: input.requestId, ok: true, rootExecutionId }),
+  }).catch((error) => {
+    const message = String((error as Error)?.message || error);
+    finish({ t: "execution_delegate_result", requestId: input.requestId, ok: false, error: message });
+    console.error(`[hub] workflow gerenciado ${input.plan.rootExecutionId} falhou: ${message}`);
+  }).finally(() => {
+    localManagedRuns.delete(input.plan.rootExecutionId);
+    if (localExecutionAborts.get(input.plan.rootExecutionId) === ctrl) localExecutionAborts.delete(input.plan.rootExecutionId);
+  });
 }
 
 /** A remote runner connected on /runner: register (token) then relay its stream to clients. */
 function handleRunnerConnection(ws: WebSocket, ip: string): void {
   runnerSockets.add(ws);
   let rid: string | null = null;
+  let upgradeOnly: RunnerConn | null = null;
   // App-level heartbeat + half-open reaper. The runner answers every {t:"ping"} with {t:"pong"}, and
   // ANY inbound message refreshes rc.lastSeen. A dead TCP half-open never fires 'close', so if three
   // ping cycles pass with no traffic we terminate the socket ourselves — that triggers ws.on("close"),
   // which ends the runner's in-flight turns instead of leaving them hung.
   const ping = setInterval(() => {
     if (ws.readyState !== WebSocket.OPEN) { clearInterval(ping); return; }
-    if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws && Date.now() - rc.lastSeen > 60000) { console.warn(`[hub] runner ${rid} sem pong — encerrando socket meio-aberto`); try { ws.terminate(); } catch { /* ignore */ } return; } }
+    if (rid) {
+      const rc = upgradeOnly || runners.get(rid);
+      if (rc && (upgradeOnly || rc.ws === ws) && Date.now() - rc.lastSeen > 60000) { console.warn(`[hub] runner ${rid} sem pong — encerrando socket meio-aberto`); try { ws.terminate(); } catch { /* ignore */ } return; }
+    }
     send(ws, { t: "ping" });
   }, 20000);
   // drop runners that never register (token) within 20s
   const regTimer = setTimeout(() => { if (!rid) { try { ws.close(1008, "no register"); } catch { /* ignore */ } } }, 20000);
-  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); console.log(`[hub] runner offline: ${rid}`); endRunnerRuns(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
+  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); console.log(`[hub] runner offline: ${rid}`); noteRunnerOffline(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
   ws.on("error", () => { /* close handles cleanup */ });
   ws.on("message", (raw) => {
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
@@ -618,11 +978,6 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       const info: RunnerInfo = m.info || {};
       const declaredId = info.runnerId || null;
       if (!declaredId) { send(ws, { t: "reject", reason: "sem runnerId" }); try { ws.close(); } catch { /* ignore */ } return; }
-      if ((info.protocolVersion || 1) !== RUNNER_PROTOCOL_VERSION) {
-        send(ws, { t: "reject", reason: `protocolo incompatível (runner=${info.protocolVersion || 1}, hub=${RUNNER_PROTOCOL_VERSION}); atualize o Runner` });
-        try { ws.close(); } catch { /* ignore */ }
-        return;
-      }
       // Machine 0 (this host) is always LOCAL_ID; a remote runner may not claim that reserved id and
       // overwrite the in-process entry.
       if (declaredId === LOCAL_ID) { send(ws, { t: "reject", reason: "runnerId reservado" }); try { ws.close(); } catch { /* ignore */ } return; }
@@ -633,6 +988,32 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
         send(ws, { t: "reject", reason: "identidade de runner recusada" }); try { ws.close(); } catch { /* ignore */ } return;
       }
       rid = declaredId;
+      const runnerProtocol = info.protocolVersion || 1;
+      if (runnerProtocol > RUNNER_PROTOCOL_VERSION) {
+        send(ws, { t: "reject", reason: `Runner usa protocolo ${runnerProtocol}, mas este Hub suporta ${RUNNER_PROTOCOL_VERSION}. Atualize o Hub primeiro; downgrade automático foi recusado.` });
+        try { ws.close(); } catch { /* ignore */ }
+        return;
+      }
+      if (runnerProtocol < RUNNER_PROTOCOL_VERSION) {
+        // Authenticated but operationally incompatible: quarantine this socket instead of rejecting
+        // the very machine that needs an update. It may only ping and complete an update; no session,
+        // file or agent traffic is relayed until it restarts on the current protocol.
+        const active = runners.get(rid);
+        if (active?.ws && active.ws.readyState === WebSocket.OPEN) { send(ws, { t: "reject", reason: "já existe uma instância compatível desta máquina" }); try { ws.close(); } catch { /* ignore */ } return; }
+        if (!runnerLabels[rid]) { runnerLabels[rid] = info.label || info.host || rid; saveRunnerLabels(); }
+        const placeholder: RunnerConn = { id: rid, ws: null, local: false, lastSeen: Date.now(), info };
+        runners.set(rid, placeholder); upgradeOnly = { ...placeholder, ws };
+        console.warn(`[hub] runner ${rid} em quarentena de atualização (protocolo ${runnerProtocol} → ${RUNNER_PROTOCOL_VERSION})`);
+        void (async () => {
+          const target = (hubCommit || await repoCommit(UPDATE_ROOT)).replace("+dirty", "");
+          if (!target || ws.readyState !== WebSocket.OPEN) return;
+          queueRunnerUpdate(rid!, target);
+          // A clean checkout already at the target may merely be running the old process. v2 restarts
+          // on force even when behind=0; clean means this special force cannot discard user work.
+          deliverPendingRunnerUpdate(upgradeOnly!, { force: !!info.commit && !info.commit.includes("+dirty") && commitMatches(info.commit, target) });
+        })();
+        broadcastMachines(); return;
+      }
       offlineSince.delete(rid); offlineAlerted.delete(rid); // back online — reset the offline clock + alert latch
       // Same id registering again = a second instance on that machine (e.g. the service plus a
       // hand-started one). The map would just be overwritten and the old socket left live but
@@ -642,12 +1023,21 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       runners.set(rid, { id: rid, ws, local: false, lastSeen: Date.now(), info });
       if (!runnerLabels[rid]) { runnerLabels[rid] = info.label || info.host || rid; saveRunnerLabels(); }
       send(ws, { t: "welcome", runnerId: rid });
+      send(ws, { t: "execution_manifest_request", reqId: `manifest-${randomUUID()}` });
+      broadcastExecutionConnection(rid, "reconciling");
       auth.audit("runner_online", { runnerId: rid, detail: info.host });
       console.log(`[hub] runner online: ${rid} (${info.host})`);
       broadcastMachines();
+      verifyOrDeliverRunnerUpdate(runners.get(rid)!);
       return;
     }
     if (!rid) return;
+    if (upgradeOnly) {
+      upgradeOnly.lastSeen = Date.now();
+      if (m.t === "update_done") completePendingRunnerUpdate(upgradeOnly, m);
+      // Quarantine is deliberately fail-closed: pong/update_done are the only accepted frames.
+      return;
+    }
     const rc = runners.get(rid); if (!rc) return; rc.lastSeen = Date.now();
     // A malformed frame from a runner must never take the hub down (unhandled throw → process crash).
     try { relayRunner(rc, m); } catch (e) { console.error("[hub] erro no relay do runner", rid, "-", String((e as any)?.message ?? e)); }
@@ -768,6 +1158,9 @@ async function speechForReply(replyText: string): Promise<string> {
 // Idempotency for LOCAL managed turns (mirrors the runner's turnId dedup) — a re-delivered send
 // runs at most once even on the embedded machine-0 path.
 const localSeenTurns = createSeenSet();
+// The automatic router runs before runManagedTurn/Runner dedupe. Guard the inbound frame as well,
+// otherwise a reconnect could spend a second routing call even though the main turn is at-most-once.
+const incomingTurns = createSeenSet(1000);
 const turnCtx: TurnCtx = {
   seen: (turnId) => localSeenTurns.add(turnId),
   afterTurn: (sid) => { void indexSession(sid); },
@@ -810,19 +1203,24 @@ async function deliverTurn(sid: string, opts: { showText: string; agentText?: st
  *  agent/folder later won't move an existing routine session (delete+recreate to change those). */
 async function runRoutine(r: Routine): Promise<void> {
   const sid = "routine-" + r.id;
+  const flags = autoFlags(r.auto);
   if (r.runnerId && r.runnerId !== LOCAL_ID) {
     const rc = runners.get(r.runnerId);
     if (!rc?.ws) { notifyEvent("error", "⏰ " + r.name, "máquina da rotina está offline", sid); return; }
-    const agentName = r.agent || rc.info.agents[0];
+    const state = runnerSessionState.get(rc.id)?.get(sid), hist = needsAuto(flags) ? await runnerHistory(rc, sid) : null;
+    const configuredAgent = r.agent && rc.info.agents.includes(r.agent) ? r.agent : undefined;
+    const agentName = hist?.agent || state?.agent || (flags.agent ? configuredAgent || rc.info.agents[0] : r.agent || rc.info.agents[0]);
     if (!agentName || !rc.info.agents.includes(agentName)) { notifyEvent("error", "⏰ " + r.name, `agente '${agentName || "(nenhum)"}' indisponível nessa máquina`, sid); return; }
-    sendToRunner(rc, { t: "send", sessionId: sid, text: r.prompt, agent: agentName, cwd: r.cwd, opts: { model: r.model, effort: r.effort }, turnId: `routine:${r.id}:${r.lastRunAt || Date.now()}` });
+    const decision = await decideAutomaticRoute({ sid, text: r.prompt, started: Number(hist?.total) > 0 || state?.started === true, currentAgent: agentName, currentModel: r.model, currentEffort: r.effort, flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens, contextWindowTokens: hist?.contextWindowTokens });
+    sendToRunner(rc, { t: "send", sessionId: sid, text: r.prompt, agent: decision.agent, cwd: r.cwd, opts: { model: decision.model, effort: decision.effort }, turnId: `routine:${r.id}:${r.lastRunAt || Date.now()}` });
     return;
   }
-  const localAgent = r.agent || agents.default;
-  if (!agents.has(localAgent)) { notifyEvent("error", "⏰ " + r.name, `agente '${localAgent}' não registrado`, sid); return; }
+  const localAgent = flags.agent ? (r.agent && localAgents.includes(r.agent) ? r.agent : localAgents[0]) : (r.agent || agents.default);
+  if (!localAgent || !localAgents.includes(localAgent)) { notifyEvent("error", "⏰ " + r.name, `agente '${localAgent || "(nenhum)"}' indisponível nessa máquina`, sid); return; }
   store.ensure(sid, { agent: localAgent, cwd: r.cwd || CWD, title: "⏰ " + r.name });
+  const decision = await routeLocalTurn(sid, r.prompt, r.model, r.effort, flags);
   await runManagedTurn(turnCtx, sid, {
-    showText: r.prompt, model: r.model, effort: r.effort, speak: !!r.speak,
+    showText: r.prompt, model: decision.model, effort: decision.effort, speak: !!r.speak,
     onError: (message) => notifyEvent("error", "⏰ " + r.name, message, sid),
   });
 }
@@ -840,6 +1238,7 @@ function handleRoutineMsg(ws: WebSocket, msg: any): boolean {
 // Scheduler: every 30s, fire any routine whose local HH:MM matches now (markRun BEFORE running so a
 // sub-minute re-tick can't double-fire; isDue also guards it). ~2 ticks/minute → never misses a minute.
 setInterval(() => {
+  if (hubUpdateInProgress) return;
   const now = new Date();
   for (const r of routines.due(now)) { routines.markRun(r.id, now.getTime()); void runRoutine(r); }
 }, 30_000).unref?.();
@@ -1055,6 +1454,10 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
  *  callers must NOT also broadcast a {t:message} assistant (they only persist it). */
 // Live turns keyed by session, so a "parar" from any client can abort the actual agent process.
 const localAborts = new Map<string, AbortController>();
+// Execution controls must address the exact root turn. A session can start another turn after the
+// previous one finished; resolving cancellation through only the session id could otherwise let a
+// stale UI command abort the newer turn.
+const localExecutionAborts = new Map<string, AbortController>();
 // Atividade viva bufferizada por sessão EM ANDAMENTO: um cliente que (re)abre no meio do turno
 // replica o que perdeu e vê "processando" em vez de uma espera em branco. Limpo ao fim do turno
 // (o texto final vai pro histórico, então replay só acontece enquanto o turno está ativo — sem
@@ -1063,7 +1466,7 @@ const activityBuf = new Map<string, any[]>();
 // Fila POR SESSÃO, dona no HUB (não mais só no navegador): toda web vendo a sessão enxerga a MESMA
 // fila, e o flush roda no servidor quando o turno termina — sobrevive mesmo que o dispositivo que
 // enfileirou saia. Cada item guarda texto + anexos (+ model/effort do envio original).
-type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean }>; model?: string; effort?: string; runnerId?: string; msgId?: string };
+type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean }>; model?: string; effort?: string; auto?: AutoRouteFlags; runnerId?: string; msgId?: string };
 const queues = new Map<string, QueueItem[]>();
 function queueOf(sid: string): QueueItem[] { let q = queues.get(sid); if (!q) { q = []; queues.set(sid, q); } return q; }
 function broadcastQueue(sid: string): void { broadcast(sid, { t: "queue", sessionId: sid, items: queueOf(sid).map((q) => ({ text: q.text, atts: q.atts })) }); }
@@ -1091,6 +1494,86 @@ const COST_FILE = join(JARVIS_DIR, "session-cost.json");
 const usageLedger = new UsageLedger(COST_FILE);
 function costOf(sid: string): number { return usageLedger.session(sid).costUsd; }
 function addUsage(sid: string, agent: string, usage?: AgentReply["usage"]): void { usageLedger.record(sid, agent, usage); }
+
+function autoFlags(value: unknown): AutoRouteFlags {
+  const v: any = value;
+  return { agent: v?.agent === true, model: v?.model === true, effort: v?.effort === true };
+}
+function needsAuto(flags: AutoRouteFlags): boolean { return flags.agent || flags.model || flags.effort; }
+
+async function decideAutomaticRoute(input: {
+  sid: string;
+  text: string;
+  started: boolean;
+  currentAgent: string;
+  currentModel?: string;
+  currentEffort?: string;
+  flags: AutoRouteFlags;
+  descriptors: unknown;
+  available: string[];
+  recent?: Array<{ role: "user" | "assistant"; text: string }>;
+  contextTokens?: number;
+  contextWindowTokens?: number;
+  notify?: (message: unknown) => void;
+}): Promise<AutoRouteDecision> {
+  const catalog = normalizeAutoRouteAgents(input.descriptors, input.available);
+  const req = {
+    message: input.text,
+    started: input.started,
+    currentAgent: input.currentAgent,
+    currentModel: input.currentModel,
+    currentEffort: input.currentEffort,
+    flags: input.flags,
+    agents: catalog,
+    recent: input.recent,
+    contextTokens: input.contextTokens,
+    contextWindowTokens: input.contextWindowTokens,
+  };
+  if (!needsAuto(input.flags)) return { agent: input.currentAgent, model: input.currentModel, effort: input.currentEffort, reason: "seleção manual", fallback: false };
+  input.notify?.({ t: "auto_route", sessionId: input.sid, state: "started" });
+  let decision: AutoRouteDecision | null = null;
+  const ctrl = new AbortController();
+  routeAborts.set(input.sid, ctrl);
+  try {
+    const router = summaryAgent();
+    if (!router.oneShot) throw new Error("agente de roteamento sem suporte one-shot");
+    const reply = await router.oneShot(buildAutoRoutePrompt(req), { ...(await compatibleAgentOpts(router, summaryCfg.model, summaryCfg.effort)), signal: ctrl.signal });
+    // Routing is deliberately accounted outside the conversation: it must appear in total usage,
+    // but never inflate the target session's context/cost as if the main coding agent spent it.
+    addUsage("__auto_route__", router.name, reply.usage);
+    decision = parseAutoRouteDecision(reply.text, req);
+  } catch {
+    if (ctrl.signal.aborted) { input.notify?.({ t: "auto_route", sessionId: input.sid, state: "cancelled" }); throw new Error(ABORTED); }
+    // deterministic fallback below
+  } finally {
+    if (routeAborts.get(input.sid) === ctrl) routeAborts.delete(input.sid);
+  }
+  if (!decision) decision = autoRouteFallback(req);
+  input.notify?.({ t: "auto_route", sessionId: input.sid, state: "completed", decision });
+  return decision;
+}
+
+async function routeLocalTurn(sid: string, text: string, model: unknown, effort: unknown, flags: AutoRouteFlags): Promise<AutoRouteDecision> {
+  const native = isNativeId(sid);
+  const info = native ? nativeInfo(sid) : store.ensure(sid);
+  if (!info) throw new Error("sessão não encontrada");
+  const history = native ? (nativeHistory(sid)?.messages || []) : store.history(sid);
+  const recent = history.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role as "user" | "assistant", text: String(m.text || "") }));
+  const su = usageLedger.session(sid);
+  const decision = await decideAutomaticRoute({
+    sid, text, started: native || history.length > 0, currentAgent: info.agent,
+    currentModel: typeof model === "string" ? model : (flags.model ? su.model : undefined),
+    currentEffort: typeof effort === "string" ? effort : undefined,
+    flags, descriptors: await agents.describe(), available: localAgents,
+    recent, contextTokens: su.contextTokens, contextWindowTokens: su.contextWindowTokens,
+    notify: (frame) => broadcast(sid, frame),
+  });
+  if (!native && history.length === 0 && decision.agent !== info.agent) {
+    if (!store.reconfigure(sid, { agent: decision.agent })) throw new Error("a IA da sessão foi bloqueada antes da decisão automática");
+    pushSessions();
+  }
+  return decision;
+}
 /** Reconcile a hub session against its bound NATIVE transcript. If the hub was killed mid-turn
  *  (restart, crash), the provider CLI child can keep running as an orphan
  *  (Windows doesn't kill children when the parent is force-killed) and finish writing the reply
@@ -1122,14 +1605,38 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   const turnId = opts.turnId || randomUUID();
   const sequencer = createEventSequencer(turnId);
   const bridge = createAgentEventBridge(turnId, sequencer);
-  const emit = (event: AgentEvent): void => {
+  const profile = (EXECUTION_ADAPTER_PROFILES as Partial<Record<string, (typeof EXECUTION_ADAPTER_PROFILES)[ExecutionAdapterId]>>)[agent.name];
+  const tracker = executionCfg.enabled ? new ExecutionTracker(localExecutionStore, { runnerId: LOCAL_ID, sessionId: sid, turnId, agent: agent.name, cwd, model: opts.model, effort: opts.effort, profile },
+    (event) => broadcastExecutionEvent(LOCAL_ID, event), (usage) => addUsage(sid, agent.name, usage)) : undefined;
+  if (tracker) localExecutionAborts.set(tracker.rootExecutionId, ctrl);
+  const emit = (event: AgentEvent, project = true): void => {
     if (buf.length < 600) buf.push(event);
+    if (project) tracker?.handleAgentEvent(event);
     broadcast(sid, { t: "agent_event", sessionId: sid, event, sessionCost: costOf(sid), sessionUsage: usageLedger.session(sid) });
   };
-  emit(bridge.accepted()); emit(bridge.started());
   try {
+    emit(bridge.accepted()); emit(bridge.started());
     const prior = store.history(sid).slice(0, -1).filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
-    const reply = await agent.send(sid, agentText, cwd, { ...opts, turnId, history: prior, signal: ctrl.signal }, (ev) => emit(bridge.provider(ev)));
+    const reply = await agent.send(sid, agentText, cwd, { ...opts, turnId, history: prior, signal: ctrl.signal }, (ev) => {
+      if (isProviderExecutionEvent(ev)) {
+        let projected: ReturnType<ExecutionTracker["handleProviderEvent"]> | undefined;
+        let projectionFailed = false;
+        try { projected = tracker?.handleProviderEvent(ev); }
+        catch (error) { projectionFailed = true; console.warn(`[hub] falha ao projetar subprocesso em ${tracker?.rootExecutionId || turnId}:`, String(error)); }
+        if (ev.kind === "execution_activity") {
+          // This is provider-published activity, not inferred progress. Feed it through the same
+          // canonical chat/history lifecycle, but do not project it into the graph twice.
+          const activity = projected?.activity || (!tracker || projectionFailed ? redactProviderExecutionActivity(ev.event, cwd) : undefined);
+          if (activity) {
+            const event = bridge.provider({ ...activity, parentId: ev.providerId });
+            event.executionId = projected?.executionId;
+            emit(event, false);
+          }
+        }
+      }
+      else emit(bridge.provider(ev));
+    });
+    if (reply.usage || opts.model || opts.effort) reply.usage = { costKind: "unavailable", source: "Jarvis turn selection", ...reply.usage, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort };
     addUsage(sid, agent.name, reply.usage);
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: reply.usage?.model || opts.model, ms: Date.now() - t0, ok: true, ts: Date.now() });
     if (reply.usage) emit(bridge.usage(reply.usage));
@@ -1155,6 +1662,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid);
     throw e;
   } finally {
+    if (tracker && localExecutionAborts.get(tracker.rootExecutionId) === ctrl) localExecutionAborts.delete(tracker.rootExecutionId);
     if (localAborts.get(sid) === ctrl) localAborts.delete(sid);
     activityBuf.delete(sid);
     activeRuns.delete(sid); broadcastRuns();
@@ -1174,15 +1682,30 @@ async function flushQueue(sid: string): Promise<void> {
   } else if (activeRuns.has(sid)) return;                         // local ainda ocupado
   const text = items.map((q) => q.text).join("\n\n");
   const atts = items.flatMap((q) => q.atts || []);
-  const model = items.find((q) => q.model)?.model;
-  const effort = items.find((q) => q.effort)?.effort;
+  // Queued messages are deliberately combined into one turn; the newest queued preference wins,
+  // matching what the user last selected before that combined turn is dispatched.
+  const policy = items.at(-1);
+  const model = policy?.model;
+  const effort = policy?.effort;
+  const automatic = policy?.auto || { agent: false, model: false, effort: false };
   queues.set(sid, []); broadcastQueue(sid); saveQueues();   // limpa ANTES de rodar (evita re-flush do mesmo)
   const viewer = [...wss.clients].find((c) => c.readyState === c.OPEN && subs.get(c as WebSocket) === sid) as WebSocket | undefined;
   try {
-    if (rid) { const rc = runners.get(rid); if (rc?.ws) sendToRunner(rc, { t: "send", sessionId: sid, text, attachments: atts, model, effort, turnId: (items.find((q) => q.msgId)?.msgId) || randomUUID() }); return; } // runner: relaya como envio normal (turnId = idempotência)
-    if (isNativeId(sid)) { await deliverNativeTurn(viewer ?? null, sid, text, { model, effort, attachments: atts }); return; }
+    if (rid) {
+      const rc = runners.get(rid);
+      if (rc?.ws) {
+        const state = runnerSessionState.get(rid)?.get(sid), hist = needsAuto(automatic) ? await runnerHistory(rc, sid) : null, su = usageLedger.session(sid);
+        const currentAgent = hist?.agent || state?.agent || rc.info.agents[0];
+        if (!currentAgent) throw new Error("nenhuma IA disponível nesta máquina");
+        const decision = await decideAutomaticRoute({ sid, text, started: /^(claude:|codex:)/.test(sid) || Number(hist?.total) > 0 || state?.started === true, currentAgent, currentModel: model || (automatic.model ? su.model : undefined), currentEffort: effort, flags: automatic, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens, notify: (frame) => { for (const c of clientsOn(rid)) if (subs.get(c) === sid) send(c, frame); } });
+        sendToRunner(rc, { t: "send", sessionId: sid, text, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, turnId: (items.find((q) => q.msgId)?.msgId) || randomUUID() });
+      }
+      return;
+    } // runner: relaya como envio normal (turnId = idempotência)
+    const decision = await routeLocalTurn(sid, text, model, effort, automatic);
+    if (isNativeId(sid)) { await deliverNativeTurn(viewer ?? null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts }); return; }
     const { agentText, showText, images, files } = buildAttachments(atts, text);
-    await runManagedTurn(turnCtx, sid, { showText, agentText, model, effort, images, files, turnId: items.find((q) => q.msgId)?.msgId, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
+    await runManagedTurn(turnCtx, sid, { showText, agentText, model: decision.model, effort: decision.effort, images, files, turnId: items.find((q) => q.msgId)?.msgId, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
   } catch (e: any) { broadcast(sid, { t: "error", message: String(e?.message ?? e) }); }
 }
 /** Replay the buffered live activity of an IN-PROGRESS local turn to a client that just (re)opened
@@ -1208,6 +1731,8 @@ function replayActivity(ws: WebSocket, sid: string): void {
 /** Abort a live turn. Local session → kill its agent process; remote → relay to the owning runner.
  *  Returns false only if nothing was running here to cancel. */
 function cancelTurn(sid: string, ws: WebSocket): boolean {
+  const routing = routeAborts.get(sid);
+  if (routing) { routing.abort(); return true; }
   const rid = activeRunner(ws);
   if (rid !== LOCAL_ID) { const rc = runners.get(rid); if (rc?.ws) { sendToRunner(rc, { t: "cancel", sessionId: sid }); return true; } return false; }
   const ctrl = localAborts.get(sid);
@@ -1852,6 +2377,96 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // machine ops (queue/cancel/summarize) → require access to the selected runner. Owner passes both.
     if (LOCAL_OPS.has(msg.t) && !canUseRunner(ws, LOCAL_ID)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
     if (ACTIVE_OPS.has(msg.t) && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
+    if (hubUpdateInProgress && UPDATE_BLOCKED_OPS.has(msg.t)) { send(ws, { t: "error", message: "Hub drenando para atualização — tente novamente após reconectar" }); return; }
+
+    // --- durable execution graph (global across sessions and authorized machines) ---
+    if (msg.t === "execution_delegate" && typeof msg.requestId === "string") {
+      const cached = executionUiState.commands[msg.requestId]; if (cached) { send(ws, cached); return; }
+      const requestedRunner = typeof msg.plan?.runnerId === "string" ? msg.plan.runnerId : "";
+      const reject = (error: string): void => { const result = { t: "execution_delegate_result", requestId: msg.requestId, ok: false, error }; executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result); };
+      if (!executionCfg.enabled) { reject("acompanhamento de trabalhos está desabilitado"); return; }
+      if (!requestedRunner || !canUseRunner(ws, requestedRunner)) { reject("máquina fixa ausente ou sem acesso"); return; }
+      if (!Array.isArray(msg.plan?.tasks)) { reject("plano de delegação inválido"); return; }
+      const plan: ManagedExecutionPlan = { rootExecutionId: String(msg.plan.rootExecutionId || ""), runnerId: requestedRunner,
+        tasks: msg.plan.tasks.map((task: any) => ({ ...task, write: task?.write === undefined ? executionCfg.defaultWrite : task.write === true })) };
+      const policy = boundedManagedPolicy(msg.policy as ManagedExecutionPolicyInput | undefined);
+      auth.audit("execution_delegate", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: requestedRunner, detail: `${plan.rootExecutionId}: ${plan.tasks.length} tarefa(s)` });
+      if (requestedRunner === LOCAL_ID) { startLocalManagedExecution({ requestId: msg.requestId, title: typeof msg.title === "string" ? msg.title : undefined, plan, policy }, (result) => send(ws, result)); return; }
+      const rc = runners.get(requestedRunner);
+      if (!rc || !sendToRunner(rc, { t: "execution_delegate", requestId: msg.requestId, title: typeof msg.title === "string" ? msg.title : undefined, plan, policy })) { reject("máquina offline"); return; }
+      pendingReq.set(msg.requestId, ws);
+      setTimeout(() => {
+        if (pendingReq.get(msg.requestId) !== ws) return;
+        pendingReq.delete(msg.requestId); reject("tempo esgotado aguardando aceite da máquina");
+      }, 30_000).unref?.();
+      return;
+    }
+    if (msg.t === "executions_list") {
+      const sessionId = msg.scope === "session" && typeof msg.sessionId === "string" ? msg.sessionId : undefined;
+      const rootExecutionId = typeof msg.rootExecutionId === "string" ? msg.rootExecutionId : undefined;
+      const requestedRunnerId = typeof msg.runnerId === "string" ? msg.runnerId : undefined;
+      const states = Array.isArray(msg.states) ? new Set<ExecutionState>(msg.states.filter(isExecutionState)) : undefined;
+      const allowedSources = executionSources().filter((source) => canUseRunner(ws, source.runnerId) && (!requestedRunnerId || source.runnerId === requestedRunnerId));
+      const all = allowedSources
+        .flatMap((source) => source.store.listNodes(sessionId).map(executionNodeForUi))
+        .filter((node) => !rootExecutionId || node.rootExecutionId === rootExecutionId)
+        .filter((node) => !states?.size || states.has(node.state))
+        .sort((a, b) => (b.startedAt || b.queuedAt) - (a.startedAt || a.queuedAt));
+      const offset = Math.max(0, Number.parseInt(String(msg.cursor || "0"), 10) || 0), limit = Math.max(1, Math.min(500, Number(msg.limit) || 100));
+      send(ws, { t: "executions_snapshot", requestId: typeof msg.requestId === "string" ? msg.requestId : undefined,
+        scope: sessionId ? "session" : "all", nodes: all.slice(offset, offset + limit), nextCursor: offset + limit < all.length ? String(offset + limit) : undefined, generatedAt: Date.now() });
+      for (const source of allowedSources) {
+        const rc = runners.get(source.runnerId), online = source.runnerId === LOCAL_ID || !!(rc?.ws && rc.ws.readyState === WebSocket.OPEN);
+        send(ws, { t: "execution_connection", runnerId: source.runnerId, state: online ? "online" : "offline", at: Date.now() });
+      }
+      return;
+    }
+    if (msg.t === "execution_open" && typeof msg.executionId === "string") {
+      const found = executionLocation(msg.executionId);
+      if (!found || !canUseRunner(ws, found.runnerId)) { send(ws, { t: "execution_error", code: "NOT_FOUND", message: "trabalho não encontrado", executionId: msg.executionId }); return; }
+      const rootEvents = executionEventsForNode(found.store, found.rootExecutionId, msg.executionId);
+      const offset = Math.max(0, Number.parseInt(String(msg.cursor || "0"), 10) || 0), limit = Math.max(1, Math.min(500, Number(msg.limit) || 200));
+      send(ws, { t: "execution_transcript", executionId: msg.executionId, node: executionNodeForUi(found.node), events: rootEvents.slice(offset, offset + limit), nextCursor: offset + limit < rootEvents.length ? String(offset + limit) : undefined, truncated: found.store.snapshot(found.rootExecutionId)?.truncated || false });
+      return;
+    }
+    if (msg.t === "execution_archive" && typeof msg.requestId === "string" && typeof msg.executionId === "string") {
+      const cached = executionUiState.commands[msg.requestId]; if (cached) { send(ws, cached); return; }
+      const found = executionLocation(msg.executionId);
+      const result = !found || !canUseRunner(ws, found.runnerId)
+        ? { t: "execution_archive_result", requestId: msg.requestId, executionId: msg.executionId, ok: false, error: "trabalho não encontrado ou sem acesso" }
+        : (() => { if (msg.archived) executionUiState.archives[msg.executionId] = Date.now(); else delete executionUiState.archives[msg.executionId]; return { t: "execution_archive_result", requestId: msg.requestId, executionId: msg.executionId, ok: true }; })();
+      executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result); return;
+    }
+    if (msg.t === "execution_input" && typeof msg.requestId === "string" && typeof msg.executionId === "string") {
+      const cached = executionUiState.commands[msg.requestId]; if (cached) { send(ws, cached); return; }
+      const found = executionLocation(msg.executionId), okAccess = !!found && canUseRunner(ws, found.runnerId);
+      const result = { t: "execution_input_result", requestId: msg.requestId, executionId: msg.executionId, ok: false,
+        error: okAccess ? "este adaptador não publicou um canal de resposta verificável" : "trabalho não encontrado ou sem acesso" };
+      executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result); return;
+    }
+    if (msg.t === "execution_control" && typeof msg.requestId === "string" && typeof msg.executionId === "string") {
+      const cached = executionUiState.commands[msg.requestId]; if (cached) { send(ws, cached); return; }
+      const found = executionLocation(msg.executionId);
+      if (!found || !canUseRunner(ws, found.runnerId)) {
+        const result = { t: "execution_control_result", requestId: msg.requestId, executionId: msg.executionId, ok: false, affectedIds: [], unsupportedIds: [msg.executionId], error: "trabalho não encontrado ou sem acesso" };
+        executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result); return;
+      }
+      if (found.runnerId !== LOCAL_ID) {
+        const rc = runners.get(found.runnerId);
+        if (!rc || !sendToRunner(rc, { t: "execution_control", requestId: msg.requestId, executionId: msg.executionId, action: msg.action, message: msg.message })) {
+          const result = { t: "execution_control_result", requestId: msg.requestId, executionId: msg.executionId, ok: false, affectedIds: [], unsupportedIds: [msg.executionId], error: "máquina offline" };
+          executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result);
+        } else pendingReq.set(msg.requestId, ws);
+        return;
+      }
+      const rootCancelable = found.node.executionId === found.rootExecutionId && (msg.action === "cancel" || msg.action === "cancel_subtree");
+      const ctrl = rootCancelable ? localExecutionAborts.get(found.rootExecutionId) : undefined;
+      if (ctrl) ctrl.abort();
+      const result = { t: "execution_control_result", requestId: msg.requestId, executionId: msg.executionId, ok: !!ctrl,
+        affectedIds: ctrl ? [found.rootExecutionId] : [], unsupportedIds: ctrl ? [] : [msg.executionId],
+        error: ctrl ? undefined : (rootCancelable ? "o turno não está mais em execução" : "controle não suportado por este adaptador") };
+      executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result); return;
+    }
 
     // --- machine selection + routing to remote runners -----------------------
     if (msg.t === "machines") { send(ws, { t: "machines", machines: machineList(ws) }); return; }
@@ -1870,6 +2485,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "mention") {
       const ar = activeRunner(ws);
       const q = typeof msg.q === "string" ? msg.q : "";
+      const sid = subs.get(ws);
+      if (isInternalExecutionSession(ar, sid)) { send(ws, { t: "error", message: "sessão interna não expõe arquivos pelo chat" }); return; }
       if (ar === LOCAL_ID) { send(ws, { t: "mention_list", files: listMentionFiles(sessionCwd(subs.get(ws)), q) }); return; }
       if (!canUseRunner(ws, ar)) { send(ws, { t: "mention_list", files: [] }); return; }
       const rc = runners.get(ar);
@@ -1881,6 +2498,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "memory_append" && typeof msg.text === "string") {
       const ar = activeRunner(ws);
       const sid = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+      if (isInternalExecutionSession(ar, sid)) { send(ws, { t: "error", message: "sessão interna não aceita memória pelo chat" }); return; }
       if (ar !== LOCAL_ID) { if (canUseRunner(ws, ar)) { const rc = runners.get(ar); if (rc?.ws) sendToRunner(rc, { t: "memory_append", text: msg.text, sessionId: sid }); } return; }
       try {
         const r = appendMemory(msg.text, sessionCwd(sid), cmdAgentOf(sessionAgent(sid)));
@@ -1913,10 +2531,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (explicitListRunner && !canUseRunner(ws, explicitListRunner)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
       const ar = explicitListRunner || activeRunner(ws);
       if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete")) {
+        const targeted = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((id: unknown): id is string => typeof id === "string") : (typeof msg.sessionId === "string" ? [msg.sessionId] : []);
+        if (targeted.some((sid: string) => isInternalExecutionSession(ar, sid))) { send(ws, { t: "error", message: "sessão interna só pode ser acessada pelo painel Trabalhos" }); return; }
         const rc = runners.get(ar);
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
         if (msg.t === "list") { sendToRunner(rc, { t: "list" }); return; }
-        if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) { sendToRunner(rc, { t: "delete", sessionId: msg.sessionId, sessionIds: msg.sessionIds, alsoNative: !!msg.alsoNative }); send(ws, { t: "deleted", sessionId: msg.sessionId, ids: msg.sessionIds, ok: true }); return; }
+        if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) { const ids: string[] = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((id: unknown): id is string => typeof id === "string") : [msg.sessionId]; if (ids.some((sid) => runnerActive.get(ar)?.has(sid))) { send(ws, { t: "error", message: "pare o turno antes de excluir esta conversa" }); return; } const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); if (!sendToRunner(rc, { t: "delete", reqId, sessionId: msg.sessionId, sessionIds: msg.sessionIds, alsoNative: !!msg.alsoNative })) { pendingReq.delete(reqId); send(ws, { t: "error", message: "não foi possível solicitar a exclusão na máquina" }); } return; }
         if (msg.t === "readdiff" && typeof msg.path === "string" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readdiff", reqId, sessionId: msg.sessionId, path: msg.path }); return; }
         if (msg.t === "new") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "new", reqId, agent: msg.agent, cwd: msg.cwd }); return; }
         if (msg.t === "readfile" && typeof msg.path === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readfile", reqId, path: msg.path, cwd: msg.cwd }); return; }
@@ -1925,8 +2545,33 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (msg.t === "open" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); subs.set(ws, msg.sessionId); sendToRunner(rc, { t: "open", reqId, sessionId: msg.sessionId }); return; }
         if (msg.t === "send" && typeof msg.text === "string") {
           const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || "default");
+          if (typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
           auth.audit("send", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: ar, detail: `${sid}: ${String(msg.text).slice(0, 80)}` });
-          sendToRunner(rc, { t: "send", sessionId: sid, text: msg.text, opts: { model: msg.model, effort: msg.effort }, turnId: (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID() });
+          if (routeAborts.has(sid) || (runnerActive.get(ar)?.has(sid) ?? false)) {
+            queueOf(sid).push({ text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined });
+            broadcastQueue(sid); saveQueues(); send(ws, { t: "queued", sessionId: sid, text: msg.text }); return;
+          }
+          const flags = autoFlags(msg.auto);
+          let state = runnerSessionState.get(rc.id)?.get(sid);
+          let hist: any = null;
+          if (needsAuto(flags)) {
+            hist = await runnerHistory(rc, sid);
+            if (hist) state = { ...(state || {}), agent: hist.agent, cwd: hist.cwd, started: Number(hist.total) > 0, source: /^(claude:|codex:)/.test(sid) ? "native" : "managed" };
+          }
+          const currentAgent = state?.agent || (typeof msg.agent === "string" ? msg.agent : undefined) || rc.info.agents[0];
+          if (!currentAgent) { send(ws, { t: "error", message: "nenhuma IA disponível nesta máquina" }); return; }
+          const su = usageLedger.session(sid);
+          const decision = await decideAutomaticRoute({
+            sid, text: msg.text, started: state?.source === "native" || state?.started === true,
+            currentAgent, currentModel: typeof msg.model === "string" ? msg.model : (flags.model ? su.model : undefined),
+            currentEffort: typeof msg.effort === "string" ? msg.effort : undefined,
+            flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [],
+            recent: Array.isArray(hist?.messages) ? hist.messages.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role, text: String(m.text || "") })) : [],
+            contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens,
+            notify: (frame) => { for (const c of clientsOn(rc.id)) if (subs.get(c) === sid) send(c, frame); },
+          });
+          const states = runnerSessionState.get(rc.id) || new Map<string, any>(); states.set(sid, { ...(state || {}), id: sid, agent: decision.agent }); runnerSessionState.set(rc.id, states);
+          sendToRunner(rc, { t: "send", sessionId: sid, text: msg.text, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], turnId: (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID() });
           return;
         }
       }
@@ -1941,8 +2586,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // underlying native claude/codex session each maps to. Irreversible.
     if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) {
       const ids: string[] = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((x: any) => typeof x === "string") : [msg.sessionId];
+      if (ids.some((sid) => activeRuns.has(sid) || routeAborts.has(sid))) { send(ws, { t: "error", message: "pare o turno antes de excluir esta conversa" }); return; }
       const deleteOne = (sid: string): boolean => {
-        if (isNativeId(sid)) { stopTail(sid); return deleteNative(sid); }
+        if (isNativeId(sid)) { stopTail(sid); const deleted = deleteNative(sid); if (deleted) localExecutionStore.deleteSession(sid); return deleted; }
+        if (store.isHidden(sid)) return false;
         const s = store.get(sid);
         if (s) {
           const ag = agents.get(s.agent);
@@ -1951,12 +2598,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           if (msg.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); const key = nid && nativeIdForAgent(s.agent, nid); if (key) deleteNative(key); }
           ag.forgetSession?.(sid);
         }
-        return store.delete(sid);
+        const deleted = store.delete(sid); if (deleted) localExecutionStore.deleteSession(sid); return deleted;
       };
-      let okCount = 0;
-      for (const sid of ids) { if (deleteOne(sid)) okCount++; if (subs.get(ws) === sid) subs.delete(ws); }
+      const deletedIds: string[] = [];
+      for (const sid of ids) { if (deleteOne(sid)) deletedIds.push(sid); if (subs.get(ws) === sid && deletedIds.includes(sid)) subs.delete(ws); }
+      const okCount = deletedIds.length;
       auth.audit("delete", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${okCount}/${ids.length} conversa(s)` });
-      send(ws, { t: "deleted", sessionId: msg.sessionId, ids, ok: okCount === ids.length, okCount });
+      send(ws, { t: "deleted", sessionId: msg.sessionId, ids: deletedIds, ok: okCount === ids.length, okCount });
       pushSessions();
       return;
     }
@@ -1982,6 +2630,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // read the diff of an edited file, reconstructed from the session's claude jsonl — local machine
     if (msg.t === "readdiff" && typeof msg.path === "string" && typeof msg.sessionId === "string") {
+      if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não expõe diff pelo chat" }); return; }
       const diffId = isNativeId(msg.sessionId) ? msg.sessionId : (() => { const s = store.get(msg.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return s && nid ? (nativeIdForAgent(s.agent, nid) || "") : ""; })();
       send(ws, { t: "filediff", ...(diffId ? sessionFileDiff(diffId, msg.path) : { path: msg.path, name: msg.path.split(/[\\/]/).pop() || msg.path, error: "sem sessão nativa vinculada" }) });
       return;
@@ -2014,22 +2663,25 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         files: sessionFiles(msg.sessionId),
       });
       replayActivity(ws, msg.sessionId);
+      replayRoute(ws, msg.sessionId);
       sendPendingAsk(ws, msg.sessionId);
       send(ws, { t: "queue", sessionId: msg.sessionId, items: queueOf(msg.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
       return;
     }
     if (msg.t === "open" && typeof msg.sessionId === "string") {
+      if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser aberta pelo chat" }); return; }
       subs.set(ws, msg.sessionId);
       syncTails();
       const s = store.ensure(msg.sessionId);
       reconcileFromNative(s); // backfill a reply an orphaned turn (killed by a prior hub restart) already wrote natively
       const all = store.history(s.id);
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-      const su = usageLedger.session(s.id), nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null;
+      const su = usageLedger.session(s.id), nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
       const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
       const files = [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))];
-      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
+      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
       replayActivity(ws, s.id);
+      replayRoute(ws, s.id);
       sendPendingAsk(ws, s.id);
       send(ws, { t: "queue", sessionId: s.id, items: queueOf(s.id).map((q) => ({ text: q.text, atts: q.atts })) });
       return;
@@ -2047,6 +2699,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // Change agent/folder of a session that has not started yet (locked-session rule).
     if (msg.t === "configure" && typeof msg.sessionId === "string") {
+      if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser configurada pelo chat" }); return; }
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
       const agent = agents.names().includes(msg.agent) ? msg.agent : undefined;
@@ -2089,6 +2742,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // per-session "resumir e falar" — cheap one-shot, spoken, not stored in history
     if (msg.t === "summarize" && typeof msg.sessionId === "string") {
+      if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna só pode ser acompanhada pelo painel Trabalhos" }); return; }
       if (voiceOpBusy) { send(ws, { t: "busy", message: "Já estou gerando um áudio — aguarde terminar." }); return; }
       voiceOpBusy = true;
       try { await summarizeAndSpeak(ws, msg.sessionId, msg.speak !== false); } finally { voiceOpBusy = false; }
@@ -2104,12 +2758,36 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // summary/digest one-shot config (which agent/model/effort — cheap by default)
     if (msg.t === "summary_cfg") { send(ws, { t: "summary_cfg", cfg: summaryCfg, agents: await agents.describe() }); return; }
     if (msg.t === "set_summary_cfg") {
-      if (typeof msg.agent === "string" && agents.names().includes(msg.agent)) summaryCfg.agent = msg.agent;
-      if (typeof msg.model === "string" && msg.model) summaryCfg.model = msg.model;
-      if (typeof msg.effort === "string" && msg.effort) summaryCfg.effort = msg.effort;
+      const requestedAgent = typeof msg.agent === "string" && localAgents.includes(msg.agent) ? msg.agent : undefined;
+      const agentName = requestedAgent
+        || (localAgents.includes(summaryCfg.agent) ? summaryCfg.agent : undefined)
+        || localAgents.find((name) => agents.has(name))
+        || agents.searchAgent().name;
+      const caps = await agents.get(agentName).capabilities();
+      const requestedModel = typeof msg.model === "string" ? msg.model : "";
+      const model = caps.models.find((m) => m.id === requestedModel) || caps.models.find((m) => m.id === caps.defaultModel) || caps.models[0];
+      const requestedEffort = typeof msg.effort === "string" ? msg.effort : "";
+      summaryCfg.agent = agentName;
+      if (model) summaryCfg.model = model.id;
+      if (model?.efforts.length) summaryCfg.effort = model.efforts.includes(requestedEffort) ? requestedEffort : (model.defaultEffort || model.efforts[0]);
       saveSummaryCfg();
       send(ws, { t: "summary_cfg", cfg: summaryCfg, agents: await agents.describe() });
       return;
+    }
+    if (msg.t === "execution_cfg") { if (!requireOwner(ws)) return; send(ws, { t: "execution_cfg", cfg: executionCfg, restartFields: ["enabled", "retentionDays", "maxEvents", "worktreeRoot"] }); return; }
+    if (msg.t === "set_execution_cfg") {
+      if (!requireOwner(ws)) return;
+      const integer = (value: unknown, min: number, max: number, label: string): number => {
+        const n = Number(value); if (!Number.isSafeInteger(n) || n < min || n > max) throw new Error(`${label} deve ficar entre ${min} e ${max}`); return n;
+      };
+      if (typeof msg.worktreeRoot !== "string" || !msg.worktreeRoot.trim() || msg.worktreeRoot.length > 1_000) throw new Error("raiz de worktrees inválida");
+      const next: ExecutionRuntimeConfig = { enabled: msg.enabled !== false,
+        retentionDays: integer(msg.retentionDays, 1, 3650, "retenção"), maxEvents: integer(msg.maxEvents, 100, 100_000, "máximo de eventos"),
+        maxConcurrency: integer(msg.maxConcurrency, 1, 32, "concorrência"), maxDepth: integer(msg.maxDepth, 1, 10, "profundidade"),
+        defaultWrite: msg.defaultWrite === true, worktreeRoot: msg.worktreeRoot.trim() };
+      const restartFields = (["enabled", "retentionDays", "maxEvents", "worktreeRoot"] as const).filter((key) => executionCfg[key] !== next[key]);
+      Object.assign(executionCfg, next); saveExecutionCfg();
+      send(ws, { t: "execution_cfg", cfg: executionCfg, saved: true, restartRequired: restartFields.length > 0, restartFields }); return;
     }
     // --- self-update (git) ---
     if (msg.t === "update_check") { await refreshUpdate(false); send(ws, { t: "update_status", status: updateStatus }); return; }
@@ -2123,34 +2801,31 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (typeof msg.runnerId === "string" && msg.runnerId) {
         const rc = runners.get(msg.runnerId);
         const label = rc ? (runnerLabels[rc.id] || rc.info.host || rc.id) : msg.runnerId;
-        if (!rc || rc.local || !rc.ws || rc.ws.readyState !== WebSocket.OPEN) { send(ws, { t: "update_machine", runnerId: msg.runnerId, label, ok: false, dirty: false, log: "máquina offline" }); return; }
+        if (!rc || rc.local) { send(ws, { t: "update_machine", runnerId: msg.runnerId, label, ok: false, dirty: false, log: "máquina desconhecida" }); return; }
+        if (force && (!rc.ws || rc.ws.readyState !== WebSocket.OPEN)) { send(ws, { t: "update_machine", runnerId: msg.runnerId, label, ok: false, dirty: false, log: "force não é guardado para execução futura: aguarde a máquina ficar online e confirme novamente" }); return; }
         auth.audit("update_apply", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: rc.id, detail: `${label}${force ? " (forçado — descarta local)" : ""}` });
-        sendToRunner(rc, { t: "update", force });
+        const latest = await updateCheck(UPDATE_ROOT, true), target = (latest.latest?.sha || latest.current || hubCommit).replace("+dirty", "");
+        queueRunnerUpdate(rc.id, target);
+        if (deliverPendingRunnerUpdate(rc, { force, allowBlocked: force, retryNow: true })) send(ws, { t: "update_machine", runnerId: rc.id, label, ok: false, state: "sent", queued: true, log: "solicitação entregue; máquina drenando" });
+        else { const online = !!rc.ws && rc.ws.readyState === WebSocket.OPEN, state = online ? (pendingRunnerUpdates[rc.id]?.state || "sent") : "queued"; send(ws, { t: "update_machine", runnerId: rc.id, label, ok: false, state, queued: true, log: online ? "atualização já está em andamento" : "máquina offline — atualização guardada para a próxima conexão" }); }
         return;
       }
-      let sent = 0;
-      const skipped: string[] = [];
-      if (all) for (const rc of runners.values()) {
-        if (rc.local) continue;
-        const label = runnerLabels[rc.id] || rc.info.host || rc.id;
-        // An offline machine is neither updated nor queued — say so instead of counting it out
-        // of existence, otherwise "N máquinas" silently means "N of the ones that happened to be up".
-        if (!rc.ws || rc.ws.readyState !== WebSocket.OPEN) { skipped.push(label); continue; }
-        if (sendToRunner(rc, { t: "update", force })) sent++; else skipped.push(label);
-      }
-      auth.audit("update_apply", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: (all ? `hub + ${sent} máquina(s)` : "hub") + (force ? " (forçado)" : "") });
-      send(ws, { t: "update_progress", message: all ? `Atualizando o Hub e ${sent} máquina(s)…` : "Atualizando o Hub…", pending: sent, skipped });
-      const r = await updateApply(UPDATE_ROOT, { force });
+      auth.audit("update_apply", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, detail: (all ? `hub + todas as máquinas conhecidas` : "hub") + (force ? " (forçado)" : "") });
+      send(ws, { t: "update_progress", message: all ? "Preparando atualização do Hub; máquinas offline ficarão na fila…" : "Preparando atualização do Hub…", pending: all ? knownRemoteRunnerIds().length : 0, queued: [] });
+      const r = await applyHubUpdate(force, all);
       send(ws, { t: "update_result", ok: r.ok, log: r.log });
-      if (r.ok && (r.behind ?? 0) > 0) scheduleRestart();
-      else await refreshUpdate(true);
+      if (!r.ok || r.restartRequired === false) await refreshUpdate(true);
       return;
     }
     if (msg.t === "update_rollback") {
       if (!requireOwner(ws)) return;
-      const r = await updateRollback(UPDATE_ROOT);
+      if (hubUpdateInProgress) { send(ws, { t: "update_result", ok: false, log: "outra atualização já está em andamento" }); return; }
+      hubUpdateInProgress = true;
+      const drainError = await drainHubForUpdate();
+      const r = drainError ? { ok: false, log: drainError } : await updateRollback(UPDATE_ROOT);
       send(ws, { t: "update_result", ok: r.ok, log: r.log });
       if (r.ok) scheduleRestart();
+      else hubUpdateInProgress = false;
       return;
     }
     // --- security admin (owner-only): devices, invites, roles, runner tokens, passphrase ---
@@ -2159,7 +2834,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (handleRoutineMsg(ws, msg)) return;
     // --- fleet dashboard: a read-only snapshot of every machine + totals + plan + parse health ---
     if (msg.t === "fleet") {
-      const machines = machineList(ws).map((m: any) => ({ ...m, active: m.local ? activeRuns.size : (runnerActive.get(m.id)?.size || 0) }));
+      const machines = machineList(ws).map((m: any) => ({ ...m, active: m.local ? activeRuns.size + localManagedRuns.size : (runnerActive.get(m.id)?.size || 0) }));
       // Custo por IA e por sessão (não só o total): a cobrança acumula por sessão, e cada sessão tem
       // um agente — some por agente para o gráfico "por IA" e ranqueie as sessões mais caras.
       const overallUsage = usageLedger.total();
@@ -2170,7 +2845,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       for (const entry of usageLedger.topSessions(50, usageAgent)) {
         const sid = entry.id, cost = entry.usage.costUsd; if (!cost) continue;
         const agent = entry.agent;
-        const title = sid === WAKE_SESSION ? "Voz (Jarvis)" : (store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : sid));
+        const internalTitle: Record<string, string> = { __auto_route__: "Roteamento automático", __summary__: "Resumos", __spoken_summary__: "Resumos falados", __decision_detection__: "Detecção de decisões" };
+        const title = sid === WAKE_SESSION ? "Voz (Jarvis)" : (internalTitle[sid] || store.get(sid)?.title || executionNodeBySession(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : sid));
         perSession.push({ id: sid, cost, agent, title, usage: entry.usage } as any);
       }
       perSession.sort((a, b) => b.cost - a.cost);
@@ -2182,7 +2858,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const plans: Record<string, any> = {};
       for (const machine of machines) for (const name of agents.names()) { const key = `${machine.id}:${name}`; const a = agents.get(name); if (machine.local) { if (!a.usage) plans[key] = { machine: machine.label, agent: name, status: "unsupported", plan: null }; else try { const plan = await a.usage(); plans[key] = { machine: machine.label, agent: name, status: plan ? "available" : "not_reported", plan }; } catch { plans[key] = { machine: machine.label, agent: name, status: "error", plan: null }; } } else { const has = Object.prototype.hasOwnProperty.call((runners.get(machine.id)?.info.agentUsage || {}), name), plan = (runners.get(machine.id)?.info.agentUsage?.[name] as any) || null; plans[key] = { machine: machine.label, agent: name, status: !has ? "unsupported" : plan ? "available" : "not_reported", plan }; } }
       const runnerMetrics = metrics.byRunner().filter((r) => canUseRunner(ws, r.runnerId)); // don't leak ids of machines they can't see
-      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + remoteActive, costTotal, billableTotal: overallUsage.billableUsd, estimatedTotal: overallUsage.estimatedUsd, byKind: overallUsage.byKind, voiceCost, voicePct, byAgent, byAgentUsage, topSessions }, metrics: { overall: metrics.overall(), runners: runnerMetrics, agents: metrics.byAgent(), models: metrics.byModel() }, parseHealth: nativeParseHealth(), plans });
+      send(ws, { t: "fleet", machines, totals: { sessions: store.list().length, active: activeRuns.size + localManagedRuns.size + remoteActive, costTotal, billableTotal: overallUsage.billableUsd, estimatedTotal: overallUsage.estimatedUsd, byKind: overallUsage.byKind, voiceCost, voicePct, byAgent, byAgentUsage, topSessions }, metrics: { overall: metrics.overall(), runners: runnerMetrics, agents: metrics.byAgent(), models: metrics.byModel() }, parseHealth: nativeParseHealth(), plans });
       return;
     }
     // --- semantic memory: search by MEANING (local embeddings) + owner reindex ---
@@ -2218,30 +2894,34 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // notifications (web-push + native FCM) → handlePushMsg (extração verbatim, mesma posição)
     if (handlePushMsg(ws, msg)) return;
     if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
+      if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
       // routes through the shared lifecycle — which (unlike the old inline copy) also persists the
       // assistant's activity trace, so a reload of a session driven via sendTo keeps its tool blocks.
-      await runManagedTurn(turnCtx, s.id, { showText: msg.text, model: msg.model, effort: msg.effort, onError: (message) => send(ws, { t: "error", message }) });
+      const decision = await routeLocalTurn(s.id, msg.text, msg.model, msg.effort, autoFlags(msg.auto));
+      await runManagedTurn(turnCtx, s.id, { showText: msg.text, model: decision.model, effort: decision.effort, onError: (message) => send(ws, { t: "error", message }) });
       return;
     }
 
     // Fila dona no hub: enfileirar / remover um / limpar. Sempre re-transmite a fila a todos que
     // veem a sessão (sincroniza entre dispositivos). O flush em si roda no fim do turno (flushQueue).
     if (msg.t === "enqueue" && typeof msg.sessionId === "string" && (typeof msg.text === "string" || Array.isArray(msg.attachments))) {
-      { const rid = activeRunner(ws); queueOf(msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined }); }
+      if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
+      { const rid = activeRunner(ws); queueOf(msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined }); }
       broadcastQueue(msg.sessionId); saveQueues(); return;
     }
     if (msg.t === "dequeue" && typeof msg.sessionId === "string" && typeof msg.index === "number") {
+      if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
       const q = queueOf(msg.sessionId); if (msg.index >= 0 && msg.index < q.length) q.splice(msg.index, 1);
       broadcastQueue(msg.sessionId); saveQueues(); return;
     }
-    if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); saveQueues(); return; }
+    if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); saveQueues(); return; }
     // "voltar" mensagem cancelada: tira a última mensagem do usuário do store (sessão do hub) pra
     // ela não reaparecer no reload. Nativa não dá (o transcript é do claude) — some só na tela.
-    if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (!isNativeId(msg.sessionId)) { store.dropLastUser(msg.sessionId); pushSessions(); } return; }
+    if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; } if (!isNativeId(msg.sessionId)) { store.dropLastUser(msg.sessionId); pushSessions(); } return; }
     // The user answered/dismissed a decision card → forget the pending questions for that session.
-    if (msg.t === "ask_clear" && typeof msg.sessionId === "string") { pendingAsk.delete(msg.sessionId); return; }
+    if (msg.t === "ask_clear" && typeof msg.sessionId === "string") { if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; } pendingAsk.delete(msg.sessionId); return; }
 
     // Wizard de voz dos cards de decisão: falar um passo (say) e interpretar a resposta falada (ask_voice).
     if (msg.t === "say" && typeof msg.text === "string") {
@@ -2272,6 +2952,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     const explicit = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : "";
     const viewing = subs.get(ws);
     const sid = explicit || viewing || "default";
+    if (store.isHidden(sid)) { send(ws, { t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
     // Só (re)inscreve o ws se o envio é para a sessão que ele já vê (ou se ainda não vê nada). Um
     // flush para uma sessão de FUNDO não pode trocar o que este ws está assistindo.
     if (!viewing || sid === viewing) subs.set(ws, sid);
@@ -2325,6 +3006,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       text = pre.text;
     }
     if (!text) return;
+    if (msg.t === "send" && typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
     { const _p = principalOf(ws); auth.audit("send", { userId: _p?.userId, deviceId: _p?.deviceId, detail: `${sid}: ${String(text).slice(0, 80)}` }); }
 
     // Meta-question about other sessions? -> cross-session search (typed or spoken).
@@ -2346,13 +3028,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // just-recorded audio (a long one is real work lost). A typed send only reaches here in a race
     // (the client sends {t:enqueue} once it knows the session is busy), so there's no double-queue.
     // Search and the wake router returned above, so this only covers real native/normal turns.
-    if (activeRuns.has(sid)) {
+    if (activeRuns.has(sid) || routeAborts.has(sid)) {
       const rid = activeRunner(ws);
       queueOf(sid).push({
         text,
         atts: Array.isArray(msg.attachments) ? msg.attachments : [],
         model: typeof msg.model === "string" ? msg.model : undefined,
         effort: typeof msg.effort === "string" ? msg.effort : undefined,
+        auto: autoFlags(msg.auto),
         runnerId: rid !== LOCAL_ID ? rid : undefined,
         msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
       });
@@ -2365,12 +3048,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // Continue an imported native CLI session (resumes the real claude session; persists in its jsonl).
     if (isNativeId(sid)) {
-      await deliverNativeTurn(ws, sid, text, { model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [] });
+      const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
+      await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [] });
       return;
     }
 
     // --- normal Jarvis session (agent + cwd locked at creation) ---
     // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
+    const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
     const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
     // Power-triggers, resolved for the AGENT only (chat keeps showing the raw text): "!cmd" runs and
     // injects its output; otherwise a "/cmd" expands to its prompt (scoped to this session's agent).
@@ -2379,15 +3064,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     const cmdExp = bang ? null : expandCommand(text, scwd, cmdAgentOf(store.get(sid)?.agent));
     await runManagedTurn(turnCtx, sid, {
       showText, agentText: bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText),
-      model: typeof msg.model === "string" ? msg.model : undefined,
-      effort: typeof msg.effort === "string" ? msg.effort : undefined,
+      model: decision.model,
+      effort: decision.effort,
       speaker, images, files, speak: !!msg.speak,
       turnId: typeof msg.msgId === "string" ? msg.msgId : undefined,
       onError: (message, limit) => send(ws, { t: "error", message, limit }),
     });
     } catch (e) {
       console.error("[hub] erro ao processar", msg.t, "-", String((e as any)?.message ?? e));
-      try { send(ws, { t: "error", message: "erro interno ao processar a mensagem" }); } catch { /* ignore */ }
+      if (String((e as any)?.message ?? e) !== ABORTED) try { send(ws, { t: "error", message: "erro interno ao processar a mensagem" }); } catch { /* ignore */ }
     }
   });
 
@@ -2399,7 +3084,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 });
 
 // Loopback-only admin API (host recovery) — see adminApi.ts. Injected with the Hub state it needs.
-startAdminApi({ updateRoot: UPDATE_ROOT, port: PORT, scheduleRestart, dropRevoked, refreshPrincipalRole, runners, runnerLabels, pendingRunnerList, sendToRunner });
+startAdminApi({ updateRoot: UPDATE_ROOT, port: PORT, applyHubUpdate, rollbackHubUpdate: async () => {
+  if (hubUpdateInProgress) return { ok: false, busy: true, log: "outra atualização já está em andamento" };
+  hubUpdateInProgress = true; const drainError = await drainHubForUpdate(); const result = drainError ? { ok: false, log: drainError } : await updateRollback(UPDATE_ROOT);
+  if (result.ok) scheduleRestart(); else hubUpdateInProgress = false; return result;
+}, queueAllRunnerUpdates: queueAllRemoteRunnerUpdates, dropRevoked, refreshPrincipalRole, runners, runnerLabels, pendingRunnerList, sendToRunner });
 
 void refreshLocalAgents();
 setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min; probes are version/login-status checks, never inference turns
@@ -2419,6 +3108,7 @@ function hubShutdown(sig: string): void {
   if (hubShuttingDown) return; hubShuttingDown = true;
   if (localAborts.size) console.log(`[hub] ${sig} — abortando ${localAborts.size} turno(s) local(is) em andamento`);
   for (const [, ctrl] of localAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
+  for (const [, ctrl] of routeAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
 }
 process.on("SIGTERM", () => hubShutdown("SIGTERM"));

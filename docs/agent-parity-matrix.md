@@ -14,12 +14,14 @@ documentação continua `unverified` até um probe autenticado daquela versão.
 
 | Área | Estado após a rodada | Evidência/gap residual |
 |---|---|---|
-| contrato/descriptor/eventos | implementado no pacote de protocolo | `AgentEvent` é o wire contract real de Hub, Runner, browser e histórico; `stream` fica apenas para rolling upgrade |
+| contrato/descriptor/eventos | implementado no pacote de protocolo | `AgentEvent` versiona o turno e `ExecutionEvent` versiona Trabalhos; ambos são contratos compartilhados por Hub/Runner/browser, enquanto `stream` fica apenas para rolling upgrade |
 | lifecycle local/remoto | implementado | serviço único, anexos/activity/usage/histórico compartilhados |
-| handshake Runner | implementado | protocolo v2; versão incompatível é recusada |
+| handshake Runner | implementado | protocolo v3; versão incompatível é recusada |
+| trabalhos/subprocessos | implementado | journal fsync local/remoto, manifesto/replay, árvore global e deep-link; card inline nativo é ao vivo, mas a reconstrução universal após reload continua no painel, não no bubble do chat |
+| fallback gerenciado | implementado, fail-closed | DAG e máquina fixa; Claude RO/writer, Codex RO e Aider writer possuem políticas conectadas; demais aguardam sandbox real certificado |
 | Claude Code | referência `complete` | esforços são CLI-wide e marcados não verificados por modelo |
-| Codex | `limited` | stream/native/resume/files/diff/modelos, janela efetiva e limite de conta implementados; certificar todos os event types por versão |
-| Gemini/Cursor/Copilot/OpenCode/Cline/Qwen | `unverified` ou `not_installed` | adapters/fixtures prontos; faltam binário+auth para probes reais nesta máquina |
+| Codex | `limited` | stream/native/resume/files/diff/modelos, janela efetiva e limite de conta implementados; comandos observados são classificados como Read/Grep/Glob/Bash e `patch_apply_end` é acompanhado durante o turno; ainda falta certificar todos os event types por versão |
+| Gemini/Cursor/Copilot/OpenCode/Cline/Qwen | `unverified` ou `not_installed` | adapters, perfis e mappers com casos sintéticos representativos; faltam corpus versionado completo, binário+auth e probes reais nesta máquina |
 | Continue/Kiro/Antigravity/Aider | `limited` ou `not_installed` | saída final apenas ou sessão/usage sem prova suficiente |
 | modelos | implementado sem invenção silenciosa | catálogo e controle são separados: `runtime`, `configured`, `provider_dynamic`, `none` × `per_turn`, `configuration_only`, `provider_default`, `none` |
 | usage/custo | implementado | ledger separa billed/estimado/assinatura/tokens/indisponível |
@@ -27,7 +29,7 @@ documentação continua `unverified` até um probe autenticado daquela versão.
 | voz/rotinas | registry-aware | modelo validado; rotina escolhe máquina/agente/modelo/pasta |
 | permissões | explícitas | `full-access` ou `provider-default`; nenhum deles é sandbox Jarvis |
 | doctor/relatório | implementado | `npm run agents:report` não envia prompt nem gasta turno |
-| Hub/Runner/WebSocket/histórico | implementado e coberto | E2E com processos reais + mock determinístico; browser DOM e reconnect mid-turn seguem residuais |
+| Hub/Runner/WebSocket/histórico | implementado e coberto | E2E local+remoto com mock determinístico, inclusive workflow gerenciado; canary Chrome desktop/mobile passou, enquanto browser/a11y automatizado, dois clientes, restart mid-tool e CLIs autenticadas seguem residuais |
 
 ## 1. Objetivo
 
@@ -131,9 +133,14 @@ web send
     → persiste resposta + activity
 ```
 
-O `activity` persistido na mensagem do assistente guarda o lifecycle canônico completo; é a razão pela qual um
-reload consegue reconstruir ferramentas e subagentes vistos durante o stream.
-Adapters que não emitem eventos deixam esse campo vazio.
+O `activity` persistido na mensagem do assistente guarda o lifecycle `AgentEvent`
+do turno; é a razão pela qual um reload consegue reconstruir ferramentas e
+subagentes que também passaram por esse stream. Eventos `ProviderExecutionEvent`
+nativos pertencem ao journal de execução: um `node_created` do chat aberto cria um
+card inline ao vivo ligado por `executionId`, mas esse card não é hoje projetado de
+volta para `StoredMessage.activity`. Portanto, após reload, **Trabalhos** é a fonte
+durável universal para filhos nativos; adapters que também publicam `AgentEvent`
+continuam reconstruindo a representação dentro do bubble.
 
 ### 4.2 Turno remoto
 
@@ -145,7 +152,7 @@ web ← Hub ← stream/message do Runner
 
 Hub e Runner chamam o mesmo `runManagedTurn` do core. O Runner só adapta
 persistência, broadcast e transporte; anexos, mensagem do usuário, `activity`,
-usage e terminal seguem o mesmo serviço. O protocolo v2 rejeita Runner antigo e
+usage e terminal seguem o mesmo serviço. O protocolo v3 rejeita Runner antigo e
 o cliente verifica `contractVersion` antes de permitir envio. O E2E
 `parity.e2e.test.ts` prova o caminho WebSocket remoto e a reabertura do histórico.
 
@@ -155,6 +162,34 @@ O Jarvis varre JSONL de Claude e Codex, cria IDs prefixados (`claude:` e
 `codex:`), lê o histórico e acompanha arquivos abertos com tail periódico. O
 parser é específico dos formatos privados de cada CLI; portanto precisa de
 fixtures por versão, telemetria de parse e degradação explícita.
+
+### 4.4 Trabalhos e subprocessos — arquitetura híbrida 3
+
+Cada turno cria uma raiz canônica e durável no proprietário da execução. Eventos são
+`fsync` antes do broadcast, recebem `journalId + seq`, toleram redelivery e são reconciliados
+por manifesto/replay quando um Runner volta. O Hub mantém mirrors, mas nunca inventa terminal
+durante uma queda: execuções ativas ficam `offline`, `reconciling`, `orphaned` ou `unknown`
+conforme a evidência disponível.
+
+Há duas fontes de filhos sob a mesma árvore:
+
+1. **Nativa:** o adapter normaliza spawn/activity/state/usage que o provedor realmente publica.
+2. **Jarvis-managed:** `jarvis_delegate` envia um DAG para uma máquina explicitamente escolhida;
+   o scheduler valida dependências, profundidade, concorrência, modelo/effort e orçamento. Tarefas
+   internas usam sessões ocultas determinísticas. Leitura exige sandbox real; escrita exige worktree
+   destacada e bloqueio de commit. Ausência dessas garantias é erro, nunca downgrade silencioso.
+
+Raízes gerenciadas são namespaced pela máquina: `rootExecutionId` fornecido ao MCP é uma semente
+estável, e o ID canônico é derivado de `machine + seed`. A mesma semente em Runners diferentes não
+colide; idempotência de reentrega continua pertencendo ao `requestId`, e snapshot/terminal são
+correlacionados por máquina e raiz.
+
+O painel global **Trabalhos** mostra raízes e filhos de todas as sessões/máquinas autorizadas,
+transcript publicado, tools, arquivos/diffs, `+/-`, métricas próprias/subárvore, estado de conexão,
+truncamento e controles somente quando a capability os autoriza. Retenção padrão de 30 dias compacta
+eventos detalhados apenas de raízes terminais, mantendo árvore, resumo e agregados. Excluir a sessão
+remove seus journals. Sessões nativas abertas fora do Jarvis só entram no grafo quando o formato do
+fornecedor permite vínculo verificável; não são retroativamente fabricadas.
 
 ## 5. Inventário completo após a implementação
 
@@ -173,10 +208,12 @@ sem simular paridade.
 | Envio | Cancelamento da árvore e restauração do input | sim | Wrapper comum; Windows usa `taskkill /T` |
 | Progresso | Cronômetro/estado inicial/terminal único | sim | Contrato canônico + transportes local/remoto |
 | Progresso | Texto incremental ou em bloco | dependente | `stream` declara `delta`, `block` ou `final_only`; nunca inventa delta |
-| Progresso | Ferramentas, thinking, planos e subagentes | dependente | Normalizados somente quando publicados pelo fornecedor |
-| Progresso | Replay ao reabrir turno ativo | sim | Buffer de até 600 eventos; truncamento ainda é gap de observabilidade |
+| Progresso | Ferramentas, thinking, planos e subagentes | dependente | Normalizados somente quando publicados pelo fornecedor; aliases explícitos (`read_file`, `readToolCall`, `read`, etc.) convergem para o mesmo vocabulário sem renomear ferramentas desconhecidas |
+| Progresso | Card inline de filho nativo/gerenciado | limitado | `node_created` da sessão aberta cria card ao vivo e deep-link para Trabalhos; após reload a árvore durável permanece em Trabalhos, enquanto o bubble só recompõe `AgentEvent` persistido |
+| Progresso | Replay/reconciliação de trabalhos | sim | Journal durável paginado; o buffer separado do chat continua limitado a 600 eventos e ainda não sinaliza seu próprio truncamento dentro do bubble |
+| Progresso | Árvore global de subprocessos | dependente | Nativa quando o fornecedor publica IDs; fallback gerenciado quando há sandbox/worktree certificado |
 | Histórico | Persistir texto, activity, anexos e usage | sim | Igual no Hub e Runner; reabertura remota coberta por E2E |
-| Histórico | Reconciliar filho órfão após restart | dependente | Funciona para adapters com binding/transcript nativo (Claude/Codex) |
+| Histórico | Reconciliar filho órfão após restart | limitado | O store marca perda de binding como órfã sem inventar terminal; backfill depende da superfície nativa e reconnect/restart durante tool ainda não tem E2E dedicado |
 | Histórico | Limite de payload ao browser | sim | Últimas `JARVIS_HISTORY_CAP`, padrão 120 |
 | Nativo | Descoberta/listagem/busca/tail | limitado | Implementado e rico para Claude/Codex; demais só quando houver formato verificável |
 | Nativo | Resume de sessão importada | limitado | Claude/Codex; UI recusa explicitamente outros adapters |
@@ -191,6 +228,7 @@ sem simular paridade.
 | Modelos | Catálogo, origem, visibilidade, contexto e efforts | dependente | Claude/Codex dinâmicos; OpenCode lista; ausência fica automática/vazia e não inventada |
 | Modelos | Catálogo por Runner | sim | Cada máquina publica descriptors completos; UI não reutiliza o catálogo do Hub |
 | Modelos | Modelo/effort inválido | sim quando catalogado | Rejeição pré-spawn; catálogo vazio mantém somente default do provedor |
+| Modelos | Roteamento automático | sim | One-shot configurado em “Roteamento automático, resumos e status”; sessão nova pode escolher IA na máquina selecionada, sessão iniciada preserva IA; modelo/effort são reavaliados por turno e validados contra o catálogo vivo |
 | Uso | Tokens/contexto por turno | dependente | Ledger aceita usage tipado de qualquer adapter |
 | Uso | Uso de plano/conta | dependente | Claude usa endpoint OAuth; Codex usa `token_count.rate_limits` do rollout; demais mostram explicitamente não reportado/não suportado |
 | Custo | Ledger por sessão/agente/modelo | sim | Classes billed/estimado/assinatura/tokens/indisponível separadas |
@@ -199,13 +237,14 @@ sem simular paridade.
 | Busca | Literal e semântica | sim | Nativas dependem dos formatos importados; embedding local é opt-in |
 | Busca | Resumo/digest one-shot | sim | Agente/modelo configuráveis e validados; roda no Hub |
 | Automação | Rotinas locais/remotas | sim | Seleciona Runner, agente, modelo e cwd; UI usa catálogo do Runner escolhido |
-| Automação | MCP Jarvis | limitado | Dispara tarefas; não transforma uma tool call em canal de stream síncrono |
+| Automação | MCP Jarvis | sim | `jarvis_run_task` cria chat; `jarvis_delegate` aceita DAG correlacionado: `wait` devolve terminal + resumos após snapshot paginado e `background` devolve aceite/root ID para Trabalhos |
 | Voz | STT/TTS/wake/speaker gate | sim | Continua Hub-only por desenho |
 | Voz | Agente/modelo/effort por fala | sim | Catálogo é gerado do registry, sem regex fixa de dois fornecedores |
 | Voz | Refino/escalonamento | sim | Opções são compatibilizadas com o agente de resumo configurado |
 | Runner | Descoberta e estado de todos os adapters | sim | Publica executáveis e descriptors com motivo de indisponibilidade |
 | Runner | Reconnect/outbox/replay | sim | Outbox limitada a 3000 eventos; E2E cobre caminho conectado |
-| Runner | Handshake de protocolo/build/contrato | sim | Runner v2 incompatível é recusado; cliente bloqueia contrato desconhecido |
+| Runner | Handshake de protocolo/build/contrato | sim | Runner v3 incompatível é recusado; cliente bloqueia contrato desconhecido |
+| Runner | Manifesto/replay de trabalhos | sim | Journal autoritativo fica na máquina; outbox preserva deltas, uso e aceite durante desconexão |
 | Segurança | Auth, grants e audit | sim | Agnóstico de adapter |
 | Segurança | Política de ferramentas | explícita | `full-access` histórico ou `provider-default`; nenhum é sandbox Jarvis |
 | Notificação | Web/mobile push em done/error/offline | sim | Terminal comum local/remoto |
@@ -216,9 +255,9 @@ sem simular paridade.
 
 ## 6. Contrato canônico obrigatório do adapter
 
-O contrato atual (`AgentAdapter` em `packages/core`) é insuficiente: não declara
-capacidades, versões, formatos ou garantia de persistência. O contrato futuro
-deve expor os seguintes grupos.
+O contrato atual (`AgentAdapter` + descriptors + `ExecutionAdapterProfile`) declara
+capacidades, versões, formatos e o tier E0–E5. Todo adapter novo deve preencher e
+provar os seguintes grupos; ausência de prova reduz o tier, não cria um valor otimista.
 
 ### 6.1 Identidade e disponibilidade
 
@@ -281,11 +320,11 @@ deve expor os seguintes grupos.
 
 ### P0 encontrados na auditoria — resolvidos nesta rodada
 
-1. Contrato canônico único em `@jarvis/protocol`, reexportado pelo core; Hub, Runner, browser e histórico consomem o mesmo envelope.
+1. Contratos canônicos `AgentEvent` e `ExecutionEvent` em `@jarvis/protocol`, reexportados pelo core; Hub, Runner e browser consomem os mesmos envelopes versionados.
 2. Lifecycle gerenciado compartilhado entre Hub e Runner.
 3. Status `complete/limited/unverified/unauthenticated/not_installed` impede
    adapter final-only de se passar por completo.
-4. Handshake Runner v2 e `contractVersion` do browser.
+4. Handshake Runner v3 e `contractVersion` do browser.
 5. Histórico remoto preserva `activity`, anexos e usage.
 6. Builder de anexos é executado na máquina remota.
 7. Codex ganhou stream, binding/resume, transcript rico, arquivos/diff e usage.
@@ -318,34 +357,72 @@ deve expor os seguintes grupos.
    tupla CLI+versão+modelo+effort+Runner.
 3. **Browser real:** o E2E cobre WebSocket/Hub/Runner/store, mas não DOM,
    reconnect durante ferramenta, restart no meio do turno ou dois browsers.
-4. **Buffers:** atividade viva e outbox têm limites em memória sem indicador
-   visual de truncamento.
-5. **Formatos privados:** saúde de parser nativo ainda não é segmentada por
+4. **Inline após reload:** filhos nativos recebem card inline ao vivo via
+   `node_created`, mas o bubble histórico só recompõe `AgentEvent`; a árvore e o
+   transcript provider-neutral duráveis ficam em **Trabalhos**.
+5. **Buffers:** o histórico inline do chat continua limitado a 600 eventos; o
+   journal de Trabalhos é durável e sinaliza truncamento. A outbox remota tem cap
+   de 3.000 frames e o journal autoritativo permite manifest/replay, mas ainda
+   falta um teste de estresse que force overflow e reconciliação do gap.
+6. **Formatos privados:** saúde de parser nativo ainda não é segmentada por
    fornecedor/versão.
-6. **Catálogo na UI:** origem/idade/verificação existem no descriptor, mas ainda
+7. **Catálogo na UI:** origem/idade/verificação existem no descriptor, mas ainda
    não são mostradas em detalhe no picker de modelo.
 
 ## 8. Snapshot atual dos adapters
 
-O estado exato por máquina deve ser obtido com `npm run agents:report`. No gate de
-2026-07-20 desta máquina, Claude Code foi `complete`, Codex `limited` e os demais
-CLIs externos estavam `not_installed`.
+O estado exato por máquina deve ser obtido com `npm run agents:report`. O relatório
+separa `support` do adapter de turno e o perfil de execução E0–E5; `complete` no
+primeiro não promove automaticamente a árvore de subagentes para `verified`. Na
+observação local de 2026-07-20, Claude Code foi `complete` no turno, Codex
+`limited` e os demais CLIs externos estavam `not_installed`; os perfis de execução
+de Claude e Codex continuam E3/`partial` até seus canaries específicos.
 
 | Adapter | Implementação | Stream | Sessão/retomada | Usage/custo | Estado máximo sem probe real |
 |---|---|---|---|---|---|
 | Claude Code | nativa e verificada localmente | delta + tools/thinking/subagentes | binding, import, tail, resume, reconcile | tokens + equivalente informado pelo CLI + plano | `complete` |
 | Codex | nativa, parser e catálogo reais | blocos + reasoning/commands/patch/tools | binding, import, tail, resume, reconcile | delta de tokens + janela efetiva + estimativa configurável + limite semanal | `limited` até certificar todos os eventos por versão |
-| Gemini CLI | adapter `stream-json` + fixtures | delta/tools | session id/resume previsto | tokens quando publicados | `unverified` |
-| Cursor Agent | adapter `stream-json` + fixtures | delta/tools, sem thinking | session id/resume previsto | indisponível no schema auditado | `unverified` |
+| Gemini CLI | adapter `stream-json` + mapper sintético | delta/tools | session id/resume previsto | tokens quando publicados | `unverified` / execução `fixture_only` |
+| Cursor Agent | adapter `stream-json` + mapper sintético | delta/tools, sem thinking | session id/resume previsto | indisponível no schema auditado | `unverified` / execução `fixture_only` |
 | GitHub Copilot CLI | adapter JSONL defensivo | delta/tools quando publicados | resume previsto | tipado conforme evento | `unverified` |
 | OpenCode | `run --format json`, catálogo `models` | eventos JSON | session id | tokens/equivalente, nunca “billed” sem prova | `unverified` |
 | Cline CLI | parser JSONL `ask/say` | snapshot/delta/reasoning | continuidade pelo histórico isolado do Jarvis; nenhum resume por ID público foi encontrado | indisponível até probe | `unverified` |
 | Qwen Code | `stream-json` + partials | delta/tools/reasoning/plan | session id/resume | tokens quando publicados | `unverified` |
 | Continue CLI | final JSON | final-only | histórico isolado do Jarvis; `--resume` global/latest não é usado para evitar cruzar sessões | indisponível | `limited` |
 | Kiro CLI | headless final | final-only | histórico isolado do Jarvis; catálogo é informativo e modelo é configurado no CLI | indisponível | `limited` |
-| Antigravity CLI | TUI `agy` detectável | desativado no Jarvis | não certificada | indisponível | `limited`, não executável |
+| Antigravity CLI | TUI `agy` detectável | desativado no Jarvis | não certificada | indisponível | `unavailable` / E0, não executável |
 | Aider | mensagem headless | final-only | histórico limitado injetado pelo Jarvis; não usa restore global por cwd | indisponível | `limited` |
 | Mock | fixture determinística test-only | thinking/tool/text | gerenciada | `tokens_only` | nunca produção |
+
+No Codex, `block` significa blocos progressivos publicados ao vivo pelo `exec
+--json`; não significa que o Jarvis espera o processo inteiro para só então mostrar
+o resultado. Isso é diferente de delta token a token e também de `final_only`.
+
+### 8.1 Contrato de subprocessos por adapter
+
+Tiers: E0 sem lifecycle; E1 raiz/terminal; E2 filhos por snapshot/API; E3 filhos e atividade;
+E4 controles por nó; E5 recuperação/steer/retry/input completos. A coluna “certificação” descreve
+a evidência atual, não a ambição do adapter.
+
+| Adapter | Tier/perfil atual | Comportamento nativo exigido | Fallback gerenciado seguro hoje | Validação pendente |
+|---|---|---|---|---|
+| Claude Code | E3 · partial · `native_stream` | `Task/Agent` vira filho; texto/tools por `parent_tool_use_id`; terminal ausente vira `unknown` | RO e writer via `safe-mode` + allowlist sem Bash/Task; writer usa worktree | canary de cancel/reconnect e todos os tipos de subagente na versão instalada |
+| Codex | E3 · partial · `native_transcript` | rollouts filhos ligados ao pai, activity incremental e usage próprio | somente RO via `--sandbox read-only`; writer é recusado sem bloqueio real de commit | certificar spawn multi-agent headless, terminal e cancelamento por versão |
+| Gemini | E3 · fixture_only · `native_stream` | IDs de tool/subagent e lifecycle do `stream-json` | recusado até sandbox granular ser provado | instalar, autenticar e capturar fixture/canary real |
+| Cursor | E2 · fixture_only · `native_stream` | lifecycle local/cloud separado; sem thinking fabricado | recusado até sandbox granular ser provado | binário+auth, local vs cloud, reconnect |
+| Copilot | E2 · fixture_only · `native_stream` | JSONL correlacionado; não anunciar controles SDK no adapter CLI | recusado até sandbox granular ser provado | binário+auth e schema real por versão |
+| OpenCode | E3 · fixture_only · `native_stream` | preferir API/ACP quando estável; CLI anuncia só raiz cancelável | recusado até sandbox/bloqueio de commit ser provado | binário+auth, API/ACP e reconciliação |
+| Cline | E3 · fixture_only · `native_stream` | distinguir Agent Teams de `use_subagents`; asks não viram sucesso | recusado até sandbox granular ser provado | binário+auth e dois modos de subagente |
+| Qwen | E3 · fixture_only · `native_stream` | deduplicar partials/transcript e preservar plano/usage | recusado até sandbox granular ser provado | binário+auth, resume e reconnect |
+| Continue | E1 · unverified · `jarvis_managed` | final-only, sem filhos nativos alegados | recusado até executor sandboxado ser conectado | binário+auth e superfície estruturada/API |
+| Kiro | E2 · fixture_only · `native_api` | ACP deve substituir o final-only; `/spawn` isolado não prova delegação | recusado até sandbox granular ser provado | binário+auth e ACP real |
+| Antigravity | E0 · unavailable · `none` | não raspar TUI nem inventar protocolo | recusado | contrato headless público verificável |
+| Aider | E1 · unverified · `jarvis_managed` | final-only, sem filho nativo alegado | writer via worktree + `--no-auto-commits`; RO recusado | instalar, autenticar, testar Windows/Linux e confirmar limites de arquivo |
+
+Regras comuns: máquina nunca muda; `rootExecutionId` é globalmente namespaced e `requestId` torna a
+reentrega idempotente; cancelamento atua apenas na raiz exata; sessões internas não aparecem em chat/busca/digest; conteúdo sensível é
+redigido no journal secundário; o transcript canônico oculto permanece local; controles não
+certificados aparecem como indisponíveis em vez de botões que falham depois.
 
 ## 9. Snapshot atual dos modelos
 
@@ -457,6 +534,11 @@ tail, diff e resume. Precisa ainda:
 
 Deve mapear todos os eventos do `exec --json`, preservando start/completed/result,
 status, saída e IDs de ferramentas. Precisa ainda:
+
+- comportamento observado em canário real de 2026-07-20: `Get-Content` apareceu
+  como Read aos 5,5 s e `patch_apply_end` como Edit com caminho e `+1/-1` aos
+  10,0 s, antes do terminal aos 15,2 s; regressões desse fluxo devem falhar a
+  certificação da versão;
 
 - persistir activity em sessão local e remota;
 - reconstruir reasoning, custom tools, commands, patches e usage do rollout;
@@ -619,7 +701,7 @@ transporte.
 
 ### 15.1 Fixtures por adapter
 
-Cada adapter precisa de fixtures de:
+O contrato-alvo exige, para cada adapter, fixtures versionadas de:
 
 1. init/session ID;
 2. texto parcial e final;
@@ -633,6 +715,21 @@ Cada adapter precisa de fixtures de:
 10. cancelamento;
 11. evento desconhecido de versão futura;
 12. transcript nativo completo e truncado/malformado.
+
+A implementação atual registra os 12 perfis e os 12 pontos de entrada de mapper,
+mas os testes usam objetos sintéticos inline e não cobrem todos os itens acima em
+todos os providers. Continue, Antigravity e Aider deliberadamente retornam zero
+evento nativo; isso prova a degradação fail-closed, não uma fixture de lifecycle.
+Os casos específicos atuais cobrem Claude, Codex, Gemini, Cursor, Copilot,
+OpenCode, Cline, Qwen e Kiro em profundidades diferentes. A suíte comum,
+independente de provider, ainda precisa cobrir também:
+
+1. perfil de execução E0–E5, origem e certificação para os 12 IDs;
+2. delegação gerenciada permitida e recusada pela matriz de segurança;
+3. DAG válido, dependência ausente e ciclo;
+4. sessão interna oculta no chat, busca e digest;
+5. redelivery do mesmo `requestId` sem execução duplicada;
+6. retenção/compactação preservando árvore, resumo e métricas.
 
 ### 15.2 Cenários E2E obrigatórios
 
@@ -655,17 +752,34 @@ Cada adapter precisa de fixtures de:
 | CLI atualizado | certificação invalidada; fixtures/probe executados novamente |
 | Dois clientes | mesma fila, progresso e terminal em ambos |
 | Local/remoto | payload normalizado equivalente |
+| Delegação gerenciada local | aceite somente após raiz durável; DAG executa uma vez e sessão interna fica oculta |
+| Delegação gerenciada remota | Hub fixa o Runner, relay preserva `requestId` e a raiz reaparece em Trabalhos |
+| Reentrega de delegação | o mesmo `requestId` devolve o resultado persistido sem criar outra raiz |
+| Sandbox indisponível | preflight falha antes do spawn; não há downgrade para prompt-only ou cwd compartilhado |
+| Escritor gerenciado | somente perfil certificado recebe worktree; commit/merge/push não são automáticos |
+| Cancelamento exato | uma requisição antiga não cancela uma nova raiz da mesma sessão |
+| Retenção | somente raízes terminais antigas são compactadas; árvore/resumo/métricas permanecem e o painel indica truncamento |
 
 ### 15.3 Testes atuais e buracos
 
 A suíte cobre stores, parsers/fixtures unitários, triggers, anexos, lifecycle
-gerenciado, ledger tipado, persistência, auth, métricas, comandos e contrato. O
-E2E sobe processos Hub e Runner reais, conecta WebSocket, executa a fixture mock,
-confere thinking/tool/text/terminal/usage e reabre o histórico rico. O número
-exato vem do gate da revisão, não fica congelado aqui. Ainda não cobre:
+gerenciado, ledger tipado, persistência, auth, métricas, comandos, contrato,
+policy/DAG, worktree, retenção, redaction e os 12 perfis de execução. O E2E sobe
+processos Hub e Runner reais, conecta WebSocket, executa a fixture mock, confere
+thinking/tool/text/terminal/usage e reabre o histórico rico. Também despacha um
+workflow Jarvis-managed local e outro remoto, verifica aceite/terminal durável,
+ocultação das sessões internas e redelivery idempotente do `requestId`. O número
+exato vem do gate da revisão, não fica congelado aqui. Testes MCP separados cobrem
+correlação, a corrida terminal-antes-do-aceite, timeout sem cancelamento, relatório
+sanitizado e paginação/deduplicação do snapshot de `wait`. Ainda não cobre:
 
-- browser/DOM e acessibilidade visual;
+- o canário real de Read/Edit do Codex foi executado manualmente e passou, mas
+  ainda não está automatizado na CI porque exige CLI autenticado e consome um
+  turno;
+
+- browser/DOM e acessibilidade automatizados (o canary manual desktop/mobile passou);
 - reconnect/restart durante uma ferramenta e dois clientes simultâneos;
+- overflow real da outbox seguido de manifest/replay;
 - anexo remoto real no E2E (o builder tem cobertura unitária/integrada);
 - processo/NDJSON autenticado de cada CLI externo;
 - conformance por versão/modelo/effort;

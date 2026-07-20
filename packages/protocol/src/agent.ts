@@ -66,6 +66,8 @@ export interface AgentDescriptor {
   capabilities: AgentCapabilities;
   models: ModelDescriptor[];
   defaultModel?: string;
+  /** Truthful execution/subprocess observability for this adapter. Controls are capability-gated. */
+  execution?: import("./execution.js").ExecutionAdapterProfile;
   discoveredAt: number;
 }
 
@@ -79,6 +81,7 @@ export interface UsageRecord {
   costKind: CostKind;
   source: string;
   model?: string;
+  effort?: string;
 }
 
 export interface ToolEvent {
@@ -114,8 +117,14 @@ export interface AgentEvent {
   tool?: ToolEvent;
   plan?: PlanEvent;
   usage?: UsageRecord;
+  /** Whether a provider usage sample covers only this execution or already includes descendants. */
+  usageScope?: "self" | "subtree";
   providerEvent?: string;
   errorCode?: string;
+  /** Provider parent/tool id for activity emitted inside a child execution. */
+  parentId?: string;
+  /** Canonical execution id once the Hub/Runner has attributed this event. */
+  executionId?: string;
 }
 
 export interface EventSequencer {

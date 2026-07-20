@@ -17,6 +17,7 @@ export interface UsageRollup {
   contextTokens?: number;
   contextWindowTokens?: number;
   model?: string;
+  effort?: string;
   byKind: Partial<Record<CostKind, number>>;
 }
 
@@ -51,7 +52,7 @@ export class UsageLedger {
     if (!usage) return;
     const hasValue = [usage.costUsd, usage.inputTokens, usage.cachedInputTokens, usage.outputTokens].some((v) => Number(v) > 0);
     if (!hasValue) return;
-    this.entries.push({ sessionId, agent, at: Date.now(), costKind: usage.costKind || "unavailable", source: usage.source || "adapter did not declare source", model: usage.model, costUsd: finite(usage.costUsd), inputTokens: finite(usage.inputTokens), cachedInputTokens: finite(usage.cachedInputTokens), outputTokens: finite(usage.outputTokens), contextTokens: finite(usage.contextTokens), contextWindowTokens: finite(usage.contextWindowTokens) });
+    this.entries.push({ sessionId, agent, at: Date.now(), costKind: usage.costKind || "unavailable", source: usage.source || "adapter did not declare source", model: usage.model, effort: usage.effort, costUsd: finite(usage.costUsd), inputTokens: finite(usage.inputTokens), cachedInputTokens: finite(usage.cachedInputTokens), outputTokens: finite(usage.outputTokens), contextTokens: finite(usage.contextTokens), contextWindowTokens: finite(usage.contextWindowTokens) });
     this.trim(Date.now()); this.flush();
   }
   session(sessionId: string): UsageRollup { return roll(this.entries.filter((e) => e.sessionId === sessionId)); }
@@ -79,6 +80,6 @@ function roll(entries: UsageLedgerEntry[]): UsageRollup {
     if (e.costKind === "billed") out.billableUsd += cost;
     else if (e.costKind === "estimated_api_equivalent") out.estimatedUsd += cost;
   }
-  const latest = entries.at(-1); if (latest) { out.contextTokens = latest.contextTokens; out.contextWindowTokens = latest.contextWindowTokens; out.model = latest.model; }
+  const latest = entries.at(-1); if (latest) { out.contextTokens = latest.contextTokens; out.contextWindowTokens = latest.contextWindowTokens; out.model = latest.model; out.effort = latest.effort; }
   return out;
 }

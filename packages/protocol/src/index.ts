@@ -3,3 +3,4 @@
 // new code cannot accidentally build against a second, incompatible lifecycle.
 export * from "./runner.js";
 export * from "./agent.js";
+export * from "./execution.js";

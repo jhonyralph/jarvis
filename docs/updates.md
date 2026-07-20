@@ -18,14 +18,32 @@ it, optionally to **all machines** at once.
   freezes.
 - **Check** = compare `HEAD` to `origin/<branch>` → how many commits behind + the
   latest commit's message.
-- **Apply** (owner) = `git pull --ff-only` + `npm install`, then the service
-  manager restarts the process with the new code (Task Scheduler / launchd /
-  systemd). Fast-forward only, and it **refuses a dirty working tree** — a local
-  edit blocks the update instead of clobbering it.
-- **All machines**: the Hub sends each connected runner an `update` message; each
-  runner pulls + restarts itself independently, then reconnects.
-- **Safety net**: the pre-update commit is saved to `~/.jarvis/update-prev`; if a
-  bad version breaks things, roll back.
+- **Apply** (owner) first stops accepting new work and drains active local turns.
+  It then fast-forwards to the exact deployment commit requested by the Hub,
+  performs deterministic dependency installation
+  (`npm ci` when a lockfile exists), and `npm run update:verify`. Only a verified
+  checkout is restarted by Task Scheduler / launchd / systemd.
+- **All machines** is a durable deployment, not a broadcast to whoever happens
+  to be online. The target commit is persisted for every known runner. The Hub
+  updates and restarts first; runners receive the target when they reconnect.
+- An authenticated runner with an older operational protocol enters an
+  **update-only quarantine**. It may update and report the result, but cannot run
+  sessions/files/tools until it restarts with the current protocol.
+- An offline runner remains in the inventory and keeps the pending target across
+  Hub restarts. A successful `update_done` is only “prepared”; success becomes
+  **verified** after the runner restarts, reconnects cleanly and reports the target
+  commit. Same-commit dependency repairs additionally require the durable receipt
+  written only after installation and validation complete.
+- The queued target remains exact even if `origin` receives newer commits while a
+  machine is offline. A later deployment may advance it again; one deployment is
+  never silently changed underneath the runner.
+- **Safety net**: each checkout records its own full pre-update commit under
+  `~/.jarvis/updates/`. If dependency install or validation fails after the pull,
+  Git and the previous dependencies are restored automatically. Manual rollback
+  remains available.
+- A cross-process lock prevents Hub, Runner and recovery CLI from updating the
+  same checkout concurrently. Clean-but-divergent local commits are refused just
+  like an uncommitted dirty tree.
 
 ## From the UI
 
@@ -33,6 +51,11 @@ Settings → **Atualização**:
 - Shows "✓ Na última versão" or "🔄 Nova versão (N commits): …".
 - Owner: **Atualizar** (double-tap to confirm) with a **"aplicar em todas as
   máquinas"** checkbox. The Hub reboots; your app reconnects on its own.
+- Runner repair remains available when the Hub itself is current. Pending
+  machines show queued, draining/preparing, awaiting restart, verified or blocked.
+- Normal updates may be queued while a machine is offline. **Force is never
+  queued**: because it discards local work, the owner must confirm it again while
+  that exact machine is online.
 
 ## From the host (recovery / no UI)
 
@@ -48,8 +71,15 @@ even with no device logged in.
 
 ## Notes / limits
 
-- A runner made from the pack/copy can't self-update; re-run its install from a
-  fresh copy, or switch it to a git clone.
+- A runner made from the pack/copy or a container image can't use the Git updater.
+  Re-run its install from a clone, or rebuild/redeploy the container image.
 - Updating the Hub restarts it (a few seconds offline); runners the same.
-- If `npm install` fails, the restart does **not** happen (you stay on the code
-  that's on disk) — check the result/log, fix, retry, or roll back.
+- A failed prepare does **not** restart. If Git had moved, rollback is attempted
+  immediately. Repeating an update on the same commit still repairs dependencies
+  and re-runs validation; “already current” is never an unrepairable dead end.
+- Runners with an older protocol are quarantined for upgrade. Runners with a
+  newer protocol are refused with an instruction to update the Hub first; the Hub
+  never attempts an automatic downgrade.
+- Installers require Node >=22, a real `.git` checkout, an `origin` reachable
+  without an interactive prompt, and a passing validation before enabling the
+  service.

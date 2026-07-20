@@ -56,9 +56,10 @@ Everything external enters through a swappable adapter (`AgentAdapter`,
 | **Talk to it** | Push-to-talk or wake word; replies spoken back with a local voice. Long replies are summarised aloud instead of read out in full. |
 | **Your real sessions** | Reads and continues native Claude Code and Codex sessions. Other adapters expose resume only when their CLI provides a verified session id. |
 | **Many machines** | Switch machines in the UI; each runs on its own hardware and agent login. |
-| **See the work** | Live tool activity (editing/creating/reading), sub-agents, `+3 −5` line counts, inline diffs, and a file viewer with syntax highlighting. |
+| **See the work** | Live tool activity (editing/creating/reading), sub-agents, `+3 −5` line counts, inline diffs, and a file viewer with syntax highlighting when the provider publishes those events. Native/managed child nodes also get a live inline card linked to the durable **Trabalhos** tree. |
 | **Ask what's up** | Spoken digest across all sessions and machines, or a summary of one conversation. |
 | **Stay in budget** | Context window, typed token/cost history for every adapter that reports usage, and Claude plan-limit (5h / weekly) indicator. |
+| **Route automatically** | In Automatic mode, the Hub's configurable routing model chooses an available agent for a new session and the compatible model/effort for every turn; the selected machine never changes. |
 | **Locked down** | Device pairing by invite, owner passphrase (2nd factor), expiring access, audit log, rate limiting. |
 | **Self-healing** | Hub and runners come back on their own after a crash or reboot; update from the UI. |
 
@@ -188,13 +189,120 @@ from the Hub machine itself — which is what makes it a safe recovery path.
 
 Windows: `powershell -File scripts\jarvis.ps1 <same command>`.
 
-Runners update from the UI — they pull and restart themselves. An update
-**aborts on a dirty git tree**, on purpose: it will not throw away local changes.
+Runners update from the UI — the target is retained for offline machines, old
+protocols get an authenticated update-only path, and completion is verified only
+after restart/reconnection. An update **aborts on a dirty git tree**, on purpose:
+it will not throw away local changes unless the owner explicitly forces that
+online machine.
+
+## Jobs and sub-agents
+
+Jarvis represents background work as one provider-neutral execution graph. A
+provider can populate that graph from its native stream/transcript; when a safe
+native surface is unavailable, the MCP tool `jarvis_delegate` can submit an
+explicit DAG to the Jarvis-managed scheduler. Every request fixes the target
+machine up front and validates agent/model/effort and dependencies before spawn.
+The default `mode: "wait"` returns the terminal child report to the calling IA;
+`mode: "background"` returns the root ID immediately for asynchronous tracking
+in **Trabalhos**.
+
+The execution owner writes an fsynced JSONL journal under
+`~/.jarvis/executions`. For remote work, the Runner remains authoritative and
+the Hub keeps a mirror reconciled by protocol v3 manifest/replay. A network drop
+therefore appears as offline/reconciling rather than a fabricated success or
+cancellation. Internal sessions used by managed children are hidden from the
+normal chat list, search and digest.
+
+Managed execution is fail-closed. The combinations wired today are:
+
+| Adapter | Read-only child | Isolated writer |
+|---|---|---|
+| Claude Code | provider safe mode + restricted tool allowlist | worktree + provider restrictions; Bash/Task withheld |
+| Codex | `--sandbox read-only` | refused until commit prevention is enforceable |
+| Aider | refused | worktree + `--no-auto-commits` |
+| Mock | test-only when `JARVIS_ENABLE_MOCK=1` | refused |
+| Gemini, Cursor, Copilot, OpenCode, Cline, Qwen, Continue, Kiro, Antigravity | refused until that adapter has a certified sandbox boundary | refused until sandbox and commit prevention are certified |
+
+“Fail-closed” means Jarvis rejects an unsupported combination before starting
+the child; it does not turn a prompt warning into a security boundary. Claude,
+Codex and Aider still rely on the named provider controls. A writer never
+merges, rebases, pushes or commits automatically, and failure to create or
+validate its worktree aborts the task.
+
+The registry contains an execution profile and a fixture-mapper entry for all
+twelve adapters. Unit tests exercise representative synthetic rows for the
+providers whose lifecycle mapper is implemented; this is **not** yet a complete,
+versioned conformance-fixture corpus for all twelve. Neither kind of fixture proves
+the external CLI: an absent or unauthenticated provider remains `fixture_only`,
+`unverified` or `unavailable` until a real versioned canary passes. Run
+`npm run agents:report` on each machine for the current runtime descriptor; there
+is not yet a persisted canary/certification ledger.
+
+Minimal `jarvis_delegate` input (the MCP client sends this object as tool
+arguments):
+
+```json
+{
+  "machine": "runner-id-from-jarvis",
+  "title": "Review and verify",
+  "mode": "wait",
+  "tasks": [
+    {
+      "id": "review",
+      "title": "Read-only review",
+      "prompt": "Inspect the change and report concrete findings.",
+      "agent": "codex",
+      "cwd": "/absolute/path/to/repo",
+      "depth": 1,
+      "write": false
+    },
+    {
+      "id": "verify",
+      "title": "Verify the findings",
+      "prompt": "Check the reported findings and summarize the evidence.",
+      "agent": "claude-code",
+      "cwd": "/absolute/path/to/repo",
+      "depth": 1,
+      "write": false,
+      "dependsOn": ["review"]
+    }
+  ],
+  "policy": { "maxConcurrency": 2, "maxDepth": 3 }
+}
+```
+
+`machine` is the fixed Runner ID, not an instruction to auto-select hardware.
+An optional `rootExecutionId` is a caller-stable seed, not the final global ID:
+Jarvis derives the canonical managed root from `machine + seed`, so the same seed
+on two Runners cannot collide.
+`waitTimeoutMs` can bound synchronous waiting to at most 600000 ms. A timeout
+does not cancel the workflow: it remains durable and visible in **Trabalhos**.
+After a terminal event, `wait` reads the machine- and root-filtered execution snapshot in
+correlated pages of 500 nodes (up to a defensive 100-page limit), deduplicates
+overlapping pages and returns bounded, secret-scrubbed child summaries. A snapshot
+failure does not rewrite the observed terminal state; the response points to the
+durable execution instead.
+Task IDs are unique within the DAG; dependencies must reference IDs in the same
+request. `model` and `effort` are optional but validated when supplied. Omitted
+`write` uses the configured default (read-only by default). Invalid cycles,
+unknown fields, unavailable adapters/models, unsafe workspace modes and policy
+overruns are rejected before acceptance.
+
+For a child created while its owning chat is open, the browser renders a live
+inline card linked to the same execution node. On reload, **Trabalhos** is the
+provider-neutral durable source of truth. The chat bubble reconstructs only the
+`AgentEvent` activity persisted with that assistant message, so a native provider
+event that has no equivalent persisted `AgentEvent` may reappear only in
+**Trabalhos**. A temporary Chrome canary passed desktop and 390×844 mobile views,
+deep links, inline cards, tree navigation, transcript, files and `+/-`; automated
+browser/a11y, two-client and mid-tool restart coverage remain release gates.
 
 ## Configuration
 
 Config lives in `~/.jarvis/hub.env` (Hub) and `~/.jarvis/runner.env` (runners).
-Everything is an env var — no secrets in the repo.
+Environment variables provide bootstrap/default values — no secrets belong in
+the repo. Owner-editable execution settings are additionally persisted in
+`~/.jarvis/execution-config.json` on the Hub as described below.
 
 | Var | Default | What |
 |---|---|---|
@@ -206,13 +314,32 @@ Everything is an env var — no secrets in the repo.
 | `JARVIS_AUTH` | `on` | Device auth. **Only** turn this off on a trusted private network |
 | `JARVIS_CWD` | process cwd | Default working directory for agents |
 | `JARVIS_VOICE` | — | Piper voice model |
-| `JARVIS_SUMMARY_MODEL` | `haiku` | Model for spoken summaries/digest (cheap on purpose) |
+| `JARVIS_SUMMARY_MODEL` | `haiku` | Model for automatic routing, spoken summaries and digest/status (cheap on purpose) |
 | `JARVIS_HISTORY_CAP` | `120` | Messages sent when opening a session |
 | `JARVIS_SESSION_COST_CAP` | `0` | Per-session **billed USD** cap (`0` = off). Estimates and subscription usage stay visible but do not masquerade as invoice spend or trigger this cap |
+| `JARVIS_EXECUTIONS` | enabled (`0` disables) | Enables durable execution tracking and Jarvis-managed delegation. Disabled mode keeps the regular inline chat lifecycle but returns an empty Trabalhos view |
+| `JARVIS_EXECUTION_RETENTION_DAYS` | `30` | Age after which terminal roots are compacted on process startup. Tree, summary and aggregate metrics remain; detailed prompt/activity/artifacts are removed and marked truncated |
+| `JARVIS_EXECUTION_MAX_EVENTS` | `5000` | In-memory reducer window per execution root (`100..100000`). Durable replay falls back to the append-only JSONL when a cursor predates this window; exceeding it marks the in-memory snapshot as truncated |
+| `JARVIS_EXECUTION_MAX_CONCURRENCY` | `6` | Maximum concurrent Jarvis-managed tasks on that process (`1..32`) |
+| `JARVIS_EXECUTION_MAX_DEPTH` | `3` | Maximum managed DAG depth (`1..10`) |
+| `JARVIS_EXECUTION_DEFAULT_WRITE` | `0` | Default for tasks that omit `write`; keep disabled unless isolated writer behavior is intentional |
+| `JARVIS_EXECUTION_WORKTREE_ROOT` | `~/.jarvis/worktrees` | Validated root used for isolated writer worktrees |
 | `JARVIS_PUBLIC_URL` | — | Base URL used in invite links |
 | `JARVIS_REQUIRE_TLS` / `JARVIS_TRUST_PROXY` | off | Set both when behind a TLS proxy |
 | `JARVIS_AUDIT_MAX_MB` | `5` | Audit-log rotation cap. At the size the current `audit.log` becomes `audit.log.1` (one generation kept) and a fresh log starts |
 | `JARVIS_HUB` / `JARVIS_TOKEN` / `JARVIS_LABEL` | — | Runner: where to connect, and as whom |
+
+For the Hub, these execution variables seed
+`~/.jarvis/execution-config.json`; an owner can change the same values under
+**Configurações → Trabalhos e subagentes**, and the saved file then takes
+precedence over the environment defaults. Concurrency, depth and default-write
+changes apply to new delegations immediately. Enabled state, retention, event
+cap and worktree root require a Hub restart, which the UI reports.
+
+Remote Runners do not inherit the Hub's execution settings. Configure the same
+variables in each `~/.jarvis/runner.env` and restart that Runner. The Hub still
+clamps a remote request to its own concurrency/depth policy, while the Runner
+applies its local limits again; the more restrictive effective limit wins.
 
 The Hub also answers an unauthenticated `GET /health` (`/healthz`) on the UI port
 returning `{ok,uptime,runners}` — for a monitor, `tailscale serve` health, or a load

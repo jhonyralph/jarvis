@@ -11,11 +11,12 @@
  * echoes it on the matching reply so the Hub can route back to the right client.
  */
 import type { AgentEvent } from "./agent.js";
+import type { ExecutionHubToRunner, ExecutionRunnerToHub } from "./execution.js";
 
 export type RunnerOS = "linux" | "darwin" | "win32" | string;
 
 /** Increment when a protocol change affects observable turn/history semantics. */
-export const RUNNER_PROTOCOL_VERSION = 2;
+export const RUNNER_PROTOCOL_VERSION = 3;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
@@ -32,6 +33,8 @@ export interface RunnerInfo {
   /** short git HEAD sha of the runner's checkout ("+dirty" suffix if uncommitted) — lets the Hub
    *  spot a runner drifting behind (or ahead of) the Hub's own build. */
   commit?: string;
+  /** Durable proof that dependencies/validation completed for a correlated update before restart. */
+  updateReceipt?: { requestId: string; targetCommit: string; current: string; preparedAt: number };
   /** friendly name set at install (JARVIS_LABEL); the Hub uses it as the initial label */
   label?: string;
   /** true for the Hub's own embedded runner ("machine 0") */
@@ -48,6 +51,8 @@ export interface RunnerSession {
   source: "managed" | "native";
   /** native sessions may be read-only depending on the agent */
   writable?: boolean;
+  /** Whether at least one message already exists; agent/cwd are locked once true. */
+  started?: boolean;
 }
 
 export interface RunnerMsg {
@@ -74,6 +79,7 @@ export interface RunnerMsg {
     costKind?: "billed" | "estimated_api_equivalent" | "subscription_included" | "tokens_only" | "unavailable";
     source?: string;
     model?: string;
+    effort?: string;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
@@ -113,7 +119,7 @@ export type RunnerToHub =
   | { t: "register"; token: string; info: RunnerInfo }
   /** Resultado do update NESTA máquina. Sem isso o Hub só sabia que enviou o pedido, e um
    *  update abortado (repo sujo) ficava invisível — o dono achava que tinha atualizado. */
-  | { t: "update_done"; ok: boolean; dirty?: boolean; behind?: number; log?: string }
+  | { t: "update_done"; requestId?: string; ok: boolean; dirty?: boolean; behind?: number; log?: string; current?: string; restartRequired?: boolean; rolledBack?: boolean; retryable?: boolean }
   | { t: "busy"; message: string } // recusa de turno concorrente na mesma sessão
   | { t: "sessions"; sessions: RunnerSession[] }
   | { t: "caps"; agent: string; caps: unknown }
@@ -132,11 +138,12 @@ export type RunnerToHub =
       inputTokens?: number;
       contextWindowTokens?: number;
       model?: string;
+      effort?: string;
       /** files touched by tools in this session (real paths, for the viewer/diff panel) */
       files?: TouchedFileMeta[];
     }
   | { t: "filediff"; reqId: string; path: string; name: string; rows?: DiffRowMeta[]; adds?: number; dels?: number; error?: string }
-  /** Canonical v2 lifecycle. New Hubs/Runners must use this; `stream` remains read-only migration input. */
+  /** Canonical AgentEvent lifecycle. New Hubs/Runners must use this; `stream` remains read-only migration input. */
   | { t: "agent_event"; sessionId: string; agent?: string; event: AgentEvent }
   /** @deprecated v1 compatibility during rolling upgrades. */
   | { t: "stream"; sessionId: string; agent?: string; ev: RunnerStreamEvent }
@@ -145,13 +152,16 @@ export type RunnerToHub =
   | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; truncated?: boolean; error?: string }
   /** directory listing for the folder browser (reply to Hub->Runner "listdir") */
   | { t: "dirs"; reqId: string; path: string; parent: string; entries: string[] }
+  /** Correlated result of a remote delete. `ids` contains only sessions actually removed. */
+  | { t: "deleted"; reqId: string; sessionId?: string; ids: string[]; ok: boolean; okCount: number }
   | { t: "runs"; active: string[] }
   /** available slash-commands / skills on this machine (reply to Hub->Runner "commands") */
   | { t: "command_list"; reqId?: string; commands: unknown[] }
   /** "@" file-mention matches under a session's cwd (reply to Hub->Runner "mention") */
   | { t: "mention_list"; reqId?: string; files: string[] }
   | { t: "error"; reqId?: string; message: string }
-  | { t: "pong" };
+  | { t: "pong" }
+  | ExecutionRunnerToHub;
 
 // --- Hub -> Runner ---
 export type HubToRunner =
@@ -180,7 +190,7 @@ export type HubToRunner =
   | { t: "listdir"; reqId: string; path?: string }
   /** change agent/cwd of a not-yet-started session (reply: history) */
   | { t: "configure"; reqId: string; sessionId: string; agent?: string; cwd?: string }
-  | { t: "delete"; sessionId?: string; sessionIds?: string[]; alsoNative?: boolean }
+  | { t: "delete"; reqId: string; sessionId?: string; sessionIds?: string[]; alsoNative?: boolean }
   | { t: "readfile"; reqId: string; path: string; cwd?: string }
   | { t: "readdiff"; reqId: string; sessionId: string; path: string }
   | { t: "caps"; agent?: string }
@@ -192,8 +202,10 @@ export type HubToRunner =
   | { t: "memory_append"; text: string; sessionId?: string }
   | { t: "stop"; sessionId: string }
   | { t: "cancel"; sessionId: string } // abort a live turn (user hit "parar")
-  /** force: descarta alterações locais (git reset --hard) antes de atualizar — só sob pedido explícito do dono. */
-  | { t: "update"; force?: boolean }
-  | { t: "ping" };
+  /** `requestId` correlates a durable Hub deployment; old runners may ignore the extra fields.
+   *  force discards local changes and is intentionally never persisted for offline execution. */
+  | { t: "update"; requestId?: string; targetCommit?: string; force?: boolean }
+  | { t: "ping" }
+  | ExecutionHubToRunner;
 
 export type RunnerProtocol = RunnerToHub | HubToRunner;

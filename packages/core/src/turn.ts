@@ -7,6 +7,7 @@ export interface TurnUsage {
   costKind?: "billed" | "estimated_api_equivalent" | "subscription_included" | "tokens_only" | "unavailable";
   source?: string;
   model?: string;
+  effort?: string;
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;

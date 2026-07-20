@@ -24,20 +24,23 @@ import {
   updateApply, restartService, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory,
   buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, createAgentEventBridge, createEventSequencer,
-  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent,
+  ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
+  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult,
 } from "@jarvis/core";
+import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
 
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
-import { RUNNER_PROTOCOL_VERSION, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
+import { RUNNER_PROTOCOL_VERSION, type HubToRunner, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/+$/, "");
 const HUB_URL = HUB + "/runner";
 const TOKEN = process.env.JARVIS_TOKEN || "";
 const DEFAULT_AGENT = process.env.JARVIS_AGENT || "claude-code";
 const CWD = process.env.JARVIS_CWD || homedir();
-const JDIR = join(homedir(), ".jarvis");
+const JDIR = join(process.env.JARVIS_HOME || homedir(), ".jarvis");
 try { mkdirSync(JDIR, { recursive: true }); } catch { /* ignore */ }
 const ID_FILE = join(JDIR, "runner-id");
+const UPDATE_RECEIPT_FILE = join(JDIR, "update-receipt.json");
 
 function runnerId(): string {
   try { const v = readFileSync(ID_FILE, "utf8").trim(); if (v) return v; } catch { /* new */ }
@@ -46,6 +49,17 @@ function runnerId(): string {
   return id;
 }
 const RUNNER_ID = runnerId();
+function updateReceipt(): RunnerInfo["updateReceipt"] {
+  try { const value = JSON.parse(readFileSync(UPDATE_RECEIPT_FILE, "utf8")); return value && typeof value.requestId === "string" && typeof value.targetCommit === "string" && typeof value.current === "string" ? value : undefined; }
+  catch { return undefined; }
+}
+const EXECUTIONS_ENABLED = process.env.JARVIS_EXECUTIONS !== "0";
+const EXECUTION_RETENTION_DAYS = Math.max(1, Math.min(3650, Number(process.env.JARVIS_EXECUTION_RETENTION_DAYS || 30)));
+const EXECUTION_MAX_EVENTS = Math.max(100, Math.min(100_000, Number(process.env.JARVIS_EXECUTION_MAX_EVENTS || 5_000)));
+const EXECUTION_MAX_CONCURRENCY = Math.max(1, Math.min(32, Number(process.env.JARVIS_EXECUTION_MAX_CONCURRENCY || 6)));
+const EXECUTION_MAX_DEPTH = Math.max(1, Math.min(10, Number(process.env.JARVIS_EXECUTION_MAX_DEPTH || 3)));
+const EXECUTION_DEFAULT_WRITE = process.env.JARVIS_EXECUTION_DEFAULT_WRITE === "1";
+const EXECUTION_WORKTREE_ROOT = process.env.JARVIS_EXECUTION_WORKTREE_ROOT || join(JDIR, "worktrees");
 
 const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new ClaudeCodeAdapter())
@@ -62,7 +76,19 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new AntigravityCliAdapter())
   .register(new MockAgentAdapter());
 const store = new Store({ agent: DEFAULT_AGENT, cwd: CWD });
+const executionStore = new ExecutionStore({ root: join(JDIR, "executions"), maxEventsPerRoot: EXECUTION_MAX_EVENTS });
+const compactedExecutions = executionStore.compactBefore(Date.now() - EXECUTION_RETENTION_DAYS * 86_400_000);
+if (compactedExecutions.roots) console.log(`[runner] retenção de trabalhos: ${compactedExecutions.roots} diário(s) compactado(s), ${compactedExecutions.droppedEvents} evento(s) detalhado(s) removido(s)`);
+if (EXECUTIONS_ENABLED) for (const snapshot of executionStore.rootsForSession()) for (const node of snapshot.nodes) {
+  if (node.state !== "queued" && node.state !== "running" && node.state !== "waiting_input") continue;
+  try {
+    executionStore.append(node.rootExecutionId, node.executionId, { kind: "state_changed", from: node.state, to: "orphaned", reason: "Runner reiniciou sem binding verificável para este processo" });
+    executionStore.append(node.rootExecutionId, node.executionId, { kind: "diagnostic", level: "warning", code: "PROCESS_BINDING_LOST", message: "Estado preservado como órfão; nenhum terminal foi inferido" });
+  } catch { /* leave the last valid projection available for reconciliation */ }
+}
 const activeRuns = new Set<string>();
+const managedRuns = new Set<string>();
+let updateInProgress = false;
 // Idempotency: turnIds already executed here. `activeRuns` only blocks a CONCURRENT duplicate;
 // this makes a re-delivered send (reconnect resend / queue re-flush / WS redelivery) run at most once.
 const seenTurns = createSeenSet();
@@ -79,7 +105,7 @@ let ws: WebSocket | null = null;
 const outbox = new Outbox<RunnerToHub>(3000);
 function send(m: RunnerToHub): void {
   if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(m)); return; }
-  if (m.t === "agent_event" || m.t === "stream" || m.t === "message") outbox.push(m);
+  if (m.t === "agent_event" || m.t === "execution_event" || m.t === "execution_usage_record" || m.t === "execution_delegate_result" || m.t === "stream" || m.t === "message") outbox.push(m);
 }
 /** Replay turn output buffered during an outage. Called right after a reconnect's `welcome` (socket
  *  OPEN again), before the fresh session/caps push, so the resumed stream lands in order. */
@@ -140,29 +166,45 @@ async function availableAgents(): Promise<string[]> {
 }
 
 function allSessions(): RunnerSession[] {
-  const own = store.list().map((s: any) => ({ id: s.id, title: s.title, agent: s.agent, cwd: s.cwd, updatedAt: s.updatedAt, source: "managed" as const, writable: true }));
+  const own = store.list().map((s: any) => ({ id: s.id, title: s.title, agent: s.agent, cwd: s.cwd, updatedAt: s.updatedAt, source: "managed" as const, writable: true, started: s.count > 0 }));
   const ownIds = new Set(own.map((s) => s.id));
-  const native = listNative().filter((n) => !ownIds.has(n.id)).map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, updatedAt: n.updatedAt, source: "native" as const, writable: n.agent === "claude-code" || n.agent === "codex" }));
+  const native = listNative().filter((n) => !ownIds.has(n.id)).map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, updatedAt: n.updatedAt, source: "native" as const, writable: n.agent === "claude-code" || n.agent === "codex", started: true }));
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 function pushSessions(): void { send({ t: "sessions", sessions: allSessions() }); }
-function pushRuns(): void { send({ t: "runs", active: [...activeRuns] }); }
+function pushRuns(): void { send({ t: "runs", active: [...activeRuns, ...managedRuns] }); }
+function pushExecutionManifest(reqId: string): void {
+  send({ t: "execution_manifest", reqId, entries: EXECUTIONS_ENABLED ? executionStore.manifest() : [] });
+}
+function pushExecutionEvents(reqId: string, rootExecutionId: string, afterSeq: number, limit?: number): void {
+  if (!EXECUTIONS_ENABLED) { send({ t: "error", reqId, message: "acompanhamento de execuções desativado neste Runner" }); return; }
+  const entry = executionStore.manifest().find((item) => item.rootExecutionId === rootExecutionId);
+  if (!entry) { send({ t: "error", reqId, message: "execução não encontrada neste Runner" }); return; }
+  const page = executionStore.events(rootExecutionId, afterSeq, limit);
+  if (page.events.length && page.events[0].seq !== afterSeq + 1) {
+    send({ t: "error", reqId, message: `replay indisponível: primeiro evento retido é ${page.events[0].seq}, esperado ${afterSeq + 1}` });
+    return;
+  }
+  send({ t: "execution_events", reqId, rootExecutionId, journalId: entry.journalId,
+    events: page.events, nextSeq: page.nextSeq });
+}
 
 async function doHistory(reqId: string, sessionId: string): Promise<void> {
   if (isNativeId(sessionId)) {
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
-    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, model: h.model, total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId) });
+    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, model: h.model, effort: h.effort, total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId) });
     startTail(sessionId); // live-mirror new turns (external CLI) to the Hub
   } else {
+    if (store.isHidden(sessionId)) { send({ t: "error", reqId, message: "sessão interna não pode ser aberta pelo chat" }); return; }
     const s = store.ensure(sessionId);
     const all = store.history(s.id);
     const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-    const nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null;
+    const nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
     const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
     send({
       t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd,
-      writable: true, total: all.length, nativeId: nid, inputTokens: nh?.inputTokens, contextWindowTokens: nh?.contextWindowTokens, model: nh?.model,
+      writable: true, total: all.length, nativeId: nid, inputTokens: nh?.inputTokens, contextWindowTokens: nh?.contextWindowTokens, model: nh?.model || lastUsage?.model, effort: nh?.effort || lastUsage?.effort,
       messages: all.map((m: any) => ({
         role: m.role, text: m.text, ts: m.ts, agent: m.agent, speaker: m.speaker,
         images: m.images, files: m.files, activity: m.activity, usage: m.usage,
@@ -178,20 +220,180 @@ function sessAgent(sid?: string): string | undefined { if (!sid) return undefine
 
 // Live turns on this machine, so a {t:cancel} from the Hub can kill the actual agent process.
 const runAborts = new Map<string, AbortController>();
+// Canonical execution controls are keyed by the exact root, never just by session: cancelling an
+// old turn must not accidentally abort a newer turn that happens to reuse the same conversation.
+const executionAborts = new Map<string, AbortController>();
+
+function runnerManagedSecurity(agent: string, write: boolean): ManagedExecutionSecurity | undefined {
+  if (agent === "mock" && process.env.JARVIS_ENABLE_MOCK === "1" && !write) return { commitPrevention: "provider_config", readOnlyEnforcement: "provider_sandbox" };
+  if (agent === "claude-code") return { commitPrevention: "provider_config", readOnlyEnforcement: write ? undefined : "provider_sandbox" };
+  if (agent === "codex" && !write) return { commitPrevention: "provider_config", readOnlyEnforcement: "provider_sandbox" };
+  if (agent === "aider" && write) return { commitPrevention: "provider_config" };
+  return undefined;
+}
+const runnerManagedExecution = new ManagedExecutionService({
+  runnerId: RUNNER_ID, store: executionStore, agents, worktrees: new ManagedWorktreeManager(EXECUTION_WORKTREE_ROOT),
+  hiddenSessions: {
+    async create(input) {
+      const existing = store.get(input.idHint);
+      if (existing) {
+        if (!store.isHidden(input.idHint) || existing.rootExecutionId !== input.rootExecutionId || existing.executionId !== input.executionId || existing.agent !== input.agent || existing.cwd !== input.cwd) {
+          throw new Error(`binding de sessão interna divergente para ${input.idHint}`);
+        }
+      } else store.ensure(input.idHint, { title: input.title, agent: input.agent, cwd: input.cwd, hidden: true, rootExecutionId: input.rootExecutionId, executionId: input.executionId });
+      return { sessionId: input.idHint };
+    },
+    append(sessionId, message) { store.add(sessionId, { role: message.role, text: message.text, ts: message.at }); },
+  },
+  securityFor: (task) => runnerManagedSecurity(task.agent, task.write === true),
+  invoke: async (input) => {
+    const reply = await input.adapter.send(input.sessionId, input.prompt, input.cwd, {
+      model: input.task.model, effort: input.task.effort, signal: input.signal,
+      managed: { workspaceAccess: input.lease.access, preventCommits: true },
+    }, input.onEvent);
+    if (reply.usage) send({ t: "execution_usage_record", rootExecutionId: executionStore.findNode(input.lease.executionId)?.rootExecutionId || input.task.id, sessionId: input.sessionId, agent: input.task.agent, usage: { ...reply.usage, costKind: reply.usage.costKind || "unavailable", source: reply.usage.source || "adapter não declarou a origem do uso" } });
+    return reply;
+  },
+  onEvent: (event) => send({ t: "execution_event", sessionId: event.rootExecutionId, event }),
+  onChildUsage: (input) => send({ t: "execution_usage_record", rootExecutionId: input.rootExecutionId, sessionId: input.sessionId, agent: input.agent, usage: input.usage }),
+});
+
+type ExecutionDelegateCommand = Extract<HubToRunner, { t: "execution_delegate" }>;
+type ExecutionDelegateResult = Extract<RunnerToHub, { t: "execution_delegate_result" }>;
+const DELEGATE_RESULTS_FILE = join(JDIR, "execution-delegate-results.json");
+const delegateResults = (() => {
+  try {
+    const rows = JSON.parse(readFileSync(DELEGATE_RESULTS_FILE, "utf8"));
+    return new Map<string, ExecutionDelegateResult>((Array.isArray(rows) ? rows : []).filter((row: any) => row?.t === "execution_delegate_result" && typeof row.requestId === "string" && typeof row.ok === "boolean").slice(-500).map((row: ExecutionDelegateResult) => [row.requestId, row]));
+  } catch { return new Map<string, ExecutionDelegateResult>(); }
+})();
+function rememberDelegateResult(result: ExecutionDelegateResult): void {
+  delegateResults.set(result.requestId, result); while (delegateResults.size > 500) { const oldest = delegateResults.keys().next().value; if (oldest) delegateResults.delete(oldest); else break; }
+  try { writeJsonAtomic(DELEGATE_RESULTS_FILE, [...delegateResults.values()]); } catch { /* outbox still preserves the live reply */ }
+  send(result);
+}
+function handleExecutionDelegate(command: ExecutionDelegateCommand): void {
+  const cached = delegateResults.get(command.requestId); if (cached) { send(cached); return; }
+  const plan: ManagedExecutionPlan = { ...command.plan, tasks: command.plan.tasks.map((task) => ({ ...task, write: task.write === undefined ? EXECUTION_DEFAULT_WRITE : task.write })) };
+  const policy: ManagedExecutionPolicyInput = { ...command.policy,
+    maxConcurrency: Math.min(EXECUTION_MAX_CONCURRENCY, command.policy?.maxConcurrency ?? EXECUTION_MAX_CONCURRENCY),
+    maxDepth: Math.min(EXECUTION_MAX_DEPTH, command.policy?.maxDepth ?? EXECUTION_MAX_DEPTH) };
+  let accepted = false; const ctrl = new AbortController();
+  managedRuns.add(plan.rootExecutionId); executionAborts.set(plan.rootExecutionId, ctrl); pushRuns();
+  void runnerManagedExecution.run(plan, { title: command.title, policy, signal: ctrl.signal,
+    onAccepted: (rootExecutionId) => { accepted = true; rememberDelegateResult({ t: "execution_delegate_result", requestId: command.requestId, ok: true, rootExecutionId }); },
+  }).catch((error) => {
+    const message = String((error as Error)?.message || error);
+    if (!accepted) rememberDelegateResult({ t: "execution_delegate_result", requestId: command.requestId, ok: false, error: message });
+    console.error(`[runner] workflow gerenciado ${plan.rootExecutionId} falhou: ${message}`);
+  }).finally(() => {
+    managedRuns.delete(plan.rootExecutionId); if (executionAborts.get(plan.rootExecutionId) === ctrl) executionAborts.delete(plan.rootExecutionId); pushRuns();
+  });
+}
+
+type ExecutionControlCommand = Extract<HubToRunner, { t: "execution_control" }>;
+type ExecutionControlResult = Extract<RunnerToHub, { t: "execution_control_result" }>;
+const CONTROL_RESULTS_FILE = join(JDIR, "execution-control-results.json");
+const CONTROL_RESULT_LIMIT = 500;
+
+function loadExecutionControlResults(): Map<string, ExecutionControlResult> {
+  try {
+    const parsed = JSON.parse(readFileSync(CONTROL_RESULTS_FILE, "utf8"));
+    if (!Array.isArray(parsed)) return new Map();
+    return new Map(parsed.flatMap((row: unknown) => {
+      const value = row as Partial<ExecutionControlResult>;
+      return value?.t === "execution_control_result" && typeof value.requestId === "string"
+        && typeof value.executionId === "string" && typeof value.ok === "boolean"
+        && Array.isArray(value.affectedIds) && Array.isArray(value.unsupportedIds)
+        ? [[value.requestId, value as ExecutionControlResult] as const] : [];
+    }).slice(-CONTROL_RESULT_LIMIT));
+  } catch { return new Map(); }
+}
+
+const executionControlResults = loadExecutionControlResults();
+
+function rememberExecutionControl(result: ExecutionControlResult): void {
+  executionControlResults.set(result.requestId, result);
+  while (executionControlResults.size > CONTROL_RESULT_LIMIT) {
+    const oldest = executionControlResults.keys().next().value;
+    if (oldest) executionControlResults.delete(oldest); else break;
+  }
+  try { writeJsonAtomic(CONTROL_RESULTS_FILE, [...executionControlResults.values()]); }
+  catch (error) { console.warn("[runner] não foi possível persistir resultado de controle:", String(error)); }
+  send(result);
+}
+
+function handleExecutionControl(command: ExecutionControlCommand): void {
+  const cached = executionControlResults.get(command.requestId);
+  if (cached) { send(cached); return; }
+  const found = executionStore.findNode(command.executionId);
+  let result: ExecutionControlResult;
+  if (!found) {
+    result = { t: "execution_control_result", requestId: command.requestId, executionId: command.executionId,
+      ok: false, affectedIds: [], unsupportedIds: [command.executionId], error: "execução não encontrada neste Runner" };
+  } else if (command.action !== "cancel" && command.action !== "cancel_subtree") {
+    result = { t: "execution_control_result", requestId: command.requestId, executionId: command.executionId,
+      ok: false, affectedIds: [], unsupportedIds: [command.executionId],
+      error: `controle ${command.action} não é suportado por este Runner` };
+  } else if (found.node.executionId !== found.node.rootExecutionId) {
+    result = { t: "execution_control_result", requestId: command.requestId, executionId: command.executionId,
+      ok: false, affectedIds: [], unsupportedIds: [command.executionId],
+      error: "cancelamento por nó não é suportado; cancele a execução raiz" };
+  } else {
+    const ctrl = executionAborts.get(found.rootExecutionId);
+    if (!ctrl || ctrl.signal.aborted) {
+      result = { t: "execution_control_result", requestId: command.requestId, executionId: command.executionId,
+        ok: false, affectedIds: [], unsupportedIds: [], error: "a execução raiz não está ativa" };
+    } else {
+      ctrl.abort();
+      result = { t: "execution_control_result", requestId: command.requestId, executionId: command.executionId,
+        ok: true, affectedIds: [command.executionId], unsupportedIds: [] };
+    }
+  }
+  rememberExecutionControl(result);
+}
 
 async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter, agentInput: string, cwd: string, opts: SendOpts, ctrl: AbortController): Promise<Awaited<ReturnType<AgentAdapter["send"]>> & { activity: AgentEvent[] }> {
   const turnId = opts.turnId || randomUUID();
   const sequencer = createEventSequencer(turnId);
   const bridge = createAgentEventBridge(turnId, sequencer);
   const activity: AgentEvent[] = [];
-  const emit = (event: AgentEvent): void => {
+  const profile = EXECUTION_ADAPTER_PROFILES[selected.name as keyof typeof EXECUTION_ADAPTER_PROFILES];
+  const rootExecutionId = executionRootId(RUNNER_ID, sessionId, turnId);
+  const tracker = EXECUTIONS_ENABLED ? new ExecutionTracker(executionStore, {
+    runnerId: RUNNER_ID, sessionId, turnId, agent: selected.name, cwd,
+    model: opts.model, effort: opts.effort, profile,
+  }, (event) => send({ t: "execution_event", sessionId, event }),
+  (usage) => send({ t: "execution_usage_record", rootExecutionId, sessionId, agent: selected.name, usage })) : undefined;
+  if (tracker) executionAborts.set(tracker.rootExecutionId, ctrl);
+  const emit = (event: AgentEvent, project = true): void => {
     if (activity.length < 600) activity.push(event);
+    if (project) {
+      try { tracker?.handleAgentEvent(event); }
+      catch (error) { console.warn(`[runner] falha ao projetar execução ${tracker?.rootExecutionId || turnId}:`, String(error)); }
+    }
     send({ t: "agent_event", sessionId, agent: selected.name, event });
   };
-  emit(bridge.accepted()); emit(bridge.started());
   try {
+    emit(bridge.accepted()); emit(bridge.started());
     const prior = store.history(sessionId).slice(0, -1).filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
-    const reply = await selected.send(sessionId, agentInput, cwd, { ...opts, turnId, history: prior, signal: ctrl.signal }, (ev) => emit(bridge.provider(ev)));
+    const reply = await selected.send(sessionId, agentInput, cwd, { ...opts, turnId, history: prior, signal: ctrl.signal }, (ev) => {
+      if (isProviderExecutionEvent(ev)) {
+        let projected: ReturnType<ExecutionTracker["handleProviderEvent"]> | undefined;
+        let projectionFailed = false;
+        try { projected = tracker?.handleProviderEvent(ev); }
+        catch (error) { projectionFailed = true; console.warn(`[runner] falha ao projetar subprocesso em ${tracker?.rootExecutionId || turnId}:`, String(error)); }
+        if (ev.kind === "execution_activity") {
+          const childActivity = projected?.activity || (!tracker || projectionFailed ? redactProviderExecutionActivity(ev.event, cwd) : undefined);
+          if (childActivity) {
+            const event = bridge.provider({ ...childActivity, parentId: ev.providerId });
+            event.executionId = projected?.executionId;
+            emit(event, false);
+          }
+        }
+      } else emit(bridge.provider(ev));
+    });
+    if (reply.usage || opts.model || opts.effort) reply.usage = { costKind: "unavailable", source: "Jarvis turn selection", ...reply.usage, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort };
     if (reply.usage) emit(bridge.usage(reply.usage));
     emit(bridge.completed(reply.text));
     return { ...reply, activity };
@@ -199,6 +401,8 @@ async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter,
     if (ctrl.signal.aborted || String(e?.message) === ABORTED) { if (!sequencer.terminal) emit(bridge.cancelled()); }
     else if (!sequencer.terminal) emit(bridge.failed(String(e?.message ?? e), "PROVIDER_ERROR"));
     throw e;
+  } finally {
+    if (tracker && executionAborts.get(tracker.rootExecutionId) === ctrl) executionAborts.delete(tracker.rootExecutionId);
   }
 }
 
@@ -211,6 +415,7 @@ async function doSend(
   attachments: Array<{ name: string; content: string; image?: boolean }> = [],
   turnId?: string,
 ): Promise<void> {
+  if (store.isHidden(sessionId)) { send({ t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
   if (turnId && !seenTurns.add(turnId)) { console.log(`[runner] turno duplicado ignorado (turnId=${turnId})`); return; }
   // One turn per session (authoritative): a second send while one runs = two agents on one repo.
   if (activeRuns.has(sessionId)) { send({ t: "busy", message: "Já há um processamento nesta sessão — aguarde terminar ou toque em Parar." }); return; }
@@ -241,6 +446,10 @@ async function doSend(
       const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : built.agentText);
       await executeRunnerAgentTurn(sessionId, agent, agentInput, useCwd, { ...opts, turnId }, ctrl);
     } else {
+      const existing = store.get(sessionId);
+      // The Hub may resolve an automatic IA immediately before the first turn. Rebind only while
+      // the session is still empty; Store enforces that a started conversation never changes IA.
+      if (existing && agentName && existing.agent !== agentName) store.reconfigure(sessionId, { agent: agentName });
       const s = store.ensure(sessionId, agentName ? { agent: agentName, cwd: cwd || CWD } : undefined);
       agent = agents.get(s.agent); streamAgent = agent.name; useCwd = s.cwd || CWD;
       const built = buildTurnAttachments(attachments, text, {
@@ -313,7 +522,7 @@ function connect(): void {
     const info: RunnerInfo = {
       runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: available,
       agentDescriptors: descriptors, agentUsage, protocolVersion: RUNNER_PROTOCOL_VERSION,
-      version: VERSION, commit: await repoCommit(RUNNER_ROOT), label: process.env.JARVIS_LABEL || undefined,
+      version: VERSION, commit: await repoCommit(RUNNER_ROOT), updateReceipt: updateReceipt(), label: process.env.JARVIS_LABEL || undefined,
     };
     send({ t: "register", token: TOKEN, info });
   });
@@ -322,9 +531,34 @@ function connect(): void {
     let m: any; try { m = JSON.parse(data.toString()); } catch { return; }
     if (!m || typeof m !== "object" || typeof m.t !== "string") return; // drop junk / non-object frames
     try {
-      if (m.t === "welcome") { console.log(`[runner] registered as ${RUNNER_ID} (${hostname()})`); flushOutbox(); pushSessions(); pushRuns(); send({ t: "caps", agent: DEFAULT_AGENT, caps: await agents.describe() }); return; }
+      if (m.t === "welcome") {
+        console.log(`[runner] registered as ${RUNNER_ID} (${hostname()})`);
+        flushOutbox();
+        pushExecutionManifest(`welcome:${RUNNER_ID}`);
+        pushSessions(); pushRuns(); send({ t: "caps", agent: DEFAULT_AGENT, caps: await agents.describe() });
+        return;
+      }
       if (m.t === "reject") { console.error(`[runner] rejected by hub: ${m.reason}`); sock.close(); return; }
       if (m.t === "ping") { send({ t: "pong" }); return; }
+      if (updateInProgress && ["send", "execution_delegate", "new", "configure"].includes(m.t)) {
+        send({ t: "error", reqId: m.reqId, message: "máquina drenando para atualização — tente novamente após ela reconectar" }); return;
+      }
+      if (m.t === "execution_manifest_request" && typeof m.reqId === "string") {
+        pushExecutionManifest(m.reqId); return;
+      }
+      if (m.t === "execution_read" && typeof m.reqId === "string" && typeof m.rootExecutionId === "string") {
+        const afterSeq = Number.isSafeInteger(m.afterSeq) && m.afterSeq >= 0 ? m.afterSeq : 0;
+        const limit = Number.isSafeInteger(m.limit) && m.limit > 0 ? Math.min(m.limit, 1000) : undefined;
+        pushExecutionEvents(m.reqId, m.rootExecutionId, afterSeq, limit); return;
+      }
+      if (m.t === "execution_control" && typeof m.requestId === "string" && typeof m.executionId === "string"
+        && ["cancel", "cancel_subtree", "steer", "retry"].includes(m.action)) {
+        handleExecutionControl(m as ExecutionControlCommand); return;
+      }
+      if (m.t === "execution_delegate" && typeof m.requestId === "string" && m.plan && typeof m.plan === "object") {
+        if (!EXECUTIONS_ENABLED) { rememberDelegateResult({ t: "execution_delegate_result", requestId: m.requestId, ok: false, error: "acompanhamento de trabalhos está desabilitado neste Runner" }); return; }
+        handleExecutionDelegate(m as ExecutionDelegateCommand); return;
+      }
       if (m.t === "list") { pushSessions(); return; }
       if (m.t === "new") {
         const id = randomUUID();
@@ -336,24 +570,29 @@ function connect(): void {
       }
       if (m.t === "readfile" && typeof m.path === "string") { send({ t: "filecontent", reqId: m.reqId, ...readProjectFile(m.path, m.cwd) }); return; }
       if (m.t === "readdiff" && typeof m.path === "string" && typeof m.sessionId === "string") {
+        if (store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não expõe diff pelo chat" }); return; }
         const diffId = isNativeId(m.sessionId) ? m.sessionId : (() => { const s = store.get(m.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return s && nid ? (nativeIdForAgent(s.agent, nid) || "") : ""; })();
         send({ t: "filediff", reqId: m.reqId, ...(diffId ? sessionFileDiff(diffId, m.path) : { path: m.path, name: m.path.split(/[\\/]/).pop() || m.path, error: "sem sessão nativa vinculada" }) });
         return;
       }
       if (m.t === "delete" && (typeof m.sessionId === "string" || Array.isArray(m.sessionIds))) {
         const ids: string[] = Array.isArray(m.sessionIds) ? m.sessionIds.filter((x: any) => typeof x === "string") : [m.sessionId];
+        const deletedIds: string[] = [];
         for (const sid of ids) {
-          if (isNativeId(sid)) { stopTail(sid); deleteNative(sid); }
+          if (activeRuns.has(sid)) continue;
+          if (isNativeId(sid)) { stopTail(sid); if (deleteNative(sid)) { executionStore.deleteSession(sid); deletedIds.push(sid); } }
           else {
+            if (store.isHidden(sid)) continue;
             const s = store.get(sid);
             if (s) {
               const ag = agents.get(s.agent);
               if (m.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); const key = nid && nativeIdForAgent(s.agent, nid); if (key) deleteNative(key); }
               ag.forgetSession?.(sid);
             }
-            store.delete(sid);
+            if (store.delete(sid)) { executionStore.deleteSession(sid); deletedIds.push(sid); }
           }
         }
+        send({ t: "deleted", reqId: m.reqId, sessionId: m.sessionId, ids: deletedIds, ok: deletedIds.length === ids.length, okCount: deletedIds.length });
         pushSessions();
         return;
       }
@@ -367,6 +606,7 @@ function connect(): void {
         return;
       }
       if (m.t === "configure" && typeof m.sessionId === "string") {
+        if (store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não pode ser configurada pelo chat" }); return; }
         const s = store.get(m.sessionId);
         if (!s) { send({ t: "error", reqId: m.reqId, message: "sessão não encontrada" }); return; }
         const agentName = agents.names().includes(m.agent) ? m.agent : undefined;
@@ -389,20 +629,36 @@ function connect(): void {
       }
       if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }
       if (m.t === "commands") { send({ t: "command_list", reqId: m.reqId, commands: listCommandsPublic(CWD) }); return; }
-      if (m.t === "mention") { send({ t: "mention_list", reqId: m.reqId, files: listMentionFiles(sessCwd(m.sessionId), typeof m.q === "string" ? m.q : "") }); return; }
+      if (m.t === "mention") { if (typeof m.sessionId === "string" && store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não expõe arquivos pelo chat" }); return; } send({ t: "mention_list", reqId: m.reqId, files: listMentionFiles(sessCwd(m.sessionId), typeof m.q === "string" ? m.q : "") }); return; }
       if (m.t === "memory_append" && typeof m.text === "string") {
+        if (typeof m.sessionId === "string" && store.isHidden(m.sessionId)) { send({ t: "error", message: "sessão interna não aceita memória pelo chat" }); return; }
         try { const r = appendMemory(m.text, sessCwd(m.sessionId), cmdAgentOf(sessAgent(m.sessionId))); if (m.sessionId) send({ t: "message", sessionId: m.sessionId, message: { role: "assistant", text: "📝 Anotado em " + r.file, ts: Date.now() } }); }
         catch (e: any) { send({ t: "error", message: "memória: " + String(e?.message ?? e) }); }
         return;
       }
       if (m.t === "update") {
+        if (updateInProgress) { send({ t: "update_done", requestId: m.requestId, ok: false, log: "outra atualização já está em andamento" }); return; }
+        updateInProgress = true;
         console.log("[runner] update solicitado pelo Hub...", m.force ? "(forçado)" : "");
-        const r = await updateApply(RUNNER_ROOT, { force: !!m.force });
+        const drainStarted = Date.now();
+        while ((activeRuns.size || managedRuns.size) && Date.now() - drainStarted < 120_000) await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (activeRuns.size || managedRuns.size) {
+          const log = `não foi possível drenar ${activeRuns.size + managedRuns.size} trabalho(s) em 120s; nenhum arquivo foi alterado`;
+          send({ t: "update_done", requestId: m.requestId, ok: false, log }); updateInProgress = false; return;
+        }
+        let r: UpdateResult;
+        try { r = await updateApply(RUNNER_ROOT, { force: !!m.force, targetCommit: typeof m.targetCommit === "string" ? m.targetCommit : undefined }); }
+        catch (error: any) { const log = "falha inesperada ao preparar atualização: " + String(error?.message ?? error); send({ t: "update_done", requestId: m.requestId, ok: false, log }); updateInProgress = false; return; }
         console.log("[runner] update:", r.ok ? "ok" : "falhou", "-", r.log.replace(/\n/g, " ").slice(0, 160));
+        if (r.ok && typeof m.requestId === "string") {
+          try { writeJsonAtomic(UPDATE_RECEIPT_FILE, { requestId: m.requestId, targetCommit: String(m.targetCommit || r.current || ""), current: String(r.current || await repoCommit(RUNNER_ROOT)).replace("+dirty", ""), preparedAt: Date.now() }, { pretty: true }); }
+          catch (error) { r = { ok: false, log: r.log + "\nERRO ao persistir comprovante da atualização: " + String((error as any)?.message ?? error), behind: r.behind }; }
+        }
         // Report back: this used to land only in THIS machine's console, so the Hub said
         // "atualizando N máquinas" and an abort here was invisible — you'd find out days later.
-        send({ t: "update_done", ok: r.ok, dirty: !!r.dirty, behind: r.behind ?? 0, log: r.log.slice(0, 600) });
-        if (r.ok && ((r.behind ?? 0) > 0 || m.force)) void drainAndExit();
+        send({ t: "update_done", requestId: m.requestId, ok: r.ok, dirty: !!r.dirty, behind: r.behind ?? 0, log: r.log.slice(0, 600), current: r.current, restartRequired: r.restartRequired, rolledBack: r.rolledBack, retryable: r.retryable });
+        if (r.ok && r.restartRequired !== false) void drainAndExit();
+        else updateInProgress = false;
         return;
       }
       if ((m.t === "cancel" || m.t === "stop") && typeof m.sessionId === "string") { runAborts.get(m.sessionId)?.abort(); return; }
@@ -419,6 +675,7 @@ async function drainAndExit(deadlineMs = 120000): Promise<void> {
   const start = Date.now();
   while (activeRuns.size && Date.now() - start < deadlineMs) await new Promise((r) => setTimeout(r, 1000));
   if (activeRuns.size) console.warn(`[runner] reiniciando com ${activeRuns.size} turno(s) ainda ativo(s) — deadline atingido`);
+  await new Promise((r) => setTimeout(r, 250)); // let update_done leave the WebSocket; reconnect verification remains authoritative
   try { restartService("runner"); } catch { /* ignore */ }
   process.exit(0);
 }

@@ -12,7 +12,7 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
-import { updateCheck, updateApply, updateRollback } from "@jarvis/core";
+import { updateCheck } from "@jarvis/core";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
 
@@ -21,7 +21,9 @@ export interface AdminCtx {
   updateRoot: string;
   /** the UI/WS port — only for the "hub" hint printed with a fresh runner token */
   port: number;
-  scheduleRestart: () => void;
+  applyHubUpdate: (force: boolean, allMachines: boolean) => Promise<any>;
+  rollbackHubUpdate: () => Promise<any>;
+  queueAllRunnerUpdates: () => Promise<any>;
   dropRevoked: () => void;
   refreshPrincipalRole: (deviceId: string, role: auth.Role) => void;
   /** RunnerConn registry (structural: .id / .local / .ws are read) */
@@ -54,9 +56,9 @@ export function startAdminApi(ctx: AdminCtx): void {
         if (req.method === "GET" && url === "/admin/claimcode") return json(200, { claimed: auth.isClaimed(), code: auth.isClaimed() ? null : auth.ensureClaimCode() });
         if (req.method === "GET" && url === "/admin/audit") { const n = Number((req.url || "").split("n=")[1]) || 100; return json(200, { audit: auth.readAudit(n) }); }
         if (req.method === "GET" && url === "/admin/update") { return json(200, await updateCheck(ctx.updateRoot, true)); }
-        if (req.method === "POST" && url === "/admin/update") { const r = await updateApply(ctx.updateRoot); if (r.ok && (r.behind ?? 0) > 0) ctx.scheduleRestart(); return json(200, r); }
-        if (req.method === "POST" && url === "/admin/update/rollback") { const r = await updateRollback(ctx.updateRoot); if (r.ok) ctx.scheduleRestart(); return json(200, r); }
-        if (req.method === "POST" && url === "/admin/update-runners") { let sent = 0; for (const rc of ctx.runners.values()) if (!rc.local && rc.ws && rc.ws.readyState === WebSocket.OPEN) { if (ctx.sendToRunner(rc, { t: "update" })) sent++; } return json(200, { ok: true, sent }); }
+        if (req.method === "POST" && url === "/admin/update") return json(200, await ctx.applyHubUpdate(false, false));
+        if (req.method === "POST" && url === "/admin/update/rollback") return json(200, await ctx.rollbackHubUpdate());
+        if (req.method === "POST" && url === "/admin/update-runners") return json(200, await ctx.queueAllRunnerUpdates());
         // purge the "ok" probe litter on connected runners via their existing delete handler
         // (no git-pull/restart needed): query the session list, delete the "ok" natives, repeat.
         if (req.method === "POST" && url === "/admin/purge-runner-ok") {

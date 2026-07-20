@@ -11,9 +11,10 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { platform, homedir, tmpdir } from "node:os";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, readdirSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, writeFileSync, mkdirSync, unlinkSync, readdirSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { toolFileStat } from "./native.js";
 import { writeJsonAtomic } from "./persist.js";
 import {
@@ -27,8 +28,11 @@ import {
   type ModelDescriptor,
   type ModelSource,
   type PermissionMode,
+  type ProviderExecutionEvent,
   type SupportLevel,
 } from "./agent-contract.js";
+import { codexChildRollouts } from "./codex-executions.js";
+import { EXECUTION_ADAPTER_PROFILES, EXECUTION_ADAPTER_IDS, mapProviderExecutionFixture, type ExecutionAdapterId } from "./execution-adapters.js";
 
 /** Effective unattended execution policy. The historical default is full access; operators can
  * opt into each provider's own sandbox/approval behavior without changing adapter code. */
@@ -66,6 +70,7 @@ export interface AgentReply {
     costKind?: CostKind;
     source?: string;
     model?: string;
+    effort?: string;
   };
 }
 
@@ -110,6 +115,39 @@ export interface SendOpts {
   history?: Array<{ role: "user" | "assistant"; text: string }>;
   /** Stable Jarvis turn id used by the canonical event envelope; never forwarded to a provider. */
   turnId?: string;
+  /** Fail-closed execution boundary used only by Jarvis-managed child workflows. Adapters must
+   * reject this option unless they can enforce the requested workspace policy for this invocation. */
+  managed?: { workspaceAccess: "read_only" | "isolated_write"; preventCommits: true };
+}
+
+type ManagedInvocation = NonNullable<SendOpts["managed"]>;
+
+/**
+ * Provider argv that enforces a Jarvis-managed child boundary. This is deliberately pure so the
+ * exact security contract is testable without spawning a billable CLI. Unknown/uncertified agents
+ * fail closed; the internal mock is available only when its caller explicitly enables the fixture.
+ */
+export function managedAdapterSecurityArgs(agent: string, managed: ManagedInvocation, allowTestMock = false): string[] {
+  if (!managed || managed.preventCommits !== true || (managed.workspaceAccess !== "read_only" && managed.workspaceAccess !== "isolated_write")) {
+    throw new Error(`política de execução gerenciada inválida para ${agent}`);
+  }
+  if (agent === "claude-code") {
+    const tools = managed.workspaceAccess === "read_only"
+      ? "Read,Glob,Grep,WebFetch,WebSearch"
+      : "Read,Glob,Grep,Edit,Write,NotebookEdit,WebFetch,WebSearch";
+    // Safe mode removes hooks/MCP/plugins; neither allowlist admits Bash, Task or Agent.
+    return ["--safe-mode", "--permission-mode", "dontAsk", "--tools", tools];
+  }
+  if (agent === "codex") {
+    if (managed.workspaceAccess !== "read_only") throw new Error("Codex gerenciado com escrita ainda não possui bloqueio de commit certificável");
+    return ["--sandbox", "read-only"];
+  }
+  if (agent === "aider") {
+    if (managed.workspaceAccess !== "isolated_write") throw new Error("Aider gerenciado não possui modo somente leitura certificado");
+    return ["--no-auto-commits"];
+  }
+  if (agent === "mock" && allowTestMock && managed.workspaceAccess === "read_only") return [];
+  throw new Error(`o adapter ${agent} ainda não possui sandbox gerenciado certificado`);
 }
 
 /** Reject stale/foreign picker values before spawning a potentially billable CLI turn. */
@@ -135,6 +173,16 @@ const safeIdent = (v?: string): string | undefined =>
  * injection or malformed billable requests when a provider has no enumerable catalog. */
 export function safeProviderValue(v?: string): string | undefined {
   return typeof v === "string" && !v.startsWith("-") && /^[A-Za-z0-9._:/@+-]{1,160}$/.test(v) ? v : undefined;
+}
+
+/** Complete Aider argv composition, kept pure to prove a managed invocation never inherits the
+ * global unattended `--yes-always` switch. */
+export function buildAiderInvocationArgs(messageFile: string, opts?: SendOpts, unattendedFullAccess = fullAccess()): string[] {
+  const args = ["--message-file", messageFile, "--no-stream", "--no-pretty"];
+  if (opts?.managed) args.push(...managedAdapterSecurityArgs("aider", opts.managed));
+  else if (unattendedFullAccess) args.push("--yes-always");
+  const model = safeProviderValue(opts?.model); if (model) args.push("--model", model);
+  return args;
 }
 
 /** Bounded, session-isolated continuity for CLIs that have no addressable native resume id. */
@@ -187,7 +235,9 @@ export interface StreamEvent {
   error?: string;
   providerEvent?: string;
 }
-export type OnEvent = (ev: StreamEvent) => void;
+export type ProviderProgressEvent = StreamEvent | ProviderExecutionEvent;
+export type OnEvent = (ev: ProviderProgressEvent) => void;
+export function isProviderExecutionEvent(ev: ProviderProgressEvent): ev is ProviderExecutionEvent { return ev.kind.startsWith("execution_"); }
 
 export interface AgentEventBridge {
   accepted(): AgentEvent;
@@ -214,11 +264,11 @@ export function createAgentEventBridge(turnId: string, sequencer: EventSequencer
     accepted: () => sequencer.next("accepted"),
     started: () => sequencer.next("started"),
     provider: (ev) => {
-      if (ev.kind === "text") return sequencer.next("text_delta", { text: ev.text || "", providerEvent: ev.providerEvent });
-      if (ev.kind === "thinking") return sequencer.next("thinking", { text: ev.text, providerEvent: ev.providerEvent });
-      if (ev.kind === "plan") return sequencer.next("plan", { text: ev.text, providerEvent: ev.providerEvent });
+      if (ev.kind === "text") return sequencer.next("text_delta", { text: ev.text || "", providerEvent: ev.providerEvent, parentId: ev.parentId });
+      if (ev.kind === "thinking") return sequencer.next("thinking", { text: ev.text, providerEvent: ev.providerEvent, parentId: ev.parentId });
+      if (ev.kind === "plan") return sequencer.next("plan", { text: ev.text, providerEvent: ev.providerEvent, parentId: ev.parentId });
       const t = tool(ev), kind = t.status === "failed" ? "tool_failed" : t.status === "completed" ? "tool_completed" : "tool_started";
-      return sequencer.next(kind, { tool: t, providerEvent: ev.providerEvent });
+      return sequencer.next(kind, { tool: t, providerEvent: ev.providerEvent, parentId: ev.parentId });
     },
     usage: (usage) => sequencer.next("usage", { usage: { ...usage, costKind: usage.costKind || "unavailable", source: usage.source || "provider did not identify usage source" } }),
     completed: (text) => sequencer.next("completed", { text }),
@@ -268,13 +318,13 @@ export class AgentRegistry {
     return this.byName.get("claude-code") || this.get();
   }
   /** Backward-compatible UI catalog enriched with the canonical descriptor. */
-  async describe(): Promise<Array<{ name: string; modelControl?: AgentCapabilities["modelControl"] } & AgentCaps & Partial<Pick<AgentDescriptor, "label" | "support" | "reason" | "cli" | "capabilities" | "discoveredAt">>>> {
+  async describe(): Promise<Array<{ name: string; modelControl?: AgentCapabilities["modelControl"] } & AgentCaps & Partial<Pick<AgentDescriptor, "label" | "support" | "reason" | "cli" | "capabilities" | "execution" | "discoveredAt">>>> {
     return Promise.all([...this.byName.values()].map(async (a) => {
       const caps = await a.capabilities();
       if (!a.descriptor) return { name: a.name, ...caps, support: "limited" as const, reason: "adapter sem descriptor canônico" };
       const d = await a.descriptor();
       const problems = descriptorProblems(d);
-      return { name: a.name, ...caps, modelControl: d.capabilities.modelControl, label: d.label, support: problems.length ? "limited" as const : d.support, reason: problems.length ? `descriptor inválido: ${problems.join("; ")}` : d.reason, cli: d.cli, capabilities: d.capabilities, discoveredAt: d.discoveredAt };
+      return { name: a.name, ...caps, modelControl: d.capabilities.modelControl, label: d.label, support: problems.length ? "limited" as const : d.support, reason: problems.length ? `descriptor inválido: ${problems.join("; ")}` : d.reason, cli: d.cli, capabilities: d.capabilities, execution: d.execution, discoveredAt: d.discoveredAt };
     }));
   }
   setDefault(name: string): void {
@@ -295,8 +345,16 @@ export class MockAgentAdapter implements AgentAdapter {
   async available(): Promise<boolean> {
     return process.env.JARVIS_ENABLE_MOCK === "1" || process.env.NODE_ENV === "test";
   }
-  async send(_sid: string, text: string, _cwd?: string, _opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
+  async send(_sid: string, text: string, _cwd?: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
+    if (opts?.managed) managedAdapterSecurityArgs(this.name, opts.managed, process.env.JARVIS_ENABLE_MOCK === "1");
     const reply = `Recebi: "${text}". (agente mock — Hub/chat/voz OK.)`;
+    if (text.includes("[fixture:child]")) {
+      onEvent?.({ kind: "execution_spawn", providerId: "mock-child-1", node: { title: "Subprocesso fixture", role: "auditor", kind: "agent" } });
+      onEvent?.({ kind: "execution_activity", providerId: "mock-child-1", event: { kind: "thinking", text: "Analisando fixture", providerEvent: "mock.child.thinking" } });
+      onEvent?.({ kind: "execution_activity", providerId: "mock-child-1", event: { kind: "tool", name: "Read", summary: "Lendo fixture", toolId: "mock-child-tool-1", status: "completed", providerEvent: "mock.child.tool" } });
+      onEvent?.({ kind: "execution_activity", providerId: "mock-child-1", event: { kind: "text", text: "Resultado publicado do subprocesso", providerEvent: "mock.child.text" } });
+      onEvent?.({ kind: "execution_state", providerId: "mock-child-1", state: "succeeded", summary: "Fixture concluída" });
+    }
     onEvent?.({ kind: "thinking" });
     onEvent?.({ kind: "tool", name: "FixtureTool", summary: "Validando fluxo de progresso", toolId: "mock-tool-1" });
     onEvent?.({ kind: "text", text: reply });
@@ -431,7 +489,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // silently discards, so every tool-using turn would come back empty. Stdin has neither problem,
     // and as a bonus removes the CLI's own "no stdin data received in 3s" wait on every turn.
     const args = ["-p", ...fmt];
-    if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
+    if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
+    else if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("--model", model);
     if (effort) args.push("--effort", effort === "ultracode" ? "xhigh" : effort); // ultracode -> xhigh
@@ -453,6 +512,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       let streamError = "";
       let usage: AgentReply["usage"];
       let lastMsgUsage: any;
+      const taskIds = new Set<string>();
       await runStream(this.bin, args, cwd, text, (line) => {
         let o: any;
         try { o = JSON.parse(line); } catch { return; }
@@ -465,8 +525,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           if (!parentId && o.message?.usage) lastMsgUsage = o.message.usage;
           for (const b of o.message?.content || []) {
             if (b.type === "text" && b.text) { if (!parentId) finalText += b.text; onEvent({ kind: "text", text: b.text, parentId }); }
-            else if (b.type === "tool_use") { const st = fileToolStat(b.name, b.input); onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), toolId: b.id, parentId, path: st.path, adds: st.adds, dels: st.dels, rows: st.rows as any }); }
+            else if (b.type === "tool_use") {
+              const st = fileToolStat(b.name, b.input);
+              if (!parentId && b.id && (b.name === "Task" || b.name === "Agent")) {
+                taskIds.add(b.id);
+                onEvent({ kind: "execution_spawn", providerId: b.id, node: { title: String(b.input?.description || b.input?.subagent_type || "Subagente Claude").slice(0, 200), role: b.input?.subagent_type, prompt: b.input?.prompt, kind: "agent" } });
+              }
+              onEvent({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), toolId: b.id, parentId, path: st.path, adds: st.adds, dels: st.dels, rows: st.rows as any });
+            }
             else if (b.type === "thinking") onEvent({ kind: "thinking", parentId });
+          }
+        } else if (o.type === "user") {
+          for (const b of o.message?.content || []) if (b?.type === "tool_result" && taskIds.has(String(b.tool_use_id || ""))) {
+            const failed = !!b.is_error;
+            onEvent({ kind: "execution_state", providerId: String(b.tool_use_id), state: failed ? "failed" : "succeeded", summary: failed ? String(b.content || "subagente falhou") : undefined });
           }
         } else if (o.type === "result") {
           if (o.session_id) sessionOut = o.session_id;
@@ -567,10 +639,12 @@ function codexThreadTelemetry(threadId?: string): CodexTelemetry | undefined {
 }
 
 /** Authoritative file metadata emitted to the native rollout after apply_patch. */
-export function codexPatchEventsFromLines(lines: string[]): StreamEvent[] {
+export function codexPatchEventsFromLines(lines: string[], sinceMs?: number): StreamEvent[] {
   const events: StreamEvent[] = [];
   for (const line of lines) {
     let row: any; try { row = JSON.parse(line); } catch { continue; }
+    const at = Date.parse(String(row?.timestamp || ""));
+    if (sinceMs && Number.isFinite(at) && at < sinceMs) continue;
     const p = row?.type === "event_msg" && row.payload?.type === "patch_apply_end" ? row.payload : undefined;
     if (!p?.changes || typeof p.changes !== "object") continue;
     for (const [path, change] of Object.entries(p.changes) as Array<[string, any]>) {
@@ -582,6 +656,49 @@ export function codexPatchEventsFromLines(lines: string[]): StreamEvent[] {
     }
   }
   return events;
+}
+
+/** Codex exposes file inspection/search/listing as `command_execution`, usually wrapped in
+ * PowerShell. Preserve the real command in `detail`, but translate commands with unambiguous
+ * semantics to Jarvis' provider-neutral Read/Grep/Glob vocabulary. This is classification of an
+ * observed command, never an invented tool call. */
+export function codexCommandActivity(command: string): Pick<StreamEvent, "name" | "summary" | "detail" | "path"> {
+  const cmd = String(command || "").trim();
+  const flat = cmd.replace(/\s+/g, " ");
+  const quotedArg = '(?:"([^"]+)"|\'([^\']+)\'|([^\\s;|]+))';
+  const directRead = new RegExp(`\\bGet-Content\\b(?:\\s+-Raw)?\\s+(?:-(?:LiteralPath|Path)\\s+)?${quotedArg}`, "i").exec(cmd)
+    || new RegExp(`\\b(?:cat|type)\\s+${quotedArg}`, "i").exec(cmd);
+  const candidate = directRead ? String(directRead[1] || directRead[2] || directRead[3] || "").replace(/^["']|["']$/g, "") : "";
+  const path = candidate && !candidate.startsWith("$") && !candidate.startsWith("-") ? candidate : undefined;
+  const base = path ? path.split(/[\\/]/).pop() || path : "arquivo(s)";
+  if (/\bGet-Content\b/i.test(cmd) || /(?:^|[;&|]\s*|-[Cc]ommand\s+["']?)\s*(?:cat|type)\s+/i.test(cmd))
+    return { name: "Read", summary: `Lendo ${base}`, detail: cmd || undefined, path };
+  if (/\b(?:rg|Select-String)\b/i.test(cmd))
+    return { name: "Grep", summary: "Buscando no projeto", detail: cmd || undefined };
+  if (/\bGet-ChildItem\b/i.test(cmd) || /(?:^|[;&|]\s*|-[Cc]ommand\s+["']?)\s*(?:ls|dir|find)\b/i.test(cmd))
+    return { name: "Glob", summary: "Listando arquivos", detail: cmd || undefined };
+  return { name: "Bash", summary: "Bash: " + flat.slice(0, 90), detail: cmd.length > 90 ? cmd : undefined };
+}
+
+/** Read only bytes appended since `offset`; avoids rereading a potentially large rollout every
+ * polling tick. A truncated/replaced file safely restarts from byte zero. */
+function codexRolloutAppend(path: string, offset: number): { data: Buffer; offset: number; reset: boolean } {
+  let fd: number | undefined;
+  try {
+    const size = statSync(path).size;
+    const reset = size < offset, start = reset ? 0 : offset;
+    if (size <= start) return { data: Buffer.alloc(0), offset: size, reset };
+    const buf = Buffer.allocUnsafe(size - start);
+    fd = openSync(path, "r");
+    let read = 0;
+    while (read < buf.length) {
+      const n = readSync(fd, buf, read, buf.length - read, start + read);
+      if (!n) break;
+      read += n;
+    }
+    return { data: buf.subarray(0, read), offset: start + read, reset };
+  } catch { return { data: Buffer.alloc(0), offset, reset: false }; }
+  finally { if (fd !== undefined) try { closeSync(fd); } catch { /* best-effort telemetry */ } }
 }
 
 export function codexPlanUsage(t?: CodexTelemetry): AgentUsage | null {
@@ -612,7 +729,8 @@ export function codexItemToEvents(it: any, isCompleted: boolean): { events: Stre
   if (type === "reasoning") return isCompleted ? { events: [{ kind: "thinking" }] } : { events: [] };
   if (type === "command_execution") {
     const cmd = String(it.command ?? "");
-    return { events: [{ kind: "tool", name: "Bash", summary: "Bash: " + cmd.replace(/\s+/g, " ").slice(0, 90), detail: cmd.length > 90 ? cmd : undefined, toolId: it.id, status, error: failed ? String(it?.error?.message || it?.error || it?.aggregated_output || "comando falhou") : undefined }] };
+    const activity = codexCommandActivity(cmd);
+    return { events: [{ kind: "tool", ...activity, toolId: it.id, status, error: failed ? String(it?.error?.message || it?.error || it?.aggregated_output || "comando falhou") : undefined }] };
   }
   if (type === "file_change" || type === "patch" || type === "apply_patch") {
     const changes = Array.isArray(it.changes) ? it.changes : Array.isArray(it.files) ? it.files : (it.path ? [{ path: it.path, kind: it.kind, unified_diff: it.unified_diff, diff: it.diff, rows: it.rows }] : []);
@@ -728,7 +846,7 @@ export class CodexAdapter implements AgentAdapter {
       id: this.name, label: "OpenAI Codex", command: "codex", version, support,
       reason: support === "not_installed" ? "CLI codex não encontrado" : support === "unauthenticated" ? "execute codex login nesta máquina" : "stream e modelos funcionam, mas todos os tipos de evento ainda precisam de certificação real por versão do CLI",
       capabilities: {
-        permissionMode: agentPermissionMode(), stream: "block", tools: true, thinking: true, plans: false, subagents: false,
+        permissionMode: agentPermissionMode(), stream: "delta", tools: true, thinking: true, plans: false, subagents: true,
         nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
         cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
         commands: true, skills: true, mcp: true, oneShot: true, remote: true,
@@ -745,7 +863,8 @@ export class CodexAdapter implements AgentAdapter {
     // directly: `codex exec resume <id> --json` correctly recalls prior turns in the same thread.
     const prev = this.sessions.get(sessionId) || (sessionId.startsWith("codex:") ? sessionId.slice("codex:".length) : undefined);
     const args = prev ? ["exec", "resume", prev, "--json"] : ["exec", "--cd", cwd, "--json"];
-    if (fullAccess()) args.push("--dangerously-bypass-approvals-and-sandbox");
+    if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
+    else if (fullAccess()) args.push("--dangerously-bypass-approvals-and-sandbox");
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
@@ -760,9 +879,49 @@ export class CodexAdapter implements AgentAdapter {
     let rawUsage: any;
     const beforeTelemetry = prev ? codexThreadTelemetry(prev) : undefined;
     const beforeRollout = prev ? codexThreadFile(prev) : undefined;
-    const beforeLineCount = beforeRollout ? (() => { try { return readFileSync(beforeRollout, "utf8").split(/\r?\n/).filter(Boolean).length; } catch { return 0; } })() : 0;
     let streamError = "";
     const seen = new Map<string, string>(); // allow started -> completed/failed; reject duplicate frames
+    const childSeen = new Map<string, { activities: number; state: string; usage: string }>();
+    const scanStartedAt = Date.now() - 5_000;
+    let patchFile = beforeRollout;
+    let patchOffset = beforeRollout ? (() => { try { return statSync(beforeRollout).size; } catch { return 0; } })() : 0;
+    let patchCarry = "";
+    let patchDecoder = new StringDecoder("utf8");
+    const patchSeen = new Set<string>();
+    const emitPatches = (flush = false): void => {
+      if (!onEvent || !(threadId || prev)) return;
+      const candidate = patchFile || codexThreadFile(threadId || prev);
+      if (!candidate) return;
+      if (!patchFile) { patchFile = candidate; patchOffset = 0; patchCarry = ""; patchDecoder = new StringDecoder("utf8"); }
+      const appended = codexRolloutAppend(candidate, patchOffset); patchOffset = appended.offset;
+      if (appended.reset) { patchCarry = ""; patchDecoder = new StringDecoder("utf8"); }
+      const combined = patchCarry + patchDecoder.write(appended.data) + (flush ? patchDecoder.end() : "");
+      const lines = combined.split(/\r?\n/);
+      patchCarry = flush ? "" : (lines.pop() || "");
+      for (const ev of codexPatchEventsFromLines(lines, scanStartedAt)) {
+        const key = String(ev.toolId || `${ev.path}:${ev.adds || 0}:${ev.dels || 0}`);
+        if (patchSeen.has(key)) continue;
+        patchSeen.add(key); onEvent(ev);
+      }
+    };
+    const emitChildren = (): void => {
+      if (!onEvent || !(threadId || prev)) return;
+      for (const child of codexChildRollouts(threadId || prev!, { sinceMs: scanStartedAt })) {
+        const before = childSeen.get(child.id);
+        if (!before) onEvent({ kind: "execution_spawn", providerId: child.id, node: { title: child.title, role: child.role || child.nickname, depth: child.depth, startedAt: child.startedAt, kind: "agent" } });
+        for (let i = before?.activities || 0; i < child.activities.length; i++) onEvent({ kind: "execution_activity", providerId: child.id, event: { ...child.activities[i], providerEvent: `snapshot:${i}` } });
+        const usageKey = JSON.stringify(child.usage || null);
+        if (child.usage && usageKey !== before?.usage) onEvent({ kind: "execution_usage", providerId: child.id, usage: { ...child.usage, costKind: child.usage.costKind || "tokens_only", source: child.usage.source || "Codex child rollout" }, measure: "cumulative", scope: "self" });
+        if (child.state !== "running" && child.state !== before?.state) onEvent({ kind: "execution_state", providerId: child.id, state: child.state, summary: child.summary, at: child.endedAt });
+        childSeen.set(child.id, { activities: child.activities.length, state: child.state, usage: usageKey });
+      }
+    };
+    let activityTimer: ReturnType<typeof setInterval> | undefined;
+    const emitActivity = (): void => { emitChildren(); emitPatches(); };
+    const startActivityPolling = (): void => {
+      if (!onEvent || activityTimer || !(threadId || prev)) return;
+      emitActivity(); activityTimer = setInterval(emitActivity, 750); activityTimer.unref?.();
+    };
 
     const emitItem = (it: any, isCompleted: boolean): void => {
       const id = String(it?.id ?? "");
@@ -782,7 +941,7 @@ export class CodexAdapter implements AgentAdapter {
     const handleLine = (line: string): void => {
       let o: any; try { o = JSON.parse(line); } catch { return; }
       switch (o.type) {
-        case "thread.started": if (o.thread_id) threadId = o.thread_id; break;
+        case "thread.started": if (o.thread_id) { threadId = o.thread_id; startActivityPolling(); } break;
         case "turn.completed": if (o.usage) rawUsage = o.usage; break;
         case "turn.failed": case "error": streamError = o.error?.message || o.message || streamError; break;
         case "item.started": emitItem(o.item, false); break;
@@ -793,18 +952,21 @@ export class CodexAdapter implements AgentAdapter {
     // Streaming when the caller wants live activity; plain capture-then-parse for internal one-offs.
     // Either way the SAME handleLine parses the SAME NDJSON — so thread id, final text and usage come
     // out identically; onEvent is simply absent (a no-op) on the non-streaming path.
-    const out = onEvent
-      ? await runStream("codex", args, cwd, text, handleLine, opts?.signal)
-      : await run("codex", args, cwd, text, opts?.signal);
+    if (prev) startActivityPolling();
+    let out = "";
+    try {
+      out = onEvent
+        ? await runStream("codex", args, cwd, text, handleLine, opts?.signal)
+        : await run("codex", args, cwd, text, opts?.signal);
+    } finally {
+      if (activityTimer) clearInterval(activityTimer);
+      emitChildren();
+      emitPatches(true);
+    }
     if (!onEvent) for (const line of out.split("\n")) { const t = line.trim(); if (t) handleLine(t); }
 
     const afterTelemetry = codexThreadTelemetry(threadId || prev);
     if (rawUsage) usage = codexUsage(rawUsage, beforeTelemetry?.total, afterTelemetry);
-    if (onEvent) {
-      const rollout = codexThreadFile(threadId || prev);
-      if (rollout) { try { const lines = readFileSync(rollout, "utf8").split(/\r?\n/).filter(Boolean).slice(beforeLineCount); for (const ev of codexPatchEventsFromLines(lines)) onEvent(ev); } catch { /* rollout enrichment is best-effort */ } }
-    }
-
     this.started.add(sessionId);
     if (streamError && !finalParts.length) throw new Error(streamError);
     if (threadId && threadId !== prev) { this.sessions.set(sessionId, threadId); this.saveSessions(); }
@@ -870,12 +1032,36 @@ function tokenUsage(value: any, source: string, costKind: CostKind = "tokens_onl
   return { inputTokens: input || undefined, cachedInputTokens: cached || undefined, contextTokens: input || undefined, outputTokens: output || undefined, costUsd, costKind: resolvedKind, source };
 }
 
+/** Collapse provider-specific tool spellings into the vocabulary understood identically by chat,
+ * history and the Files menu. Unknown names remain visible instead of being guessed. */
+export function normalizeToolName(name: string): string {
+  const raw = String(name || "Tool").replace(/ToolCall$/i, "");
+  const key = raw.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const aliases: Record<string, string> = {
+    read: "Read", readfile: "Read", viewfile: "Read", getfile: "Read",
+    write: "Write", writefile: "Write", createfile: "Write",
+    edit: "Edit", editfile: "Edit", replace: "Edit", replaceinfile: "Edit", updatefile: "Edit", applypatch: "Edit", patch: "Edit",
+    multiedit: "MultiEdit", notebookedit: "NotebookEdit",
+    grep: "Grep", searchfiles: "Grep", findinfiles: "Grep",
+    glob: "Glob", listfiles: "Glob", findfiles: "Glob",
+    shell: "Bash", command: "Bash", executecommand: "Bash", runcommand: "Bash", terminal: "Bash", exec: "Bash", bash: "Bash",
+    websearch: "WebSearch", searchweb: "WebSearch", webfetch: "WebFetch", fetchurl: "WebFetch",
+    task: "Task", agent: "Agent", subagent: "Agent",
+  };
+  return aliases[key] || raw || "Tool";
+}
+
 function toolEvent(name: string, args: any, id?: string, status: StreamEvent["status"] = "started", error?: string, providerEvent?: string): StreamEvent {
-  const normalized = /shell|command|terminal|exec|bash/i.test(name) ? "Bash" : name;
-  const stat = fileToolStat(normalized, args);
-  const explicitPath = args && typeof args === "object" ? String(args.file_path || args.path || args.filename || args.file || "") || undefined : undefined;
-  const explicitAdds = Number(args?.adds ?? args?.additions), explicitDels = Number(args?.dels ?? args?.deletions);
-  return { kind: "tool", name: normalized, summary: toolSummary(normalized, args), detail: toolDetail(normalized, args), toolId: id, status, error, providerEvent,
+  const normalized = normalizeToolName(name);
+  const rawArgs = args && typeof args === "object" ? { ...args } : (normalized === "Bash" ? { command: String(args || "") } : {});
+  const explicitPath = String(rawArgs.file_path || rawArgs.path || rawArgs.filename || rawArgs.file || rawArgs.notebook_path || "") || undefined;
+  const normalizedArgs = explicitPath && !rawArgs.file_path ? { ...rawArgs, file_path: explicitPath } : rawArgs;
+  if (normalized === "Bash" && !normalizedArgs.command && normalizedArgs.cmd) normalizedArgs.command = normalizedArgs.cmd;
+  if (normalized === "Grep" && !normalizedArgs.pattern) normalizedArgs.pattern = normalizedArgs.query || normalizedArgs.regex;
+  if (normalized === "Glob" && !normalizedArgs.pattern) normalizedArgs.pattern = normalizedArgs.glob || explicitPath;
+  const stat = fileToolStat(normalized, normalizedArgs);
+  const explicitAdds = Number(normalizedArgs?.adds ?? normalizedArgs?.additions), explicitDels = Number(normalizedArgs?.dels ?? normalizedArgs?.deletions);
+  return { kind: "tool", name: normalized, summary: toolSummary(normalized, normalizedArgs), detail: toolDetail(normalized, normalizedArgs), toolId: id, status, error, providerEvent,
     path: explicitPath || stat.path,
     adds: Number.isFinite(explicitAdds) ? explicitAdds : stat.adds,
     dels: Number.isFinite(explicitDels) ? explicitDels : stat.dels,
@@ -952,7 +1138,9 @@ export function parseGenericJsonlEvent(o: any, source: string, billedCost = fals
   if (/tool|command/i.test(type)) {
     const state = /fail|error/i.test(subtype) ? "failed" : /complete|success|done|result|output/i.test(subtype || type) ? "completed" : "started";
     const err = state === "failed" ? String(o.error?.message || o.error || o.part?.state?.error || "tool failed") : undefined;
-    return { sessionId, events: [toolEvent(String(o.name || o.tool || o.part?.tool || "Tool"), o.args || o.input || o.part?.state?.input || {}, o.call_id || o.callId || o.part?.callID || o.id, state, err, `${type}${subtype ? "." + subtype : ""}`)], providerEvent: type };
+    const name = String(o.name || o.tool || o.part?.tool || (/command/i.test(type) ? "Bash" : "Tool"));
+    const fallback = { ...(o.command != null ? { command: o.command } : {}), ...(o.path != null ? { path: o.path } : {}) };
+    return { sessionId, events: [toolEvent(name, o.args || o.input || o.part?.state?.input || fallback, o.call_id || o.callId || o.part?.callID || o.id, state, err, `${type}${subtype ? "." + subtype : ""}`)], providerEvent: type };
   }
   if (type === "result" || type === "done" || type === "task_complete" || /step[_-]?finish/i.test(type)) return { sessionId, finalText: String(o.result || o.text || o.message || ""), error: o.is_error ? String(o.error || o.result || "agent error") : undefined, usage: tokenUsage(o.usage || o.stats || o.part, source, billedCost ? "billed" : "tokens_only"), providerEvent: type };
   if (type === "error") return { sessionId, error: String(o.error?.message || o.message || o.error || "agent error"), providerEvent: type };
@@ -1022,6 +1210,7 @@ class StructuredCliAdapter implements AgentAdapter {
     });
   }
   async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
+    if (opts?.managed) managedAdapterSecurityArgs(this.name, opts.managed);
     validateModelSelection(await this.capabilities(), opts);
     const nativeContinuity = this.spec.capabilities.sessionContinuity === "native_id";
     const previous = nativeContinuity ? this.sessions.get(sessionId) : undefined;
@@ -1031,6 +1220,9 @@ class StructuredCliAdapter implements AgentAdapter {
     let snapshot = "", finalText = "", nativeId = previous, usage: AgentReply["usage"], failure = "";
     const handle = (line: string): void => {
       let parsed: any; try { parsed = JSON.parse(line); } catch { return; }
+      if ((EXECUTION_ADAPTER_IDS as readonly string[]).includes(this.spec.id)) {
+        for (const event of mapProviderExecutionFixture(this.spec.id as ExecutionAdapterId, parsed)) onEvent?.(event);
+      }
       const item = this.spec.parser(parsed);
       if (item.sessionId) nativeId = item.sessionId;
       if (item.usage) usage = item.usage;
@@ -1126,6 +1318,7 @@ class LimitedFinalCliAdapter implements AgentAdapter {
   async capabilities(): Promise<AgentCaps> { return { models: [], autoModel: true }; }
   async available(): Promise<boolean> { return !!(await cliVersion(this.command)); }
   async send(_sessionId: string, text: string, cwd: string, opts?: SendOpts): Promise<AgentReply> {
+    if (opts?.managed) managedAdapterSecurityArgs(this.name, opts.managed);
     if (opts?.model && this.declaredCapabilities.modelControl !== "per_turn") throw new Error(`o agente ${this.name} não permite selecionar modelo por turno; configure o modelo na própria CLI`);
     validateModelSelection(await this.capabilities(), opts);
     const prompt = this.declaredCapabilities.sessionContinuity === "jarvis_history" ? withManagedHistory(text, opts?.history) : text;
@@ -1156,7 +1349,7 @@ export class KiroCliAdapter extends LimitedFinalCliAdapter {
   }
 }
 export class AntigravityCliAdapter extends LimitedFinalCliAdapter {
-  constructor() { super("antigravity", "Google Antigravity CLI", "agy", (text) => [text], { ...LIMITED_CAPABILITIES, tools: true, files: true, diffs: true, plans: true, subagents: true, mcp: true, skills: true, commands: true, oneShot: false, remote: false, modelCatalog: "none", modelControl: "none", sessionContinuity: "none", toolLifecycle: "unobservable" }); }
+  constructor() { super("antigravity", "Google Antigravity CLI", "agy", (text) => [text], { ...LIMITED_CAPABILITIES, tools: true, files: true, diffs: true, plans: true, subagents: false, mcp: true, skills: true, commands: true, oneShot: false, remote: false, modelCatalog: "none", modelControl: "none", sessionContinuity: "none", toolLifecycle: "unobservable" }); }
   override async available(): Promise<boolean> { return false; }
   override async send(): Promise<AgentReply> { throw new Error("Antigravity CLI não expõe um modo headless estruturado verificável; use o TUI agy diretamente"); }
   override async descriptor(): Promise<AgentDescriptor> { const version = await cliVersion("agy"); return makeDescriptor({ id: this.name, label: "Google Antigravity CLI", command: "agy", version, support: version ? "limited" : "not_installed", reason: version ? "TUI e transcripts detectáveis, mas sem envio headless público; execução pelo Jarvis permanece desativada" : "CLI agy não encontrado", capabilities: this.declaredCapabilities, caps: await this.capabilities() }); }
@@ -1197,8 +1390,7 @@ export class AiderAdapter implements AgentAdapter {
     // it entirely off the command line (belt-and-braces with spawnCli's shell:false).
     const mf = tempTextFile("jarvis_aider", withManagedHistory(text, opts?.history));
     try {
-      const args = ["--message-file", mf.path, "--no-stream", "--no-pretty"]; if (fullAccess()) args.push("--yes-always");
-      const model = safeProviderValue(opts?.model); if (model) args.push("--model", model);
+      const args = buildAiderInvocationArgs(mf.path, opts);
       const out = await run("aider", args, cwd, "", opts?.signal);
       return { text: out.trim() };
     } finally { mf.cleanup(); }
@@ -1285,6 +1477,7 @@ function makeDescriptor(opts: {
     capabilities: effectiveCaps(opts.capabilities),
     models,
     defaultModel: opts.caps.defaultModel,
+    execution: (EXECUTION_ADAPTER_PROFILES as Partial<Record<string, import("./execution-adapters.js").CertifiedExecutionAdapterProfile>>)[opts.id],
     discoveredAt,
   };
 }
@@ -1423,8 +1616,9 @@ function toolSummary(name: string, input: any): string {
   try {
     switch (name) {
       case "Bash": return "Bash: " + String(input?.command || "").replace(/\s+/g, " ").slice(0, 90);
-      case "Read": return "Lendo " + base(input?.file_path);
-      case "Edit": case "Write": case "NotebookEdit": return "Editando " + base(input?.file_path);
+      case "Read": return "Lendo " + (base(input?.file_path || input?.path) || "arquivo(s)");
+      case "Write": return "Criando " + (base(input?.file_path || input?.path) || "arquivo");
+      case "Edit": case "MultiEdit": case "NotebookEdit": return "Editando " + (base(input?.file_path || input?.path) || "arquivo");
       case "Grep": return "Buscando /" + String(input?.pattern || "").slice(0, 40) + "/";
       case "Glob": return "Listando " + String(input?.pattern || "");
       case "Task": case "Agent": return "Subagente: " + String(input?.description || input?.subagent_type || "").slice(0, 60);

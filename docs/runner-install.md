@@ -36,8 +36,10 @@ From the cloned repo:
 ./scripts/install-runner.sh -h "wss://<hub>/" -t "<token>" -l "Meu Mac"
 ```
 
-The installer: checks Node, runs `npm install`, writes `~/.jarvis/runner.env`
-(Hub + token + label), and registers an autostart service:
+The installer: verifies Node >=22, confirms this is a Git clone whose `origin`
+is reachable non-interactively, installs from the lockfile, validates the
+checkout, writes `~/.jarvis/runner.env` (Hub + token + label), and registers an
+autostart service:
 
 - **Windows** — Task Scheduler task `JarvisRunner` (at logon, auto-restart).
 - **macOS** — launchd agent `com.jarvis.runner` (`~/Library/LaunchAgents`).
@@ -53,8 +55,11 @@ The machine then appears in the Hub's machine selector. Pick it to run agents th
   revoked token stops the runner from reconnecting.
 - **Logs**: `~/.jarvis/runner.log` (macOS/Linux) or the Task Scheduler history
   (Windows).
-- **Update**: `git pull` on the machine; the service restarts on next login (or
-  restart the task/service).
+- **Update**: Settings → Atualização in the Hub can target all machines. Offline
+  runners retain the target and update on reconnect; runners with an older
+  protocol are restricted to the update channel until they restart. For recovery,
+  a manual `git pull --ff-only && npm ci && npm run update:verify` followed by a
+  task/service restart is equivalent.
 
 ## Notes / limits
 
