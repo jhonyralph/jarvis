@@ -1516,10 +1516,14 @@ async function broadcastVoiceState(): Promise<void> {
   broadcastAll({ t: "voice_state", gate: voiceGate, threshold: voiceThreshold ?? null, speakers });
 }
 
-// Client build version = the served index.html's mtime. It changes the moment the file is edited
-// (the Hub serves it from disk per request, no restart needed), so it's the exact signal for
-// "this browser is now running stale UI". Sent on connect and pushed whenever it changes.
-function webVersion(): string { try { return String(Math.floor(statSync(join(WEB, "index.html")).mtimeMs)); } catch { return "0"; } }
+// Client build version covers EVERY executable shell asset. Watching only index.html left tabs running
+// stale app.js indefinitely when a UI-only fix shipped. The maximum mtime is stable, cheap and changes
+// as soon as any critical asset is edited; connected clients then reload after their active turn.
+function webVersion(): string {
+  let latest = 0;
+  for (const name of ["index.html", "app.js", "sw.js"]) try { latest = Math.max(latest, statSync(join(WEB, name)).mtimeMs); } catch { /* missing asset contributes nothing */ }
+  return String(Math.floor(latest));
+}
 let lastWebVersion = webVersion();
 setInterval(() => { const v = webVersion(); if (v !== lastWebVersion) { lastWebVersion = v; broadcastAll({ t: "version", v, contractVersion: AGENT_EVENT_SCHEMA_VERSION, runnerProtocolVersion: RUNNER_PROTOCOL_VERSION }); } }, 15_000).unref?.();
 

@@ -569,7 +569,7 @@
     function machineCaps(){ const id=currentMachine==='all'?routedMachine:currentMachine; const m=machines.find(x=>x.id===id); return (m&&m.agentDescriptors&&m.agentDescriptors.length)?m.agentDescriptors:caps; }
     function availableMachineCaps(){ const available=machineAgents(); return machineCaps().filter(c=>available.includes(c.name)); }
     const capsFor = n => machineCaps().find(c=>c.name===n)||{models:[],defaultModel:null,autoModel:false};
-    const routineCaps=()=>{ const m=machines.find(x=>x.id===(E.rtRunner.value||'local')), all=(m&&m.agentDescriptors&&m.agentDescriptors.length)?m.agentDescriptors:caps, declared=m&&Array.isArray(m.agents)&&m.agents.length?m.agents:null, available=declared||all.filter(c=>!['not_installed','unauthenticated'].includes(c.support)).map(c=>c.name); return all.filter(c=>available.includes(c.name)); };
+    const routineCaps=()=>{ const m=machines.find(x=>x.id===(E.rtRunner.value||'local')), all=(m&&m.agentDescriptors&&m.agentDescriptors.length)?m.agentDescriptors:caps, declared=m&&Array.isArray(m.agents)?m.agents:null, available=declared||all.filter(c=>!['not_installed','unauthenticated'].includes(c.support)).map(c=>c.name); return all.filter(c=>available.includes(c.name)); };
     const routineCapsFor=n=>routineCaps().find(c=>c.name===n)||{models:[],defaultModel:null,autoModel:false};
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
     const selectableModels=c=>(c.models||[]).filter(m=>m.selectable!==false);
@@ -578,17 +578,16 @@
     // footer pill state: model/effort vary per-message; agent/folder lock once the session starts
     let curModel=null, curEffort=null, curCwd='', curStarted=false;
     const modelLabel=(agent,id)=>{ const m=modelObj(agent,id); return m?(m.label||m.id):(id||'Automático'); };
-    const effortsFor=(agent,id)=>{ const m=modelObj(agent,id); return (m&&m.efforts)||[]; };
+    const effortsFor=(agent,id)=>{ const c=capsFor(agent), m=id&&(c.models||[]).find(x=>x.id===id); return m?(m.efforts||[]):[...new Set((c.models||[]).flatMap(x=>x.efforts||[]))]; };
     const EFF_PT={minimal:'Mínimo',low:'Baixo',medium:'Médio',high:'Alto',xhigh:'Muito alto',max:'Máximo',ultra:'Ultra',ultracode:'Ultracode'};
     const effLabel=v=>v?(EFF_PT[v]||v):'—';
     const base = p => (p||'').replace(/[\\/]$/,'').split(/[\\/]/).pop()||p;
     // Modelo/esforço são POR SESSÃO — escolher em uma sessão não pode vazar pras outras. cfg.model/
     // cfg.effort (Configurações) continuam sendo só o PADRÃO para sessão NOVA sem preferência salva
     // ainda. Persistido (não só em memória) pra sobreviver a reload.
-    const AUTO_MODEL='__jarvis_auto__';
+    const AUTO_MODEL='__jarvis_auto__', AUTO_EFFORT='__jarvis_auto_effort__';
     let sessionPrefs={}; try{ sessionPrefs=JSON.parse(localStorage.getItem('jarvis_session_prefs')||'{}'); }catch(e){}
     function saveSessionPrefs(){ try{ localStorage.setItem('jarvis_session_prefs',JSON.stringify(sessionPrefs)); }catch(e){} }
-    function setSessionPref(model,effort){ if(!currentSession)return; const p=Object.assign({},sessionPrefs[currentSession]); if(model!=null)p.model=model; if(effort!=null)p.effort=effort; sessionPrefs[currentSession]=p; saveSessionPrefs(); }
     // Modelo/esforço REAIS que a sessão nativa (criada na máquina) reporta — o servidor lê do transcript.
     // Só as sessões nativas mandam isso; sessão gerenciada deixa null e cai no pref/default como antes.
     let sessDeclModel=null, sessDeclEffort=null;
@@ -602,7 +601,7 @@
       curModel=perTurn?(pref.model===AUTO_MODEL?null:inheritedModel):null;
       const efs=effortsFor(currentAgent,curModel);
       const okE=e=>e&&efs.includes(e);
-      curEffort = okE(pref.effort)?pref.effort : (okE(sessDeclEffort)?sessDeclEffort : (okE(cfg.effort)?cfg.effort : ((modelObj(currentAgent,curModel)||{}).defaultEffort||efs[efs.length-1]||null)));
+      curEffort = pref.effort===AUTO_EFFORT?null:(okE(pref.effort)?pref.effort : (okE(sessDeclEffort)?sessDeclEffort : (okE(cfg.effort)?cfg.effort : ((modelObj(currentAgent,curModel)||{}).defaultEffort||null))));
       renderControls(); }
     function renderControls(){
       E.agentName.textContent=currentAgent||'—';
@@ -911,7 +910,7 @@
       const left=Math.max(8,Math.min(r.left, innerWidth-pr.width-8)); let top=r.top-pr.height-8; if(top<8) top=r.bottom+8;
       E.pop.style.left=left+'px'; E.pop.style.top=top+'px'; }
     function togglePop(anchor,build){ if(!E.pop.classList.contains('hidden') && E.pop._anchor===anchor) closePop(); else openPop(anchor,build); }
-    document.addEventListener('click',(e)=>{ if(E.pop.classList.contains('hidden'))return; if(E.pop.contains(e.target)||e.target.closest('.pill'))return; closePop(); });
+    document.addEventListener('click',(e)=>{ if(E.pop.classList.contains('hidden'))return; if(E.pop.contains(e.target)||(E.pop._anchor&&E.pop._anchor.contains(e.target)))return; closePop(); });
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape') closePop(); });
     const ph=(t)=>{ const d=document.createElement('div'); d.className='ph'; d.textContent=t; return d; };
 
@@ -923,17 +922,14 @@
         if(ok) o.onclick=()=>{ closePop(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); };
         p.appendChild(o); }); }
 
-    function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); if(c.modelControl!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=c.modelControl==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } if(c.autoModel){ const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); curModel=null; curEffort=null; const pref=Object.assign({},sessionPrefs[currentSession]); pref.model=AUTO_MODEL; delete pref.effort; sessionPrefs[currentSession]=pref; saveSessionPrefs(); renderControls(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
+    function buildModelPop(p){ const c=capsFor(currentAgent); p.appendChild(ph('Modelo')); if(c.modelControl!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=c.modelControl==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } if(c.autoModel){ const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const pref=Object.assign({},sessionPrefs[currentSession]); pref.model=AUTO_MODEL; sessionPrefs[currentSession]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
-      o.onclick=()=>{ closePop(); curModel=mm.id; const efs=effortsFor(currentAgent,mm.id); if(!efs.includes(curEffort)) curEffort=((modelObj(currentAgent,mm.id)||{}).defaultEffort||efs[efs.length-1]||null); setSessionPref(curModel,curEffort); renderControls(); }; p.appendChild(o); }); }
+      o.onclick=()=>{ closePop(); const pref=Object.assign({},sessionPrefs[currentSession]), efs=effortsFor(currentAgent,mm.id); pref.model=mm.id; if(pref.effort&&pref.effort!==AUTO_EFFORT&&!efs.includes(pref.effort))pref.effort=AUTO_EFFORT; sessionPrefs[currentSession]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(o); }); }
 
     function buildEffortPop(p){ const efs=effortsFor(currentAgent,curModel); p.appendChild(ph('Esforço · '+(currentAgent||'')));
       if(!efs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='sem níveis para este modelo'; p.appendChild(d); return; }
-      const lbl=document.createElement('div'); lbl.className='slbl'; lbl.innerHTML='<span>Mais rápido</span><span>Mais inteligente</span>'; p.appendChild(lbl);
-      const rng=document.createElement('input'); rng.type='range'; rng.min=0; rng.max=efs.length-1; rng.step=1; let idx=efs.indexOf(curEffort); if(idx<0) idx=efs.length-1; rng.value=idx; p.appendChild(rng);
-      const val=document.createElement('div'); val.className='sval'; val.textContent=effLabel(efs[idx]); p.appendChild(val);
-      rng.oninput=()=>{ val.textContent=effLabel(efs[+rng.value]); };
-      rng.onchange=()=>{ curEffort=efs[+rng.value]; setSessionPref(null,curEffort); renderControls(); }; }
+      const add=(value,label)=>{ const o=document.createElement('div'); o.className='opt'+(curEffort===value?' sel':''); o.innerHTML=esc(label)+(curEffort===value?'<span class="r">atual</span>':''); o.onclick=()=>{ closePop(); curEffort=value; const pref=Object.assign({},sessionPrefs[currentSession]); pref.effort=value==null?AUTO_EFFORT:value; sessionPrefs[currentSession]=pref; saveSessionPrefs(); renderControls(); }; p.appendChild(o); };
+      add(null,'Automático'); efs.forEach(e=>add(e,effLabel(e))); }
 
     function buildFolderBrowser(p,{runnerId='local',initial='',onUse,showRecents=false}={}){ popMode='folder'; browseRunner=runnerId; browseUse=onUse||null; p.appendChild(ph('Pasta de trabalho'));
       if(showRecents&&recentDirs.length){ p.appendChild(ph('Recentes')); const rl=document.createElement('div'); rl.className='flist'; rl.style.maxHeight='140px'; rl.style.marginBottom='8px';
@@ -992,7 +988,7 @@
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
-      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner){ const online=machines.filter(m=>m.online), desired=E.rtRunner.value||(currentMachine==='all'?routedMachine:currentMachine), preferred=online.some(m=>m.id===desired)?desired:(online.some(m=>m.id==='local')?'local':(online[0]||{}).id); fillSel(E.rtRunner,online.map(m=>({id:m.id,label:m.label||m.id})),preferred); fillRoutineAgents(); validateRoutineCron(); tx({t:'routines'}); }
+      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner){ fillRoutineMachines(); validateRoutineCron(); tx({t:'routines'}); }
       tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang; };
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value), ms=selectableModels(c), model=(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.setModel,c.modelControl==='per_turn'?ms:[],model); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
@@ -1013,8 +1009,9 @@
     E.rtAdd.onclick=()=>{ const name=(E.rtName.value||'').trim(), prompt=(E.rtPrompt.value||'').trim(), cron=(E.rtCron.value||'').trim(); if(!name||!prompt){ toast(t('tRtFill')); return; } if(!cronOk){ toast('Corrija a agenda cron antes de adicionar.'); validateRoutineCron(); return; }
       tx({t:'routine_add',routine:{name,prompt,cron,hour:0,minute:0,runnerId:E.rtRunner.value||'local',agent:E.rtAgent.value||undefined,model:E.rtModel.value||undefined,effort:E.rtEffort.value||undefined,cwd:(E.rtCwd.value||'').trim()||undefined,speak:E.rtSpeak.checked}}); E.rtName.value=''; E.rtPrompt.value=''; E.rtCwd.value=''; E.rtSpeak.checked=false; };
     function fillRoutineChoice(sel,items,val,emptyLabel){ fillSel(sel,items,val); if(!items.length){ const o=document.createElement('option'); o.value=''; o.textContent=emptyLabel; sel.appendChild(o); sel.classList.remove('hidden'); sel.disabled=true; } else sel.disabled=false; }
-    function fillRoutineEfforts(){ const c=routineCapsFor(E.rtAgent.value), m=(c.models||[]).find(x=>x.id===E.rtModel.value), efs=(m&&m.efforts)||[], old=E.rtEffort.value, effort=efs.includes(old)?old:(m&&m.defaultEffort)||efs[0]||''; fillRoutineChoice(E.rtEffort,efs,effort,'Automático / não aplicável'); }
-    function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value), ms=(c.models||[]).filter(m=>m.selectable!==false), old=E.rtModel.value, model=(ms.some(m=>m.id===old)&&old)||(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillRoutineChoice(E.rtModel,c.modelControl==='per_turn'?ms:[],model,c.modelControl==='configuration_only'?'Configurado na IA':'Automático'); fillRoutineEfforts(); }
+    function fillRoutineMachines(){ const desired=E.rtRunner.value||(currentMachine==='all'?routedMachine:currentMachine), preferred=machines.some(m=>m.id===desired)?desired:(machines.some(m=>m.id==='local')?'local':(machines[0]||{}).id); fillSel(E.rtRunner,machines.map(m=>({id:m.id,label:(m.label||m.id)+(m.online?'':' · offline')})),preferred); fillRoutineAgents(); }
+    function fillRoutineEfforts(){ const c=routineCapsFor(E.rtAgent.value), m=(c.models||[]).find(x=>x.id===E.rtModel.value), efs=m?(m.efforts||[]):[...new Set((c.models||[]).flatMap(x=>x.efforts||[]))], old=E.rtEffort.value, items=efs.length?[{id:'',label:'Automático'},...efs.map(id=>({id,label:effLabel(id)}))]:[], effort=old===''?'':(efs.includes(old)?old:''); fillRoutineChoice(E.rtEffort,items,effort,'Automático / não aplicável'); }
+    function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value), ms=(c.models||[]).filter(m=>m.selectable!==false), old=E.rtModel.value, selectable=c.modelControl==='per_turn'?((c.autoModel?[{id:'',label:'Automático'}]:[]).concat(ms)):[], model=selectable.some(m=>m.id===old)?old:((c.autoModel?'':((ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''))); fillRoutineChoice(E.rtModel,selectable,model,c.modelControl==='configuration_only'?'Configurado na IA':'Automático'); fillRoutineEfforts(); }
     function fillRoutineAgents(){ const cs=routineCaps(), old=E.rtAgent.value, preferred=cs.some(c=>c.name===old)?old:(cs.some(c=>c.name===(cfg.agent||currentAgent))?(cfg.agent||currentAgent):(cs[0]&&cs[0].name)||''); fillRoutineChoice(E.rtAgent,cs.map(c=>({id:c.name,label:c.label||c.name})),preferred,'Nenhuma IA disponível'); fillRoutineModels(); }
     E.rtRunner.onchange=()=>{ E.rtCwd.value=''; fillRoutineAgents(); };
     E.rtAgent.onchange=fillRoutineModels;
@@ -1223,7 +1220,7 @@
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
         else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=m.runnerId; cmdReqPending=false; if(trigOpen()&&trigMode==='cmd') updateTrig(); }
         else if(m.t==='mention_list'){ fileList=m.files||[]; if(trigOpen()&&trigMode==='file'){ trigItems=fileList.slice(0,50); trigIdx=trigItems.length?0:-1; renderTrig(); } }
-        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineAgents();
+        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
           if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }
         else if(m.t==='filecontent'){ showFile(m); }
