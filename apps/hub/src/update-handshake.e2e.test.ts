@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import WebSocket from "ws";
@@ -29,10 +29,11 @@ async function connectRunner(port: number, info: Record<string, unknown>): Promi
 
 test("old/offline runners retain an update until restart and commit verification", { timeout: 60_000 }, async () => {
   const root = resolve(import.meta.dirname, "../../.."), home = mkdtempSync(join(tmpdir(), "jarvis-update-hub-"));
-  const port = await freePort(), adminPort = await freePort(); let hub: ReturnType<typeof spawn> | undefined;
+  const port = await freePort(), adminPort = await freePort(); let hub: ReturnType<typeof spawn> | undefined, hubPid: number | undefined;
   const start = async () => {
     hub = spawn(process.execPath, ["--import", "tsx", "apps/hub/src/index.ts"], { cwd: root, detached: process.platform !== "win32", stdio: "ignore",
       env: { ...process.env, JARVIS_PORT: String(port), JARVIS_ADMIN_PORT: String(adminPort), JARVIS_HOME: home, JARVIS_AUTH: "off", JARVIS_AGENT: "mock", JARVIS_ENABLE_MOCK: "1" } });
+    hubPid = hub.pid;
     await waitHealth(port);
   };
   const runnerId = "runner-update-e2e";
@@ -42,7 +43,7 @@ test("old/offline runners retain an update until restart and commit verification
     const first = await old.box.take((m) => m.t === "update" || m.t === "reject");
     assert.equal(first.t, "update", "an authenticated old protocol must be quarantined for update, not rejected");
     assert.ok(first.requestId && first.targetCommit); old.ws.close();
-    await stop(hub?.pid); hub = undefined;
+    await stop(hubPid); hub = undefined; hubPid = undefined;
 
     await start();
     const current = await connectRunner(port, { runnerId, host: "runner", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION, commit: "old0000" });
@@ -79,9 +80,24 @@ test("old/offline runners retain an update until restart and commit verification
     assert.equal(afterReceipt[repairId], undefined, "same-SHA repair clears only with its matching durable receipt");
     withReceipt.ws.close();
 
+    await stop(hubPid); hub = undefined; hubPid = undefined;
+    const staleId = "runner-stale-target-e2e";
+    const currentHead = (await pExecFile("git", ["rev-parse", "--short", "HEAD"], { cwd: root })).stdout.trim();
+    writeFileSync(join(home, ".jarvis", "hub", "pending-runner-updates.json"), JSON.stringify({
+      [staleId]: { requestId: "stale-request", targetCommit: "0000000", requestedAt: Date.now(), state: "sent", force: true, fromCommit: currentHead },
+    }));
+    await start();
+    await new Promise((r) => setTimeout(r, 200));
+    const alreadyCurrent = await connectRunner(port, { runnerId: staleId, host: "current-runner", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION, commit: currentHead });
+    await alreadyCurrent.box.take((m) => m.t === "welcome");
+    await assert.rejects(() => alreadyCurrent.box.take((m) => m.t === "update", 400), /timed out|frame timeout/, "stale pending target must not be redelivered as a downgrade");
+    const afterStale = JSON.parse(readFileSync(join(home, ".jarvis", "hub", "pending-runner-updates.json"), "utf8"));
+    assert.equal(afterStale[staleId], undefined, "stale pending target is cleared when runner is already on the current Hub commit");
+    alreadyCurrent.ws.close();
+
     const future = await connectRunner(port, { runnerId: "runner-future-e2e", host: "future", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION + 1, commit: first.targetCommit });
     const rejected = await future.box.take((m) => m.t === "reject" || m.t === "update");
     assert.equal(rejected.t, "reject", "a newer runner protocol must never be auto-downgraded");
     assert.match(rejected.reason, /Atualize o Hub primeiro/); future.ws.close();
-  } finally { await stop(hub?.pid); rmSync(home, { recursive: true, force: true }); }
+  } finally { await stop(hubPid); rmSync(home, { recursive: true, force: true }); }
 });

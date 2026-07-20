@@ -643,8 +643,33 @@ function updateMachineNotice(runnerId: string, payload: Record<string, unknown>)
   for (const c of updateWatchers) send(c, { t: "update_machine", runnerId, label, ...payload });
   broadcastMachines();
 }
-function deliverPendingRunnerUpdate(rc: RunnerConn, opts?: { force?: boolean; allowBlocked?: boolean; retryNow?: boolean }): boolean {
+function normalizePendingRunnerUpdate(rc: RunnerConn): PendingRunnerUpdate | null {
   const pending = pendingRunnerUpdates[rc.id];
+  if (!pending) return null;
+  if (pending.state === "blocked") return pending;
+  const target = (hubCommit || "").replace("+dirty", "");
+  if (!target || commitMatches(pending.targetCommit, target)) return pending;
+  const clean = !!rc.info.commit && !rc.info.commit.includes("+dirty");
+  if (clean && commitMatches(rc.info.commit || "", target) && (rc.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION) {
+    delete pendingRunnerUpdates[rc.id]; savePendingRunnerUpdates();
+    auth.audit("update_machine_verified", { runnerId: rc.id, detail: `${runnerLabels[rc.id] || rc.info.host || rc.id}: fila antiga ${pending.targetCommit} descartada; já está em ${rc.info.commit}` });
+    updateMachineNotice(rc.id, { ok: true, verified: true, state: "verified", behind: 0, log: `fila antiga ${pending.targetCommit} descartada; máquina já está em ${rc.info.commit}` });
+    return null;
+  }
+  const previousTarget = pending.targetCommit;
+  pending.requestId = randomUUID();
+  pending.targetCommit = target;
+  pending.requestedAt = Date.now();
+  pending.state = "queued";
+  pending.fromCommit = undefined;
+  pending.lastAttemptAt = undefined;
+  pending.lastError = `alvo anterior ${previousTarget} substituído por ${target}`;
+  savePendingRunnerUpdates();
+  updateMachineNotice(rc.id, { state: "queued", queued: true, ok: false, log: pending.lastError });
+  return pending;
+}
+function deliverPendingRunnerUpdate(rc: RunnerConn, opts?: { force?: boolean; allowBlocked?: boolean; retryNow?: boolean }): boolean {
+  const pending = normalizePendingRunnerUpdate(rc);
   if (!pending || !rc.ws || rc.ws.readyState !== WebSocket.OPEN) return false;
   if (pending.state === "blocked" && !opts?.allowBlocked) return false;
   if (pending.lastAttemptAt && Date.now() - pending.lastAttemptAt < 30_000 && !opts?.retryNow) return false;
@@ -669,7 +694,7 @@ function completePendingRunnerUpdate(rc: RunnerConn, m: any): void {
   updateMachineNotice(rc.id, { ok: !!m.ok, dirty: !!m.dirty, behind: m.behind ?? 0, state, queued: !m.ok, log: String(m.log || "").slice(0, 3000), rolledBack: !!m.rolledBack });
 }
 function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
-  const pending = pendingRunnerUpdates[rc.id]; if (!pending) return;
+  const pending = normalizePendingRunnerUpdate(rc); if (!pending) return;
   if (pending.state === "blocked") return;
   const receipt = rc.info.updateReceipt, clean = !!rc.info.commit && !rc.info.commit.includes("+dirty"), changedCommit = !!pending.fromCommit && !commitMatches(pending.fromCommit, pending.targetCommit);
   const receiptMatches = !!receipt && receipt.requestId === pending.requestId && commitMatches(receipt.targetCommit, pending.targetCommit) && commitMatches(receipt.current, pending.targetCommit);
