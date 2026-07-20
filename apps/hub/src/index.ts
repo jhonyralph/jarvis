@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -854,7 +854,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     const now = new Set<string>(m.active || []);
     runnerActive.set(rc.id, now);
     for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] });
-    for (const sid of prev) if (!now.has(sid)) void flushQueue(sid); // turno do runner terminou → flush da fila DELE
+    for (const sid of prev) if (!now.has(sid)) void maybeFlushQueue(sid, true); // turno do runner terminou → talvez rode a fila DELE
     return;
   }
   // Update outcome of a machine. Goes to whoever asked (any owner watching the update panel),
@@ -1746,8 +1746,15 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     if (localAborts.get(sid) === ctrl) localAborts.delete(sid);
     activityBuf.delete(sid);
     activeRuns.delete(sid); broadcastRuns();
-    void flushQueue(sid); // fim de turno → envia a fila DESTA sessão (se houver), no servidor
+    void maybeFlushQueue(sid, true); // fim de turno → talvez envie a fila DESTA sessão (se houver), no servidor
   }
+}
+async function maybeFlushQueue(sid: string, autoplay: boolean): Promise<void> {
+  if (autoplay) {
+    const decision = decideAdaptiveRun(effectivePolicyFor(sid).policy, { queueAutoplay: true });
+    if (decision.action !== "allow") return;
+  }
+  await flushQueue(sid);
 }
 /** Envia a fila acumulada de `sid` como UM novo turno, no servidor — assim ela dispara mesmo se o
  *  dispositivo que enfileirou já saiu, e nunca duplica (o guard activeRuns cobre corridas). Combina
@@ -3038,7 +3045,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       broadcastQueue(msg.sessionId); saveQueues(); return;
     }
     if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); saveQueues(); return; }
-    if (msg.t === "flushqueue" && typeof msg.sessionId === "string") { if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } void flushQueue(msg.sessionId); return; }
+    if (msg.t === "flushqueue" && typeof msg.sessionId === "string") { if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } void maybeFlushQueue(msg.sessionId, false); return; }
     // "voltar" mensagem cancelada: tira a última mensagem do usuário do store (sessão do hub) pra
     // ela não reaparecer no reload. Nativa não dá (o transcript é do claude) — some só na tela.
     if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; } if (!isNativeId(msg.sessionId)) { store.dropLastUser(msg.sessionId); pushSessions(); } return; }
