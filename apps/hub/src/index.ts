@@ -101,9 +101,9 @@ function saveSummaryCfg(): void { try { writeJsonAtomic(SUMMARY_FILE, summaryCfg
 // Voz ambiente (staging): política de escalada de modelo + modelos rápido/upgrade. Persistido.
 // escalate: "ask" (avisa e pede autorização por voz) | "auto" (sobe sozinho) | "<modelId>" (sobe pra esse).
 const VOICE_CFG_FILE = join(JARVIS_DIR, "voice-cfg.json");
-const voiceCfg: { escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number } = (() => {
+const voiceCfg: { agent: string; model?: string; effort?: string; escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number } = (() => {
   // relevance: "on" (padrão — filtra falas que não são comando/relacionadas antes de despachar) | "off".
-  const d = { escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high", relevance: (process.env.JARVIS_VOICE_RELEVANCE || "on") };
+  const d = { agent: process.env.JARVIS_WAKE_AGENT || DEFAULT_AGENT, model: process.env.JARVIS_WAKE_MODEL || undefined, effort: process.env.JARVIS_WAKE_EFFORT || undefined, escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high", relevance: (process.env.JARVIS_VOICE_RELEVANCE || "on") };
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(VOICE_CFG_FILE, "utf8")) }; } catch { return d; }
 })();
 function saveVoiceCfg(): void { try { writeJsonAtomic(VOICE_CFG_FILE, voiceCfg, { pretty: true }); } catch { /* ignore */ } }
@@ -220,7 +220,9 @@ let voiceThreshold: number | undefined = typeof voiceCfg.threshold === "number" 
 // proactive-voice session setup: which agent/model/effort/folder the wake session
 // uses, and a task held while we ask the user "continuar ou nova sessão?".
 const voiceConfig: { agent: string; model?: string; effort?: string; cwd: string } = {
-  agent: process.env.JARVIS_WAKE_AGENT || DEFAULT_AGENT,
+  agent: voiceCfg.agent,
+  model: voiceCfg.model,
+  effort: voiceCfg.effort,
   cwd: process.env.JARVIS_WAKE_CWD || CWD,
 };
 let voicePending: { task: string } | null = null;
@@ -1716,8 +1718,18 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
     await runVoiceTask(rp.task, rp.speak, rp.speaker);
     return true;
   }
-  if (msg.t === "voice_cfg") { send(ws, { t: "voice_cfg", cfg: { ...voiceCfg, agent: summaryCfg.agent } }); return true; }
-  if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return true; if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; if (typeof msg.relevance === "string") voiceCfg.relevance = msg.relevance; saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: { ...voiceCfg, agent: summaryCfg.agent } }); return true; }
+  if (msg.t === "voice_cfg") { send(ws, { t: "voice_cfg", cfg: { ...voiceCfg } }); return true; }
+  if (msg.t === "set_voice_cfg") { if (!requireOwner(ws)) return true;
+    const nextAgent = typeof msg.agent === "string" && agents.names().includes(msg.agent) ? msg.agent : voiceCfg.agent;
+    const caps = await agents.get(nextAgent).capabilities();
+    const nextModel = typeof msg.model === "string" ? (msg.model || undefined) : voiceCfg.model;
+    const modelInfo = nextModel ? caps.models.find((m) => m.id === nextModel) : undefined;
+    if (nextModel && !modelInfo) { send(ws, { t: "error", message: `modelo de voz inválido para ${nextAgent}: ${nextModel}` }); return true; }
+    const nextEffort = typeof msg.effort === "string" ? (msg.effort || undefined) : voiceCfg.effort;
+    if (nextEffort && !modelInfo?.efforts.includes(nextEffort)) { send(ws, { t: "error", message: `esforço de voz inválido para ${nextModel || nextAgent}: ${nextEffort}` }); return true; }
+    voiceCfg.agent = voiceConfig.agent = nextAgent; voiceCfg.model = voiceConfig.model = nextModel; voiceCfg.effort = voiceConfig.effort = nextEffort;
+    if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; if (typeof msg.relevance === "string") voiceCfg.relevance = msg.relevance;
+    saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: { ...voiceCfg } }); return true; }
   return false;
 }
 
@@ -1892,7 +1904,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // when viewing a REMOTE machine, session ops are forwarded to that runner
     {
-      const ar = activeRunner(ws);
+      const explicitListRunner = msg.t === "listdir" && typeof msg.runnerId === "string" ? msg.runnerId : null;
+      if (explicitListRunner && !canUseRunner(ws, explicitListRunner)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
+      const ar = explicitListRunner || activeRunner(ws);
       if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete")) {
         const rc = runners.get(ar);
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }

@@ -4,8 +4,8 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtCwd','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'newSess','searchBtn','digestBtn','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtTime','rtSpeak','rtAdd','spkList','setEnroll','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -32,7 +32,7 @@
     E.fileModalClose.onclick=closeFileModal;
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!E.fileModal.classList.contains('hidden')){ e.stopPropagation(); closeFileModal(); } });
 
-    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=16, filesShown=12, attachments=[], browsePath='', recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
+    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=16, filesShown=12, attachments=[], browsePath='', browseRunner='local', browseUse=null, recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
     let machines=[], currentMachine=localStorage.getItem('jarvis_machine')||'local', routedMachine='local', lastByMachine={}, restoringMachine=(currentMachine!=='local'&&currentMachine!=='all');
     // vista "Todas as máquinas": currentMachine==='all' é a VISÃO unificada; routedMachine é a máquina
     // real para onde o hub roteia (definida ao abrir/criar uma sessão da lista agregada). hue por nome.
@@ -56,6 +56,7 @@
     I18N.pt.lblSlash='Autocomplete e sugestões ao digitar “/”, “@”, “#” e “!”';
     I18N.en.lblSlash='Autocomplete and suggestions when typing “/”, “@”, “#” and “!”';
     I18N.es.lblSlash='Autocompletado y sugerencias al escribir “/”, “@”, “#” y “!”';
+    I18N.pt.secDefaults='Chat'; I18N.en.secDefaults='Chat'; I18N.es.secDefaults='Chat';
     let lang = cfg.lang || (navigator.language||'pt').slice(0,2); if(!I18N[lang]) lang='pt';
     const t = k => (I18N[lang]&&I18N[lang][k]) || I18N.pt[k] || k;
     function applyI18n(){ document.querySelectorAll('[data-i18n]').forEach(el=>{ el.textContent=t(el.dataset.i18n); }); document.querySelectorAll('[data-i18n-ph]').forEach(el=>{ el.placeholder=t(el.dataset.i18nPh); }); }
@@ -568,7 +569,7 @@
     function machineCaps(){ const id=currentMachine==='all'?routedMachine:currentMachine; const m=machines.find(x=>x.id===id); return (m&&m.agentDescriptors&&m.agentDescriptors.length)?m.agentDescriptors:caps; }
     function availableMachineCaps(){ const available=machineAgents(); return machineCaps().filter(c=>available.includes(c.name)); }
     const capsFor = n => machineCaps().find(c=>c.name===n)||{models:[],defaultModel:null,autoModel:false};
-    const routineCaps=()=>{ const m=machines.find(x=>x.id===E.rtRunner.value), all=(m&&m.agentDescriptors&&m.agentDescriptors.length)?m.agentDescriptors:caps, available=m&&Array.isArray(m.agents)?m.agents:all.map(c=>c.name); return all.filter(c=>available.includes(c.name)); };
+    const routineCaps=()=>{ const m=machines.find(x=>x.id===(E.rtRunner.value||'local')), all=(m&&m.agentDescriptors&&m.agentDescriptors.length)?m.agentDescriptors:caps, declared=m&&Array.isArray(m.agents)&&m.agents.length?m.agents:null, available=declared||all.filter(c=>!['not_installed','unauthenticated'].includes(c.support)).map(c=>c.name); return all.filter(c=>available.includes(c.name)); };
     const routineCapsFor=n=>routineCaps().find(c=>c.name===n)||{models:[],defaultModel:null,autoModel:false};
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
     const selectableModels=c=>(c.models||[]).filter(m=>m.selectable!==false);
@@ -934,16 +935,17 @@
       rng.oninput=()=>{ val.textContent=effLabel(efs[+rng.value]); };
       rng.onchange=()=>{ curEffort=efs[+rng.value]; setSessionPref(null,curEffort); renderControls(); }; }
 
-    function buildFolderPop(p){ popMode='folder'; p.appendChild(ph('Pasta de trabalho'));
-      if(recentDirs.length){ p.appendChild(ph('Recentes')); const rl=document.createElement('div'); rl.className='flist'; rl.style.maxHeight='140px'; rl.style.marginBottom='8px';
+    function buildFolderBrowser(p,{runnerId='local',initial='',onUse,showRecents=false}={}){ popMode='folder'; browseRunner=runnerId; browseUse=onUse||null; p.appendChild(ph('Pasta de trabalho'));
+      if(showRecents&&recentDirs.length){ p.appendChild(ph('Recentes')); const rl=document.createElement('div'); rl.className='flist'; rl.style.maxHeight='140px'; rl.style.marginBottom='8px';
         recentDirs.forEach(d=>{ const it=document.createElement('div'); it.textContent='🕘 '+base(d); it.title=d; it.onclick=()=>{ closePop(); tx({t:'configure',sessionId:currentSession,cwd:d}); }; rl.appendChild(it); }); p.appendChild(rl); p.appendChild(ph('Navegar')); }
       const path=document.createElement('div'); path.className='fpath'; path.id='popPath'; path.textContent='carregando…'; p.appendChild(path);
       const list=document.createElement('div'); list.className='flist'; list.id='popList'; list.style.height='190px'; p.appendChild(list);
       const row=document.createElement('div'); row.className='frow';
-      const up=document.createElement('button'); up.className='ghost'; up.id='popUp'; up.textContent='⬆ acima'; up.onclick=()=>tx({t:'listdir',path:up.dataset.parent||''});
-      const use=document.createElement('button'); use.id='popUse'; use.textContent='Usar esta pasta'; use.onclick=()=>{ const b=browsePath; closePop(); tx({t:'configure',sessionId:currentSession,cwd:b}); };
+      const up=document.createElement('button'); up.className='ghost'; up.id='popUp'; up.textContent='⬆ acima'; up.onclick=()=>tx({t:'listdir',runnerId:browseRunner,path:up.dataset.parent||''});
+      const use=document.createElement('button'); use.id='popUse'; use.textContent='Usar esta pasta'; use.onclick=()=>{ const b=browsePath, fn=browseUse; closePop(); if(fn)fn(b); };
       row.appendChild(up); row.appendChild(use); p.appendChild(row);
-      tx({t:'listdir',path:curCwd||cfg.lastCwd||''}); }
+      tx({t:'listdir',runnerId:browseRunner,path:initial||''}); }
+    function buildFolderPop(p){ buildFolderBrowser(p,{runnerId:routedMachine||'local',initial:curCwd||cfg.lastCwd||'',showRecents:true,onUse:b=>tx({t:'configure',sessionId:currentSession,cwd:b})}); }
 
     E.agentBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.agentBtn,buildAgentPop); };
     E.cwdBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.cwdBtn,buildFolderPop); };
@@ -990,7 +992,7 @@
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
-      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner){ fillSel(E.rtRunner,machines.filter(m=>m.online).map(m=>({id:m.id,label:m.label||m.id})),currentRunner); fillRoutineAgents(); tx({t:'routines'}); }
+      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner){ const online=machines.filter(m=>m.online), desired=E.rtRunner.value||(currentMachine==='all'?routedMachine:currentMachine), preferred=online.some(m=>m.id===desired)?desired:(online.some(m=>m.id==='local')?'local':(online[0]||{}).id); fillSel(E.rtRunner,online.map(m=>({id:m.id,label:m.label||m.id})),preferred); fillRoutineAgents(); tx({t:'routines'}); }
       tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang; };
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value), ms=selectableModels(c), model=(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.setModel,c.modelControl==='per_turn'?ms:[],model); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
@@ -1000,7 +1002,7 @@
       E.routinesList.innerHTML='';
       list.forEach(r=>{ const d=document.createElement('div'); d.style.cssText='display:flex;align-items:center;gap:4px;padding:3px 0';
         const machine=(machines.find(m=>m.id===(r.runnerId||'local'))||{}).label||r.runnerId||'servidor';
-        d.innerHTML=`<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.enabled?'':'⏸ '}<b>${esc(r.name)}</b> <span class="mut">· ${esc(r.label||'')} · ${esc(machine)} · ${esc(r.agent||'padrão')}</span>${r.speak?' 🔊':''}</span>`;
+        d.innerHTML=`<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.enabled?'':'⏸ '}<b>${esc(r.name)}</b> <span class="mut">· ${esc(r.label||'')} · ${esc(machine)} · ${esc(r.agent||'padrão')}${r.model?' · '+esc(r.model):''}${r.effort?' · '+esc(effLabel(r.effort)):''}</span>${r.speak?' 🔊':''}</span>`;
         const mk=(txt,title,fn)=>{ const b=document.createElement('button'); b.className='ghost'; b.textContent=txt; b.title=title; b.style.cssText='padding:2px 7px;flex:none'; b.onclick=fn; return b; };
         d.appendChild(mk('↻','Rodar agora',()=>{ tx({t:'routine_run',id:r.id}); toast('Rodando “'+r.name+'”…'); }));
         d.appendChild(mk(r.enabled?'⏸':'▶️', r.enabled?'Pausar':'Ativar', ()=>tx({t:'routine_update',id:r.id,patch:{enabled:!r.enabled}})));
@@ -1008,17 +1010,27 @@
         E.routinesList.appendChild(d); }); }
     E.rtAdd.onclick=()=>{ const name=(E.rtName.value||'').trim(), prompt=(E.rtPrompt.value||'').trim(); if(!name||!prompt){ toast(t('tRtFill')); return; }
       const t=(E.rtTime.value||'08:00').split(':'); const hour=parseInt(t[0]||'8',10)||0, minute=parseInt(t[1]||'0',10)||0;
-      tx({t:'routine_add',routine:{name,prompt,hour,minute,runnerId:E.rtRunner.value||'local',agent:E.rtAgent.value||undefined,model:E.rtModel.value||undefined,cwd:(E.rtCwd.value||'').trim()||undefined,speak:E.rtSpeak.checked}}); E.rtName.value=''; E.rtPrompt.value=''; E.rtCwd.value=''; E.rtSpeak.checked=false; };
-    function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value); fillSel(E.rtModel,c.modelControl==='per_turn'?(c.autoModel?[{id:'',label:'Automático'}]:[]).concat((c.models||[]).filter(m=>m.selectable!==false)):[],c.defaultModel||''); }
-    function fillRoutineAgents(){ const cs=routineCaps(); fillSel(E.rtAgent,cs.map(c=>({id:c.name,label:c.label||c.name})),cs.some(c=>c.name===(cfg.agent||currentAgent))?(cfg.agent||currentAgent):(cs[0]&&cs[0].name)||''); fillRoutineModels(); }
-    E.rtRunner.onchange=fillRoutineAgents;
+      tx({t:'routine_add',routine:{name,prompt,hour,minute,runnerId:E.rtRunner.value||'local',agent:E.rtAgent.value||undefined,model:E.rtModel.value||undefined,effort:E.rtEffort.value||undefined,cwd:(E.rtCwd.value||'').trim()||undefined,speak:E.rtSpeak.checked}}); E.rtName.value=''; E.rtPrompt.value=''; E.rtCwd.value=''; E.rtSpeak.checked=false; };
+    function fillRoutineChoice(sel,items,val,emptyLabel){ fillSel(sel,items,val); if(!items.length){ const o=document.createElement('option'); o.value=''; o.textContent=emptyLabel; sel.appendChild(o); sel.classList.remove('hidden'); sel.disabled=true; } else sel.disabled=false; }
+    function fillRoutineEfforts(){ const c=routineCapsFor(E.rtAgent.value), m=(c.models||[]).find(x=>x.id===E.rtModel.value), efs=(m&&m.efforts)||[], old=E.rtEffort.value, effort=efs.includes(old)?old:(m&&m.defaultEffort)||efs[0]||''; fillRoutineChoice(E.rtEffort,efs,effort,'Automático / não aplicável'); }
+    function fillRoutineModels(){ const c=routineCapsFor(E.rtAgent.value), ms=(c.models||[]).filter(m=>m.selectable!==false), old=E.rtModel.value, model=(ms.some(m=>m.id===old)&&old)||(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillRoutineChoice(E.rtModel,c.modelControl==='per_turn'?ms:[],model,c.modelControl==='configuration_only'?'Configurado na IA':'Automático'); fillRoutineEfforts(); }
+    function fillRoutineAgents(){ const cs=routineCaps(), old=E.rtAgent.value, preferred=cs.some(c=>c.name===old)?old:(cs.some(c=>c.name===(cfg.agent||currentAgent))?(cfg.agent||currentAgent):(cs[0]&&cs[0].name)||''); fillRoutineChoice(E.rtAgent,cs.map(c=>({id:c.name,label:c.label||c.name})),preferred,'Nenhuma IA disponível'); fillRoutineModels(); }
+    E.rtRunner.onchange=()=>{ E.rtCwd.value=''; fillRoutineAgents(); };
     E.rtAgent.onchange=fillRoutineModels;
+    E.rtModel.onchange=fillRoutineEfforts;
+    E.rtBrowse.onclick=()=>togglePop(E.rtBrowse,p=>buildFolderBrowser(p,{runnerId:E.rtRunner.value||'local',initial:E.rtCwd.value||'',onUse:b=>{ E.rtCwd.value=b; }}));
     // ---------- config do refino por voz (escalada de modelo) ----------
-    function renderVoiceCfg(cfg){ if(!E.setVoiceEscalate)return; const models=(localCapsFor((cfg&&cfg.agent)||currentAgent).models||[]).map(x=>x.id);
+    let currentVoiceCfg={};
+    function fillVoiceModels(cfg){ const c=localCapsFor(E.setVoiceAgent.value), models=selectableModels(c); fillSel(E.setVoiceModel,models,(cfg&&cfg.model)||c.defaultModel||(models[0]||{}).id||''); const m=models.find(x=>x.id===E.setVoiceModel.value); fillSel(E.setVoiceEffort,(m&&m.efforts)||[],(cfg&&cfg.effort)||(m&&m.defaultEffort)||''); }
+    function saveVoiceModelCfg(){ tx({t:'set_voice_cfg',agent:E.setVoiceAgent.value,model:E.setVoiceModel.value,effort:E.setVoiceEffort.value}); }
+    function renderVoiceCfg(cfg){ if(!E.setVoiceEscalate)return; currentVoiceCfg=cfg||{}; const local=machines.find(m=>m.id==='local'), names=local&&Array.isArray(local.agents)?local.agents:caps.map(c=>c.name), available=caps.filter(c=>names.includes(c.name)); fillSel(E.setVoiceAgent,available.map(c=>({id:c.name,label:c.label||c.name})),cfg.agent||currentAgent); fillVoiceModels(cfg); const models=(localCapsFor(E.setVoiceAgent.value).models||[]).map(x=>x.id);
       const opts=[['ask','Sempre perguntar'],['auto','Automático (deixar decidir)']].concat(models.map(m=>[m,'Sempre: '+m]));
       E.setVoiceEscalate.innerHTML=''; opts.forEach(([v,l])=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; if(v===((cfg&&cfg.escalate)||'ask')) o.selected=true; E.setVoiceEscalate.appendChild(o); });
       if(E.setVoiceRelevance) E.setVoiceRelevance.checked=((cfg&&cfg.relevance)||'on')!=='off'; }
     E.setVoiceEscalate.onchange=()=>tx({t:'set_voice_cfg',escalate:E.setVoiceEscalate.value});
+    E.setVoiceAgent.onchange=()=>{ fillVoiceModels({}); saveVoiceModelCfg(); };
+    E.setVoiceModel.onchange=()=>{ fillVoiceModels({model:E.setVoiceModel.value}); saveVoiceModelCfg(); };
+    E.setVoiceEffort.onchange=saveVoiceModelCfg;
     if(E.setVoiceRelevance) E.setVoiceRelevance.onchange=()=>tx({t:'set_voice_cfg',relevance:E.setVoiceRelevance.checked?'on':'off'});
     E.setModel.onchange=()=>fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value);
     // resumo/digest one-shot config (roda no Hub; barato por padrão)
@@ -1208,13 +1220,13 @@
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
         else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=m.runnerId; cmdReqPending=false; if(trigOpen()&&trigMode==='cmd') updateTrig(); }
         else if(m.t==='mention_list'){ fileList=m.files||[]; if(trigOpen()&&trigMode==='file'){ trigItems=fileList.slice(0,50); trigIdx=trigItems.length?0:-1; renderTrig(); } }
-        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'});
+        else if(m.t==='machines'){ machines=m.machines||[]; renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineAgents();
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
           if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }
         else if(m.t==='filecontent'){ showFile(m); }
         else if(m.t==='filediff'){ showDiff(m); }
         else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
-          if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
+          if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',runnerId:browseRunner,path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
         else if(m.t==='sessions'){
           // visão unificada: só o agregado (runnerId 'all') alimenta a lista; listas de máquina única
           // que chegam por troca de runner (ao abrir) são ignoradas aqui pra não sobrescrever o agregado.

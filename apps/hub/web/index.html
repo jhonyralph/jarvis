@@ -292,7 +292,9 @@
     #routinesSection { background:#ffffff05; border:1px solid var(--line); border-radius:14px; padding:0 14px 14px; margin-top:4px; }
     #routinesSection .sec { border-top:0; margin-top:0; }
     .routine-builder { display:flex; flex-direction:column; gap:12px; }
-    .routine-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .routine-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .routine-path { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:end; }
+    .routine-path button { min-height:46px; white-space:nowrap; }
     .routine-actions { display:grid; grid-template-columns:minmax(145px,.7fr) auto 1fr; gap:12px; align-items:end; }
     .routine-actions > button { justify-self:end; min-height:46px; min-width:122px; }
     .routine-toggle { min-height:46px; margin:0!important; align-self:end; }
@@ -302,6 +304,7 @@
       #settings .settings-title { min-height:62px; margin:0 -18px 2px; padding:0 18px; }
       #settings .settings-actions { margin:8px -18px -18px; padding-left:18px; padding-right:18px; }
       .routine-grid { grid-template-columns:1fr; }
+      .routine-path { grid-template-columns:1fr; }
       .routine-actions { grid-template-columns:1fr auto; }
       .routine-actions .routine-time { grid-column:1/-1; }
       .routine-actions > button { width:100%; }
@@ -596,6 +599,12 @@
     <label><span data-i18n="lblEffort">Esforço padrão</span> <select id="setEffort"></select></label>
     <label class="row"><input type="checkbox" id="setSlash" checked> <span data-i18n="lblSlash">Autocomplete e sugestões ao digitar “/”, “@”, “#” e “!”</span></label>
     <div class="sec" data-i18n="secVoice">Voz</div>
+    <div class="mut">Configuração independente do chat para comandos e respostas iniciados por voz.</div>
+    <div class="routine-grid">
+      <label>IA da voz<select id="setVoiceAgent"></select></label>
+      <label>Modelo da voz<select id="setVoiceModel"></select></label>
+      <label>Esforço da voz<select id="setVoiceEffort"></select></label>
+    </div>
     <label class="row"><input type="checkbox" id="setVoice"> <span data-i18n="lblSpeakDefault">Falar as respostas por padrão</span></label>
     <label class="row"><input type="checkbox" id="setContinue"> <span data-i18n="lblContinue">Após responder, continuar escutando follow-up</span></label>
     <label><span data-i18n="lblContinueWin">Janela de escuta de continuação (segundos)</span><input type="number" id="setContinueSec" min="5" max="120" step="5"></label>
@@ -630,8 +639,9 @@
           <label>Máquina<select id="rtRunner"></select></label>
           <label>IA<select id="rtAgent"></select></label>
           <label>Modelo<select id="rtModel"></select></label>
+          <label>Esforço<select id="rtEffort"></select></label>
         </div>
-        <label>Pasta de trabalho <span class="mut">opcional</span><input id="rtCwd" placeholder="Ex.: C:\Workspace\projeto" autocomplete="off"></label>
+        <div class="routine-path"><label>Pasta de trabalho <span class="mut">opcional</span><input id="rtCwd" placeholder="Ex.: C:\Workspace\projeto" autocomplete="off"></label><button id="rtBrowse" class="ghost" type="button">📁 Escolher pasta</button></div>
         <div class="routine-actions">
           <label class="routine-time">Horário<input id="rtTime" type="time" value="08:00"></label>
           <label class="row routine-toggle"><input type="checkbox" id="rtSpeak"> Falar resultado</label>
