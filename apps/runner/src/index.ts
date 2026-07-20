@@ -187,7 +187,7 @@ function psQuote(value: string): string {
   return "'" + value.replace(/'/g, "''") + "'";
 }
 
-function detachedWindowsRunnerUpdateScript(input: { requestId: string; targetCommit: string; root: string; resultFile: string; receiptFile: string; pid: number; force: boolean }): string {
+function detachedWindowsRunnerUpdateScript(input: { requestId: string; targetCommit: string; root: string; resultFile: string; receiptFile: string; logFile: string; pid: number; force: boolean }): string {
   return `
 $ErrorActionPreference = 'Stop'
 $Root = ${psQuote(input.root)}
@@ -195,6 +195,7 @@ $RequestId = ${psQuote(input.requestId)}
 $Target = ${psQuote(input.targetCommit)}
 $ResultFile = ${psQuote(input.resultFile)}
 $ReceiptFile = ${psQuote(input.receiptFile)}
+$RunnerLogFile = ${psQuote(input.logFile)}
 $LockFile = ${psQuote(UPDATE_LOCK_FILE)}
 $RunnerPid = ${input.pid}
 $Force = ${input.force ? "$true" : "$false"}
@@ -202,12 +203,21 @@ $TaskName = 'JarvisRunner'
 $Log = New-Object System.Collections.Generic.List[string]
 
 function Add-Log([string]$Text) { $script:Log.Add($Text) }
+function Add-Progress([string]$Text) {
+  Add-Log $Text
+  try { Add-Content -Path $RunnerLogFile -Value ("[updater] {0} {1}" -f (Get-Date -Format o), $Text) } catch {}
+}
 function Run-Step([string]$Exe, [string[]]$Args) {
-  Add-Log ("> " + $Exe + " " + ($Args -join " "))
+  $cmd = $Exe + " " + ($Args -join " ")
+  Add-Progress ("> " + $cmd)
   $out = & $Exe @Args 2>&1
   $code = $LASTEXITCODE
   foreach ($line in $out) { Add-Log ([string]$line) }
-  if ($code -ne 0) { throw ($Exe + " saiu com código " + $code) }
+  if ($code -ne 0) {
+    Add-Progress ("falhou: " + $cmd + " (codigo " + $code + ")")
+    throw ($Exe + " saiu com código " + $code)
+  }
+  Add-Progress ("ok: " + $cmd)
 }
 function Git([string[]]$Args) { Run-Step "git" $Args }
 function Npm([string[]]$Args) { Run-Step "npm.cmd" $Args }
@@ -254,17 +264,17 @@ function Start-Runner() {
   try {
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
     if ($task.State -eq "Running") {
-      Add-Log ("scheduled task ja esta em execucao: " + $TaskName)
+      Add-Progress ("scheduled task ja esta em execucao: " + $TaskName)
       return
     }
   } catch {
-    Add-Log ("consulta da scheduled task falhou; tentando iniciar: " + $_)
+    Add-Progress ("consulta da scheduled task falhou; tentando iniciar: " + $_)
   }
   try {
     Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-    Add-Log ("scheduled task iniciado: " + $TaskName)
+    Add-Progress ("scheduled task iniciado: " + $TaskName)
   } catch {
-    Add-Log ("Start-ScheduledTask falhou; fallback npm start: " + $_)
+    Add-Progress ("Start-ScheduledTask falhou; fallback npm start: " + $_)
     Start-Process -FilePath "npm.cmd" -ArgumentList "start" -WorkingDirectory (Join-Path $Root "apps\\runner") -WindowStyle Hidden | Out-Null
   }
 }
@@ -273,7 +283,7 @@ $previous = ""
 $current = ""
 $rolledBack = $false
 try {
-  Add-Log "parando runner antes do upgrade"
+  Add-Progress "parando runner antes do upgrade"
   try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
   Start-Sleep -Seconds 1
   try { Stop-Process -Id $RunnerPid -Force -ErrorAction SilentlyContinue } catch {}
@@ -301,7 +311,7 @@ try {
   $receipt = [ordered]@{ requestId = $RequestId; targetCommit = $Target; current = $current; preparedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
   $receipt | ConvertTo-Json -Depth 5 | Set-Content -Path $ReceiptFile -Encoding UTF8
 } catch {
-  Add-Log ("ERRO na preparação: " + $_)
+  Add-Progress ("ERRO na preparação: " + $_)
   if ($previous) {
     try {
       Set-Location $Root
@@ -310,9 +320,9 @@ try {
       Npm @("ci")
       Npm @("run", "update:verify", "--if-present")
       $rolledBack = $true
-      Add-Log "rollback automático concluído"
+      Add-Progress "rollback automático concluído"
     } catch {
-      Add-Log ("ERRO também no rollback: " + $_)
+      Add-Progress ("ERRO também no rollback: " + $_)
     }
   }
   try { $current = Git-Out @("rev-parse", "--short", "HEAD") } catch { $current = "" }
@@ -333,7 +343,7 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
   cleanupRunnerUpdateScripts();
   try {
     writeFileSync(UPDATE_LOCK_FILE, JSON.stringify({ requestId, targetCommit, pid: process.pid, at: Date.now() }), "utf8");
-    writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, pid: process.pid, force: !!m.force }), "utf8");
+    writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner.log"), pid: process.pid, force: !!m.force }), "utf8");
     spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } catch (error: any) {
     try { unlinkSync(UPDATE_LOCK_FILE); } catch { /* ignore */ }
