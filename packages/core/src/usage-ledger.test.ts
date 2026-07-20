@@ -30,3 +30,13 @@ test("usage ledger converts repeated legacy Codex cumulative snapshots to deltas
   const usage = new UsageLedger(file).session("c");
   assert.equal(usage.costUsd, 12); assert.equal(usage.inputTokens, 1200); assert.equal(usage.outputTokens, 130); assert.equal(usage.contextTokens, undefined);
 });
+
+test("usage views can attribute legacy unknown entries from their session without rewriting history", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-usage-attribution-")), file = join(dir, "usage.json");
+  writeFileSync(file, JSON.stringify({ knownSession: { cost: 2, ts: Date.now() }, deletedSession: { cost: 1, ts: Date.now() } }));
+  const ledger = new UsageLedger(file);
+  const resolve = (sid: string, agent: string) => agent === "unknown" ? (sid === "knownSession" ? "codex" : "legacy-unattributed") : agent;
+  assert.equal(ledger.byAgent(resolve).codex.costUsd, 2);
+  assert.equal(ledger.byAgent(resolve)["legacy-unattributed"].costUsd, 1);
+  assert.equal(ledger.topSessions(2, resolve)[0].agent, "codex");
+});

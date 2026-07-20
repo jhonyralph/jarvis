@@ -686,7 +686,7 @@
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">$${(T.billableTotal||0).toFixed(2)}</div><div class="mut" style="font-size:11px">cobrado reportado</div></div>
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">≈$${(T.estimatedTotal||0).toFixed(2)}</div><div class="mut" style="font-size:11px">equivalente estimado</div></div>
         <div title="Consumo de LLM atribuído à voz"><div style="font-size:20px;font-weight:700;color:#a78bfa">≈$${(T.voiceCost||0).toFixed(2)}</div><div class="mut" style="font-size:11px">🎙 voz${T.voicePct?` · ${T.voicePct}% do total`:''}</div></div></div>`;
-      const agLabel=a=>({'claude-code':'Claude','codex':'Codex','gemini':'Gemini','cursor':'Cursor','copilot':'Copilot','opencode':'OpenCode','cline':'Cline','qwen':'Qwen','continue':'Continue','kiro':'Kiro','antigravity':'Antigravity','aider':'Aider','outro':'Outros'})[a]||a;
+      const agLabel=a=>({'claude-code':'Claude','codex':'Codex','gemini':'Gemini','cursor':'Cursor','copilot':'Copilot','opencode':'OpenCode','cline':'Cline','qwen':'Qwen','continue':'Continue','kiro':'Kiro','antigravity':'Antigravity','aider':'Aider','legacy-unattributed':'Legado não atribuído','unknown':'Legado não atribuído','remote-unknown':'Remoto não atribuído','outro':'Outros'})[a]||a;
       const agColor=a=>({'claude-code':'#d97757','codex':'#22c55e','gemini':'#4285f4','cursor':'#e5e7eb','copilot':'#a78bfa','opencode':'#f59e0b','cline':'#ef4444','qwen':'#60a5fa','aider':'#38bdf8'})[a]||'#9aa0a6';
       const costFmt=u=>u&&u.billableUsd>0&&u.estimatedUsd<=0?'$'+u.costUsd.toFixed(2):u&&u.estimatedUsd>0&&u.billableUsd<=0?'≈$'+u.costUsd.toFixed(2):'Σ$'+((u&&u.costUsd)||0).toFixed(2);
       const agRows=Object.entries(T.byAgent||{}).sort((x,y)=>y[1]-x[1]);
@@ -979,14 +979,13 @@
     E.usageBtn.onclick=()=>togglePop(E.usageBtn,buildUsagePop);
 
     // ---------- settings (persistente) ----------
-    E.settingsBtn.onclick=()=>{ const mc=availableMachineCaps(); fillSel(E.setAgent,mc.map(c=>({id:c.name,label:c.label||c.name})),cfg.agent||currentAgent); const c=capsFor(E.setAgent.value);
+    E.settingsBtn.onclick=()=>{ E.settings.classList.remove('hidden'); const mc=availableMachineCaps(); fillSel(E.setAgent,mc.map(c=>({id:c.name,label:c.label||c.name})),cfg.agent||currentAgent); const c=mc.find(x=>x.name===E.setAgent.value)||capsFor(E.setAgent.value);
       fillSel(E.setModel,c.modelControl==='per_turn'?(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(selectableModels(c)):[],cfg.model||c.defaultModel||''); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
       const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); if(isOwner){ fillSel(E.rtRunner,machines.filter(m=>m.online).map(m=>({id:m.id,label:m.label||m.id})),currentRunner); fillRoutineAgents(); tx({t:'routines'}); }
-      tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang;
-      E.settings.classList.remove('hidden'); };
+      tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang; };
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value); fillSel(E.setModel,c.modelControl==='per_turn'?(c.autoModel?[{id:'',label:'Automático'}]:[]).concat(selectableModels(c)):[],c.defaultModel||''); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     // ---------- rotinas agendadas (owner) ----------

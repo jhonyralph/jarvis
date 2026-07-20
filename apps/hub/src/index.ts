@@ -406,6 +406,11 @@ function activeRunner(ws: WebSocket): string { return clientRunner.get(ws) || LO
 /** The cwd / agent of a LOCAL session (managed or native), for "@" file search, "!" and "#" memory. */
 function sessionCwd(sid?: string): string { if (!sid) return CWD; if (isNativeId(sid)) return nativeInfo(sid)?.cwd || CWD; return store.get(sid)?.cwd || CWD; }
 function sessionAgent(sid?: string): string | undefined { if (!sid) return undefined; if (isNativeId(sid)) return nativeInfo(sid)?.agent; return store.get(sid)?.agent; }
+/** Attribute legacy usage without pretending the old untyped ledger knew its provider. */
+function usageAgent(sid: string, recorded?: string): string {
+  if (recorded && recorded !== "unknown" && recorded !== "remote-unknown") return recorded;
+  return sessionAgent(sid) || (sid.startsWith("claude:") ? "claude-code" : sid.startsWith("codex:") ? "codex" : "legacy-unattributed");
+}
 /** Per-runner authorization — the "access to the Hub == a shell on the machine" boundary. The owner
  *  reaches every machine; a member only the runners granted in their invite (auth.grants). Auth off =
  *  fully trusted. This is the DRIVE gate (select + act), enforced for BOTH the local machine and remote
@@ -2140,12 +2145,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // um agente — some por agente para o gráfico "por IA" e ranqueie as sessões mais caras.
       const overallUsage = usageLedger.total();
       const costTotal = overallUsage.costUsd;
-      const byAgentUsage = usageLedger.byAgent();
+      const byAgentUsage = usageLedger.byAgent(usageAgent);
       const byAgent: Record<string, number> = Object.fromEntries(Object.entries(byAgentUsage).map(([agent, usage]) => [agent, usage.costUsd]));
       const perSession: Array<{ id: string; cost: number; agent: string; title: string }> = [];
-      for (const entry of usageLedger.topSessions(50)) {
+      for (const entry of usageLedger.topSessions(50, usageAgent)) {
         const sid = entry.id, cost = entry.usage.costUsd; if (!cost) continue;
-        const agent = entry.agent || sessionAgent(sid) || "outro";
+        const agent = entry.agent;
         const title = sid === WAKE_SESSION ? "Voz (Jarvis)" : (store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : sid));
         perSession.push({ id: sid, cost, agent, title, usage: entry.usage } as any);
       }

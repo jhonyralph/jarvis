@@ -56,15 +56,15 @@ export class UsageLedger {
   }
   session(sessionId: string): UsageRollup { return roll(this.entries.filter((e) => e.sessionId === sessionId)); }
   total(): UsageRollup { return roll(this.entries); }
-  byAgent(): Record<string, UsageRollup> {
+  byAgent(resolveAgent: (sessionId: string, recordedAgent: string) => string = (_sessionId, agent) => agent): Record<string, UsageRollup> {
     const grouped: Record<string, UsageLedgerEntry[]> = {};
-    for (const entry of this.entries) (grouped[entry.agent] ||= []).push(entry);
+    for (const entry of this.entries) (grouped[resolveAgent(entry.sessionId, entry.agent)] ||= []).push(entry);
     return Object.fromEntries(Object.entries(grouped).map(([agent, values]) => [agent, roll(values)]));
   }
-  topSessions(limit = 6): Array<{ id: string; agent: string; usage: UsageRollup }> {
+  topSessions(limit = 6, resolveAgent: (sessionId: string, recordedAgent: string) => string = (_sessionId, agent) => agent): Array<{ id: string; agent: string; usage: UsageRollup }> {
     const grouped = new Map<string, UsageLedgerEntry[]>();
     for (const e of this.entries) { const list = grouped.get(e.sessionId) || []; list.push(e); grouped.set(e.sessionId, list); }
-    return [...grouped.entries()].map(([id, values]) => ({ id, agent: values.at(-1)?.agent || "unknown", usage: roll(values) })).sort((a, b) => b.usage.costUsd - a.usage.costUsd).slice(0, limit);
+    return [...grouped.entries()].map(([id, values]) => ({ id, agent: resolveAgent(id, values.at(-1)?.agent || "unknown"), usage: roll(values) })).sort((a, b) => b.usage.costUsd - a.usage.costUsd).slice(0, limit);
   }
   private trim(now: number): void { this.entries = this.entries.filter((e) => now - e.at < this.ttlMs).slice(-this.maxEntries); }
   private flush(): void { writeJsonAtomic(this.file, this.entries); }
