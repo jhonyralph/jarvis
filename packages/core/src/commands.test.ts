@@ -34,9 +34,11 @@ writeFileSync(join(CLAUDE, "commands", "plain.md"), `Just a body, no frontmatter
 writeFileSync(join(CODEX, "prompts", "cx-only.md"), `Codex-only prompt for $ARGUMENTS here.`);
 writeFileSync(join(CODEX, "prompts", "plain.md"), `CODEX version of plain — should lose to Claude.`);
 writeFileSync(join(HOME, "claude.json"), JSON.stringify({ mcpServers: { "my-mcp": { type: "http", url: "https://x" } } }));
+writeFileSync(join(CODEX, "config.toml"), `[projects."x"]\ntrust_level = "trusted"\n[mcp_servers.cx-mcp]\ncommand = "node"\n`);
 process.env.JARVIS_CLAUDE_HOME = CLAUDE;
 process.env.JARVIS_CODEX_HOME = CODEX;
 process.env.JARVIS_CLAUDE_JSON = join(HOME, "claude.json");
+process.env.JARVIS_CODEX_CONFIG = join(CODEX, "config.toml");
 
 const { listCommands, listCommandsPublic, expandCommand, cmdAgentOf } = await import("./commands.js");
 
@@ -119,6 +121,13 @@ test("MCP servers from ~/.claude.json are listed (kind:mcp, Claude) and expand t
   assert.equal(mcp!.agent, "claude");
   assert.match(expandCommand("/my-mcp do X", undefined, "claude")!.expanded, /Use the "my-mcp" MCP server/);
   assert.equal(expandCommand("/my-mcp", undefined, "codex"), null, "not offered under Codex");
+});
+
+test("Codex MCP servers from config.toml are listed (agent:codex)", () => {
+  const m = listCommands().find((c) => c.name === "cx-mcp");
+  assert.ok(m, "codex mcp server discovered");
+  assert.equal(m!.kind, "mcp");
+  assert.equal(m!.agent, "codex");
 });
 
 test("Claude built-in commands are listed and pass through unexpanded", () => {

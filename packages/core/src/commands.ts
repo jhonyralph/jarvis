@@ -113,6 +113,18 @@ function scanMcp(cwd: string | undefined, out: SlashCommand[]): void {
   } catch { /* no ~/.claude.json */ }
   if (cwd) { try { const j = JSON.parse(readFileSync(join(cwd, ".mcp.json"), "utf8")); add(j.mcpServers || j, "project", ".mcp.json"); } catch { /* none */ } }
 }
+/** Codex MCP servers from ~/.codex/config.toml — minimal TOML: just the `[mcp_servers.<name>]`
+ *  section headers (name is enough for discovery; the model invokes the tools). */
+function scanCodexMcp(out: SlashCommand[]): void {
+  let raw: string;
+  try { raw = readFileSync(process.env.JARVIS_CODEX_CONFIG || join(codexHome(), "config.toml"), "utf8"); } catch { return; }
+  const seen = new Set<string>();
+  for (const ln of raw.split(/\r?\n/)) {
+    const h = /^\s*\[mcp_servers\.(?:"([^"]+)"|([^.\]]+))\]/.exec(ln);
+    const name = h && (h[1] || h[2]);
+    if (name && !seen.has(name)) { seen.add(name); out.push({ name, description: "Servidor MCP · codex", kind: "mcp", agent: "codex", source: "user", path: "" }); }
+  }
+}
 
 // Claude Code's BUILT-IN slash-commands are baked into the binary (not files) and aren't enumerable,
 // so this is a small CURATED set of the useful headless ones. They PASS THROUGH unexpanded — inside
@@ -160,7 +172,7 @@ const cache = new Map<string, { key: string; data: SlashCommand[] }>();
  *  Cached, keyed on the source dirs' mtimes so a newly added command shows up without a restart. */
 export function listCommands(cwd?: string): SlashCommand[] {
   const ch = claudeHome(), xh = codexHome();
-  const dirs = [join(ch, "skills"), join(ch, "commands"), join(xh, "skills"), join(xh, "prompts"), claudeJson()];
+  const dirs = [join(ch, "skills"), join(ch, "commands"), join(xh, "skills"), join(xh, "prompts"), claudeJson(), process.env.JARVIS_CODEX_CONFIG || join(xh, "config.toml")];
   if (cwd) dirs.push(join(cwd, ".claude", "skills"), join(cwd, ".claude", "commands"), join(cwd, ".mcp.json"));
   const key = dirs.map((d) => { try { return d + ":" + statSync(d).mtimeMs; } catch { return d + ":0"; } }).join("|");
   const ck = cwd || "";
@@ -172,6 +184,7 @@ export function listCommands(cwd?: string): SlashCommand[] {
   scanSkills(join(xh, "skills"), "codex", "user", out);
   scanCommands(join(xh, "prompts"), "codex", "user", out);   // Codex prompts are the equivalent of slash-commands
   scanMcp(cwd, out);
+  scanCodexMcp(out);
   scanBuiltins(out);
   if (cwd) { scanSkills(join(cwd, ".claude", "skills"), "claude", "project", out); scanCommands(join(cwd, ".claude", "commands"), "claude", "project", out); }
   out.sort((a, b) => prio(a) - prio(b) || a.name.localeCompare(b.name));

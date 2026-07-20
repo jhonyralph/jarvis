@@ -1425,6 +1425,7 @@
       if(text.startsWith('#')){ const note=text.replace(/^#+\s*/,'').trim(); if(!note) return; closeTrig();
         dialog({title:'Anexar à memória do projeto: “'+note.slice(0,60)+(note.length>60?'…':'')+'”?', okText:'Anexar'}).then(ok=>{ if(ok){ tx({t:'memory_append', text:note, sessionId:currentSession}); E.input.value=''; E.input.style.height='auto'; if(currentSession){ delete draftBySession[currentSession]; saveDrafts(); } } });
         return; }
+      if(text.startsWith('!')) pushBang(text.slice(1).split('\n')[0].trim());   // guarda no histórico do "!"
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; renderAttach();
       if(currentSession){ delete draftBySession[currentSession]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,msgId:uid()}); return; }
@@ -1449,6 +1450,8 @@
     // ---------- composer triggers: "/" commands+skills+mcp · "@" files · "#" memory ----------
     let cmdList=[], cmdListFor=null, cmdReqPending=false;   // "/" catalog (per machine)
     let fileList=[], mentionT=null, fileAt=null, slashAt=null;   // "@" results/debounce/range + "/" range
+    const bangHist=(()=>{ try{ return JSON.parse(localStorage.getItem('jarvis_bang')||'[]'); }catch(e){ return []; } })();  // "!" histórico (por dispositivo)
+    function pushBang(cmd){ if(!cmd)return; const h=[cmd,...bangHist.filter(x=>x!==cmd)].slice(0,30); bangHist.length=0; bangHist.push(...h); try{ localStorage.setItem('jarvis_bang',JSON.stringify(bangHist)); }catch(e){} }
     let trigMode=null, trigItems=[], trigIdx=-1;            // shared trigger-popover state (distinct from the E.pop popover)
     const slashOn=()=> cfg.slashMenu!==false;               // default ON; the toggle governs ALL trigger popovers
     function requestCommands(){ if(slashOn() && !cmdReqPending){ cmdReqPending=true; tx({t:'commands'}); } }
@@ -1481,13 +1484,27 @@
       trigItems=fileList.filter(f=>!q||f.toLowerCase().includes(q)).slice(0,50); trigIdx=trigItems.length?0:-1;
       if(!trigItems.length && !fileList.length){ E.cmdPop.innerHTML='<div class="cmdempty">Buscando arquivos…</div>'; E.cmdPop.classList.remove('hidden'); return; }
       renderTrig(); }
+    // "#"/"!" agem só no INÍCIO da mensagem (é onde o servidor os trata) → mostram um hint (e o "!" o histórico).
+    function openMem(){ trigItems=[]; trigIdx=-1;
+      E.cmdPop.innerHTML='<div class="cmdhint">📝 Anexar à memória do projeto ('+(cmdAgentSel()==='codex'?'AGENTS.md':'CLAUDE.md')+') — Enter confirma · Esc cancela</div>';
+      E.cmdPop.classList.remove('hidden'); }
+    function openBang(frag){ const q=frag.toLowerCase();
+      trigItems=bangHist.filter(c=>!q||c.toLowerCase().includes(q)).slice(0,20); trigIdx=trigItems.length?0:-1;
+      const hint='<div class="cmdhint">⚡ Rodar no terminal e injetar a saída — Enter roda · Esc cancela'+(trigItems.length?' · Tab usa o histórico':'')+'</div>';
+      const rows=trigItems.map((c,i)=>'<div class="cmdit'+(i===trigIdx?' sel':'')+'" data-i="'+i+'"><span class="cn">! '+esc(c)+'</span></div>');
+      E.cmdPop.innerHTML=hint+rows.join(''); E.cmdPop.classList.remove('hidden');
+      E.cmdPop.querySelectorAll('.cmdit').forEach(el=>{ el.onclick=()=>selectTrig(+el.dataset.i); });
+      const s=E.cmdPop.querySelector('.cmdit.sel'); if(s) s.scrollIntoView({block:'nearest'}); }
     function updateTrig(){
       if(!slashOn()){ closeTrig(); return; }
       const st=slashTok(); if(st){ trigMode='cmd'; slashAt=st; openCmd(st.tok); return; }
       const at=atTok(); if(at){ trigMode='file'; fileAt=at; openMention(at.tok); return; }
+      const h=/^\s*([#!])([\s\S]*)$/.exec(E.input.value);
+      if(h){ if(h[1]==='#'){ trigMode='mem'; openMem(); } else { trigMode='bang'; openBang((h[2].split('\n')[0]||'').trim()); } return; }
       closeTrig(); }
     function moveTrig(d){ if(!trigItems.length)return; trigIdx=(trigIdx+d+trigItems.length)%trigItems.length; renderTrig(); }
     function selectTrig(i){ const it=trigItems[i]; if(it==null)return;
+      if(trigMode==='bang'){ const v=E.input.value; const nl=v.indexOf('\n'); E.input.value='!'+it+(nl===-1?'':v.slice(nl)); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} return; }
       if(trigMode==='file'){ const at=fileAt||atTok(); if(!at){ closeTrig(); return; } const v=E.input.value; E.input.value=v.slice(0,at.start)+it+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} return; }
       // cmd mode: replace just the "/tok" on its line with "/name " (keeps preceding lines/text intact)
       const at=slashAt||atTok()||{start:0,end:E.input.value.length}; const v=E.input.value;
@@ -1499,7 +1516,9 @@
         if(e.key==='ArrowDown'){ e.preventDefault(); moveTrig(1); return; }
         if(e.key==='ArrowUp'){ e.preventDefault(); moveTrig(-1); return; }
         if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); closeTrig(); return; }
-        if((e.key==='Tab'||(e.key==='Enter'&&!e.shiftKey)) && trigIdx>=0){ e.preventDefault(); selectTrig(trigIdx); return; }
+        if(e.key==='Tab' && trigIdx>=0){ e.preventDefault(); selectTrig(trigIdx); return; }
+        // Enter só INSERE em / e @ (listas de escolha). Em ! e # o Enter deve RODAR/CONFIRMAR (cai no submit).
+        if(e.key==='Enter'&&!e.shiftKey && (trigMode==='cmd'||trigMode==='file') && trigIdx>=0){ e.preventDefault(); selectTrig(trigIdx); return; }
       }
       if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
