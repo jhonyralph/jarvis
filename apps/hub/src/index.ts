@@ -99,6 +99,16 @@ const EXECUTION_CFG_FILE = join(JARVIS_DIR, "execution-config.json");
 const ADAPTIVE_POLICY_FILE = join(JARVIS_DIR, "policies.json");
 let adaptivePolicyDoc: AdaptivePolicyDocument = loadAdaptivePolicyDocument(ADAPTIVE_POLICY_FILE);
 function saveAdaptivePolicy(): void { saveAdaptivePolicyDocument(ADAPTIVE_POLICY_FILE, adaptivePolicyDoc); }
+interface AdaptiveDecisionLogEvent { ts: number; kind: string; action: string; reason: string; sessionId?: string; detail?: string; policyId?: string; }
+const ADAPTIVE_DECISIONS_FILE = join(JARVIS_DIR, "adaptive-decisions.json");
+let adaptiveDecisionLog: AdaptiveDecisionLogEvent[] = (() => {
+  try { return JSON.parse(readFileSync(ADAPTIVE_DECISIONS_FILE, "utf8")).filter((e: any) => e && typeof e.ts === "number").slice(-500); } catch { return []; }
+})();
+function recordAdaptiveDecision(event: Omit<AdaptiveDecisionLogEvent, "ts">): void {
+  adaptiveDecisionLog.push({ ts: Date.now(), ...event });
+  if (adaptiveDecisionLog.length > 500) adaptiveDecisionLog = adaptiveDecisionLog.slice(-500);
+  try { writeJsonAtomic(ADAPTIVE_DECISIONS_FILE, adaptiveDecisionLog, { pretty: true }); } catch { /* ignore */ }
+}
 function effectivePolicyFor(sessionId?: string): ReturnType<typeof resolveAdaptivePolicy> {
   const cwd = sessionId ? sessionCwd(sessionId) : undefined;
   return resolveAdaptivePolicy(adaptivePolicyDoc, { sessionId, cwd });
@@ -132,6 +142,7 @@ function queueRoutineApproval(r: Routine, reason: string): void {
     ttlMs: 12 * 60 * 60 * 1000,
   });
   pendingAdaptiveApprovals.set(approval.id, { approval, routineId: r.id });
+  recordAdaptiveDecision({ kind: "routine", action: "ask", reason, sessionId: sid, detail: r.name, policyId: approval.policyId });
   notifyEvent("machine", "Rotina aguardando aprovação", `${r.name}: ${reason}`, sid);
   broadcastAdaptiveApprovals();
 }
@@ -147,6 +158,7 @@ function completeAdaptiveApproval(id: string, action: "approve" | "reject", audi
     notifyEvent("machine", "Aprovação recusada", pending.approval.title, pending.approval.sessionId);
     auth.audit("adaptive_approval", { ...audit, detail: `${pending.approval.id}: rejected` });
   }
+  recordAdaptiveDecision({ kind: "approval", action: action === "approve" ? "approved" : "rejected", reason: "owner_action", sessionId: pending.approval.sessionId, detail: pending.approval.title, policyId: pending.approval.policyId });
   broadcastAdaptiveApprovals();
   return pending.approval;
 }
@@ -1311,6 +1323,7 @@ async function runRoutine(r: Routine, approved = false): Promise<void> {
     const resolved = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: r.cwd || CWD, sessionId: sid });
     const decision = decideAdaptiveRun(resolved.policy, { background: true, risk: "medium" });
     if (decision.action === "reject") {
+      recordAdaptiveDecision({ kind: "routine", action: "reject", reason: decision.reason, sessionId: sid, detail: r.name, policyId: resolved.policy.id });
       notifyEvent("error", "⏰ " + r.name, "bloqueada pela política: " + decision.reason, sid);
       return;
     }
@@ -1318,6 +1331,7 @@ async function runRoutine(r: Routine, approved = false): Promise<void> {
       queueRoutineApproval(r, decision.reason);
       return;
     }
+    recordAdaptiveDecision({ kind: "routine", action: "allow", reason: decision.reason, sessionId: sid, detail: r.name, policyId: resolved.policy.id });
   }
   if (r.runnerId && r.runnerId !== LOCAL_ID) {
     const rc = runners.get(r.runnerId);
@@ -1817,7 +1831,9 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
 }
 async function maybeFlushQueue(sid: string, autoplay: boolean): Promise<void> {
   if (autoplay) {
-    const decision = decideAdaptiveRun(effectivePolicyFor(sid).policy, { queueAutoplay: true });
+    const resolved = effectivePolicyFor(sid);
+    const decision = decideAdaptiveRun(resolved.policy, { queueAutoplay: true });
+    recordAdaptiveDecision({ kind: "queue_autoplay", action: decision.action, reason: decision.reason, sessionId: sid, policyId: resolved.policy.id });
     if (decision.action !== "allow") return;
   }
   await flushQueue(sid);
@@ -2658,7 +2674,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       try {
         const cwd = sessionCwd(sid);
         const agent = sessionAgent(sid);
-        const decision = decideMemoryWrite(effectivePolicyFor(sid).policy, { repoAvailable: true });
+        const resolved = effectivePolicyFor(sid);
+        const decision = decideMemoryWrite(resolved.policy, { repoAvailable: true });
+        recordAdaptiveDecision({ kind: "memory_write", action: decision.action, reason: decision.reason, sessionId: sid, policyId: resolved.policy.id });
         if (decision.action === "reject") { send(ws, { t: "error", message: "memória bloqueada pela política: " + decision.reason }); return; }
         let text = "";
         if (decision.action === "repo") {
@@ -2978,6 +2996,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "adaptive_approvals") {
       if (!requireOwner(ws)) return;
       send(ws, { t: "adaptive_approvals", approvals: adaptiveApprovalList() });
+      return;
+    }
+    if (msg.t === "adaptive_decisions") {
+      if (!requireOwner(ws)) return;
+      const limit = Number.isSafeInteger(msg.limit) && msg.limit > 0 ? Math.min(msg.limit, 200) : 50;
+      send(ws, { t: "adaptive_decisions", decisions: adaptiveDecisionLog.slice(-limit).reverse() });
       return;
     }
     if (msg.t === "adaptive_approval" && typeof msg.id === "string") {
