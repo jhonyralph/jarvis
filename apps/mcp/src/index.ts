@@ -88,7 +88,12 @@ const tools: McpTool[] = [
       const agLine = Object.entries(T.byAgentUsage || {}).sort((a, b) => Number((b[1] as any)?.costUsd || 0) - Number((a[1] as any)?.costUsd || 0)).map(([a, u]) => `${agName[a] || a} ${usageFmt(u)}`).join(" · ");
       if (agLine) out += `Custo por IA: ${agLine}\n`;
       out += mm.map((x: any) => `- ${x.label}: ${x.online ? "online" : "offline"}${x.active ? ` · ${x.active} rodando` : ""}${x.stale ? " · desatualizada" : ""}`).join("\n");
-      if (m.plan?.fiveHour) out += `\nPlano 5h: ${Math.round(m.plan.fiveHour.pct)}%` + (m.plan.sevenDay ? ` · semanal: ${Math.round(m.plan.sevenDay.pct)}%` : "");
+      const usageText = (w: any) => {
+        const used = Math.min(100, Math.max(0, Math.round(Number(w?.pct) || 0)));
+        const remaining = Math.min(100, Math.max(0, Math.round(Number.isFinite(Number(w?.remainingPct)) ? Number(w.remainingPct) : (100 - used))));
+        return `${used}% usado, ${remaining}% restante`;
+      };
+      if (m.plan?.fiveHour) out += `\nPlano 5h: ${usageText(m.plan.fiveHour)}` + (m.plan.sevenDay ? ` · semanal: ${usageText(m.plan.sevenDay)}` : "");
       return out;
     },
   },

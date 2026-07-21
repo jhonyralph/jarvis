@@ -225,7 +225,7 @@ test("Codex usage uses per-turn deltas while context and plan come from rollout 
   ]);
   const usage = codexUsage(telemetry!.total, { input_tokens: 1000, cached_input_tokens: 500, output_tokens: 100 }, telemetry);
   assert.equal(usage!.inputTokens, 500); assert.equal(usage!.contextTokens, 600); assert.equal(usage!.contextWindowTokens, 258400); assert.equal(usage!.model, "gpt-5.6-sol");
-  const plan = codexPlanUsage(telemetry); assert.equal(plan!.sevenDay!.pct, 12); assert.match(plan!.label || "", /pro/);
+  const plan = codexPlanUsage(telemetry); assert.equal(plan!.sevenDay!.pct, 12); assert.equal(plan!.sevenDay!.remainingPct, 88); assert.match(plan!.label || "", /pro/);
 });
 
 // --- Codex item → StreamEvent mapping (same vocabulary Claude emits) ---

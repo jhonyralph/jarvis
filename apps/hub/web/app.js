@@ -705,8 +705,11 @@
       }
       E.canvasModal.classList.remove('hidden'); }
     E.canvasClose.onclick=()=>{ tx({t:'canvas_choice',choice:'cancel'}); hideCanvas(); };
-    function pctBar(w){ const p=Math.min(100,Math.max(0,Math.round(w?.pct||0))); const col=p>=90?'#f43f5e':p>=70?'#f59e0b':'#22c55e';
-      return `<div style="background:#ffffff14;border-radius:5px;height:7px;overflow:hidden;margin-top:2px"><div style="width:${p}%;height:100%;background:${col}"></div></div><div class="mut" style="font-size:10.5px">${p}%${w?.resetsAt?' · reseta '+new Date(w.resetsAt).toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}):''}</div>`; }
+    function planUsed(w){ return Math.min(100,Math.max(0,Math.round(Number(w?.pct)||0))); }
+    function planRemaining(w){ return Math.min(100,Math.max(0,Math.round(Number.isFinite(Number(w?.remainingPct))?Number(w.remainingPct):(100-planUsed(w))))); }
+    function planPctText(w){ return `${planUsed(w)}% usado · ${planRemaining(w)}% restante`; }
+    function pctBar(w){ const p=planUsed(w), col=p>=90?'#f43f5e':p>=70?'#f59e0b':'#22c55e';
+      return `<div style="background:#ffffff14;border-radius:5px;height:7px;overflow:hidden;margin-top:2px"><div style="width:${p}%;height:100%;background:${col}"></div></div><div class="mut" style="font-size:10.5px">${planPctText(w)}${w?.resetsAt?' · reseta '+new Date(w.resetsAt).toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}):''}</div>`; }
     function renderFleet(m){ if(!E.fleetBody)return; const T=m.totals||{}; const mm=m.machines||[]; let h='';
       const agLabel=a=>({'claude-code':'Claude','codex':'Codex','gemini':'Gemini','cursor':'Cursor','copilot':'Copilot','opencode':'OpenCode','cline':'Cline','qwen':'Qwen','continue':'Continue','kiro':'Kiro','antigravity':'Antigravity','aider':'Aider','legacy-unattributed':'Legado não atribuído','unknown':'Legado não atribuído','remote-unknown':'Remoto não atribuído','outro':'Outros'})[a]||a;
       h+='<div class="sec" style="margin:0 0 4px">Configuração nas máquinas</div>';
@@ -1021,9 +1024,10 @@
       p.innerHTML=h; if(planKey===usageRunner+'\0'+usageAgent) renderPlan(planUsage); tx({t:'get_usage',agent:usageAgent,runnerId:usageRunner}); }
     function renderPlan(plan){ const el=document.getElementById('uplan'); if(!el)return;
       if(!plan){ el.className='umut'; el.textContent=planStatus==='unsupported'?'o CLI desta IA não publica limites de conta':planStatus==='error'?'erro ao consultar o provedor':'nenhum limite foi reportado pelo provedor'; return; }
-      const w=(lbl,x,color)=> x?`<div class="urow"><span>${esc(lbl)}</span><b>${x.pct}%</b></div>`+ubar(x.pct,color)+(x.resetsAt?`<div class="umut ureset">reinicia ${fmtReset(x.resetsAt)}</div>`:''):'';
+      const w=(lbl,x,color)=> x?`<div class="urow"><span>${esc(lbl)}</span><b>${planPctText(x)}</b></div>`+ubar(planUsed(x),color)+(x.resetsAt?`<div class="umut ureset">reinicia ${fmtReset(x.resetsAt)}</div>`:''):'';
       let h=w('Limite de 5 horas',plan.fiveHour,'#2563eb')+w('Semanal · todos os modelos',plan.sevenDay,'#7c3aed');
       (plan.extra||[]).forEach(e=>h+=w(e.label,e,'#7c3aed'));
+      if(plan.source) h+=`<div class="umut">fonte: ${esc(plan.source)}</div>`;
       el.className=''; el.innerHTML=h||'<span class="umut">sem dados</span>'; }
     E.usageBtn.onclick=()=>togglePop(E.usageBtn,buildUsagePop);
 

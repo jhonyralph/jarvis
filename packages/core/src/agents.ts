@@ -87,8 +87,8 @@ export interface ModelInfo {
   source?: ModelSource;
 }
 
-/** One usage window (a % used + when it resets). */
-export interface UsageWindow { pct: number; resetsAt?: string; }
+/** One account-limit window. `pct` is used percent; `remainingPct` is derived for clear UI copy. */
+export interface UsageWindow { pct: number; remainingPct?: number; resetsAt?: string; }
 /** Account-level plan usage, if the agent exposes it (Claude: /api/oauth/usage). */
 export interface AgentUsage {
   fiveHour?: UsageWindow;
@@ -96,6 +96,13 @@ export interface AgentUsage {
   extra?: Array<{ label: string } & UsageWindow>;
   label?: string;
   source?: string;
+}
+
+function usageWindowFromUsed(usedPercent: unknown, resetsAt?: string): UsageWindow | undefined {
+  const raw = Number(usedPercent);
+  if (!Number.isFinite(raw)) return undefined;
+  const pct = Math.min(100, Math.max(0, raw));
+  return { pct, remainingPct: Math.min(100, Math.max(0, 100 - pct)), resetsAt };
 }
 
 export interface AgentCaps {
@@ -400,7 +407,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         headers: { authorization: `Bearer ${token}`, "anthropic-version": "2023-06-01", "anthropic-beta": "oauth-2025-04-20" },
       });
       const j: any = await res.json();
-      const win = (w: any): UsageWindow | undefined => (w && typeof w.utilization === "number") ? { pct: Math.round(w.utilization), resetsAt: w.resets_at } : undefined;
+      const win = (w: any): UsageWindow | undefined => w ? usageWindowFromUsed(w.utilization, w.resets_at) : undefined;
       data = { fiveHour: win(j.five_hour), sevenDay: win(j.seven_day) };
       const extra: Array<{ label: string } & UsageWindow> = [];
       for (const [k, label] of [["seven_day_opus", "Semanal · Opus"], ["seven_day_sonnet", "Semanal · Sonnet"]] as const) { const w = win(j[k]); if (w) extra.push({ label, ...w }); }
@@ -703,10 +710,13 @@ function codexRolloutAppend(path: string, offset: number): { data: Buffer; offse
 
 export function codexPlanUsage(t?: CodexTelemetry): AgentUsage | null {
   const rl = t?.rateLimits; if (!rl) return null;
-  const windows: Array<{ label: string; pct: number; minutes?: number; resetsAt?: string }> = [];
-  for (const [label, value] of [["Principal", rl.primary], ["Secundário", rl.secondary]] as const) if (value && Number.isFinite(Number(value.used_percent))) windows.push({ label, pct: Number(value.used_percent), minutes: Number(value.window_minutes) || undefined, resetsAt: value.resets_at ? new Date(Number(value.resets_at) * 1000).toISOString() : undefined });
+  const windows: Array<{ label: string; usage: UsageWindow; minutes?: number }> = [];
+  for (const [label, value] of [["Principal", rl.primary], ["Secundário", rl.secondary]] as const) {
+    const usage = value ? usageWindowFromUsed(value.used_percent, value.resets_at ? new Date(Number(value.resets_at) * 1000).toISOString() : undefined) : undefined;
+    if (usage) windows.push({ label, usage, minutes: Number(value.window_minutes) || undefined });
+  }
   const result: AgentUsage = { label: rl.plan_type ? `Codex · ${rl.plan_type}` : "Codex", source: "Codex rollout token_count.rate_limits", extra: [] };
-  for (const w of windows) { const target = { pct: w.pct, resetsAt: w.resetsAt }; if (w.minutes === 300) result.fiveHour = target; else if (w.minutes === 10080) result.sevenDay = target; else result.extra!.push({ label: `${w.label}${w.minutes ? ` · ${w.minutes} min` : ""}`, ...target }); }
+  for (const w of windows) { if (w.minutes === 300) result.fiveHour = w.usage; else if (w.minutes === 10080) result.sevenDay = w.usage; else result.extra!.push({ label: `${w.label}${w.minutes ? ` · ${w.minutes} min` : ""}`, ...w.usage }); }
   if (!result.extra?.length) delete result.extra;
   return result;
 }
