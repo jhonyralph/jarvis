@@ -354,7 +354,7 @@
     function showPending(){ if(pendingEl)return; pendingStart=Date.now(); pendingEl=document.createElement('div'); pendingEl.className='msg bot pending';
       const upd=()=>{ if(!pendingEl)return; const s=Math.floor((Date.now()-pendingStart)/1000); const t=s>=60?`${Math.floor(s/60)}m ${s%60}s`:`${s}s`;
         pendingEl.innerHTML=`<span class="work"><span class="spin"></span>Jarvis trabalhando… ${t}</span>`; };
-      upd(); pendingTimer=setInterval(upd,1000); E.log.appendChild(pendingEl); autoScroll(); }
+      upd(); pendingTimer=setInterval(upd,1000); E.log.appendChild(pendingEl); updateStopStatus(); autoScroll(); }
     function clearPending(){ if(pendingTimer){ clearInterval(pendingTimer); pendingTimer=null; } if(pendingEl){ pendingEl.remove(); pendingEl=null; } }
     // ---- streaming (atividade ao vivo: ferramentas + texto) ----
     const toolIcon = n => ({Bash:'🖥',Read:'📄',Edit:'✏️',Write:'✏️',NotebookEdit:'✏️',MultiEdit:'✏️',Grep:'🔎',Glob:'📁',Task:'🤖',Agent:'🤖',WebFetch:'🌐',WebSearch:'🌐',Thinking:'◔',Plan:'📋'}[n]||'🔧');
@@ -1244,7 +1244,11 @@
     // "parando…" é POR SESSÃO, não global: só aparece na sessão que você parou; troca de sessão
     // reflete o estado da sessão atual. (Não mexe nos status de voz listening/speaking.)
     const stopping={};
-    function updateStopStatus(){ if(currentSession && stopping[currentSession]) status('busy',t('spStopping')); else if(E.status.className==='busy') status(''); }
+    function updateStopStatus(){
+      if(currentSession && stopping[currentSession]) status('busy',t('spStopping'));
+      else if(currentSession&&busy(currentSession)&&!askActive&&!askingSids.has(currentSession)) status('busy','Jarvis trabalhando...');
+      else if(E.status.className==='busy') status('');
+    }
     // trava global de operação de voz (resumo/digest): só 1 por vez, independente do chat.
     // libera ao chegar {t:summary}/{t:busy}/{t:error} ou por failsafe de tempo.
     let voiceOp=null,voiceOpSid=null,voiceOpBtn=null,voiceOpHtml='',voiceOpTimer=0;
@@ -1475,7 +1479,7 @@
           if(currentSession && m.sessionId!==currentSession && (!openingSession||m.sessionId!==openingSession)) return;
           openingSession=null; applyHistory(m);
         }
-        else if(m.t==='message'){ if(m.message.role==='assistant') clearRestorable(m.message.sessionId); if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
+        else if(m.t==='message'){ if(m.message.role==='assistant') clearRestorable(m.message.sessionId); if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); if(!(m.message.role==='user'&&consumeOptimisticUser(m.message.sessionId,m.message))) addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='queue'){ queueBySession[m.sessionId]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession) renderQueue(); }
         else if(m.t==='auto_route'&&m.sessionId===currentSession){ if(m.state==='started'){ status('busy','Escolhendo IA, modelo e esforço…'); }
           else if(m.state==='cancelled'){ status(''); clearPending(); onTurnEnd(m.sessionId); }
@@ -1534,7 +1538,7 @@
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
         else if(m.t==='voice_ignored'){ endVoiceOp(); clearPending(); status(''); toast(t('tVoiceIgnored')); }
-        else if(m.t==='queued'){ endVoiceOp(); clearPending(); status(''); toast(t('tQueued')); }
+        else if(m.t==='queued'){ endVoiceOp(); justSent.delete(m.sessionId); if(m.sessionId===currentSession){ clearPending(); status('busy','Mensagem na fila — aguardando o turno atual terminar'); } toast(t('tQueued')); refreshComposer(); }
         else if(m.t==='voice_timing'){ try{ console.log('[voz] STT '+m.stt+'ms · locutor '+m.speaker+'ms · correção+gate '+m.preflight+'ms'); }catch(e){} }
         else if(m.t==='runs'){ const now=m.active||[]; const finished=[...new Set([...activeRuns,...justSent])].filter(id=>!now.includes(id)); activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; now.forEach(id=>justSent.delete(id)); finished.forEach(id=>onTurnEnd(id)); renderRecents(); refreshComposer(); scheduleAllRefresh(); }
         else if(m.t==='qr'){ E.qrImg.src=m.dataUri; E.qrUrl.textContent=m.url; E.qrModal.classList.remove('hidden'); }
@@ -1659,7 +1663,7 @@
     // Fila e "ocupado" são POR SESSÃO. A verdade de quem está rodando é o servidor (activeRuns, via
     // {t:runs}); justSent cobre a janela entre eu enviar e o servidor confirmar. Enfileirar numa
     // sessão NUNCA bloqueia outra: cada uma tem sua fila e seu estado.
-    const queueBySession={}, justSent=new Set(), justSentTimers={};
+    const queueBySession={}, justSent=new Set(), justSentTimers={}, optimisticUsers={};
     // draft do composer POR SESSÃO, persistido — sobrevive ao lock/descarte da aba no mobile (antes
     // era só em memória, então bloquear o telefone perdia o que você estava digitando).
     const draftBySession=(()=>{ try{ return JSON.parse(localStorage.getItem('jarvis_drafts')||'{}'); }catch(e){ return {}; } })();
@@ -1685,6 +1689,26 @@
       E.log.appendChild(b); autoScroll(); }
     function queueOf(sid){ return queueBySession[sid] || (queueBySession[sid]=[]); }
     function busy(sid){ return !!sid && (activeRuns.includes(sid) || justSent.has(sid)); }
+    function optimisticList(sid){ return optimisticUsers[sid] || (optimisticUsers[sid]=[]); }
+    function optimisticMessage(text,atts){
+      atts=Array.isArray(atts)?atts:[];
+      const images=atts.filter(a=>a&&a.image).map(a=>a.preview||(a.content&&('data:image/*;base64,'+a.content))).filter(Boolean);
+      const files=atts.filter(a=>a&&!a.image).map(a=>({name:a.name||'arquivo',content:a.content}));
+      return {role:'user',text:text||'(anexo)',images,files};
+    }
+    function addOptimisticUser(sid,msgId,text,atts){
+      if(sid!==currentSession)return;
+      const el=buildMsgEl(optimisticMessage(text,atts)); el.classList.add('optimistic'); el.dataset.msgId=msgId;
+      const anchor=pendingEl||strEl; if(anchor)E.log.insertBefore(el,anchor); else E.log.appendChild(el);
+      optimisticList(sid).push({msgId,text:text||'(anexo)',el}); autoScroll();
+    }
+    function consumeOptimisticUser(sid,message){
+      const list=optimisticList(sid);
+      while(list.length&&!list[0].el.isConnected) list.shift();
+      const idx=list.findIndex(x=>x.text===(message.text||'(anexo)'));
+      if(idx<0)return false;
+      const [hit]=list.splice(idx,1); hit.el.classList.remove('optimistic'); delete hit.el.dataset.msgId; return true;
+    }
     // "justSent" cobre a janela entre eu ENVIAR e o servidor CONFIRMAR o run (activeRuns, via {t:runs}).
     // Failsafe POR SESSÃO: se em 45s o servidor não confirmar (run perdido — WS caiu, done não chegou),
     // destrava a sessão em vez de deixá-la "executando" pra sempre bloqueando novos envios. NUNCA
@@ -1696,18 +1720,19 @@
       // Durante uma DECISÃO pendente: trava input + enviar + mic (a resposta vem pelo card), mas
       // mantém Parar ATIVO. Durante a fase "consolidando" (o servidor está gerando as perguntas): trava
       // tudo e mostra o status, para o input não ficar livre no ~1min entre o fim do turno e a pergunta.
-      const consolidating=askingSids.has(currentSession);
+      const consolidating=askingSids.has(currentSession), running=busy(currentSession);
       const lock=!!askActive, ro=curNative&&!curNativeWritable, block=ro||lock||consolidating;
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!(curBusy||lock));
       E.input.disabled=block; E.sendBtn.disabled=block; if(E.mic)E.mic.disabled=block;
-      E.input.placeholder=consolidating?'Consolidando o resultado…':(lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':t('composerPh')));
-      renderQueue(); maybeReload(); }
+      E.input.placeholder=consolidating?'Consolidando o resultado…':(lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':(running?'Turno em andamento — enviar adiciona à fila automática':t('composerPh'))));
+      renderQueue(); updateStopStatus(); maybeReload(); }
     // id de mensagem p/ idempotência: o runner executa um turnId no máximo uma vez (re-entrega do
     // MESMO frame reusa o id e é ignorada). Cada submit gera um id novo (dois envios = dois turnos).
     const uid=()=>{ try{ return crypto.randomUUID(); }catch(e){ return 'm'+Date.now()+Math.random().toString(36).slice(2,8); } };
-    function sendMsgTo(sid,text,atts){ if(!sid)return; lastWasVoice=false; bumpSession(sid); markJustSent(sid);
-      tx({t:'send',text:text||'(anexo)',speak,model:curModel,effort:curEffort,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId:uid()});
-      if(sid===currentSession){ stick=true; showPending(); } refreshComposer(); }
+    function sendMsgTo(sid,text,atts){ if(!sid)return; const msgId=uid(), body=text||'(anexo)'; lastWasVoice=false; bumpSession(sid); markJustSent(sid);
+      if(sid===currentSession){ stick=true; addOptimisticUser(sid,msgId,body,atts||[]); if(!curStarted){ curStarted=true; renderControls(); } showPending(); }
+      tx({t:'send',text:body,speak,model:curModel,effort:curEffort,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
+      refreshComposer(); }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
     // Fim de turno de uma sessão. O FLUSH da fila agora é do SERVIDOR (flushQueue no hub): ele
     // envia a fila acumulada e re-transmite {t:queue}/{t:message}. Aqui só destravamos o composer.
@@ -1715,10 +1740,9 @@
     function clearQueue(){ if(currentSession){ queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); } refreshComposer(); }
     function renderQueue(){ if(!E.queueRow)return; const q=queueOf(currentSession); E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!q.length); if(!q.length)return;
       const decisionHold=!!askActive||askingSids.has(currentSession);
-      const canRun=!!currentSession&&!busy(currentSession)&&!decisionHold;
-      const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — '+(canRun?'prontas para rodar':'enviadas juntas quando terminar'); hdr.appendChild(s);
+      const waiting=decisionHold?'aguardando sua decisão':(busy(currentSession)?'rodam automaticamente quando este turno terminar':'rodam automaticamente agora');
+      const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — '+waiting; hdr.appendChild(s);
       const acts=document.createElement('div'); acts.className='qacts';
-      if(canRun){ const run=document.createElement('button'); run.type='button'; run.className='qrun'; run.textContent='▶ rodar fila'; run.onclick=()=>{ tx({t:'flushqueue',sessionId:currentSession}); }; acts.appendChild(run); }
       const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[currentSession]=[]; renderQueue(); tx({t:'clearqueue',sessionId:currentSession}); }; acts.appendChild(clr); hdr.appendChild(acts); E.queueRow.appendChild(hdr);
       const list=document.createElement('div'); list.className='qlist';
       q.forEach((it0,i)=>{ const it=document.createElement('div'); it.className='qitem';

@@ -984,7 +984,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     const now = new Set<string>(m.active || []);
     runnerActive.set(rc.id, now);
     for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] });
-    for (const sid of prev) if (!now.has(sid)) void maybeFlushQueue(sid, true); // turno do runner terminou → talvez rode a fila DELE
+    for (const sid of prev) if (!now.has(sid)) void maybeFlushQueue(sid, false); // turno do runner terminou → roda a fila DELE
     return;
   }
   // Update outcome of a machine. Goes to whoever asked (any owner watching the update panel),
@@ -1892,7 +1892,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     if (localAborts.get(sid) === ctrl) localAborts.delete(sid);
     activityBuf.delete(sid);
     activeRuns.delete(sid); broadcastRuns();
-    void maybeFlushQueue(sid, true); // fim de turno → talvez envie a fila DESTA sessão (se houver), no servidor
+    void maybeFlushQueue(sid, false); // fim de turno → envia a fila DESTA sessão (se houver), no servidor
   }
 }
 async function maybeFlushQueue(sid: string, autoplay: boolean): Promise<void> {
@@ -2806,7 +2806,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           auth.audit("send", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: ar, detail: `${sid}: ${String(msg.text).slice(0, 80)}` });
           if (routeAborts.has(sid) || (runnerActive.get(ar)?.has(sid) ?? false)) {
             queueOf(sid).push({ text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined });
-            broadcastQueue(sid); saveQueues(); send(ws, { t: "queued", sessionId: sid, text: msg.text }); return;
+            broadcastQueue(sid); saveQueues(); void maybeFlushQueue(sid, false); send(ws, { t: "queued", sessionId: sid, text: msg.text }); return;
           }
           const flags = autoFlags(msg.auto);
           let state = runnerSessionState.get(rc.id)?.get(sid);
@@ -3239,7 +3239,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
       if (decisionLocked(msg.sessionId)) { send(ws, { t: "error", message: decisionLockMessage(msg.sessionId) }); return; }
       { const rid = activeRunner(ws); queueOf(msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined }); }
-      broadcastQueue(msg.sessionId); saveQueues(); return;
+      broadcastQueue(msg.sessionId); saveQueues(); void maybeFlushQueue(msg.sessionId, false); return;
     }
     if (msg.t === "dequeue" && typeof msg.sessionId === "string" && typeof msg.index === "number") {
       if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
@@ -3389,7 +3389,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         runnerId: rid !== LOCAL_ID ? rid : undefined,
         msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
       });
-      broadcastQueue(sid); saveQueues();
+      broadcastQueue(sid); saveQueues(); void maybeFlushQueue(sid, false);
       // ack so the client stops its "processando" spinner and confirms the utterance landed (the
       // queue list itself already updated via broadcastQueue above).
       send(ws, { t: "queued", sessionId: sid, text, voice: msg.t === "voice" });

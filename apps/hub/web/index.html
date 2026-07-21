@@ -58,6 +58,7 @@
     #limit { padding:10px 14px; background:#7c2d12; color:#fed7aa; font-size:13px; }
     #log { flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:14px; scrollbar-gutter:stable both-edges; }
     .msg.me { align-self:flex-end; background:var(--me); color:#fff; padding:9px 13px; border-radius:14px; white-space:pre-wrap; max-width:min(88%,760px); overflow-wrap:anywhere; }
+    .msg.me.optimistic { opacity:.78; }
     .msg.me .msgimgs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
     .msg.me .msgimgs:last-child { margin-bottom:0; }
     .msg.me .msgimg { max-width:220px; max-height:260px; width:auto; border-radius:10px; cursor:zoom-in; display:block; }
@@ -212,7 +213,6 @@
     #queueRow .qlist { display:flex; flex-direction:column; gap:5px; max-height:min(42vh,280px); overflow-y:auto; padding-right:2px; }
     #queueRow .qhdr { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11.5px; color:var(--mut); }
     #queueRow .qacts { display:flex; align-items:center; gap:7px; flex:none; }
-    #queueRow .qrun { background:#22c55e; color:#04210f; border:0; cursor:pointer; font-size:11.5px; padding:2px 7px; border-radius:7px; }
     #queueRow .qclr { background:none; border:0; color:#f0883e; cursor:pointer; font-size:11.5px; padding:2px 4px; }
     #queueRow .qitem { background:#ffffff0d; border:1px dashed var(--line); border-radius:9px; padding:6px 9px; }
     #queueRow .qhead { display:flex; align-items:center; gap:6px; }
@@ -772,7 +772,7 @@
       </div>
       <label class="row"><input type="checkbox" id="setPolicyRepoWrites"> Permitir escrita no repo quando a política permitir</label>
       <label class="row"><input type="checkbox" id="setPolicyDiff" checked> Exigir preview/diff antes de escrever no repo</label>
-      <label class="row"><input type="checkbox" id="setPolicyAutoplay"> Permitir rodar fila automaticamente</label>
+      <label class="row"><input type="checkbox" id="setPolicyAutoplay"> Permitir automações em cadeia sem confirmação</label>
       <label class="row"><input type="checkbox" id="setPolicyBackground"> Permitir turnos em background</label>
       <div class="row" style="gap:6px;flex-wrap:wrap">
         <button id="setPolicyProject" class="ghost" type="button">Salvar para pasta atual</button>
