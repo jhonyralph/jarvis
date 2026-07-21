@@ -195,16 +195,35 @@
     // Luby e o Desktop, o RTT oscila de 28ms a 621ms via DERP. O payload, porém, é o mesmo que
     // já desenhamos — então guardamos: revisitar pinta na hora e a cópia fresca só substitui
     // quando chega. Limitado a poucas sessões porque isso também roda no celular.
-    const histCache=new Map(); const HIST_CACHE_MAX=12;
+    const histCache=new Map(); const HIST_CACHE_MAX=12; let openingSession=null;
     function cacheHist(m){ if(!m||!m.sessionId)return; histCache.delete(m.sessionId); histCache.set(m.sessionId,m);
       if(histCache.size>HIST_CACHE_MAX) histCache.delete(histCache.keys().next().value); }
+    function showSessionLoading(id){
+      const prevSession=currentSession, switchingSession=prevSession!==id;
+      if(switchingSession && prevSession!=null){ draftBySession[prevSession]=E.input.value; saveDrafts(); stashAttachments(prevSession); }
+      currentSession=id; lastByMachine[currentMachine]=id; unread.delete(id); updateOfflineBanner();
+      const s=sessions.find(x=>x.id===id)||{};
+      currentAgent=s.agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=s.cwd||''; curNative=!!s.native||isNative(id);
+      curNativeWritable=false; curNativeId=''; curStarted=!!s.started; sessDeclModel=s.model||null; sessDeclEffort=s.effort||null; lastRouteReason='';
+      E.title.textContent=s.title||'Carregando sessão...'; refreshTitleInfo(); syncModelEffort();
+      clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; E.log.innerHTML='';
+      askActive=null; askVoice=false; askPendingVoice=false; updateStopStatus();
+      const row=document.createElement('div'); row.className='msg bot pending sessionload';
+      const work=document.createElement('span'); work.className='work';
+      const spin=document.createElement('span'); spin.className='spin';
+      const txt=document.createElement('span'); txt.textContent=busy(id)?'Reconstruindo atividade em andamento...':'Carregando histórico...';
+      work.appendChild(spin); work.appendChild(txt); row.appendChild(work); E.log.appendChild(row); forceBottom();
+      curFiles=[]; renderFiles(); E.filePanel.classList.add('hidden'); renderRecents(); closePop();
+      if(switchingSession){ E.input.value=draftBySession[id]||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(id); }
+      renderNativeChip(); setHash(currentSession); refreshComposer();
+    }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
     function openSession(id){ if(!id)return;
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
       if(currentMachine==='all'){ const s=sessions.find(x=>x.id===id); const rid=(s&&s.runnerId)||'local'; if(rid!==routedMachine){ routedMachine=rid; tx({t:'runner',runnerId:rid}); } }
-      const c=histCache.get(id); if(c&&id!==currentSession) applyHistory(c); tx({t:'open',sessionId:id}); }
+      openingSession=id; const c=histCache.get(id); if(c&&id!==currentSession) applyHistory(c); else if(!c&&(id!==currentSession||!E.log.childElementCount)) showSessionLoading(id); tx({t:'open',sessionId:id}); }
     function applyHistory(m){
       // NÃO limpar a fila da sessão anterior — ela continua válida quando o turno dela terminar.
       // Rascunho do composer é POR SESSÃO: ao TROCAR de sessão guarda o texto não-enviado da anterior
@@ -220,7 +239,7 @@
       updateStopStatus();   // reflete o "parando…" da sessão ATUAL (por sessão, não global)
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
-      msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); forceBottom();
+      msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); if(busy(m.sessionId)) showPending(); forceBottom();
       if(getRestorable(m.sessionId)){
         // Só é "não enviada" de verdade se a ÚLTIMA mensagem do histórico ainda for do usuário (sem
         // resposta). Se já tem resposta (ex.: o hub reconciliou com o transcript nativo depois de um
@@ -1451,7 +1470,11 @@
           const pick = exists(last)?last : (exists(h)?h : (sessions.find(s=>!isNative(s.id))||{}).id);
           if(pick) openSession(pick);
           else if(currentMachine==='local' && !hashSession()) E.newSess.onclick(); } }
-        else if(m.t==='history'){ cacheHist(m); applyHistory(m); }
+        else if(m.t==='history'){
+          cacheHist(m);
+          if(currentSession && m.sessionId!==currentSession && (!openingSession||m.sessionId!==openingSession)) return;
+          openingSession=null; applyHistory(m);
+        }
         else if(m.t==='message'){ if(m.message.role==='assistant') clearRestorable(m.message.sessionId); if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='queue'){ queueBySession[m.sessionId]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession) renderQueue(); }
         else if(m.t==='auto_route'&&m.sessionId===currentSession){ if(m.state==='started'){ status('busy','Escolhendo IA, modelo e esforço…'); }
