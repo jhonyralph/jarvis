@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { filterUnboundNativeSessions, parseNativeEvents, lineDiff, editCounts, toolFileStat } from "./native.js";
+import { filterUnboundNativeSessions, isClaudeSidechainOnlyHead, parseNativeEvents, lineDiff, editCounts, toolFileStat } from "./native.js";
 
 const TS = "2024-06-01T10:00:00.000Z";
 const claudeLine = (o: object) => JSON.stringify({ timestamp: TS, ...o });
@@ -131,4 +131,17 @@ test("filterUnboundNativeSessions hides provider transcripts already bound to ma
     filterUnboundNativeSessions(native, managed, (s) => s.native).map((s) => s.id),
     ["codex:native-2"],
   );
+});
+
+test("Claude sidechain-only transcripts are not standalone native sessions", () => {
+  const side = [
+    claudeLine({ type: "user", isSidechain: true, parentUuid: "root", message: { content: "tarefa interna" } }),
+    claudeLine({ type: "assistant", isSidechain: true, parentUuid: "root", message: { content: [{ type: "text", text: "feito" }] } }),
+  ].join("\n");
+  const main = [
+    claudeLine({ type: "user", cwd: "/repo", message: { content: "pedido principal" } }),
+    claudeLine({ type: "assistant", isSidechain: true, parentUuid: "root", message: { content: [{ type: "text", text: "detalhe interno" }] } }),
+  ].join("\n");
+  assert.equal(isClaudeSidechainOnlyHead(side), true);
+  assert.equal(isClaudeSidechainOnlyHead(main), false);
 });

@@ -393,6 +393,10 @@ const routeAborts = new Map<string, AbortController>();
 // opens the session LATER (switched away, phone reopened) still sees them. Both LOCAL-session only.
 const asking = new Set<string>();
 const pendingAsk = new Map<string, unknown[]>();
+function decisionLocked(sid: string): boolean { return asking.has(sid) || pendingAsk.has(sid); }
+function decisionLockMessage(sid: string): string {
+  return asking.has(sid) ? "aguarde a consolidação da pergunta antes de enviar outra mensagem" : "responda a decisão pendente antes de enviar outra mensagem";
+}
 /** Resend a session's pending "consolidating" state + questions to a client that just (re)opened it. */
 function sendPendingAsk(ws: WebSocket, sid: string): void {
   if (asking.has(sid)) send(ws, { t: "asking", sessionId: sid, on: true });
@@ -1906,6 +1910,7 @@ async function maybeFlushQueue(sid: string, autoplay: boolean): Promise<void> {
 async function flushQueue(sid: string): Promise<void> {
   const items = queueOf(sid);
   if (!items.length) return;
+  if (decisionLocked(sid)) return;
   const rid = items.find((q) => q.runnerId)?.runnerId; // fila de sessão de runner remoto?
   if (rid) {
     if ((runnerActive.get(rid) || new Set()).has(sid)) return;   // runner ainda ocupado
@@ -2796,6 +2801,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           let sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || "default");
           const canonicalSid = isNativeId(sid) ? managedRunnerSessionForNative(rc.id, sid) : undefined;
           if (canonicalSid) sid = canonicalSid;
+          if (decisionLocked(sid)) { send(ws, { t: "error", message: decisionLockMessage(sid) }); return; }
           if (typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
           auth.audit("send", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: ar, detail: `${sid}: ${String(msg.text).slice(0, 80)}` });
           if (routeAborts.has(sid) || (runnerActive.get(ar)?.has(sid) ?? false)) {
@@ -3219,6 +3225,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
+      if (decisionLocked(s.id)) { send(ws, { t: "error", message: decisionLockMessage(s.id) }); return; }
       // routes through the shared lifecycle — which (unlike the old inline copy) also persists the
       // assistant's activity trace, so a reload of a session driven via sendTo keeps its tool blocks.
       const decision = await routeLocalTurn(s.id, msg.text, msg.model, msg.effort, autoFlags(msg.auto));
@@ -3230,6 +3237,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // veem a sessão (sincroniza entre dispositivos). O flush em si roda no fim do turno (flushQueue).
     if (msg.t === "enqueue" && typeof msg.sessionId === "string" && (typeof msg.text === "string" || Array.isArray(msg.attachments))) {
       if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
+      if (decisionLocked(msg.sessionId)) { send(ws, { t: "error", message: decisionLockMessage(msg.sessionId) }); return; }
       { const rid = activeRunner(ws); queueOf(msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined }); }
       broadcastQueue(msg.sessionId); saveQueues(); return;
     }
@@ -3276,6 +3284,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     const viewing = subs.get(ws);
     const sid = explicit || viewing || "default";
     if (store.isHidden(sid)) { send(ws, { t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
+    if ((msg.t === "send" || msg.t === "voice") && decisionLocked(sid)) { send(ws, { t: "error", message: decisionLockMessage(sid) }); return; }
     // Só (re)inscreve o ws se o envio é para a sessão que ele já vê (ou se ainda não vê nada). Um
     // flush para uma sessão de FUNDO não pode trocar o que este ws está assistindo.
     if (!viewing || sid === viewing) subs.set(ws, sid);

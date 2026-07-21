@@ -151,6 +151,16 @@ function contentText(c: any): string {
   return "";
 }
 
+export function isClaudeSidechainOnlyHead(head: string): boolean {
+  let sawMain = false, sawSide = false;
+  eachLine(head, (o) => {
+    if (o.type !== "user" && o.type !== "assistant") return;
+    if (o.isSidechain) sawSide = true;
+    else sawMain = true;
+  });
+  return sawSide && !sawMain;
+}
+
 // Nome ESTÁVEL de uma sessão nativa. O Claude Code reescreve o ai-title a cada turno; se o menu
 // seguisse o mais recente, o nome ficaria mudando "no meio da corrida". Então CONGELAMOS: na
 // primeira vez que vemos um ai-title de verdade, gravamos e nunca mais mudamos. Guardado em
@@ -174,6 +184,7 @@ function stableTitle(id: string, latestAi: string, fallback: string): string {
 function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
   const head = readHead(path);
   if (!head) return null;
+  if (isClaudeSidechainOnlyHead(head)) return null;
   const id = basename(path).replace(/\.jsonl$/i, "");
   let firstUser = "", cwd = "";
   eachLine(head, (o) => {
