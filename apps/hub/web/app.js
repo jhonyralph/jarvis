@@ -259,7 +259,7 @@
       const work=document.createElement('span'); work.className='work';
       const spin=document.createElement('span'); spin.className='spin';
       const txt=document.createElement('span'); txt.textContent=busy(id)?'Reconstruindo atividade em andamento...':'Carregando histórico...';
-      work.appendChild(spin); work.appendChild(txt); row.appendChild(work); E.log.appendChild(row); forceBottom();
+      work.appendChild(spin); work.appendChild(txt); row.appendChild(work); E.log.appendChild(row); forceBottomSoon();
       curFiles=[]; renderFiles(); closeFilePanel(); renderRecents(); closePop();
       if(switchingSession){ E.input.value=sessionValue(draftBySession,id,targetRunner)||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(id,targetRunner); }
       renderNativeChip(); setHash(currentSession); refreshComposer();
@@ -288,7 +288,7 @@
       updateStopStatus();   // reflete o "parando…" da sessão ATUAL (por sessão, não global)
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
-      msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); rememberHistoryActivity(msgs); E.log.appendChild(frag); if(busy(m.sessionId)) showPending(); forceBottom();
+      msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); rememberHistoryActivity(msgs); E.log.appendChild(frag); if(busy(m.sessionId)) showPending(); forceBottomSoon();
       if(getRestorable(m.sessionId)){
         // Só é "não enviada" de verdade se a ÚLTIMA mensagem do histórico ainda for do usuário (sem
         // resposta). Se já tem resposta (ex.: o hub reconciliou com o transcript nativo depois de um
@@ -317,6 +317,7 @@
     function updScrollBtn(d){ if(d==null)d=distBottom(); if(E.scrollBtn) E.scrollBtn.classList.toggle('hidden', d<60); }
     function autoScroll(){ if(stick) E.log.scrollTop=E.log.scrollHeight; updScrollBtn(); }
     function forceBottom(){ stick=true; E.log.scrollTop=E.log.scrollHeight; updScrollBtn(0); }
+    function forceBottomSoon(){ forceBottom(); requestAnimationFrame(()=>{ forceBottom(); requestAnimationFrame(forceBottom); }); setTimeout(forceBottom,100); }
     E.log.addEventListener('scroll',()=>{ const d=distBottom(); if(d<40) stick=true; else if(d>E.log.clientHeight*0.1) stick=false; updScrollBtn(d); });
     if(E.scrollBtn) E.scrollBtn.onclick=forceBottom;
     function addMsg(m){ const d=buildMsgEl(m); const anchor=pendingEl||(m.role==='user'?strEl:null); if(anchor) E.log.insertBefore(d,anchor); else E.log.appendChild(d); autoScroll(); }
@@ -496,6 +497,8 @@
       if(rec) renderRecents(); else renderFiles(); }
     function secCounts(){ if(E.recCnt) E.recCnt.textContent = sessions.length ? String(sessions.length) : '';
       if(E.filesCnt) E.filesCnt.textContent = curFiles.length ? String(curFiles.length) : ''; }
+    function nearPaneBottom(el,px=160){ return !!el && (el.scrollHeight - el.scrollTop - el.clientHeight) < px; }
+    function scheduleAutoPager(fn){ requestAnimationFrame(()=>{ fn(); requestAnimationFrame(fn); }); }
     function renderFiles(){ E.files.innerHTML=''; secCounts();
       curFiles.slice(0,filesShown).forEach(f=>{ const d=document.createElement('div'); d.className='item readable'; d.title=f.path;
         const nm=(f.path||'').split(/[\\/]/).pop()||f.path;
@@ -504,8 +507,12 @@
         d.onclick=()=>openFile(f.path,f.action); E.files.appendChild(d); });
       if(E.filesMore){ const resta=curFiles.length-filesShown;
         E.filesMore.textContent = resta>0 ? `Mostrar mais (${resta})` : 'Mostrar mais';
-        E.filesMore.classList.toggle('hidden', resta<=0); } }
-    E.filesMore.onclick=()=>{ filesShown+=20; renderFiles(); };
+        E.filesMore.classList.toggle('hidden', resta<=0); }
+      scheduleAutoPager(maybeAutoMoreFiles); }
+    function loadMoreFiles(){ if(curFiles.length<=filesShown)return; filesShown=Math.min(curFiles.length,filesShown+30); renderFiles(); }
+    function maybeAutoMoreFiles(){ if(!E.filesPane||E.filesPane.classList.contains('hidden')||curFiles.length<=filesShown)return; if(nearPaneBottom(E.filesPane)||E.filesPane.scrollHeight<=E.filesPane.clientHeight+40)loadMoreFiles(); }
+    E.filesMore.onclick=loadMoreFiles;
+    if(E.filesPane)E.filesPane.addEventListener('scroll',maybeAutoMoreFiles);
     // Upsert a file touched during a LIVE turn (from the stream tool events).
     function touchFile(path,action,adds,dels){ if(!path)return; let f=curFiles.find(x=>x.path===path);
       if(!f){ f={path,action:action||'read',adds:adds||0,dels:dels||0}; curFiles.unshift(f); }
@@ -608,8 +615,11 @@
       d.title=`${s.title||'Sessão'}\n— ${s.agent||''}${nat?' · nativo (somente leitura)':''}\n${s.cwd||''}`;
       d.onclick=()=>{ openSession(s.id,runner); closeSide(); };
       E.recents.appendChild(d); });
-      E.moreBtn.classList.toggle('hidden', sessions.length<=shown); }
-    E.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
+      E.moreBtn.classList.toggle('hidden', sessions.length<=shown); scheduleAutoPager(maybeAutoMoreRecents); }
+    function loadMoreRecents(){ if(sessions.length<=shown)return; shown=Math.min(sessions.length,shown+20); renderRecents(); }
+    function maybeAutoMoreRecents(){ if(!E.recPane||E.recPane.classList.contains('hidden')||sessions.length<=shown)return; if(nearPaneBottom(E.recPane)||E.recPane.scrollHeight<=E.recPane.clientHeight+40)loadMoreRecents(); }
+    E.moreBtn.onclick=loadMoreRecents;
+    if(E.recPane)E.recPane.addEventListener('scroll',maybeAutoMoreRecents);
 
     // ---------- seletor de máquina (runners) ----------
     function renderMachines(){
@@ -1330,6 +1340,7 @@
 
     // ---------- execution graph: workflows, subagents and background processes ----------
     const workNodes=new Map(), workEvents=new Map(), workTranscriptCursor=new Map(), workCollapsed=new Set(), workConnections=new Map();
+    const workTranscriptLoading=new Set();
     let workSelected='', workTab='activity', workFilter='all', workConnected=false, workLoaded=false, workLoadError='', workNextCursor='', workLoadingMore=false, workUnseen=0, workLastFocus=null, workAnnounceT=null;
     const WORK_TERMINAL=new Set(['succeeded','failed','cancelled']);
     const WORK_STATE_LABEL={queued:'Na fila',running:'Em execução',waiting_input:'Precisa de você',succeeded:'Concluído',failed:'Falhou',cancelled:'Cancelado',orphaned:'Órfão',unknown:'Estado desconhecido'};
@@ -1398,6 +1409,8 @@
       return `<div class="worksection">Controles</div><div class="workcontrols">${b('Cancelar','cancel',cancelOk,'danger')}${b('Cancelar árvore','cancel_subtree',subtreeOk,'danger')}${b('Orientar','steer',steerOk)}${b('Tentar novamente','retry',retryOk)}${b(n.archivedAt?'Desarquivar':'Arquivar','archive',workConnected&&terminal)}</div>${unavailable.length?`<div class="workcapwhy">Indisponíveis: ${esc(unavailable.join(', '))}. ${esc(reason)}</div>`:''}`; }
     function workArtifactPath(n,a){ const p=String(a.relativePath||''); if(!p)return''; if(/^(?:[A-Za-z]:[\\/]|\/)/.test(p))return p; const base=String(n.worktree||n.cwd||'').replace(/[\\/]$/,''); if(!base)return p; return base+(base.includes('\\')?'\\':'/')+p; }
     function workArtifactConflicts(n){ const owners=new Map(), ids=new Set([n.executionId,...workDescendants(n.executionId).map(x=>x.executionId)]); ids.forEach(id=>(workEvents.get(id)||[]).forEach(ev=>{const a=ev.artifact;if(ev.kind!=='artifact'||!a||!a.relativePath)return;const key=String(a.relativePath).replace(/\\/g,'/').toLowerCase(),set=owners.get(key)||new Set();set.add(id);owners.set(key,set);}));return new Set([...owners].filter(([,set])=>set.size>1).map(([path])=>path)); }
+    function loadMoreWorkTranscript(id){ const cursor=workTranscriptCursor.get(id); if(!id||!cursor||workTranscriptLoading.has(id))return false; workTranscriptLoading.add(id); tx({t:'execution_open',executionId:id,cursor,limit:500}); return true; }
+    function maybeAutoMoreWorkDetail(){ const id=workSelected; if(!id||E.workPanel.classList.contains('hidden')||!workTranscriptCursor.get(id))return; if(nearPaneBottom(E.workDetailBody,220)||E.workDetailBody.scrollHeight<=E.workDetailBody.clientHeight+70)loadMoreWorkTranscript(id); }
     function renderWorkDetail(){ const n=workNodes.get(workSelected); if(!n){ E.workCrumb.textContent='';E.workNodeTitle.textContent='Selecione um trabalho';E.workNodeState.textContent='';E.workDetailBody.innerHTML='<div class="workempty"><span class="weicon">🧩</span><span>Selecione um trabalho para acompanhar.</span></div>';return; }
       const events=workEvents.get(n.executionId)||[], cap=n.capabilities||{}; E.workCrumb.textContent=workBreadcrumb(n); E.workNodeTitle.textContent=n.title||n.executionId; E.workNodeState.textContent=workNodeStatusText(n);
       E.workPanel.querySelectorAll('.worktabs [data-tab]').forEach(b=>{const on=b.dataset.tab===workTab;b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1;});
@@ -1407,12 +1420,12 @@
       if(workTab==='activity'){ h+=workMetricsHtml(n); E.workDetailBody.innerHTML=h; const visible=events.filter(e=>!['node_created','artifact','usage'].includes(e.kind)); const conv=renderWorkConversation(visible);
         if(conv)E.workDetailBody.appendChild(conv); else E.workDetailBody.insertAdjacentHTML('beforeend','<div class="workempty"><span class="weicon">◔</span><span>Aguardando atividade publicável.</span></div>');
         if(workTranscriptCursor.get(n.executionId))E.workDetailBody.insertAdjacentHTML('beforeend','<button type="button" class="ghost" data-transcript-more style="width:100%;margin-top:8px">Carregar mais</button>');
-        bindWorkDetail(n,events); return; }
+        bindWorkDetail(n,events); scheduleAutoPager(maybeAutoMoreWorkDetail); return; }
       else if(workTab==='transcript'){ const level=cap.transcript||'none'; h+=`<div class="worknotice">Mensagens publicadas pelo adapter: <b>${esc(level)}</b>. O painel nunca apresenta raciocínio privado.</div>`; if(n.prompt)h+=`<div class="worksection">Instrução delegada</div><div class="workevent"><div class="wetext">${esc(String(n.prompt))}</div></div>`; const transcript=events.filter(e=>e.kind==='message'||e.kind==='summary'||(e.kind==='thinking'&&e.published)); h+=transcript.length?transcript.map(workEventHtml).join(''):`<div class="workempty"><span class="weicon">💬</span><span>${level==='none'?'Este adapter não fornece mensagens publicáveis.':'Nenhuma mensagem publicada ainda.'}</span></div>`; if(workTranscriptCursor.get(n.executionId))h+='<button type="button" class="ghost" data-transcript-more style="width:100%;margin-top:8px">Carregar mais mensagens</button>'; }
       else if(workTab==='files'){ const arts=events.filter(e=>e.kind==='artifact'&&e.artifact).map(e=>e.artifact), conflicts=workArtifactConflicts(n); if(conflicts.size)h+=`<div class="worknotice"><b>Possível conflito:</b> ${conflicts.size} arquivo${conflicts.size===1?' aparece':'s aparecem'} em mais de um descendente. Confira os worktrees antes de integrar.</div>`; h+=arts.length?arts.map(a=>{const path=workArtifactPath(n,a),disabled=!path||a.redacted,key=String(a.relativePath||'').replace(/\\/g,'/').toLowerCase(),conflict=conflicts.has(key),counts=(a.adds||a.dels)?`<span class="fadd">+${workNum(a.adds)}</span><span class="fdel">-${workNum(a.dels)}</span>`:'';return `<button type="button" class="workfile" data-artifact="${esc(String(a.artifactId||''))}" ${disabled?`disabled title="${a.redacted?'Conteúdo redigido pelo provider':'O provider publicou somente metadados'}"`:''}><span>${a.kind==='diff'?'±':'📄'}</span><span class="wfname">${esc(String(a.name||a.relativePath||'arquivo'))}</span>${counts}<span class="wfmeta">${conflict?'⚠ conflito · ':''}${a.redacted?'redigido':a.size?kfmt(a.size):a.kind||''}</span></button>`;}).join(''):`<div class="workempty"><span class="weicon">📄</span><span>${cap.files==='none'?'Este adapter não publica arquivos.':'Nenhum arquivo atribuído a este trabalho.'}</span></div>`; }
       else { const row=(k,v)=>v!=null&&v!==''?`<div class="workevent"><div class="wetop"><b>${k}</b></div><div class="wetext">${esc(String(v))}</div></div>`:''; h+=workMetricsHtml(n)+row('IA',n.agent)+row('Modelo',n.model)+row('Esforço',n.effort)+row('Máquina',n.runnerId)+row('Sessão',n.sessionId)+row('Origem',n.origin)+row('Certificação',n.certification)+row('Aquisição',n.acquisitionSurface)+row('Dependências',(n.dependsOn||[]).join(', '))+row('Workspace isolado',cap.isolatedWorkspace)+row('Pasta',n.worktree||n.cwd)+workCapabilitiesHtml(n); }
-      E.workDetailBody.innerHTML=h; bindWorkDetail(n,events); }
-    function bindWorkDetail(n,events){ E.workDetailBody.querySelectorAll('[data-control]').forEach(b=>b.onclick=()=>workControl(n,b.dataset.control)); E.workDetailBody.querySelectorAll('[data-input]').forEach(b=>b.onclick=()=>workAnswer(n,workLatestInput(events),b.dataset.input,b.dataset.answer)); E.workDetailBody.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>{const ev=events.find(e=>e.kind==='artifact'&&e.artifact&&e.artifact.artifactId===b.dataset.artifact),p=ev&&workArtifactPath(n,ev.artifact);if(!p)return;if(n.runnerId&&n.runnerId!==routedMachine){routedMachine=n.runnerId;tx({t:'runner',runnerId:n.runnerId});}openFile(p,ev.artifact.kind==='diff'?'edit':'read',{keepWork:true});}); const more=E.workDetailBody.querySelector('[data-transcript-more]');if(more)more.onclick=()=>{more.disabled=true;more.textContent='Carregando…';tx({t:'execution_open',executionId:n.executionId,cursor:workTranscriptCursor.get(n.executionId),limit:500});}; }
+      E.workDetailBody.innerHTML=h; bindWorkDetail(n,events); scheduleAutoPager(maybeAutoMoreWorkDetail); }
+    function bindWorkDetail(n,events){ E.workDetailBody.querySelectorAll('[data-control]').forEach(b=>b.onclick=()=>workControl(n,b.dataset.control)); E.workDetailBody.querySelectorAll('[data-input]').forEach(b=>b.onclick=()=>workAnswer(n,workLatestInput(events),b.dataset.input,b.dataset.answer)); E.workDetailBody.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>{const ev=events.find(e=>e.kind==='artifact'&&e.artifact&&e.artifact.artifactId===b.dataset.artifact),p=ev&&workArtifactPath(n,ev.artifact);if(!p)return;if(n.runnerId&&n.runnerId!==routedMachine){routedMachine=n.runnerId;tx({t:'runner',runnerId:n.runnerId});}openFile(p,ev.artifact.kind==='diff'?'edit':'read',{keepWork:true});}); const more=E.workDetailBody.querySelector('[data-transcript-more]');if(more)more.onclick=()=>{more.disabled=true;more.textContent='Carregando…';loadMoreWorkTranscript(n.executionId);}; }
     async function workControl(n,action){ if(action==='archive'){ tx({t:'execution_archive',requestId:uid(),executionId:n.executionId,archived:!n.archivedAt});return; } let message; if(action==='steer'){message=await dialog({title:'Orientação para este trabalho',input:true,placeholder:'O que ele deve ajustar?',okText:'Enviar'});if(!message)return;} if(action==='cancel'||action==='cancel_subtree'){const count=action==='cancel_subtree'?1+workDescendants(n.executionId).length:1;if(!await dialog({title:`Cancelar ${count} trabalho${count===1?'':'s'}?\nO progresso já publicado será preservado.`,okText:'Cancelar trabalho',danger:true}))return;} tx({t:'execution_control',requestId:uid(),executionId:n.executionId,action,message}); }
     async function workAnswer(n,ev,decision,preset){ if(!ev)return; let answer=preset||''; if(decision==='answer'&&!answer){answer=await dialog({title:ev.summary||'Responder ao trabalho',input:true,placeholder:'Sua resposta',okText:'Responder'});if(!answer)return;} tx({t:'execution_input',requestId:uid(),executionId:n.executionId,inputId:ev.inputId,decision,answer:answer||undefined}); }
     function workSetHash(push=true){ const p=new URLSearchParams(); if(currentSession){p.set('session',currentSession);p.set('runner',currentSessionRunner);} if(workSelected)p.set('work',workSelected); const h=p.toString(),url=h?'#'+h:location.pathname+location.search;if(location.hash===(h?'#'+h:''))return;(push?history.pushState:history.replaceState).call(history,null,'',url); }
@@ -1425,13 +1438,18 @@
       if(n)workSyncInlineNode(n);
       if(ev.kind!=='node_created'){const list=workEvents.get(ev.executionId)||[];if(!ev.eventId||!list.some(x=>x.eventId===ev.eventId)){list.push(ev);if(list.length>5000)list.splice(0,list.length-5000);workEvents.set(ev.executionId,list);}}
       workRenderBadge(); workUpdateScopes(); renderWorkTree(true); if(workSelected===ev.executionId&&!E.workPanel.classList.contains('hidden')){const atEnd=E.workDetailBody.scrollHeight-E.workDetailBody.scrollTop-E.workDetailBody.clientHeight<45;if(atEnd){renderWorkDetail();E.workDetailBody.scrollTop=E.workDetailBody.scrollHeight;}else{workUnseen++;E.workNew.textContent=workUnseen+' novo'+(workUnseen===1?' evento':'s eventos');E.workNew.classList.remove('hidden');}} if(ev.kind==='input_requested')workAnnounce('Um trabalho precisa de você.'); }
-    function workApplySnapshot(m){ workLoaded=true;workLoadError='';if(m.scope==='all'&&!workLoadingMore)workNodes.clear();workLoadingMore=false;workNextCursor=m.nextCursor||'';E.workMore.classList.toggle('hidden',!workNextCursor);E.workMore.disabled=false;E.workMore.textContent='Mostrar mais';(Array.isArray(m.nodes)?m.nodes:[]).forEach(n=>{if(n&&n.executionId){workNodes.set(n.executionId,n);workSyncInlineNode(n);}});workRenderBadge();workUpdateScopes();renderWorkTree();const wanted=hashWork();if(wanted&&workNodes.has(wanted)&&workSelected!==wanted){if(E.workPanel.classList.contains('hidden'))openWorkPanel({fromHash:true});openWorkNode(wanted,{fromHash:true});}else if(workSelected&&!workNodes.has(workSelected)){workSelected='';renderWorkDetail();} }
+    function workApplySnapshot(m){ workLoaded=true;workLoadError='';if(m.scope==='all'&&!workLoadingMore)workNodes.clear();workLoadingMore=false;workNextCursor=m.nextCursor||'';E.workMore.classList.toggle('hidden',!workNextCursor);E.workMore.disabled=false;E.workMore.textContent='Mostrar mais';(Array.isArray(m.nodes)?m.nodes:[]).forEach(n=>{if(n&&n.executionId){workNodes.set(n.executionId,n);workSyncInlineNode(n);}});workRenderBadge();workUpdateScopes();renderWorkTree();scheduleAutoPager(maybeAutoMoreWork);const wanted=hashWork();if(wanted&&workNodes.has(wanted)&&workSelected!==wanted){if(E.workPanel.classList.contains('hidden'))openWorkPanel({fromHash:true});openWorkNode(wanted,{fromHash:true});}else if(workSelected&&!workNodes.has(workSelected)){workSelected='';renderWorkDetail();} }
     E.workBtn.onclick=()=>openWorkPanel(); E.workClose.onclick=()=>closeWorkPanel(); E.workBack.onclick=()=>{const prior=workSelected;workSelected='';E.workPanel.classList.remove('show-detail');renderWorkTree();renderWorkDetail();workSetHash(true);const n=prior&&E.workTree.querySelector(`.worknode[data-id="${CSS.escape(prior)}"]`);n&&n.focus();};
     E.workMax.onclick=()=>{const max=E.workPanel.classList.toggle('max');E.workMax.textContent=max?'🗗':'⛶';E.workMax.title=max?'Restaurar':'Maximizar';};
     E.workPanel.querySelectorAll('.workfilters [data-filter]').forEach(b=>b.onclick=()=>{workFilter=b.dataset.filter;E.workPanel.querySelectorAll('.workfilters [data-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderWorkTree();});
     [E.workMachine,E.workSession,E.workAgent].forEach(s=>s.onchange=()=>renderWorkTree());
     E.workPanel.querySelectorAll('.worktabs [data-tab]').forEach(b=>{b.onclick=()=>{workTab=b.dataset.tab;renderWorkDetail();};b.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const tabs=[...E.workPanel.querySelectorAll('.worktabs [data-tab]')],i=tabs.indexOf(b),next=e.key==='Home'?tabs[0]:e.key==='End'?tabs[tabs.length-1]:tabs[(i+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length];next.click();next.focus();};});
-    E.workMore.onclick=()=>{if(!workNextCursor||workLoadingMore)return;workLoadingMore=true;E.workMore.disabled=true;E.workMore.textContent='Carregando…';tx({t:'executions_list',scope:'all',cursor:workNextCursor,limit:500});};
+    function workTreeScroller(){ return E.workTree&&E.workTree.closest('.worktreewrap'); }
+    function loadMoreWork(){ if(!workNextCursor||workLoadingMore)return;workLoadingMore=true;E.workMore.disabled=true;E.workMore.textContent='Carregando…';tx({t:'executions_list',scope:'all',cursor:workNextCursor,limit:500}); }
+    function maybeAutoMoreWork(){ const el=workTreeScroller(); if(!el||E.workPanel.classList.contains('hidden')||!workNextCursor||workLoadingMore)return; if(nearPaneBottom(el,220)||el.scrollHeight<=el.clientHeight+70)loadMoreWork(); }
+    E.workMore.onclick=loadMoreWork;
+    { const el=workTreeScroller(); if(el)el.addEventListener('scroll',maybeAutoMoreWork); }
+    E.workDetailBody.addEventListener('scroll',maybeAutoMoreWorkDetail);
     E.workNew.onclick=()=>{workUnseen=0;E.workNew.classList.add('hidden');renderWorkDetail();E.workDetailBody.scrollTop=E.workDetailBody.scrollHeight;};
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!E.workPanel.classList.contains('hidden')){e.stopPropagation();closeWorkPanel();}});
     setInterval(()=>{if(!E.workPanel.classList.contains('hidden')&&[...workNodes.values()].some(n=>n.state==='running')){renderWorkTree(true);const n=workNodes.get(workSelected);if(n)E.workNodeState.textContent=workNodeStatusText(n);}},5000);
@@ -1511,17 +1529,18 @@
         else if(m.t==='execution_delta'){ workApplyEvent(m.event); }
         else if(m.t==='execution_transcript'){
           if(m.node&&m.node.executionId)workNodes.set(m.node.executionId,m.node);
-          const old=workEvents.get(m.executionId)||[], merged=[], seen=new Set();
+          workTranscriptLoading.delete(m.executionId);
+          const old=workEvents.get(m.executionId)||[], wasEmpty=!old.length, wasAtEnd=nearPaneBottom(E.workDetailBody,90), merged=[], seen=new Set();
           [...old,...(Array.isArray(m.events)?m.events:[])].forEach(ev=>{const key=ev&&ev.eventId;if(key&&seen.has(key))return;if(key)seen.add(key);merged.push(ev);}); merged.sort((a,b)=>(workNum(a&&a.seq)-workNum(b&&b.seq))||(workNum(a&&a.at)-workNum(b&&b.at)));
           workEvents.set(m.executionId,merged.slice(-5000)); workTranscriptCursor.set(m.executionId,m.nextCursor||''); if(m.node&&m.truncated)workNodes.set(m.node.executionId,Object.assign({},m.node,{truncated:true}));
-          if(m.executionId===workSelected){renderWorkTree();renderWorkDetail();}
+          if(m.executionId===workSelected){renderWorkTree();renderWorkDetail();if(wasEmpty||wasAtEnd){E.workDetailBody.scrollTop=E.workDetailBody.scrollHeight;scheduleAutoPager(maybeAutoMoreWorkDetail);}}
         }
         else if(m.t==='execution_connection'){ if(m.runnerId)workConnections.set(m.runnerId,m.state);renderWorkConnection();if(workSelected&&(workNodes.get(workSelected)||{}).runnerId===m.runnerId)renderWorkDetail(); }
         else if(m.t==='execution_control_result'||m.t==='execution_input_result'||m.t==='execution_archive_result'){
           const unsupported=Array.isArray(m.unsupportedIds)?m.unsupportedIds.length:0; toast(m.ok?(unsupported?`⚠ Atualizado parcialmente · ${unsupported} sem suporte`:'✓ Trabalho atualizado'):('⚠ '+(m.error||'Não foi possível atualizar o trabalho.')));
           if(m.executionId)tx({t:'execution_open',executionId:m.executionId,limit:500});
         }
-        else if(m.t==='execution_error'){ const msg=m.message||m.code||'Falha ao carregar trabalhos'; if(!m.executionId){workLoadError=String(msg);workLoadingMore=false;E.workMore.disabled=false;E.workMore.textContent='Tentar novamente';renderWorkTree();} if(m.executionId===workSelected)E.workDetailBody.insertAdjacentHTML('afterbegin',`<div class="worknotice err">${esc(String(msg))}</div>`); else toast('⚠ '+msg); }
+        else if(m.t==='execution_error'){ const msg=m.message||m.code||'Falha ao carregar trabalhos'; if(m.executionId)workTranscriptLoading.delete(m.executionId); if(!m.executionId){workLoadError=String(msg);workLoadingMore=false;E.workMore.disabled=false;E.workMore.textContent='Tentar novamente';renderWorkTree();} if(m.executionId===workSelected)E.workDetailBody.insertAdjacentHTML('afterbegin',`<div class="worknotice err">${esc(String(msg))}</div>`); else toast('⚠ '+msg); }
         else if(m.t==='update_status'){ updState=m.status; renderUpdate(); }
         else if(m.t==='update_progress'){ if(E.updStatus) E.updStatus.textContent='… '+(m.message||'atualizando'); toast('🔄 '+(m.message||''));
           // Machine snapshots carry the durable queue keyed by runner id. Do not synthesize rows by
