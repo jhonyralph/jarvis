@@ -290,8 +290,9 @@ $current = ""
 $rolledBack = $false
 try {
   Add-Progress "parando runner antes do upgrade"
-  try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
-  Start-Sleep -Seconds 1
+  # The launcher is the scheduled task. Keep it alive: the update lock makes it wait while this
+  # detached updater owns the checkout. Stopping the task here can also terminate this script and
+  # leave a stale runner-update.lock behind.
   try { Stop-Process -Id $RunnerPid -Force -ErrorAction SilentlyContinue } catch {}
   Start-Sleep -Seconds 2
   Set-Location $Root
