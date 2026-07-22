@@ -85,6 +85,34 @@ itself) runs a **Runner** that executes agents locally and streams back.
    scopes list/new/commands) OR *unified list with a machine badge*; the unified
    view also gets a per-machine **filter**.
 
+## Context, memory and HITL boundaries
+
+- Runner protocol v6 scopes live broadcasts, queues, activity/routing buffers,
+  usage, browser caches/drafts, decision state, semantic memory and voice
+  staging by `runnerId + sessionId`. Delayed frames carry `runnerId` and cannot
+  overwrite an equal-id session after a machine switch.
+- Every turn records a context manifest with actor, machine, cwd, continuity,
+  prompt hashes/counts and candidate instruction-file hashes. Prompt contents
+  are not copied to the audit, and normal chat never injects semantic memory.
+- Semantic search defaults to the current machine and project (or exact session
+  when no cwd exists). Cross-project/cross-machine search is an explicit UI mode
+  and still honors the caller's runner grants and private-note ownership.
+- `#note` is a Jarvis-owned two-step HITL operation: exact preview, then a
+  short-lived one-time apply token. The preview is shown on every device viewing
+  the same session; changed files invalidate it instead of being overwritten.
+  Apply and cancel are both one-time operations synchronized to every device;
+  cancellation also invalidates the token on a remote Runner.
+- Post-turn decision cards are extracted by the Hub, work for every adapter,
+  replay when another device opens the session and never block normal input or
+  the queue. A newer turn clears stale questions on every device.
+- STT/TTS remain Hub services, but confirmed voice turns and staged drafts are
+  sent back to the Runner that owns the session.
+- The Runner includes the latest unanswered turn's durable `liveActivity` in
+  `history`. The Hub replays it after a device returns to the session and clears
+  the in-memory copy only after `activity_committed` confirms that the assistant
+  reply reached `sessions.json`. A Hub restart is covered by E2E while the Runner
+  remains the authoritative journal owner.
+
 ## Build phases
 
 - **A — Protocol + doc** (this): `@jarvis/protocol` gains the real Runner↔Hub

@@ -231,6 +231,12 @@
     /* file viewer / diff — right-side panel (desktop), full overlay (mobile) */
     #filePanel { flex:0 0 clamp(360px,42%,760px); display:flex; flex-direction:column; min-width:0; border-left:1px solid var(--line); background:var(--panel); }
     #filePanel.hidden { display:none; }
+    #app.work-file-split { --work-split-w:clamp(380px,42vw,760px); }
+    #app.work-file-split main { margin-right:var(--work-split-w); }
+    #app.work-file-split #workPanel,
+    #app.work-file-split #filePanel { position:fixed; right:0; width:var(--work-split-w); flex:none; z-index:45; border-left:1px solid var(--line); }
+    #app.work-file-split #workPanel { top:0; bottom:50%; }
+    #app.work-file-split #filePanel { top:50%; bottom:0; }
     #filePanel .fphead { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
     #filePanel .fpname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:13.5px; }
     #filePanel .fpstat { flex:none; font-size:11.5px; font-family:ui-monospace,Menlo,Consolas,monospace; }
@@ -253,7 +259,7 @@
     #files .item { cursor:default; } #files .item.readable { cursor:pointer; display:flex; align-items:center; gap:6px; } #files .item.readable:hover { background:#ffffff0d; }
     #files .rtitle { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } #files .rbadge { flex:none; font-size:12px; }
     #files .fadd { color:#3fb950; font-size:10.5px; flex:none; } #files .fdel { color:#f85149; font-size:10.5px; flex:none; }
-    @media (max-width:820px){ #filePanel { position:fixed; inset:0; z-index:40; flex:none; border-left:0; } }
+    @media (max-width:820px){ #filePanel { position:fixed; inset:0; z-index:40; flex:none; border-left:0; } #app.work-file-split main { margin-right:0; } #app.work-file-split #workPanel { inset:0; width:100%; height:100dvh; } #app.work-file-split #filePanel { inset:0; width:auto; z-index:50; } }
     .dirlist { border:1px solid var(--line); border-radius:10px; overflow:auto; max-height:240px; }
     .dirlist div { padding:8px 12px; cursor:pointer; font-size:13.5px; border-bottom:1px solid var(--line); } .dirlist div:hover { background:#ffffff0d; }
     /* clickable footer pills (agent / folder / model / effort) */
@@ -430,14 +436,14 @@
       #log { padding:14px; gap:12px; } .msg.me, .msg.bot { max-width:92%; }
       .msg.me { font-size:15.5px; } .msg.bot { font-size:15.5px; }
       /* composer: bigger targets; pills in one scrollable row; send full width */
-      #composer { padding:10px 12px calc(10px + env(safe-area-inset-bottom)); gap:10px; }
+      #composer { width:100%; min-width:0; overflow:hidden; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); gap:10px; }
       /* O mic tem que ter a MESMA altura do input (media: input 52px, mic 47.5px = 4.5px de
          desalinho visível). As duas caixas passam a derivar das mesmas medidas, para não
          voltarem a divergir se o padding do input mudar. Altura = lh + 2*pad + 2*borda. */
-      .inputrow { --ipad:13px; --ilh:24px; }
-      #input { font-size:16px; padding:var(--ipad) 14px; line-height:var(--ilh); } /* 16px avoids iOS focus-zoom */
-      .controls { flex-wrap:wrap; gap:8px; }
-      .ctlpills { display:flex; gap:8px; overflow-x:auto; flex:1 1 100%; padding-bottom:3px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+      .inputrow { width:100%; min-width:0; --ipad:13px; --ilh:24px; }
+      #input { width:auto; max-width:100%; font-size:16px; padding:var(--ipad) 14px; line-height:var(--ilh); } /* 16px avoids iOS focus-zoom */
+      .controls { width:100%; min-width:0; flex-wrap:wrap; gap:8px; }
+      .ctlpills { display:flex; width:100%; min-width:0; max-width:100%; gap:8px; overflow-x:auto; flex:1 1 100%; padding-bottom:3px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
       .ctlpills::-webkit-scrollbar { display:none; } .ctlpills .spacer { display:none; }
       /* no celular os mais usados vêm primeiro: ＋ anexar, modelo, esforço, consumo, escutar — depois o resto */
       #attach { order:0; } #modelBtn { order:1; } #effortBtn { order:2; } #usageBtn { order:3; } #speak { order:4; }
@@ -562,6 +568,14 @@
     @media (prefers-reduced-motion:reduce) {
       #side, .spin, .worknode[data-state="running"] .wnstate::before { animation:none!important; transition:none!important; }
     }
+    .context-manifest { margin-top:7px; font-size:11px; opacity:.78; }
+    .context-manifest summary { cursor:pointer; user-select:none; }
+    .context-manifest .context-grid { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 8px; margin-top:5px; text-align:left; }
+    .context-manifest .context-grid b { font-weight:600; }
+    .context-manifest .context-grid span { overflow-wrap:anywhere; }
+    .semantic-scope { display:flex; gap:6px; align-items:center; margin-top:2px; }
+    .memory-preview-note { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--code); border:1px solid var(--line); padding:10px; max-height:30vh; overflow:auto; }
+    .memory-preview-target { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; overflow-wrap:anywhere; }
   </style>
 </head>
 <body>
@@ -679,8 +693,7 @@
             <div id="workNodeState"></div>
           </div>
           <div class="worktabs" role="tablist" aria-label="Informações do trabalho">
-            <button id="workTabActivity" type="button" role="tab" data-tab="activity" aria-controls="workDetailBody" aria-selected="true">Eventos</button>
-            <button id="workTabTranscript" type="button" role="tab" data-tab="transcript" aria-controls="workDetailBody" aria-selected="false">Mensagens</button>
+            <button id="workTabActivity" type="button" role="tab" data-tab="activity" aria-controls="workDetailBody" aria-selected="true">Conversa</button>
             <button id="workTabFiles" type="button" role="tab" data-tab="files" aria-controls="workDetailBody" aria-selected="false">Arquivos</button>
             <button id="workTabDetails" type="button" role="tab" data-tab="details" aria-controls="workDetailBody" aria-selected="false">Detalhes</button>
           </div>
@@ -736,9 +749,24 @@
       <span class="spacer"></span>
       <span class="link hidden" id="memReindex" title="Reindexar a memória semântica">↻ reindexar</span>
     </div>
+    <div id="semanticScope" class="semantic-scope hidden">
+      <span class="mut" style="font-size:12px">Escopo</span>
+      <button id="memScopeProject" class="ghost on" type="button">Projeto atual</button>
+      <button id="memScopeAll" class="ghost" type="button">Tudo permitido</button>
+    </div>
     <input id="searchInput" type="text" placeholder="Filtrar por título ou conteúdo… (ex.: a2p)" autocomplete="off">
     <div id="searchResults"></div>
     <div class="row"><button id="searchGo">Buscar</button><button id="searchClose" class="ghost">Fechar</button></div>
+  </div></div>
+
+  <div id="memoryModal" class="modal hidden"><div class="card" style="min-width:min(520px,94vw);max-width:min(680px,96vw)">
+    <b>Confirmar memória</b>
+    <div class="mut" style="font-size:12px">Destino</div>
+    <div id="memoryTarget" class="memory-preview-target"></div>
+    <div class="mut" style="font-size:12px;margin-top:8px">Conteúdo exato</div>
+    <div id="memoryNote" class="memory-preview-note"></div>
+    <div id="memoryMeta" class="mut" style="font-size:11px"></div>
+    <div class="row" style="justify-content:flex-end"><button id="memoryCancel" class="ghost" type="button">Cancelar</button><button id="memoryApply" type="button">Gravar</button></div>
   </div></div>
 
   <div id="settings" class="modal hidden"><div class="card settings-card">

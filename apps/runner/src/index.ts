@@ -17,21 +17,23 @@ import { hostname, homedir, platform } from "node:os";
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateCheck, updateApply, restartService, runnerSelfUpdateDecision, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
-  listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory,
+  listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang,
+  previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest,
   buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, fileDiffFromMessages, createAgentEventBridge, createEventSequencer,
   ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
-  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult,
+  pendingActivityReplay,
+  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type MemoryAppendPreview,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
 
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
-import { RUNNER_PROTOCOL_VERSION, type HubToRunner, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
+import { RUNNER_PROTOCOL_VERSION, type ContextActor, type HubToRunner, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/+$/, "");
 const HUB_URL = HUB + "/runner";
@@ -97,10 +99,14 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new AntigravityCliAdapter())
   .register(new MockAgentAdapter());
 const store = new Store({ agent: DEFAULT_AGENT, cwd: CWD });
+const contextManifests = new ContextManifestStore(JDIR);
+const memoryProvenance = new MemoryProvenanceStore(JDIR);
+const nativeBindingCollisions = agents.nativeBindingCollisions();
+if (nativeBindingCollisions.length) console.error("[runner] colisões de sessão nativa detectadas; turnos afetados serão bloqueados:", JSON.stringify(nativeBindingCollisions));
 const executionStore = new ExecutionStore({ root: join(JDIR, "executions"), maxEventsPerRoot: EXECUTION_MAX_EVENTS });
 const compactedExecutions = executionStore.compactBefore(Date.now() - EXECUTION_RETENTION_DAYS * 86_400_000);
 if (compactedExecutions.roots) console.log(`[runner] retenção de trabalhos: ${compactedExecutions.roots} diário(s) compactado(s), ${compactedExecutions.droppedEvents} evento(s) detalhado(s) removido(s)`);
-if (EXECUTIONS_ENABLED) for (const snapshot of executionStore.rootsForSession()) for (const node of snapshot.nodes) {
+for (const snapshot of executionStore.rootsForSession()) for (const node of snapshot.nodes) {
   if (node.state !== "queued" && node.state !== "running" && node.state !== "waiting_input") continue;
   try {
     executionStore.append(node.rootExecutionId, node.executionId, { kind: "state_changed", from: node.state, to: "orphaned", reason: "Runner reiniciou sem binding verificável para este processo" });
@@ -133,7 +139,7 @@ let ws: WebSocket | null = null;
 const outbox = new Outbox<RunnerToHub>(3000);
 function send(m: RunnerToHub): void {
   if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(m)); return; }
-  if (m.t === "agent_event" || m.t === "execution_event" || m.t === "execution_usage_record" || m.t === "execution_delegate_result" || m.t === "stream" || m.t === "message") outbox.push(m);
+  if (m.t === "agent_event" || m.t === "context_manifest" || m.t === "execution_event" || m.t === "execution_usage_record" || m.t === "execution_delegate_result" || m.t === "stream" || m.t === "message") outbox.push(m);
 }
 /** Replay turn output buffered during an outage. Called right after a reconnect's `welcome` (socket
  *  OPEN again), before the fresh session/caps push, so the resumed stream lands in order. */
@@ -414,7 +420,20 @@ function allSessions(): RunnerSession[] {
   }).map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, updatedAt: n.updatedAt, source: "native" as const, writable: n.agent === "claude-code" || n.agent === "codex", started: true }));
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
 }
-function pushSessions(): void { send({ t: "sessions", sessions: allSessions() }); }
+function recentDirsList(sessions: RunnerSession[], n = 10): string[] {
+  const seen = new Set<string>(), out: string[] = [];
+  for (const s of sessions) {
+    const d = (s.cwd || "").trim();
+    if (!d || seen.has(d)) continue;
+    seen.add(d); out.push(d);
+    if (out.length >= n) break;
+  }
+  return out;
+}
+function pushSessions(): void {
+  const sessions = allSessions();
+  send({ t: "sessions", sessions, recentDirs: recentDirsList(sessions) });
+}
 function pushRuns(): void { send({ t: "runs", active: [...activeRuns, ...managedRuns] }); }
 function pushExecutionManifest(reqId: string): void {
   send({ t: "execution_manifest", reqId, entries: EXECUTIONS_ENABLED ? executionStore.manifest() : [] });
@@ -436,23 +455,28 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
   if (isNativeId(sessionId)) {
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
-    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, model: h.model, effort: h.effort, total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId) });
+    const live = pendingActivityReplay(executionStore, sessionId, h.messages);
+    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, model: h.model, effort: h.effort, total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId), liveActivity: live?.events, liveState: live?.state, liveTurnId: live?.turnId, liveUpdatedAt: live?.updatedAt, liveTruncated: live?.truncated });
     startTail(sessionId); // live-mirror new turns (external CLI) to the Hub
   } else {
     if (store.isHidden(sessionId)) { send({ t: "error", reqId, message: "sessão interna não pode ser aberta pelo chat" }); return; }
     const s = store.ensure(sessionId);
+    reconcileFromNative(s);
     const all = store.history(s.id);
     const nid = agents.get(s.agent).nativeSessionId?.(s.id);
     const nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
     const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
+    const live = pendingActivityReplay(executionStore, s.id, all);
     send({
       t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd,
       writable: true, total: all.length, nativeId: nid, inputTokens: nh?.inputTokens, contextWindowTokens: nh?.contextWindowTokens, model: nh?.model || lastUsage?.model, effort: nh?.effort || lastUsage?.effort,
       messages: all.map((m: any) => ({
         role: m.role, text: m.text, ts: m.ts, agent: m.agent, speaker: m.speaker,
-        images: m.images, files: m.files, activity: m.activity, usage: m.usage,
+        images: m.images, files: m.files, activity: m.activity, usage: m.usage, contextManifest: m.contextManifest,
       })),
       files: [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))],
+      liveActivity: live?.events, liveState: live?.state, liveTurnId: live?.turnId,
+      liveUpdatedAt: live?.updatedAt, liveTruncated: live?.truncated,
     });
   }
 }
@@ -460,6 +484,21 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
 /** cwd / agent of a session on THIS machine (managed or native), for "@" search, "!" and "#" memory. */
 function sessCwd(sid?: string): string { if (!sid) return CWD; if (isNativeId(sid)) return nativeInfo(sid)?.cwd || CWD; return store.get(sid)?.cwd || CWD; }
 function sessAgent(sid?: string): string | undefined { if (!sid) return undefined; if (isNativeId(sid)) return nativeInfo(sid)?.agent; return store.get(sid)?.agent; }
+
+interface PendingMemoryPreview {
+  preview: MemoryAppendPreview;
+  sessionId?: string;
+  actor?: ContextActor;
+  agent?: string;
+  cwd: string;
+  expiresAt: number;
+}
+const pendingMemoryPreviews = new Map<string, PendingMemoryPreview>();
+const MEMORY_PREVIEW_TTL_MS = 5 * 60_000;
+function cleanExpiredMemoryPreviews(): void {
+  const now = Date.now();
+  for (const [token, pending] of pendingMemoryPreviews) if (pending.expiresAt <= now) pendingMemoryPreviews.delete(token);
+}
 
 // Live turns on this machine, so a {t:cancel} from the Hub can kill the actual agent process.
 const runAborts = new Map<string, AbortController>();
@@ -603,12 +642,12 @@ async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter,
   const activity: AgentEvent[] = [];
   const profile = EXECUTION_ADAPTER_PROFILES[selected.name as keyof typeof EXECUTION_ADAPTER_PROFILES];
   const rootExecutionId = executionRootId(RUNNER_ID, sessionId, turnId);
-  const tracker = EXECUTIONS_ENABLED ? new ExecutionTracker(executionStore, {
+  const tracker = new ExecutionTracker(executionStore, {
     runnerId: RUNNER_ID, sessionId, turnId, agent: selected.name, cwd,
     model: opts.model, effort: opts.effort, profile,
-  }, (event) => send({ t: "execution_event", sessionId, event }),
-  (usage) => send({ t: "execution_usage_record", rootExecutionId, sessionId, agent: selected.name, usage })) : undefined;
-  if (tracker) executionAborts.set(tracker.rootExecutionId, ctrl);
+  }, EXECUTIONS_ENABLED ? (event) => send({ t: "execution_event", sessionId, event }) : undefined,
+  (usage) => send({ t: "execution_usage_record", rootExecutionId, sessionId, agent: selected.name, usage }));
+  executionAborts.set(tracker.rootExecutionId, ctrl);
   const emit = (event: AgentEvent, project = true): void => {
     if (activity.length < 600) activity.push(event);
     if (project) {
@@ -641,12 +680,25 @@ async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter,
     emit(bridge.completed(reply.text));
     return { ...reply, activity };
   } catch (e: any) {
-    if (ctrl.signal.aborted || String(e?.message) === ABORTED) { if (!sequencer.terminal) emit(bridge.cancelled()); }
+    if (ctrl.signal.aborted || String(e?.message) === ABORTED) { if (!sequencer.terminal) emit(bridge.cancelled("Cancelada por solicitação do usuário.")); }
     else if (!sequencer.terminal) emit(bridge.failed(String(e?.message ?? e), "PROVIDER_ERROR"));
     throw e;
   } finally {
-    if (tracker && executionAborts.get(tracker.rootExecutionId) === ctrl) executionAborts.delete(tracker.rootExecutionId);
+    if (executionAborts.get(tracker.rootExecutionId) === ctrl) executionAborts.delete(tracker.rootExecutionId);
   }
+}
+
+function reconcileFromNative(s: ReturnType<typeof store.ensure>): void {
+  if (activeRuns.has(s.id)) return;
+  const last = store.history(s.id).at(-1);
+  if (!last || last.role !== "user") return;
+  const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+  if (!nid) return;
+  const nativeKey = nativeIdForAgent(s.agent, nid); if (!nativeKey) return;
+  const h = nativeHistory(nativeKey);
+  if (!h) return;
+  const nativeReply = [...h.messages].reverse().find((m) => m.role === "assistant" && m.ts > last.ts);
+  if (nativeReply?.text) store.add(s.id, { role: "assistant", text: nativeReply.text, ts: nativeReply.ts, agent: s.agent, activity: nativeReply.activity });
 }
 
 async function doSend(
@@ -657,12 +709,15 @@ async function doSend(
   opts?: SendOpts,
   attachments: Array<{ name: string; content: string; image?: boolean }> = [],
   turnId?: string,
+  speaker?: string,
+  actor?: ContextActor,
 ): Promise<void> {
   if (store.isHidden(sessionId)) { send({ t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
   if (turnId && !seenTurns.add(turnId)) { console.log(`[runner] turno duplicado ignorado (turnId=${turnId})`); return; }
   // One turn per session (authoritative): a second send while one runs = two agents on one repo.
   if (activeRuns.has(sessionId)) { send({ t: "busy", message: "Já há um processamento nesta sessão — aguarde terminar ou toque em Parar." }); return; }
   const ctrl = new AbortController();
+  const effectiveTurnId = turnId || randomUUID();
   runAborts.set(sessionId, ctrl);
   activeRuns.add(sessionId); pushRuns();
   // pause the native tail so our own turn isn't double-broadcast (already streamed below)
@@ -683,11 +738,20 @@ async function doSend(
         },
         previewImage: (name, bytes) => imageDataUrl(name, bytes),
       });
-      send({ t: "message", sessionId, message: { role: "user", text: built.showText, ts: Date.now(), agent: agent.name, images: built.images, files: built.files } });
       const bang = await expandBang(built.agentText, useCwd);
       const cmdExp = bang ? null : expandCommand(built.agentText, useCwd, cmdAgentOf(agent.name));
       const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : built.agentText);
-      await executeRunnerAgentTurn(sessionId, agent, agentInput, useCwd, { ...opts, turnId }, ctrl);
+      const prior = (nativeHistory(sessionId)?.messages || []).filter((message) => message.role === "user" || message.role === "assistant");
+      const manifest = buildContextManifest({
+        turnId: effectiveTurnId, sessionId, runnerId: RUNNER_ID, agent: agent.name, cwd: useCwd, actor,
+        continuity: agent.sessionContinuity?.() || "none",
+        nativeSessionId: sessionId.includes(":") ? sessionId.slice(sessionId.indexOf(":") + 1) : undefined,
+        history: prior, showText: built.showText, agentText: agentInput, images: built.images, files: built.files,
+      });
+      try { contextManifests.append(manifest); } catch (error) { console.warn("[runner] manifesto de contexto não persistido:", String(error)); }
+      send({ t: "context_manifest", sessionId, manifest });
+      send({ t: "message", sessionId, message: { role: "user", text: built.showText, ts: Date.now(), agent: agent.name, images: built.images, files: built.files, contextManifest: manifest } });
+      await executeRunnerAgentTurn(sessionId, agent, agentInput, useCwd, { ...opts, turnId: effectiveTurnId }, ctrl);
     } else {
       const existing = store.get(sessionId);
       // The Hub may resolve an automatic IA immediately before the first turn. Rebind only while
@@ -703,6 +767,9 @@ async function doSend(
         },
         previewImage: (name, bytes) => imageDataUrl(name, bytes),
       });
+      const bang = await expandBang(built.agentText, useCwd);
+      const cmdExp = bang ? null : expandCommand(built.agentText, useCwd, cmdAgentOf(agent.name));
+      const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : built.agentText);
       const ctx: TurnCtx = {
         ensure: (sid) => store.ensure(sid),
         resolveAgentName: (name) => agents.get(name).name,
@@ -711,17 +778,27 @@ async function doSend(
         pushSessions,
         now: () => Date.now(),
         speak: async () => {},
+        buildContextManifest: ({ turnId: manifestTurnId, sid, agentName: manifestAgent, cwd: manifestCwd, showText, agentText, actor: manifestActor, images, files }) => {
+          const selected = agents.get(manifestAgent);
+          return buildContextManifest({
+            turnId: manifestTurnId, sessionId: sid, runnerId: RUNNER_ID, agent: selected.name, cwd: manifestCwd,
+            actor: manifestActor, continuity: selected.sessionContinuity?.() || "none", nativeSessionId: selected.nativeSessionId?.(sid),
+            history: store.history(sid), showText, agentText, images, files,
+          });
+        },
+        recordContextManifest: (manifest) => {
+          try { contextManifests.append(manifest); } catch (error) { console.warn("[runner] manifesto de contexto não persistido:", String(error)); }
+          send({ t: "context_manifest", sessionId: manifest.sessionId, manifest });
+        },
         runAgentTurn: async (sid, name, agentText, turnCwd, turnOpts) => {
           const selected = agents.get(name);
-          const bang = await expandBang(agentText, turnCwd);
-          const cmdExp = bang ? null : expandCommand(agentText, turnCwd, cmdAgentOf(selected.name));
-          const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
-          return executeRunnerAgentTurn(sid, selected, agentInput, turnCwd, turnOpts, ctrl);
+          return executeRunnerAgentTurn(sid, selected, agentText, turnCwd, turnOpts, ctrl);
         },
+        afterStored: (sid, storedTurnId) => send({ t: "activity_committed", sessionId: sid, turnId: storedTurnId }),
       };
       await runManagedTurn(ctx, sessionId, {
-        showText: built.showText, agentText: built.agentText, model: opts?.model, effort: opts?.effort, turnId,
-        images: built.images, files: built.files,
+        showText: built.showText, agentText: agentInput, model: opts?.model, effort: opts?.effort, turnId: effectiveTurnId,
+        actor, speaker, images: built.images, files: built.files,
         onError: (message) => {
           if (!(ctrl.signal.aborted || message === ABORTED)) send({ t: "error", message });
         },
@@ -733,6 +810,11 @@ async function doSend(
       send({ t: "error", message: String(e?.message ?? e) });
     }
   } finally {
+    const managed = !isNativeId(sessionId) ? store.get(sessionId) : undefined;
+    if (managed) {
+      const nativeId = agents.get(managed.agent).nativeSessionId?.(sessionId);
+      if (nativeId) send({ t: "session", sessionId, nativeId });
+    }
     if (runAborts.get(sessionId) === ctrl) runAborts.delete(sessionId);
     activeRuns.delete(sessionId); pushRuns();
     if (tail) { try { tail.offset = statSync(tail.path).size; tail.buf = ""; } catch { /* ignore */ } tail.paused = false; }
@@ -812,7 +894,8 @@ function connect(): void {
       if (m.t === "new") {
         const id = randomUUID();
         const agentName = agents.names().includes(m.agent) ? m.agent : agents.default;
-        const s = store.ensure(id, { agent: agentName, cwd: (typeof m.cwd === "string" && m.cwd) ? m.cwd : CWD });
+        const cwd = (typeof m.cwd === "string" && m.cwd && existsSync(m.cwd)) ? m.cwd : CWD;
+        const s = store.ensure(id, { agent: agentName, cwd });
         send({ t: "history", reqId: m.reqId, sessionId: id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: 0, messages: [] });
         pushSessions();
         return;
@@ -874,6 +957,8 @@ function connect(): void {
           { model: m.model ?? m.opts?.model, effort: m.effort ?? m.opts?.effort },
           Array.isArray(m.attachments) ? m.attachments : [],
           typeof m.turnId === "string" ? m.turnId : undefined,
+          typeof m.speaker === "string" ? m.speaker : undefined,
+          m.actor,
         );
         return;
       }
@@ -890,12 +975,52 @@ function connect(): void {
         }
         return;
       }
-      if (m.t === "commands") { send({ t: "command_list", reqId: m.reqId, commands: listCommandsPublic(CWD) }); return; }
+      if (m.t === "commands") { const cwd = sessCwd(m.sessionId); send({ t: "command_list", reqId: m.reqId, cwd, commands: listCommandsPublic(cwd) }); return; }
       if (m.t === "mention") { if (typeof m.sessionId === "string" && store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não expõe arquivos pelo chat" }); return; } send({ t: "mention_list", reqId: m.reqId, files: listMentionFiles(sessCwd(m.sessionId), typeof m.q === "string" ? m.q : "") }); return; }
-      if (m.t === "memory_append" && typeof m.text === "string") {
-        if (typeof m.sessionId === "string" && store.isHidden(m.sessionId)) { send({ t: "error", message: "sessão interna não aceita memória pelo chat" }); return; }
-        try { const r = appendMemory(m.text, sessCwd(m.sessionId), cmdAgentOf(sessAgent(m.sessionId))); if (m.sessionId) send({ t: "message", sessionId: m.sessionId, message: { role: "assistant", text: "📝 Anotado em " + r.file, ts: Date.now() } }); }
-        catch (e: any) { send({ t: "error", message: "memória: " + String(e?.message ?? e) }); }
+      if (m.t === "memory_preview" && typeof m.text === "string") {
+        if (typeof m.sessionId === "string" && store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não aceita memória pelo chat" }); return; }
+        try {
+          cleanExpiredMemoryPreviews();
+          const cwd = sessCwd(m.sessionId), agent = cmdAgentOf(sessAgent(m.sessionId));
+          const preview = previewMemoryAppend(m.text, cwd, agent);
+          const token = randomUUID(), expiresAt = Date.now() + MEMORY_PREVIEW_TTL_MS;
+          pendingMemoryPreviews.set(token, { preview, sessionId: m.sessionId, actor: m.actor, agent: agent || undefined, cwd, expiresAt });
+          send({ t: "memory_preview", reqId: m.reqId, sessionId: m.sessionId, token, target: preview.file, note: preview.note, appendText: preview.appendText, beforeHash: preview.beforeHash, exists: preview.exists, expiresAt });
+        } catch (e: any) { send({ t: "error", reqId: m.reqId, message: "memória: " + String(e?.message ?? e) }); }
+        return;
+      }
+      if (m.t === "memory_apply" && typeof m.token === "string") {
+        cleanExpiredMemoryPreviews();
+        const pending = pendingMemoryPreviews.get(m.token);
+        pendingMemoryPreviews.delete(m.token);
+        if (!pending) { send({ t: "memory_applied", reqId: m.reqId, token: m.token, ok: false, error: "prévia inexistente, expirada ou já aplicada" }); return; }
+        try {
+          const result = applyMemoryAppend(pending.preview);
+          memoryProvenance.append({
+            at: Date.now(), sessionId: pending.sessionId, runnerId: RUNNER_ID,
+            userId: pending.actor?.userId, deviceId: pending.actor?.deviceId, agent: pending.agent, cwd: pending.cwd,
+            target: result.file, beforeHash: result.beforeHash, afterHash: result.afterHash,
+            noteHash: createHash("sha256").update(result.note).digest("hex"),
+          });
+          send({ t: "memory_applied", reqId: m.reqId, token: m.token, sessionId: pending.sessionId, ok: true, target: result.file, beforeHash: result.beforeHash, afterHash: result.afterHash });
+          if (pending.sessionId) send({ t: "message", sessionId: pending.sessionId, message: { role: "assistant", text: "Anotado em " + result.file, ts: Date.now() } });
+        } catch (e: any) { send({ t: "memory_applied", reqId: m.reqId, token: m.token, sessionId: pending.sessionId, ok: false, error: "memória: " + String(e?.message ?? e) }); }
+        return;
+      }
+      if (m.t === "memory_cancel" && typeof m.token === "string") {
+        pendingMemoryPreviews.delete(m.token);
+        return;
+      }
+      if (m.t === "memory_append") {
+        send({ t: "error", message: "escrita de memória exige prévia e confirmação pelo fluxo preview/apply" });
+        return;
+      }
+      if (m.t === "dropLast" && typeof m.sessionId === "string") {
+        if (store.isHidden(m.sessionId)) { send({ t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; }
+        if (!isNativeId(m.sessionId)) {
+          store.dropLastUser(m.sessionId);
+          pushSessions();
+        }
         return;
       }
       if (m.t === "update") {
@@ -971,6 +1096,16 @@ if (!TOKEN) {
 }
 try { const purged = purgeProbeJunk(); if (purged) console.log(`[runner] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
 try { const s = purgeScratch(); if (s) console.log(`[runner] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
+try {
+  let n = 0;
+  for (const meta of store.list()) {
+    const s = store.ensure(meta.id);
+    const before = s.messages.length;
+    reconcileFromNative(s);
+    if (s.messages.length > before) n++;
+  }
+  if (n) console.log(`[runner] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`);
+} catch { /* ignore */ }
 connect();
 // keep native/managed session list fresh (native sessions can change out-of-band)
 setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) pushSessions(); }, 6000);

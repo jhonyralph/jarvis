@@ -161,6 +161,12 @@ export function isClaudeSidechainOnlyHead(head: string): boolean {
   return sawSide && !sawMain;
 }
 
+export function isCodexSubagentMeta(payload: any): boolean {
+  return payload?.thread_source === "subagent"
+    || typeof payload?.parent_thread_id === "string"
+    || !!payload?.source?.subagent?.thread_spawn;
+}
+
 // Nome ESTÁVEL de uma sessão nativa. O Claude Code reescreve o ai-title a cada turno; se o menu
 // seguisse o mais recente, o nome ficaria mudando "no meio da corrida". Então CONGELAMOS: na
 // primeira vez que vemos um ai-title de verdade, gravamos e nunca mais mudamos. Guardado em
@@ -212,8 +218,10 @@ function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
   const head = readHead(path);
   if (!head) return null;
   let id = "", cwd = "", title = "";
+  let internalSubagent = false;
   eachLine(head, (o) => {
     if (o.type === "session_meta" && o.payload) {
+      if (isCodexSubagentMeta(o.payload)) { internalSubagent = true; return; }
       id = o.payload.session_id || o.payload.id || id;
       cwd = o.payload.cwd || cwd;
     } else if (!title && o.type === "response_item" && o.payload?.type === "message" && o.payload.role === "user") {
@@ -221,6 +229,7 @@ function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
       if (t && !isInjected(t)) title = t;
     }
   });
+  if (internalSubagent) return null;
   if (cwd && /[\\/]\.jarvis[\\/]oneshot/i.test(cwd)) return null; // Jarvis's own one-shot (summary/digest/voice) — not a real session
   if (!id) {
     const m = basename(path).match(/([0-9a-f]{8}-[0-9a-f-]+)\.jsonl$/i);

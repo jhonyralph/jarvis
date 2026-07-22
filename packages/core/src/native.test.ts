@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { filterUnboundNativeSessions, isClaudeSidechainOnlyHead, parseNativeEvents, lineDiff, editCounts, toolFileStat } from "./native.js";
+import { filterUnboundNativeSessions, isClaudeSidechainOnlyHead, isCodexSubagentMeta, parseNativeEvents, lineDiff, editCounts, toolFileStat } from "./native.js";
 
 const TS = "2024-06-01T10:00:00.000Z";
 const claudeLine = (o: object) => JSON.stringify({ timestamp: TS, ...o });
@@ -144,4 +144,11 @@ test("Claude sidechain-only transcripts are not standalone native sessions", () 
   ].join("\n");
   assert.equal(isClaudeSidechainOnlyHead(side), true);
   assert.equal(isClaudeSidechainOnlyHead(main), false);
+});
+
+test("Codex subagent metadata is classified as internal", () => {
+  assert.equal(isCodexSubagentMeta({ id: "parent", session_id: "parent", thread_source: "user" }), false);
+  assert.equal(isCodexSubagentMeta({ id: "child", session_id: "parent", thread_source: "subagent" }), true);
+  assert.equal(isCodexSubagentMeta({ id: "child", parent_thread_id: "parent" }), true);
+  assert.equal(isCodexSubagentMeta({ source: { subagent: { thread_spawn: { parent_thread_id: "parent" } } } }), true);
 });

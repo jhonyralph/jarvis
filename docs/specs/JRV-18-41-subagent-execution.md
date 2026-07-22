@@ -15,7 +15,7 @@ links:
   design: "Referências visuais fornecidas pelo usuário em 2026-07-20"
   adr: "N/A"
 approval_evidence: "Usuário em 2026-07-20 aprovou a arquitetura híbrida, o escopo, o anti-escopo, o breakdown completo EXEC-01..12 / ADP-01..12 e esta especificação executável."
-implementation_evidence: "Contrato/journal/tracker, protocolo Runner v3, painel Trabalhos, fallback gerenciado local/remoto, settings, retenção, perfis e entradas de mapper dos 12 adapters e MCP jarvis_delegate implementados no working tree em 2026-07-20; corpus versionado completo, gate final e canaries externos continuam separados."
+implementation_evidence: "Contrato/journal/tracker, protocolo Runner v6, replay durável do chat, painel Trabalhos, fallback gerenciado local/remoto, settings, retenção, perfis e entradas de mapper dos 12 adapters e MCP jarvis_delegate implementados no working tree em 2026-07-21; corpus versionado completo, gate final e canaries externos continuam separados."
 ---
 
 # Executable spec
@@ -31,7 +31,7 @@ inventar progresso.
 
 ### 0.1 Implementation status
 
-- `packages/protocol/src/execution.ts` é o contrato canônico; Hub e Runner negociam protocolo v3.
+- `packages/protocol/src/execution.ts` é o contrato canônico; Hub e Runner negociam protocolo v6.
 - `ExecutionStore` mantém journal fsynced, snapshot/replay, manifesto, idempotência, compactação de
   raízes terminais e remoção por sessão. O Hub espelha journals remotos sem fabricar terminal.
 - O painel global **Trabalhos** lista a árvore autorizada, transcript, arquivos/diffs, `+/-`, métricas,
@@ -361,7 +361,7 @@ Erros fechados: `NOT_FOUND`, `FORBIDDEN`, `UNSUPPORTED`, `INVALID_STATE`, `CONFL
 O Runner emite os mesmos `ExecutionEvent` em `{ t:"execution_event", sessionId, event }`, mantém o
 journal autoritativo e responde manifest/replay paginado por `reqId`. O Hub produz o snapshot para o
 browser a partir do mirror reconciliado. Controles do Hub carregam
-`requestId` idempotente. `RUNNER_PROTOCOL_VERSION` é 3 e manifest/replay estão implementados nos dois
+`requestId` idempotente. `RUNNER_PROTOCOL_VERSION` é 6 e manifest/replay estão implementados nos dois
 lados. Um Runner com versão incompatível é recusado no handshake e deve ser atualizado; o Hub não
 permite uma conexão parcialmente compatível com semântica ambígua.
 Delegação remota usa `execution_delegate`/`execution_delegate_result`; usage do filho volta em
@@ -840,8 +840,8 @@ Esta é a saída exigida para `reviewed`/`gate-approved`, não uma alegação de
 |---|---|---|
 | Contrato e persistência | `packages/protocol/src/execution.ts`, `packages/core/src/execution-store.ts` e testes | implementado |
 | Policy/DAG/worktree/redaction | `execution-policy`, `execution-orchestrator`, `execution-worktree`, `execution-redact` e testes | implementado; segurança real depende da combinação certificada abaixo |
-| Lifecycle local/remoto | tracker no Hub/Runner, protocolo v3, manifest/replay e E2E mock local/remoto | implementado; reconnect/restart durante tool ainda sem E2E dedicado |
-| UX Trabalhos | `apps/hub/web/index.html` e `app.js` | árvore/detalhe e card inline vivo implementados; canary manual Chrome desktop/mobile passou; reconstrução inline nativa universal no bubble após reload e browser/a11y automatizado ainda pendentes |
+| Lifecycle local/remoto | tracker no Hub/Runner, protocolo v6, manifest/replay e E2E mock local/remoto | implementado; E2E dedicado reinicia o Hub durante tool e recupera atividade do journal do Runner |
+| UX Trabalhos | `apps/hub/web/index.html` e `app.js` | árvore/detalhe e card inline vivo implementados; o chat recompõe turno pendente e agrupa chunks `Read` por arquivo; browser/a11y automatizado ainda pendentes |
 | MCP/fallback | `apps/mcp/src/delegate.ts`, `delegateTool.ts`, `delegateReport.ts`, `jarvis_delegate`, `ManagedExecutionService` e testes | `wait`/`background`, corrida aceite/terminal, timeout e snapshot paginado/sanitizado implementados; E2E por cliente MCP real ainda pendente |
 | Retenção/settings | compactação de raízes terminais + Configurações/env | implementado; Runner remoto usa env próprio |
 | Claude | E3 `partial`; RO/writer conectados por controles do provider | canary de subagente/cancel/reconnect pendente |

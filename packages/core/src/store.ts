@@ -5,6 +5,7 @@
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ContextManifest } from "@jarvis/protocol";
 import { writeJsonAtomic, readJson } from "./persist.js";
 
 export interface StoredMessage {
@@ -27,6 +28,7 @@ export interface StoredMessage {
     outputTokens?: number;
     contextTokens?: number;
   };
+  contextManifest?: ContextManifest;
 }
 
 export interface SessionMeta {

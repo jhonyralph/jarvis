@@ -29,6 +29,7 @@ import {
   type ModelSource,
   type PermissionMode,
   type ProviderExecutionEvent,
+  type SessionContinuity,
   type SupportLevel,
 } from "./agent-contract.js";
 import { codexChildRollouts } from "./codex-executions.js";
@@ -253,7 +254,7 @@ export interface AgentEventBridge {
   usage(usage: NonNullable<AgentReply["usage"]>): AgentEvent;
   completed(text: string): AgentEvent;
   failed(message: string, errorCode?: string): AgentEvent;
-  cancelled(): AgentEvent;
+  cancelled(reason?: string): AgentEvent;
 }
 
 /** Single provider-progress → canonical-event boundary used by both Hub and Runner. */
@@ -280,7 +281,7 @@ export function createAgentEventBridge(turnId: string, sequencer: EventSequencer
     usage: (usage) => sequencer.next("usage", { usage: { ...usage, costKind: usage.costKind || "unavailable", source: usage.source || "provider did not identify usage source" } }),
     completed: (text) => sequencer.next("completed", { text }),
     failed: (message, errorCode) => sequencer.next("failed", { text: message, errorCode }),
-    cancelled: () => sequencer.next("cancelled"),
+    cancelled: (reason) => sequencer.next("cancelled", { text: reason }),
   };
 }
 
@@ -293,12 +294,39 @@ export interface AgentAdapter {
   oneShot?(text: string, opts?: SendOpts): Promise<AgentReply>;
   /** The underlying native session id (e.g. the real claude session), if bound. */
   nativeSessionId?(sessionId: string): string | undefined;
+  /** Synchronous declaration used by per-turn context manifests. */
+  sessionContinuity?(): SessionContinuity;
+  /** Persisted managed->native bindings, used to detect accidental shared provider threads. */
+  nativeSessionBindings?(): Array<[managedSessionId: string, nativeSessionId: string]>;
   /** Forget a session's native binding (on delete), so a reused id won't resume it. */
   forgetSession?(sessionId: string): void;
   /** Account plan usage (5h / weekly windows), if the agent exposes it. */
   usage?(): Promise<AgentUsage | null>;
   /** Versioned support/capability snapshot. Legacy adapters without it are always limited. */
   descriptor?(): Promise<AgentDescriptor>;
+}
+
+export interface NativeSessionCollision {
+  nativeSessionId: string;
+  managedSessionIds: string[];
+}
+
+export function findNativeSessionCollisions(bindings: Iterable<[string, string]>): NativeSessionCollision[] {
+  const owners = new Map<string, string[]>();
+  for (const [managedId, nativeId] of bindings) {
+    if (!managedId || !nativeId) continue;
+    const list = owners.get(nativeId) || [];
+    list.push(managedId);
+    owners.set(nativeId, list);
+  }
+  return [...owners.entries()]
+    .filter(([, managedSessionIds]) => new Set(managedSessionIds).size > 1)
+    .map(([nativeSessionId, managedSessionIds]) => ({ nativeSessionId, managedSessionIds: [...new Set(managedSessionIds)].sort() }));
+}
+
+export function assertNativeSessionBinding(bindings: Iterable<[string, string]>, managedSessionId: string, nativeSessionId: string): void {
+  const conflict = [...bindings].find(([owner, native]) => native === nativeSessionId && owner !== managedSessionId);
+  if (conflict) throw new Error(`colisão de sessão nativa: ${nativeSessionId} já pertence à sessão Jarvis ${conflict[0]}`);
 }
 
 export class AgentRegistry {
@@ -340,21 +368,43 @@ export class AgentRegistry {
   get default(): string {
     return this.defaultName;
   }
+  nativeBindingCollisions(): Array<NativeSessionCollision & { agent: string }> {
+    return [...this.byName.values()].flatMap((adapter) =>
+      findNativeSessionCollisions(adapter.nativeSessionBindings?.() || []).map((collision) => ({ agent: adapter.name, ...collision }))
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
 
 export class MockAgentAdapter implements AgentAdapter {
   readonly name = "mock";
+  sessionContinuity(): SessionContinuity { return "jarvis_history"; }
   async capabilities(): Promise<AgentCaps> {
     return { models: [] };
   }
   async available(): Promise<boolean> {
     return process.env.JARVIS_ENABLE_MOCK === "1" || process.env.NODE_ENV === "test";
   }
-  async send(_sid: string, text: string, _cwd?: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
+  async send(_sid: string, text: string, cwd = process.cwd(), opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
     if (opts?.managed) managedAdapterSecurityArgs(this.name, opts.managed, process.env.JARVIS_ENABLE_MOCK === "1");
-    const reply = `Recebi: "${text}". (agente mock — Hub/chat/voz OK.)`;
+    const reply = text.includes("[fixture:decision]")
+      ? "Qual caminho seguir? [fixture:decision]"
+      : `Recebi: "${text}". (agente mock — Hub/chat/voz OK.)`;
+    const replayFixture = text.includes("[fixture:replay]") || text.includes("[fixture:replay-long]");
+    if (replayFixture) {
+      const path = join(cwd, "fixture-replay.ts");
+      onEvent?.({ kind: "thinking", text: "Preparando replay durável" });
+      onEvent?.({ kind: "tool", name: "Read", summary: "Lendo fixture-replay.ts (parte 1)", toolId: "replay-read-1", path, status: "started" });
+      onEvent?.({ kind: "tool", name: "Read", summary: "Lendo fixture-replay.ts (parte 2)", toolId: "replay-read-2", path, status: "started" });
+    }
+    if (text.includes("[fixture:slow]") || replayFixture) {
+      await new Promise<void>((resolve, reject) => {
+        if (opts?.signal?.aborted) { reject(new Error(ABORTED)); return; }
+        const timer = setTimeout(resolve, text.includes("[fixture:replay-long]") ? 15_000 : 5_000);
+        opts?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error(ABORTED)); }, { once: true });
+      });
+    }
     if (text.includes("[fixture:child]")) {
       onEvent?.({ kind: "execution_spawn", providerId: "mock-child-1", node: { title: "Subprocesso fixture", role: "auditor", kind: "agent" } });
       onEvent?.({ kind: "execution_activity", providerId: "mock-child-1", event: { kind: "thinking", text: "Analisando fixture", providerEvent: "mock.child.thinking" } });
@@ -367,7 +417,13 @@ export class MockAgentAdapter implements AgentAdapter {
     onEvent?.({ kind: "text", text: reply });
     return { text: reply, usage: { inputTokens: 1, outputTokens: 1, costKind: "tokens_only", source: "mock fixture" } };
   }
-  async oneShot(): Promise<AgentReply> {
+  async oneShot(text = ""): Promise<AgentReply> {
+    if (text.includes("[fixture:stage]")) {
+      return { text: '{"draft":"refino remoto confirmado","say":"","needsUpgrade":false,"reason":""}' };
+    }
+    if (text.includes("[fixture:decision]")) {
+      return { text: '{"questions":[{"header":"Escopo","question":"Qual caminho seguir?","multi":false,"options":[{"label":"Continuar","desc":"Executa o próximo passo."}]}]}' };
+    }
     return { text: '{"answer":"(busca mock — defina JARVIS_SEARCH_AGENT=claude-code para busca real)","matches":[],"action":null}' };
   }
   async descriptor(): Promise<AgentDescriptor> {
@@ -391,6 +447,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
   nativeSessionId(sessionId: string): string | undefined {
     return this.sessions.get(sessionId);
+  }
+  sessionContinuity(): SessionContinuity { return "native_id"; }
+  nativeSessionBindings(): Array<[string, string]> { return [...this.sessions.entries()]; }
+  private bindSession(sessionId: string, nativeSessionId: string): void {
+    assertNativeSessionBinding(this.sessions, sessionId, nativeSessionId);
+    if (this.sessions.get(sessionId) === nativeSessionId) return;
+    this.sessions.set(sessionId, nativeSessionId);
+    this.saveSessions();
   }
   forgetSession(sessionId: string): void {
     if (this.sessions.delete(sessionId)) this.saveSessions();
@@ -484,8 +548,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
     validateModelSelection(await this.capabilities(), opts);
+    const mapped = this.sessions.get(sessionId);
     // native imported sessions ("claude:<uuid>") resume the underlying real claude session
-    const prev = this.sessions.get(sessionId) || (sessionId.startsWith("claude:") ? sessionId.slice("claude:".length) : undefined);
+    const prev = mapped || (sessionId.startsWith("claude:") ? sessionId.slice("claude:".length) : undefined);
+    if (prev) assertNativeSessionBinding(this.sessions, sessionId, prev);
     const fmt = onEvent ? ["--output-format", "stream-json", "--verbose"] : ["--output-format", "json"];
     // The prompt goes over STDIN, not as a "-p <value>" argv value — confirmed by direct testing:
     // text starting with "-" (a dash-led sentence, or the "--- arquivo anexado:" attachment marker)
@@ -523,7 +589,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       await runStream(this.bin, args, cwd, text, (line) => {
         let o: any;
         try { o = JSON.parse(line); } catch { return; }
-        if (o.type === "system" && o.subtype === "init" && o.session_id) sessionOut = o.session_id;
+        if (o.type === "system" && o.subtype === "init" && o.session_id) {
+          sessionOut = o.session_id;
+          if (sessionOut && this.sessions.get(sessionId) !== sessionOut) {
+            this.bindSession(sessionId, sessionOut);
+          }
+        }
         else if (o.type === "assistant") {
           // Sub-agent (Task) turns carry a top-level parent_tool_use_id; their text is the
           // sub-agent's own reasoning, NOT the parent answer — surface it but don't accumulate it.
@@ -548,21 +619,26 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             onEvent({ kind: "execution_state", providerId: String(b.tool_use_id), state: failed ? "failed" : "succeeded", summary: failed ? String(b.content || "subagente falhou") : undefined });
           }
         } else if (o.type === "result") {
-          if (o.session_id) sessionOut = o.session_id;
+          if (o.session_id) {
+            sessionOut = o.session_id;
+            if (sessionOut && this.sessions.get(sessionId) !== sessionOut) {
+              this.bindSession(sessionId, sessionOut);
+            }
+          }
           if (o.result && !finalText) finalText = o.result;
           if (o.is_error) streamError = o.result || "claude error";
           usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model };
         }
       }, opts?.signal);
       if (streamError) throw new Error(streamError);
-      if (sessionOut) { this.sessions.set(sessionId, sessionOut); this.saveSessions(); }
+      if (sessionOut) this.bindSession(sessionId, sessionOut);
       return { text: finalText, usage };
     }
 
     const raw = await run(this.bin, args, cwd, text, opts?.signal);
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(json.result || "claude error");
-    if (json.session_id) { this.sessions.set(sessionId, json.session_id); this.saveSessions(); }
+    if (json.session_id) this.bindSession(sessionId, json.session_id);
     return {
       text: json.result ?? "",
       usage: { costUsd: json.total_cost_usd, inputTokens: inputContext(json.usage), contextTokens: inputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model },
@@ -793,6 +869,14 @@ export class CodexAdapter implements AgentAdapter {
   nativeSessionId(sessionId: string): string | undefined {
     return this.sessions.get(sessionId);
   }
+  sessionContinuity(): SessionContinuity { return "native_id"; }
+  nativeSessionBindings(): Array<[string, string]> { return [...this.sessions.entries()]; }
+  private bindSession(sessionId: string, nativeSessionId: string): void {
+    assertNativeSessionBinding(this.sessions, sessionId, nativeSessionId);
+    if (this.sessions.get(sessionId) === nativeSessionId) return;
+    this.sessions.set(sessionId, nativeSessionId);
+    this.saveSessions();
+  }
   forgetSession(sessionId: string): void {
     if (this.sessions.delete(sessionId)) this.saveSessions();
   }
@@ -868,10 +952,12 @@ export class CodexAdapter implements AgentAdapter {
 
   async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
     validateModelSelection(await this.capabilities(), opts);
+    const mapped = this.sessions.get(sessionId);
     // Resume the bound thread if we have one — continuity, and dedupe (see nativeSessionId above).
     // `resume` has no --cd of its own: it continues in the thread's original cwd. Confirmed
     // directly: `codex exec resume <id> --json` correctly recalls prior turns in the same thread.
-    const prev = this.sessions.get(sessionId) || (sessionId.startsWith("codex:") ? sessionId.slice("codex:".length) : undefined);
+    const prev = mapped || (sessionId.startsWith("codex:") ? sessionId.slice("codex:".length) : undefined);
+    if (prev) assertNativeSessionBinding(this.sessions, sessionId, prev);
     const args = prev ? ["exec", "resume", prev, "--json"] : ["exec", "--cd", cwd, "--json"];
     if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
     else if (fullAccess()) args.push("--dangerously-bypass-approvals-and-sandbox");
@@ -951,7 +1037,16 @@ export class CodexAdapter implements AgentAdapter {
     const handleLine = (line: string): void => {
       let o: any; try { o = JSON.parse(line); } catch { return; }
       switch (o.type) {
-        case "thread.started": if (o.thread_id) { threadId = o.thread_id; startActivityPolling(); } break;
+        case "thread.started":
+          if (o.thread_id) {
+            const nextThreadId = String(o.thread_id);
+            threadId = nextThreadId;
+            if (nextThreadId !== prev && this.sessions.get(sessionId) !== nextThreadId) {
+              this.bindSession(sessionId, nextThreadId);
+            }
+            startActivityPolling();
+          }
+          break;
         case "turn.completed": if (o.usage) rawUsage = o.usage; break;
         case "turn.failed": case "error": streamError = o.error?.message || o.message || streamError; break;
         case "item.started": emitItem(o.item, false); break;
@@ -979,7 +1074,7 @@ export class CodexAdapter implements AgentAdapter {
     if (rawUsage) usage = codexUsage(rawUsage, beforeTelemetry?.total, afterTelemetry);
     this.started.add(sessionId);
     if (streamError && !finalParts.length) throw new Error(streamError);
-    if (threadId && threadId !== prev) { this.sessions.set(sessionId, threadId); this.saveSessions(); }
+    if (threadId && threadId !== prev) this.bindSession(sessionId, threadId);
     return { text: finalParts.join("\n\n").trim() || out.trim(), usage };
   }
 
@@ -1220,6 +1315,14 @@ class StructuredCliAdapter implements AgentAdapter {
   }
   private saveSessions(): void { try { writeJsonAtomic(this.sessionsFile, Object.fromEntries(this.sessions)); } catch { /* ignore */ } }
   nativeSessionId(sessionId: string): string | undefined { return this.sessions.get(sessionId); }
+  sessionContinuity(): SessionContinuity { return this.spec.capabilities.sessionContinuity; }
+  nativeSessionBindings(): Array<[string, string]> { return [...this.sessions.entries()]; }
+  private bindSession(sessionId: string, nativeSessionId: string): void {
+    assertNativeSessionBinding(this.sessions, sessionId, nativeSessionId);
+    if (this.sessions.get(sessionId) === nativeSessionId) return;
+    this.sessions.set(sessionId, nativeSessionId);
+    this.saveSessions();
+  }
   forgetSession(sessionId: string): void { if (this.sessions.delete(sessionId)) this.saveSessions(); }
   async capabilities(): Promise<AgentCaps> { return { models: [], autoModel: true }; }
   async available(): Promise<boolean> { return !!(await cliVersion(this.spec.command)); }
@@ -1237,6 +1340,7 @@ class StructuredCliAdapter implements AgentAdapter {
     validateModelSelection(await this.capabilities(), opts);
     const nativeContinuity = this.spec.capabilities.sessionContinuity === "native_id";
     const previous = nativeContinuity ? this.sessions.get(sessionId) : undefined;
+    if (previous) assertNativeSessionBinding(this.sessions, sessionId, previous);
     const effectiveText = this.spec.capabilities.sessionContinuity === "jarvis_history" ? withManagedHistory(text, opts?.history) : text;
     const args = this.spec.args(effectiveText, cwd, previous, opts);
     const parts: string[] = [];
@@ -1248,7 +1352,10 @@ class StructuredCliAdapter implements AgentAdapter {
         for (const event of mapProviderExecutionFixture(this.spec.id as ExecutionAdapterId, parsed)) onEvent?.(event);
       }
       const item = this.spec.parser(parsed);
-      if (item.sessionId) nativeId = item.sessionId;
+      if (item.sessionId) {
+        nativeId = item.sessionId;
+        if (nativeContinuity && !sessionId.startsWith("__oneshot_")) this.bindSession(sessionId, nativeId);
+      }
       if (item.usage) usage = item.usage;
       if (item.error) failure = item.error;
       for (const event of item.events || []) onEvent?.(event);
@@ -1276,7 +1383,7 @@ class StructuredCliAdapter implements AgentAdapter {
     }
     if (!onEvent) for (const line of out.split(/\r?\n/)) if (line.trim()) handle(line);
     if (failure && !finalText && !parts.length) throw new Error(failure);
-    if (nativeContinuity && !sessionId.startsWith("__oneshot_") && nativeId && nativeId !== previous) { this.sessions.set(sessionId, nativeId); this.saveSessions(); }
+    if (nativeContinuity && !sessionId.startsWith("__oneshot_") && nativeId && nativeId !== previous) this.bindSession(sessionId, nativeId);
     if (usage && !usage.model) usage.model = opts?.model;
     return { text: (finalText || parts.join("") || out).trim(), usage };
   }
@@ -1347,6 +1454,7 @@ export function finalOnlyText(output: string): string {
 /** Detectable but intentionally final-only: these CLIs do not expose a verified live tool stream. */
 class LimitedFinalCliAdapter implements AgentAdapter {
   constructor(readonly name: string, private label: string, private command: string, private args: (text: string, opts?: SendOpts) => string[], protected declaredCapabilities: AgentCapabilities) {}
+  sessionContinuity(): SessionContinuity { return this.declaredCapabilities.sessionContinuity; }
   async capabilities(): Promise<AgentCaps> { return { models: [], autoModel: true }; }
   async available(): Promise<boolean> { return !!(await cliVersion(this.command)); }
   async send(sessionId: string, text: string, cwd: string, opts?: SendOpts, onEvent?: OnEvent): Promise<AgentReply> {
@@ -1416,6 +1524,7 @@ export class AntigravityCliAdapter extends LimitedFinalCliAdapter {
  */
 export class AiderAdapter implements AgentAdapter {
   readonly name = "aider";
+  sessionContinuity(): SessionContinuity { return "jarvis_history"; }
   async capabilities(): Promise<AgentCaps> {
     const configured = aiderConfiguredModel();
     return { models: configured ? [{ id: configured, label: configured, efforts: [], source: "config" }] : [], defaultModel: configured, autoModel: !configured };

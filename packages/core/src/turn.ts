@@ -1,4 +1,6 @@
 /** Provider-neutral managed-turn lifecycle shared by the embedded Hub and every remote Runner. */
+import { randomUUID } from "node:crypto";
+import type { ContextActor, ContextManifest } from "@jarvis/protocol";
 
 export interface TurnSessionRef { agent: string; cwd: string; }
 
@@ -67,6 +69,7 @@ export interface TurnStoredMessage {
   files?: Array<{ name: string; content?: string }>;
   activity?: unknown[];
   usage?: TurnUsage;
+  contextManifest?: ContextManifest;
 }
 
 export interface TurnReply { text: string; activity?: unknown[]; usage?: TurnUsage; }
@@ -79,9 +82,23 @@ export interface TurnCtx {
   pushSessions(): void;
   now(): number;
   runAgentTurn(sid: string, agentName: string, agentText: string, cwd: string, opts: { model?: string; effort?: string; turnId?: string }): Promise<TurnReply>;
+  buildContextManifest?(input: {
+    turnId: string;
+    sid: string;
+    agentName: string;
+    cwd: string;
+    showText: string;
+    agentText: string;
+    actor?: ContextActor;
+    images?: string[];
+    files?: Array<{ name: string; content?: string }>;
+  }): ContextManifest;
+  recordContextManifest?(manifest: ContextManifest): void;
   speak(sid: string, replyText: string, also?: string[]): Promise<void>;
   checkBudget?(sid: string): { blocked: boolean; message?: string };
   seen?(turnId: string): boolean;
+  /** Called only after the assistant message has been durably added to the session store. */
+  afterStored?(sid: string, turnId: string): void;
   afterTurn?(sid: string): void;
 }
 
@@ -96,6 +113,7 @@ export interface ManagedTurnInput {
   speak?: boolean;
   speakAlso?: string[];
   turnId?: string;
+  actor?: ContextActor;
   onError(message: string, limit: boolean): void;
 }
 
@@ -109,20 +127,28 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
   if (budget?.blocked) { o.onError(budget.message || "limite de custo desta sessão atingido", true); return; }
   const session = ctx.ensure(sid);
   const agentName = ctx.resolveAgentName(session.agent);
+  const turnId = o.turnId || randomUUID();
+  const agentText = o.agentText ?? o.showText;
+  const contextManifest = ctx.buildContextManifest?.({
+    turnId, sid, agentName, cwd: session.cwd, showText: o.showText, agentText,
+    actor: o.actor, images: o.images, files: o.files,
+  });
+  if (contextManifest) ctx.recordContextManifest?.(contextManifest);
   const userMsg: TurnStoredMessage = {
     role: "user", text: o.showText, ts: ctx.now(), agent: agentName,
-    speaker: o.speaker, images: o.images, files: o.files,
+    speaker: o.speaker, images: o.images, files: o.files, contextManifest,
   };
   ctx.add(sid, userMsg);
   ctx.broadcast(sid, { t: "message", message: { sessionId: sid, ...userMsg } });
   ctx.pushSessions();
   try {
-    const reply = await ctx.runAgentTurn(sid, session.agent, o.agentText ?? o.showText, session.cwd, { model: o.model, effort: o.effort, turnId: o.turnId });
+    const reply = await ctx.runAgentTurn(sid, session.agent, agentText, session.cwd, { model: o.model, effort: o.effort, turnId });
     ctx.add(sid, {
       role: "assistant", text: reply.text, ts: ctx.now(), agent: agentName,
       activity: reply.activity, usage: reply.usage,
     });
     ctx.pushSessions();
+    ctx.afterStored?.(sid, turnId);
     ctx.afterTurn?.(sid);
     if (o.speak) await ctx.speak(sid, reply.text, o.speakAlso);
   } catch (e: unknown) {

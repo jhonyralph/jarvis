@@ -25,6 +25,27 @@ test("budget block and duplicate turn do not persist a phantom user message", as
   assert.deepEqual({ adds, runs, errors }, { adds: 0, runs: 0, errors: 1 });
 });
 
+test("managed lifecycle uses one stable turn id for the manifest and provider invocation", async () => {
+  const stored: TurnStoredMessage[] = []; let providerTurnId = "", recordedTurnId = "", committedTurnId = "";
+  await runManagedTurn({
+    ensure: () => ({ agent: "mock", cwd: "/repo" }), resolveAgentName: (name) => name,
+    add: (_sid, message) => stored.push(message), broadcast: () => {}, pushSessions: () => {}, now: () => 10, speak: async () => {},
+    buildContextManifest: (input) => ({
+      schemaVersion: 1, turnId: input.turnId, sessionId: input.sid, runnerId: "local", agent: input.agentName, cwd: input.cwd, createdAt: 10,
+      continuity: { kind: "jarvis_history", historyMessages: 0, historyChars: 0 },
+      prompt: { userChars: input.showText.length, agentChars: input.agentText.length, agentSha256: "hash", transformed: true, attachments: [] },
+      semanticMemory: { injected: false, entryIds: [] }, instructionFiles: [],
+    }),
+    recordContextManifest: (manifest) => { recordedTurnId = manifest.turnId; },
+    runAgentTurn: async (_sid, _agent, _text, _cwd, opts) => { providerTurnId = opts.turnId || ""; return { text: "ok" }; },
+    afterStored: (_sid, turnId) => { committedTurnId = turnId; assert.equal(stored.at(-1)?.role, "assistant"); },
+  }, "s1", { showText: "raw", agentText: "expanded", onError: assert.fail });
+  assert.ok(providerTurnId);
+  assert.equal(recordedTurnId, providerTurnId);
+  assert.equal(stored[0].contextManifest?.turnId, providerTurnId);
+  assert.equal(committedTurnId, providerTurnId);
+});
+
 test("attachment builder preserves text files and turns images into readable paths/previews", () => {
   const built = buildTurnAttachments([{ name: "a.txt", content: "abc" }, { name: "pic.png", content: Buffer.from("x").toString("base64"), image: true }], "pergunta", {
     saveImage: () => "/tmp/pic.png", previewImage: (name, bytes) => imageDataUrl(name, bytes),

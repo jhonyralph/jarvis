@@ -41,3 +41,37 @@ test("usage views can attribute legacy unknown entries from their session withou
   assert.equal(ledger.byAgent(resolve)["legacy-unattributed"].costUsd, 1);
   assert.equal(ledger.topSessions(2, resolve)[0].agent, "codex");
 });
+
+test("usage views isolate equal session ids by runner", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "jarvis-ledger-runners-")), "usage.json");
+  const ledger = new UsageLedger(file);
+  ledger.record("same", "mock", { inputTokens: 2, costKind: "tokens_only" }, "runner-a");
+  ledger.record("same", "mock", { inputTokens: 3, costKind: "tokens_only" }, "runner-b");
+  ledger.record("same", "mock", { inputTokens: 5, costKind: "tokens_only" }, "local");
+  assert.equal(ledger.session("same", "runner-a").inputTokens, 2);
+  assert.equal(ledger.session("same", "runner-b").inputTokens, 3);
+  assert.equal(ledger.session("same", "local").inputTokens, 5);
+  assert.deepEqual(ledger.topSessions(10).map((entry) => entry.runnerId).sort(), ["local", "runner-a", "runner-b"]);
+});
+
+test("scoped usage views quarantine entries without runner provenance", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "jarvis-ledger-legacy-runner-")), "usage.json");
+  writeFileSync(file, JSON.stringify([
+    { sessionId: "same", agent: "mock", at: Date.now(), costKind: "tokens_only", source: "legacy", inputTokens: 7 },
+    { sessionId: "same", runnerId: "local", agent: "mock", at: Date.now(), costKind: "tokens_only", source: "scoped", inputTokens: 3 },
+  ]));
+  const ledger = new UsageLedger(file);
+  assert.equal(ledger.session("same").inputTokens, 10);
+  assert.equal(ledger.session("same", "local").inputTokens, 3);
+  assert.equal(ledger.session("same", "runner-a").inputTokens, 0);
+  assert.deepEqual(ledger.topSessions(10).map((entry) => entry.runnerId).sort(), ["legacy", "local"]);
+});
+
+test("Codex cumulative migration is isolated by runner", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "jarvis-ledger-codex-runners-")), "usage.json"), at = Date.now();
+  const entry = (runnerId: string, inputTokens: number, outputTokens: number) => ({ sessionId: "same", runnerId, agent: "codex", at, costKind: "estimated_api_equivalent", source: "codex exec --json tokens × fixture", inputTokens, outputTokens });
+  writeFileSync(file, JSON.stringify([entry("runner-a", 100, 10), entry("runner-b", 40, 4)]));
+  const ledger = new UsageLedger(file);
+  assert.equal(ledger.session("same", "runner-a").inputTokens, 100);
+  assert.equal(ledger.session("same", "runner-b").inputTokens, 40);
+});

@@ -40,6 +40,9 @@ defined there.
   plus optional native binding/usage/descriptor. Implementations and support
   levels are enumerated in the parity matrix.
 - `packages/core/src/turn.ts` — managed lifecycle shared by Hub and Runner.
+- `packages/core/src/activity-replay.ts` — reconstructs only the latest unanswered
+  turn from the fsynced execution journal. A stored assistant message closes the
+  replay window, preventing duplicate completed responses.
 - `packages/core/src/agent-contract.ts` — descriptors, models, usage and event
   schema; the current web transport still carries the compatible `stream` shape.
 - `packages/protocol/src/runner.ts` — actual Hub↔Runner WebSocket contract.
@@ -68,7 +71,9 @@ when it is controlling another conversation. There is no separate public
 ## Data & security model
 
 - **Storage:** crash-safe (atomic) JSON snapshots + local files on each machine
-  that owns sessions; provider-native transcripts remain in provider homes.
+  that owns sessions; pending activity is an append-only fsynced execution
+  journal and survives Hub/Runner restart. Provider-native transcripts remain
+  in provider homes.
 - **Network:** private Tailscale is recommended; reverse proxy/TLS is optional.
 - **Encryption:** supplied by Tailscale or the operator's TLS proxy.
 - **External calls:** the selected provider CLI's inference/integrations. Voice is
@@ -77,7 +82,7 @@ when it is controlling another conversation. There is no separate public
 ## Current implementation milestones
 
 1. Local voice, PWA, auth, push and managed sessions.
-2. Hub + multi-machine Runner protocol v3, including durable execution journals,
+2. Hub + multi-machine Runner protocol v6, including durable execution journals,
    manifest/replay and provider-neutral subprocess trees.
 3. Shared provider-neutral turn lifecycle and typed usage ledger.
 4. Claude/Codex native integration plus registered adapters/status for the wider

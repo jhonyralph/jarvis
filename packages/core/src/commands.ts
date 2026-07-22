@@ -71,7 +71,9 @@ function scanSkills(dir: string, agent: CmdAgent, source: SlashCommand["source"]
   let entries: import("node:fs").Dirent[];
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const d of entries) {
-    if (!d.isDirectory() || d.name.startsWith(".")) continue;
+    if (!d.isDirectory()) continue;
+    if (d.name === ".system") { scanSkills(join(dir, d.name), agent, source, out); continue; }
+    if (d.name.startsWith(".")) continue;
     const f = join(dir, d.name, "SKILL.md");
     if (!existsSync(f)) continue;
     let fm: Record<string, string>;
@@ -239,18 +241,18 @@ export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | nul
   if (agent === null) return null;   // adapter with no command system → nothing to expand
   let all = listCommands(cwd);       // priority-sorted-then-alpha; find() returns the preferred on ties
   if (agent) all = all.filter((c) => c.agent === agent);
-  // A "/command" may sit on ANY line (start of the message, or its own line mid-message). Expand the
-  // first such line whose command has a prompt; the rest of the message is kept as context. Built-ins
+  // A "/command" may sit after whitespace on ANY line, including mid-message. Expand the first such
+  // token whose command has a prompt; surrounding text is kept as context. Built-ins
   // (expandOne → null) are left raw so `claude -p` resolves "/name" itself.
   const lines = (text || "").split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const m = /^\s*\/([A-Za-z0-9:_.-]+)(?:[ \t]+(.*))?$/.exec(lines[i]);
+    const m = /(^|[\s(])\/([A-Za-z0-9:_.-]+)(?:[ \t]+(.*))?$/.exec(lines[i]);
     if (!m) continue;
-    const cmd = findCmd(all, m[1]);
+    const cmd = findCmd(all, m[2]);
     if (!cmd) continue;
-    const exp = expandOne(cmd, (m[2] || "").trim());
+    const exp = expandOne(cmd, (m[3] || "").trim());
     if (exp == null) continue;   // built-in / unreadable → leave the line raw, keep scanning
-    const out = [...lines]; out[i] = exp;
+    const out = [...lines]; out[i] = lines[i].slice(0, m.index + m[1].length) + exp;
     return { name: cmd.name, expanded: out.join("\n").trim() };
   }
   return null;

@@ -37,6 +37,29 @@ export interface WriteJsonOpts {
   backup?: boolean;
 }
 
+export interface WriteTextOpts {
+  /** keep a `.bak` copy of the previous good file before replacing (default true) */
+  backup?: boolean;
+}
+
+/** Crash-safe UTF-8 text write with the same durability guarantees as writeJsonAtomic. */
+export function writeTextAtomic(path: string, text: string, opts?: WriteTextOpts): void {
+  const dir = dirname(path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const tmp = path + ".tmp";
+  const fd = openSync(tmp, "w");
+  try {
+    writeFileSync(fd, text, "utf8");
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  if (opts?.backup !== false && existsSync(path)) {
+    try { copyFileSync(path, path + ".bak"); } catch { /* best-effort backup */ }
+  }
+  renameSync(tmp, path);
+}
+
 /**
  * Crash-safe JSON write: temp file + fsync + atomic rename, with an optional `.bak` of the
  * previous good contents. Creates the parent directory if missing. Throws only on a real IO

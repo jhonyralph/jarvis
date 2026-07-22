@@ -208,10 +208,16 @@ in **Trabalhos**.
 
 The execution owner writes an fsynced JSONL journal under
 `~/.jarvis/executions`. For remote work, the Runner remains authoritative and
-the Hub keeps a mirror reconciled by protocol v3 manifest/replay. A network drop
+the Hub keeps a mirror reconciled by protocol v6 manifest/replay. A network drop
 therefore appears as offline/reconciling rather than a fabricated success or
 cancellation. Internal sessions used by managed children are hidden from the
 normal chat list, search and digest.
+
+The same journal is the recovery source for an unfinished chat turn. Reopening a
+session, reconnecting a device or restarting the Hub replays the pending
+canonical activity from disk. The live buffer is released only after the
+assistant reply is durably present in `sessions.json`; an orphaned process is
+shown with its preserved activity and an explicit interruption reason.
 
 Managed execution is fail-closed. The combinations wired today are:
 
@@ -317,7 +323,7 @@ the repo. Owner-editable execution settings are additionally persisted in
 | `JARVIS_SUMMARY_MODEL` | `haiku` | Model for automatic routing, spoken summaries and digest/status (cheap on purpose) |
 | `JARVIS_HISTORY_CAP` | `120` | Messages sent when opening a session |
 | `JARVIS_SESSION_COST_CAP` | `0` | Per-session **billed USD** cap (`0` = off). Estimates and subscription usage stay visible but do not masquerade as invoice spend or trigger this cap |
-| `JARVIS_EXECUTIONS` | enabled (`0` disables) | Enables durable execution tracking and Jarvis-managed delegation. Disabled mode keeps the regular inline chat lifecycle but returns an empty Trabalhos view |
+| `JARVIS_EXECUTIONS` | enabled (`0` disables) | Enables the Trabalhos view, execution protocol and Jarvis-managed delegation. The minimum fsynced journal for crash-safe chat replay remains active when this UI feature is disabled |
 | `JARVIS_EXECUTION_RETENTION_DAYS` | `30` | Age after which terminal roots are compacted on process startup. Tree, summary and aggregate metrics remain; detailed prompt/activity/artifacts are removed and marked truncated |
 | `JARVIS_EXECUTION_MAX_EVENTS` | `5000` | In-memory reducer window per execution root (`100..100000`). Durable replay falls back to the append-only JSONL when a cursor predates this window; exceeding it marks the in-memory snapshot as truncated |
 | `JARVIS_EXECUTION_MAX_CONCURRENCY` | `6` | Maximum concurrent Jarvis-managed tasks on that process (`1..32`) |

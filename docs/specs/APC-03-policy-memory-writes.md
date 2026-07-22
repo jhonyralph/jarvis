@@ -25,16 +25,18 @@ entre recusar, gravar na memória local do Jarvis ou gravar no repo.
 
 1. `memory.writeTarget=disabled` recusa a operação.
 2. `jarvis_only` grava no store semântico local com namespace APC-02.
-3. `repo_allowed` cai para Jarvis quando escrita no repo estiver bloqueada ou exigir preview ainda indisponível.
-4. `repo_required` recusa quando o repo não estiver disponível, escrita estiver bloqueada ou preview for obrigatório.
-5. Escrita no repo só acontece quando `write.allowRepoWrites=true` e `write.requireDiffPreview=false`.
+3. `repo_allowed` cai para Jarvis quando escrita no repo estiver bloqueada.
+4. `repo_required` recusa quando o repo não estiver disponível ou escrita estiver bloqueada.
+5. Escrita interativa no repo usa sempre `memory_preview` + `memory_apply`, com hash da versão lida e token curto de uso único; `memory_cancel` invalida a prévia sem escrever.
 
 ## Acceptance
 
 - A decisão fica no core e é testável sem Hub.
-- Hub local usa a decisão para `memory_append`.
+- Hub local e Runner remoto usam a mesma decisão e o fluxo preview/apply.
 - Memória Jarvis-only recebe classificação e embedding quando disponível.
-- Remote runner mantém o comportamento legado até receber política em fase posterior.
+- A prévia não escreve; alteração concorrente no arquivo falha fechada.
+- Aplicar ou cancelar em um dispositivo consome a operação para todos os dispositivos e para o Runner remoto.
+- Proveniência registra máquina, sessão, usuário/dispositivo e hashes, sem copiar o texto da nota.
 
 ## Validation
 

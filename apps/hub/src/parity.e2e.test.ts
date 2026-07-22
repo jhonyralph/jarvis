@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,10 +57,27 @@ class Inbox {
 
 test("remote Runner preserves the same progress, terminal and rich history lifecycle", { timeout: 35_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), "jarvis-parity-e2e-"));
+  mkdirSync(join(home, ".jarvis"), { recursive: true });
+  writeFileSync(join(home, ".jarvis", "policies.json"), JSON.stringify({
+    schemaVersion: 1,
+    global: {
+      schemaVersion: 1, id: "global", scope: "global", label: "Global",
+      memory: { writeTarget: "repo_allowed", namespaces: ["project", "session", "task"], allowPersonalContext: false, allowProjectContext: true, repoFiles: ["AGENTS.md"] },
+      autonomy: { mode: "assisted", allowQueueAutoplay: false, allowBackgroundTurns: false, requireApprovalAboveRisk: "medium" },
+      budget: { unknownEstimate: "ask" }, write: { allowRepoWrites: true, requireDiffPreview: false }, updatedAt: Date.now(),
+    },
+    projects: [], sessions: [], tasks: [],
+  }));
+  mkdirSync(join(home, ".agents", "skills", "remote-only"), { recursive: true });
+  writeFileSync(join(home, ".agents", "skills", "remote-only", "SKILL.md"), `---
+name: remote-only
+description: Remote cwd only test skill.
+---
+Use only for runner cwd parity tests.`);
   const hubPort = await freePort(), adminPort = await freePort();
   const common = { JARVIS_AUTH: "off", JARVIS_ENABLE_MOCK: "1", JARVIS_AGENT: "mock", JARVIS_SEARCH_AGENT: "mock", JARVIS_CWD: ROOT, JARVIS_HOME: home, USERPROFILE: home, HOME: home, NODE_ENV: "test" };
   const hub = child("apps/hub/src/index.ts", { ...common, JARVIS_PORT: String(hubPort), JARVIS_ADMIN_PORT: String(adminPort) });
-  let runner: ReturnType<typeof child> | undefined; let ws: WebSocket | undefined;
+  let runner: ReturnType<typeof child> | undefined; let ws: WebSocket | undefined; let ws2: WebSocket | undefined;
   try {
     await waitHealth(hubPort, hub.logs);
     runner = child("apps/runner/src/index.ts", { ...common, JARVIS_HUB: `ws://127.0.0.1:${hubPort}`, JARVIS_TOKEN: "" });
@@ -80,11 +97,25 @@ test("remote Runner preserves the same progress, terminal and rich history lifec
     inbox.send({ t: "new", agent: "mock", cwd: home });
     const created = await inbox.take((m) => m.t === "history" && m.session?.agent === "mock");
     const sid = created.sessionId;
+    inbox.send({ t: "list" });
+    const listedAfterCreate = await inbox.take((m) => m.t === "sessions" && m.runnerId === remote.id && m.sessions?.some((s: any) => s.id === sid));
+    assert.ok(listedAfterCreate.recentDirs?.includes(home), "remote sessions publish cwd history for the folder picker");
     inbox.send({ t: "open", sessionId: sid });
     await inbox.take((m) => m.t === "history" && m.sessionId === sid);
+    inbox.send({ t: "commands", sessionId: sid });
+    const remoteCommands = await inbox.take((m) => m.t === "command_list" && m.runnerId === remote.id && m.cwd === home);
+    assert.ok(remoteCommands.commands.some((c: any) => c.name === "remote-only" && c.source === "project"), "remote slash commands use the session cwd");
 
     inbox.send({ t: "send", sessionId: sid, text: "paridade", msgId: "e2e-turn-1" });
-    await inbox.take((m) => m.t === "message" && m.message?.sessionId === sid && m.message?.role === "user");
+    const firstUser = await inbox.take((m) => m.t === "message" && m.message?.sessionId === sid && m.message?.role === "user");
+    const firstManifest = await inbox.take((m) => m.t === "context_manifest" && m.sessionId === sid && m.manifest?.turnId === "e2e-turn-1");
+    assert.equal(firstManifest.manifest.runnerId, remote.id);
+    assert.equal(firstManifest.manifest.cwd, home);
+    assert.equal(firstManifest.manifest.actor?.source, "user");
+    assert.equal(firstManifest.manifest.semanticMemory.injected, false);
+    assert.equal(firstManifest.manifest.prompt.agentSha256.length, 64);
+    assert.doesNotMatch(JSON.stringify(firstManifest.manifest), /paridade/, "the audit manifest never persists prompt contents");
+    assert.deepEqual(firstUser.message.contextManifest, firstManifest.manifest, "the live user message carries the exact audited manifest");
     await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "started");
     await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "thinking");
     await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "tool_started" && m.event?.tool?.name === "FixtureTool");
@@ -110,8 +141,114 @@ test("remote Runner preserves the same progress, terminal and rich history lifec
       await new Promise((r) => setTimeout(r, 50));
     }
     const assistant = history.messages.find((m: any) => m.role === "assistant");
+    const persistedUser = history.messages.find((m: any) => m.role === "user" && m.text === "paridade");
+    assert.deepEqual(persistedUser.contextManifest, firstManifest.manifest, "remote history preserves context provenance after reload");
     assert.deepEqual(assistant.activity.map((e: any) => e.kind), ["accepted", "started", "thinking", "tool_started", "text_delta", "usage", "completed"], "reload preserves the complete canonical lifecycle in order");
     assert.equal(assistant.usage.costKind, "tokens_only");
+
+    // HITL memory is owned by Jarvis, not by provider-specific interaction support. The exact same
+    // preview is broadcast to every device on the session, performs no write, remains bound to the
+    // original runner if the requesting device switches machines, and is consumable only once.
+    ws2 = new WebSocket(`ws://127.0.0.1:${hubPort}`);
+    await new Promise<void>((resolve, reject) => { ws2!.once("open", resolve); ws2!.once("error", reject); });
+    const inbox2 = new Inbox(ws2);
+    await inbox2.take((m) => m.t === "version");
+    inbox2.send({ t: "runner", runnerId: remote.id });
+    await inbox2.take((m) => m.t === "sessions" && m.runnerId === remote.id);
+    inbox2.send({ t: "open", sessionId: sid });
+    await inbox2.take((m) => m.t === "history" && m.sessionId === sid);
+
+    // Leaving and reopening while a remote turn is running must reconstruct the exact activity
+    // from the Runner's fsynced journal. The two Read chunks intentionally remain distinct in the
+    // audit stream; the browser projection folds them into one clickable file row.
+    inbox2.send({ t: "runner", runnerId: "local" });
+    await inbox2.take((m) => m.t === "sessions" && (m.runnerId === undefined || m.runnerId === "local"));
+    inbox.send({ t: "send", sessionId: sid, text: "[fixture:replay]", msgId: "e2e-live-replay" });
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "tool_started" && m.event?.tool?.callId === "replay-read-2");
+    inbox2.send({ t: "runner", runnerId: remote.id });
+    await inbox2.take((m) => m.t === "sessions" && m.runnerId === remote.id);
+    inbox2.send({ t: "open", sessionId: sid });
+    const liveHistory = await inbox2.take((m) => m.t === "history" && m.sessionId === sid && m.messages?.at(-1)?.text === "[fixture:replay]");
+    assert.equal(liveHistory.messages.at(-1).role, "user");
+    await inbox2.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.turnId === "e2e-live-replay" && m.event?.kind === "accepted");
+    await inbox2.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.turnId === "e2e-live-replay" && m.event?.kind === "started");
+    await inbox2.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.turnId === "e2e-live-replay" && m.event?.kind === "thinking");
+    const replayReads = [
+      await inbox2.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.turnId === "e2e-live-replay" && m.event?.tool?.callId === "replay-read-1"),
+      await inbox2.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.turnId === "e2e-live-replay" && m.event?.tool?.callId === "replay-read-2"),
+    ];
+    assert.equal(new Set(replayReads.map((frame) => frame.event.tool.path)).size, 1, "chunked reads preserve one stable file target for UI compaction");
+    inbox.send({ t: "cancel", sessionId: sid });
+    const cancelledReplay = await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.turnId === "e2e-live-replay" && m.event?.kind === "cancelled");
+    assert.match(cancelledReplay.event.text, /solicitação do usuário/);
+    inbox.send({ t: "dropLast", sessionId: sid });
+    inbox.send({ t: "open", sessionId: sid });
+    const cleanHistory = await inbox.take((m) => m.t === "history" && m.sessionId === sid && !m.messages?.some((message: any) => message.text === "[fixture:replay]"));
+    assert.equal(cleanHistory.messages.some((message: any) => message.text === "[fixture:replay]"), false);
+
+    const memoryFile = join(home, "AGENTS.md"), memoryNote = "isolamento HITL entre dispositivos";
+    assert.equal(existsSync(memoryFile), false);
+    inbox.send({ t: "memory_preview", sessionId: sid, text: "prévia que será descartada" });
+    const cancelledPreview = await inbox.take((m) => m.t === "memory_preview" && m.sessionId === sid && m.note === "prévia que será descartada");
+    await inbox2.take((m) => m.t === "memory_preview" && m.token === cancelledPreview.token);
+    inbox2.send({ t: "memory_cancel", token: cancelledPreview.token });
+    await inbox.take((m) => m.t === "memory_cancelled" && m.token === cancelledPreview.token && m.ok === true);
+    await inbox2.take((m) => m.t === "memory_cancelled" && m.token === cancelledPreview.token && m.ok === true);
+    inbox.send({ t: "memory_apply", token: cancelledPreview.token });
+    assert.match((await inbox.take((m) => m.t === "memory_applied" && m.token === cancelledPreview.token && m.ok === false)).error, /inexistente|expirada|já aplicada/);
+    assert.equal(existsSync(memoryFile), false, "cancelling on either device invalidates the shared preview without writing");
+    inbox.send({ t: "memory_preview", sessionId: sid, text: memoryNote });
+    const preview1 = await inbox.take((m) => m.t === "memory_preview" && m.sessionId === sid && m.note === memoryNote);
+    const preview2 = await inbox2.take((m) => m.t === "memory_preview" && m.sessionId === sid && m.note === memoryNote);
+    assert.equal(preview1.token, preview2.token, "all devices confirm the same one-time operation");
+    assert.equal(preview1.runnerId, remote.id);
+    assert.equal(preview1.target, memoryFile);
+    assert.equal(preview1.appendText, `- ${memoryNote}\n`, "preview exposes the exact bytes that will be appended");
+    assert.equal(existsSync(memoryFile), false, "preview is side-effect free");
+    inbox.send({ t: "runner", runnerId: "local" });
+    await inbox.take((m) => m.t === "sessions" && (m.runnerId === undefined || m.runnerId === "local"));
+    inbox.send({ t: "memory_apply", token: preview1.token });
+    const applied1 = await inbox.take((m) => m.t === "memory_applied" && m.ok === true && m.target === memoryFile);
+    const applied2 = await inbox2.take((m) => m.t === "memory_applied" && m.ok === true && m.target === memoryFile);
+    assert.equal(applied1.runnerId, remote.id); assert.equal(applied2.runnerId, remote.id);
+    assert.equal(applied1.token, preview1.token); assert.equal(applied2.token, preview1.token);
+    assert.match(readFileSync(memoryFile, "utf8"), /isolamento HITL entre dispositivos/);
+    inbox2.send({ t: "memory_apply", token: preview1.token });
+    assert.match((await inbox2.take((m) => m.t === "memory_applied" && m.ok === false)).error, /inexistente|expirada|já aplicada/);
+    inbox.send({ t: "runner", runnerId: remote.id });
+    await inbox.take((m) => m.t === "sessions" && m.runnerId === remote.id);
+    inbox.send({ t: "open", sessionId: sid });
+    await inbox.take((m) => m.t === "history" && m.sessionId === sid);
+
+    // Jarvis owns post-turn HITL independently of provider input APIs. It reaches every device,
+    // replays on a later open, and never holds the queue hostage: a newer queued instruction clears
+    // the old question everywhere and starts normally.
+    inbox.send({ t: "send", sessionId: sid, text: "[fixture:decision]", msgId: "e2e-decision" });
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "completed" && /fixture:decision/.test(m.event?.text || ""));
+    const ask1 = await inbox.take((m) => m.t === "ask" && m.runnerId === remote.id && m.sessionId === sid);
+    const ask2 = await inbox2.take((m) => m.t === "ask" && m.runnerId === remote.id && m.sessionId === sid);
+    assert.deepEqual(ask1.questions, ask2.questions);
+    inbox2.send({ t: "runner", runnerId: "local" });
+    await inbox2.take((m) => m.t === "sessions" && (m.runnerId === undefined || m.runnerId === "local"));
+    inbox2.send({ t: "runner", runnerId: remote.id });
+    await inbox2.take((m) => m.t === "sessions" && m.runnerId === remote.id);
+    inbox2.send({ t: "open", sessionId: sid });
+    await inbox2.take((m) => m.t === "history" && m.sessionId === sid);
+    await inbox2.take((m) => m.t === "ask" && m.runnerId === remote.id && m.sessionId === sid, 5_000);
+    inbox.send({ t: "enqueue", sessionId: sid, text: "fila depois do HITL", msgId: "e2e-hitl-queue" });
+    await inbox.take((m) => m.t === "ask_cleared" && m.runnerId === remote.id && m.sessionId === sid);
+    await inbox2.take((m) => m.t === "ask_cleared" && m.runnerId === remote.id && m.sessionId === sid);
+    await inbox.take((m) => m.t === "message" && m.message?.sessionId === sid && m.message?.role === "user" && m.message?.text === "fila depois do HITL");
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "completed" && /fila depois do HITL/.test(m.event?.text || ""));
+
+    inbox.send({ t: "stage_text", sessionId: sid, text: "[fixture:stage]" });
+    const staged1 = await inbox.take((m) => m.t === "stage" && m.runnerId === remote.id && m.sessionId === sid && m.draft === "refino remoto confirmado", 8_000);
+    const staged2 = await inbox2.take((m) => m.t === "stage" && m.runnerId === remote.id && m.sessionId === sid && m.draft === staged1.draft, 8_000);
+    assert.equal(staged2.draft, staged1.draft, "remote voice staging is shared on the owning runner");
+    inbox.send({ t: "stage_confirm", sessionId: sid });
+    await inbox.take((m) => m.t === "stage" && m.runnerId === remote.id && m.sessionId === sid && m.done === true);
+    await inbox.take((m) => m.t === "message" && m.message?.sessionId === sid && m.message?.role === "user" && m.message?.text === "refino remoto confirmado");
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.kind === "completed" && /refino remoto confirmado/.test(m.event?.text || ""));
 
     // Provider-native child activity must also use the canonical chat lifecycle. The same event is
     // persisted once in the execution journal and once in the assistant message activity, with the
@@ -196,12 +333,126 @@ test("remote Runner preserves the same progress, terminal and rich history lifec
     // This prevents an optimistic UI success from hiding a session the owner refused to delete.
     inbox.send({ t: "runner", runnerId: remote.id });
     await inbox.take((m) => m.t === "sessions" && m.runnerId === remote.id);
+    inbox.send({ t: "new", agent: "mock", cwd: home });
+    const queueCreated = await inbox.take((m) => m.t === "history" && m.session?.agent === "mock" && m.sessionId !== sid && m.sessionId !== localSid);
+    const queueSid = queueCreated.sessionId;
+    inbox.send({ t: "send", sessionId: queueSid, text: "primeiro turno remoto", msgId: "e2e-queue-first" });
+    inbox.send({ t: "enqueue", sessionId: queueSid, text: "fila remota", msgId: "e2e-queue-second" });
+    await inbox.take((m) => m.t === "message" && m.message?.sessionId === queueSid && m.message?.role === "user" && m.message?.text === "primeiro turno remoto");
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === queueSid && m.event?.kind === "completed" && /primeiro turno remoto/.test(m.event?.text || ""));
+    await inbox.take((m) => m.t === "message" && m.message?.sessionId === queueSid && m.message?.role === "user" && m.message?.text === "fila remota");
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === queueSid && m.event?.kind === "completed" && /fila remota/.test(m.event?.text || ""));
+    inbox.send({ t: "search", query: "fila remota" });
+    const remoteSearch = await inbox.take((m) => m.t === "searchResult" && m.done === true && m.hits?.some((h: any) => h.id === queueSid && h.runnerId === remote.id), 12_000);
+    assert.ok(remoteSearch.hits.some((h: any) => h.id === queueSid && h.runnerId === remote.id), "literal search includes remote runner histories with routing metadata");
+
+    // A native/provider id can legitimately be identical on two machines. Queue and live activity
+    // must therefore use runner + session identity, never the bare session id.
+    inbox2.send({ t: "open", sessionId: queueSid });
+    await inbox2.take((m) => m.t === "history" && m.sessionId === queueSid);
+    inbox2.send({ t: "send", sessionId: queueSid, text: "[fixture:slow] remoto", msgId: "e2e-collision-remote-running" });
+    await inbox2.take((m) => m.t === "message" && m.message?.sessionId === queueSid && m.message?.role === "user" && m.message?.text === "[fixture:slow] remoto");
+    inbox2.send({ t: "enqueue", sessionId: queueSid, text: "fila exclusiva remota", msgId: "e2e-collision-remote-queued" });
+    const remoteQueue = await inbox2.take((m) => m.t === "queue" && m.sessionId === queueSid && m.items?.some((item: any) => item.text === "fila exclusiva remota"));
+    assert.deepEqual(remoteQueue.items.map((item: any) => item.text), ["fila exclusiva remota"]);
+
+    inbox.send({ t: "runner", runnerId: "local" });
+    await inbox.take((m) => m.t === "sessions" && (m.runnerId === undefined || m.runnerId === "local"));
+    inbox.send({ t: "open", sessionId: queueSid });
+    const localCollisionOpened = await inbox.take((m) => m.t === "history" && m.sessionId === queueSid);
+    assert.equal(localCollisionOpened.session?.sessionUsage?.inputTokens || 0, 0, "equal-id remote usage is not exposed on a fresh local session");
+    inbox.send({ t: "send", sessionId: queueSid, text: "[fixture:slow] local", msgId: "e2e-collision-local-running" });
+    await inbox.take((m) => m.t === "message" && m.message?.sessionId === queueSid && m.message?.role === "user" && m.message?.text === "[fixture:slow] local");
+    inbox.send({ t: "enqueue", sessionId: queueSid, text: "fila exclusiva local", msgId: "e2e-collision-local-queued" });
+    const localQueue = await inbox.take((m) => m.t === "queue" && m.sessionId === queueSid && m.items?.some((item: any) => item.text === "fila exclusiva local"));
+    assert.deepEqual(localQueue.items.map((item: any) => item.text), ["fila exclusiva local"]);
+
+    await inbox2.take((m) => m.t === "message" && m.message?.sessionId === queueSid && m.message?.role === "user" && m.message?.text === "fila exclusiva remota", 12_000);
+    await inbox2.take((m) => m.t === "agent_event" && m.sessionId === queueSid && m.event?.kind === "completed" && /fila exclusiva remota/.test(m.event?.text || ""));
+    await inbox.take((m) => m.t === "message" && m.message?.sessionId === queueSid && m.message?.role === "user" && m.message?.text === "fila exclusiva local", 12_000);
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === queueSid && m.event?.kind === "completed" && /fila exclusiva local/.test(m.event?.text || ""));
+    inbox2.send({ t: "open", sessionId: queueSid });
+    const remoteCollisionHistory = await inbox2.take((m) => m.t === "history" && m.sessionId === queueSid && m.messages?.some((entry: any) => entry.text === "fila exclusiva remota"));
+    inbox.send({ t: "open", sessionId: queueSid });
+    const localCollisionHistory = await inbox.take((m) => m.t === "history" && m.sessionId === queueSid && m.messages?.some((entry: any) => entry.text === "fila exclusiva local"));
+    assert.equal(remoteCollisionHistory.messages.some((entry: any) => entry.text === "fila exclusiva local"), false, "local queue never reaches the equal-id remote session");
+    assert.equal(localCollisionHistory.messages.some((entry: any) => entry.text === "fila exclusiva remota"), false, "remote queue never reaches the equal-id local session");
+
+    inbox.send({ t: "runner", runnerId: remote.id });
+    await inbox.take((m) => m.t === "sessions" && m.runnerId === remote.id);
+    inbox.send({ t: "new", agent: "mock", cwd: home });
+    const cancelCreated = await inbox.take((m) => m.t === "history" && m.session?.agent === "mock" && ![sid, localSid, queueSid].includes(m.sessionId));
+    const cancelSid = cancelCreated.sessionId;
+    inbox.send({ t: "send", sessionId: cancelSid, text: "[fixture:slow]", msgId: "e2e-drop-last" });
+    await inbox.take((m) => m.t === "message" && m.message?.sessionId === cancelSid && m.message?.role === "user" && m.message?.text === "[fixture:slow]");
+    inbox.send({ t: "cancel", sessionId: cancelSid });
+    inbox.send({ t: "dropLast", sessionId: cancelSid });
+    await inbox.take((m) => m.t === "agent_event" && m.sessionId === cancelSid && m.event?.kind === "cancelled");
+    inbox.send({ t: "open", sessionId: cancelSid });
+    const afterDropLast = await inbox.take((m) => m.t === "history" && m.sessionId === cancelSid);
+    assert.equal(afterDropLast.messages.some((message: any) => message.role === "user" && message.text === "[fixture:slow]"), false, "remote dropLast removes the cancelled trailing user message");
     inbox.send({ t: "delete", sessionId: sid });
     const deleted = await inbox.take((m) => m.t === "deleted");
     assert.equal(deleted.ok, true); assert.deepEqual(deleted.ids, [sid]);
     inbox.send({ t: "executions_list", scope: "session", sessionId: sid, limit: 50 });
     const afterDelete = await inbox.take((m) => m.t === "executions_snapshot" && m.scope === "session");
     assert.equal(afterDelete.nodes.some((node: any) => node.sessionId === sid), false);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.stack : error}\n--- hub ---\n${hub.logs()}\n--- runner ---\n${runner?.logs() || "not started"}`);
+  } finally {
+    try { ws2?.close(); } catch { /* ignore */ }
+    try { ws?.close(); } catch { /* ignore */ }
+    await stopChild(runner?.process);
+    await stopChild(hub.process);
+    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("remote live activity survives a Hub restart and replays from the Runner journal", { timeout: 40_000 }, async () => {
+  const home = mkdtempSync(join(tmpdir(), "jarvis-restart-e2e-"));
+  const hubPort = await freePort(), adminPort = await freePort();
+  const common = { JARVIS_AUTH: "off", JARVIS_ENABLE_MOCK: "1", JARVIS_AGENT: "mock", JARVIS_CWD: ROOT, JARVIS_HOME: home, USERPROFILE: home, HOME: home, NODE_ENV: "test" };
+  let hub = child("apps/hub/src/index.ts", { ...common, JARVIS_PORT: String(hubPort), JARVIS_ADMIN_PORT: String(adminPort) });
+  let runner: ReturnType<typeof child> | undefined, ws: WebSocket | undefined;
+  try {
+    await waitHealth(hubPort, hub.logs);
+    runner = child("apps/runner/src/index.ts", { ...common, JARVIS_HUB: `ws://127.0.0.1:${hubPort}`, JARVIS_TOKEN: "" });
+    ws = new WebSocket(`ws://127.0.0.1:${hubPort}`);
+    await new Promise<void>((resolve, reject) => { ws!.once("open", resolve); ws!.once("error", reject); });
+    let inbox = new Inbox(ws);
+    await inbox.take((message) => message.t === "version");
+    let machines = await inbox.take((message) => message.t === "machines" && message.machines?.some((machine: any) => !machine.local && machine.online), 15_000);
+    const runnerId = machines.machines.find((machine: any) => !machine.local && machine.online).id;
+    inbox.send({ t: "runner", runnerId });
+    await inbox.take((message) => message.t === "sessions" && message.runnerId === runnerId);
+    inbox.send({ t: "new", agent: "mock", cwd: home });
+    const created = await inbox.take((message) => message.t === "history" && message.session?.agent === "mock");
+    const sid = created.sessionId;
+    inbox.send({ t: "send", sessionId: sid, text: "[fixture:replay-long]", msgId: "restart-live-turn" });
+    await inbox.take((message) => message.t === "agent_event" && message.sessionId === sid && message.event?.tool?.callId === "replay-read-2");
+
+    ws.close(); ws = undefined;
+    await stopChild(hub.process);
+    hub = child("apps/hub/src/index.ts", { ...common, JARVIS_PORT: String(hubPort), JARVIS_ADMIN_PORT: String(adminPort) });
+    await waitHealth(hubPort, hub.logs);
+    ws = new WebSocket(`ws://127.0.0.1:${hubPort}`);
+    await new Promise<void>((resolve, reject) => { ws!.once("open", resolve); ws!.once("error", reject); });
+    inbox = new Inbox(ws);
+    await inbox.take((message) => message.t === "version");
+    machines = await inbox.take((message) => message.t === "machines" && message.machines?.some((machine: any) => machine.id === runnerId && machine.online), 15_000);
+    assert.ok(machines.machines.some((machine: any) => machine.id === runnerId && machine.online));
+    inbox.send({ t: "runner", runnerId });
+    await inbox.take((message) => message.t === "sessions" && message.runnerId === runnerId);
+    inbox.send({ t: "open", sessionId: sid });
+    const history = await inbox.take((message) => message.t === "history" && message.sessionId === sid);
+    assert.equal(history.messages.at(-1)?.role, "user", "the in-flight turn remains pending after Hub restart");
+    await inbox.take((message) => message.t === "agent_event" && message.sessionId === sid && message.event?.turnId === "restart-live-turn" && message.event?.kind === "accepted");
+    await inbox.take((message) => message.t === "agent_event" && message.sessionId === sid && message.event?.turnId === "restart-live-turn" && message.event?.kind === "thinking");
+    const replayedRead = await inbox.take((message) => message.t === "agent_event" && message.sessionId === sid && message.event?.turnId === "restart-live-turn" && message.event?.tool?.callId === "replay-read-2");
+    assert.match(replayedRead.event.tool.path, /fixture-replay\.ts$/);
+    inbox.send({ t: "cancel", sessionId: sid });
+    const cancelled = await inbox.take((message) => message.t === "agent_event" && message.sessionId === sid && message.event?.turnId === "restart-live-turn" && message.event?.kind === "cancelled");
+    assert.match(cancelled.event.text, /solicitação do usuário/);
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.stack : error}\n--- hub ---\n${hub.logs()}\n--- runner ---\n${runner?.logs() || "not started"}`);
   } finally {

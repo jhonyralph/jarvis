@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyMemoryText, cosine, MemoryStore, type MemoryEntry } from "./memory.js";
@@ -71,16 +71,45 @@ test("persists across reload", () => {
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
-test("classifies personal topics without leaking them into project scope", () => {
+test("legacy remote ids recover their runner partition before any reindex", () => {
+  const d = mkdtempSync(join(tmpdir(), "jarvis-mem-"));
+  try {
+    writeFileSync(join(d, "memory.json"), JSON.stringify([{ id: "runner:machine-2:session-9", sessionId: "session-9", cwd: "/repo", text: "legacy", ts: 1, vec: [1, 0] }]));
+    const m = new MemoryStore(d);
+    assert.deepEqual(m.search([1, 0], { runnerIds: ["local"] }), []);
+    assert.deepEqual(m.search([1, 0], { runnerIds: ["machine-2"] }).map((hit) => [hit.sessionId, hit.runnerId]), [["session-9", "machine-2"]]);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("classifies personal topics without changing their scope while retaining the project partition", () => {
   const recipe = classifyMemoryText({ text: "Receita de bolo com farinha e forno", cwd: "C:/repo/jarvis" });
   assert.equal(recipe.scope, "personal");
   assert.equal(recipe.topic, "recipe");
   assert.ok(recipe.namespaces.includes("topic:recipe"));
-  assert.equal(recipe.projectKey, undefined);
+  assert.equal(recipe.projectKey, "c:/repo/jarvis");
+  assert.ok(recipe.namespaces.includes("project:c:/repo/jarvis"));
 
   const sports = classifyMemoryText({ text: "placar do jogo de futebol" });
   assert.equal(sports.scope, "personal");
   assert.equal(sports.topic, "sports");
+});
+
+test("search isolates identical vectors by runner, project and private owner", () => {
+  const d = mkdtempSync(join(tmpdir(), "jarvis-mem-"));
+  try {
+    const m = new MemoryStore(d);
+    m.upsert(entry("local-a", [1, 0], { runnerId: "local", cwd: "/repo/a", text: "Receita privada do projeto A", ownerId: "alice" }));
+    m.upsert(entry("local-b", [1, 0], { runnerId: "local", cwd: "/repo/b", text: "Fix API no projeto B" }));
+    m.upsert(entry("remote-a", [1, 0], { runnerId: "runner-2", cwd: "/repo/a", text: "Fix API no projeto A" }));
+
+    assert.deepEqual(m.search([1, 0], { runnerIds: ["local"], projectKey: "/repo/a", principalId: "alice" }).map((h) => h.id), ["local-a"]);
+    assert.deepEqual(m.search([1, 0], { runnerIds: ["local"], projectKey: "/repo/a", principalId: "bob" }), [], "another principal cannot read a private note");
+    assert.deepEqual(m.search([1, 0], { runnerIds: ["runner-2"], projectKey: "/repo/a", principalId: "alice" }).map((h) => h.id), ["remote-a"]);
+    assert.deepEqual(m.search([1, 0], { runnerIds: [] }), [], "an empty authorization set must fail closed");
+    assert.equal(m.stats({ runnerIds: ["local"], principalId: "bob" }).total, 1, "stats use the same authorization boundary as search");
+    assert.equal(m.stats({ runnerIds: ["local"], principalId: "alice", projectKey: "/repo/a" }).total, 1, "project stats do not reveal neighboring projects");
+    assert.equal(m.stats({ runnerIds: [], principalId: "alice" }).total, 0, "stats also fail closed with no authorized runner");
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
 test("classifies project memories with normalized project keys", () => {

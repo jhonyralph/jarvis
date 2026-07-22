@@ -16,20 +16,20 @@ documentação continua `unverified` até um probe autenticado daquela versão.
 |---|---|---|
 | contrato/descriptor/eventos | implementado no pacote de protocolo | `AgentEvent` versiona o turno e `ExecutionEvent` versiona Trabalhos; ambos são contratos compartilhados por Hub/Runner/browser, enquanto `stream` fica apenas para rolling upgrade |
 | lifecycle local/remoto | implementado | serviço único, anexos/activity/usage/histórico compartilhados |
-| handshake Runner | implementado | protocolo v3; versão incompatível é recusada |
-| trabalhos/subprocessos | implementado | journal fsync local/remoto, manifesto/replay, árvore global e deep-link; card inline nativo é ao vivo, mas a reconstrução universal após reload continua no painel, não no bubble do chat |
+| handshake Runner | implementado | protocolo v6; versão incompatível é recusada |
+| trabalhos/subprocessos | implementado | journal fsync local/remoto, manifesto/replay, árvore global e deep-link; o turno ainda sem resposta também é reconstruído no chat após reabertura/reinício |
 | fallback gerenciado | implementado, fail-closed | DAG e máquina fixa; Claude RO/writer, Codex RO e Aider writer possuem políticas conectadas; demais aguardam sandbox real certificado |
 | Claude Code | referência `complete` | esforços são CLI-wide e marcados não verificados por modelo |
 | Codex | `limited` | stream/native/resume/files/diff/modelos, janela efetiva e limite de conta implementados; comandos observados são classificados como Read/Grep/Glob/Bash e `patch_apply_end` é acompanhado durante o turno; ainda falta certificar todos os event types por versão |
 | Gemini/Cursor/Copilot/OpenCode/Cline/Qwen | `unverified` ou `not_installed` | adapters, perfis e mappers com casos sintéticos representativos; faltam corpus versionado completo, binário+auth e probes reais nesta máquina |
 | Continue/Kiro/Antigravity/Aider | `limited` ou `not_installed` | saída final apenas ou sessão/usage sem prova suficiente |
 | modelos | implementado sem invenção silenciosa | catálogo e controle são separados: `runtime`, `configured`, `provider_dynamic`, `none` × `per_turn`, `configuration_only`, `provider_default`, `none` |
-| usage/custo | implementado | ledger separa billed/estimado/assinatura/tokens/indisponível |
+| usage/custo | implementado | ledger separa billed/estimado/assinatura/tokens/indisponível e particiona IDs iguais por máquina |
 | comandos/skills/MCP/memória | implementado best-effort | homônimos coexistem; fonte não documentada não promove certificação |
 | voz/rotinas | registry-aware | modelo validado; rotina escolhe máquina/agente/modelo/pasta |
 | permissões | explícitas | `full-access` ou `provider-default`; nenhum deles é sandbox Jarvis |
 | doctor/relatório | implementado | `npm run agents:report` não envia prompt nem gasta turno |
-| Hub/Runner/WebSocket/histórico | implementado e coberto | E2E local+remoto com mock determinístico, inclusive workflow gerenciado; canary Chrome desktop/mobile passou, enquanto browser/a11y automatizado, dois clientes, restart mid-tool e CLIs autenticadas seguem residuais |
+| Hub/Runner/WebSocket/histórico | implementado e coberto | E2E local+remoto com mock determinístico, workflow gerenciado, dois clientes para HITL/memória/refino de voz, colisão local/remota do mesmo sessionId e restart do Hub durante tool; CLIs autenticadas seguem residuais |
 
 ## 1. Objetivo
 
@@ -152,7 +152,7 @@ web ← Hub ← stream/message do Runner
 
 Hub e Runner chamam o mesmo `runManagedTurn` do core. O Runner só adapta
 persistência, broadcast e transporte; anexos, mensagem do usuário, `activity`,
-usage e terminal seguem o mesmo serviço. O protocolo v3 rejeita Runner antigo e
+usage e terminal seguem o mesmo serviço. O protocolo v6 rejeita Runner antigo e
 o cliente verifica `contractVersion` antes de permitir envio. O E2E
 `parity.e2e.test.ts` prova o caminho WebSocket remoto e a reabertura do histórico.
 
@@ -240,10 +240,10 @@ sem simular paridade.
 | Automação | MCP Jarvis | sim | `jarvis_run_task` cria chat; `jarvis_delegate` aceita DAG correlacionado: `wait` devolve terminal + resumos após snapshot paginado e `background` devolve aceite/root ID para Trabalhos |
 | Voz | STT/TTS/wake/speaker gate | sim | Continua Hub-only por desenho |
 | Voz | Agente/modelo/effort por fala | sim | Catálogo é gerado do registry, sem regex fixa de dois fornecedores |
-| Voz | Refino/escalonamento | sim | Opções são compatibilizadas com o agente de resumo configurado |
+| Voz | Refino/escalonamento | sim | Opções são compatibilizadas com o agente de resumo configurado; estado/histórico/envio permanecem no Runner dono da sessão |
 | Runner | Descoberta e estado de todos os adapters | sim | Publica executáveis e descriptors com motivo de indisponibilidade |
 | Runner | Reconnect/outbox/replay | sim | Outbox limitada a 3000 eventos; E2E cobre caminho conectado |
-| Runner | Handshake de protocolo/build/contrato | sim | Runner v3 incompatível é recusado; cliente bloqueia contrato desconhecido |
+| Runner | Handshake de protocolo/build/contrato | sim | Runner v6 incompatível é recusado; cliente bloqueia contrato desconhecido |
 | Runner | Manifesto/replay de trabalhos | sim | Journal autoritativo fica na máquina; outbox preserva deltas, uso e aceite durante desconexão |
 | Segurança | Auth, grants e audit | sim | Agnóstico de adapter |
 | Segurança | Política de ferramentas | explícita | `full-access` histórico ou `provider-default`; nenhum é sandbox Jarvis |
@@ -324,7 +324,7 @@ provar os seguintes grupos; ausência de prova reduz o tier, não cria um valor 
 2. Lifecycle gerenciado compartilhado entre Hub e Runner.
 3. Status `complete/limited/unverified/unauthenticated/not_installed` impede
    adapter final-only de se passar por completo.
-4. Handshake Runner v3 e `contractVersion` do browser.
+4. Handshake Runner v6 e `contractVersion` do browser.
 5. Histórico remoto preserva `activity`, anexos e usage.
 6. Builder de anexos é executado na máquina remota.
 7. Codex ganhou stream, binding/resume, transcript rico, arquivos/diff e usage.

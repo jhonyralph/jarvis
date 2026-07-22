@@ -11,12 +11,13 @@
  * echoes it on the matching reply so the Hub can route back to the right client.
  */
 import type { AgentEvent } from "./agent.js";
-import type { ExecutionHubToRunner, ExecutionRunnerToHub } from "./execution.js";
+import type { ContextActor, ContextManifest } from "./context.js";
+import type { ExecutionHubToRunner, ExecutionRunnerToHub, ExecutionState } from "./execution.js";
 
 export type RunnerOS = "linux" | "darwin" | "win32" | string;
 
 /** Increment when a protocol change affects observable turn/history semantics. */
-export const RUNNER_PROTOCOL_VERSION = 3;
+export const RUNNER_PROTOCOL_VERSION = 6;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
@@ -76,6 +77,7 @@ export interface RunnerMsg {
   speaker?: string;
   images?: string[];
   files?: Array<{ name: string; content?: string }>;
+  contextManifest?: ContextManifest;
   usage?: {
     costUsd?: number;
     costKind?: "billed" | "estimated_api_equivalent" | "subscription_included" | "tokens_only" | "unavailable";
@@ -123,7 +125,7 @@ export type RunnerToHub =
    *  update abortado (repo sujo) ficava invisível — o dono achava que tinha atualizado. */
   | { t: "update_done"; requestId?: string; ok: boolean; dirty?: boolean; behind?: number; log?: string; current?: string; restartRequired?: boolean; rolledBack?: boolean; retryable?: boolean }
   | { t: "busy"; message: string } // recusa de turno concorrente na mesma sessão
-  | { t: "sessions"; sessions: RunnerSession[] }
+  | { t: "sessions"; sessions: RunnerSession[]; recentDirs?: string[] }
   | { t: "caps"; agent: string; caps: unknown }
   | {
       t: "history";
@@ -143,10 +145,21 @@ export type RunnerToHub =
       effort?: string;
       /** files touched by tools in this session (real paths, for the viewer/diff panel) */
       files?: TouchedFileMeta[];
+      /** Durable replay for the latest user turn that does not yet have a stored assistant reply. */
+      liveActivity?: AgentEvent[];
+      liveState?: ExecutionState;
+      liveTurnId?: string;
+      liveUpdatedAt?: number;
+      liveTruncated?: boolean;
     }
   | { t: "filediff"; reqId: string; path: string; name: string; rows?: DiffRowMeta[]; adds?: number; dels?: number; error?: string }
   /** Canonical AgentEvent lifecycle. New Hubs/Runners must use this; `stream` remains read-only migration input. */
   | { t: "agent_event"; sessionId: string; agent?: string; event: AgentEvent }
+  /** Live metadata update for a managed session, e.g. native CLI id discovered during first turn. */
+  | { t: "session"; sessionId: string; nativeId?: string }
+  /** The assistant reply is now durably present in sessions.json; live replay may be cleared. */
+  | { t: "activity_committed"; sessionId: string; turnId: string }
+  | { t: "context_manifest"; sessionId: string; manifest: ContextManifest }
   /** @deprecated v1 compatibility during rolling upgrades. */
   | { t: "stream"; sessionId: string; agent?: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
@@ -158,11 +171,13 @@ export type RunnerToHub =
   | { t: "deleted"; reqId: string; sessionId?: string; ids: string[]; ok: boolean; okCount: number }
   | { t: "runs"; active: string[] }
   /** available slash-commands / skills on this machine (reply to Hub->Runner "commands") */
-  | { t: "command_list"; reqId?: string; commands: unknown[] }
+  | { t: "command_list"; reqId?: string; commands: unknown[]; cwd?: string }
   /** "@" file-mention matches under a session's cwd (reply to Hub->Runner "mention") */
   | { t: "mention_list"; reqId?: string; files: string[] }
   /** Live account-plan snapshot for one adapter (reply to Hub->Runner "usage"). */
   | { t: "usage_info"; reqId: string; agent: string; plan: unknown | null; planStatus: "available" | "not_reported" | "unsupported" | "error" }
+  | { t: "memory_preview"; reqId: string; sessionId?: string; token: string; target: string; note: string; appendText: string; beforeHash: string; exists: boolean; expiresAt: number }
+  | { t: "memory_applied"; reqId: string; token: string; sessionId?: string; ok: boolean; target?: string; beforeHash?: string; afterHash?: string; error?: string }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" }
   | ExecutionRunnerToHub;
@@ -184,8 +199,10 @@ export type HubToRunner =
       turnId?: string;
       /** attachments carried by a queue flush (top-level model/effort accompany them) */
       attachments?: Array<{ name: string; content: string; image?: boolean }>;
+      speaker?: string;
       model?: string;
       effort?: string;
+      actor?: ContextActor;
     }
   | { t: "list" }
   /** create a fresh managed session on the runner (reply: history with the new id) */
@@ -201,11 +218,19 @@ export type HubToRunner =
   /** Query this machine's live account-plan usage for an adapter. */
   | { t: "usage"; reqId: string; agent?: string }
   /** enumerate this machine's slash-commands / skills (reply: command_list) */
-  | { t: "commands"; reqId: string }
+  | { t: "commands"; reqId: string; sessionId?: string }
   /** "@" file-mention search under a session's cwd (reply: mention_list) */
   | { t: "mention"; reqId: string; q?: string; sessionId?: string }
-  /** "#note" → append to the provider instruction file (CLAUDE.md/GEMINI.md/AGENTS.md) */
+  /** Preview a provider-instruction write without modifying the runner filesystem. */
+  | { t: "memory_preview"; reqId: string; text: string; sessionId?: string; actor?: ContextActor }
+  /** Apply a previously previewed, one-time write. */
+  | { t: "memory_apply"; reqId: string; token: string }
+  /** Invalidate a preview without writing; idempotent cleanup for multi-device HITL. */
+  | { t: "memory_cancel"; token: string }
+  /** @deprecated v4 compatibility. New Hubs must use preview/apply. */
   | { t: "memory_append"; text: string; sessionId?: string }
+  /** Drop the trailing user message from a managed session after a cancelled turn. */
+  | { t: "dropLast"; sessionId: string }
   | { t: "stop"; sessionId: string }
   | { t: "cancel"; sessionId: string } // abort a live turn (user hit "parar")
   /** `requestId` correlates a durable Hub deployment; old runners may ignore the extra fields.

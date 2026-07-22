@@ -3,6 +3,7 @@ import type { CostKind, UsageRecord } from "./agent-contract.js";
 
 export interface UsageLedgerEntry extends UsageRecord {
   sessionId: string;
+  runnerId?: string;
   agent: string;
   at: number;
 }
@@ -41,31 +42,37 @@ export class UsageLedger {
     // retained as the historical baseline; subsequent entries become non-negative differences.
     const codexTotals = new Map<string, { cost: number; input: number; cached: number; output: number }>();
     for (const e of this.entries) if (e.agent === "codex" && /codex exec --json tokens ×/i.test(e.source || "")) {
-      const current = { cost: e.costUsd || 0, input: e.inputTokens || 0, cached: e.cachedInputTokens || 0, output: e.outputTokens || 0 }, prev = codexTotals.get(e.sessionId);
-      codexTotals.set(e.sessionId, current);
+      const key = `${e.runnerId || "legacy"}\0${e.sessionId}`;
+      const current = { cost: e.costUsd || 0, input: e.inputTokens || 0, cached: e.cachedInputTokens || 0, output: e.outputTokens || 0 }, prev = codexTotals.get(key);
+      codexTotals.set(key, current);
       if (prev) { e.costUsd = Math.max(0, current.cost - prev.cost); e.inputTokens = Math.max(0, current.input - prev.input); e.cachedInputTokens = Math.max(0, current.cached - prev.cached); e.outputTokens = Math.max(0, current.output - prev.output); }
       e.contextTokens = undefined; e.contextWindowTokens = undefined; e.source = "migrated Codex cumulative snapshot → delta";
     }
     this.trim(now);
   }
-  record(sessionId: string, agent: string, usage?: Partial<UsageRecord>): void {
+  record(sessionId: string, agent: string, usage?: Partial<UsageRecord>, runnerId?: string): void {
     if (!usage) return;
     const hasValue = [usage.costUsd, usage.inputTokens, usage.cachedInputTokens, usage.outputTokens].some((v) => Number(v) > 0);
     if (!hasValue) return;
-    this.entries.push({ sessionId, agent, at: Date.now(), costKind: usage.costKind || "unavailable", source: usage.source || "adapter did not declare source", model: usage.model, effort: usage.effort, costUsd: finite(usage.costUsd), inputTokens: finite(usage.inputTokens), cachedInputTokens: finite(usage.cachedInputTokens), outputTokens: finite(usage.outputTokens), contextTokens: finite(usage.contextTokens), contextWindowTokens: finite(usage.contextWindowTokens) });
+    this.entries.push({ sessionId, runnerId, agent, at: Date.now(), costKind: usage.costKind || "unavailable", source: usage.source || "adapter did not declare source", model: usage.model, effort: usage.effort, costUsd: finite(usage.costUsd), inputTokens: finite(usage.inputTokens), cachedInputTokens: finite(usage.cachedInputTokens), outputTokens: finite(usage.outputTokens), contextTokens: finite(usage.contextTokens), contextWindowTokens: finite(usage.contextWindowTokens) });
     this.trim(Date.now()); this.flush();
   }
-  session(sessionId: string): UsageRollup { return roll(this.entries.filter((e) => e.sessionId === sessionId)); }
+  session(sessionId: string, runnerId?: string): UsageRollup {
+    return roll(this.entries.filter((e) => e.sessionId === sessionId && (runnerId === undefined || e.runnerId === runnerId)));
+  }
   total(): UsageRollup { return roll(this.entries); }
-  byAgent(resolveAgent: (sessionId: string, recordedAgent: string) => string = (_sessionId, agent) => agent): Record<string, UsageRollup> {
+  byAgent(resolveAgent: (sessionId: string, recordedAgent: string, runnerId?: string) => string = (_sessionId, agent) => agent): Record<string, UsageRollup> {
     const grouped: Record<string, UsageLedgerEntry[]> = {};
-    for (const entry of this.entries) (grouped[resolveAgent(entry.sessionId, entry.agent)] ||= []).push(entry);
+    for (const entry of this.entries) (grouped[resolveAgent(entry.sessionId, entry.agent, entry.runnerId)] ||= []).push(entry);
     return Object.fromEntries(Object.entries(grouped).map(([agent, values]) => [agent, roll(values)]));
   }
-  topSessions(limit = 6, resolveAgent: (sessionId: string, recordedAgent: string) => string = (_sessionId, agent) => agent): Array<{ id: string; agent: string; usage: UsageRollup }> {
+  topSessions(limit = 6, resolveAgent: (sessionId: string, recordedAgent: string, runnerId?: string) => string = (_sessionId, agent) => agent): Array<{ id: string; runnerId: string; agent: string; usage: UsageRollup }> {
     const grouped = new Map<string, UsageLedgerEntry[]>();
-    for (const e of this.entries) { const list = grouped.get(e.sessionId) || []; list.push(e); grouped.set(e.sessionId, list); }
-    return [...grouped.entries()].map(([id, values]) => ({ id, agent: resolveAgent(id, values.at(-1)?.agent || "unknown"), usage: roll(values) })).sort((a, b) => b.usage.costUsd - a.usage.costUsd).slice(0, limit);
+    for (const e of this.entries) { const key = `${e.runnerId || "legacy"}\0${e.sessionId}`, list = grouped.get(key) || []; list.push(e); grouped.set(key, list); }
+    return [...grouped.values()].map((values) => {
+      const latest = values.at(-1)!;
+      return { id: latest.sessionId, runnerId: latest.runnerId || "legacy", agent: resolveAgent(latest.sessionId, latest.agent || "unknown", latest.runnerId), usage: roll(values) };
+    }).sort((a, b) => b.usage.costUsd - a.usage.costUsd).slice(0, limit);
   }
   private trim(now: number): void { this.entries = this.entries.filter((e) => now - e.at < this.ttlMs).slice(-this.maxEntries); }
   private flush(): void { writeJsonAtomic(this.file, this.entries); }

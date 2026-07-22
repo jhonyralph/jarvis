@@ -38,6 +38,10 @@ export interface MemoryEntry {
   topic?: string;
   /** Normalized cwd-derived key for project and monorepo memories. */
   projectKey?: string;
+  /** Machine partition. Missing legacy values are treated as the Hub's local runner. */
+  runnerId?: string;
+  /** Private manual notes are visible only to their owner; session indexes remain shared. */
+  ownerId?: string;
 }
 
 export interface MemoryHit extends MemoryEntry { score: number; }
@@ -82,6 +86,12 @@ export interface MemorySearchOpts {
   projectKey?: string;
   /** restrict to a normalized project prefix, useful for monorepos */
   projectPrefix?: string;
+  /** restrict to the machines the caller is authorized to inspect */
+  runnerIds?: string[];
+  /** principal requesting the search; entries owned by another principal are always excluded */
+  principalId?: string;
+  /** exact session fallback for sessions without a cwd */
+  sessionId?: string;
 }
 
 const PROJECT_WORDS = [
@@ -120,14 +130,17 @@ export function classifyMemoryText(input: { text: string; cwd?: string; namespac
   const namespaces = new Set<string>(explicit);
   namespaces.add(`scope:${scope}`);
   namespaces.add(`topic:${topic}`);
-  if (projectKey && scope === "project") namespaces.add(`project:${projectKey}`);
-  return { scope, topic, namespaces: [...namespaces], projectKey: scope === "project" ? projectKey : undefined };
+  if (projectKey) namespaces.add(`project:${projectKey}`);
+  return { scope, topic, namespaces: [...namespaces], projectKey };
 }
 
 function normalizeEntry(e: MemoryEntry): MemoryEntry {
   const classification = classifyMemoryText({ text: e.text || "", cwd: e.cwd, namespaces: e.namespaces });
+  const legacyRemote = /^runner:([^:]+):(.+)$/.exec(e.id || "");
   return {
     ...e,
+    sessionId: e.sessionId || legacyRemote?.[2] || e.id,
+    runnerId: e.runnerId || legacyRemote?.[1],
     namespaces: classification.namespaces,
     scope: e.scope || classification.scope,
     topic: e.topic || classification.topic,
@@ -163,9 +176,16 @@ export class MemoryStore {
   has(id: string): boolean { return this.data.some((e) => e.id === id); }
   size(): number { return this.data.length; }
   ids(): Set<string> { return new Set(this.data.map((e) => e.id)); }
-  stats(): MemoryStats {
+  stats(opts: Pick<MemorySearchOpts, "runnerIds" | "principalId" | "projectKey" | "sessionId"> = {}): MemoryStats {
     const byScope: Record<string, number> = {}, byTopic: Record<string, number> = {}, projects = new Map<string, MemoryProjectStats>();
+    const runnerIds = opts.runnerIds?.map(normalizeMemoryNamespace).filter(Boolean);
+    let total = 0;
     for (const e of this.data) {
+      if (runnerIds && !runnerIds.includes(normalizeMemoryNamespace(e.runnerId || "local"))) continue;
+      if (e.ownerId && e.ownerId !== opts.principalId) continue;
+      if (opts.sessionId && e.sessionId !== opts.sessionId) continue;
+      if (opts.projectKey && e.projectKey !== projectMemoryKey(opts.projectKey)) continue;
+      total++;
       const scope = e.scope || "general", topic = e.topic || "general";
       byScope[scope] = (byScope[scope] || 0) + 1;
       byTopic[topic] = (byTopic[topic] || 0) + 1;
@@ -174,15 +194,20 @@ export class MemoryStore {
         p.count++; p.latestTs = Math.max(p.latestTs, e.ts || 0); projects.set(e.projectKey, p);
       }
     }
-    return { total: this.data.length, byScope, byTopic, projects: [...projects.values()].sort((a, b) => (b.count - a.count) || (b.latestTs - a.latestTs)) };
+    return { total, byScope, byTopic, projects: [...projects.values()].sort((a, b) => (b.count - a.count) || (b.latestTs - a.latestTs)) };
   }
 
   /** Cosine top-K over the query vector, newest-first as the tiebreak, with optional filters. */
   search(vec: number[], opts: MemorySearchOpts = {}): MemoryHit[] {
     const topK = opts.topK ?? 8, minScore = opts.minScore ?? 0;
     const namespaces = (opts.namespaces || []).map(normalizeMemoryNamespace).filter(Boolean);
+    const runnerIds = opts.runnerIds?.map(normalizeMemoryNamespace).filter(Boolean);
     const hits: MemoryHit[] = [];
     for (const e of this.data) {
+      const runnerId = normalizeMemoryNamespace(e.runnerId || "local");
+      if (runnerIds && !runnerIds.includes(runnerId)) continue;
+      if (e.ownerId && e.ownerId !== opts.principalId) continue;
+      if (opts.sessionId && e.sessionId !== opts.sessionId) continue;
       if (opts.cwd && e.cwd !== opts.cwd) continue;
       if (opts.agent && e.agent !== opts.agent) continue;
       if (opts.scope && e.scope !== opts.scope) continue;

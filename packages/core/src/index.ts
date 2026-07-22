@@ -31,3 +31,5 @@ export * from "./execution-redact.js";
 export * from "./managed-execution.js";
 export * from "./execution-usage.js";
 export * from "./adaptive-policy.js";
+export * from "./context.js";
+export * from "./activity-replay.js";

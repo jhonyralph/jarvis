@@ -28,9 +28,9 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, appendMemory, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
-import { RUNNER_PROTOCOL_VERSION, isExecutionState, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
+import { RUNNER_PROTOCOL_VERSION, isExecutionState, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
 import { startAdminApi } from "./adminApi.js";
@@ -41,6 +41,7 @@ import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
 const CWD = process.env.JARVIS_CWD || process.cwd();
+const LOCAL_ID = "local";
 const VOICE = process.env.JARVIS_VOICE || "en_GB-alan-medium";
 // cap how many messages we send/render on open — long sessions were heavy on mobile
 const HISTORY_CAP = Number(process.env.JARVIS_HISTORY_CAP || 120);
@@ -72,6 +73,7 @@ const metrics = new Metrics();
 // Start time of a remote runner's in-flight turn, keyed "runnerId\0sessionId", so relayRunner can
 // measure its duration when the terminal stream event arrives.
 const remoteTurnStart = new Map<string, number>();
+const remoteSpeak = new Set<string>();
 /** Best-effort: embed a session's digest and upsert it into semantic memory (no-op if the local
  *  embedding model isn't installed). Called after each managed turn via turnCtx.afterTurn. */
 async function indexSession(sid: string): Promise<void> {
@@ -82,7 +84,21 @@ async function indexSession(sid: string): Promise<void> {
     const lastAsst = [...s.messages].reverse().find((m) => m.role === "assistant")?.text || "";
     const text = `${s.title}\n${lastUser}\n${lastAsst}`.slice(0, 2000);
     const vec = await embedOne(text);
-    if (vec.length) memory.upsert({ id: s.id, sessionId: s.id, agent: s.agent, cwd: s.cwd, title: s.title, text: text.slice(0, 400), ts: s.updatedAt, vec });
+    if (vec.length) memory.upsert({ id: s.id, sessionId: s.id, runnerId: LOCAL_ID, agent: s.agent, cwd: s.cwd, title: s.title, text: text.slice(0, 400), ts: s.updatedAt, vec });
+  } catch { /* embedding unavailable — memory is opt-in */ }
+}
+async function indexRunnerSession(rc: RunnerConn, sid: string): Promise<void> {
+  try {
+    const h = await runnerHistory(rc, sid);
+    const messages = Array.isArray(h?.messages) ? h.messages : [];
+    if (!h || !messages.length) return;
+    const lastUser = [...messages].reverse().find((m: any) => m?.role === "user")?.text || "";
+    const lastAsst = [...messages].reverse().find((m: any) => m?.role === "assistant")?.text || "";
+    const label = runnerLabels[rc.id] || rc.info.host || rc.id;
+    const title = `${label} · ${h.title || sid}`;
+    const text = `${title}\n${lastUser}\n${lastAsst}`.slice(0, 2000);
+    const vec = await embedOne(text);
+    if (vec.length) memory.upsert({ id: `runner:${rc.id}:${sid}`, sessionId: sid, runnerId: rc.id, agent: h.agent, cwd: h.cwd, title, text: text.slice(0, 400), ts: Date.now(), vec, ...classifyMemoryText({ text, cwd: h.cwd }) });
   } catch { /* embedding unavailable — memory is opt-in */ }
 }
 // dedicated, locked-agent/cwd session that the machine wake listener injects into
@@ -92,6 +108,11 @@ store.ensure(WAKE_SESSION, { agent: process.env.JARVIS_WAKE_AGENT || agents.defa
 // + subscriptions live locally; the push protocol relays via the browser's FCM/APNs
 // (payload is encrypted). ----
 const JARVIS_DIR = join(process.env.JARVIS_HOME || homedir(), ".jarvis");
+const contextManifests = new ContextManifestStore(JARVIS_DIR);
+const remoteContextManifests = new ContextManifestStore(JARVIS_DIR, "remote-context-manifests.jsonl");
+const memoryProvenance = new MemoryProvenanceStore(JARVIS_DIR);
+const nativeBindingCollisions = agents.nativeBindingCollisions();
+if (nativeBindingCollisions.length) console.error("[hub] colisões de sessão nativa detectadas; turnos afetados serão bloqueados:", JSON.stringify(nativeBindingCollisions));
 const LOCAL_EXECUTION_DIR = join(JARVIS_DIR, "executions");
 const MIRROR_EXECUTION_DIR = join(JARVIS_DIR, "hub", "executions");
 const EXECUTION_UI_FILE = join(JARVIS_DIR, "hub", "execution-ui.json");
@@ -192,7 +213,7 @@ function saveExecutionCfg(): void { try { writeJsonAtomic(EXECUTION_CFG_FILE, ex
 const localExecutionStore = new ExecutionStore({ root: LOCAL_EXECUTION_DIR, maxEventsPerRoot: executionCfg.maxEvents });
 const compactedExecutions = localExecutionStore.compactBefore(Date.now() - executionCfg.retentionDays * 86_400_000);
 if (compactedExecutions.roots) console.log(`[hub] retenção de trabalhos: ${compactedExecutions.roots} diário(s) compactado(s), ${compactedExecutions.droppedEvents} evento(s) detalhado(s) removido(s)`);
-if (executionCfg.enabled) for (const snapshot of localExecutionStore.rootsForSession()) for (const node of snapshot.nodes) {
+for (const snapshot of localExecutionStore.rootsForSession()) for (const node of snapshot.nodes) {
   if (node.state !== "queued" && node.state !== "running" && node.state !== "waiting_input") continue;
   try {
     localExecutionStore.append(node.rootExecutionId, node.executionId, { kind: "state_changed", from: node.state, to: "orphaned", reason: "Hub reiniciou sem binding verificável para este processo" });
@@ -374,11 +395,13 @@ function voiceMentionsCatalog(text: string, desc: Awaited<ReturnType<AgentRegist
 function send(ws: WebSocket, obj: unknown): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
 }
-/** to every client currently viewing `sessionId` (keeps desktop + phone in sync) */
-function broadcast(sessionId: string, obj: unknown): void {
-  const s = JSON.stringify(obj);
-  for (const c of wss.clients) if (c.readyState === c.OPEN && subs.get(c as WebSocket) === sessionId) c.send(s);
+/** To every client viewing a session on one exact machine (keeps desktop + phone in sync). */
+function broadcastOn(runnerId: string, sessionId: string, obj: unknown): void {
+  const frame = obj && typeof obj === "object" && !Array.isArray(obj) ? { ...(obj as Record<string, unknown>), runnerId } : obj;
+  const s = JSON.stringify(frame);
+  for (const c of clientsOn(runnerId)) if (c.readyState === c.OPEN && subs.get(c) === sessionId) c.send(s);
 }
+function broadcast(sessionId: string, obj: unknown): void { broadcastOn(LOCAL_ID, sessionId, obj); }
 /** to every UI client (skips runner sockets) */
 function broadcastAll(obj: unknown): void {
   const s = JSON.stringify(obj);
@@ -388,22 +411,23 @@ function broadcastAll(obj: unknown): void {
 // sessions with an in-flight Jarvis-driven turn — powers the "rodando agora" panel.
 const activeRuns = new Set<string>();
 const routeAborts = new Map<string, AbortController>();
-// Post-turn decision detection ("consolidating" → questions). `asking` = sessions whose reply is being
-// analysed (locks the composer); `pendingAsk` = questions awaiting an answer, kept so a client that
-// opens the session LATER (switched away, phone reopened) still sees them. Both LOCAL-session only.
-const asking = new Set<string>();
-const pendingAsk = new Map<string, unknown[]>();
-function decisionLocked(sid: string): boolean { return asking.has(sid) || pendingAsk.has(sid); }
-function decisionLockMessage(sid: string): string {
-  return asking.has(sid) ? "aguarde a consolidação da pergunta antes de enviar outra mensagem" : "responda a decisão pendente antes de enviar outra mensagem";
+// Post-turn decision detection is Hub-owned HITL. It is machine/session scoped, replayed on open,
+// and deliberately never blocks the composer or queue. A newer turn invalidates stale questions.
+const decisionKey = (runnerId: string, sid: string): string => runnerId + "\0" + sid;
+const asking = new Map<string, string>();
+const pendingAsk = new Map<string, { runnerId: string; sessionId: string; questions: unknown[] }>();
+function clearPendingAsk(runnerId: string, sid: string): void {
+  const key = decisionKey(runnerId, sid), wasAsking = asking.delete(key), wasPending = pendingAsk.delete(key), changed = wasAsking || wasPending;
+  if (changed) broadcastOn(runnerId, sid, { t: "ask_cleared", runnerId, sessionId: sid });
 }
-/** Resend a session's pending "consolidating" state + questions to a client that just (re)opened it. */
-function sendPendingAsk(ws: WebSocket, sid: string): void {
-  if (asking.has(sid)) send(ws, { t: "asking", sessionId: sid, on: true });
-  const pa = pendingAsk.get(sid); if (pa) send(ws, { t: "ask", sessionId: sid, questions: pa });
+/** Resend pending analysis/questions to a client that just (re)opened the exact machine/session. */
+function sendPendingAsk(ws: WebSocket, runnerId: string, sid: string): void {
+  const key = decisionKey(runnerId, sid);
+  if (asking.has(key)) send(ws, { t: "asking", runnerId, sessionId: sid, on: true });
+  const pa = pendingAsk.get(key); if (pa) send(ws, { t: "ask", runnerId, sessionId: sid, questions: pa.questions });
 }
 // runs/sessions are per-machine: only clients viewing the LOCAL machine get local ones.
-function broadcastRuns(): void { const s = JSON.stringify({ t: "runs", active: [...activeRuns] }); for (const c of clientsOn(LOCAL_ID)) if (c.readyState === c.OPEN) c.send(s); }
+function broadcastRuns(): void { const s = JSON.stringify({ t: "runs", runnerId: LOCAL_ID, active: [...activeRuns] }); for (const c of clientsOn(LOCAL_ID)) if (c.readyState === c.OPEN) c.send(s); }
 // single-flight global para operações de voz (resumo/digest): só 1 por vez em toda a instância,
 // independente de qual chat/cliente pediu. Guard no servidor complementa a trava de UI (multi-device).
 let voiceOpBusy = false;
@@ -414,6 +438,10 @@ const principals = new WeakMap<WebSocket, Conn>();
 const unauthTimers = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
 function isAuthed(ws: WebSocket): boolean { return !auth.AUTH_ENABLED || principals.has(ws); }
 function principalOf(ws: WebSocket): Conn | undefined { return principals.get(ws); }
+function actorOf(ws: WebSocket, source: ContextActor["source"] = "user"): ContextActor {
+  const principal = principalOf(ws);
+  return { userId: principal?.userId || undefined, deviceId: principal?.deviceId || undefined, source };
+}
 /** Fully authed = token accepted AND (no owner passphrase OR this session verified it). */
 function fullyAuthed(ws: WebSocket): boolean { if (!auth.AUTH_ENABLED) return true; const p = principals.get(ws); return !!p && (!auth.hasPassphrase() || p.verified); }
 function clearUnauthTimer(ws: WebSocket): void { const t = unauthTimers.get(ws); if (t) { clearTimeout(t); unauthTimers.delete(ws); } }
@@ -491,7 +519,6 @@ const pendingRunnerUpdates: Record<string, PendingRunnerUpdate> = (() => {
 function savePendingRunnerUpdates(): void { try { writeJsonAtomic(RUNNER_UPDATES_FILE, pendingRunnerUpdates, { pretty: true }); } catch (e) { console.error("[hub] não consegui persistir fila de atualização:", String((e as any)?.message ?? e)); } }
 const runners = new Map<string, RunnerConn>();
 const runnerSockets = new Set<WebSocket>();
-const LOCAL_ID = "local";
 runners.set(LOCAL_ID, { id: LOCAL_ID, ws: null, local: true, lastSeen: Date.now(), info: { runnerId: LOCAL_ID, host: hostname(), os: process.platform, agents: [], protocolVersion: RUNNER_PROTOCOL_VERSION, local: true } });
 // Labels are the durable machine inventory. Rebuild offline placeholders after every Hub restart so
 // they remain selectable and, critically, can retain a pending update until they reconnect.
@@ -500,6 +527,14 @@ for (const [id, label] of Object.entries(runnerLabels)) if (id !== LOCAL_ID && !
 }
 const clientRunner = new WeakMap<WebSocket, string>();
 const runnerActive = new Map<string, Set<string>>(); // runnerId -> session ids running there
+function markRunnerSessionActive(runnerId: string, sid: string): void {
+  if (!runnerId || !sid) return;
+  const set = runnerActive.get(runnerId) || new Set<string>();
+  if (set.has(sid)) return;
+  set.add(sid);
+  runnerActive.set(runnerId, set);
+  for (const c of clientsOn(runnerId)) send(c, { t: "runs", runnerId, active: [...set] });
+}
 // When each currently-offline runner dropped (cleared on reconnect), so the fleet view can show
 // "offline há Xm" and a periodic sweep can alert once when a machine stays down past the threshold.
 const offlineSince = new Map<string, number>();
@@ -509,6 +544,34 @@ const OFFLINE_ALERT_MS = Math.max(0, Number(process.env.JARVIS_OFFLINE_ALERT_MIN
 // or restarting), long after the request returned — this is who gets told.
 const updateWatchers = new Set<WebSocket>();
 const pendingReq = new Map<string, WebSocket>();
+interface PendingMemoryConfirmation {
+  runnerId: string;
+  sessionId?: string;
+  actor: ContextActor;
+  mode: "repo-local" | "repo-remote" | "jarvis";
+  expiresAt: number;
+  preview?: MemoryAppendPreview;
+  text?: string;
+  cwd?: string;
+  agent?: string;
+}
+const pendingMemoryConfirmations = new Map<string, PendingMemoryConfirmation>();
+const pendingRemoteMemoryPreview = new Map<string, { ws: WebSocket; runnerId: string; sessionId?: string; actor: ContextActor }>();
+const pendingRemoteMemoryApply = new Map<string, { ws: WebSocket; pending: PendingMemoryConfirmation; token: string }>();
+const MEMORY_PREVIEW_TTL_MS = 5 * 60_000;
+function cleanExpiredMemoryConfirmations(): void {
+  const now = Date.now();
+  for (const [token, pending] of pendingMemoryConfirmations) if (pending.expiresAt <= now) pendingMemoryConfirmations.delete(token);
+}
+function sendMemoryFrame(origin: WebSocket, pending: PendingMemoryConfirmation, frame: unknown): void {
+  let sentOrigin = false;
+  for (const client of clientsOn(pending.runnerId)) {
+    if (pending.sessionId && subs.get(client) !== pending.sessionId) continue;
+    if (pending.actor.userId && principalOf(client)?.userId !== pending.actor.userId) continue;
+    send(client, frame); if (client === origin) sentOrigin = true;
+  }
+  if (!sentOrigin) send(origin, frame);
+}
 let reqSeq = 0;
 const runnerSessionState = new Map<string, Map<string, any>>();
 // which agents are actually usable on THIS (local) machine — probes availability, so the
@@ -563,12 +626,26 @@ function activeRunner(ws: WebSocket): string { return clientRunner.get(ws) || LO
 /** The cwd / agent of a LOCAL session (managed or native), for "@" file search, "!" and "#" memory. */
 function sessionCwd(sid?: string): string { if (!sid) return CWD; if (isNativeId(sid)) return nativeInfo(sid)?.cwd || CWD; return store.get(sid)?.cwd || CWD; }
 function sessionAgent(sid?: string): string | undefined { if (!sid) return undefined; if (isNativeId(sid)) return nativeInfo(sid)?.agent; return store.get(sid)?.agent; }
-/** Attribute legacy usage without pretending the old untyped ledger knew its provider. */
-function usageAgent(sid: string, recorded?: string): string {
-  if (recorded && recorded !== "unknown" && recorded !== "remote-unknown") return recorded;
-  return sessionAgent(sid) || executionNodeBySession(sid)?.agent || (sid.startsWith("claude:") ? "claude-code" : sid.startsWith("codex:") ? "codex" : "legacy-unattributed");
+function sessionCwdOn(runnerId: string, sid?: string): string {
+  if (runnerId === LOCAL_ID) return sessionCwd(sid);
+  return String((sid && runnerSessionState.get(runnerId)?.get(sid)?.cwd) || "");
 }
-function replayRoute(ws: WebSocket, sid: string): void { if (routeAborts.has(sid)) send(ws, { t: "auto_route", sessionId: sid, state: "started" }); }
+/** Attribute scoped usage without assigning origin-less legacy entries to a current machine. */
+function usageAgent(sid: string, recorded?: string, runnerId?: string): string {
+  if (recorded && recorded !== "unknown" && recorded !== "remote-unknown") return recorded;
+  const scopedAgent = runnerId === LOCAL_ID
+    ? sessionAgent(sid) || executionNodeBySession(sid)?.agent
+    : runnerId ? runnerSessionState.get(runnerId)?.get(sid)?.agent : undefined;
+  return scopedAgent || (sid.startsWith("claude:") ? "claude-code" : sid.startsWith("codex:") ? "codex" : "legacy-unattributed");
+}
+function scopedSessionKey(runnerId: string, sid: string): string { return runnerId + "\0" + sid; }
+function splitScopedSessionKey(key: string): { runnerId: string; sessionId: string } {
+  const separator = key.indexOf("\0");
+  return separator < 0 ? { runnerId: LOCAL_ID, sessionId: key } : { runnerId: key.slice(0, separator), sessionId: key.slice(separator + 1) };
+}
+function replayRoute(ws: WebSocket, runnerId: string, sid: string): void {
+  if (routeAborts.has(scopedSessionKey(runnerId, sid))) send(ws, { t: "auto_route", sessionId: sid, state: "started" });
+}
 /** Per-runner authorization — the "access to the Hub == a shell on the machine" boundary. The owner
  *  reaches every machine; a member only the runners granted in their invite (auth.grants). Auth off =
  *  fully trusted. This is the DRIVE gate (select + act), enforced for BOTH the local machine and remote
@@ -580,19 +657,59 @@ function canUseRunner(ws: WebSocket, rid: string): boolean {
   if (p.role === "owner") return true;
   return auth.canAccessRunner(p.userId, rid);
 }
+function allowedRunnerIds(ws: WebSocket): string[] {
+  return [...new Set([LOCAL_ID, ...runners.keys(), ...Object.keys(runnerLabels)])].filter((runnerId) => canUseRunner(ws, runnerId));
+}
 // The session ops that act on a machine (local or the selected runner). A member without a grant for
 // the target machine may not run any of these — mirrors the forwarded-op list below.
-const RUNNER_OPS = new Set(["list", "open", "send", "new", "listdir", "configure", "readfile", "readdiff", "delete"]);
+const RUNNER_OPS = new Set(["list", "open", "send", "new", "listdir", "configure", "readfile", "readdiff", "delete", "dropLast"]);
 // Ops that ALWAYS read or execute the LOCAL (Hub) machine's own sessions, regardless of which runner
 // is selected — they never take the remote-forward path. These were NOT in RUNNER_OPS, so a member
-// without local access reached them: `sendTo`/`voice` execute a turn ON THE HUB (normally full-access),
+// without local access reached them: `sendTo` executes a turn ON THE HUB (normally full-access),
 // and search/summary read every local session. Gate them on LOCAL_ID like any other machine op.
-const LOCAL_OPS = new Set(["sendTo", "dropLast", "search", "memory_search", "voice"]);
+const LOCAL_OPS = new Set(["sendTo", "search"]);
 // Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
-const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize"]);
+const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
 const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "summarize", "digest", "routine_run"]);
+function holdForHubUpdate(ws: WebSocket, msg: any): boolean {
+  if (!hubUpdateInProgress || !UPDATE_BLOCKED_OPS.has(msg.t)) return false;
+  const runnerId = activeRunner(ws);
+  const queueRunnerId = runnerId !== LOCAL_ID ? runnerId : undefined;
+  const enqueue = (sid: string, text: string, atts: any[] = []): void => {
+    if (typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
+    enqueueChatTurn(runnerId, sid, {
+      text,
+      atts: Array.isArray(atts) ? atts : [],
+      model: typeof msg.model === "string" ? msg.model : undefined,
+      effort: typeof msg.effort === "string" ? msg.effort : undefined,
+      auto: autoFlags(msg.auto),
+      runnerId: queueRunnerId,
+      msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
+      actor: actorOf(ws, "queue"),
+    });
+    send(ws, { t: "queued", runnerId, sessionId: sid, text, update: true, message: "Atualização em andamento — mensagem ficou na fila e roda quando o Hub voltar." });
+  };
+  if (msg.t === "send" && typeof msg.text === "string") {
+    enqueue((typeof msg.sessionId === "string" && msg.sessionId) || subs.get(ws) || "default", msg.text, msg.attachments);
+    return true;
+  }
+  if (msg.t === "sendTo" && typeof msg.sessionId === "string" && typeof msg.text === "string") {
+    enqueue(msg.sessionId, msg.text, msg.attachments);
+    return true;
+  }
+  if (msg.t === "enqueue" && typeof msg.sessionId === "string") {
+    enqueue(msg.sessionId, typeof msg.text === "string" ? msg.text : "(anexo)", msg.attachments);
+    return true;
+  }
+  if (msg.t === "flushqueue" && typeof msg.sessionId === "string") {
+    send(ws, { t: "queued", runnerId, sessionId: msg.sessionId, text: "", update: true, message: "Atualização em andamento — a fila roda automaticamente quando o Hub voltar." });
+    return true;
+  }
+  send(ws, { t: "error", message: "Hub drenando para atualização — esta ação fica disponível após reconectar" });
+  return true;
+}
 /** Client sockets (not runner sockets) currently viewing a given machine. */
 function clientsOn(runnerId: string): WebSocket[] {
   const out: WebSocket[] = [];
@@ -682,6 +799,10 @@ function deliverPendingRunnerUpdate(rc: RunnerConn, opts?: { force?: boolean; al
   if (sent) { if (!pending.fromCommit && rc.info.commit) pending.fromCommit = rc.info.commit; pending.state = "sent"; pending.lastAttemptAt = Date.now(); pending.lastError = undefined; savePendingRunnerUpdates(); updateMachineNotice(rc.id, { state: "sent", queued: true, ok: false, log: "solicitação entregue; máquina drenando" }); }
   return sent;
 }
+function runnerUpdateDraining(runnerId: string): boolean {
+  const pending = pendingRunnerUpdates[runnerId];
+  return !!pending && pending.state !== "blocked";
+}
 function completePendingRunnerUpdate(rc: RunnerConn, m: any): void {
   const pending = pendingRunnerUpdates[rc.id];
   const label = runnerLabels[rc.id] || rc.info.host || rc.id;
@@ -705,7 +826,7 @@ function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
   if (clean && commitMatches(rc.info.commit || "", pending.targetCommit) && (rc.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION && (receiptMatches || changedCommit)) {
     delete pendingRunnerUpdates[rc.id]; savePendingRunnerUpdates();
     auth.audit("update_machine_verified", { runnerId: rc.id, detail: `${runnerLabels[rc.id] || rc.info.host || rc.id}: ${rc.info.commit || pending.targetCommit}` });
-    updateMachineNotice(rc.id, { ok: true, verified: true, state: "verified", behind: 1, log: `reiniciou e reconectou em ${rc.info.commit || pending.targetCommit}` }); return;
+    updateMachineNotice(rc.id, { ok: true, verified: true, state: "verified", behind: 1, log: `reiniciou e reconectou em ${rc.info.commit || pending.targetCommit}` }); flushQueuesForRunner(rc.id); return;
   }
   deliverPendingRunnerUpdate(rc, { retryNow: true });
 }
@@ -735,7 +856,7 @@ async function applyHubUpdate(force: boolean, allMachines: boolean): Promise<any
   hubUpdateInProgress = true;
   broadcastAll({ t: "update_progress", message: "Drenando trabalhos locais antes de atualizar…" });
   const drainError = await drainHubForUpdate();
-  if (drainError) { hubUpdateInProgress = false; return { ok: false, log: drainError }; }
+  if (drainError) { hubUpdateInProgress = false; flushAllQueues(); return { ok: false, log: drainError }; }
   const created: Array<[string, string]> = [];
   if (allMachines) for (const id of remoteIds) { const before = pendingRunnerUpdates[id]?.requestId; const p = queueRunnerUpdate(id, target, { force: true }); if (p.requestId !== before) created.push([id, p.requestId]); }
   if (allMachines) { broadcastMachines(); broadcastAll({ t: "update_progress", message: `Hub drenado; ${remoteIds.length} máquina(s) ficaram na fila persistente. Preparando o Hub…`, queued: remoteIds.map((id) => runnerLabels[id] || id) }); }
@@ -743,9 +864,9 @@ async function applyHubUpdate(force: boolean, allMachines: boolean): Promise<any
   if (!result.ok) {
     for (const [id, requestId] of created) if (pendingRunnerUpdates[id]?.requestId === requestId) delete pendingRunnerUpdates[id];
     if (created.length) savePendingRunnerUpdates();
-    hubUpdateInProgress = false; broadcastMachines(); return result;
+    hubUpdateInProgress = false; broadcastMachines(); flushAllQueues(); return result;
   }
-  if (result.restartRequired !== false) scheduleRestart(); else hubUpdateInProgress = false;
+  if (result.restartRequired !== false) scheduleRestart(); else { hubUpdateInProgress = false; flushAllQueues(); }
   return result;
 }
 async function queueAllRemoteRunnerUpdates(): Promise<{ ok: boolean; queued: number; delivered: number; target?: string; error?: string }> {
@@ -873,7 +994,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     mirror.setConnection(pending.rootExecutionId, "online"); broadcastExecutionConnection(rc.id, "online");
     return;
   }
-  if (m.t === "execution_usage_record") { addUsage(String(m.sessionId || m.rootExecutionId), String(m.agent || "remote-unknown"), m.usage); return; }
+  if (m.t === "execution_usage_record") { addUsage(String(m.sessionId || m.rootExecutionId), String(m.agent || "remote-unknown"), m.usage, rc.id); return; }
   if (m.t === "usage_info") {
     const cb = pendingRunnerUsage.get(m.reqId);
     if (cb) { pendingRunnerUsage.delete(m.reqId); cb(m); }
@@ -881,6 +1002,21 @@ function relayRunner(rc: RunnerConn, m: any): void {
       rc.info.agentUsage = rc.info.agentUsage || {};
       rc.info.agentUsage[m.agent] = m.plan || null;
     }
+    return;
+  }
+  if (m.t === "memory_preview") {
+    const pending = pendingRemoteMemoryPreview.get(m.reqId), client = pendingReq.get(m.reqId);
+    pendingRemoteMemoryPreview.delete(m.reqId); pendingReq.delete(m.reqId);
+    if (!pending || !client || pending.runnerId !== rc.id || typeof m.token !== "string") return;
+    const confirmation: PendingMemoryConfirmation = { runnerId: rc.id, sessionId: pending.sessionId, actor: pending.actor, mode: "repo-remote", expiresAt: Number(m.expiresAt) || Date.now() + MEMORY_PREVIEW_TTL_MS };
+    pendingMemoryConfirmations.set(m.token, confirmation);
+    sendMemoryFrame(client, confirmation, { t: "memory_preview", token: m.token, target: m.target, note: m.note, appendText: m.appendText, beforeHash: m.beforeHash, exists: !!m.exists, expiresAt: m.expiresAt, runnerId: rc.id, sessionId: pending.sessionId, mode: "repo" });
+    return;
+  }
+  if (m.t === "memory_applied") {
+    const request = pendingRemoteMemoryApply.get(m.reqId), client = pendingReq.get(m.reqId);
+    pendingRemoteMemoryApply.delete(m.reqId); pendingReq.delete(m.reqId);
+    if (request && client) sendMemoryFrame(client, request.pending, { ...m, runnerId: rc.id });
     return;
   }
   if (m.t === "execution_delegate_result") {
@@ -902,9 +1038,10 @@ function relayRunner(rc: RunnerConn, m: any): void {
     const raw = Array.isArray(m.sessions) ? m.sessions : [];
     mergeRunnerSessionState(rc.id, raw);
     const sessions = dedupeRunnerSessions(rc.id, raw);
+    const recentDirs = Array.isArray(m.recentDirs) ? m.recentDirs.filter((d: unknown): d is string => typeof d === "string" && d.trim().length > 0) : [];
     const cb = pendingRunnerList.get(rc.id);
     if (cb) { pendingRunnerList.delete(rc.id); cb(sessions); }
-    for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions, recentDirs: [], runnerId: rc.id });
+    for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions, recentDirs, runnerId: rc.id });
     return;
   }
   if (m.t === "deleted") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); for (const sid of m.ids || []) mirrorExecutionStore(rc.id).deleteSession(sid); send(c, { t: "deleted", sessionId: m.sessionId, ids: m.ids || [], ok: !!m.ok, okCount: Number(m.okCount) || 0 }); } return; }
@@ -918,10 +1055,13 @@ function relayRunner(rc: RunnerConn, m: any): void {
     if (c) {
       pendingReq.delete(m.reqId);
       const native = /^(claude:|codex:)/.test(m.sessionId || "");
-      const messages = Array.isArray(m.messages) ? m.messages : [];
-      const su = effectiveSessionUsage(m.sessionId, messages);
+    const messages = Array.isArray(m.messages) ? m.messages : [];
+    const liveKey = scopedSessionKey(rc.id, m.sessionId);
+    if (Array.isArray(m.liveActivity) && m.liveActivity.length) activityBuf.set(liveKey, m.liveActivity.slice(0, 1_200));
+    else if ([...messages].reverse().some((message: any) => message?.role === "assistant")) activityBuf.delete(liveKey);
+      const su = effectiveSessionUsage(m.sessionId, messages, rc.id);
       send(c, {
-        t: "history", sessionId: m.sessionId,
+        t: "history", runnerId: rc.id, sessionId: m.sessionId,
         session: {
           agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId,
           sessionCost: su.costUsd, sessionUsage: su,
@@ -929,30 +1069,59 @@ function relayRunner(rc: RunnerConn, m: any): void {
           model: m.model || su.model, effort: m.effort || su.effort,
         },
         total: m.total,
-        messages: messages.map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity })),
+        messages: messages.map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity, contextManifest: x.contextManifest })),
         files: m.files,
       });
-      replayRoute(c, m.sessionId); replayActivity(c, m.sessionId);
-      send(c, { t: "queue", sessionId: m.sessionId, items: queueOf(m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
+      replayRoute(c, rc.id, m.sessionId); replayActivity(c, rc.id, m.sessionId);
+      sendPendingAsk(c, rc.id, m.sessionId);
+      send(c, { t: "queue", runnerId: rc.id, sessionId: m.sessionId, items: queueOf(rc.id, m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
     }
     return;
   }
   if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
   if (m.t === "agent_event") {
     const event = m.event as AgentEvent, sid = m.sessionId, mkey = rc.id + "\0" + sid;
-    if (event.kind === "accepted") { activityBuf.set(sid, []); remoteTurnStart.set(mkey, Date.now()); }
-    const b = activityBuf.get(sid); if (b && b.length < 600) b.push(event);
-    if (event.kind === "usage" && event.usage) addUsage(sid, m.agent || "remote-unknown", event.usage);
+    if (event.kind === "accepted") { activityBuf.set(mkey, []); remoteTurnStart.set(mkey, Date.now()); }
+    const b = activityBuf.get(mkey); if (b && b.length < 600) b.push(event);
+    if (event.kind === "usage" && event.usage) addUsage(sid, m.agent || "remote-unknown", event.usage, rc.id);
     if (event.kind === "completed" || event.kind === "cancelled" || event.kind === "failed") {
-      activityBuf.delete(sid);
       const t0 = remoteTurnStart.get(mkey);
       if (t0 && event.kind !== "cancelled") metrics.record({ runnerId: rc.id, agent: m.agent, model: event.usage?.model, ms: Date.now() - t0, ok: event.kind === "completed", ts: Date.now() });
       remoteTurnStart.delete(mkey);
+      if (event.kind !== "completed") remoteSpeak.delete(mkey);
     }
-    for (const c of clientsOn(rc.id)) send(c, { t: "agent_event", sessionId: sid, event, sessionCost: costOf(sid), sessionUsage: usageLedger.session(sid) });
+    for (const c of clientsOn(rc.id)) send(c, { t: "agent_event", runnerId: rc.id, sessionId: sid, event, sessionCost: costOf(sid, rc.id), sessionUsage: sessionUsage(sid, rc.id) });
     const label = runnerLabels[rc.id] || rc.info.host || rc.id;
-    if (event.kind === "completed") notifyEvent("done", `${label} · sessão concluída`, event.text || "", sid);
+    if (event.kind === "completed") {
+      const replyText = event.text || "";
+      if (remoteSpeak.delete(mkey) && replyText) void (async () => {
+        try {
+          const wav = await synthesize(replyText, VOICE);
+          for (const c of clientsOn(rc.id)) if (subs.get(c) === sid) send(c, { t: "tts", runnerId: rc.id, sessionId: sid, audio: wav.toString("base64"), text: replyText });
+        } catch { /* TTS is best-effort. */ }
+      })();
+      notifyEvent("done", `${label} · sessão concluída`, replyText, sid);
+    }
     else if (event.kind === "failed") notifyEvent("error", `${label} · falhou`, event.text || "", sid);
+    if (event.kind === "completed") { void runAsking(rc.id, sid, event.text || ""); void indexRunnerSession(rc, sid); }
+    return;
+  }
+  if (m.t === "activity_committed") {
+    const key = scopedSessionKey(rc.id, m.sessionId), buffered = activityBuf.get(key);
+    if (!buffered || buffered.some((event: any) => event?.turnId === m.turnId)) activityBuf.delete(key);
+    return;
+  }
+  if (m.t === "session") {
+    const states = runnerSessionState.get(rc.id) || new Map<string, any>();
+    states.set(m.sessionId, { ...(states.get(m.sessionId) || {}), id: m.sessionId, nativeId: m.nativeId });
+    runnerSessionState.set(rc.id, states);
+    for (const c of clientsOn(rc.id)) send(c, { t: "session", runnerId: rc.id, sessionId: m.sessionId, nativeId: m.nativeId });
+    return;
+  }
+  if (m.t === "context_manifest" && m.manifest) {
+    const manifest: ContextManifest = { ...m.manifest, runnerId: rc.id, sessionId: m.sessionId };
+    try { remoteContextManifests.append(manifest); } catch (error) { console.warn("[hub] manifesto remoto não persistido:", String(error)); }
+    for (const c of clientsOn(rc.id)) if (subs.get(c) === m.sessionId) send(c, { t: "context_manifest", runnerId: rc.id, sessionId: m.sessionId, manifest });
     return;
   }
   if (m.t === "stream") {
@@ -960,16 +1129,15 @@ function relayRunner(rc: RunnerConn, m: any): void {
     // turno remoto reexibir "processando" + as ferramentas em vez de esperar em branco.
     { const sid = m.sessionId, ev = m.ev || {};
       const mkey = rc.id + "\0" + sid;
-      if (ev.kind === "start") { activityBuf.set(sid, []); remoteTurnStart.set(mkey, Date.now()); }
-      else if (ev.kind === "tool" || ev.kind === "text" || ev.kind === "thinking") { const b = activityBuf.get(sid); if (b && b.length < 600) b.push(ev); }
+      if (ev.kind === "start") { activityBuf.set(mkey, []); remoteTurnStart.set(mkey, Date.now()); }
+      else if (ev.kind === "tool" || ev.kind === "text" || ev.kind === "thinking") { const b = activityBuf.get(mkey); if (b && b.length < 600) b.push(ev); }
       else if (ev.kind === "done" || ev.kind === "cancelled" || ev.kind === "error") {
-        activityBuf.delete(sid);
-        if (ev.kind === "done") addUsage(sid, m.agent || "remote-unknown", ev.usage); // typed remote usage, any agent
+        if (ev.kind === "done") addUsage(sid, m.agent || "remote-unknown", ev.usage, rc.id); // typed remote usage, any agent
         const t0 = remoteTurnStart.get(mkey);
         if (t0 && ev.kind !== "cancelled") metrics.record({ runnerId: rc.id, agent: m.agent, model: ev.usage?.model, ms: Date.now() - t0, ok: ev.kind === "done", ts: Date.now() });
         remoteTurnStart.delete(mkey);
       } }
-    for (const c of clientsOn(rc.id)) send(c, { t: "stream", sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage, sessionCost: costOf(m.sessionId), sessionUsage: usageLedger.session(m.sessionId) });
+    for (const c of clientsOn(rc.id)) send(c, { t: "stream", runnerId: rc.id, sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage, sessionCost: costOf(m.sessionId, rc.id), sessionUsage: sessionUsage(m.sessionId, rc.id) });
     // Turnos de máquina remota terminavam em silêncio: só o cliente conectado ficava sabendo.
     const label = runnerLabels[rc.id] || rc.info.host || rc.id;
     if (m.ev?.kind === "done") notifyEvent("done", `${label} · sessão concluída`, m.ev.text || "", m.sessionId);
@@ -977,14 +1145,14 @@ function relayRunner(rc: RunnerConn, m: any): void {
     return;
   }
   if (m.t === "busy") { for (const c of clientsOn(rc.id)) send(c, { t: "busy", message: m.message }); return; }
-  if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", message: { sessionId: m.sessionId, ...m.message } }); return; }
-  if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", sessionId: m.sessionId, name: m.name, summary: m.summary, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows }); return; }
+  if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", runnerId: rc.id, message: { sessionId: m.sessionId, ...m.message } }); return; }
+  if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", runnerId: rc.id, sessionId: m.sessionId, name: m.name, summary: m.summary, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows }); return; }
   if (m.t === "runs") {
     const prev = runnerActive.get(rc.id) || new Set<string>();
     const now = new Set<string>(m.active || []);
     runnerActive.set(rc.id, now);
-    for (const c of clientsOn(rc.id)) send(c, { t: "runs", active: m.active || [] });
-    for (const sid of prev) if (!now.has(sid)) void maybeFlushQueue(sid, false); // turno do runner terminou → roda a fila DELE
+    for (const c of clientsOn(rc.id)) send(c, { t: "runs", runnerId: rc.id, active: m.active || [] });
+    for (const sid of prev) if (!now.has(sid)) void maybeFlushQueue(rc.id, sid, false); // turno do runner terminou → roda a fila DELE
     return;
   }
   // Update outcome of a machine. Goes to whoever asked (any owner watching the update panel),
@@ -992,13 +1160,20 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "update_done") {
     completePendingRunnerUpdate(rc, m); return;
   }
-  if (m.t === "command_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "command_list", runnerId: rc.id, commands: m.commands || [] }); } return; }
+  if (m.t === "command_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "command_list", runnerId: rc.id, cwd: m.cwd, commands: m.commands || [] }); } return; }
   if (m.t === "mention_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "mention_list", files: m.files || [] }); } return; }
   if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries }); } return; }
   if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); } return; }
   if (m.t === "error") {
     const replay = m.reqId && executionReplayRequests.get(m.reqId);
     if (replay) { executionReplayRequests.delete(m.reqId); mirrorExecutionStore(rc.id).setConnection(replay.rootExecutionId, "desynced"); broadcastExecutionConnection(rc.id, "desynced"); console.error(`[hub] replay de execução falhou em ${rc.id}: ${m.message}`); return; }
+    const memoryApply = m.reqId && pendingRemoteMemoryApply.get(m.reqId);
+    if (memoryApply) {
+      pendingRemoteMemoryApply.delete(m.reqId!); pendingReq.delete(m.reqId!);
+      sendMemoryFrame(memoryApply.ws, memoryApply.pending, { t: "memory_applied", token: memoryApply.token, ok: false, error: m.message, runnerId: rc.id, sessionId: memoryApply.pending.sessionId });
+      return;
+    }
+    if (m.reqId) pendingRemoteMemoryPreview.delete(m.reqId);
     const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return;
   }
 }
@@ -1344,13 +1519,29 @@ const localSeenTurns = createSeenSet();
 const incomingTurns = createSeenSet(1000);
 const turnCtx: TurnCtx = {
   seen: (turnId) => localSeenTurns.add(turnId),
+  afterStored: (sid) => { activityBuf.delete(scopedSessionKey(LOCAL_ID, sid)); },
   afterTurn: (sid) => { void indexSession(sid); },
   ensure: (sid) => store.ensure(sid),
   resolveAgentName: (n) => agents.get(n).name,
-  add: (sid, msg) => store.add(sid, msg),
+  add: (sid, msg) => {
+    store.add(sid, msg);
+    if (msg.role === "user") clearPendingInboundTurn(msg.contextManifest?.turnId);
+  },
   broadcast: (sid, msg) => broadcast(sid, msg as any),
   pushSessions: () => pushSessions(),
   now: () => Date.now(),
+  buildContextManifest: ({ turnId, sid, agentName, cwd, showText, agentText, actor, images, files }) => {
+    const selected = agents.get(agentName);
+    return buildContextManifest({
+      turnId, sessionId: sid, runnerId: LOCAL_ID, agent: selected.name, cwd, actor,
+      continuity: selected.sessionContinuity?.() || "none", nativeSessionId: selected.nativeSessionId?.(sid),
+      history: store.history(sid), showText, agentText, images, files,
+    });
+  },
+  recordContextManifest: (manifest) => {
+    try { contextManifests.append(manifest); } catch (error) { console.warn("[hub] manifesto de contexto não persistido:", String(error)); }
+    broadcast(manifest.sessionId, { t: "context_manifest", sessionId: manifest.sessionId, manifest });
+  },
   runAgentTurn: (sid, agentName, agentText, cwd, opts) => agentTurn(sid, agents.get(agentName), agentText, cwd, opts),
   speak: async (sid, replyText, also) => {
     const spoken = await speechForReply(replyText);
@@ -1363,17 +1554,17 @@ const turnCtx: TurnCtx = {
   // behavior change). Stops a runaway session from spending indefinitely without a human in the loop.
   checkBudget: (sid) => {
     const cap = Number(process.env.JARVIS_SESSION_COST_CAP) || 0;
-    const spent = usageLedger.session(sid).billableUsd;
+    const spent = sessionUsage(sid).billableUsd;
     if (cap > 0 && spent >= cap) return { blocked: true, message: `Esta sessão já custou $${spent.toFixed(2)} (limite $${cap.toFixed(2)}). Ajuste JARVIS_SESSION_COST_CAP ou continue em outra sessão.` };
     return { blocked: false };
   },
 };
 
 /** One full turn against a session's agent: store+broadcast the user msg, get the reply, speak if asked. */
-async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; speak?: boolean; speaker?: string; speakAlso?: string[] }): Promise<void> {
+async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; speak?: boolean; speaker?: string; speakAlso?: string[]; actor?: ContextActor }): Promise<void> {
   await runManagedTurn(turnCtx, sid, {
     showText: opts.showText, agentText: opts.agentText, model: opts.model, effort: opts.effort,
-    speaker: opts.speaker, speak: opts.speak, speakAlso: opts.speakAlso,
+    actor: opts.actor, speaker: opts.speaker, speak: opts.speak, speakAlso: opts.speakAlso,
     onError: (message, limit) => broadcast(sid, { t: "error", message, limit }),
   });
 }
@@ -1406,8 +1597,8 @@ async function runRoutine(r: Routine, approved = false): Promise<void> {
     const configuredAgent = r.agent && rc.info.agents.includes(r.agent) ? r.agent : undefined;
     const agentName = hist?.agent || state?.agent || (flags.agent ? configuredAgent || rc.info.agents[0] : r.agent || rc.info.agents[0]);
     if (!agentName || !rc.info.agents.includes(agentName)) { notifyEvent("error", "⏰ " + r.name, `agente '${agentName || "(nenhum)"}' indisponível nessa máquina`, sid); return; }
-    const decision = await decideAutomaticRoute({ sid, text: r.prompt, started: Number(hist?.total) > 0 || state?.started === true, currentAgent: agentName, currentModel: r.model, currentEffort: r.effort, flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens, contextWindowTokens: hist?.contextWindowTokens });
-    sendToRunner(rc, { t: "send", sessionId: sid, text: r.prompt, agent: decision.agent, cwd: r.cwd, opts: { model: decision.model, effort: decision.effort }, turnId: `routine:${r.id}:${r.lastRunAt || Date.now()}` });
+    const decision = await decideAutomaticRoute({ runnerId: r.runnerId, sid, text: r.prompt, started: Number(hist?.total) > 0 || state?.started === true, currentAgent: agentName, currentModel: r.model, currentEffort: r.effort, flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens, contextWindowTokens: hist?.contextWindowTokens });
+    if (sendToRunner(rc, { t: "send", sessionId: sid, text: r.prompt, agent: decision.agent, cwd: r.cwd, opts: { model: decision.model, effort: decision.effort }, turnId: `routine:${r.id}:${r.lastRunAt || Date.now()}`, actor: { source: "routine" } })) markRunnerSessionActive(rc.id, sid);
     return;
   }
   const localAgent = flags.agent ? (r.agent && localAgents.includes(r.agent) ? r.agent : localAgents[0]) : (r.agent || agents.default);
@@ -1415,7 +1606,7 @@ async function runRoutine(r: Routine, approved = false): Promise<void> {
   store.ensure(sid, { agent: localAgent, cwd: r.cwd || CWD, title: "⏰ " + r.name });
   const decision = await routeLocalTurn(sid, r.prompt, r.model, r.effort, flags);
   await runManagedTurn(turnCtx, sid, {
-    showText: r.prompt, model: decision.model, effort: decision.effort, speak: !!r.speak,
+    showText: r.prompt, model: decision.model, effort: decision.effort, speak: !!r.speak, actor: { source: "routine" },
     onError: (message) => notifyEvent("error", "⏰ " + r.name, message, sid),
   });
 }
@@ -1440,75 +1631,105 @@ setInterval(() => {
 
 // Voz (wake sem contexto): qual sessão EXISTENTE a fala mais combina, via memória semântica.
 // null se nada forte o bastante. É a base da resolução "sugerir a sessão certa" (não perguntar cego).
-async function suggestSession(utterance: string): Promise<{ id: string; title: string; score: number } | null> {
+async function suggestSession(utterance: string, scope: { runnerId: string; cwd: string; principalId?: string }): Promise<{ id: string; title: string; score: number } | null> {
   try {
     const vec = await embedOne(utterance);
     if (!vec.length) return null;
-    const [top] = memory.search(vec, { topK: 1, minScore: 0.35 });
+    const projectKey = projectMemoryKey(scope.cwd);
+    if (!projectKey) return null;
+    const [top] = memory.search(vec, { topK: 1, minScore: 0.35, runnerIds: [scope.runnerId], projectKey, principalId: scope.principalId });
     return top ? { id: top.sessionId, title: top.title || top.id, score: Math.round(top.score * 100) } : null;
   } catch { return null; }
 }
 // ---- voz ambiente: staging (refinar a fala por voz ANTES de comprometer no chat real) --------
 const CONFIRM_RX = /\b(confirm(o|ar|ado)?|pode (mandar|enviar|ir)|manda(r)?|envia(r)?|isso mesmo|é isso|perfeito|fechou)\b/i;
-const stageEscalatePending = new Map<string, string>(); // sessão -> fala aguardando autorização de escalada
-function stageContext(sid: string): string {
-  return store.history(sid).slice(-6).map((m) => `${m.role === "user" ? "U" : "A"}: ${(m.text || "").slice(0, 200)}`).join("\n").slice(0, 1200);
+interface StageScope { runnerId: string; sessionId: string; actor?: ContextActor }
+const stageKey = (scope: StageScope): string => decisionKey(scope.runnerId, scope.sessionId);
+const stageEscalatePending = new Map<string, string>();
+async function stageContext(scope: StageScope): Promise<string> {
+  let messages: any[];
+  if (scope.runnerId === LOCAL_ID) messages = store.history(scope.sessionId);
+  else {
+    const rc = runners.get(scope.runnerId);
+    messages = rc?.ws ? (await runnerHistory(rc, scope.sessionId))?.messages || [] : [];
+  }
+  return messages.slice(-6).map((m: any) => `${m.role === "user" ? "U" : "A"}: ${(m.text || "").slice(0, 200)}`).join("\n").slice(0, 1200);
 }
-async function stageSpeak(sid: string, text: string): Promise<void> {
+async function stageSpeak(scope: StageScope, text: string): Promise<void> {
   if (!text) return;
-  broadcast(sid, { t: "stage_say", sessionId: sid, text });
-  try { const wav = await synthesize(text, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text }); } catch { /* tts opcional */ }
+  broadcastOn(scope.runnerId, scope.sessionId, { t: "stage_say", runnerId: scope.runnerId, sessionId: scope.sessionId, text });
+  try { const wav = await synthesize(text, VOICE); broadcastOn(scope.runnerId, scope.sessionId, { t: "tts", sessionId: scope.sessionId, audio: wav.toString("base64"), text }); } catch { /* tts opcional */ }
 }
-async function stageRefinePass(sid: string, utterance: string, model: string, effort: string): Promise<ReturnType<typeof parseRefine>> {
-  const e = staging.get(sid)!;
-  const prompt = buildRefinePrompt({ context: stageContext(sid), turns: e.turns, utterance });
+async function stageRefinePass(scope: StageScope, utterance: string, model: string, effort: string): Promise<ReturnType<typeof parseRefine>> {
+  const e = staging.get(stageKey(scope))!;
+  const prompt = buildRefinePrompt({ context: await stageContext(scope), turns: e.turns, utterance });
   const agent = agents.searchAgent();
   const sendOpts = await compatibleAgentOpts(agent, model, effort);
   const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__stage__", prompt, process.cwd(), sendOpts);
   addUsage(WAKE_SESSION, agent.name, reply.usage); // atribui usage/custo tipado à voz
   return parseRefine(reply.text);
 }
-async function stageHandle(sid: string, utterance: string): Promise<void> {
+async function stageHandle(scope: StageScope, utterance: string): Promise<void> {
   utterance = (utterance || "").trim();
   if (!utterance) return;
-  let e = staging.get(sid) || staging.start(sid, { model: voiceCfg.fastModel, effort: voiceCfg.fastEffort });
-  if (CONFIRM_RX.test(utterance) && e.draft) { await stageConfirm(sid); return; }   // confirmação por voz
-  let r = await stageRefinePass(sid, utterance, e.model || voiceCfg.fastModel, e.effort || voiceCfg.fastEffort);
+  const key = stageKey(scope);
+  let e = staging.get(key) || staging.start(key, { model: voiceCfg.fastModel, effort: voiceCfg.fastEffort });
+  if (CONFIRM_RX.test(utterance) && e.draft) { await stageConfirm(scope); return; }   // confirmação por voz
+  let r = await stageRefinePass(scope, utterance, e.model || voiceCfg.fastModel, e.effort || voiceCfg.fastEffort);
   if (r.needsUpgrade && !e.escalated) {
     if (voiceCfg.escalate === "ask") {
-      stageEscalatePending.set(sid, utterance);
-      broadcast(sid, { t: "stage_escalate", sessionId: sid, reason: r.reason || "" });
-      await stageSpeak(sid, `Isso pede um modelo mais forte pra ficar bom${r.reason ? " (" + r.reason + ")" : ""}. Posso usar por um momento?`);
+      stageEscalatePending.set(key, utterance);
+      broadcastOn(scope.runnerId, scope.sessionId, { t: "stage_escalate", runnerId: scope.runnerId, sessionId: scope.sessionId, reason: r.reason || "" });
+      await stageSpeak(scope, `Isso pede um modelo mais forte pra ficar bom${r.reason ? " (" + r.reason + ")" : ""}. Posso usar por um momento?`);
       return;
     }
     const up = (voiceCfg.escalate !== "auto" ? voiceCfg.escalate : voiceCfg.upgradeModel) || voiceCfg.upgradeModel;
-    r = await stageRefinePass(sid, utterance, up, voiceCfg.upgradeEffort);
-    staging.push(sid, { role: "user", text: utterance, ts: Date.now() }, r.draft, { escalated: true });
+    r = await stageRefinePass(scope, utterance, up, voiceCfg.upgradeEffort);
+    staging.push(key, { role: "user", text: utterance, ts: Date.now() }, r.draft, { escalated: true });
   } else {
-    staging.push(sid, { role: "user", text: utterance, ts: Date.now() }, r.draft);
+    staging.push(key, { role: "user", text: utterance, ts: Date.now() }, r.draft);
   }
-  if (r.say) staging.push(sid, { role: "assistant", text: r.say, ts: Date.now() }, r.draft);
-  broadcast(sid, { t: "stage", sessionId: sid, draft: r.draft, say: r.say || "" });
-  await stageSpeak(sid, r.say || "Anotei. Pode confirmar ou ajustar.");
+  if (r.say) staging.push(key, { role: "assistant", text: r.say, ts: Date.now() }, r.draft);
+  broadcastOn(scope.runnerId, scope.sessionId, { t: "stage", runnerId: scope.runnerId, sessionId: scope.sessionId, draft: r.draft, say: r.say || "" });
+  await stageSpeak(scope, r.say || "Anotei. Pode confirmar ou ajustar.");
 }
-async function stageEscalateApprove(sid: string, ok: boolean): Promise<void> {
-  const utterance = stageEscalatePending.get(sid);
-  stageEscalatePending.delete(sid);
-  if (!utterance || !staging.get(sid)) return;
+async function stageEscalateApprove(scope: StageScope, ok: boolean): Promise<void> {
+  const key = stageKey(scope), utterance = stageEscalatePending.get(key);
+  stageEscalatePending.delete(key);
+  if (!utterance || !staging.get(key)) return;
   const model = ok ? ((voiceCfg.escalate !== "auto" && voiceCfg.escalate !== "ask" ? voiceCfg.escalate : voiceCfg.upgradeModel) || voiceCfg.upgradeModel) : voiceCfg.fastModel;
   const effort = ok ? voiceCfg.upgradeEffort : voiceCfg.fastEffort;
-  if (!ok) await stageSpeak(sid, "Ok, sigo com o modelo rápido.");
-  const r = await stageRefinePass(sid, utterance, model, effort);
-  staging.push(sid, { role: "user", text: utterance, ts: Date.now() }, r.draft, { escalated: ok });
-  if (r.say) staging.push(sid, { role: "assistant", text: r.say, ts: Date.now() }, r.draft);
-  broadcast(sid, { t: "stage", sessionId: sid, draft: r.draft, say: r.say || "" });
-  await stageSpeak(sid, r.say || "Pode confirmar.");
+  if (!ok) await stageSpeak(scope, "Ok, sigo com o modelo rápido.");
+  const r = await stageRefinePass(scope, utterance, model, effort);
+  staging.push(key, { role: "user", text: utterance, ts: Date.now() }, r.draft, { escalated: ok });
+  if (r.say) staging.push(key, { role: "assistant", text: r.say, ts: Date.now() }, r.draft);
+  broadcastOn(scope.runnerId, scope.sessionId, { t: "stage", runnerId: scope.runnerId, sessionId: scope.sessionId, draft: r.draft, say: r.say || "" });
+  await stageSpeak(scope, r.say || "Pode confirmar.");
 }
-async function stageConfirm(sid: string): Promise<void> {
-  const e = staging.get(sid);
-  staging.remove(sid); stageEscalatePending.delete(sid);
-  broadcast(sid, { t: "stage", sessionId: sid, done: true });
-  if (e && e.draft) await deliverTurn(sid, { showText: e.draft, speak: true });
+async function stageConfirm(scope: StageScope): Promise<void> {
+  const key = stageKey(scope), e = staging.get(key);
+  staging.remove(key); stageEscalatePending.delete(key);
+  broadcastOn(scope.runnerId, scope.sessionId, { t: "stage", runnerId: scope.runnerId, sessionId: scope.sessionId, done: true });
+  if (!e?.draft) return;
+  clearPendingAsk(scope.runnerId, scope.sessionId);
+  if (scope.runnerId === LOCAL_ID) {
+    await deliverTurn(scope.sessionId, { showText: e.draft, speak: true, actor: scope.actor || { source: "user" } });
+    return;
+  }
+  const rc = runners.get(scope.runnerId), state = runnerSessionState.get(scope.runnerId)?.get(scope.sessionId);
+  if (!rc?.ws) throw new Error("máquina da sessão de voz está offline");
+  if (runnerUpdateDraining(scope.runnerId) || runnerActive.get(scope.runnerId)?.has(scope.sessionId)) {
+    enqueueChatTurn(scope.runnerId, scope.sessionId, { text: e.draft, atts: [], runnerId: scope.runnerId, msgId: randomUUID(), actor: { ...(scope.actor || {}), source: "queue" } });
+    return;
+  }
+  const agent = state?.agent || rc.info.agents[0];
+  if (!agent) throw new Error("nenhuma IA disponível na máquina da sessão de voz");
+  remoteSpeak.add(scope.runnerId + "\0" + scope.sessionId);
+  if (!sendToRunner(rc, { t: "send", sessionId: scope.sessionId, text: e.draft, agent, turnId: randomUUID(), actor: scope.actor || { source: "user" } })) {
+    remoteSpeak.delete(scope.runnerId + "\0" + scope.sessionId);
+    throw new Error("não foi possível enviar o refino de voz para a máquina");
+  }
+  markRunnerSessionActive(scope.runnerId, scope.sessionId);
 }
 
 /** Jarvis speaks a short control line into the voice session (not from the agent). */
@@ -1518,7 +1739,7 @@ async function voiceSay(text: string): Promise<void> {
 }
 function resetVoiceSession(): void {
   const s = store.reset(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd, title: "Voz (Jarvis)" });
-  broadcast(WAKE_SESSION, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
+  broadcast(WAKE_SESSION, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
   pushSessions();
 }
 async function runVoiceTask(task: string, speak: boolean, speaker?: string): Promise<void> {
@@ -1527,12 +1748,12 @@ async function runVoiceTask(task: string, speak: boolean, speaker?: string): Pro
   if (sid === WAKE_SESSION && s.messages.length === 0) store.reconfigure(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd });
   // sessão vinculada usa o modelo/esforço DELA (undefined → prefs/default); só a de voz usa voiceConfig.
   // e o ÁUDIO também vai pro canal de voz (WAKE) quando vinculado a outra sessão, senão o wake listener não ouve.
-  await deliverTurn(sid, { showText: task, model: sid === WAKE_SESSION ? voiceConfig.model : undefined, effort: sid === WAKE_SESSION ? voiceConfig.effort : undefined, speak, speaker, speakAlso: sid !== WAKE_SESSION ? [WAKE_SESSION] : undefined });
+  await deliverTurn(sid, { showText: task, model: sid === WAKE_SESSION ? voiceConfig.model : undefined, effort: sid === WAKE_SESSION ? voiceConfig.effort : undefined, speak, speaker, speakAlso: sid !== WAKE_SESSION ? [WAKE_SESSION] : undefined, actor: { source: "user" } });
 }
 /** Wake sem contexto: sugere a sessão mais provável (memória semântica) e abre o overlay p/ decidir
  *  continuar nela ou criar nova. Sem sugestão forte → cai na sessão de voz (comportamento antigo). */
 async function resolveVoice(task: string, speak: boolean, speaker?: string): Promise<void> {
-  const sug = await suggestSession(task);
+  const sug = await suggestSession(task, { runnerId: LOCAL_ID, cwd: sessionCwd(voiceTarget || WAKE_SESSION) });
   if (sug && sug.id !== WAKE_SESSION && sug.id !== voiceTarget) {
     voiceResolve = { task, speak, speaker, suggestId: sug.id };
     broadcast(WAKE_SESSION, { t: "canvas", op: "show", kind: "resolve", title: "🎙 Onde continuar?", utterance: task, suggestion: sug, recents: store.list().slice(0, 20).map((s) => ({ id: s.id, title: s.title })) });
@@ -1658,13 +1879,75 @@ const localExecutionAborts = new Map<string, AbortController>();
 // (o texto final vai pro histórico, então replay só acontece enquanto o turno está ativo — sem
 // duplicar o texto de um turno já concluído).
 const activityBuf = new Map<string, any[]>();
-// Fila POR SESSÃO, dona no HUB (não mais só no navegador): toda web vendo a sessão enxerga a MESMA
+// Fila POR MÁQUINA + SESSÃO, dona no HUB (não mais só no navegador): toda web vendo a sessão enxerga a MESMA
 // fila, e o flush roda no servidor quando o turno termina — sobrevive mesmo que o dispositivo que
 // enfileirou saia. Cada item guarda texto + anexos (+ model/effort do envio original).
-type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean }>; model?: string; effort?: string; auto?: AutoRouteFlags; runnerId?: string; msgId?: string };
+type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean }>; model?: string; effort?: string; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor };
 const queues = new Map<string, QueueItem[]>();
-function queueOf(sid: string): QueueItem[] { let q = queues.get(sid); if (!q) { q = []; queues.set(sid, q); } return q; }
-function broadcastQueue(sid: string): void { broadcast(sid, { t: "queue", sessionId: sid, items: queueOf(sid).map((q) => ({ text: q.text, atts: q.atts })) }); }
+type PendingInboundTurn = QueueItem & { sessionId: string; ts: number };
+const PENDING_INBOUND_FILE = join(JARVIS_DIR, "pending-inbound-turns.json");
+const PENDING_INBOUND_TTL_MS = 6 * 60 * 60 * 1000;
+const pendingInboundTurns = new Map<string, PendingInboundTurn>();
+function savePendingInboundTurns(): void {
+  try { writeJsonAtomic(PENDING_INBOUND_FILE, Object.fromEntries(pendingInboundTurns)); } catch { /* best-effort recovery log */ }
+}
+function recordPendingInboundTurn(runnerId: string, sid: string, msg: any, text: string, actor: ContextActor): string | undefined {
+  const id = typeof msg.msgId === "string" && msg.msgId ? msg.msgId : undefined;
+  if (!id || isNativeId(sid) || runnerId !== LOCAL_ID) return undefined;
+  pendingInboundTurns.set(id, {
+    sessionId: sid, text, atts: Array.isArray(msg.attachments) ? msg.attachments : [],
+    model: typeof msg.model === "string" ? msg.model : undefined,
+    effort: typeof msg.effort === "string" ? msg.effort : undefined,
+    auto: autoFlags(msg.auto), msgId: id, actor, ts: Date.now(),
+  });
+  savePendingInboundTurns();
+  return id;
+}
+function clearPendingInboundTurn(id?: string): void {
+  if (!id || !pendingInboundTurns.delete(id)) return;
+  savePendingInboundTurns();
+}
+function loadPendingInboundTurns(): void {
+  const raw = readJson<Record<string, PendingInboundTurn>>(PENDING_INBOUND_FILE, {});
+  const now = Date.now();
+  for (const [id, item] of Object.entries(raw)) {
+    if (!item || typeof item.sessionId !== "string" || typeof item.text !== "string" || now - Number(item.ts || 0) >= PENDING_INBOUND_TTL_MS) continue;
+    if (isNativeId(item.sessionId)) continue;
+    pendingInboundTurns.set(id, item);
+  }
+}
+function recoverPendingInboundTurns(): void {
+  for (const [id, item] of [...pendingInboundTurns]) {
+    const q = queueOf(LOCAL_ID, item.sessionId);
+    if (!q.some((queued) => queued.msgId === id)) q.push({ text: item.text, atts: item.atts || [], model: item.model, effort: item.effort, auto: item.auto, msgId: id, actor: { ...(item.actor || {}), source: "queue" } });
+    pendingInboundTurns.delete(id);
+    broadcastQueue(LOCAL_ID, item.sessionId);
+  }
+  saveQueues();
+  savePendingInboundTurns();
+}
+function queueOf(runnerId: string, sid: string): QueueItem[] {
+  const key = scopedSessionKey(runnerId, sid);
+  let q = queues.get(key); if (!q) { q = []; queues.set(key, q); }
+  return q;
+}
+function broadcastQueue(runnerId: string, sid: string): void {
+  broadcastOn(runnerId, sid, { t: "queue", runnerId, sessionId: sid, items: queueOf(runnerId, sid).map((q) => ({ text: q.text, atts: q.atts })) });
+}
+function enqueueChatTurn(runnerId: string, sid: string, item: QueueItem): void {
+  queueOf(runnerId, sid).push(item);
+  broadcastQueue(runnerId, sid);
+  saveQueues();
+}
+function flushAllQueues(): void {
+  for (const [key, items] of queues) if (items.length) { const scope = splitScopedSessionKey(key); void maybeFlushQueue(scope.runnerId, scope.sessionId, false); }
+}
+function flushQueuesForRunner(runnerId: string): void {
+  for (const [key, items] of queues) {
+    const scope = splitScopedSessionKey(key);
+    if (items.length && scope.runnerId === runnerId) void maybeFlushQueue(runnerId, scope.sessionId, false);
+  }
+}
 // A fila vive em memória; um restart do hub a perdia. Persistimos num cache com TTL para que, após
 // reiniciar, o usuário VEJA a fila de volta e continue de onde estava (some sozinha após o TTL).
 const QUEUES_FILE = join(JARVIS_DIR, "queues.json");
@@ -1672,8 +1955,11 @@ const QUEUE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 function saveQueues(): void {
   try {
     const now = Date.now();
-    const obj: Record<string, { items: QueueItem[]; ts: number }> = {};
-    for (const [sid, items] of queues) if (items.length) obj[sid] = { items, ts: now };
+    const obj: Record<string, { runnerId: string; sessionId: string; items: QueueItem[]; ts: number }> = {};
+    for (const [key, items] of queues) if (items.length) {
+      const scope = splitScopedSessionKey(key);
+      obj[key] = { ...scope, items, ts: now };
+    }
     writeJsonAtomic(QUEUES_FILE, obj);
   } catch { /* ignore */ }
 }
@@ -1681,14 +1967,22 @@ function loadQueues(): void {
   try {
     const obj = JSON.parse(readFileSync(QUEUES_FILE, "utf8"));
     const now = Date.now();
-    for (const sid of Object.keys(obj)) { const e = obj[sid]; if (e && Array.isArray(e.items) && e.items.length && now - (e.ts || 0) < QUEUE_TTL_MS) queues.set(sid, e.items); }
+    for (const persistedKey of Object.keys(obj)) {
+      const e = obj[persistedKey];
+      if (!e || !Array.isArray(e.items) || !e.items.length || now - (e.ts || 0) >= QUEUE_TTL_MS) continue;
+      const parsed = splitScopedSessionKey(persistedKey);
+      const runnerId = typeof e.runnerId === "string" && e.runnerId ? e.runnerId : (e.items.find((item: QueueItem) => item?.runnerId)?.runnerId || parsed.runnerId);
+      const sessionId = typeof e.sessionId === "string" && e.sessionId ? e.sessionId : parsed.sessionId;
+      queues.set(scopedSessionKey(runnerId, sessionId), e.items);
+    }
   } catch { /* ignore */ }
 }
 // Custo ACUMULADO por sessão (o que passou pelo Jarvis), persistido pra sobreviver a reload/restart.
 const COST_FILE = join(JARVIS_DIR, "session-cost.json");
 const usageLedger = new UsageLedger(COST_FILE);
-function costOf(sid: string): number { return usageLedger.session(sid).costUsd; }
-function addUsage(sid: string, agent: string, usage?: AgentReply["usage"]): void { usageLedger.record(sid, agent, usage); }
+function sessionUsage(sid: string, runnerId = LOCAL_ID): ReturnType<UsageLedger["session"]> { return usageLedger.session(sid, runnerId); }
+function costOf(sid: string, runnerId = LOCAL_ID): number { return sessionUsage(sid, runnerId).costUsd; }
+function addUsage(sid: string, agent: string, usage?: AgentReply["usage"], runnerId = LOCAL_ID): void { usageLedger.record(sid, agent, usage, runnerId); }
 function usageFromMessages(messages: any[] = []): ReturnType<UsageLedger["session"]> {
   const out: ReturnType<UsageLedger["session"]> = { costUsd: 0, billableUsd: 0, estimatedUsd: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, byKind: {} };
   for (const msg of messages) {
@@ -1705,8 +1999,8 @@ function usageFromMessages(messages: any[] = []): ReturnType<UsageLedger["sessio
   }
   return out;
 }
-function effectiveSessionUsage(sid: string, messages: any[] = []): ReturnType<UsageLedger["session"]> {
-  const ledger = usageLedger.session(sid), hist = usageFromMessages(messages);
+function effectiveSessionUsage(sid: string, messages: any[] = [], runnerId = LOCAL_ID): ReturnType<UsageLedger["session"]> {
+  const ledger = sessionUsage(sid, runnerId), hist = usageFromMessages(messages);
   const out = { ...ledger, byKind: { ...ledger.byKind } };
   if (hist.costUsd > out.costUsd) {
     out.costUsd = hist.costUsd; out.billableUsd = hist.billableUsd; out.estimatedUsd = hist.estimatedUsd; out.byKind = hist.byKind;
@@ -1728,6 +2022,7 @@ function autoFlags(value: unknown): AutoRouteFlags {
 function needsAuto(flags: AutoRouteFlags): boolean { return flags.agent || flags.model || flags.effort; }
 
 async function decideAutomaticRoute(input: {
+  runnerId: string;
   sid: string;
   text: string;
   started: boolean;
@@ -1756,10 +2051,11 @@ async function decideAutomaticRoute(input: {
     contextWindowTokens: input.contextWindowTokens,
   };
   if (!needsAuto(input.flags)) return { agent: input.currentAgent, model: input.currentModel, effort: input.currentEffort, reason: "seleção manual", fallback: false };
-  input.notify?.({ t: "auto_route", sessionId: input.sid, state: "started" });
+  input.notify?.({ t: "auto_route", runnerId: input.runnerId, sessionId: input.sid, state: "started" });
   let decision: AutoRouteDecision | null = null;
   const ctrl = new AbortController();
-  routeAborts.set(input.sid, ctrl);
+  const routeKey = scopedSessionKey(input.runnerId, input.sid);
+  routeAborts.set(routeKey, ctrl);
   try {
     const router = summaryAgent();
     if (!router.oneShot) throw new Error("agente de roteamento sem suporte one-shot");
@@ -1769,13 +2065,13 @@ async function decideAutomaticRoute(input: {
     addUsage("__auto_route__", router.name, reply.usage);
     decision = parseAutoRouteDecision(reply.text, req);
   } catch {
-    if (ctrl.signal.aborted) { input.notify?.({ t: "auto_route", sessionId: input.sid, state: "cancelled" }); throw new Error(ABORTED); }
+    if (ctrl.signal.aborted) { input.notify?.({ t: "auto_route", runnerId: input.runnerId, sessionId: input.sid, state: "cancelled" }); throw new Error(ABORTED); }
     // deterministic fallback below
   } finally {
-    if (routeAborts.get(input.sid) === ctrl) routeAborts.delete(input.sid);
+    if (routeAborts.get(routeKey) === ctrl) routeAborts.delete(routeKey);
   }
   if (!decision) decision = autoRouteFallback(req);
-  input.notify?.({ t: "auto_route", sessionId: input.sid, state: "completed", decision });
+  input.notify?.({ t: "auto_route", runnerId: input.runnerId, sessionId: input.sid, state: "completed", decision });
   return decision;
 }
 
@@ -1785,9 +2081,9 @@ async function routeLocalTurn(sid: string, text: string, model: unknown, effort:
   if (!info) throw new Error("sessão não encontrada");
   const history = native ? (nativeHistory(sid)?.messages || []) : store.history(sid);
   const recent = history.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role as "user" | "assistant", text: String(m.text || "") }));
-  const su = usageLedger.session(sid);
+  const su = sessionUsage(sid);
   const decision = await decideAutomaticRoute({
-    sid, text, started: native || history.length > 0, currentAgent: info.agent,
+    runnerId: LOCAL_ID, sid, text, started: native || history.length > 0, currentAgent: info.agent,
     currentModel: typeof model === "string" ? model : (flags.model ? su.model : undefined),
     currentEffort: typeof effort === "string" ? effort : undefined,
     flags, descriptors: await agents.describe(), available: localAgents,
@@ -1818,27 +2114,28 @@ function reconcileFromNative(s: ReturnType<typeof store.ensure>): void {
   const h = nativeHistory(nativeKey);
   if (!h) return;
   const nativeReply = [...h.messages].reverse().find((m) => m.role === "assistant" && m.ts > last.ts);
-  if (nativeReply?.text) store.add(s.id, { role: "assistant", text: nativeReply.text, ts: nativeReply.ts, agent: s.agent });
+  if (nativeReply?.text) store.add(s.id, { role: "assistant", text: nativeReply.text, ts: nativeReply.ts, agent: s.agent, activity: nativeReply.activity });
 }
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply & { activity?: any[] }> {
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
   activeRuns.add(sid); broadcastRuns();
-  // A new turn supersedes any pending decision / consolidating state from the previous one.
-  pendingAsk.delete(sid); if (asking.delete(sid)) broadcast(sid, { t: "asking", sessionId: sid, on: false });
-  const buf: any[] = []; activityBuf.set(sid, buf);
+  // A new turn supersedes any pending post-turn decision without blocking this turn.
+  clearPendingAsk(LOCAL_ID, sid);
+  const activityKey = scopedSessionKey(LOCAL_ID, sid);
+  const buf: any[] = []; activityBuf.set(activityKey, buf);
   const t0 = Date.now();
   const turnId = opts.turnId || randomUUID();
   const sequencer = createEventSequencer(turnId);
   const bridge = createAgentEventBridge(turnId, sequencer);
   const profile = (EXECUTION_ADAPTER_PROFILES as Partial<Record<string, (typeof EXECUTION_ADAPTER_PROFILES)[ExecutionAdapterId]>>)[agent.name];
-  const tracker = executionCfg.enabled ? new ExecutionTracker(localExecutionStore, { runnerId: LOCAL_ID, sessionId: sid, turnId, agent: agent.name, cwd, model: opts.model, effort: opts.effort, profile },
-    (event) => broadcastExecutionEvent(LOCAL_ID, event), (usage) => addUsage(sid, agent.name, usage)) : undefined;
-  if (tracker) localExecutionAborts.set(tracker.rootExecutionId, ctrl);
+  const tracker = new ExecutionTracker(localExecutionStore, { runnerId: LOCAL_ID, sessionId: sid, turnId, agent: agent.name, cwd, model: opts.model, effort: opts.effort, profile },
+    executionCfg.enabled ? (event) => broadcastExecutionEvent(LOCAL_ID, event) : undefined, (usage) => addUsage(sid, agent.name, usage));
+  localExecutionAborts.set(tracker.rootExecutionId, ctrl);
   const emit = (event: AgentEvent, project = true): void => {
     if (buf.length < 600) buf.push(event);
     if (project) tracker?.handleAgentEvent(event);
-    broadcast(sid, { t: "agent_event", sessionId: sid, event, sessionCost: costOf(sid), sessionUsage: usageLedger.session(sid) });
+    broadcast(sid, { t: "agent_event", sessionId: sid, event, sessionCost: costOf(sid), sessionUsage: sessionUsage(sid) });
   };
   try {
     emit(bridge.accepted()); emit(bridge.started());
@@ -1871,7 +2168,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     const nativeId = agent.nativeSessionId?.(sid);
     if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
     notifyEvent("done", store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis"), reply.text, sid);
-    void runAsking(sid, reply.text); // detecta decisões na resposta, trava o chat enquanto isso, e as persiste
+    void runAsking(LOCAL_ID, sid, reply.text);
     // A subagent's internal tool calls only exist while the turn is live (Claude Code writes no
     // recoverable trace of them to disk once done — verified: Task's toolUseResult.outputFile is
     // never populated). The buffered stream events ARE that trace; hand them back so the caller can
@@ -1880,7 +2177,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   } catch (e) {
     // A user-initiated cancel is not a failure: tell the UI it stopped, and don't notify an error.
     if (ctrl.signal.aborted || String((e as any)?.message) === ABORTED) {
-      if (!sequencer.terminal) emit(bridge.cancelled());
+      if (!sequencer.terminal) emit(bridge.cancelled("Cancelada por solicitação do usuário."));
       throw e;
     }
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: opts.model, ms: Date.now() - t0, ok: false, ts: Date.now() });
@@ -1888,30 +2185,29 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid);
     throw e;
   } finally {
-    if (tracker && localExecutionAborts.get(tracker.rootExecutionId) === ctrl) localExecutionAborts.delete(tracker.rootExecutionId);
+    if (localExecutionAborts.get(tracker.rootExecutionId) === ctrl) localExecutionAborts.delete(tracker.rootExecutionId);
     if (localAborts.get(sid) === ctrl) localAborts.delete(sid);
-    activityBuf.delete(sid);
     activeRuns.delete(sid); broadcastRuns();
-    void maybeFlushQueue(sid, false); // fim de turno → envia a fila DESTA sessão (se houver), no servidor
+    void maybeFlushQueue(LOCAL_ID, sid, false); // fim de turno → envia a fila DESTA sessão (se houver), no servidor
   }
 }
-async function maybeFlushQueue(sid: string, autoplay: boolean): Promise<void> {
+async function maybeFlushQueue(runnerId: string, sid: string, autoplay: boolean): Promise<void> {
+  if (hubUpdateInProgress) return;
   if (autoplay) {
     const resolved = effectivePolicyFor(sid);
     const decision = decideAdaptiveRun(resolved.policy, { queueAutoplay: true });
     recordAdaptiveDecision({ kind: "queue_autoplay", action: decision.action, reason: decision.reason, sessionId: sid, policyId: resolved.policy.id });
     if (decision.action !== "allow") return;
   }
-  await flushQueue(sid);
+  await flushQueue(runnerId, sid);
 }
 /** Envia a fila acumulada de `sid` como UM novo turno, no servidor — assim ela dispara mesmo se o
  *  dispositivo que enfileirou já saiu, e nunca duplica (o guard activeRuns cobre corridas). Combina
  *  os itens (texto juntado, anexos concatenados) e roteia pelo mesmo caminho de um envio normal. */
-async function flushQueue(sid: string): Promise<void> {
-  const items = queueOf(sid);
+async function flushQueue(runnerId: string, sid: string): Promise<void> {
+  const items = queueOf(runnerId, sid);
   if (!items.length) return;
-  if (decisionLocked(sid)) return;
-  const rid = items.find((q) => q.runnerId)?.runnerId; // fila de sessão de runner remoto?
+  const rid = runnerId === LOCAL_ID ? undefined : runnerId;
   if (rid) {
     if ((runnerActive.get(rid) || new Set()).has(sid)) return;   // runner ainda ocupado
     if (!runners.get(rid)?.ws) return;                            // runner OFFLINE → mantém a fila (não perde)
@@ -1924,52 +2220,60 @@ async function flushQueue(sid: string): Promise<void> {
   const model = policy?.model;
   const effort = policy?.effort;
   const automatic = policy?.auto || { agent: false, model: false, effort: false };
-  queues.set(sid, []); broadcastQueue(sid); saveQueues();   // limpa ANTES de rodar (evita re-flush do mesmo)
-  const viewer = [...wss.clients].find((c) => c.readyState === c.OPEN && subs.get(c as WebSocket) === sid) as WebSocket | undefined;
+  queues.set(scopedSessionKey(runnerId, sid), []); broadcastQueue(runnerId, sid); saveQueues();   // limpa ANTES de rodar (evita re-flush do mesmo)
+  const actor = policy?.actor ? { ...policy.actor, source: "queue" as const } : { source: "queue" as const };
+  clearPendingAsk(rid || LOCAL_ID, sid);
+  let dispatched = false;
   try {
     if (rid) {
       const rc = runners.get(rid);
       if (rc?.ws) {
-        const state = runnerSessionState.get(rid)?.get(sid), hist = needsAuto(automatic) ? await runnerHistory(rc, sid) : null, su = usageLedger.session(sid);
+        const state = runnerSessionState.get(rid)?.get(sid), hist = needsAuto(automatic) ? await runnerHistory(rc, sid) : null, su = sessionUsage(sid, rid);
         const currentAgent = hist?.agent || state?.agent || rc.info.agents[0];
         if (!currentAgent) throw new Error("nenhuma IA disponível nesta máquina");
-        const decision = await decideAutomaticRoute({ sid, text, started: /^(claude:|codex:)/.test(sid) || Number(hist?.total) > 0 || state?.started === true, currentAgent, currentModel: model || (automatic.model ? su.model : undefined), currentEffort: effort, flags: automatic, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens, notify: (frame) => { for (const c of clientsOn(rid)) if (subs.get(c) === sid) send(c, frame); } });
-        sendToRunner(rc, { t: "send", sessionId: sid, text, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, turnId: (items.find((q) => q.msgId)?.msgId) || randomUUID() });
+        const decision = await decideAutomaticRoute({ runnerId, sid, text, started: /^(claude:|codex:)/.test(sid) || Number(hist?.total) > 0 || state?.started === true, currentAgent, currentModel: model || (automatic.model ? su.model : undefined), currentEffort: effort, flags: automatic, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens, notify: (frame) => { for (const c of clientsOn(rid)) if (subs.get(c) === sid) send(c, frame); } });
+        const ok = sendToRunner(rc, { t: "send", sessionId: sid, text, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, turnId: (items.find((q) => q.msgId)?.msgId) || randomUUID(), actor });
+        if (!ok) throw new Error("não foi possível enviar a fila para a máquina");
+        dispatched = true;
+        markRunnerSessionActive(rid, sid);
       }
       return;
     } // runner: relaya como envio normal (turnId = idempotência)
     const decision = await routeLocalTurn(sid, text, model, effort, automatic);
-    if (isNativeId(sid)) { await deliverNativeTurn(viewer ?? null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts }); return; }
+    dispatched = true;
+    if (isNativeId(sid)) { await deliverNativeTurn(null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts, actor }); return; }
     const { agentText, showText, images, files } = buildAttachments(atts, text);
-    await runManagedTurn(turnCtx, sid, { showText, agentText, model: decision.model, effort: decision.effort, images, files, turnId: items.find((q) => q.msgId)?.msgId, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
-  } catch (e: any) { broadcast(sid, { t: "error", message: String(e?.message ?? e) }); }
+    await runManagedTurn(turnCtx, sid, { showText, agentText, model: decision.model, effort: decision.effort, images, files, turnId: items.find((q) => q.msgId)?.msgId, actor, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
+  } catch (e: any) {
+    if (!dispatched && !queueOf(runnerId, sid).length) { queues.set(scopedSessionKey(runnerId, sid), items); broadcastQueue(runnerId, sid); saveQueues(); }
+    broadcastOn(runnerId, sid, { t: "error", message: String(e?.message ?? e) });
+  }
 }
 /** Replay the buffered live activity of an IN-PROGRESS local turn to a client that just (re)opened
  *  the session — so a page refresh mid-turn shows "processando" + the tool/subagente activity it
  *  missed, instead of a blank wait until the reply lands. No-op once the turn is done (buffer gone),
  *  so a finished turn (whose text is already in history) is never re-streamed/duplicated. */
-function sessionActive(sid: string): boolean {
-  if (activeRuns.has(sid)) return true;                       // turno local
-  for (const s of runnerActive.values()) if (s.has(sid)) return true; // turno em algum runner
-  return false;
-}
-function replayActivity(ws: WebSocket, sid: string): void {
-  if (!sessionActive(sid)) return;
-  const buf = activityBuf.get(sid);
-  if (!buf) return;
+function replayActivity(ws: WebSocket, runnerId: string, sid: string): void {
+  const key = scopedSessionKey(runnerId, sid);
+  let buf = activityBuf.get(key);
+  if (!buf && runnerId === LOCAL_ID && !isNativeId(sid)) {
+    const replay = pendingActivityReplay(localExecutionStore, sid, store.history(sid), 240);
+    if (replay?.events.length) { buf = replay.events; activityBuf.set(key, buf); }
+  }
+  if (!buf?.length) return;
   if (buf.some((ev: any) => ev?.schemaVersion === AGENT_EVENT_SCHEMA_VERSION)) {
-    for (const event of buf) send(ws, { t: "agent_event", sessionId: sid, event });
+    for (const event of buf) send(ws, { t: "agent_event", runnerId, sessionId: sid, event });
   } else {
-    send(ws, { t: "stream", sessionId: sid, ev: { kind: "start" } });
-    for (const ev of buf) send(ws, { t: "stream", sessionId: sid, ev });
+    send(ws, { t: "stream", runnerId, sessionId: sid, ev: { kind: "start" } });
+    for (const ev of buf) send(ws, { t: "stream", runnerId, sessionId: sid, ev });
   }
 }
 /** Abort a live turn. Local session → kill its agent process; remote → relay to the owning runner.
  *  Returns false only if nothing was running here to cancel. */
 function cancelTurn(sid: string, ws: WebSocket): boolean {
-  const routing = routeAborts.get(sid);
-  if (routing) { routing.abort(); return true; }
   const rid = activeRunner(ws);
+  const routing = routeAborts.get(scopedSessionKey(rid, sid));
+  if (routing) { routing.abort(); return true; }
   if (rid !== LOCAL_ID) { const rc = runners.get(rid); if (rc?.ws) { sendToRunner(rc, { t: "cancel", sessionId: sid }); return true; } return false; }
   const ctrl = localAborts.get(sid);
   if (ctrl) { ctrl.abort(); return true; }
@@ -2057,17 +2361,26 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
     return [];
   }
 }
-/** Post-turn decision flow: mark the session "consolidating" (locks the composer, shows a status)
- *  while the — slow — detector runs, then broadcast the questions AND remember them (pendingAsk) so a
- *  client opening the session later still gets them. Always emits `asking:false` at the end. */
-async function runAsking(sid: string, replyText: string): Promise<void> {
-  asking.add(sid);
-  broadcast(sid, { t: "asking", sessionId: sid, on: true });
+/** Post-turn decision flow: publish non-blocking analysis state, then keep any questions available
+ *  for every device that opens this exact machine/session. A newer turn invalidates the generation. */
+async function runAsking(runnerId: string, sid: string, replyText: string): Promise<void> {
+  const key = decisionKey(runnerId, sid), generation = randomUUID();
+  asking.set(key, generation);
+  broadcastOn(runnerId, sid, { t: "asking", runnerId, sessionId: sid, on: true });
   try {
     const questions = await detectDecisions(replyText);
-    if (questions.length) { pendingAsk.set(sid, questions); broadcast(sid, { t: "ask", sessionId: sid, questions }); }
+    if (asking.get(key) !== generation) return;
+    if (questions.length) {
+      pendingAsk.set(key, { runnerId, sessionId: sid, questions });
+      broadcastOn(runnerId, sid, { t: "ask", runnerId, sessionId: sid, questions });
+    }
   } catch { /* ignore */ }
-  finally { asking.delete(sid); broadcast(sid, { t: "asking", sessionId: sid, on: false }); }
+  finally {
+    if (asking.get(key) === generation) {
+      asking.delete(key);
+      broadcastOn(runnerId, sid, { t: "asking", runnerId, sessionId: sid, on: false });
+    }
+  }
 }
 /** Voice wizard: map a spoken answer to a step action. Fast keyword nav first (voltar/avançar/
  *  repetir), then a cheap LLM maps the utterance to option indices or free "other" text. Robust:
@@ -2101,7 +2414,7 @@ async function interpretAskVoice(transcript: string, question: string, options: 
   }
 }
 
-async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }> }): Promise<void> {
+async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }>; actor?: ContextActor }): Promise<void> {
   const info = nativeInfo(sid);
   if (!info) { if (ws) send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
   if (info.agent !== "claude-code" && info.agent !== "codex") { if (ws) send(ws, { t: "error", message: "este adapter não oferece retomada nativa importada" }); return; }
@@ -2113,14 +2426,23 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   const bang = await expandBang(text, info.cwd || CWD);
   const cmdExp = bang ? null : expandCommand(text, info.cwd || CWD, cmdAgentOf(info.agent));
   const agentSend = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
+  const turnId = randomUUID();
+  const manifest = buildContextManifest({
+    turnId, sessionId: sid, runnerId: LOCAL_ID, agent: agent.name, cwd: info.cwd || CWD, actor: opts.actor,
+    continuity: agent.sessionContinuity?.() || "none", nativeSessionId: sid.includes(":") ? sid.slice(sid.indexOf(":") + 1) : undefined,
+    history: (nativeHistory(sid)?.messages || []).filter((message) => message.role === "user" || message.role === "assistant"),
+    showText, agentText: agentSend, images, files,
+  });
+  try { contextManifests.append(manifest); } catch (error) { console.warn("[hub] manifesto de contexto nativo não persistido:", String(error)); }
+  broadcast(sid, { t: "context_manifest", sessionId: sid, manifest });
   // pause the live tail so it doesn't re-broadcast our own turn (already shown via streaming)
   const tail = nativeTails.get(sid);
   if (tail) tail.paused = true;
   // NOTE: native sessions have no Jarvis-side store — `files` rides the live broadcast (viewable
   // now) but isn't persisted; a reload rebuilds from the claude transcript, which doesn't carry it.
-  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: info.agent, speaker: opts.speaker, images, files } });
+  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: info.agent, speaker: opts.speaker, images, files, contextManifest: manifest } });
   try {
-    const reply = await agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort });
+    const reply = await agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, turnId });
     if (opts.speak) {
       const spoken = await speechForReply(reply.text);
       if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
@@ -2136,7 +2458,7 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
 /** Cross-session search: reason over recent sessions, reply only to the asker (optionally spoken). */
 async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): Promise<void> {
   const extra = listNative(24).map((n) => ({ id: n.id, agent: n.agent, cwd: n.cwd, title: n.title, updatedAt: n.updatedAt, lastUser: "", lastAssistant: "" }));
-  const r = await runSessionSearch({ query, store, agents, extra });
+  const r = await runSessionSearch({ query, store, agents, extra: [...extra, ...(await runnerSessionExtras(ws, 8))] });
   let audio: string | undefined;
   if (speak) {
     const spoken = speechifyCapped(r.answer);
@@ -2169,6 +2491,52 @@ function searchManaged(query: string): SessionHit[] {
     own.push({ id: meta.id, title: meta.title, agent: meta.agent, cwd: meta.cwd, updatedAt: meta.updatedAt, where: inContent ? "content" : "title", snippet: inContent ? snippetAround(hay, idx, primary.length) : meta.title });
   }
   return own;
+}
+type RoutedSessionHit = SessionHit & { runnerId?: string };
+function searchHitFromMessages(query: string, meta: { id: string; title: string; agent: string; cwd: string; updatedAt: number; runnerId?: string }, messages: Array<{ text?: string }>): RoutedSessionHit | null {
+  const tokens = query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean);
+  if (!tokens.length) return null;
+  const hay = meta.title + "\n" + messages.map((m) => m.text || "").join("\n");
+  const hl = hay.toLowerCase();
+  if (!tokens.every((t) => hl.includes(t))) return null;
+  const titleL = meta.title.toLowerCase();
+  const primary = tokens.find((t) => !titleL.includes(t)) || tokens[0];
+  const idx = hl.indexOf(primary);
+  const inContent = idx >= meta.title.length + 1;
+  return { id: meta.id, title: meta.title, agent: meta.agent, cwd: meta.cwd, updatedAt: meta.updatedAt, runnerId: meta.runnerId, where: inContent ? "content" : "title", snippet: inContent ? snippetAround(hay, idx, primary.length) : meta.title };
+}
+async function searchRunnerSessions(ws: WebSocket, query: string, perRunner = 20): Promise<RoutedSessionHit[]> {
+  const out: RoutedSessionHit[] = [];
+  const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUseRunner(ws, r.id));
+  await Promise.all(remotes.map(async (r) => {
+    const sessions = (await runnerSessions(r)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, perRunner);
+    for (const s of sessions) {
+      const h = await runnerHistory(r, s.id);
+      const messages = Array.isArray(h?.messages) ? h.messages : [];
+      const hit = searchHitFromMessages(query, { id: s.id, title: s.title || h?.title || s.id, agent: s.agent || h?.agent || "", cwd: s.cwd || h?.cwd || "", updatedAt: Number(s.updatedAt) || Date.now(), runnerId: r.id }, messages);
+      if (hit) out.push(hit);
+    }
+  }));
+  return out;
+}
+async function runnerSessionExtras(ws: WebSocket, perRunner = 8): Promise<Array<{ id: string; agent: string; cwd: string; title: string; updatedAt: number; lastUser: string; lastAssistant: string; runnerId: string }>> {
+  const out: Array<{ id: string; agent: string; cwd: string; title: string; updatedAt: number; lastUser: string; lastAssistant: string; runnerId: string }> = [];
+  const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUseRunner(ws, r.id));
+  await Promise.all(remotes.map(async (r) => {
+    const label = runnerLabels[r.id] || r.info.host || r.id;
+    const sessions = (await runnerSessions(r)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, perRunner);
+    for (const s of sessions) {
+      const h = await runnerHistory(r, s.id);
+      const messages = Array.isArray(h?.messages) ? h.messages : [];
+      out.push({
+        id: s.id, runnerId: r.id, agent: s.agent || h?.agent || "", cwd: s.cwd || h?.cwd || "",
+        title: `${label} · ${s.title || h?.title || s.id}`, updatedAt: Number(s.updatedAt) || Date.now(),
+        lastUser: [...messages].reverse().find((m: any) => m?.role === "user")?.text || "",
+        lastAssistant: [...messages].reverse().find((m: any) => m?.role === "assistant")?.text || "",
+      });
+    }
+  }));
+  return out;
 }
 /** Native session ids that are already represented by a managed session (dedup, same as allSessions). */
 function nativeExcludeIds(): Set<string> {
@@ -2297,7 +2665,7 @@ async function sendInitialState(ws: WebSocket): Promise<void> {
   // The initial view is the local machine — only push its sessions/runs to a principal allowed to use
   // it, so a member granted only remote runners doesn't get the Hub's local session list unprompted
   // (mirrors the per-runner drive gate; the client then selects a machine it may access).
-  if (canUseRunner(ws, LOCAL_ID)) { sendSessions(ws); send(ws, { t: "runs", active: [...activeRuns] }); }
+  if (canUseRunner(ws, LOCAL_ID)) { sendSessions(ws); send(ws, { t: "runs", runnerId: LOCAL_ID, active: [...activeRuns] }); }
   else send(ws, { t: "sessions", sessions: [], recentDirs: [] });
   await sendVoiceState(ws);
 }
@@ -2458,22 +2826,27 @@ function handleSecurityMsg(ws: WebSocket, msg: any): boolean {
  *  read/write. Returns true if it handled `msg`. Behavior-preserving — same relative order at the
  *  original call site (a single `if (await handleVoiceStageMsg(...)) return;`). */
 async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
+  const scope = (sessionId?: string): StageScope => ({ runnerId: activeRunner(ws), sessionId: sessionId || subs.get(ws) || WAKE_SESSION, actor: actorOf(ws) });
   if (msg.t === "stage_voice" && typeof msg.audio === "string") {
-    const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION);
+    const current = scope((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : undefined);
     let text = "";
     try { text = await transcribe(Buffer.from(msg.audio, "base64"), msg.lang, msg.ext); text = await correctTranscript(text); }
     catch (e: any) { send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) }); return true; }
-    broadcast(sid, { t: "stage_heard", sessionId: sid, text });
-    await stageHandle(sid, text);
+    broadcastOn(current.runnerId, current.sessionId, { t: "stage_heard", runnerId: current.runnerId, sessionId: current.sessionId, text });
+    await stageHandle(current, text);
     return true;
   }
-  if (msg.t === "stage_text" && typeof msg.text === "string") { await stageHandle((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), msg.text); return true; }
-  if (msg.t === "stage_confirm") { await stageConfirm((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION)); return true; }
-  if (msg.t === "stage_cancel") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); staging.remove(sid); stageEscalatePending.delete(sid); broadcast(sid, { t: "stage", sessionId: sid, done: true }); return true; }
-  if (msg.t === "stage_state") { const sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION); const e = staging.get(sid); if (e && e.draft) send(ws, { t: "stage", sessionId: sid, draft: e.draft }); return true; }
-  if (msg.t === "stage_escalate_ok") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), true); return true; }
-  if (msg.t === "stage_escalate_no") { await stageEscalateApprove((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || WAKE_SESSION), false); return true; }
-  if (msg.t === "voice_suggest" && typeof msg.utterance === "string") { send(ws, { t: "voice_suggest", utterance: msg.utterance, suggestion: await suggestSession(msg.utterance) }); return true; }
+  if (msg.t === "stage_text" && typeof msg.text === "string") { await stageHandle(scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), msg.text); return true; }
+  if (msg.t === "stage_confirm") { await stageConfirm(scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined)); return true; }
+  if (msg.t === "stage_cancel") { const current = scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), key = stageKey(current); staging.remove(key); stageEscalatePending.delete(key); broadcastOn(current.runnerId, current.sessionId, { t: "stage", runnerId: current.runnerId, sessionId: current.sessionId, done: true }); return true; }
+  if (msg.t === "stage_state") { const current = scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), e = staging.get(stageKey(current)); if (e?.draft) send(ws, { t: "stage", runnerId: current.runnerId, sessionId: current.sessionId, draft: e.draft }); return true; }
+  if (msg.t === "stage_escalate_ok") { await stageEscalateApprove(scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), true); return true; }
+  if (msg.t === "stage_escalate_no") { await stageEscalateApprove(scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), false); return true; }
+  if (msg.t === "voice_suggest" && typeof msg.utterance === "string") {
+    const runnerId = activeRunner(ws), sid = subs.get(ws);
+    send(ws, { t: "voice_suggest", utterance: msg.utterance, suggestion: await suggestSession(msg.utterance, { runnerId, cwd: sessionCwdOn(runnerId, sid), principalId: principalOf(ws)?.userId }) });
+    return true;
+  }
   if (msg.t === "canvas_choice") {
     broadcast(WAKE_SESSION, { t: "canvas", op: "close" });
     const rp = voiceResolve; voiceResolve = null;
@@ -2613,7 +2986,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // machine ops (queue/cancel/summarize) → require access to the selected runner. Owner passes both.
     if (LOCAL_OPS.has(msg.t) && !canUseRunner(ws, LOCAL_ID)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
     if (ACTIVE_OPS.has(msg.t) && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
-    if (hubUpdateInProgress && UPDATE_BLOCKED_OPS.has(msg.t)) { send(ws, { t: "error", message: "Hub drenando para atualização — tente novamente após reconectar" }); return; }
+    if (holdForHubUpdate(ws, msg)) return;
 
     // --- durable execution graph (global across sessions and authorized machines) ---
     if (msg.t === "execution_delegate" && typeof msg.requestId === "string") {
@@ -2712,10 +3085,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // is read straight off disk; a remote machine's list is fetched from its runner (it owns the files).
     if (msg.t === "commands") {
       const ar = activeRunner(ws);
-      if (ar === LOCAL_ID) { send(ws, { t: "command_list", runnerId: LOCAL_ID, commands: listCommandsPublic(CWD) }); return; }
+      const sid = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+      if (ar === LOCAL_ID) { const cwd = sessionCwd(sid); send(ws, { t: "command_list", runnerId: LOCAL_ID, cwd, commands: listCommandsPublic(cwd) }); return; }
       if (!canUseRunner(ws, ar)) { send(ws, { t: "command_list", runnerId: ar, commands: [] }); return; }
       const rc = runners.get(ar);
-      if (rc?.ws) { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "commands", reqId }); }
+      if (rc?.ws) { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "commands", reqId, sessionId: sid }); }
       else send(ws, { t: "command_list", runnerId: ar, commands: [] });
       return;
     }
@@ -2732,35 +3106,94 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       else send(ws, { t: "mention_list", files: [] });
       return;
     }
-    // "#note" → append to the session's memory file (CLAUDE.md / AGENTS.md) in its cwd. No turn.
-    if (msg.t === "memory_append" && typeof msg.text === "string") {
-      const ar = activeRunner(ws);
-      const sid = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
-      if (isInternalExecutionSession(ar, sid)) { send(ws, { t: "error", message: "sessão interna não aceita memória pelo chat" }); return; }
-      if (ar !== LOCAL_ID) { if (canUseRunner(ws, ar)) { const rc = runners.get(ar); if (rc?.ws) sendToRunner(rc, { t: "memory_append", text: msg.text, sessionId: sid }); } return; }
-      try {
-        const cwd = sessionCwd(sid);
-        const agent = sessionAgent(sid);
-        const resolved = effectivePolicyFor(sid);
-        const decision = decideMemoryWrite(resolved.policy, { repoAvailable: true });
-        recordAdaptiveDecision({ kind: "memory_write", action: decision.action, reason: decision.reason, sessionId: sid, policyId: resolved.policy.id });
-        if (decision.action === "reject") { send(ws, { t: "error", message: "memória bloqueada pela política: " + decision.reason }); return; }
-        let text = "";
-        if (decision.action === "repo") {
-          const r = appendMemory(msg.text, cwd, cmdAgentOf(agent));
-          text = "📝 Anotado em " + r.file;
-        } else {
-          const cls = classifyMemoryText({ text: msg.text, cwd });
-          let vec: number[] = [];
-          try { vec = await embedOne(msg.text); } catch { vec = []; }
-          memory.upsert({ id: `note:${sid || "global"}:${Date.now()}`, sessionId: sid || "memory", agent, cwd, title: "Memória Jarvis", text: msg.text.slice(0, 400), ts: Date.now(), vec, ...cls });
-          text = "📝 Anotado na memória do Jarvis";
+    // "#note" is a two-step HITL write: exact preview first, one-time apply second.
+    if (msg.t === "memory_preview" && typeof msg.text === "string") {
+      const runnerId = activeRunner(ws), sessionId = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
+      if (isInternalExecutionSession(runnerId, sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita memória pelo chat" }); return; }
+      cleanExpiredMemoryConfirmations();
+      const actor = actorOf(ws), state = runnerId === LOCAL_ID ? undefined : (sessionId ? runnerSessionState.get(runnerId)?.get(sessionId) : undefined);
+      const cwd = runnerId === LOCAL_ID ? sessionCwd(sessionId) : String(state?.cwd || "");
+      const agent = runnerId === LOCAL_ID ? sessionAgent(sessionId) : String(state?.agent || "remote");
+      const resolved = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd, sessionId });
+      const rc = runnerId === LOCAL_ID ? undefined : runners.get(runnerId);
+      const decision = decideMemoryWrite(resolved.policy, { repoAvailable: runnerId === LOCAL_ID || !!rc?.ws });
+      recordAdaptiveDecision({ kind: "memory_write", action: decision.action, reason: decision.reason, sessionId, policyId: resolved.policy.id });
+      if (decision.action === "reject") { send(ws, { t: "error", message: "memória bloqueada pela política: " + decision.reason }); return; }
+      if (decision.action === "repo" && runnerId !== LOCAL_ID) {
+        if (!rc?.ws) { send(ws, { t: "error", message: "máquina offline" }); return; }
+        const reqId = "memory-" + randomUUID();
+        pendingReq.set(reqId, ws); pendingRemoteMemoryPreview.set(reqId, { ws, runnerId, sessionId, actor });
+        if (!sendToRunner(rc, { t: "memory_preview", reqId, text: msg.text, sessionId, actor })) {
+          pendingReq.delete(reqId); pendingRemoteMemoryPreview.delete(reqId); send(ws, { t: "error", message: "não foi possível solicitar a prévia na máquina" });
         }
-        const note = { t: "message" as const, message: { sessionId: sid || "", role: "assistant", text, ts: Date.now() } };
-        if (sid) broadcast(sid, note); else send(ws, note);
-      } catch (e: any) { send(ws, { t: "error", message: "memória: " + String(e?.message ?? e) }); }
+        return;
+      }
+      try {
+        const note = msg.text.replace(/^\s*#+\s*/, "").trim();
+        if (!note) throw new Error("a nota de memória está vazia");
+        if (note.length > 8000) throw new Error("a nota de memória excede 8000 caracteres");
+        const token = randomUUID(), expiresAt = Date.now() + MEMORY_PREVIEW_TTL_MS;
+        const pending: PendingMemoryConfirmation = { runnerId, sessionId, actor, mode: decision.action === "repo" ? "repo-local" : "jarvis", expiresAt, text: note, cwd, agent };
+        let target = "Memória privada do Jarvis", beforeHash = createHash("sha256").update("").digest("hex"), exists = true;
+        if (pending.mode === "repo-local") {
+          pending.preview = previewMemoryAppend(note, cwd, cmdAgentOf(agent));
+          target = pending.preview.file; beforeHash = pending.preview.beforeHash; exists = pending.preview.exists;
+        }
+        pendingMemoryConfirmations.set(token, pending);
+        sendMemoryFrame(ws, pending, { t: "memory_preview", token, target, note, appendText: pending.preview?.appendText || note, beforeHash, exists, expiresAt, runnerId, sessionId, mode: pending.mode === "jarvis" ? "jarvis" : "repo", reason: decision.reason });
+      } catch (error: any) { send(ws, { t: "error", message: "memória: " + String(error?.message ?? error) }); }
       return;
     }
+    if (msg.t === "memory_apply" && typeof msg.token === "string") {
+      cleanExpiredMemoryConfirmations();
+      const pending = pendingMemoryConfirmations.get(msg.token);
+      if (!pending) { send(ws, { t: "memory_applied", token: msg.token, ok: false, error: "prévia inexistente, expirada ou já aplicada" }); return; }
+      if (pending.actor.userId && pending.actor.userId !== principalOf(ws)?.userId) { send(ws, { t: "memory_applied", token: msg.token, ok: false, error: "esta prévia pertence a outro usuário" }); return; }
+      if (!canUseRunner(ws, pending.runnerId)) { send(ws, { t: "memory_applied", token: msg.token, ok: false, error: "sem acesso à máquina da prévia" }); return; }
+      pendingMemoryConfirmations.delete(msg.token);
+      if (pending.mode === "repo-remote") {
+        const rc = runners.get(pending.runnerId), reqId = "memory-apply-" + randomUUID();
+        if (!rc?.ws) { sendMemoryFrame(ws, pending, { t: "memory_applied", token: msg.token, ok: false, error: "máquina offline" }); return; }
+        pendingReq.set(reqId, ws); pendingRemoteMemoryApply.set(reqId, { ws, pending, token: msg.token });
+        if (!sendToRunner(rc, { t: "memory_apply", reqId, token: msg.token })) {
+          pendingReq.delete(reqId); pendingRemoteMemoryApply.delete(reqId); sendMemoryFrame(ws, pending, { t: "memory_applied", token: msg.token, ok: false, error: "não foi possível aplicar a memória na máquina" });
+        }
+        return;
+      }
+      try {
+        const note = pending.text || pending.preview?.note || "", noteHash = createHash("sha256").update(note).digest("hex");
+        let target = "jarvis://semantic", beforeHash = createHash("sha256").update("").digest("hex"), afterHash = noteHash;
+        if (pending.mode === "repo-local" && pending.preview) {
+          const result = applyMemoryAppend(pending.preview);
+          target = result.file; beforeHash = result.beforeHash; afterHash = result.afterHash;
+        } else {
+          const cls = classifyMemoryText({ text: note, cwd: pending.cwd });
+          let vec: number[] = []; try { vec = await embedOne(note); } catch { vec = []; }
+          memory.upsert({ id: `note:${pending.actor.userId || "local"}:${Date.now()}`, sessionId: pending.sessionId || "memory", runnerId: pending.runnerId, ownerId: pending.actor.userId, agent: pending.agent, cwd: pending.cwd, title: "Memória Jarvis", text: note.slice(0, 400), ts: Date.now(), vec, ...cls });
+        }
+        memoryProvenance.append({ at: Date.now(), sessionId: pending.sessionId, runnerId: pending.runnerId, userId: pending.actor.userId, deviceId: pending.actor.deviceId, agent: pending.agent, cwd: pending.cwd || "", target, beforeHash, afterHash, noteHash });
+        auth.audit("memory_write", { userId: pending.actor.userId, deviceId: pending.actor.deviceId, runnerId: pending.runnerId, detail: `${pending.sessionId || "memory"}: ${target}` });
+        sendMemoryFrame(ws, pending, { t: "memory_applied", token: msg.token, ok: true, target, beforeHash, afterHash, runnerId: pending.runnerId, sessionId: pending.sessionId });
+        const confirmation = { t: "message", message: { sessionId: pending.sessionId || "", role: "assistant", text: pending.mode === "jarvis" ? "Anotado na memória privada do Jarvis" : "Anotado em " + target, ts: Date.now() } };
+        sendMemoryFrame(ws, pending, confirmation);
+      } catch (error: any) { sendMemoryFrame(ws, pending, { t: "memory_applied", token: msg.token, ok: false, error: "memória: " + String(error?.message ?? error) }); }
+      return;
+    }
+    if (msg.t === "memory_cancel" && typeof msg.token === "string") {
+      cleanExpiredMemoryConfirmations();
+      const pending = pendingMemoryConfirmations.get(msg.token);
+      if (!pending) { send(ws, { t: "memory_cancelled", token: msg.token, ok: false, error: "prévia inexistente, expirada ou já consumida" }); return; }
+      if (pending.actor.userId && pending.actor.userId !== principalOf(ws)?.userId) { send(ws, { t: "memory_cancelled", token: msg.token, ok: false, error: "esta prévia pertence a outro usuário" }); return; }
+      if (!canUseRunner(ws, pending.runnerId)) { send(ws, { t: "memory_cancelled", token: msg.token, ok: false, error: "sem acesso à máquina da prévia" }); return; }
+      pendingMemoryConfirmations.delete(msg.token);
+      if (pending.mode === "repo-remote") {
+        const rc = runners.get(pending.runnerId);
+        if (rc?.ws) sendToRunner(rc, { t: "memory_cancel", token: msg.token });
+      }
+      sendMemoryFrame(ws, pending, { t: "memory_cancelled", token: msg.token, ok: true, runnerId: pending.runnerId, sessionId: pending.sessionId });
+      return;
+    }
+    if (msg.t === "memory_append") { send(ws, { t: "error", message: "escrita de memória exige prévia e confirmação" }); return; }
     if (msg.t === "runner" && typeof msg.runnerId === "string") {
       const target = runners.has(msg.runnerId) ? msg.runnerId : LOCAL_ID;
       if (!canUseRunner(ws, target)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
@@ -2784,12 +3217,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const explicitListRunner = msg.t === "listdir" && typeof msg.runnerId === "string" ? msg.runnerId : null;
       if (explicitListRunner && !canUseRunner(ws, explicitListRunner)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
       const ar = explicitListRunner || activeRunner(ws);
-      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete")) {
+      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete" || msg.t === "dropLast")) {
         const targeted = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((id: unknown): id is string => typeof id === "string") : (typeof msg.sessionId === "string" ? [msg.sessionId] : []);
         if (targeted.some((sid: string) => isInternalExecutionSession(ar, sid))) { send(ws, { t: "error", message: "sessão interna só pode ser acessada pelo painel Trabalhos" }); return; }
         const rc = runners.get(ar);
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
         if (msg.t === "list") { sendToRunner(rc, { t: "list" }); return; }
+        if (msg.t === "dropLast" && typeof msg.sessionId === "string") { activityBuf.delete(scopedSessionKey(ar, msg.sessionId)); sendToRunner(rc, { t: "dropLast", sessionId: msg.sessionId }); return; }
         if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) { const ids: string[] = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((id: unknown): id is string => typeof id === "string") : [msg.sessionId]; if (ids.some((sid) => runnerActive.get(ar)?.has(sid))) { send(ws, { t: "error", message: "pare o turno antes de excluir esta conversa" }); return; } const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); if (!sendToRunner(rc, { t: "delete", reqId, sessionId: msg.sessionId, sessionIds: msg.sessionIds, alsoNative: !!msg.alsoNative })) { pendingReq.delete(reqId); send(ws, { t: "error", message: "não foi possível solicitar a exclusão na máquina" }); } return; }
         if (msg.t === "readdiff" && typeof msg.path === "string" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readdiff", reqId, sessionId: msg.sessionId, path: msg.path }); return; }
         if (msg.t === "new") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "new", reqId, agent: msg.agent, cwd: msg.cwd }); return; }
@@ -2801,12 +3235,16 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           let sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || "default");
           const canonicalSid = isNativeId(sid) ? managedRunnerSessionForNative(rc.id, sid) : undefined;
           if (canonicalSid) sid = canonicalSid;
-          if (decisionLocked(sid)) { send(ws, { t: "error", message: decisionLockMessage(sid) }); return; }
           if (typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
+          clearPendingAsk(ar, sid);
           auth.audit("send", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: ar, detail: `${sid}: ${String(msg.text).slice(0, 80)}` });
-          if (routeAborts.has(sid) || (runnerActive.get(ar)?.has(sid) ?? false)) {
-            queueOf(sid).push({ text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined });
-            broadcastQueue(sid); saveQueues(); void maybeFlushQueue(sid, false); send(ws, { t: "queued", sessionId: sid, text: msg.text }); return;
+          if (runnerUpdateDraining(ar)) {
+            enqueueChatTurn(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+            send(ws, { t: "queued", runnerId: ar, sessionId: sid, text: msg.text, update: true, message: "Máquina drenando para atualização — mensagem ficou na fila." }); return;
+          }
+          if (routeAborts.has(scopedSessionKey(ar, sid)) || (runnerActive.get(ar)?.has(sid) ?? false)) {
+            queueOf(ar, sid).push({ text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+            broadcastQueue(ar, sid); saveQueues(); void maybeFlushQueue(ar, sid, false); send(ws, { t: "queued", runnerId: ar, sessionId: sid, text: msg.text }); return;
           }
           const flags = autoFlags(msg.auto);
           let state = runnerSessionState.get(rc.id)?.get(sid);
@@ -2817,9 +3255,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           }
           const currentAgent = state?.agent || (typeof msg.agent === "string" ? msg.agent : undefined) || rc.info.agents[0];
           if (!currentAgent) { send(ws, { t: "error", message: "nenhuma IA disponível nesta máquina" }); return; }
-          const su = usageLedger.session(sid);
+          const su = sessionUsage(sid, ar);
           const decision = await decideAutomaticRoute({
-            sid, text: msg.text, started: state?.source === "native" || state?.started === true,
+            runnerId: ar, sid, text: msg.text, started: state?.source === "native" || state?.started === true,
             currentAgent, currentModel: typeof msg.model === "string" ? msg.model : (flags.model ? su.model : undefined),
             currentEffort: typeof msg.effort === "string" ? msg.effort : undefined,
             flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [],
@@ -2828,7 +3266,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
             notify: (frame) => { for (const c of clientsOn(rc.id)) if (subs.get(c) === sid) send(c, frame); },
           });
           const states = runnerSessionState.get(rc.id) || new Map<string, any>(); states.set(sid, { ...(state || {}), id: sid, agent: decision.agent }); runnerSessionState.set(rc.id, states);
-          sendToRunner(rc, { t: "send", sessionId: sid, text: msg.text, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], turnId: (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID() });
+          if (msg.speak) remoteSpeak.add(ar + "\0" + sid);
+          if (!sendToRunner(rc, { t: "send", sessionId: sid, text: msg.text, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker: typeof msg.speaker === "string" ? msg.speaker : undefined, turnId: (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID(), actor: actorOf(ws) })) {
+            remoteSpeak.delete(ar + "\0" + sid);
+            send(ws, { t: "error", message: "não foi possível enviar para a máquina" }); return;
+          }
+          markRunnerSessionActive(ar, sid);
           return;
         }
       }
@@ -2843,7 +3286,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // underlying native claude/codex session each maps to. Irreversible.
     if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) {
       const ids: string[] = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((x: any) => typeof x === "string") : [msg.sessionId];
-      if (ids.some((sid) => activeRuns.has(sid) || routeAborts.has(sid))) { send(ws, { t: "error", message: "pare o turno antes de excluir esta conversa" }); return; }
+      if (ids.some((sid) => activeRuns.has(sid) || routeAborts.has(scopedSessionKey(LOCAL_ID, sid)))) { send(ws, { t: "error", message: "pare o turno antes de excluir esta conversa" }); return; }
       const deleteOne = (sid: string): boolean => {
         if (isNativeId(sid)) { stopTail(sid); const deleted = deleteNative(sid); if (deleted) localExecutionStore.deleteSession(sid); return deleted; }
         if (store.isHidden(sid)) return false;
@@ -2922,17 +3365,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const h = nativeHistory(msg.sessionId);
       if (!h) { send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
       send(ws, {
-        t: "history",
+        t: "history", runnerId: LOCAL_ID,
         sessionId: msg.sessionId,
-        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, sessionCost: costOf(msg.sessionId), sessionUsage: usageLedger.session(msg.sessionId), model: h.model, effort: h.effort },
+        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, sessionCost: costOf(msg.sessionId), sessionUsage: sessionUsage(msg.sessionId), model: h.model, effort: h.effort },
         total: h.messages.length,
         messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })),
         files: sessionFiles(msg.sessionId),
       });
-      replayActivity(ws, msg.sessionId);
-      replayRoute(ws, msg.sessionId);
-      sendPendingAsk(ws, msg.sessionId);
-      send(ws, { t: "queue", sessionId: msg.sessionId, items: queueOf(msg.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
+      replayActivity(ws, LOCAL_ID, msg.sessionId);
+      replayRoute(ws, LOCAL_ID, msg.sessionId);
+      sendPendingAsk(ws, LOCAL_ID, msg.sessionId);
+      send(ws, { t: "queue", runnerId: LOCAL_ID, sessionId: msg.sessionId, items: queueOf(LOCAL_ID, msg.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
       return;
     }
     if (msg.t === "open" && typeof msg.sessionId === "string") {
@@ -2943,14 +3386,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       reconcileFromNative(s); // backfill a reply an orphaned turn (killed by a prior hub restart) already wrote natively
       const all = store.history(s.id);
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-      const su = usageLedger.session(s.id), nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
+      const su = sessionUsage(s.id), nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
       const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
       const files = [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))];
-      send(ws, { t: "history", sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
-      replayActivity(ws, s.id);
-      replayRoute(ws, s.id);
-      sendPendingAsk(ws, s.id);
-      send(ws, { t: "queue", sessionId: s.id, items: queueOf(s.id).map((q) => ({ text: q.text, atts: q.atts })) });
+      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
+      replayActivity(ws, LOCAL_ID, s.id);
+      replayRoute(ws, LOCAL_ID, s.id);
+      sendPendingAsk(ws, LOCAL_ID, s.id);
+      send(ws, { t: "queue", runnerId: LOCAL_ID, sessionId: s.id, items: queueOf(LOCAL_ID, s.id).map((q) => ({ text: q.text, atts: q.atts })) });
       return;
     }
     if (msg.t === "new") {
@@ -2960,7 +3403,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const s = store.ensure(id, { agent: agentName, cwd });
       subs.set(ws, id);
       syncTails();
-      send(ws, { t: "history", sessionId: id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
+      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
       pushSessions();
       return;
     }
@@ -2976,7 +3419,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         return;
       }
       const ns = store.get(s.id)!;
-      send(ws, { t: "history", sessionId: ns.id, session: { agent: ns.agent, cwd: ns.cwd, title: ns.title }, messages: store.history(ns.id) });
+      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: ns.id, session: { agent: ns.agent, cwd: ns.cwd, title: ns.title }, messages: store.history(ns.id) });
       pushSessions();
       return;
     }
@@ -2995,15 +3438,16 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const exclude = nativeExcludeIds();
         const NAT = Number(process.env.JARVIS_NATIVE_LIMIT) || 40;
         send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done: false });
-        const stage = (limit: number, done: boolean): void => {
+        const stage = async (limit: number, includeRemote: boolean, done: boolean): Promise<void> => {
           if (ws.readyState !== WebSocket.OPEN) return;
           try {
             const nat = searchNative(q, limit).filter((h) => !exclude.has(h.id));
-            send(ws, { t: "searchResult", query: q, hits: sortHits([...managed, ...nat]), done });
+            const remote = includeRemote ? await searchRunnerSessions(ws, q) : [];
+            send(ws, { t: "searchResult", query: q, hits: sortHits([...managed, ...nat, ...remote]), done });
           } catch { send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done }); }
         };
         // most-recent 10 native first (quick), then the full sweep — or straight to full if the cap is ≤10.
-        setImmediate(() => { if (NAT > 10) { stage(10, false); setImmediate(() => stage(NAT, true)); } else stage(NAT, true); });
+        setImmediate(() => { if (NAT > 10) { void stage(10, false, false); setImmediate(() => { void stage(NAT, true, true); }); } else void stage(NAT, true, true); });
       }
       return;
     }
@@ -3161,13 +3605,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const costTotal = overallUsage.costUsd;
       const byAgentUsage = usageLedger.byAgent(usageAgent);
       const byAgent: Record<string, number> = Object.fromEntries(Object.entries(byAgentUsage).map(([agent, usage]) => [agent, usage.costUsd]));
-      const perSession: Array<{ id: string; cost: number; agent: string; title: string }> = [];
+      const perSession: Array<{ id: string; runnerId: string; cost: number; agent: string; title: string }> = [];
       for (const entry of usageLedger.topSessions(50, usageAgent)) {
-        const sid = entry.id, cost = entry.usage.costUsd; if (!cost) continue;
+        const sid = entry.id, runnerId = entry.runnerId, cost = entry.usage.costUsd; if (!cost) continue;
         const agent = entry.agent;
         const internalTitle: Record<string, string> = { __auto_route__: "Roteamento automático", __summary__: "Resumos", __spoken_summary__: "Resumos falados", __decision_detection__: "Detecção de decisões" };
-        const title = sid === WAKE_SESSION ? "Voz (Jarvis)" : (internalTitle[sid] || store.get(sid)?.title || executionNodeBySession(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : sid));
-        perSession.push({ id: sid, cost, agent, title, usage: entry.usage } as any);
+        const remoteState = runnerId === LOCAL_ID ? undefined : runnerSessionState.get(runnerId)?.get(sid);
+        const remoteLabel = runnerLabels[runnerId] || runners.get(runnerId)?.info.host || runnerId;
+        const title = sid === WAKE_SESSION && runnerId === LOCAL_ID ? "Voz (Jarvis)" : (internalTitle[sid] || (runnerId === LOCAL_ID ? store.get(sid)?.title || executionNodeBySession(sid)?.title : remoteState?.title || `${remoteLabel} · ${sid}`) || (isNativeId(sid) ? "Sessão da máquina" : sid));
+        perSession.push({ id: sid, runnerId, cost, agent, title, usage: entry.usage } as any);
       }
       perSession.sort((a, b) => b.cost - a.cost);
       const topSessions = perSession.slice(0, 6);
@@ -3186,17 +3632,27 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const q = msg.query;
       try {
         const vec = await embedOne(q);
-        const sid = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
-        const cls = classifyMemoryText({ text: q, cwd: sessionCwd(sid) });
-        const projectPrefix = typeof msg.projectPrefix === "string" ? msg.projectPrefix : undefined;
-        const scoped = vec.length ? memory.search(vec, { topK: 10, minScore: 0.2, namespaces: cls.namespaces, projectPrefix }) : [];
-        const hits = scoped.length ? scoped : (vec.length ? memory.search(vec, { topK: 10, minScore: 0.2 }) : []);
-        send(ws, { t: "memory_result", query: q, classification: cls, stats: memory.stats(), hits: hits.map((h) => ({ id: h.id, title: h.title, agent: h.agent, cwd: h.cwd, snippet: h.text, score: Math.round(h.score * 100), namespaces: h.namespaces, scope: h.scope, topic: h.topic, projectKey: h.projectKey })) });
+        const runnerId = activeRunner(ws), sid = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws), cwd = sessionCwdOn(runnerId, sid);
+        const cls = classifyMemoryText({ text: q, cwd }), principalId = principalOf(ws)?.userId, all = msg.scope === "all";
+        const runnerIds = all ? allowedRunnerIds(ws) : [runnerId];
+        const projectKey = all ? undefined : projectMemoryKey(cwd);
+        const sessionId = !all && !projectKey ? sid : undefined;
+        const hasBoundary = all || !!projectKey || !!sessionId;
+        const scopedRunnerIds = hasBoundary ? runnerIds : [];
+        const hits = vec.length && hasBoundary ? memory.search(vec, {
+          topK: 10, minScore: 0.2, runnerIds: scopedRunnerIds, principalId,
+          projectKey, sessionId,
+        }) : [];
+        send(ws, { t: "memory_result", query: q, searchScope: all ? "all" : "project", classification: cls, stats: memory.stats({ runnerIds: scopedRunnerIds, principalId, projectKey, sessionId }), hits: hits.map((h) => {
+          const legacyRoute = /^runner:([^:]+):(.+)$/.exec(h.id);
+          const hitRunner = h.runnerId || legacyRoute?.[1] || LOCAL_ID;
+          return { id: h.sessionId, runnerId: hitRunner, title: h.title, agent: h.agent, cwd: h.cwd, snippet: h.text, score: Math.round(h.score * 100), namespaces: h.namespaces, scope: h.scope, topic: h.topic, projectKey: h.projectKey };
+        }) });
       } catch { send(ws, { t: "memory_result", query: q, hits: [], error: "memória local indisponível — instale sentence-transformers na máquina do Hub (pip install sentence-transformers)" }); }
       return;
     }
     if (msg.t === "memory_stats") {
-      send(ws, { t: "memory_stats", stats: memory.stats() });
+      send(ws, { t: "memory_stats", stats: memory.stats({ runnerIds: allowedRunnerIds(ws), principalId: principalOf(ws)?.userId }) });
       return;
     }
     if (msg.t === "memory_reindex") {
@@ -3204,8 +3660,21 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       void (async () => {
         try {
           const jobs = store.list().map((s) => { const full = store.get(s.id); if (!full || !full.messages.length) return null; const lu = [...full.messages].reverse().find((m) => m.role === "user")?.text || ""; const la = [...full.messages].reverse().find((m) => m.role === "assistant")?.text || ""; return { meta: s, text: `${s.title}\n${lu}\n${la}`.slice(0, 2000) }; }).filter(Boolean) as Array<{ meta: any; text: string }>;
+          const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUseRunner(ws, r.id));
+          for (const r of remotes) {
+            const label = runnerLabels[r.id] || r.info.host || r.id;
+            for (const s of await runnerSessions(r)) {
+              const h = await runnerHistory(r, s.id);
+              const messages = Array.isArray(h?.messages) ? h.messages : [];
+              if (!messages.length) continue;
+              const lu = [...messages].reverse().find((m: any) => m?.role === "user")?.text || "";
+              const la = [...messages].reverse().find((m: any) => m?.role === "assistant")?.text || "";
+              const title = `${label} · ${s.title || h?.title || s.id}`;
+              jobs.push({ meta: { id: `runner:${r.id}:${s.id}`, sessionId: s.id, runnerId: r.id, agent: s.agent || h?.agent, cwd: s.cwd || h?.cwd, title, updatedAt: s.updatedAt || Date.now() }, text: `${title}\n${lu}\n${la}`.slice(0, 2000) });
+            }
+          }
           const vecs = await embed(jobs.map((j) => j.text));
-          memory.upsertMany(jobs.map((j, i) => ({ id: j.meta.id, sessionId: j.meta.id, agent: j.meta.agent, cwd: j.meta.cwd, title: j.meta.title, text: j.text.slice(0, 400), ts: j.meta.updatedAt, vec: vecs[i] || [], ...classifyMemoryText({ text: j.text, cwd: j.meta.cwd }) })).filter((e) => e.vec.length));
+          memory.upsertMany(jobs.map((j, i) => ({ id: j.meta.id, sessionId: j.meta.sessionId || j.meta.id, runnerId: j.meta.runnerId || LOCAL_ID, agent: j.meta.agent, cwd: j.meta.cwd, title: j.meta.title, text: j.text.slice(0, 400), ts: j.meta.updatedAt, vec: vecs[i] || [], ...classifyMemoryText({ text: j.text, cwd: j.meta.cwd }) })).filter((e) => e.vec.length));
           send(ws, { t: "memory_reindexed", count: memory.size(), stats: memory.stats() });
         } catch (e: any) { send(ws, { t: "error", message: "reindex da memória falhou: " + String(e?.message ?? e) }); }
       })();
@@ -3225,34 +3694,39 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
-      if (decisionLocked(s.id)) { send(ws, { t: "error", message: decisionLockMessage(s.id) }); return; }
+      clearPendingAsk(LOCAL_ID, s.id);
       // routes through the shared lifecycle — which (unlike the old inline copy) also persists the
       // assistant's activity trace, so a reload of a session driven via sendTo keeps its tool blocks.
       const decision = await routeLocalTurn(s.id, msg.text, msg.model, msg.effort, autoFlags(msg.auto));
-      await runManagedTurn(turnCtx, s.id, { showText: msg.text, model: decision.model, effort: decision.effort, onError: (message) => send(ws, { t: "error", message }) });
+      await runManagedTurn(turnCtx, s.id, { showText: msg.text, model: decision.model, effort: decision.effort, actor: actorOf(ws), onError: (message) => send(ws, { t: "error", message }) });
       return;
     }
 
     // Fila dona no hub: enfileirar / remover um / limpar / rodar agora. Sempre re-transmite a fila a todos que
     // veem a sessão (sincroniza entre dispositivos). O flush em si roda no fim do turno (flushQueue).
     if (msg.t === "enqueue" && typeof msg.sessionId === "string" && (typeof msg.text === "string" || Array.isArray(msg.attachments))) {
-      if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
-      if (decisionLocked(msg.sessionId)) { send(ws, { t: "error", message: decisionLockMessage(msg.sessionId) }); return; }
-      { const rid = activeRunner(ws); queueOf(msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined }); }
-      broadcastQueue(msg.sessionId); saveQueues(); void maybeFlushQueue(msg.sessionId, false); return;
+      const rid = activeRunner(ws);
+      if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
+      queueOf(rid, msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+      broadcastQueue(rid, msg.sessionId); saveQueues(); void maybeFlushQueue(rid, msg.sessionId, false); return;
     }
     if (msg.t === "dequeue" && typeof msg.sessionId === "string" && typeof msg.index === "number") {
-      if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
-      const q = queueOf(msg.sessionId); if (msg.index >= 0 && msg.index < q.length) q.splice(msg.index, 1);
-      broadcastQueue(msg.sessionId); saveQueues(); return;
+      const rid = activeRunner(ws);
+      if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
+      const q = queueOf(rid, msg.sessionId); if (msg.index >= 0 && msg.index < q.length) q.splice(msg.index, 1);
+      broadcastQueue(rid, msg.sessionId); saveQueues(); return;
     }
-    if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(msg.sessionId, []); broadcastQueue(msg.sessionId); saveQueues(); return; }
-    if (msg.t === "flushqueue" && typeof msg.sessionId === "string") { if (isInternalExecutionSession(activeRunner(ws), msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } void maybeFlushQueue(msg.sessionId, false); return; }
+    if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { const rid = activeRunner(ws); if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(scopedSessionKey(rid, msg.sessionId), []); broadcastQueue(rid, msg.sessionId); saveQueues(); return; }
+    if (msg.t === "flushqueue" && typeof msg.sessionId === "string") { const rid = activeRunner(ws); if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } void maybeFlushQueue(rid, msg.sessionId, false); return; }
     // "voltar" mensagem cancelada: tira a última mensagem do usuário do store (sessão do hub) pra
     // ela não reaparecer no reload. Nativa não dá (o transcript é do claude) — some só na tela.
-    if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; } if (!isNativeId(msg.sessionId)) { store.dropLastUser(msg.sessionId); pushSessions(); } return; }
+    if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; } if (!isNativeId(msg.sessionId)) { activityBuf.delete(scopedSessionKey(LOCAL_ID, msg.sessionId)); store.dropLastUser(msg.sessionId); pushSessions(); } return; }
     // The user answered/dismissed a decision card → forget the pending questions for that session.
-    if (msg.t === "ask_clear" && typeof msg.sessionId === "string") { if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; } pendingAsk.delete(msg.sessionId); return; }
+    if (msg.t === "ask_clear" && typeof msg.sessionId === "string") {
+      const runnerId = activeRunner(ws);
+      if (isInternalExecutionSession(runnerId, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; }
+      clearPendingAsk(runnerId, msg.sessionId); return;
+    }
 
     // Wizard de voz dos cards de decisão: falar um passo (say) e interpretar a resposta falada (ask_voice).
     if (msg.t === "say" && typeof msg.text === "string") {
@@ -3284,7 +3758,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     const viewing = subs.get(ws);
     const sid = explicit || viewing || "default";
     if (store.isHidden(sid)) { send(ws, { t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
-    if ((msg.t === "send" || msg.t === "voice") && decisionLocked(sid)) { send(ws, { t: "error", message: decisionLockMessage(sid) }); return; }
+    if (msg.t === "send" || msg.t === "voice") clearPendingAsk(activeRunner(ws), sid);
     // Só (re)inscreve o ws se o envio é para a sessão que ele já vê (ou se ainda não vê nada). Um
     // flush para uma sessão de FUNDO não pode trocar o que este ws está assistindo.
     if (!viewing || sid === viewing) subs.set(ws, sid);
@@ -3339,10 +3813,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (!text) return;
     if (msg.t === "send" && typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
+    const inboundActor = actorOf(ws);
+    const inboundKey = recordPendingInboundTurn(activeRunner(ws), sid, msg, text, inboundActor);
     { const _p = principalOf(ws); auth.audit("send", { userId: _p?.userId, deviceId: _p?.deviceId, detail: `${sid}: ${String(text).slice(0, 80)}` }); }
 
     const approvalCommand = adaptiveApprovalVoiceCommand(text);
     if (approvalCommand) {
+      clearPendingInboundTurn(inboundKey);
       const owner = requireOwner(ws); if (!owner) return;
       const approvals = adaptiveApprovalList();
       let reply = "";
@@ -3361,6 +3838,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // Meta-question about other sessions? -> cross-session search (typed or spoken).
     if (looksLikeCrossSessionQuery(text)) {
+      clearPendingInboundTurn(inboundKey);
       await runAndSendSearch(ws, text, !!msg.speak);
       return;
     }
@@ -3368,8 +3846,57 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // Proactive-voice router: the wake session lets the user pick the agent/model/effort/
     // folder by speech, and asks new-vs-continue when a conversation is already going.
     if (sid === WAKE_SESSION) {
+      clearPendingInboundTurn(inboundKey);
       await handleVoiceTurn(text, !!msg.speak, speaker);
       return;
+    }
+    if (msg.t === "voice") {
+      const ar = activeRunner(ws);
+      if (ar !== LOCAL_ID) {
+        if (!canUseRunner(ws, ar)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
+        const rc = runners.get(ar);
+        if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
+        let remoteSid = isNativeId(sid) ? (managedRunnerSessionForNative(rc.id, sid) || sid) : sid;
+        if (runnerUpdateDraining(ar)) {
+          enqueueChatTurn(ar, remoteSid, { text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+          send(ws, { t: "queued", runnerId: ar, sessionId: remoteSid, text, voice: true, update: true, message: "Máquina drenando para atualização — mensagem ficou na fila." });
+          return;
+        }
+        if (routeAborts.has(scopedSessionKey(ar, remoteSid)) || (runnerActive.get(ar)?.has(remoteSid) ?? false)) {
+          queueOf(ar, remoteSid).push({ text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+          broadcastQueue(ar, remoteSid); saveQueues(); void maybeFlushQueue(ar, remoteSid, false);
+          send(ws, { t: "queued", runnerId: ar, sessionId: remoteSid, text, voice: true });
+          return;
+        }
+        const flags = autoFlags(msg.auto);
+        let state = runnerSessionState.get(rc.id)?.get(remoteSid);
+        let hist: any = null;
+        if (needsAuto(flags)) {
+          hist = await runnerHistory(rc, remoteSid);
+          if (hist) state = { ...(state || {}), agent: hist.agent, cwd: hist.cwd, started: Number(hist.total) > 0, source: /^(claude:|codex:)/.test(remoteSid) ? "native" : "managed" };
+        }
+        const currentAgent = state?.agent || rc.info.agents[0];
+        if (!currentAgent) { send(ws, { t: "error", message: "nenhuma IA disponível nesta máquina" }); return; }
+        const su = sessionUsage(remoteSid, ar);
+        const decision = await decideAutomaticRoute({
+          runnerId: ar, sid: remoteSid, text, started: state?.source === "native" || state?.started === true,
+          currentAgent, currentModel: typeof msg.model === "string" ? msg.model : (flags.model ? su.model : undefined),
+          currentEffort: typeof msg.effort === "string" ? msg.effort : undefined,
+          flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [],
+          recent: Array.isArray(hist?.messages) ? hist.messages.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role, text: String(m.text || "") })) : [],
+          contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens,
+          notify: (frame) => { for (const c of clientsOn(rc.id)) if (subs.get(c) === remoteSid) send(c, frame); },
+        });
+        const states = runnerSessionState.get(rc.id) || new Map<string, any>(); states.set(remoteSid, { ...(state || {}), id: remoteSid, agent: decision.agent }); runnerSessionState.set(rc.id, states);
+        if (msg.speak) remoteSpeak.add(ar + "\0" + remoteSid);
+        if (!sendToRunner(rc, { t: "send", sessionId: remoteSid, text, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, turnId: (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID(), actor: actorOf(ws) })) {
+          remoteSpeak.delete(ar + "\0" + remoteSid);
+          send(ws, { t: "error", message: "não foi possível enviar para a máquina" });
+          return;
+        }
+        markRunnerSessionActive(ar, remoteSid);
+        return;
+      }
     }
     // One turn per session. A second send while one is still running would spawn a CONCURRENT agent
     // on the same session — two processes editing the same repo at once. Instead of DROPPING the
@@ -3378,9 +3905,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // just-recorded audio (a long one is real work lost). A typed send only reaches here in a race
     // (the client sends {t:enqueue} once it knows the session is busy), so there's no double-queue.
     // Search and the wake router returned above, so this only covers real native/normal turns.
-    if (activeRuns.has(sid) || routeAborts.has(sid)) {
+    if (activeRuns.has(sid) || routeAborts.has(scopedSessionKey(LOCAL_ID, sid))) {
       const rid = activeRunner(ws);
-      queueOf(sid).push({
+      queueOf(LOCAL_ID, sid).push({
         text,
         atts: Array.isArray(msg.attachments) ? msg.attachments : [],
         model: typeof msg.model === "string" ? msg.model : undefined,
@@ -3388,18 +3915,21 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         auto: autoFlags(msg.auto),
         runnerId: rid !== LOCAL_ID ? rid : undefined,
         msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
+        actor: actorOf(ws, "queue"),
       });
-      broadcastQueue(sid); saveQueues(); void maybeFlushQueue(sid, false);
+      broadcastQueue(LOCAL_ID, sid); saveQueues(); void maybeFlushQueue(LOCAL_ID, sid, false);
+      clearPendingInboundTurn(inboundKey);
       // ack so the client stops its "processando" spinner and confirms the utterance landed (the
       // queue list itself already updated via broadcastQueue above).
-      send(ws, { t: "queued", sessionId: sid, text, voice: msg.t === "voice" });
+      send(ws, { t: "queued", runnerId: LOCAL_ID, sessionId: sid, text, voice: msg.t === "voice" });
       return;
     }
 
     // Continue an imported native CLI session (resumes the real claude session; persists in its jsonl).
     if (isNativeId(sid)) {
       const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
-      await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [] });
+      await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], actor: actorOf(ws) });
+      clearPendingInboundTurn(inboundKey);
       return;
     }
 
@@ -3418,8 +3948,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       effort: decision.effort,
       speaker, images, files, speak: !!msg.speak,
       turnId: typeof msg.msgId === "string" ? msg.msgId : undefined,
+      actor: actorOf(ws),
       onError: (message, limit) => send(ws, { t: "error", message, limit }),
     });
+    clearPendingInboundTurn(inboundKey);
     } catch (e) {
       console.error("[hub] erro ao processar", msg.t, "-", String((e as any)?.message ?? e));
       if (String((e as any)?.message ?? e) !== ABORTED) try { send(ws, { t: "error", message: "erro interno ao processar a mensagem" }); } catch { /* ignore */ }
@@ -3446,7 +3978,7 @@ setTimeout(() => void refreshUpdate(true), 8_000); // first update check shortly
 setInterval(() => void refreshUpdate(true), 6 * 3600_000); // then every 6h
 try { const purged = purgeProbeJunk(); if (purged) console.log(`[hub] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
 try { const s = purgeScratch(); if (s) console.log(`[hub] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
-try { loadQueues(); const n = [...queues.values()].reduce((a, q) => a + q.length, 0); if (n) console.log(`[hub] fila restaurada: ${n} mensagem(ns) (cache com TTL)`); } catch { /* ignore */ }
+try { loadQueues(); loadPendingInboundTurns(); recoverPendingInboundTurns(); const n = [...queues.values()].reduce((a, q) => a + q.length, 0); if (n) { console.log(`[hub] fila restaurada: ${n} mensagem(ns) (cache com TTL)`); setTimeout(flushAllQueues, 1500).unref?.(); } } catch { /* ignore */ }
 // A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
 // — fix them all proactively at boot, not just when the user happens to reopen one.
 try { let n = 0; for (const meta of store.list()) { const s = store.ensure(meta.id); const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) n++; } if (n) console.log(`[hub] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`); } catch { /* ignore */ }

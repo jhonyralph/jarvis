@@ -1,7 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs } from "./agents.js";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
+
+test("native continuity rejects one provider thread bound to multiple Jarvis sessions", () => {
+  const bindings: Array<[string, string]> = [["jarvis-a", "native-1"], ["jarvis-b", "native-1"], ["jarvis-c", "native-2"]];
+  assert.deepEqual(findNativeSessionCollisions(bindings), [{ nativeSessionId: "native-1", managedSessionIds: ["jarvis-a", "jarvis-b"] }]);
+  assert.throws(() => assertNativeSessionBinding([["jarvis-a", "native-1"]], "jarvis-b", "native-1"), /colisão de sessão nativa/);
+  assert.throws(() => assertNativeSessionBinding([["jarvis-a", "native-1"]], "claude:native-1", "native-1"), /colisão de sessão nativa/, "direct native imports cannot bypass a managed owner");
+  assert.doesNotThrow(() => assertNativeSessionBinding([["jarvis-a", "native-1"]], "jarvis-a", "native-1"));
+});
 
 test("permission mode is explicit and defaults conservatively to the historical full-access behavior", () => {
   assert.equal(agentPermissionMode(undefined), "full_access");

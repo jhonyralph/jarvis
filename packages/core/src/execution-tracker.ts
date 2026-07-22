@@ -144,8 +144,17 @@ export class ExecutionTracker {
     if (sourceEvent.kind === "usage") sourceEvent.usageScope = this.meta.profile?.capabilities.usage === "subtree" ? "subtree" : "self";
     event = redactedAgentEvent(event);
     this.ensureRoot(event.at);
-    if (event.kind === "accepted") { sourceEvent.executionId = this.rootExecutionId; return; }
-    if (event.kind === "started") { sourceEvent.executionId = this.rootExecutionId; this.transition(this.rootExecutionId, "running"); return; }
+    if (event.kind === "accepted") {
+      sourceEvent.executionId = this.rootExecutionId;
+      this.append(this.rootExecutionId, { kind: "agent_event", event: { ...event, executionId: this.rootExecutionId } });
+      return;
+    }
+    if (event.kind === "started") {
+      sourceEvent.executionId = this.rootExecutionId;
+      this.append(this.rootExecutionId, { kind: "agent_event", event: { ...event, executionId: this.rootExecutionId } });
+      this.transition(this.rootExecutionId, "running");
+      return;
+    }
     const tool = event.tool;
     const isChildTool = !!tool && /^(Task|Agent|Subagent|spawn_agent)$/i.test(tool.name);
     if (isChildTool && tool) {

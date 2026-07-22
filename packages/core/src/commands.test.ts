@@ -13,7 +13,9 @@ const HOME = mkdtempSync(join(tmpdir(), "jarvis-cmd-"));
 const CLAUDE = join(HOME, "claude"), CODEX = join(HOME, "codex");
 mkdirSync(join(CLAUDE, "skills", "my-skill"), { recursive: true });
 mkdirSync(join(CLAUDE, "commands", "flow"), { recursive: true });
+mkdirSync(join(CODEX, "skills", ".system", "codex-system"), { recursive: true });
 mkdirSync(join(CODEX, "prompts"), { recursive: true });
+mkdirSync(join(HOME, ".agents", "skills", "general-skill"), { recursive: true });
 writeFileSync(join(CLAUDE, "skills", "my-skill", "SKILL.md"), `---
 name: my-skill
 description: >-
@@ -21,6 +23,16 @@ description: >-
   something useful.
 ---
 Body of the skill.`);
+writeFileSync(join(CODEX, "skills", ".system", "codex-system", "SKILL.md"), `---
+name: codex-system
+description: Codex system skill.
+---
+Body.`);
+writeFileSync(join(HOME, ".agents", "skills", "general-skill", "SKILL.md"), `---
+name: general-skill
+description: General Codex skill.
+---
+Body.`);
 writeFileSync(join(CLAUDE, "commands", "flow", "discovery.md"), `---
 description: Discovery phase — break an epic into features
 argument-hint: <epic>
@@ -39,6 +51,8 @@ process.env.JARVIS_CLAUDE_HOME = CLAUDE;
 process.env.JARVIS_CODEX_HOME = CODEX;
 process.env.JARVIS_CLAUDE_JSON = join(HOME, "claude.json");
 process.env.JARVIS_CODEX_CONFIG = join(CODEX, "config.toml");
+process.env.HOME = HOME;
+process.env.USERPROFILE = HOME;
 
 const { listCommands, listCommandsPublic, expandCommand, cmdAgentOf } = await import("./commands.js");
 
@@ -84,6 +98,12 @@ test("Codex prompts are discovered (flat, first-line description) alongside Clau
   assert.match(cx!.description, /Codex-only prompt/, "first body line used as description");
   const skill = all.find((c) => c.name === "my-skill");
   assert.equal(skill!.agent, "claude");
+});
+
+test("Codex lists its .system skills and general .agents skills", () => {
+  const codex = listCommands().filter((c) => c.agent === "codex" && c.kind === "skill");
+  assert.ok(codex.some((c) => c.name === "codex-system" && c.source === "user"));
+  assert.ok(codex.some((c) => c.name === "general-skill" && c.source === "user"));
 });
 
 test("same-named commands remain visible per agent; unscoped expansion keeps deterministic Claude priority", () => {
@@ -143,6 +163,13 @@ test("expandCommand finds a /command on any line and keeps the rest as context",
   assert.ok(r, "command on a later line is expanded");
   assert.match(r!.expanded, /Run discovery for: meu epico/);
   assert.match(r!.expanded, /contexto antes/, "preceding lines are preserved");
+});
+
+test("expandCommand finds a /command mid-line after whitespace", () => {
+  const r = expandCommand("antes /cx-only argumento", undefined, "codex");
+  assert.ok(r, "command in the middle of the line is expanded");
+  assert.match(r!.expanded, /^antes Codex-only prompt for argumento here\.$/);
+  assert.equal(expandCommand("C:/Workspace/app", undefined, "codex"), null, "Windows paths are not treated as slash commands");
 });
 
 test("expandCommand returns null for non-commands and unknown names", () => {

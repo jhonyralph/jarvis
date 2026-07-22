@@ -4,7 +4,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','memReindex','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -32,7 +32,7 @@
     E.fileModalClose.onclick=closeFileModal;
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!E.fileModal.classList.contains('hidden')){ e.stopPropagation(); closeFileModal(); } });
 
-    let ws, currentSession=null, currentAgent=null, caps=[], sessions=[], shown=16, filesShown=12, attachments=[], attachmentsBySession={}, browsePath='', browseRunner='local', browseUse=null, recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='';
+    let ws, currentSession=null, currentSessionRunner='local', currentAgent=null, caps=[], sessions=[], shown=16, filesShown=12, attachments=[], attachmentsBySession={}, browsePath='', browseRunner='local', browseUse=null, recentDirs=[], curNative=false, curNativeWritable=false, curNativeId='', creatingSession=false;
     let machines=[], currentMachine=localStorage.getItem('jarvis_machine')||'local', routedMachine='local', lastByMachine={}, restoringMachine=(currentMachine!=='local'&&currentMachine!=='all');
     // vista "Todas as máquinas": currentMachine==='all' é a VISÃO unificada; routedMachine é a máquina
     // real para onde o hub roteia (definida ao abrir/criar uma sessão da lista agregada). hue por nome.
@@ -40,8 +40,8 @@
     let allRefreshT=null; function scheduleAllRefresh(){ if(currentMachine!=='all')return; clearTimeout(allRefreshT); allRefreshT=setTimeout(()=>{ if(currentMachine==='all') tx({t:'listAll'}); }, 1500); }
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
     const agentIcon = a => ({'claude-code':'🟣',codex:'🟢',gemini:'🔵',cursor:'⚫',copilot:'🟪',opencode:'🟠',cline:'🔴',qwen:'🔷',continue:'🟡',kiro:'🟤',antigravity:'🛸',aider:'🔹',mock:'⚪'})[a]||'🔹';
-    let activeRuns=[]; const unread=new Set(); // painel "rodando agora / precisa de você"
-    const askingSids=new Set();  // sessões na fase "consolidando" pós-turno (servidor → {t:asking}); trava o composer
+    let activeRuns=[]; const activeRunsByRunner={}; const unread=new Set(); // painel "rodando agora / precisa de você"
+    const askingSids=new Set();  // machine+session keys still being analyzed for optional HITL
     // ---- config (persisted; refresh não perde estado) ----
     const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
@@ -93,20 +93,20 @@
     // A tool-activity block (icon + summary + optional +/- counts). File tools are clickable
     // → open the viewer/diff panel. done=true shows past tense ("Editado"); reused by streaming
     // (present tense while running, flipped on done) AND by rebuilt history (already done).
-    function toolRowEl(name,summary,path,adds,dels,done,rows,detail){
+    function toolRowEl(name,summary,path,adds,dels,done,rows,detail,opts){
       const d=document.createElement('div'); d.className='strtool'; d.dataset.name=name||''; d.dataset.sum=summary||'';
       const isFile=/Edit$/.test(name||'')||name==='Write'||name==='Read'||name==='NotebookEdit';
       const head=document.createElement('div'); head.className='strtoolhead';
       head.innerHTML=`<span>${toolIcon(name)}</span><span class="ttl">${esc((done?pastify(name,summary):summary)||name||'')}</span>`;
       const ttl=head.querySelector('.ttl');
       // clicar no NOME → abre o arquivo (conteúdo)
-      if(path&&isFile){ ttl.classList.add('clk'); ttl.title='Abrir '+path; ttl.onclick=(e)=>{ e.stopPropagation(); openFile(path,'read'); }; }
+      if(path&&isFile){ ttl.classList.add('clk'); ttl.title='Abrir '+path; ttl.onclick=(e)=>{ e.stopPropagation(); openFile(path,'read',opts); }; }
       // clicar na CONTAGEM → diff SÓ desta alteração, inline (fallback: painel do arquivo inteiro)
       if(adds||dels){ const c=document.createElement('span'); c.className='tcnt'; c.innerHTML=`<span class="fadd">+${adds||0}</span> <span class="fdel">-${dels||0}</span>`;
         if(rows&&rows.length){ c.classList.add('clk'); c.title='Ver o diff desta alteração'; c.onclick=(e)=>{ e.stopPropagation(); toggleInlineDiff(d,rows,adds,dels); }; }
-        else if(path){ c.classList.add('clk'); c.title='Ver diff no painel'; c.onclick=(e)=>{ e.stopPropagation(); openFile(path,'edit'); }; }
+        else if(path){ c.classList.add('clk'); c.title='Ver diff no painel'; c.onclick=(e)=>{ e.stopPropagation(); openFile(path,'edit',opts); }; }
         head.appendChild(c); }
-      d.appendChild(head); addExpand(d,(done?pastify(name,summary):summary)||'',detail); return d; }
+      d.appendChild(head); if(name!=='Read')addExpand(d,(done?pastify(name,summary):summary)||'',detail); return d; }
     // Comando/ação longa: recolhe em 2 linhas e adiciona "expandir/recolher". Aplica-se tanto às
     // linhas de tool do stream quanto ao bloco de atividade ao vivo.
     function addExpand(block,text,detail){ const hasDetail=!!(detail&&detail.length);
@@ -131,13 +131,27 @@
     // rest of a long turn (it used to flip only when the WHOLE turn ended). Direct children only, so a
     // sub-agent box's internals aren't touched from the top level.
     function flipDone(container){ if(container) container.querySelectorAll(':scope > .strtool[data-name]:not(.tdone)').forEach(setToolDone); }
+    function contextManifestEl(manifest){
+      if(!manifest||manifest.schemaVersion!==1)return null;
+      const details=document.createElement('details'); details.className='context-manifest';
+      const summary=document.createElement('summary'); summary.textContent='Contexto do turno'; details.appendChild(summary);
+      const grid=document.createElement('div'); grid.className='context-grid';
+      const row=(label,value)=>{ const b=document.createElement('b'),v=document.createElement('span'); b.textContent=label; v.textContent=String(value==null?'—':value); grid.append(b,v); };
+      row('Máquina',manifest.runnerId); row('Agente',manifest.agent); row('Pasta',manifest.cwd);
+      const continuity=manifest.continuity||{}; row('Continuidade',continuity.kind+(continuity.nativeSessionId?' · '+continuity.nativeSessionId:''));
+      row('Histórico',String(continuity.historyMessages||0)+' mensagens · '+String(continuity.historyChars||0)+' caracteres');
+      const prompt=manifest.prompt||{}; row('Prompt',String(prompt.agentChars||0)+' caracteres'+(prompt.transformed?' · transformado':' · sem transformação'));
+      row('Memória semântica',manifest.semanticMemory&&manifest.semanticMemory.injected?'injetada':'não injetada');
+      const files=(manifest.instructionFiles||[]).map(f=>f.path+' ['+String(f.sha256||'').slice(0,10)+']').join('\n'); row('Instruções candidatas',files||'nenhuma');
+      details.appendChild(grid); return details;
+    }
     function buildMsgEl(m){
       if(m.role==='tool') return toolRowEl(m.name,m.text,m.path,m.adds,m.dels,true,m.rows,m.detail);
       const d=document.createElement('div'); if(m.role==='user'){ d.className='msg me';
         if(m.speaker){ const s=document.createElement('span'); s.textContent='🗣 '+m.speaker; s.style.cssText='display:block;font-size:11px;opacity:.7;margin-bottom:2px'; d.appendChild(s); }
         if(m.images&&m.images.length){ const w=document.createElement('div'); w.className='msgimgs'; m.images.forEach(u=>{ const im=document.createElement('img'); im.className='msgimg'; im.src=u; im.loading='lazy'; im.onclick=()=>openImg(u); w.appendChild(im); }); d.appendChild(w); }
         if(m.files&&m.files.length){ const w=document.createElement('div'); w.className='msgfiles'; m.files.forEach(f=>{ const c=document.createElement('button'); c.type='button'; c.className='filechip'+(f.content==null?' nocontent':''); c.title=f.content==null?'Anexo grande demais para reabrir':'Abrir '+f.name; c.textContent='📎 '+f.name; c.onclick=()=>openAttachedFile(f); w.appendChild(c); }); d.appendChild(w); }
-        const showTxt=m.text&&!((m.images&&m.images.length||m.files&&m.files.length)&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); }
+        const showTxt=m.text&&!((m.images&&m.images.length||m.files&&m.files.length)&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); const context=contextManifestEl(m.contextManifest); if(context)d.appendChild(context); }
       else { d.className='msg bot';
         const af=(m.activity&&m.activity.length)?renderActivityBlock(m.activity):null;
         if(af) d.appendChild(af);
@@ -152,14 +166,25 @@
     // (não usa strFlow/subAgents globais). Quando o histórico carrega text_delta/text_block,
     // renderiza o texto de nível raiz INTERCALADO no fluxo; quando o adapter só salvou texto final,
     // buildMsgEl ainda mostra m.text ao fim como fallback.
+    function readToolKey(name,path,summary,detail,parentId){
+      if(name!=='Read')return '';
+      const raw=String(path||summary||detail||'').replace(/\\/g,'/').replace(/\s+/g,' ').trim();
+      if(!raw)return '';
+      const target=raw
+        .replace(/\s*\((?:offset|limit|line|lines|linha|linhas|bytes|chunk|parte)[^)]*\)/gi,'')
+        .replace(/\b(?:offset|limit|line|lines|linha|linhas|bytes|chunk|parte)\s*[:=]?\s*\d+\b/gi,'')
+        .trim().toLowerCase();
+      return target?'read\0'+(parentId||'root')+'\0'+target:'';
+    }
     function normalizeActivity(events){ const out=[], tools={};
+      const addTool=t=>{ const callKey=t.toolId?(t.parentId||'root')+'\0'+t.toolId:''; const readKey=readToolKey(t.name,t.path,t.summary,t.detail,t.parentId); const key=readKey||callKey,old=key&&tools[key]; if(old)Object.assign(old,t);else{if(key)tools[key]=t;out.push(t);} };
       (events||[]).forEach(ev=>{ if(ev&&ev.schemaVersion===1){
           if(ev.kind==='text_delta'||ev.kind==='text_block') out.push({kind:'text',text:ev.text||'',parentId:ev.parentId||(ev.tool&&ev.tool.parentId),executionId:ev.executionId});
           else if(ev.kind==='thinking') out.push({kind:'thinking',text:ev.text,parentId:ev.parentId,executionId:ev.executionId});
-          else if(/^tool_/.test(ev.kind)&&ev.tool){ const t={kind:'tool',name:ev.tool.name,summary:ev.tool.summary,detail:ev.tool.detail,path:ev.tool.path,adds:ev.tool.adds,dels:ev.tool.dels,rows:ev.tool.rows,toolId:ev.tool.callId,parentId:ev.tool.parentId,status:ev.tool.status,error:ev.tool.error,executionId:ev.executionId},key=t.toolId?(t.parentId||'root')+'\0'+t.toolId:''; const old=key&&tools[key]; if(old)Object.assign(old,t);else{if(key)tools[key]=t;out.push(t);} }
+          else if(/^tool_/.test(ev.kind)&&ev.tool) addTool({kind:'tool',name:ev.tool.name,summary:ev.tool.summary,detail:ev.tool.detail,path:ev.tool.path,adds:ev.tool.adds,dels:ev.tool.dels,rows:ev.tool.rows,toolId:ev.tool.callId,parentId:ev.tool.parentId,status:ev.tool.status,error:ev.tool.error,executionId:ev.executionId});
           else if(ev.kind==='plan') out.push({kind:'tool',name:'Plan',summary:ev.plan&&ev.plan.title||ev.text||'Plano atualizado',status:'completed',parentId:ev.parentId,executionId:ev.executionId});
-        } else out.push(ev); }); return out; }
-    function renderActivityBlock(events){
+        } else if(ev&&ev.kind==='tool') addTool({...ev}); else out.push(ev); }); return out; }
+    function renderActivityBlock(events,opts){
       const flow=document.createElement('div'); flow.className='strflow acthist';
       const subAgents={}; let curTextEl=null, curTextRaw='', rootText=false;
       function closeTextBlock(){ curTextEl=null; curTextRaw=''; }
@@ -173,9 +198,9 @@
         const rec={wrap,body,title,countEl,open,count:0,preview:null,previewText:''}; subAgents[id]=rec; if(executionId)bindInlineWork(rec,executionId); return rec; }
       normalizeActivity(events).forEach(ev=>{
         if(ev.kind==='tool'){
-          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); sa.body.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail)); sa.count++; sa.countEl.textContent=sa.count; return; }
+          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); sa.body.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail,opts)); sa.count++; sa.countEl.textContent=sa.count; return; }
           if((ev.name==='Task'||ev.name==='Agent')&&ev.toolId){ ensureSA(ev.toolId,(ev.summary||'').replace(/^Subagente:\s*/,'')||'sub-agente',ev.executionId); return; }
-          closeTextBlock(); flow.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail));
+          closeTextBlock(); flow.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail,opts));
         } else if(ev.kind==='text'){
           const t=ev.text||''; if(!t)return;
           if(ev.parentId){
@@ -186,7 +211,7 @@
             if(!curTextEl){ flipDone(flow); curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; flow.appendChild(curTextEl); }
             curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); rootText=true;
           }
-        } else if(ev.kind==='thinking'){ if(ev.parentId){const sa=ensureSA(ev.parentId,null,ev.executionId);sa.body.appendChild(toolRowEl('Thinking',ev.text||'Pensando…',null,0,0,true));sa.count++;sa.countEl.textContent=sa.count;}else{closeTextBlock();flow.appendChild(toolRowEl('Thinking',ev.text||'Pensando…',null,0,0,true));} }
+        } else if(ev.kind==='thinking'){ if(ev.parentId){const sa=ensureSA(ev.parentId,null,ev.executionId);sa.body.appendChild(toolRowEl('Thinking',ev.text||'Pensando…',null,0,0,true,null,null,opts));sa.count++;sa.countEl.textContent=sa.count;}else{closeTextBlock();flow.appendChild(toolRowEl('Thinking',ev.text||'Pensando…',null,0,0,true,null,null,opts));} }
       });
       if(rootText) flow.dataset.rootText='1';
       return flow.childNodes.length?flow:null; }
@@ -195,13 +220,35 @@
     // Luby e o Desktop, o RTT oscila de 28ms a 621ms via DERP. O payload, porém, é o mesmo que
     // já desenhamos — então guardamos: revisitar pinta na hora e a cópia fresca só substitui
     // quando chega. Limitado a poucas sessões porque isso também roda no celular.
+    function selectedRunner(){ return currentMachine==='all'?(routedMachine||'local'):(currentMachine||'local'); }
+    function sessionStateKey(sid,runner){ return (runner||selectedRunner())+'\0'+(sid||''); }
+    function sessionRunner(){ return currentSession?(currentSessionRunner||selectedRunner()):selectedRunner(); }
+    function sessionValue(state,sid,runner){ return state[sessionStateKey(sid,runner)]; }
     const histCache=new Map(); const HIST_CACHE_MAX=12; let openingSession=null;
-    function cacheHist(m){ if(!m||!m.sessionId)return; histCache.delete(m.sessionId); histCache.set(m.sessionId,m);
+    function cacheHist(m){ if(!m||!m.sessionId)return; const key=sessionStateKey(m.sessionId,m.runnerId||selectedRunner()); histCache.delete(key); histCache.set(key,m);
       if(histCache.size>HIST_CACHE_MAX) histCache.delete(histCache.keys().next().value); }
-    function showSessionLoading(id){
-      const prevSession=currentSession, switchingSession=prevSession!==id;
-      if(switchingSession && prevSession!=null){ draftBySession[prevSession]=E.input.value; saveDrafts(); stashAttachments(prevSession); }
-      currentSession=id; lastByMachine[currentMachine]=id; unread.delete(id); updateOfflineBanner();
+    function dedupeSessionsList(list){
+      const out=[], seen=new Set();
+      (list||[]).forEach(s=>{ if(!s||!s.id)return; const key=(s.runnerId||'local')+'|'+s.id; if(seen.has(key))return; seen.add(key); out.push(s); });
+      return out;
+    }
+    function rememberHistoryActivity(messages){
+      let lastTurn=null;
+      (messages||[]).forEach(m=>(m.activity||[]).forEach(ev=>{
+        if(!ev||ev.schemaVersion!==1)return;
+        if(ev.turnId)lastTurn=ev.turnId;
+        if(ev.eventId)seenAgentEvents.add(ev.eventId);
+      }));
+      if(seenAgentEvents.size>1200){
+        const keep=[...seenAgentEvents].slice(-1200);
+        seenAgentEvents.clear(); keep.forEach(x=>seenAgentEvents.add(x));
+      }
+      if(lastTurn)liveTurnId=lastTurn;
+    }
+    function showSessionLoading(id,runnerId){
+      const targetRunner=runnerId||selectedRunner(), prevSession=currentSession, prevRunner=currentSessionRunner, switchingSession=prevSession!==id||prevRunner!==targetRunner;
+      if(switchingSession && prevSession!=null){ draftBySession[sessionStateKey(prevSession,prevRunner)]=E.input.value; saveDrafts(); stashAttachments(prevSession,prevRunner); }
+      currentSession=id; currentSessionRunner=targetRunner; lastByMachine[currentMachine]=id; unread.delete(sessionStateKey(id,targetRunner)); updateOfflineBanner();
       const s=sessions.find(x=>x.id===id)||{};
       currentAgent=s.agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=s.cwd||''; curNative=!!s.native||isNative(id);
       curNativeWritable=false; curNativeId=''; curStarted=!!s.started; sessDeclModel=s.model||null; sessDeclEffort=s.effort||null; lastRouteReason='';
@@ -213,24 +260,26 @@
       const spin=document.createElement('span'); spin.className='spin';
       const txt=document.createElement('span'); txt.textContent=busy(id)?'Reconstruindo atividade em andamento...':'Carregando histórico...';
       work.appendChild(spin); work.appendChild(txt); row.appendChild(work); E.log.appendChild(row); forceBottom();
-      curFiles=[]; renderFiles(); E.filePanel.classList.add('hidden'); renderRecents(); closePop();
-      if(switchingSession){ E.input.value=draftBySession[id]||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(id); }
+      curFiles=[]; renderFiles(); closeFilePanel(); renderRecents(); closePop();
+      if(switchingSession){ E.input.value=sessionValue(draftBySession,id,targetRunner)||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(id,targetRunner); }
       renderNativeChip(); setHash(currentSession); refreshComposer();
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
-    function openSession(id){ if(!id)return;
+    function openSession(id,runnerId){ if(!id)return;
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
-      if(currentMachine==='all'){ const s=sessions.find(x=>x.id===id); const rid=(s&&s.runnerId)||'local'; if(rid!==routedMachine){ routedMachine=rid; tx({t:'runner',runnerId:rid}); } }
-      openingSession=id; const c=histCache.get(id); if(c&&id!==currentSession) applyHistory(c); else if(!c&&(id!==currentSession||!E.log.childElementCount)) showSessionLoading(id); tx({t:'open',sessionId:id}); }
+      const listed=currentMachine==='all'&&sessions.find(x=>x.id===id&&(!runnerId||x.runnerId===runnerId)), rid=runnerId||(listed&&listed.runnerId)||selectedRunner();
+      if(rid!==routedMachine){ routedMachine=rid; tx({t:'runner',runnerId:rid}); }
+      const key=sessionStateKey(id,rid), same=id===currentSession&&rid===currentSessionRunner;
+      openingSession=key; const c=histCache.get(key); if(c&&!same) applyHistory(c); else if(!c&&(!same||!E.log.childElementCount)) showSessionLoading(id,rid); tx({t:'open',sessionId:id}); }
     function applyHistory(m){
       // NÃO limpar a fila da sessão anterior — ela continua válida quando o turno dela terminar.
       // Rascunho do composer é POR SESSÃO: ao TROCAR de sessão guarda o texto não-enviado da anterior
       // e restaura o da nova; um refresh da MESMA sessão nunca mexe no que você está digitando agora.
-      const prevSession=currentSession, switchingSession=prevSession!==m.sessionId;
-      if(switchingSession && prevSession!=null){ draftBySession[prevSession]=E.input.value; saveDrafts(); stashAttachments(prevSession); }
-      currentSession=m.sessionId; lastByMachine[currentMachine]=m.sessionId; unread.delete(m.sessionId); updateOfflineBanner();
+      const targetRunner=m.runnerId||selectedRunner(), prevSession=currentSession, prevRunner=currentSessionRunner, switchingSession=prevSession!==m.sessionId||prevRunner!==targetRunner;
+      if(switchingSession && prevSession!=null){ draftBySession[sessionStateKey(prevSession,prevRunner)]=E.input.value; saveDrafts(); stashAttachments(prevSession,prevRunner); }
+      currentSession=m.sessionId; currentSessionRunner=targetRunner; lastByMachine[currentMachine]=m.sessionId; unread.delete(sessionStateKey(m.sessionId,targetRunner)); updateOfflineBanner();
       currentAgent=(m.session||{}).agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null; lastRouteReason='';   // modelo/esforço reais da sessão da máquina (só nativas mandam)
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
@@ -239,7 +288,7 @@
       updateStopStatus();   // reflete o "parando…" da sessão ATUAL (por sessão, não global)
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
       if(m.total&&m.total>msgs.length){ const n=document.createElement('div'); n.className='msg err'; n.textContent=`— mostrando as últimas ${msgs.length} de ${m.total} mensagens —`; frag.appendChild(n); }
-      msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); E.log.appendChild(frag); if(busy(m.sessionId)) showPending(); forceBottom();
+      msgs.forEach(mm=>frag.appendChild(buildMsgEl(mm))); rememberHistoryActivity(msgs); E.log.appendChild(frag); if(busy(m.sessionId)) showPending(); forceBottom();
       if(getRestorable(m.sessionId)){
         // Só é "não enviada" de verdade se a ÚLTIMA mensagem do histórico ainda for do usuário (sem
         // resposta). Se já tem resposta (ex.: o hub reconciliou com o transcript nativo depois de um
@@ -247,14 +296,14 @@
         const lastMsg=msgs[msgs.length-1];
         if(lastMsg && lastMsg.role==='assistant') clearRestorable(m.sessionId); else showRestoreBar(m.sessionId);
       }
-      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); E.filePanel.classList.add('hidden'); lastInputTokens=(m.session||{}).inputTokens||0; lastContextWindow=(m.session||{}).contextWindowTokens||0; sessCost=(m.session||{}).sessionCost||0; sessUsage=(m.session||{}).sessionUsage||null; updUsagePill(); renderRecents(); closePop();
+      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); closeFilePanel(); lastInputTokens=(m.session||{}).inputTokens||0; lastContextWindow=(m.session||{}).contextWindowTokens||0; sessCost=(m.session||{}).sessionCost||0; sessUsage=(m.session||{}).sessionUsage||null; updUsagePill(); renderRecents(); closePop();
       curNativeWritable=curNative&&!!(m.session||{}).writable; const ro=curNative&&!curNativeWritable;
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = curNativeWritable ? '🔗 Sessão da máquina ('+esc(currentAgent||'')+') — você pode continuar por aqui' : '👁 Sessão nativa (somente leitura no Jarvis)';
       E.input.disabled=ro; E.sendBtn.disabled=ro; E.mic.disabled=ro; E.input.placeholder=ro?'Sessão nativa — somente leitura':'Fale ou digite…';
-      if(switchingSession){ E.input.value=draftBySession[m.sessionId]||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(m.sessionId); }
+      if(switchingSession){ E.input.value=sessionValue(draftBySession,m.sessionId,targetRunner)||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(m.sessionId,targetRunner); }
       curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession);
-      { const savedAsk=getAsk(m.sessionId); if(savedAsk&&savedAsk.length&&!askActive) renderAskCard(savedAsk); }   // restaura decision-card pendente (lock/reload)
+      { const savedAsk=getAsk(m.sessionId,sessionRunner()); if(savedAsk&&savedAsk.length&&!askActive) renderAskCard(savedAsk,sessionRunner()); }   // restaura decision-card pendente (lock/reload)
       if(!stagingActive) tx({t:'stage_state',sessionId:m.sessionId});   // restaura painel de refino de voz, se houver (lock/reload)
       refreshComposer();
     }
@@ -277,12 +326,12 @@
     let askActive=null, askVoice=false, askPendingVoice=false, ttsPlaying=false; // wizard de decisão (+voz)
     let stagingActive=false, curTtsAudio=null; // voz ambiente: refino por cima do agente + handle do TTS p/ interromper
     function stopTTS(){ try{ if(curTtsAudio){ curTtsAudio.pause(); curTtsAudio=null; } }catch(e){} ttsPlaying=false; }
-    function renderAskCard(questions){
+    function renderAskCard(questions,runnerId){
       if(!Array.isArray(questions)||!questions.length) return;
       E.log.querySelectorAll('.askcard').forEach(c=>c.remove());  // idempotente: nunca empilha (resend no open)
       const answers=questions.map(()=>({sel:new Set(), other:'', otherSel:false}));
       const card=document.createElement('div'); card.className='msg bot askcard'; E.log.appendChild(card);
-      const st={questions,answers,step:0,card};
+      const st={questions,answers,step:0,card,runnerId:runnerId||sessionRunner()};
       function draw(){ const q=questions[st.step], a=answers[st.step]; card.innerHTML=''; card.classList.toggle('min',!!st.min);
         const hd=document.createElement('div'); hd.className='askhd';
         const lbl=document.createElement('span'); lbl.textContent=`Passo ${st.step+1}/${questions.length}${q.header?' · '+q.header:''}`;
@@ -320,7 +369,7 @@
       }
       function answerText(i){ const q=questions[i],a=answers[i]; const picks=[...a.sel].map(x=>q.options[x].label); if(a.otherSel && a.other.trim())picks.push('Outros: '+a.other.trim()); return picks.join('; '); }
       function submit(){ const text='Decisões escolhidas:\n'+questions.map((q,i)=>`- ${q.question}\n  → ${answerText(i)}`).join('\n');
-        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false; clearAsk(currentSession); tx({t:'ask_clear',sessionId:currentSession});
+        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false; clearAsk(currentSession,st.runnerId); tx({t:'ask_clear',sessionId:currentSession});
         sendMsgTo(currentSession, text); if(wasVoice) lastWasVoice=true; }  // mantém o modo voz para a próxima decisão
       st.draw=draw; st.submit=submit; st.voice=lastWasVoice; askActive=st; draw(); refreshComposer();
       // Se a decisão veio de uma fala, conduz por VOZ (step a step). Espera a fala da resposta
@@ -381,8 +430,9 @@
       const rec={wrap,body,title,countEl,open,count:0,preview:null,previewText:''}; subAgents[id]=rec; if(executionId)bindInlineWork(rec,executionId); return rec; }
     function bindInlineWork(rec,executionId){ if(!rec||!rec.open||!executionId)return; rec.wrap.dataset.executionId=executionId; rec.open.classList.add('ready'); rec.open.onclick=e=>{e.stopPropagation();openWorkPanel();openWorkNode(executionId);}; const n=workNodes.get(executionId);if(n){if(n.title)rec.title.textContent=n.title;rec.wrap.dataset.state=n.state||'unknown';const state=rec.wrap.querySelector('.sastate');if(state)state.textContent=workStateLabel(n.state).toLowerCase();} }
     function streamTool(name,summary,toolId,parentId,path,adds,dels,rows,detail,status,error,executionId){ if(!strFlow)streamStartUI();
-      const liveKey=toolId?(parentId||'root')+'\0'+toolId:'';
-      if(liveKey&&status!=='started'&&liveTools[liveKey]){ const row=liveTools[liveKey]; setToolDone(row); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} autoScroll(); return; }
+      const readKey=readToolKey(name,path,summary,detail,parentId);
+      const liveKey=readKey||(toolId?(parentId||'root')+'\0'+toolId:'');
+      if(liveKey&&liveTools[liveKey]){ const row=liveTools[liveKey]; if(summary){row.dataset.sum=summary;const ttl=row.querySelector('.ttl');if(ttl)ttl.textContent=(status&&status!=='started'?pastify(name,summary):summary)||name||'';} if(status&&status!=='started')setToolDone(row); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} autoScroll(); return; }
       if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); flipDone(sa.body); const row=toolRowEl(name,summary,path,adds,dels,status!=='started',rows,detail); sa.body.appendChild(row); if(liveKey)liveTools[liveKey]=row; sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
       if((name==='Task'||name==='Agent')&&toolId){ flipDone(strFlow); ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente',executionId); autoScroll(); return; }
       closeTextBlock(); flipDone(strFlow); const row=toolRowEl(name,summary,path,adds,dels,status!=='started',rows,detail); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} strFlow.appendChild(row); if(liveKey)liveTools[liveKey]=row; autoScroll(); }
@@ -411,27 +461,27 @@
       strEl.appendChild(f);
       if(usage){ E.usage.textContent=usageSummary(usage); const context=usage.contextTokens||usage.inputTokens; if(context){lastInputTokens=context; if(usage.contextWindowTokens)lastContextWindow=usage.contextWindowTokens; updUsagePill();} }
       streamFinish(); autoScroll(); }
-    function streamCancelled(){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
-      if(currentSession) delete stopping[currentSession]; updateStopStatus();   // parou → limpa o "parando…" da sessão
+    function streamCancelled(reason){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
+      if(currentSession) delete stopping[sessionStateKey(currentSession,currentSessionRunner)]; updateStopStatus();   // parou → limpa o "parando…" da sessão
       if(cleanCancel){ cleanCancel=false; if(strEl)strEl.remove(); streamFinish(); autoScroll(); return; }  // cancel limpo: a msg voltou ao input → sem bloco "interrompido"
       if(strEl){ const head=strEl.querySelector('.strhead'); if(head) head.remove();
         strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone);
-        const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ interrompido'; strEl.appendChild(n);
+        const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ '+(reason||'interrompido'); strEl.appendChild(n);
         streamFinish(); }
-      else addErr('⏹ interrompido'); autoScroll(); }
+      else addErr('⏹ '+(reason||'interrompido')); autoScroll(); }
     function streamErr(message){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending(); if(strEl){ const head=strEl.querySelector('.strhead'); if(head)head.remove(); strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone); const n=document.createElement('div'); n.className='usage err'; n.textContent='⚠ '+(message||'Falha na execução'); strEl.appendChild(n); streamFinish(); } else addErr(message||'Falha na execução'); autoScroll(); }
     function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
-      (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
+      (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}" data-runner="${esc(x.runnerId||'')}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
         (x.why||x.progress?`<br><span class="mut">${esc(x.why||x.progress||'')}</span>`:'')+
-        (m.action?`<br><button type="button" class="exec ghost" data-id="${esc(x.id)}" data-action="${esc(m.action)}">▶ executar ação</button>`:'')+`</div>`; });
+        (m.action?`<br><button type="button" class="exec ghost" data-id="${esc(x.id)}" data-runner="${esc(x.runnerId||'')}" data-action="${esc(m.action)}">▶ executar ação</button>`:'')+`</div>`; });
       return h; }
     function addSearchCard(m){ const d=document.createElement('div'); d.className='msg bot'; d.innerHTML=searchCardHtml(m); E.log.appendChild(d); autoScroll(); if(m.audio) playTTS(m.audio); }
     function renderSearchInto(c,m){ c.innerHTML=searchCardHtml(m); if(m.audio) playTTS(m.audio); }
     // Filtro literal (busca digitada): lista de sessões cujo título/conversa contém os termos. Sem áudio.
     function hitsHtml(m){ const hits=m.hits||[]; const more=(m.done===false);
       if(!hits.length) return more?'<div class="mut">Buscando…</div>':'<div class="mut">Nada encontrado para “'+esc(m.query)+'”.</div>';
-      return '<div class="mut" style="margin-bottom:6px">'+hits.length+' sessão(ões)'+(more?' · buscando mais…':'')+'</div>'+hits.map(x=>`<div class="match" data-id="${esc(x.id)}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
+      return '<div class="mut" style="margin-bottom:6px">'+hits.length+' sessão(ões)'+(more?' · buscando mais…':'')+'</div>'+hits.map(x=>`<div class="match" data-id="${esc(x.id)}" data-runner="${esc(x.runnerId||'')}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
         (x.snippet && x.where==='content'?`<br><span class="mut">${esc(x.snippet)}</span>`:'')+
         (x.cwd?`<br><span class="mut" style="font-size:11px;opacity:.7">${esc(base(x.cwd))}</span>`:'')+`</div>`).join('')+(more?'<div class="mut" style="margin-top:8px;opacity:.7">🔎 buscando em mais sessões…</div>':''); }
     function renderHits(c,m){ c.innerHTML=hitsHtml(m); }
@@ -465,7 +515,9 @@
     // curFileDiffable = há um diff pra mostrar (aberto por uma edição, numa sessão). Guardado pra
     // o toggle poder recarregar o outro modo sem reabrir.
     let curFilePath='', curFileView='full', curFileDiffable=false;
-    function openFile(path,action,opts){ if(E.workPanel&&!E.workPanel.classList.contains('hidden')&&!(opts&&opts.keepWork))closeWorkPanel(); E.filePanel.classList.remove('hidden'); E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
+    function setWorkFileSplit(on){ const app=document.getElementById('app'); if(app)app.classList.toggle('work-file-split',!!on); }
+    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); }
+    function openFile(path,action,opts){ const keep=!!(opts&&opts.keepWork); if(E.workPanel&&!E.workPanel.classList.contains('hidden')&&!keep)closeWorkPanel(); setWorkFileSplit(keep); E.filePanel.classList.remove('hidden'); E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
       curFilePath=path; curFileDiffable=(action==='edit' && !!currentSession); curFileView=curFileDiffable?'diff':'full';
       renderFileViewBtns(); loadFileView(); }
     function loadFileView(){ E.fileStat.textContent=''; E.fileMeta.textContent=curFilePath; E.fileBody.className='filebody plain'; E.fileBody.textContent='Carregando…';
@@ -528,12 +580,13 @@
 
     // Ao enviar, a sessão vira a MAIS RECENTE → sobe pro topo do menu na hora (o servidor confirma depois).
     let lastBump=null;
-    function bumpSession(sid){ if(!sid)return; lastBump={sid,ts:Date.now()}; const i=sessions.findIndex(s=>s.id===sid); if(i>0){ const [s]=sessions.splice(i,1); sessions.unshift(s); renderRecents(); } }
+    function bumpSession(sid){ if(!sid)return; const runner=sessionRunner(); lastBump={sid,runner,ts:Date.now()}; const i=sessions.findIndex(s=>s.id===sid&&(currentMachine!=='all'||(s.runnerId||'local')===runner)); if(i>0){ const [s]=sessions.splice(i,1); sessions.unshift(s); renderRecents(); } }
     function renderRecents(){ E.recents.innerHTML='';
-      if(activeRuns.length){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+activeRuns.length+' rodando agora'; E.recents.appendChild(h); }
+      const visibleRuns=currentMachine==='all'?sessions.filter(s=>(activeRunsByRunner[s.runnerId||'local']||[]).includes(s.id)).length:activeRuns.length;
+      if(visibleRuns){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+visibleRuns+' rodando agora'; E.recents.appendChild(h); }
       secCounts();
-      sessions.slice(0,shown).forEach(s=>{ const run=activeRuns.includes(s.id), un=unread.has(s.id)&&!run&&s.id!==currentSession;
-      const d=document.createElement('div'); d.className='item'+(s.id===currentSession?' active':'')+(run?' running':'')+(un?' unread':'');
+      sessions.slice(0,shown).forEach(s=>{ const runner=s.runnerId||selectedRunner(), run=(activeRunsByRunner[runner]||[]).includes(s.id), un=unread.has(sessionStateKey(s.id,runner))&&!run&&!(s.id===currentSession&&runner===currentSessionRunner);
+      const d=document.createElement('div'); d.className='item'+(s.id===currentSession&&runner===currentSessionRunner?' active':'')+(run?' running':'')+(un?' unread':'');
       const nat=isNative(s.id);
       // "nativo" NÃO vai mais na listagem (encurtava o nome da sessão); a marca de nativo continua no tooltip (title) do item.
       const mb=(currentMachine==='all'&&s.machine)?`<span class="rmachine" style="--mh:${machineHue(s.machine)}" title="Máquina: ${esc(s.machine)}">${esc(s.machine)}</span>`:'';
@@ -553,7 +606,7 @@
         setTimeout(()=>{ if(del.isConnected){ del.textContent='🗑'; del.disabled=false; toast(t('tDelNoResp')); } }, 6000); };
       d.appendChild(del);
       d.title=`${s.title||'Sessão'}\n— ${s.agent||''}${nat?' · nativo (somente leitura)':''}\n${s.cwd||''}`;
-      d.onclick=()=>{ openSession(s.id); closeSide(); };
+      d.onclick=()=>{ openSession(s.id,runner); closeSide(); };
       E.recents.appendChild(d); });
       E.moreBtn.classList.toggle('hidden', sessions.length<=shown); }
     E.moreBtn.onclick=()=>{ shown+=10; renderRecents(); };
@@ -590,9 +643,9 @@
       E.machineBar.appendChild(menu);
     }
     function selectMachine(id){ const mm=document.getElementById('mmenu'); if(mm)mm.classList.add('hidden'); if(id===currentMachine) return;
-      if(currentSession!=null){ draftBySession[currentSession]=E.input.value; saveDrafts(); }
-      stashAttachments(currentSession);
-      currentMachine=id; restoringMachine=false; try{localStorage.setItem('jarvis_machine',id);}catch{} currentSession=null; curStarted=false; attachments=[]; renderAttach(); clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); renderMachines();
+      if(currentSession!=null){ draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; saveDrafts(); }
+      stashAttachments(currentSession,currentSessionRunner);
+      currentMachine=id; restoringMachine=false; openingSession=null; try{localStorage.setItem('jarvis_machine',id);}catch{} currentSession=null; currentSessionRunner=id==='all'?(routedMachine||'local'):id; activeRuns=activeRunsByRunner[currentSessionRunner]||[]; curStarted=false; attachments=[]; renderAttach(); clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); renderMachines();
       if(id==='all'){ tx({t:'listAll'}); } else { routedMachine=id; tx({t:'runner',runnerId:id}); } updateOfflineBanner(); }
     // Per-session offline indicator: a persistent banner when the machine this session lives on is
     // offline, so the user knows WHY a turn won't go through (distinct from the transient "interrompido"
@@ -632,8 +685,8 @@
     // Modelo/esforço REAIS que a sessão nativa (criada na máquina) reporta — o servidor lê do transcript.
     // Só as sessões nativas mandam isso; sessão gerenciada deixa null e cai no pref/default como antes.
     let sessDeclModel=null, sessDeclEffort=null, lastRouteReason='';
-    function routeAutoFor(sid){ const p=sessionPrefs[sid]||{}; return {agent:p.agent===AUTO_AGENT,model:p.model===AUTO_MODEL,effort:p.effort===AUTO_EFFORT}; }
-    function syncModelEffort(){ const c=capsFor(currentAgent); const pref=sessionPrefs[currentSession]||{};
+    function routeAutoFor(sid){ const p=sessionValue(sessionPrefs,sid,sessionRunner())||{}; return {agent:p.agent===AUTO_AGENT,model:p.model===AUTO_MODEL,effort:p.effort===AUTO_EFFORT}; }
+    function syncModelEffort(){ const c=capsFor(currentAgent); const pref=sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{};
       // Prioridade do modelo: escolha explícita do usuário nesta sessão > o que a sessão realmente usa
       // (nativa) > default global salvo > default do agente. Assim uma sessão da máquina abre já com o
       // modelo/esforço dela, mas se você trocar pelo seletor a SUA escolha manda dali em diante.
@@ -646,7 +699,7 @@
       curEffort = pref.effort===AUTO_EFFORT?null:(okE(pref.effort)?pref.effort : (okE(sessDeclEffort)?sessDeclEffort : (okE(cfg.effort)?cfg.effort : ((modelObj(currentAgent,curModel)||{}).defaultEffort||null))));
       renderControls(); }
     function renderControls(){
-      const pref=sessionPrefs[currentSession]||{}, agentAuto=!curStarted&&!curNative&&pref.agent===AUTO_AGENT;
+      const pref=sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}, agentAuto=!curStarted&&!curNative&&pref.agent===AUTO_AGENT;
       E.agentName.textContent=(agentAuto?'Automático · ':'')+(currentAgent||'—');
       E.cwdName.textContent=base(curCwd)||'—';
       const c=capsFor(currentAgent), control=modelControlOf(c), perTurn=control==='per_turn';
@@ -677,7 +730,7 @@
       if(currentMachine==='all'){ const mid=await pickMachine(); if(!mid) return; target=mid; if(mid!==routedMachine){ routedMachine=mid; tx({t:'runner',runnerId:mid}); } }
       const pm=machines.find(x=>x.id===target); const avail=(pm&&Array.isArray(pm.agents)&&pm.agents.length)?pm.agents:machineAgents();
       let agent=cfg.agent||currentAgent||(caps[0]||{}).name; if(!avail.includes(agent)) agent=avail[0]||agent;
-      const cwd=target==='local'?(cfg.lastCwd||''):''; tx({t:'new',agent,cwd}); closeSide(); };
+      const cwd=target==='local'?(cfg.lastCwd||''):''; creatingSession=true; tx({t:'new',agent,cwd}); closeSide(); };
 
     // ---------- search (input com foco imediato; sem prompt) ----------
     E.searchBtn.onclick=()=>openSearch();
@@ -786,7 +839,7 @@
         if(p.fiveHour)h+=pctBar(p.fiveHour); if(p.sevenDay)h+=pctBar(p.sevenDay); (p.extra||[]).forEach(e=>{h+=`<div class="mut" style="font-size:10.5px">${esc(e.label)}</div>${pctBar(e)}`;}); });
       const ph=m.parseHealth; if(ph&&ph.emptyNonEmptyFiles>0){ h+=`<div style="margin-top:10px;color:#f59e0b;font-size:11.5px">⚠ ${ph.emptyNonEmptyFiles} transcript(s) não-vazios parsearam 0 mensagens — possível mudança de formato do CLI.</div>`; }
       E.fleetBody.innerHTML=h; }
-    E.fileClose.onclick=()=>E.filePanel.classList.add('hidden');
+    E.fileClose.onclick=closeFilePanel;
     E.fileCopy.onclick=()=>{ const dl=E.fileBody.querySelectorAll('.dline'); const t=dl.length?[...dl].map(x=>x.textContent).join('\n'):(E.fileBody.textContent||''); (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>{E.fileCopy.textContent='Copiado ✓';setTimeout(()=>E.fileCopy.textContent='Copiar',1500);}).catch(()=>{}); };
 
     // ---- segurança: dispositivos & convites (dono) ----
@@ -936,23 +989,32 @@
       var go=async function(){ if(await window.__jarvisNative.unlock()){ if(bioOverlay){ bioOverlay.remove(); bioOverlay=null; } } };
       var b=bioOverlay.querySelector('#bioUnlockBtn'); if(b) b.onclick=go; go();
     }
-    let searchMode='literal', searchTimer=null;
+    let searchMode='literal', semanticSearchScope='project', searchTimer=null;
     function setSearchMode(m){ searchMode=m; E.smLiteral.classList.toggle('on',m==='literal'); E.smSemantic.classList.toggle('on',m==='semantic');
+      E.semanticScope.classList.toggle('hidden',m!=='semantic');
       E.searchInput.placeholder=m==='semantic'?'Buscar por SIGNIFICADO (ex.: onde mexi no refresh de token)…':'Filtrar por título ou conteúdo… (ex.: a2p)'; E.searchResults.innerHTML=''; }
     E.smLiteral.onclick=()=>setSearchMode('literal'); E.smSemantic.onclick=()=>setSearchMode('semantic');
+    function setSemanticScope(scope){ semanticSearchScope=scope==='all'?'all':'project'; E.memScopeProject.classList.toggle('on',semanticSearchScope==='project'); E.memScopeAll.classList.toggle('on',semanticSearchScope==='all'); E.searchResults.innerHTML=''; }
+    E.memScopeProject.onclick=()=>setSemanticScope('project'); E.memScopeAll.onclick=()=>setSemanticScope('all');
     E.memReindex.onclick=()=>{ tx({t:'memory_reindex'}); toast(t('tMemReindexing')); };
     function openSearch(){ E.searchInput.value=''; setSearchMode('literal'); if(E.memReindex) E.memReindex.classList.toggle('hidden',!(authUser&&authUser.role==='owner')); E.searchModal.classList.remove('hidden'); closeSide(); setTimeout(()=>E.searchInput.focus(),30); }
     function runSearch(){ const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; }
       E.searchResults.innerHTML=searchMode==='semantic'?'<div class="mut">Buscando por significado (pode levar alguns segundos)…</div>':'<div class="mut">Buscando…</div>';
-      tx(searchMode==='semantic'?{t:'memory_search',query:q}:{t:'search',query:q}); }
+      tx(searchMode==='semantic'?{t:'memory_search',query:q,sessionId:currentSession,scope:semanticSearchScope}:{t:'search',query:q}); }
     E.searchGo.onclick=runSearch;
     E.searchClose.onclick=()=>E.searchModal.classList.add('hidden');
     E.searchInput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(searchTimer); runSearch(); } };
     // filtra ao digitar (debounce) — a 1ª busca parseia as sessões nativas, refinar o termo é instantâneo
     E.searchInput.oninput=()=>{ clearTimeout(searchTimer); const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; } if(searchMode==='semantic') return; searchTimer=setTimeout(runSearch,300); };
     E.searchResults.addEventListener('click',(e)=>{
-      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort,auto:routeAutoFor(exec.dataset.id)}); openSession(exec.dataset.id); E.searchModal.classList.add('hidden'); return; }
-      const match=e.target.closest('.match'); if(match){ openSession(match.dataset.id); E.searchModal.classList.add('hidden'); } });
+      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); if(exec.dataset.runner){ routedMachine=exec.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort,auto:routeAutoFor(exec.dataset.id)}); openSession(exec.dataset.id,exec.dataset.runner); E.searchModal.classList.add('hidden'); return; }
+      const match=e.target.closest('.match'); if(match){ if(match.dataset.runner){ routedMachine=match.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(match.dataset.id,match.dataset.runner); E.searchModal.classList.add('hidden'); } });
+
+    let memoryPreviewToken='', memoryApplyToken='', memoryPreviewNote='', memoryApplyNote='';
+    function showMemoryPreview(m){ memoryPreviewToken=m.token||''; memoryApplyToken=''; memoryPreviewNote=m.note||''; memoryApplyNote=''; E.memoryTarget.textContent=m.target||'—'; E.memoryNote.textContent=m.appendText||m.note||'';
+      E.memoryMeta.textContent=(m.mode==='jarvis'?'Privada para seu usuário':'Arquivo de instruções do projeto')+' · expira em 5 minutos'; E.memoryCancel.disabled=false; E.memoryApply.disabled=!memoryPreviewToken; E.memoryModal.classList.remove('hidden'); }
+    E.memoryCancel.onclick=()=>{ if(!memoryPreviewToken)return; E.memoryCancel.disabled=true; tx({t:'memory_cancel',token:memoryPreviewToken}); };
+    E.memoryApply.onclick=()=>{ if(!memoryPreviewToken)return; memoryApplyToken=memoryPreviewToken; memoryApplyNote=memoryPreviewNote; memoryPreviewToken=''; E.memoryCancel.disabled=true; E.memoryApply.disabled=true; tx({t:'memory_apply',token:memoryApplyToken}); };
 
     // ---------- footer popovers (pills clicáveis) ----------
     let popMode=null;
@@ -967,21 +1029,21 @@
     const ph=(t)=>{ const d=document.createElement('div'); d.className='ph'; d.textContent=t; return d; };
 
     function machineAgents(){ const id=currentMachine==='all'?routedMachine:currentMachine, m=machines.find(x=>x.id===id); return m&&Array.isArray(m.agents)?m.agents:caps.map(c=>c.name); }
-    function buildAgentPop(p){ p.appendChild(ph('Agente / IA')); const avail=machineAgents(), pref=sessionPrefs[currentSession]||{};
-      if(!curStarted&&!curNative){ const a=document.createElement('div'); a.className='opt'+(pref.agent===AUTO_AGENT?' sel':''); a.innerHTML='✨ Automático'+(pref.agent===AUTO_AGENT?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const np=Object.assign({},pref,{agent:AUTO_AGENT,model:AUTO_MODEL,effort:AUTO_EFFORT}); sessionPrefs[currentSession]=np; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); }
+    function buildAgentPop(p){ p.appendChild(ph('Agente / IA')); const avail=machineAgents(), pref=sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}, prefKey=sessionStateKey(currentSession,currentSessionRunner);
+      if(!curStarted&&!curNative){ const a=document.createElement('div'); a.className='opt'+(pref.agent===AUTO_AGENT?' sel':''); a.innerHTML='✨ Automático'+(pref.agent===AUTO_AGENT?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const np=Object.assign({},pref,{agent:AUTO_AGENT,model:AUTO_MODEL,effort:AUTO_EFFORT}); sessionPrefs[prefKey]=np; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); }
       machineCaps().forEach(c=>{ const ok=avail.includes(c.name); const o=document.createElement('div'); o.className='opt'+(c.name===currentAgent?' sel':'')+(ok?'':' disabled');
         const state=c.support==='limited'?'limitado':c.support==='unverified'?'não verificado':c.support==='unauthenticated'?'sem login':c.support==='not_installed'?'não instalado':''; o.title=c.reason||'';
         o.innerHTML='🤖 '+esc(c.label||c.name)+(c.name===currentAgent?'<span class="r">atual</span>':(!ok?'<span class="r">indisponível</span>':(state?'<span class="r">'+esc(state)+'</span>':'')));
-        if(ok) o.onclick=()=>{ closePop(); const np=Object.assign({},pref,{agent:c.name}); sessionPrefs[currentSession]=np; saveSessionPrefs(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); else renderControls(); };
+        if(ok) o.onclick=()=>{ closePop(); const np=Object.assign({},pref,{agent:c.name}); sessionPrefs[prefKey]=np; saveSessionPrefs(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); else renderControls(); };
         p.appendChild(o); }); }
 
-    function buildModelPop(p){ const c=capsFor(currentAgent), control=modelControlOf(c); p.appendChild(ph('Modelo')); if(control!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=control==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } { const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='✨ Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const pref=Object.assign({},sessionPrefs[currentSession]); pref.model=AUTO_MODEL; sessionPrefs[currentSession]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
+    function buildModelPop(p){ const c=capsFor(currentAgent), control=modelControlOf(c), prefKey=sessionStateKey(currentSession,currentSessionRunner); p.appendChild(ph('Modelo')); if(control!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=control==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } { const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='✨ Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.model=AUTO_MODEL; sessionPrefs[prefKey]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
-      o.onclick=()=>{ closePop(); const pref=Object.assign({},sessionPrefs[currentSession]), efs=effortsFor(currentAgent,mm.id); pref.model=mm.id; if(pref.effort&&pref.effort!==AUTO_EFFORT&&!efs.includes(pref.effort))pref.effort=AUTO_EFFORT; sessionPrefs[currentSession]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(o); }); }
+      o.onclick=()=>{ closePop(); const pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}), efs=effortsFor(currentAgent,mm.id); pref.model=mm.id; if(pref.effort&&pref.effort!==AUTO_EFFORT&&!efs.includes(pref.effort))pref.effort=AUTO_EFFORT; sessionPrefs[prefKey]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(o); }); }
 
     function buildEffortPop(p){ const efs=effortsFor(currentAgent,curModel); p.appendChild(ph('Esforço · '+(currentAgent||'')));
       if(!efs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='sem níveis para este modelo'; p.appendChild(d); return; }
-      const saveEffort=(value)=>{ curEffort=value; const pref=Object.assign({},sessionPrefs[currentSession]); pref.effort=value==null?AUTO_EFFORT:value; sessionPrefs[currentSession]=pref; saveSessionPrefs(); renderControls(); };
+      const saveEffort=(value)=>{ curEffort=value; const key=sessionStateKey(currentSession,currentSessionRunner), pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.effort=value==null?AUTO_EFFORT:value; sessionPrefs[key]=pref; saveSessionPrefs(); renderControls(); };
       // Automático is a routing mode, not a point below "Mínimo" on the effort scale.
       // Keep it separate so the slider remains a truthful low → high representation.
       const auto=document.createElement('button'); auto.type='button'; auto.className='opt effort-auto'+(curEffort==null?' sel':''); auto.setAttribute('aria-pressed',String(curEffort==null));
@@ -1245,8 +1307,8 @@
     // reflete o estado da sessão atual. (Não mexe nos status de voz listening/speaking.)
     const stopping={};
     function updateStopStatus(){
-      if(currentSession && stopping[currentSession]) status('busy',t('spStopping'));
-      else if(currentSession&&busy(currentSession)&&!askActive&&!askingSids.has(currentSession)) status('busy','Jarvis trabalhando...');
+      if(currentSession && stopping[sessionStateKey(currentSession,currentSessionRunner)]) status('busy',t('spStopping'));
+      else if(currentSession&&busy(currentSession)&&!askActive&&!askingSids.has(askStateKey(currentSession))) status('busy','Jarvis trabalhando...');
       else if(E.status.className==='busy') status('');
     }
     // trava global de operação de voz (resumo/digest): só 1 por vez, independente do chat.
@@ -1280,7 +1342,7 @@
     function workChildren(id){ return [...workNodes.values()].filter(n=>n.parentExecutionId===id); }
     function workDescendants(id){ const out=[], q=workChildren(id); while(q.length){ const n=q.shift(); if(!n||out.some(x=>x.executionId===n.executionId))continue; out.push(n); q.push(...workChildren(n.executionId)); } return out; }
     function workSyncInlineNode(n){ if(!n||!n.executionId)return; document.querySelectorAll(`.subagent[data-execution-id="${CSS.escape(n.executionId)}"]`).forEach(el=>{if(n.title){const title=el.querySelector('.satitle');if(title)title.textContent=n.title;}el.dataset.state=n.state||'unknown';const state=el.querySelector('.sastate');if(state)state.textContent=workStateLabel(n.state).toLowerCase();}); }
-    function workMaybeInlineNode(n){ const runner=currentMachine==='all'?routedMachine:currentMachine;if(!strFlow||!n||!n.parentExecutionId||n.sessionId!==currentSession||n.runnerId!==runner)return;const rec=ensureSubAgent(n.providerExecutionId||n.executionId,n.title||n.role||'sub-agente',n.executionId);workSyncInlineNode(n);return rec; }
+    function workMaybeInlineNode(n){ const runner=currentMachine==='all'?routedMachine:currentMachine;if(!strFlow||!n||!n.parentExecutionId||n.sessionId!==currentSession||n.runnerId!==runner)return;const existing=[...document.querySelectorAll('.subagent')].find(el=>el.dataset.executionId===n.executionId),id=existing&&existing.dataset.id||n.providerExecutionId||n.executionId;const rec=ensureSubAgent(id,n.title||n.role||'sub-agente',n.executionId);workSyncInlineNode(n);return rec; }
     function workSort(a,b){ const rank={waiting_input:0,running:1,queued:2,failed:3,orphaned:4,unknown:5,succeeded:6,cancelled:7}; return (rank[a.state]??8)-(rank[b.state]??8) || (workNum(b.endedAt||b.startedAt||b.queuedAt)-workNum(a.endedAt||a.startedAt||a.queuedAt)); }
     function workMatches(n){
       if(E.workMachine.value&&n.runnerId!==E.workMachine.value)return false;
@@ -1313,7 +1375,20 @@
     function workBreadcrumb(n){ const out=[],seen=new Set(); let cur=n; while(cur&&!seen.has(cur.executionId)){seen.add(cur.executionId);out.unshift(cur.title||cur.executionId);cur=cur.parentExecutionId&&workNodes.get(cur.parentExecutionId);} return out.join(' › '); }
     function workEventText(ev){ if(!ev)return''; if(ev.kind==='message'||ev.kind==='summary'||ev.kind==='thinking'||ev.kind==='diagnostic')return ev.text||ev.message||''; if(ev.kind==='state_changed')return `${workStateLabel(ev.from)} → ${workStateLabel(ev.to)}${ev.reason?' · '+ev.reason:''}`; if(ev.kind==='input_requested')return ev.summary||'Aguardando sua resposta'; if(ev.kind==='input_resolved')return `Intervenção ${ev.state||'resolvida'}`; if(ev.kind==='artifact')return (ev.artifact&&ev.artifact.name)||'Arquivo publicado'; if(ev.kind==='tool'){const x=ev.tool||{};return x.summary||x.name||'Ferramenta';} if(ev.kind==='truncated')return `${ev.dropped||0} eventos omitidos · ${ev.reason||'limite de retenção'}`; if(ev.kind==='agent_event'){ const a=ev.event||{}; return a.text||(a.tool&&(a.tool.summary||a.tool.name))||a.kind||'Atividade do agente'; } if(ev.kind==='usage')return 'Métricas atualizadas'; return ev.kind||'Evento'; }
     function workEventIcon(ev){ return ({message:'💬',summary:'📝',thinking:'◔',state_changed:'●',input_requested:'⚠',input_resolved:'✓',artifact:'📄',usage:'◔',truncated:'⚠',diagnostic:'⚠',agent_event:'🔧',tool:'🔧'})[ev&&ev.kind]||'·'; }
-    function workEventHtml(ev){ const text=workEventText(ev), when=ev&&ev.at?new Date(ev.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}):''; return `<div class="workevent"><div class="wetop"><span>${workEventIcon(ev)}</span><b>${esc(String(ev.kind||'evento'))}</b><span>${esc(when)}</span></div>${text?`<div class="wetext">${esc(String(text))}</div>`:''}</div>`; }
+    function workEventHtml(ev){ const text=workEventText(ev), when=ev&&ev.at?new Date(ev.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}):''; if(ev&&(ev.kind==='message'||ev.kind==='summary'))return `<div class="msg bot">${md(String(text||''))}</div>`; return `<div class="workevent"><div class="wetop"><span>${workEventIcon(ev)}</span><b>${esc(String(ev.kind||'evento'))}</b><span>${esc(when)}</span></div>${text?`<div class="wetext">${esc(String(text))}</div>`:''}</div>`; }
+    function workActivityFromEvent(ev){
+      if(!ev)return null;
+      if(ev.kind==='message'||ev.kind==='summary')return {schemaVersion:1,kind:'text_block',text:ev.text||'',executionId:ev.executionId};
+      if(ev.kind==='thinking')return {schemaVersion:1,kind:'thinking',text:ev.text||'Pensando...',executionId:ev.executionId};
+      if(ev.kind==='tool'&&ev.tool){ const st=ev.tool.status==='failed'?'tool_failed':ev.tool.status==='completed'?'tool_completed':'tool_started'; return {schemaVersion:1,kind:st,tool:ev.tool,executionId:ev.executionId}; }
+      if(ev.kind==='agent_event'&&ev.event){ const a=Object.assign({schemaVersion:1},ev.event); if(!a.executionId)a.executionId=ev.executionId; return a; }
+      if(ev.kind==='diagnostic')return {schemaVersion:1,kind:'thinking',text:ev.message||ev.code||'Diagnóstico',executionId:ev.executionId};
+      return null;
+    }
+    function renderWorkConversation(events){
+      const activity=events.map(workActivityFromEvent).filter(Boolean);
+      return activity.length?renderActivityBlock(activity,{keepWork:true}):null;
+    }
     function workLatestInput(events){ const resolved=new Set(events.filter(e=>e.kind==='input_resolved').map(e=>e.inputId)); return [...events].reverse().find(e=>e.kind==='input_requested'&&!resolved.has(e.inputId)); }
     function workInputHtml(ev){ if(!ev)return''; const choices=Array.isArray(ev.choices)?ev.choices:[]; return `<div class="worknotice"><b>Precisa de você</b><div>${esc(String(ev.summary||'Esta execução aguarda uma decisão.'))}</div><div class="workcontrols" style="margin-top:8px">${ev.inputKind==='approval'?'<button type="button" data-input="approve">Aprovar</button><button type="button" class="danger" data-input="reject">Rejeitar</button>':choices.map((c,i)=>`<button type="button" class="ghost" data-input="answer" data-answer="${esc(String(c))}">${esc(String(c))}</button>`).join('')+'<button type="button" class="ghost" data-input="answer">Responder…</button>'}</div></div>`; }
     function workMetricsHtml(n){ const own=(n.metrics&&n.metrics.self)||{}, sub=(n.metrics&&n.metrics.subtree)||null, block=(title,m)=>`<div class="worksection">${title}</div><div class="workmetrics"><div class="workmetric"><span>Tokens</span><b>${workTokenText(m)}</b></div><div class="workmetric"><span>Ferramentas</span><b>${workNum(m.toolCalls)||'—'}</b></div><div class="workmetric"><span>Custo</span><b>${workCostText(m)}</b></div><div class="workmetric"><span>Duração</span><b>${workDuration(n)}</b></div></div>`; return block('Este trabalho',own)+(sub?block('Incluindo descendentes',sub):''); }
@@ -1328,7 +1403,11 @@
       E.workPanel.querySelectorAll('.worktabs [data-tab]').forEach(b=>{const on=b.dataset.tab===workTab;b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1;});
       let h='', conn=workConnections.get(n.runnerId); if(conn&&conn!=='online')h+=`<div class="worknotice"><b>Máquina ${esc(conn)}.</b> Esta é a última visão persistida; os controles podem ficar indisponíveis até a reconciliação.</div>`; if(n.state==='orphaned')h+='<div class="worknotice err"><b>Conexão perdida.</b> O estado final ainda não foi observado; o Jarvis tentará reconciliar sem marcar cancelamento por inferência.</div>'; if(n.state==='unknown')h+='<div class="worknotice">Estado parcial: o provider ainda não publicou lifecycle suficiente.</div>'; if(n.truncated)h+='<div class="worknotice">Histórico do trabalho truncado. O que aparece abaixo é apenas a parte preservada.</div>'; if(n.summary)h+=`<div class="worknotice" style="border-color:var(--line);background:#ffffff07;color:var(--text)">${esc(String(n.summary))}</div>`;
       const pending=workLatestInput(events); if(pending)h+=workInputHtml(pending);
-      if(workTab==='activity'){ h+=workMetricsHtml(n); const visible=events.filter(e=>!['message','node_created'].includes(e.kind)); h+=visible.length?visible.map(workEventHtml).join(''):'<div class="workempty"><span class="weicon">◔</span><span>Aguardando atividade publicável.</span></div>'; }
+      if(workTab==='transcript')workTab='activity';
+      if(workTab==='activity'){ h+=workMetricsHtml(n); E.workDetailBody.innerHTML=h; const visible=events.filter(e=>!['node_created','artifact','usage'].includes(e.kind)); const conv=renderWorkConversation(visible);
+        if(conv)E.workDetailBody.appendChild(conv); else E.workDetailBody.insertAdjacentHTML('beforeend','<div class="workempty"><span class="weicon">◔</span><span>Aguardando atividade publicável.</span></div>');
+        if(workTranscriptCursor.get(n.executionId))E.workDetailBody.insertAdjacentHTML('beforeend','<button type="button" class="ghost" data-transcript-more style="width:100%;margin-top:8px">Carregar mais</button>');
+        bindWorkDetail(n,events); return; }
       else if(workTab==='transcript'){ const level=cap.transcript||'none'; h+=`<div class="worknotice">Mensagens publicadas pelo adapter: <b>${esc(level)}</b>. O painel nunca apresenta raciocínio privado.</div>`; if(n.prompt)h+=`<div class="worksection">Instrução delegada</div><div class="workevent"><div class="wetext">${esc(String(n.prompt))}</div></div>`; const transcript=events.filter(e=>e.kind==='message'||e.kind==='summary'||(e.kind==='thinking'&&e.published)); h+=transcript.length?transcript.map(workEventHtml).join(''):`<div class="workempty"><span class="weicon">💬</span><span>${level==='none'?'Este adapter não fornece mensagens publicáveis.':'Nenhuma mensagem publicada ainda.'}</span></div>`; if(workTranscriptCursor.get(n.executionId))h+='<button type="button" class="ghost" data-transcript-more style="width:100%;margin-top:8px">Carregar mais mensagens</button>'; }
       else if(workTab==='files'){ const arts=events.filter(e=>e.kind==='artifact'&&e.artifact).map(e=>e.artifact), conflicts=workArtifactConflicts(n); if(conflicts.size)h+=`<div class="worknotice"><b>Possível conflito:</b> ${conflicts.size} arquivo${conflicts.size===1?' aparece':'s aparecem'} em mais de um descendente. Confira os worktrees antes de integrar.</div>`; h+=arts.length?arts.map(a=>{const path=workArtifactPath(n,a),disabled=!path||a.redacted,key=String(a.relativePath||'').replace(/\\/g,'/').toLowerCase(),conflict=conflicts.has(key),counts=(a.adds||a.dels)?`<span class="fadd">+${workNum(a.adds)}</span><span class="fdel">-${workNum(a.dels)}</span>`:'';return `<button type="button" class="workfile" data-artifact="${esc(String(a.artifactId||''))}" ${disabled?`disabled title="${a.redacted?'Conteúdo redigido pelo provider':'O provider publicou somente metadados'}"`:''}><span>${a.kind==='diff'?'±':'📄'}</span><span class="wfname">${esc(String(a.name||a.relativePath||'arquivo'))}</span>${counts}<span class="wfmeta">${conflict?'⚠ conflito · ':''}${a.redacted?'redigido':a.size?kfmt(a.size):a.kind||''}</span></button>`;}).join(''):`<div class="workempty"><span class="weicon">📄</span><span>${cap.files==='none'?'Este adapter não publica arquivos.':'Nenhum arquivo atribuído a este trabalho.'}</span></div>`; }
       else { const row=(k,v)=>v!=null&&v!==''?`<div class="workevent"><div class="wetop"><b>${k}</b></div><div class="wetext">${esc(String(v))}</div></div>`:''; h+=workMetricsHtml(n)+row('IA',n.agent)+row('Modelo',n.model)+row('Esforço',n.effort)+row('Máquina',n.runnerId)+row('Sessão',n.sessionId)+row('Origem',n.origin)+row('Certificação',n.certification)+row('Aquisição',n.acquisitionSurface)+row('Dependências',(n.dependsOn||[]).join(', '))+row('Workspace isolado',cap.isolatedWorkspace)+row('Pasta',n.worktree||n.cwd)+workCapabilitiesHtml(n); }
@@ -1336,9 +1415,9 @@
     function bindWorkDetail(n,events){ E.workDetailBody.querySelectorAll('[data-control]').forEach(b=>b.onclick=()=>workControl(n,b.dataset.control)); E.workDetailBody.querySelectorAll('[data-input]').forEach(b=>b.onclick=()=>workAnswer(n,workLatestInput(events),b.dataset.input,b.dataset.answer)); E.workDetailBody.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>{const ev=events.find(e=>e.kind==='artifact'&&e.artifact&&e.artifact.artifactId===b.dataset.artifact),p=ev&&workArtifactPath(n,ev.artifact);if(!p)return;if(n.runnerId&&n.runnerId!==routedMachine){routedMachine=n.runnerId;tx({t:'runner',runnerId:n.runnerId});}openFile(p,ev.artifact.kind==='diff'?'edit':'read',{keepWork:true});}); const more=E.workDetailBody.querySelector('[data-transcript-more]');if(more)more.onclick=()=>{more.disabled=true;more.textContent='Carregando…';tx({t:'execution_open',executionId:n.executionId,cursor:workTranscriptCursor.get(n.executionId),limit:500});}; }
     async function workControl(n,action){ if(action==='archive'){ tx({t:'execution_archive',requestId:uid(),executionId:n.executionId,archived:!n.archivedAt});return; } let message; if(action==='steer'){message=await dialog({title:'Orientação para este trabalho',input:true,placeholder:'O que ele deve ajustar?',okText:'Enviar'});if(!message)return;} if(action==='cancel'||action==='cancel_subtree'){const count=action==='cancel_subtree'?1+workDescendants(n.executionId).length:1;if(!await dialog({title:`Cancelar ${count} trabalho${count===1?'':'s'}?\nO progresso já publicado será preservado.`,okText:'Cancelar trabalho',danger:true}))return;} tx({t:'execution_control',requestId:uid(),executionId:n.executionId,action,message}); }
     async function workAnswer(n,ev,decision,preset){ if(!ev)return; let answer=preset||''; if(decision==='answer'&&!answer){answer=await dialog({title:ev.summary||'Responder ao trabalho',input:true,placeholder:'Sua resposta',okText:'Responder'});if(!answer)return;} tx({t:'execution_input',requestId:uid(),executionId:n.executionId,inputId:ev.inputId,decision,answer:answer||undefined}); }
-    function workSetHash(push=true){ const p=new URLSearchParams(); if(currentSession)p.set('session',currentSession); if(workSelected)p.set('work',workSelected); const h=p.toString(),url=h?'#'+h:location.pathname+location.search;if(location.hash===(h?'#'+h:''))return;(push?history.pushState:history.replaceState).call(history,null,'',url); }
+    function workSetHash(push=true){ const p=new URLSearchParams(); if(currentSession){p.set('session',currentSession);p.set('runner',currentSessionRunner);} if(workSelected)p.set('work',workSelected); const h=p.toString(),url=h?'#'+h:location.pathname+location.search;if(location.hash===(h?'#'+h:''))return;(push?history.pushState:history.replaceState).call(history,null,'',url); }
     function openWorkNode(id,{fromHash=false}={}){ const n=workNodes.get(id); workSelected=id; workUnseen=0; E.workNew.classList.add('hidden'); E.workPanel.classList.add('show-detail'); renderWorkTree(); renderWorkDetail(); tx({t:'execution_open',executionId:id,limit:500}); if(!fromHash)workSetHash(); }
-    function openWorkPanel({fromHash=false}={}){ workLastFocus=document.activeElement; E.filePanel.classList.add('hidden');E.workPanel.classList.remove('hidden');E.workPanel.setAttribute('aria-hidden','false');closeSide();workConnected=!!(ws&&ws.readyState===1);renderWorkConnection();workUpdateScopes();renderWorkTree();renderWorkDetail();tx({t:'executions_list',scope:'all',limit:500});if(!fromHash&&workSelected)workSetHash();setTimeout(()=>{const f=E.workPanel.querySelector('.worknode[aria-selected="true"]')||E.workClose;f&&f.focus();},20); }
+    function openWorkPanel({fromHash=false}={}){ workLastFocus=document.activeElement; closeFilePanel();E.workPanel.classList.remove('hidden');E.workPanel.setAttribute('aria-hidden','false');closeSide();workConnected=!!(ws&&ws.readyState===1);renderWorkConnection();workUpdateScopes();renderWorkTree();renderWorkDetail();tx({t:'executions_list',scope:'all',limit:500});if(!fromHash&&workSelected)workSetHash();setTimeout(()=>{const f=E.workPanel.querySelector('.worknode[aria-selected="true"]')||E.workClose;f&&f.focus();},20); }
     function closeWorkPanel(clearHash=true){ E.workPanel.classList.add('hidden');E.workPanel.classList.remove('show-detail','max');E.workPanel.setAttribute('aria-hidden','true');E.workMax.textContent='⛶';if(clearHash){workSelected='';workSetHash(true);}if(workLastFocus&&workLastFocus.isConnected)workLastFocus.focus(); }
     function renderWorkConnection(){ const bad=[...workConnections.values()].filter(x=>x!=='online').length; E.workLive.textContent=!workConnected?'offline · última visão':bad?`parcial · ${bad} máquina${bad===1?'':'s'}`:'ao vivo';E.workLive.classList.toggle('offline',!workConnected||!!bad); }
     function workAnnounce(text){ clearTimeout(workAnnounceT); workAnnounceT=setTimeout(()=>{E.workAnnounce.textContent=text;},400); }
@@ -1359,12 +1438,15 @@
 
     // ---------- ws ----------
     function tx(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+    function frameRunner(m){ return (m&&m.runnerId)||selectedRunner(); }
+    function currentFrame(m,sid){ return (sid||(m&&m.sessionId))===currentSession&&frameRunner(m)===currentSessionRunner; }
     // deep-link: preserves both the conversation and the selected work. Old #<sessionId> links stay valid.
     function hashParams(){ const raw=location.hash.slice(1); if(!raw)return new URLSearchParams(); if(!raw.includes('=')&&!raw.includes('&')){const p=new URLSearchParams();p.set('session',decodeURIComponent(raw));return p;}return new URLSearchParams(raw); }
-    function setHash(id){ const p=new URLSearchParams(); if(id)p.set('session',id); if(workSelected&&!E.workPanel.classList.contains('hidden'))p.set('work',workSelected); const h=p.toString(); if(h){if(location.hash!=='#'+h)history.replaceState(null,'','#'+h);}else if(location.hash)history.replaceState(null,'',location.pathname+location.search); }
+    function setHash(id){ const p=new URLSearchParams(); if(id){p.set('session',id);p.set('runner',currentSessionRunner);} if(workSelected&&!E.workPanel.classList.contains('hidden'))p.set('work',workSelected); const h=p.toString(); if(h){if(location.hash!=='#'+h)history.replaceState(null,'','#'+h);}else if(location.hash)history.replaceState(null,'',location.pathname+location.search); }
     const hashSession = () => hashParams().get('session')||'';
+    const hashRunner = () => hashParams().get('runner')||'';
     const hashWork = () => hashParams().get('work')||'';
-    function applyDeepLink(){ const h=hashSession(),w=hashWork(); if(h&&h!==currentSession&&(isNative(h)||sessions.some(s=>s.id===h)))openSession(h);if(w){if(E.workPanel.classList.contains('hidden'))openWorkPanel({fromHash:true});if(workNodes.has(w)&&workSelected!==w)openWorkNode(w,{fromHash:true});}else if(!E.workPanel.classList.contains('hidden'))closeWorkPanel(false); }
+    function applyDeepLink(){ const h=hashSession(),r=hashRunner()||selectedRunner(),w=hashWork(); if(h&&(h!==currentSession||r!==currentSessionRunner)&&(isNative(h)||sessions.some(s=>s.id===h&&(!hashRunner()||(s.runnerId||selectedRunner())===r))))openSession(h,r);if(w){if(E.workPanel.classList.contains('hidden'))openWorkPanel({fromHash:true});if(workNodes.has(w)&&workSelected!==w)openWorkNode(w,{fromHash:true});}else if(!E.workPanel.classList.contains('hidden'))closeWorkPanel(false); }
     addEventListener('hashchange',applyDeepLink);addEventListener('popstate',applyDeepLink);
     let reconnectT=null;
     function scheduleReconnect(){ if(reconnectT)return; reconnectT=setTimeout(()=>{ reconnectT=null; connect(); },1200); }
@@ -1399,7 +1481,7 @@
       if(gateMode==='verify'){ if(!val){ gateError('Informe a senha.'); return; } authPass=val; gateError(''); tx({t:'verify',pass:val}); return; }
       const label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
       if(!val){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code:val, label }); }
-    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); tx({t:'executions_list',scope:'all',limit:500}); if(authUser&&authUser.role==='owner')tx({t:'adaptive_approvals'}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) openSession(currentSession); if(cfg.push) enablePush(); requestCommands(); if(hashWork())openWorkPanel({fromHash:true}); }
+    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); tx({t:'executions_list',scope:'all',limit:500}); if(authUser&&authUser.role==='owner')tx({t:'adaptive_approvals'}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) openSession(currentSession,currentSessionRunner); if(cfg.push) enablePush(); requestCommands(); if(hashWork())openWorkPanel({fromHash:true}); }
     function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); if(window.__jarvisNative){ if(window.__jarvisNative.reregister&&cfg.push) window.__jarvisNative.reregister(); if(window.__jarvisNative.wakeStart&&cfg.wake) window.__jarvisNative.wakeStart(); } }
 
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
@@ -1452,7 +1534,7 @@
         else if(m.t==='update_result'){ if(m.ok){ toast('✅ '+((m.log||'atualizado').split('\n').pop()||'').slice(0,80)); } else { toast('⚠ Falha: '+(m.log||'').slice(0,120)); if(E.updStatus) E.updStatus.textContent='⚠ '+(m.log||'').slice(0,140); E.updActions.classList.remove('hidden'); } }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
-        else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=m.runnerId; cmdReqPending=false; if(trigOpen()&&trigMode==='cmd') updateTrig(); }
+        else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=(m.runnerId||routedMachine||currentMachine||'local')+'|'+(m.cwd||curCwd||''); cmdReqPending=false; if(trigOpen()&&trigMode==='cmd') updateTrig(); }
         else if(m.t==='mention_list'){ fileList=m.files||[]; if(trigOpen()&&trigMode==='file'){ trigItems=fileList.slice(0,50); trigIdx=trigItems.length?0:-1; renderTrig(); } }
         else if(m.t==='machines'){ machines=m.machines||[]; machines.forEach(mm=>{ const u=mm.updatePending;if(!u){const prior=updMach[mm.id];if(prior&&['queued','sent','awaiting_restart'].includes(prior.state)&&mm.online&&!mm.stale)updMach[mm.id]={label:mm.label,state:'verified',why:'reiniciou e versão confirmada'};return;} const state=u.state||'queued';updMach[mm.id]={label:mm.label,state,dirty:state==='blocked',why:state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':(mm.online?'aguardando nova tentativa':'offline — atualização guardada')};}); renderUpdMachines(); renderUpdate(); renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
@@ -1466,27 +1548,30 @@
           // visão unificada: só o agregado (runnerId 'all') alimenta a lista; listas de máquina única
           // que chegam por troca de runner (ao abrir) são ignoradas aqui pra não sobrescrever o agregado.
           if(currentMachine==='all'){ if(m.runnerId!=='all') return; } else if(m.runnerId && m.runnerId!==currentMachine) return;
-          restoringMachine=false; sessions=m.sessions||[]; recentDirs=m.recentDirs||recentDirs;
-          if(lastBump && Date.now()-lastBump.ts<12000){ const bi=sessions.findIndex(s=>s.id===lastBump.sid); if(bi>0){ const [bs]=sessions.splice(bi,1); sessions.unshift(bs); } }  // preserva o topo recém-enviado
-          renderRecents(); if(!currentSession && currentMachine!=='all'){
+          restoringMachine=false; sessions=dedupeSessionsList(m.sessions||[]); recentDirs=m.recentDirs||recentDirs;
+          if(lastBump && Date.now()-lastBump.ts<12000){ const bi=sessions.findIndex(s=>s.id===lastBump.sid&&(currentMachine!=='all'||(s.runnerId||'local')===lastBump.runner)); if(bi>0){ const [bs]=sessions.splice(bi,1); sessions.unshift(bs); } }  // preserva o topo recém-enviado
+          renderRecents(); if(!currentSession && !creatingSession && currentMachine!=='all'){
           const exists=(id)=> !!id && sessions.some(s=>s.id===id);
           const last=lastByMachine[currentMachine], h=hashSession();
           const pick = exists(last)?last : (exists(h)?h : (sessions.find(s=>!isNative(s.id))||{}).id);
-          if(pick) openSession(pick);
+          if(pick) openSession(pick,currentMachine);
           else if(currentMachine==='local' && !hashSession()) E.newSess.onclick(); } }
         else if(m.t==='history'){
-          cacheHist(m);
-          if(currentSession && m.sessionId!==currentSession && (!openingSession||m.sessionId!==openingSession)) return;
-          openingSession=null; applyHistory(m);
+          const historyRunner=m.runnerId||selectedRunner(), historyKey=sessionStateKey(m.sessionId,historyRunner); cacheHist({...m,runnerId:historyRunner});
+          if(historyRunner!==selectedRunner()&&historyKey!==openingSession)return;
+          if(openingSession&&historyKey!==openingSession)return;
+          if(currentSession && (m.sessionId!==currentSession||historyRunner!==currentSessionRunner)) return;
+          openingSession=null; creatingSession=false; applyHistory(m);
         }
-        else if(m.t==='message'){ if(m.message.role==='assistant') clearRestorable(m.message.sessionId); if(m.message.sessionId===currentSession){ if(m.message.role==='assistant') clearPending(); if(!(m.message.role==='user'&&consumeOptimisticUser(m.message.sessionId,m.message))) addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
-        else if(m.t==='queue'){ queueBySession[m.sessionId]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession) renderQueue(); }
-        else if(m.t==='auto_route'&&m.sessionId===currentSession){ if(m.state==='started'){ status('busy','Escolhendo IA, modelo e esforço…'); }
-          else if(m.state==='cancelled'){ status(''); clearPending(); onTurnEnd(m.sessionId); }
+        else if(m.t==='message'){ const runner=frameRunner(m); if(m.message.role==='assistant') clearRestorable(m.message.sessionId,runner); if(currentFrame(m,m.message.sessionId)){ if(m.message.role==='assistant') clearPending(); if(!(m.message.role==='user'&&consumeOptimisticUser(m.message.sessionId,m.message))) addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
+        else if(m.t==='queue'){ const runner=m.runnerId||selectedRunner(); queueBySession[sessionStateKey(m.sessionId,runner)]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession&&runner===currentSessionRunner) renderQueue(); }
+        else if(m.t==='auto_route'&&currentFrame(m)){ if(m.state==='started'){ status('busy','Escolhendo IA, modelo e esforço…'); }
+          else if(m.state==='cancelled'){ status(''); clearPending(); onTurnEnd(m.sessionId,frameRunner(m)); }
           else { const d=m.decision||{}; status(''); if(d.agent)currentAgent=d.agent; sessDeclModel=d.model||null; sessDeclEffort=d.effort||null; lastRouteReason=d.reason||''; syncModelEffort(); if(d.fallback)toast('⚠ Automático: '+(d.reason||'usado o padrão compatível')); } }
-        else if(m.t==='asking'){ if(m.on) askingSids.add(m.sessionId); else askingSids.delete(m.sessionId); if(m.sessionId===currentSession){ if(m.on) status('busy','Consolidando o resultado…'); else if(!askActive) status(''); refreshComposer(); } renderRecents(); }
-        else if(m.t==='ask'){ askingSids.delete(m.sessionId); saveAsk(m.sessionId,m.questions||[]); if(m.sessionId===currentSession){ status(''); renderAskCard(m.questions||[]); refreshComposer(); } else { unread.add(m.sessionId); renderRecents(); } }
-        else if(m.t==='agent_event'){ if(m.sessionId!==currentSession)return; const ev=m.event||{};
+        else if(m.t==='asking'){ const k=askStateKey(m.sessionId,m.runnerId); if(m.on) askingSids.add(k); else askingSids.delete(k); if(currentFrame(m)){ if(m.on&&!busy(currentSession)) status('busy','Consolidando o resultado…'); else if(!askActive) status(''); refreshComposer(); } renderRecents(); }
+        else if(m.t==='ask'){ askingSids.delete(askStateKey(m.sessionId,m.runnerId)); saveAsk(m.sessionId,m.questions||[],m.runnerId); if(m.sessionId===currentSession&&(m.runnerId||selectedRunner())===currentSessionRunner){ status(''); renderAskCard(m.questions||[],m.runnerId); refreshComposer(); } else { unread.add(sessionStateKey(m.sessionId,m.runnerId)); renderRecents(); } }
+        else if(m.t==='ask_cleared'){ askingSids.delete(askStateKey(m.sessionId,m.runnerId)); clearAsk(m.sessionId,m.runnerId); if(currentFrame(m)){ if(askActive){try{askActive.card.remove();}catch(e){} askActive=null;askVoice=false;} status('');refreshComposer(); } }
+        else if(m.t==='agent_event'){ if(!currentFrame(m))return; const ev=m.event||{};
           if(liveTurnId!==ev.turnId){ liveTurnId=ev.turnId; seenAgentEvents.clear(); }
           if(ev.eventId&&seenAgentEvents.has(ev.eventId))return; if(ev.eventId){seenAgentEvents.add(ev.eventId);if(seenAgentEvents.size>1200)seenAgentEvents.delete(seenAgentEvents.values().next().value);}
           if(ev.kind==='accepted'||ev.kind==='started') streamStartUI(ev.at);
@@ -1495,59 +1580,67 @@
           else if(ev.kind==='text_delta'||ev.kind==='text_block'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.parentId||(ev.tool&&ev.tool.parentId),ev.executionId); }
           else if(ev.kind==='plan') streamTool('Plan',ev.plan&&ev.plan.title||ev.text||'Plano atualizado',null,null,null,0,0,null,null,'completed');
           else if(ev.kind==='usage'){ turnUsage=ev.usage||turnUsage; if(ev.usage){E.usage.textContent=usageSummary(ev.usage);if(ev.usage.contextTokens||ev.usage.inputTokens)lastInputTokens=ev.usage.contextTokens||ev.usage.inputTokens;if(ev.usage.contextWindowTokens)lastContextWindow=ev.usage.contextWindowTokens;if(ev.usage.model)sessDeclModel=ev.usage.model;if(ev.usage.effort)sessDeclEffort=ev.usage.effort;renderControls();updUsagePill();} }
-          else if(ev.kind==='completed'){ clearRestorable(m.sessionId); if(typeof m.sessionCost==='number'){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text,turnUsage); onTurnEnd(m.sessionId); }
-          else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
-          else if(ev.kind==='failed'){ streamErr(ev.text); onTurnEnd(m.sessionId); } }
-        else if(m.t==='stream'){ if(m.sessionId!==currentSession)return; const ev=m.ev||{};
+          else if(ev.kind==='completed'){ clearRestorable(m.sessionId,frameRunner(m)); if(typeof m.sessionCost==='number'){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text,turnUsage); onTurnEnd(m.sessionId,frameRunner(m)); }
+          else if(ev.kind==='cancelled'){ streamCancelled(ev.text); onTurnEnd(m.sessionId,frameRunner(m)); }
+          else if(ev.kind==='failed'){ streamErr(ev.text); onTurnEnd(m.sessionId,frameRunner(m)); } }
+        else if(m.t==='stream'){ if(!currentFrame(m))return; const ev=m.ev||{};
           if(ev.kind==='start') streamStartUI();
           else if(ev.kind==='thinking') streamThinking(ev.text);
           else if(ev.kind==='tool'){ streamTool(ev.name,ev.summary,ev.toolId,ev.parentId,ev.path,ev.adds,ev.dels,ev.rows,ev.detail,null,null,ev.executionId); if(ev.path) touchFile(ev.path, /Edit$|^Write$/.test(ev.name)?(ev.name==='Write'?'write':'edit'):'read', ev.adds, ev.dels); }
           else if(ev.kind==='text'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.parentId,ev.executionId); }
-          else if(ev.kind==='done'){ clearRestorable(m.sessionId); if(typeof m.sessionCost==='number'&&m.sessionId===currentSession){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text, m.usage); onTurnEnd(m.sessionId); }
-          else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId); }
-          else if(ev.kind==='error'){ streamErr(); onTurnEnd(m.sessionId); } }
-        else if(m.t==='activity'){ if(m.sessionId!==currentSession)return;
+          else if(ev.kind==='done'){ clearRestorable(m.sessionId,frameRunner(m)); if(typeof m.sessionCost==='number'){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text, m.usage); onTurnEnd(m.sessionId,frameRunner(m)); }
+          else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId,frameRunner(m)); }
+          else if(ev.kind==='error'){ streamErr(); onTurnEnd(m.sessionId,frameRunner(m)); } }
+        else if(m.t==='activity'){ if(!currentFrame(m))return;
           // espelho ao vivo de uma sessão nativa: o evento já é uma ação CONCLUÍDA (o tail lê o que
           // foi escrito) → tool row completo (done): "Editado", contagem +/-, abrir arquivo, diff.
           const d=toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows,m.detail);
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
           if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); autoScroll(); }
-        else if(m.t==='usage'){ if(m.sessionId===currentSession&&m.usage){ E.usage.textContent=usageSummary(m.usage); if(m.usage.contextTokens||m.usage.inputTokens)lastInputTokens=m.usage.contextTokens||m.usage.inputTokens; if(m.usage.contextWindowTokens)lastContextWindow=m.usage.contextWindowTokens; updUsagePill(); } }
+        else if(m.t==='usage'){ if(currentFrame(m)&&m.usage){ E.usage.textContent=usageSummary(m.usage); if(m.usage.contextTokens||m.usage.inputTokens)lastInputTokens=m.usage.contextTokens||m.usage.inputTokens;if(m.usage.contextWindowTokens)lastContextWindow=m.usage.contextWindowTokens;updUsagePill(); } }
         else if(m.t==='usage_info'){ planUsage=m.plan||null; planStatus=m.planStatus||null; planKey=(m.runnerId||'local')+'\0'+(m.agent||''); if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
-        else if(m.t==='session'){ if(m.sessionId===currentSession && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
+        else if(m.t==='session'){ if(currentFrame(m) && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
         else if(m.t==='deleted'){ const deleted=Array.isArray(m.ids)?m.ids:[], inCur=deleted.includes(currentSession);
           if(inCur){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); }
-          deleted.forEach(id=>{ if(id&&sessionPrefs[id]){ delete sessionPrefs[id]; } }); saveSessionPrefs();
+          deleted.forEach(id=>{ const key=sessionStateKey(id,sessionRunner()); if(sessionPrefs[key])delete sessionPrefs[key]; if(sessionRunner()==='local'&&sessionPrefs[id])delete sessionPrefs[id]; }); saveSessionPrefs();
           if(!m.ok) toast(t('tDelFail')); }
-        else if(m.t==='tts'){ if(m.for==='ask'){ askVoicePlayAndListen(m.audio); } else if(m.sessionId===currentSession) playTTS(m.audio); }
+        else if(m.t==='tts'){ if(m.for==='ask'){ if(!m.sessionId||currentFrame(m))askVoicePlayAndListen(m.audio); } else if(currentFrame(m)) playTTS(m.audio); }
         else if(m.t==='ask_choice'){ askVoiceApply(m); }
         else if(m.t==='searchResult'){ clearPending();
           if(m.hits!==undefined){ if(!E.searchModal.classList.contains('hidden') && m.query===E.searchInput.value.trim()) renderHits(E.searchResults,m); }   // filtro literal digitado (ignora resposta obsoleta)
           else if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }   // busca falada (LLM + áudio)
         else if(m.t==='memory_result'){ if(E.searchModal.classList.contains('hidden'))return;
           if(m.error){ E.searchResults.innerHTML='<div class="mut">'+esc(m.error)+'</div>'; return; }
-          const hits=(m.hits||[]).map(h=>({id:h.id,title:h.title,agent:h.agent,cwd:h.cwd,where:'content',snippet:'['+(h.score||0)+'%] '+(h.snippet||'')}));
+          const hits=(m.hits||[]).map(h=>({id:h.id,runnerId:h.runnerId,title:h.title,agent:h.agent,cwd:h.cwd,where:'content',snippet:'['+(h.score||0)+'%] '+(h.snippet||'')}));
           renderHits(E.searchResults,{query:m.query,hits,done:true}); if(m.stats){ const ps=(m.stats.projects||[]).slice(0,3).map(p=>p.projectKey+' ('+p.count+')').join(' · '), d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;margin-top:6px'; d.textContent='Memória: '+(m.stats.total||0)+' itens'+(ps?' · '+ps:''); E.searchResults.appendChild(d); } }
+        else if(m.t==='memory_preview'){ status(''); showMemoryPreview(m); }
+        else if(m.t==='memory_cancelled'){ if(m.token&&memoryPreviewToken&&m.token!==memoryPreviewToken)return; status(''); E.memoryCancel.disabled=false;
+          if(m.ok){ E.memoryModal.classList.add('hidden'); E.memoryApply.disabled=false; memoryPreviewToken=''; memoryPreviewNote=''; toast('Prévia descartada'); }
+          else toast(m.error||'Não foi possível descartar a prévia'); }
+        else if(m.t==='memory_applied'){ const related=memoryApplyToken||memoryPreviewToken; if(m.token&&related&&m.token!==related)return; const note=memoryApplyToken===m.token?memoryApplyNote:memoryPreviewNote;
+          status(''); E.memoryModal.classList.add('hidden'); E.memoryCancel.disabled=false; E.memoryApply.disabled=false; memoryPreviewToken=''; memoryApplyToken=''; memoryPreviewNote=''; memoryApplyNote='';
+          if(m.ok){ toast('Memória gravada'); if(note&&E.input.value.replace(/^#+\s*/,'').trim()===note){ E.input.value=''; E.input.style.height='auto'; if(currentSession){ delete draftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveDrafts(); } } }
+          else { toast(m.error||'Não foi possível gravar a memória'); } }
         else if(m.t==='memory_stats'){ toast('Memória: '+((m.stats&&m.stats.total)||0)+' itens.'); }
         else if(m.t==='memory_reindexed'){ toast('✓ Memória reindexada: '+(m.count||0)+' sessões.'); }
-        else if(m.t==='stage'){ if(m.done){ hideStage(); } else showStage({draft:m.draft,say:m.say}); }
-        else if(m.t==='stage_heard'){ if(stageEl) showStage({heard:m.text}); }
-        else if(m.t==='stage_escalate'){ showStage({escalate:true,reason:m.reason}); }
+        else if(m.t==='stage'){ if(currentFrame(m)){ if(m.done){ hideStage(); } else showStage({draft:m.draft,say:m.say}); } }
+        else if(m.t==='stage_heard'){ if(currentFrame(m)&&stageEl) showStage({heard:m.text}); }
+        else if(m.t==='stage_escalate'){ if(currentFrame(m))showStage({escalate:true,reason:m.reason}); }
         else if(m.t==='stage_say'){ /* falado via tts; sem UI extra */ }
         else if(m.t==='canvas'){ renderCanvas(m); }
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
         else if(m.t==='voice_ignored'){ endVoiceOp(); clearPending(); status(''); toast(t('tVoiceIgnored')); }
-        else if(m.t==='queued'){ endVoiceOp(); justSent.delete(m.sessionId); if(m.sessionId===currentSession){ clearPending(); status('busy','Mensagem na fila — aguardando o turno atual terminar'); } toast(t('tQueued')); refreshComposer(); }
+        else if(m.t==='queued'){ const runner=frameRunner(m); endVoiceOp(); justSent.delete(sessionStateKey(m.sessionId,runner)); const msg=m.message||(m.update?'Atualização em andamento — mensagem ficou na fila.':'Mensagem na fila — aguardando o turno atual terminar'); refreshComposer(); if(currentFrame(m)){ clearPending(); status('busy',msg); } toast(m.update?'🔄 '+msg:t('tQueued')); }
         else if(m.t==='voice_timing'){ try{ console.log('[voz] STT '+m.stt+'ms · locutor '+m.speaker+'ms · correção+gate '+m.preflight+'ms'); }catch(e){} }
-        else if(m.t==='runs'){ const now=m.active||[]; const finished=[...new Set([...activeRuns,...justSent])].filter(id=>!now.includes(id)); activeRuns.forEach(id=>{ if(!now.includes(id)&&id!==currentSession) unread.add(id); }); activeRuns=now; now.forEach(id=>justSent.delete(id)); finished.forEach(id=>onTurnEnd(id)); renderRecents(); refreshComposer(); scheduleAllRefresh(); }
+        else if(m.t==='runs'){ const runner=m.runnerId||selectedRunner(), prev=activeRunsByRunner[runner]||[], now=m.active||[], sent=[...justSent].filter(key=>key.startsWith(runner+'\0')).map(key=>key.slice(runner.length+1)), finished=[...new Set([...prev,...sent])].filter(id=>!now.includes(id)); prev.forEach(id=>{ if(!now.includes(id)&&!(id===currentSession&&runner===currentSessionRunner)) unread.add(sessionStateKey(id,runner)); }); activeRunsByRunner[runner]=now; if(runner===sessionRunner())activeRuns=now; now.forEach(id=>justSent.delete(sessionStateKey(id,runner))); finished.forEach(id=>onTurnEnd(id,runner)); renderRecents(); refreshComposer(); scheduleAllRefresh(); }
         else if(m.t==='qr'){ E.qrImg.src=m.dataUri; E.qrUrl.textContent=m.url; E.qrModal.classList.remove('hidden'); }
         else if(m.t==='pushkey'){ if(pushKeyResolve){ const r=pushKeyResolve; pushKeyResolve=null; r(m.key); } }
         else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }
         else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
-        else if(m.t==='error'){ endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
+        else if(m.t==='error'){ creatingSession=false; endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
     function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
       const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking',t('spSpeaking')); ttsPlaying=true; curTtsAudio=a;
@@ -1620,8 +1713,8 @@
     E.backdrop.onclick=closeSide; E.sideClose.onclick=closeSide;
     E.log.addEventListener('click',(e)=>{
       if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
-      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort,auto:routeAutoFor(exec.dataset.id)}); openSession(exec.dataset.id); return; }
-      const match=e.target.closest('.match'); if(match){ openSession(match.dataset.id); return; }
+      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); if(exec.dataset.runner){ routedMachine=exec.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort,auto:routeAutoFor(exec.dataset.id)}); openSession(exec.dataset.id,exec.dataset.runner); return; }
+      const match=e.target.closest('.match'); if(match){ if(match.dataset.runner){ routedMachine=match.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(match.dataset.id,match.dataset.runner); return; }
       // file references in the chat (markdown links) must NOT navigate away — open in the panel.
       const a=e.target.closest && e.target.closest('a'); if(a){ const href=a.getAttribute('href')||'';
         if(/^(https?:|mailto:|tel:|#)/i.test(href)) return; // real links pass through
@@ -1642,8 +1735,8 @@
       if(a.image&&a.preview){ c.innerHTML=`<img src="${a.preview}" alt="">`; const im=c.querySelector('img'); if(im) im.onclick=(e)=>{ e.stopPropagation(); openImg(a.preview); }; const x=document.createElement('span'); x.className='rmx'; x.textContent='✕'; x.title='Remover'; x.onclick=(e)=>{ e.stopPropagation(); rm(); }; c.appendChild(x); }
       else { c.textContent='📎 '+a.name+' ✕'; c.onclick=rm; }
       E.attachRow.appendChild(c); }); }
-    function stashAttachments(sid){ if(!sid)return; if(attachments.length) attachmentsBySession[sid]=attachments.slice(); else delete attachmentsBySession[sid]; }
-    function restoreAttachments(sid){ attachments=(sid&&attachmentsBySession[sid])?attachmentsBySession[sid].slice():[]; renderAttach(); }
+    function stashAttachments(sid,runner){ if(!sid)return; const key=sessionStateKey(sid,runner); if(attachments.length) attachmentsBySession[key]=attachments.slice(); else delete attachmentsBySession[key]; }
+    function restoreAttachments(sid,runner){ const saved=sid&&sessionValue(attachmentsBySession,sid,runner); attachments=saved?saved.slice():[]; renderAttach(); }
     // arrastar-e-soltar arquivos/imagens no chat → vira anexo (usa o mesmo addFile do ＋/paste)
     const hasFiles=e=>e.dataTransfer&&Array.from(e.dataTransfer.types||[]).includes('Files');
     let dragDepth=0;
@@ -1668,18 +1761,21 @@
     // era só em memória, então bloquear o telefone perdia o que você estava digitando).
     const draftBySession=(()=>{ try{ return JSON.parse(localStorage.getItem('jarvis_drafts')||'{}'); }catch(e){ return {}; } })();
     function saveDrafts(){ try{ localStorage.setItem('jarvis_drafts', JSON.stringify(draftBySession)); }catch(e){} }
-    function stashDraft(){ if(currentSession!=null){ const v=E.input?E.input.value:''; if(v&&v.trim()) draftBySession[currentSession]=v; else delete draftBySession[currentSession]; saveDrafts(); } }
-    // decision-card pendente por sessão, persistido — sobrevive ao lock/descarte da aba (restaura ao reabrir).
-    function saveAsk(sid,q){ if(!sid)return; try{ localStorage.setItem('jarvis_ask_'+sid, JSON.stringify(q||[])); }catch(e){} }
-    function clearAsk(sid){ if(!sid)return; try{ localStorage.removeItem('jarvis_ask_'+sid); }catch(e){} }
-    function getAsk(sid){ try{ const s=localStorage.getItem('jarvis_ask_'+sid); return s?JSON.parse(s):null; }catch(e){ return null; } }
+    function stashDraft(){ if(currentSession!=null){ const key=sessionStateKey(currentSession,currentSessionRunner), v=E.input?E.input.value:''; if(v&&v.trim()) draftBySession[key]=v; else delete draftBySession[key]; saveDrafts(); } }
+    // Decision state is partitioned by machine + session, so equal provider ids cannot cross runners.
+    function askStateKey(sid,runner){ return sessionStateKey(sid,runner); }
+    function askStoreKey(sid,runner){ return 'jarvis_ask_'+encodeURIComponent(runner||sessionRunner())+'_'+sid; }
+    function saveAsk(sid,q,runner){ if(!sid)return; try{ localStorage.setItem(askStoreKey(sid,runner), JSON.stringify(q||[])); }catch(e){} }
+    function clearAsk(sid,runner){ if(!sid)return; try{ localStorage.removeItem(askStoreKey(sid,runner)); }catch(e){} }
+    function getAsk(sid,runner){ try{ const s=localStorage.getItem(askStoreKey(sid,runner)); return s?JSON.parse(s):null; }catch(e){ return null; } }
     // Mensagem "em voo" recuperável: se você PARAR antes de vir resposta, ela volta pro input pra
     // editar e reenviar. Persistida (localStorage, TTL 1h) pra sobreviver a reload. Some quando a
     // resposta começa a chegar.
     const RESTORE_TTL=3600000;
-    function setRestorable(sid,text,atts){ if(!sid)return; try{ localStorage.setItem('jarvis_restore_'+sid,JSON.stringify({text:text||'',atts:atts||[],ts:Date.now()})); }catch(e){} }
-    function getRestorable(sid){ if(!sid)return null; try{ const v=JSON.parse(localStorage.getItem('jarvis_restore_'+sid)||'null'); if(v&&Date.now()-(v.ts||0)<RESTORE_TTL)return v; }catch(e){} return null; }
-    function clearRestorable(sid){ if(!sid)return; try{localStorage.removeItem('jarvis_restore_'+sid);}catch(e){} const b=document.getElementById('restorebar'); if(b)b.remove(); }
+    function restorableKey(sid,runner){ return 'jarvis_restore_'+encodeURIComponent(runner||sessionRunner())+'_'+sid; }
+    function setRestorable(sid,text,atts,runner){ if(!sid)return; try{ localStorage.setItem(restorableKey(sid,runner),JSON.stringify({text:text||'',atts:atts||[],ts:Date.now()})); }catch(e){} }
+    function getRestorable(sid,runner){ if(!sid)return null; try{ const v=JSON.parse(localStorage.getItem(restorableKey(sid,runner))||'null'); if(v&&Date.now()-(v.ts||0)<RESTORE_TTL)return v; }catch(e){} return null; }
+    function clearRestorable(sid,runner){ if(!sid)return; try{localStorage.removeItem(restorableKey(sid,runner));if((runner||sessionRunner())==='local')localStorage.removeItem('jarvis_restore_'+sid);}catch(e){} const b=document.getElementById('restorebar'); if(b)b.remove(); }
     function restoreToInput(sid){ const v=getRestorable(sid); if(!v)return; E.input.value=v.text||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(Array.isArray(v.atts)&&v.atts.length){ attachments=v.atts.slice(); renderAttach(); } clearRestorable(sid); try{E.input.focus();}catch(e){} }
     function showRestoreBar(sid){ if(!getRestorable(sid)||sid!==currentSession)return; const old=document.getElementById('restorebar'); if(old)old.remove();
       const b=document.createElement('div'); b.id='restorebar'; b.className='restorebar';
@@ -1687,9 +1783,9 @@
       const btn=document.createElement('button'); btn.type='button'; btn.className='rback'; btn.textContent='↩ Voltar ao campo'; btn.onclick=()=>restoreToInput(sid); b.appendChild(btn);
       const x=document.createElement('button'); x.type='button'; x.className='rx'; x.title='Descartar'; x.textContent='✕'; x.onclick=()=>clearRestorable(sid); b.appendChild(x);
       E.log.appendChild(b); autoScroll(); }
-    function queueOf(sid){ return queueBySession[sid] || (queueBySession[sid]=[]); }
-    function busy(sid){ return !!sid && (activeRuns.includes(sid) || justSent.has(sid)); }
-    function optimisticList(sid){ return optimisticUsers[sid] || (optimisticUsers[sid]=[]); }
+    function queueOf(sid,runner){ const key=sessionStateKey(sid,runner); return queueBySession[key] || (queueBySession[key]=[]); }
+    function busy(sid,runner){ if(!sid)return false; const rid=runner||sessionRunner(); return (activeRunsByRunner[rid]||[]).includes(sid) || justSent.has(sessionStateKey(sid,rid)); }
+    function optimisticList(sid,runner){ const key=sessionStateKey(sid,runner); return optimisticUsers[key] || (optimisticUsers[key]=[]); }
     function optimisticMessage(text,atts){
       atts=Array.isArray(atts)?atts:[];
       const images=atts.filter(a=>a&&a.image).map(a=>a.preview||(a.content&&('data:image/*;base64,'+a.content))).filter(Boolean);
@@ -1700,10 +1796,10 @@
       if(sid!==currentSession)return;
       const el=buildMsgEl(optimisticMessage(text,atts)); el.classList.add('optimistic'); el.dataset.msgId=msgId;
       const anchor=pendingEl||strEl; if(anchor)E.log.insertBefore(el,anchor); else E.log.appendChild(el);
-      optimisticList(sid).push({msgId,text:text||'(anexo)',el}); autoScroll();
+      optimisticList(sid,currentSessionRunner).push({msgId,text:text||'(anexo)',el}); autoScroll();
     }
     function consumeOptimisticUser(sid,message){
-      const list=optimisticList(sid);
+      const list=optimisticList(sid,currentSessionRunner);
       while(list.length&&!list[0].el.isConnected) list.shift();
       const idx=list.findIndex(x=>x.text===(message.text||'(anexo)'));
       if(idx<0)return false;
@@ -1713,37 +1809,36 @@
     // Failsafe POR SESSÃO: se em 45s o servidor não confirmar (run perdido — WS caiu, done não chegou),
     // destrava a sessão em vez de deixá-la "executando" pra sempre bloqueando novos envios. NUNCA
     // afeta outra sessão (cada sid tem seu timer); se o run de fato começou (activeRuns), não mexe.
-    function markJustSent(sid){ if(!sid)return; justSent.add(sid); clearTimeout(justSentTimers[sid]);
-      justSentTimers[sid]=setTimeout(()=>{ if(justSent.has(sid)&&!activeRuns.includes(sid)){ justSent.delete(sid); refreshComposer(); renderRecents(); } }, 45000); }
+    function markJustSent(sid,runner){ if(!sid)return; const rid=runner||sessionRunner(), key=sessionStateKey(sid,rid); justSent.add(key); clearTimeout(justSentTimers[key]);
+      justSentTimers[key]=setTimeout(()=>{ if(justSent.has(key)&&!(activeRunsByRunner[rid]||[]).includes(sid)){ justSent.delete(key); refreshComposer(); renderRecents(); } }, 45000); }
     let curBusy=false;   // reflete busy(currentSession); mantido p/ auto-reload
     function refreshComposer(){ curBusy=busy(currentSession);
-      // Durante uma DECISÃO pendente: trava input + enviar + mic (a resposta vem pelo card), mas
-      // mantém Parar ATIVO. Durante a fase "consolidando" (o servidor está gerando as perguntas): trava
-      // tudo e mostra o status, para o input não ficar livre no ~1min entre o fim do turno e a pergunta.
-      const consolidating=askingSids.has(currentSession), running=busy(currentSession);
-      const lock=!!askActive, ro=curNative&&!curNativeWritable, block=ro||lock||consolidating;
-      if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!(curBusy||lock));
+      // Hub-owned decision cards are advisory HITL. They stay visible without blocking normal input,
+      // voice, or the server queue; a newer turn clears stale questions on every device.
+      const running=busy(currentSession), ro=curNative&&!curNativeWritable, block=ro;
+      if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!curBusy);
       E.input.disabled=block; E.sendBtn.disabled=block; if(E.mic)E.mic.disabled=block;
-      E.input.placeholder=consolidating?'Consolidando o resultado…':(lock?'Responda a decisão acima — ou toque em Parar para digitar':(ro?'Sessão nativa — somente leitura':(running?'Turno em andamento — enviar adiciona à fila automática':t('composerPh'))));
+      E.input.placeholder=ro?'Sessão nativa — somente leitura':(running?'Turno em andamento — enviar adiciona à fila automática':t('composerPh'));
       renderQueue(); updateStopStatus(); maybeReload(); }
     // id de mensagem p/ idempotência: o runner executa um turnId no máximo uma vez (re-entrega do
     // MESMO frame reusa o id e é ignorada). Cada submit gera um id novo (dois envios = dois turnos).
     const uid=()=>{ try{ return crypto.randomUUID(); }catch(e){ return 'm'+Date.now()+Math.random().toString(36).slice(2,8); } };
-    function sendMsgTo(sid,text,atts){ if(!sid)return; const msgId=uid(), body=text||'(anexo)'; lastWasVoice=false; bumpSession(sid); markJustSent(sid);
+    function sendMsgTo(sid,text,atts){ if(!sid)return; const msgId=uid(), body=text||'(anexo)'; lastWasVoice=false;
+      if(askActive&&sid===currentSession){ const runner=askActive.runnerId||sessionRunner(); try{askActive.card.remove();}catch(e){} askActive=null; askVoice=false; clearAsk(sid,runner); tx({t:'ask_clear',sessionId:sid}); }
+      const askKey=askStateKey(sid); if(askingSids.delete(askKey)) tx({t:'ask_clear',sessionId:sid}); bumpSession(sid); markJustSent(sid);
       if(sid===currentSession){ stick=true; addOptimisticUser(sid,msgId,body,atts||[]); if(!curStarted){ curStarted=true; renderControls(); } showPending(); }
       tx({t:'send',text:body,speak,model:curModel,effort:curEffort,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
       refreshComposer(); }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
     // Fim de turno de uma sessão. O FLUSH da fila agora é do SERVIDOR (flushQueue no hub): ele
     // envia a fila acumulada e re-transmite {t:queue}/{t:message}. Aqui só destravamos o composer.
-    function onTurnEnd(sid){ if(!sid)return; justSent.delete(sid); delete stopping[sid]; if(sid===currentSession) updateStopStatus(); refreshComposer(); }
-    function clearQueue(){ if(currentSession){ queueBySession[currentSession]=[]; tx({t:'clearqueue',sessionId:currentSession}); } refreshComposer(); }
+    function onTurnEnd(sid,runner){ if(!sid)return; const rid=runner||sessionRunner(), key=sessionStateKey(sid,rid); justSent.delete(key); delete stopping[key]; if(sid===currentSession&&rid===currentSessionRunner) updateStopStatus(); refreshComposer(); }
+    function clearQueue(){ if(currentSession){ queueBySession[sessionStateKey(currentSession,currentSessionRunner)]=[]; tx({t:'clearqueue',sessionId:currentSession}); } refreshComposer(); }
     function renderQueue(){ if(!E.queueRow)return; const q=queueOf(currentSession); E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!q.length); if(!q.length)return;
-      const decisionHold=!!askActive||askingSids.has(currentSession);
-      const waiting=decisionHold?'aguardando sua decisão':(busy(currentSession)?'rodam automaticamente quando este turno terminar':'rodam automaticamente agora');
+      const waiting=busy(currentSession)?'rodam automaticamente quando este turno terminar':'rodam automaticamente agora';
       const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — '+waiting; hdr.appendChild(s);
       const acts=document.createElement('div'); acts.className='qacts';
-      const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[currentSession]=[]; renderQueue(); tx({t:'clearqueue',sessionId:currentSession}); }; acts.appendChild(clr); hdr.appendChild(acts); E.queueRow.appendChild(hdr);
+      const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[sessionStateKey(currentSession,currentSessionRunner)]=[]; renderQueue(); tx({t:'clearqueue',sessionId:currentSession}); }; acts.appendChild(clr); hdr.appendChild(acts); E.queueRow.appendChild(hdr);
       const list=document.createElement('div'); list.className='qlist';
       q.forEach((it0,i)=>{ const it=document.createElement('div'); it.className='qitem';
         const atts=it0.atts||[]; const imgs=atts.filter(a=>a.image).length, files=atts.length-imgs;
@@ -1769,11 +1864,11 @@
     E.composer.onsubmit=(e)=>{ e.preventDefault(); if(curNative&&!curNativeWritable)return; const text=E.input.value.trim(); if(!text&&!attachments.length)return;
       // "#note" → append to the project memory file (CLAUDE.md/AGENTS.md), confirmed. Not a turn.
       if(text.startsWith('#')){ const note=text.replace(/^#+\s*/,'').trim(); if(!note) return; closeTrig();
-        dialog({title:'Anexar à memória do projeto: “'+note.slice(0,60)+(note.length>60?'…':'')+'”?', okText:'Anexar'}).then(ok=>{ if(ok){ tx({t:'memory_append', text:note, sessionId:currentSession}); E.input.value=''; E.input.style.height='auto'; if(currentSession){ delete draftBySession[currentSession]; saveDrafts(); } } });
+        tx({t:'memory_preview',text:note,sessionId:currentSession}); status('busy','Preparando prévia da memória…');
         return; }
       if(text.startsWith('!')) pushBang(text.slice(1).split('\n')[0].trim());   // guarda no histórico do "!"
-      const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; if(currentSession) delete attachmentsBySession[currentSession]; renderAttach();
-      if(currentSession){ delete draftBySession[currentSession]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
+      const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; if(currentSession) delete attachmentsBySession[sessionStateKey(currentSession,currentSessionRunner)]; renderAttach();
+      if(currentSession){ delete draftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),msgId:uid()}); return; }
       setRestorable(currentSession,text,atts); sendMsgTo(currentSession,text||'(anexo)',atts); };
     E.stopBtn.onclick=()=>{
@@ -1781,18 +1876,18 @@
         askVoice=false; askPendingVoice=false;
         try{ const c=askActive.card; const nav=c.querySelector('.asknav'); if(nav)nav.remove(); c.classList.add('done'); c.classList.remove('min');
           const n=document.createElement('div'); n.className='askhd'; n.textContent='Decisão interrompida — responda manualmente pelo campo abaixo.'; c.appendChild(n); }catch(e){}
-        askActive=null; clearAsk(currentSession); tx({t:'ask_clear',sessionId:currentSession}); status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
+        const runner=askActive.runnerId||sessionRunner(); askActive=null; clearAsk(currentSession,runner); tx({t:'ask_clear',sessionId:currentSession}); status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
       // Parar um turno em andamento: cancela o agente e — se ainda não veio resposta — devolve a
       // mensagem ao input (ou mostra o botão "voltar" se você já estava digitando). A FILA é
       // preservada (não some mais no parar).
-      if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(currentSession); askVoice=false; askPendingVoice=false;
+      if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(sessionStateKey(currentSession,currentSessionRunner)); askVoice=false; askPendingVoice=false;
       if(getRestorable(currentSession)){
         const b=E.log.querySelectorAll('.msg.me'); const last=b[b.length-1]; if(last)last.remove();   // tira a mensagem cancelada do chat
         cleanCancel=true;                                                                            // o bloco de atividade some sem deixar "interrompido"
         if(!curNative) tx({t:'dropLast',sessionId:currentSession});                                  // hub: tira do store pra não voltar no reload
         if(!E.input.value.trim()) restoreToInput(currentSession); else showRestoreBar(currentSession);
       }
-      stopping[currentSession]=true; refreshComposer(); updateStopStatus(); };
+      stopping[sessionStateKey(currentSession,currentSessionRunner)]=true; refreshComposer(); updateStopStatus(); };
     // ---------- composer triggers: "/" commands+skills+mcp · "@" files · "#" memory ----------
     let cmdList=[], cmdListFor=null, cmdReqPending=false;   // "/" catalog (per machine)
     let fileList=[], mentionT=null, fileAt=null, slashAt=null;   // "@" results/debounce/range + "/" range
@@ -1800,12 +1895,13 @@
     function pushBang(cmd){ if(!cmd)return; const h=[cmd,...bangHist.filter(x=>x!==cmd)].slice(0,30); bangHist.length=0; bangHist.push(...h); try{ localStorage.setItem('jarvis_bang',JSON.stringify(bangHist)); }catch(e){} }
     let trigMode=null, trigItems=[], trigIdx=-1;            // shared trigger-popover state (distinct from the E.pop popover)
     const slashOn=()=> cfg.slashMenu!==false;               // default ON; the toggle governs ALL trigger popovers
-    function requestCommands(){ if(slashOn() && !cmdReqPending){ cmdReqPending=true; tx({t:'commands'}); } }
+    function cmdCacheKey(){ return (routedMachine||currentMachine||'local')+'|'+(curCwd||''); }
+    function requestCommands(){ if(slashOn() && !cmdReqPending){ cmdReqPending=true; tx({t:'commands',sessionId:currentSession}); } }
     function cmdAgentSel(){ const a=currentAgent||''; return a==='claude-code'?'claude':(['codex','gemini','cursor','copilot','opencode','cline','qwen'].includes(a)?a:null); }
     function trigOpen(){ return !E.cmdPop.classList.contains('hidden'); }
     function closeTrig(){ if(trigOpen()){ E.cmdPop.classList.add('hidden'); E.cmdPop.innerHTML=''; } trigMode=null; trigItems=[]; trigIdx=-1; }
-    // "/word" at the START OF ANY LINE (up to the cursor); "@frag" = a path fragment before the cursor.
-    function slashTok(){ const p=E.input.selectionStart||0; const m=/(?:^|\n)[ \t]*\/([\w:.\-]*)$/.exec(E.input.value.slice(0,p)); return m?{tok:m[1],start:p-m[1].length-1,end:p}:null; }
+    // "/word" after start/space/"(" (up to the cursor); "@frag" = a path fragment before the cursor.
+    function slashTok(){ const p=E.input.selectionStart||0, s=E.input.value.slice(0,p), m=/(^|[\s(])\/([\w:.\-]*)$/.exec(s); return m?{tok:m[2],start:m.index+m[1].length,end:p}:null; }
     function atTok(){ const p=E.input.selectionStart||0; const m=/(?:^|\s)@([\w./\-]*)$/.exec(E.input.value.slice(0,p)); return m?{tok:m[1],start:p-m[1].length-1,end:p}:null; }
     function filterCmds(tok){ const q=(tok||'').toLowerCase(); const ag=cmdAgentSel();
       let arr=ag?cmdList.filter(c=>c.agent===ag):[];
@@ -1822,7 +1918,7 @@
       E.cmdPop.querySelectorAll('.cmdit').forEach(el=>{ el.onclick=()=>selectTrig(+el.dataset.i); });
       const s=E.cmdPop.querySelector('.cmdit.sel'); if(s) s.scrollIntoView({block:'nearest'}); }
     function openCmd(tok){
-      if(cmdListFor!==routedMachine){ requestCommands(); E.cmdPop.innerHTML='<div class="cmdempty">Carregando…</div>'; E.cmdPop.classList.remove('hidden'); trigItems=[]; trigIdx=-1; return; }
+      if(cmdListFor!==cmdCacheKey()){ requestCommands(); E.cmdPop.innerHTML='<div class="cmdempty">Carregando…</div>'; E.cmdPop.classList.remove('hidden'); trigItems=[]; trigIdx=-1; return; }
       trigItems=filterCmds(tok); trigIdx=trigItems.length?0:-1; renderTrig(); }
     function openMention(tok){
       clearTimeout(mentionT); mentionT=setTimeout(()=>{ if(trigMode==='file') tx({t:'mention', q:tok}); }, 120);
@@ -1852,11 +1948,11 @@
     function selectTrig(i){ const it=trigItems[i]; if(it==null)return;
       if(trigMode==='bang'){ const v=E.input.value; const nl=v.indexOf('\n'); E.input.value='!'+it+(nl===-1?'':v.slice(nl)); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} return; }
       if(trigMode==='file'){ const at=fileAt||atTok(); if(!at){ closeTrig(); return; } const v=E.input.value; E.input.value=v.slice(0,at.start)+it+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} return; }
-      // cmd mode: replace just the "/tok" on its line with "/name " (keeps preceding lines/text intact)
-      const at=slashAt||atTok()||{start:0,end:E.input.value.length}; const v=E.input.value;
+      // cmd mode: replace just the "/tok" with "/name " (keeps surrounding text intact)
+      const at=slashAt||slashTok()||{start:0,end:E.input.value.length}; const v=E.input.value;
       E.input.value=v.slice(0,at.start)+'/'+it.name+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} }
 
-    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[currentSession]=E.input.value; updateTrig(); };
+    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; if(currentSession) draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; updateTrig(); };
     E.input.onkeydown=(e)=>{
       if(trigOpen()){
         if(e.key==='ArrowDown'){ e.preventDefault(); moveTrig(1); return; }
