@@ -145,6 +145,19 @@ test("managed service validates availability and model/effort before workspace o
   } finally { f.cleanup(); }
 });
 
+test("managed service injects terminal dependency summaries into dependent prompts", async () => {
+  const f = fixture();
+  try {
+    await f.service.run(plan({ tasks: [
+      { ...plan().tasks[0], id: "first", title: "Primeira", prompt: "Primeira leitura" },
+      { ...plan().tasks[0], id: "second", title: "Segunda", prompt: "Sintetize", dependsOn: ["first"] },
+    ] }));
+    assert.match(f.adapter.prompt || "", /\[Resultados das dependências\]/);
+    assert.match(f.adapter.prompt || "", /## Primeira \[succeeded\]/);
+    assert.match(f.adapter.prompt || "", /feito/);
+  } finally { f.cleanup(); }
+});
+
 test("failed adapter is durable and its worktree is still released only after failure terminal", async () => {
   const f = fixture(); f.adapter.fail = new Error("provider caiu");
   try {

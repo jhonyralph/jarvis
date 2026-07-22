@@ -298,6 +298,13 @@
     .modal label > input:not([type=checkbox]), .modal label > select, #gate .gatebox input { width:100%; background:var(--bg); color:var(--text); border:1px solid #ffffff26; border-radius:10px; padding:11px 13px; font:inherit; font-size:14px; box-sizing:border-box; transition:border-color .15s, box-shadow .15s; }
     .modal label > select { appearance:none; -webkit-appearance:none; cursor:pointer; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2394a3b8' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>"); background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; }
     .modal label > input:not([type=checkbox]):focus, .modal label > select:focus, #gate .gatebox input:focus { outline:none; border-color:var(--me); box-shadow:0 0 0 3px #2563eb33; }
+    .councilcard { width:min(560px,100%); border-radius:8px; }
+    .councilcard .ctop { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .councilcard .ctop b { font-size:16px; }
+    .councilcard textarea { min-height:132px; font-family:inherit; font-size:14px; line-height:1.4; }
+    .councilcard .cgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .councilcard .cactions { justify-content:flex-end; align-items:center; }
+    @media (max-width:560px){ .councilcard .cgrid { grid-template-columns:1fr; } }
     .modal label > input::placeholder, #gate .gatebox input::placeholder { color:#64748b; }
     .modal input[type=text] { background:var(--bg); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:11px 13px; font:inherit; }
     /* Settings is a dense control surface: give it hierarchy, predictable controls and a mobile
@@ -635,6 +642,7 @@
         <div class="controls">
           <div class="ctlpills">
             <button type="button" id="attach" class="ghost" title="Anexar">＋</button>
+            <button type="button" id="councilBtn" class="ghost" title="Convocar Conselho">Conselho</button>
             <span id="status"></span>
             <span class="spacer"></span>
             <button type="button" id="agentBtn" class="pill" title="Agente / IA">🤖 <span class="cap" id="agentName">—</span></button>
@@ -714,6 +722,22 @@
     <div class="row" style="justify-content:flex-end"><button id="dlgCancel" class="ghost" type="button">Cancelar</button><button id="dlgOk" type="button">OK</button></div>
   </div></div>
 
+
+  <div id="councilModal" class="modal hidden"><div class="card councilcard">
+    <div class="ctop"><b>Conselho</b><button id="councilClose" class="ghost" type="button" title="Fechar">✕</button></div>
+    <label>Tema<textarea id="councilTopic" placeholder="O que o Conselho deve discutir?"></textarea></label>
+    <div class="cgrid">
+      <label>Modo<select id="councilMode">
+        <option value="auto">Auto</option>
+        <option value="quick">Rápido</option>
+        <option value="technical">Técnico</option>
+        <option value="critical">Crítico</option>
+        <option value="deep">Profundo</option>
+      </select></label>
+      <label class="row"><input id="councilContext" type="checkbox" checked>Usar contexto recente</label>
+    </div>
+    <div class="row cactions"><span id="councilNote" class="mut" style="font-size:12px;flex:1"></span><button id="councilCancel" class="ghost" type="button">Cancelar</button><button id="councilGo" type="button">Convocar</button></div>
+  </div></div>
 
   <div id="canvasModal" class="modal hidden"><div class="card" style="min-width:min(520px,94vw);max-width:min(680px,96vw)">
     <div class="row" style="justify-content:space-between;align-items:center"><b id="canvasTitle">🎙 Jarvis</b><button id="canvasClose" class="ghost" type="button">✕</button></div>

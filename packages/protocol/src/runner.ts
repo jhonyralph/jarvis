@@ -12,7 +12,7 @@
  */
 import type { AgentEvent } from "./agent.js";
 import type { ContextActor, ContextManifest } from "./context.js";
-import type { ExecutionHubToRunner, ExecutionRunnerToHub, ExecutionState } from "./execution.js";
+import type { ExecutionHubToRunner, ExecutionRunnerToHub, ExecutionState, ManagedExecutionPlanWire, ManagedExecutionPolicyWire } from "./execution.js";
 
 export type RunnerOS = "linux" | "darwin" | "win32" | string;
 
@@ -217,6 +217,8 @@ export type HubToRunner =
   | { t: "caps"; agent?: string }
   /** Query this machine's live account-plan usage for an adapter. */
   | { t: "usage"; reqId: string; agent?: string }
+  /** Start a Jarvis Conselho workflow and persist the final synthesis into this managed session. */
+  | { t: "council_start"; requestId: string; sessionId: string; requestText: string; mode: "quick" | "technical" | "critical" | "deep"; finalTaskId: string; title?: string; plan: ManagedExecutionPlanWire; policy?: ManagedExecutionPolicyWire }
   /** enumerate this machine's slash-commands / skills (reply: command_list) */
   | { t: "commands"; reqId: string; sessionId?: string }
   /** "@" file-mention search under a session's cwd (reply: mention_list) */

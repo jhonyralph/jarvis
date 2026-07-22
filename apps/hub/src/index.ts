@@ -28,7 +28,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, type CouncilMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -36,6 +36,7 @@ import * as guard from "./guard.js";
 import { startAdminApi } from "./adminApi.js";
 import { runManagedTurn, type TurnCtx } from "./turn.js";
 import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
+import { buildCouncilRoutePrompt, councilRouteFallback, parseCouncilRouteDecision, type CouncilRouteDecision } from "./councilRoute.js";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
@@ -671,8 +672,8 @@ const LOCAL_OPS = new Set(["sendTo", "search"]);
 // Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
-const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
-const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "summarize", "digest", "routine_run"]);
+const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "council_start", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
+const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "summarize", "digest", "routine_run"]);
 function holdForHubUpdate(ws: WebSocket, msg: any): boolean {
   if (!hubUpdateInProgress || !UPDATE_BLOCKED_OPS.has(msg.t)) return false;
   const runnerId = activeRunner(ws);
@@ -2096,6 +2097,134 @@ async function routeLocalTurn(sid: string, text: string, model: unknown, effort:
   }
   return decision;
 }
+
+function councilRecentLocal(sessionId: string): Array<{ role: "user" | "assistant"; text: string }> {
+  return store.history(sessionId).filter((m: any) => m?.role === "user" || m?.role === "assistant")
+    .slice(-6).map((m: any) => ({ role: m.role as "user" | "assistant", text: String(m.text || "") }));
+}
+
+function councilTopic(topic: string, recent: Array<{ role: "user" | "assistant"; text: string }>, includeContext: boolean): string {
+  const base = topic.trim();
+  if (!includeContext || !recent.length) return base;
+  const context = recent.map((m) => `${m.role === "user" ? "Usuário" : "Assistente"}: ${m.text.slice(0, 1200)}`).join("\n\n");
+  return `${base}\n\nContexto recente da sessão:\n${context}`;
+}
+
+async function decideCouncilRoute(input: {
+  topic: string;
+  requestedMode: CouncilMode;
+  recent: Array<{ role: "user" | "assistant"; text: string }>;
+}): Promise<CouncilRouteDecision> {
+  const req = { topic: input.topic, requestedMode: input.requestedMode, recent: input.recent };
+  if (input.requestedMode !== "auto") return councilRouteFallback(req);
+  let decision: CouncilRouteDecision | null = null;
+  try {
+    const router = summaryAgent();
+    if (!router.oneShot) throw new Error("agente de roteamento sem suporte one-shot");
+    const reply = await router.oneShot(buildCouncilRoutePrompt(req), await compatibleAgentOpts(router, summaryCfg.model, summaryCfg.effort));
+    addUsage("__council_route__", router.name, reply.usage);
+    decision = parseCouncilRouteDecision(reply.text, req);
+  } catch {
+    // deterministic fallback below
+  }
+  return decision || councilRouteFallback(req);
+}
+
+function councilFinalSummary(source: ExecutionStore, rootExecutionId: string, finalTaskId: string): string | undefined {
+  const finalId = managedChildExecutionId(rootExecutionId, finalTaskId);
+  const final = source.findNode(finalId)?.node;
+  if (final?.summary?.trim()) return final.summary;
+  return source.findNode(rootExecutionId)?.node.summary;
+}
+
+async function startLocalCouncil(ws: WebSocket, input: {
+  sessionId: string;
+  topic: string;
+  mode: CouncilMode;
+  includeContext: boolean;
+  model?: string;
+  effort?: string;
+}): Promise<void> {
+  if (!executionCfg.enabled) { send(ws, { t: "error", message: "Conselho exige Trabalhos habilitado" }); return; }
+  if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Conselho ainda não grava resultado em sessão nativa" }); return; }
+  if (store.isHidden(input.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita Conselho" }); return; }
+  const s = store.get(input.sessionId);
+  if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
+  const recent = councilRecentLocal(input.sessionId);
+  const route = await decideCouncilRoute({ topic: input.topic, requestedMode: input.mode, recent });
+  const topic = councilTopic(input.topic, recent, input.includeContext);
+  const built = buildCouncilPlan({
+    runnerId: LOCAL_ID, sessionId: input.sessionId, topic, cwd: s.cwd || CWD, mode: route.mode,
+    agents: await agents.describe() as any, preferredAgent: s.agent, model: input.model, effort: input.effort,
+  });
+  const requestText = formatCouncilRequestMessage(input.topic, route.mode);
+  const ts = Date.now();
+  store.add(input.sessionId, { role: "user", text: requestText, ts, agent: "jarvis" });
+  broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "user", text: requestText, ts, agent: "jarvis" } });
+  pushSessions();
+  auth.audit("council_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${built.rootExecutionId}: ${route.mode}` });
+
+  const ctrl = new AbortController();
+  localManagedRuns.add(built.rootExecutionId); localExecutionAborts.set(built.rootExecutionId, ctrl); broadcastRuns();
+  void localManagedExecution.run(built.plan, {
+    title: built.title, policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy(built.policy, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: s.cwd || CWD }).policy)),
+    signal: ctrl.signal,
+    onAccepted: (rootExecutionId) => send(ws, { t: "council_started", runnerId: LOCAL_ID, sessionId: input.sessionId, rootExecutionId, mode: route.mode, reason: route.reason }),
+  }).then((report) => {
+    const summary = councilFinalSummary(localExecutionStore, built.rootExecutionId, built.finalTaskId);
+    const text = formatCouncilFinalMessage({ mode: route.mode, rootExecutionId: built.rootExecutionId, summary, failed: report.state !== "succeeded" });
+    const at = Date.now();
+    store.add(input.sessionId, { role: "assistant", text, ts: at, agent: "jarvis" });
+    broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "assistant", text, ts: at, agent: "jarvis" } });
+    pushSessions();
+  }).catch((error) => {
+    const message = "Conselho: " + String((error as Error)?.message || error);
+    send(ws, { t: "error", message });
+  }).finally(() => {
+    localManagedRuns.delete(built.rootExecutionId);
+    if (localExecutionAborts.get(built.rootExecutionId) === ctrl) localExecutionAborts.delete(built.rootExecutionId);
+    broadcastRuns();
+  });
+}
+
+async function startRemoteCouncil(ws: WebSocket, rc: RunnerConn, input: {
+  sessionId: string;
+  topic: string;
+  mode: CouncilMode;
+  includeContext: boolean;
+  model?: string;
+  effort?: string;
+}): Promise<void> {
+  if (!executionCfg.enabled) { send(ws, { t: "error", message: "Conselho exige Trabalhos habilitado" }); return; }
+  if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Conselho ainda não grava resultado em sessão nativa" }); return; }
+  if (isInternalExecutionSession(rc.id, input.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita Conselho" }); return; }
+  if (!rc.ws || rc.ws.readyState !== WebSocket.OPEN) { send(ws, { t: "error", message: "máquina offline" }); return; }
+  const hist = await runnerHistory(rc, input.sessionId);
+  const state = runnerSessionState.get(rc.id)?.get(input.sessionId);
+  const recent = Array.isArray(hist?.messages)
+    ? hist.messages.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role as "user" | "assistant", text: String(m.text || "") }))
+    : [];
+  const cwd = String(hist?.cwd || state?.cwd || "");
+  const preferredAgent = String(hist?.agent || state?.agent || rc.info.agents?.[0] || "");
+  if (!cwd) { send(ws, { t: "error", message: "não foi possível identificar a pasta da sessão remota" }); return; }
+  const route = await decideCouncilRoute({ topic: input.topic, requestedMode: input.mode, recent });
+  const topic = councilTopic(input.topic, recent, input.includeContext);
+  const remoteAgents = Array.isArray(rc.info.agentDescriptors) && rc.info.agentDescriptors.length
+    ? rc.info.agentDescriptors
+    : (rc.info.agents || []).map((name) => ({ name }));
+  const built = buildCouncilPlan({
+    runnerId: rc.id, sessionId: input.sessionId, topic, cwd, mode: route.mode,
+    agents: remoteAgents as any, preferredAgent, model: input.model, effort: input.effort,
+  });
+  const requestId = `council-${randomUUID()}`;
+  const requestText = formatCouncilRequestMessage(input.topic, route.mode);
+  const policy = boundedManagedPolicy(mergeAdaptiveManagedPolicy(built.policy, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd }).policy));
+  auth.audit("council_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: rc.id, detail: `${built.rootExecutionId}: ${route.mode}` });
+  if (!sendToRunner(rc, { t: "council_start", requestId, sessionId: input.sessionId, requestText, mode: route.mode, finalTaskId: built.finalTaskId, title: built.title, plan: built.plan, policy })) {
+    send(ws, { t: "error", message: "não foi possível iniciar Conselho na máquina" }); return;
+  }
+  send(ws, { t: "council_started", runnerId: rc.id, sessionId: input.sessionId, rootExecutionId: built.rootExecutionId, mode: route.mode, reason: route.reason });
+}
 /** Reconcile a hub session against its bound NATIVE transcript. If the hub was killed mid-turn
  *  (restart, crash), the provider CLI child can keep running as an orphan
  *  (Windows doesn't kill children when the parent is force-killed) and finish writing the reply
@@ -3464,6 +3593,25 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (voiceOpBusy) { send(ws, { t: "busy", message: "Já estou gerando um áudio — aguarde terminar." }); return; }
       voiceOpBusy = true;
       try { await digestAndSpeak(ws, msg.speak !== false); } finally { voiceOpBusy = false; }
+      return;
+    }
+    if (msg.t === "council_start" && typeof msg.sessionId === "string" && typeof msg.topic === "string") {
+      const mode = COUNCIL_MODES.includes(msg.mode) ? msg.mode as CouncilMode : "auto";
+      const input = {
+        sessionId: msg.sessionId,
+        topic: msg.topic.slice(0, 20_000),
+        mode,
+        includeContext: msg.includeContext !== false,
+        model: typeof msg.model === "string" ? msg.model : undefined,
+        effort: typeof msg.effort === "string" ? msg.effort : undefined,
+      };
+      const runnerId = activeRunner(ws);
+      if (runnerId === LOCAL_ID) await startLocalCouncil(ws, input);
+      else {
+        const rc = runners.get(runnerId);
+        if (!rc) { send(ws, { t: "error", message: "máquina desconhecida" }); return; }
+        await startRemoteCouncil(ws, rc, input);
+      }
       return;
     }
     // summary/digest one-shot config (which agent/model/effort — cheap by default)

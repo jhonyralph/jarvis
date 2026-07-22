@@ -4,7 +4,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -750,6 +750,29 @@
     E.tabFiles.onclick=()=>selectTab('files');
     selectTab(cfg.tab);
     E.digestBtn.onclick=()=>{ if(!startVoiceOp('digest',E.digestBtn,'⏳ gerando…'))return; status('speaking',t('stAnalyzing')); tx({t:'digest',speak:true}); };
+    function openCouncil(){
+      if(!currentSession){ toast(t('tOpenFirst')); return; }
+      if(curNative){ toast('Conselho ainda não grava resultado em sessão nativa.'); return; }
+      const draft=(E.input.value||'').trim();
+      E.councilTopic.value=draft||'';
+      E.councilMode.value='auto';
+      E.councilContext.checked=true;
+      E.councilNote.textContent='';
+      E.councilModal.classList.remove('hidden');
+      setTimeout(()=>E.councilTopic.focus(),20);
+    }
+    function closeCouncil(){ E.councilModal.classList.add('hidden'); E.councilGo.disabled=false; E.councilNote.textContent=''; }
+    E.councilBtn.onclick=openCouncil;
+    E.councilClose.onclick=closeCouncil; E.councilCancel.onclick=closeCouncil;
+    E.councilModal.onclick=(e)=>{ if(e.target===E.councilModal) closeCouncil(); };
+    E.councilGo.onclick=()=>{
+      const topic=(E.councilTopic.value||'').trim();
+      if(!topic){ E.councilNote.textContent='Informe o tema.'; return; }
+      if(!currentSession){ closeCouncil(); toast(t('tOpenFirst')); return; }
+      E.councilGo.disabled=true; E.councilNote.textContent='Convocando...';
+      tx({t:'council_start',sessionId:currentSession,topic,mode:E.councilMode.value,includeContext:E.councilContext.checked,model:curModel,effort:curEffort});
+      closeCouncil(); closeSide(); toast('Conselho convocado.');
+    };
     // Resumir a sessão ATUAL exigia abrir a barra lateral e achar a sessão na lista — no celular,
     // onde a lateral é overlay, isso é o caminho todo. O panorama (🎧) fica só na lateral: dois
     // ícones de áudio lado a lado não diziam qual era o escopo de cada um.
@@ -1536,6 +1559,7 @@
           if(m.executionId===workSelected){renderWorkTree();renderWorkDetail();if(wasEmpty||wasAtEnd){E.workDetailBody.scrollTop=E.workDetailBody.scrollHeight;scheduleAutoPager(maybeAutoMoreWorkDetail);}}
         }
         else if(m.t==='execution_connection'){ if(m.runnerId)workConnections.set(m.runnerId,m.state);renderWorkConnection();if(workSelected&&(workNodes.get(workSelected)||{}).runnerId===m.runnerId)renderWorkDetail(); }
+        else if(m.t==='council_started'){ toast('Conselho em andamento em Trabalhos.'); if(m.rootExecutionId){ workSelected=m.rootExecutionId; tx({t:'executions_list',scope:'all',rootExecutionId:m.rootExecutionId,runnerId:m.runnerId,limit:500}); } }
         else if(m.t==='execution_control_result'||m.t==='execution_input_result'||m.t==='execution_archive_result'){
           const unsupported=Array.isArray(m.unsupportedIds)?m.unsupportedIds.length:0; toast(m.ok?(unsupported?`⚠ Atualizado parcialmente · ${unsupported} sem suporte`:'✓ Trabalho atualizado'):('⚠ '+(m.error||'Não foi possível atualizar o trabalho.')));
           if(m.executionId)tx({t:'execution_open',executionId:m.executionId,limit:500});
@@ -1837,6 +1861,7 @@
       const running=busy(currentSession), ro=curNative&&!curNativeWritable, block=ro;
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!curBusy);
       E.input.disabled=block; E.sendBtn.disabled=block; if(E.mic)E.mic.disabled=block;
+      if(E.councilBtn){ E.councilBtn.disabled=!currentSession||curNative; E.councilBtn.title=curNative?'Conselho ainda não grava resultado em sessão nativa':'Convocar Conselho'; }
       E.input.placeholder=ro?'Sessão nativa — somente leitura':(running?'Turno em andamento — enviar adiciona à fila automática':t('composerPh'));
       renderQueue(); updateStopStatus(); maybeReload(); }
     // id de mensagem p/ idempotência: o runner executa um turnId no máximo uma vez (re-entrega do

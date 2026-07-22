@@ -28,6 +28,7 @@ import {
   buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, fileDiffFromMessages, createAgentEventBridge, createEventSequencer,
   ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
   pendingActivityReplay,
+  formatCouncilFinalMessage, managedChildExecutionId,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type MemoryAppendPreview,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
@@ -574,6 +575,55 @@ function handleExecutionDelegate(command: ExecutionDelegateCommand): void {
   });
 }
 
+function councilFinalSummary(rootExecutionId: string, finalTaskId: string): string | undefined {
+  const finalId = managedChildExecutionId(rootExecutionId, finalTaskId);
+  const final = executionStore.findNode(finalId)?.node;
+  if (final?.summary?.trim()) return final.summary;
+  return executionStore.findNode(rootExecutionId)?.node.summary;
+}
+
+function handleCouncilStart(command: {
+  requestId: string;
+  sessionId: string;
+  requestText: string;
+  mode: "quick" | "technical" | "critical" | "deep";
+  finalTaskId: string;
+  title?: string;
+  plan: ManagedExecutionPlan;
+  policy?: ManagedExecutionPolicyInput;
+}): void {
+  if (store.isHidden(command.sessionId)) { send({ t: "error", reqId: command.requestId, message: "sessão interna não aceita Conselho" }); return; }
+  if (isNativeId(command.sessionId)) { send({ t: "error", reqId: command.requestId, message: "Conselho ainda não grava resultado em sessão nativa" }); return; }
+  const s = store.get(command.sessionId);
+  if (!s) { send({ t: "error", reqId: command.requestId, message: "sessão não encontrada" }); return; }
+  const at = Date.now();
+  store.add(command.sessionId, { role: "user", text: command.requestText, ts: at, agent: "jarvis" });
+  send({ t: "message", sessionId: command.sessionId, message: { role: "user", text: command.requestText, ts: at, agent: "jarvis" } });
+  pushSessions();
+
+  const ctrl = new AbortController();
+  managedRuns.add(command.plan.rootExecutionId); executionAborts.set(command.plan.rootExecutionId, ctrl); pushRuns();
+  void runnerManagedExecution.run(command.plan, { title: command.title, policy: command.policy, signal: ctrl.signal })
+    .then((report) => {
+      const text = formatCouncilFinalMessage({
+        mode: command.mode,
+        rootExecutionId: command.plan.rootExecutionId,
+        summary: councilFinalSummary(command.plan.rootExecutionId, command.finalTaskId),
+        failed: report.state !== "succeeded",
+      });
+      const ts = Date.now();
+      store.add(command.sessionId, { role: "assistant", text, ts, agent: "jarvis" });
+      send({ t: "message", sessionId: command.sessionId, message: { role: "assistant", text, ts, agent: "jarvis" } });
+      pushSessions();
+    })
+    .catch((error) => send({ t: "error", reqId: command.requestId, message: "Conselho: " + String((error as Error)?.message || error) }))
+    .finally(() => {
+      managedRuns.delete(command.plan.rootExecutionId);
+      if (executionAborts.get(command.plan.rootExecutionId) === ctrl) executionAborts.delete(command.plan.rootExecutionId);
+      pushRuns();
+    });
+}
+
 type ExecutionControlCommand = Extract<HubToRunner, { t: "execution_control" }>;
 type ExecutionControlResult = Extract<RunnerToHub, { t: "execution_control_result" }>;
 const CONTROL_RESULTS_FILE = join(JDIR, "execution-control-results.json");
@@ -872,7 +922,7 @@ function connect(): void {
         return;
       }
       if (m.t === "ping") { send({ t: "pong" }); return; }
-      if (updateInProgress && ["send", "execution_delegate", "new", "configure"].includes(m.t)) {
+      if (updateInProgress && ["send", "execution_delegate", "council_start", "new", "configure"].includes(m.t)) {
         send({ t: "error", reqId: m.reqId, message: "máquina drenando para atualização — tente novamente após ela reconectar" }); return;
       }
       if (m.t === "execution_manifest_request" && typeof m.reqId === "string") {
@@ -890,6 +940,10 @@ function connect(): void {
       if (m.t === "execution_delegate" && typeof m.requestId === "string" && m.plan && typeof m.plan === "object") {
         if (!EXECUTIONS_ENABLED) { rememberDelegateResult({ t: "execution_delegate_result", requestId: m.requestId, ok: false, error: "acompanhamento de trabalhos está desabilitado neste Runner" }); return; }
         handleExecutionDelegate(m as ExecutionDelegateCommand); return;
+      }
+      if (m.t === "council_start" && typeof m.requestId === "string" && typeof m.sessionId === "string" && m.plan && typeof m.plan === "object") {
+        if (!EXECUTIONS_ENABLED) { send({ t: "error", reqId: m.requestId, message: "acompanhamento de trabalhos está desabilitado neste Runner" }); return; }
+        handleCouncilStart(m as any); return;
       }
       if (m.t === "list") { pushSessions(); return; }
       if (m.t === "new") {

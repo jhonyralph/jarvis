@@ -146,11 +146,12 @@ function safeTool(event: StreamEvent, cwd: string): ToolEvent {
   };
 }
 
-function managedPrompt(task: ManagedExecutionTask, lease: ManagedWorkspaceLease): string {
+function managedPrompt(task: ManagedExecutionTask, lease: ManagedWorkspaceLease, dependencyContext?: string): string {
   const access = lease.access === "isolated_write"
     ? "Você pode editar apenas a worktree isolada fornecida."
     : "Esta execução está sob sandbox real somente leitura; não tente modificar arquivos.";
-  return `[Política de execução gerenciada do Jarvis]\n${access}\nNão crie commits, não faça merge/rebase/push e não altere outras worktrees. Publique um resumo objetivo ao terminar.\n\n${task.prompt}`;
+  const dependencyBlock = dependencyContext ? `\n\n[Resultados das dependências]\n${dependencyContext}` : "";
+  return `[Política de execução gerenciada do Jarvis]\n${access}\nNão crie commits, não faça merge/rebase/push e não altere outras worktrees. Publique um resumo objetivo ao terminar.${dependencyBlock}\n\n${task.prompt}`;
 }
 
 /**
@@ -304,6 +305,17 @@ export class ManagedExecutionService {
     };
   }
 
+  private dependencyContext(plan: ManagedExecutionPlan, prepared: Map<string, PreparedTask>, task: ManagedExecutionTask): string | undefined {
+    const rows = (task.dependsOn || []).flatMap((dependencyId) => {
+      const dependency = prepared.get(dependencyId);
+      const node = dependency ? this.deps.store.findNode(dependency.executionId)?.node : undefined;
+      if (!node) return [];
+      const summary = journalText(node.summary || "", 6_000) || "(sem resumo publicado)";
+      return [`## ${node.title} [${node.state}]\n${summary}`];
+    });
+    return rows.length ? rows.join("\n\n") : undefined;
+  }
+
   async run(plan: ManagedExecutionPlan, options: ManagedExecutionStartOptions = {}): Promise<ManagedExecutionReport> {
     const prepared = await this.preflight(plan, options.policy);
     const rootTurnId = options.rootTurnId || hashId("turn", plan.rootExecutionId);
@@ -375,7 +387,7 @@ export class ManagedExecutionService {
               cwd: lease.cwd, rootExecutionId: plan.rootExecutionId, executionId: item.executionId,
             });
             if (hidden.sessionId !== sessionId) throw new Error(`gateway de sessão oculta não preservou o idHint para ${task.id}`);
-            const prompt = managedPrompt(task, lease);
+            const prompt = managedPrompt(task, lease, this.dependencyContext(plan, prepared, task));
             await this.deps.hiddenSessions.append(sessionId, { role: "user", text: task.prompt, at: this.now() });
             const onEvent = this.providerSink(plan, item, lease.cwd);
             const reply = this.deps.invoke
