@@ -353,8 +353,15 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
   cleanupRunnerUpdateScripts();
   try {
     writeFileSync(UPDATE_LOCK_FILE, JSON.stringify({ requestId, targetCommit, pid: process.pid, at: Date.now() }), "utf8");
-    writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner.log"), pid: process.pid, force: !!m.force }), "utf8");
-    spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+    // #3: o updater loga num arquivo PRÓPRIO (runner-update.log). Antes escrevia no runner.log, que o
+    // launcher mantém aberto (*>>): uma sharing violation engolia todo o rastro do updater ao morrer.
+    writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), pid: process.pid, force: !!m.force }), "utf8");
+    const updater = spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true });
+    updater.unref();
+    // #2: o lock deve carregar o PID do UPDATER, não o do runner (que morre por design e é inútil para
+    // liveness). Assim o launcher limpa o lock assim que ESTE processo sumir, em vez de esperar 30 min
+    // por idade — foi o que prendeu a Luby offline quando o updater morreu antes da 1ª linha.
+    if (updater.pid) { try { writeFileSync(UPDATE_LOCK_FILE, JSON.stringify({ requestId, targetCommit, pid: updater.pid, at: Date.now() }), "utf8"); } catch { /* best-effort: o lock já existe */ } }
   } catch (error: any) {
     try { unlinkSync(UPDATE_LOCK_FILE); } catch { /* ignore */ }
     console.warn("[runner] update externo Windows indisponível:", String(error?.message ?? error).slice(0, 160));
@@ -1123,7 +1130,10 @@ function connect(): void {
   });
   sock.on("close", () => {
     clearInterval(hb); ws = null;
-    void maybeSelfUpdate("desconectado");
+    // #4: NÃO dispare auto-update numa queda transiente (ex.: 502 do túnel) — era o gatilho que criava
+    // corrida com o update do Hub. Só considera após desconexão SUSTENTADA (backoff já cresceu); a
+    // checagem periódica ("checagem periódica desconectada") cobre o caso realmente longo.
+    if (reconnectDelay >= 8000) void maybeSelfUpdate("desconectado");
     setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     console.log(`[runner] disconnected; retrying in ${reconnectDelay / 1000}s`);
   });

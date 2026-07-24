@@ -37,9 +37,15 @@ $lastUpdateWaitLog = [DateTimeOffset]::MinValue
 while ($true) {
   if (Test-Path $updateLock) {
     try {
+      $lockPid = $null
+      try { $lockPid = [int]((Get-Content -Raw -LiteralPath $updateLock | ConvertFrom-Json).pid) } catch { $lockPid = $null }
+      # #2: se o lock nomeia o processo do updater e ele JA morreu, o update abortou -> limpa na hora,
+      # sem esperar 30 min. So cai no timeout por idade quando o pid e ilegivel (lock de formato antigo).
+      $updaterDead = $false
+      if ($lockPid) { $updaterDead = -not [bool](Get-Process -Id $lockPid -ErrorAction SilentlyContinue) }
       $age = ((Get-Date) - (Get-Item -LiteralPath $updateLock).LastWriteTime).TotalMinutes
-      if ($age -gt 30) {
-        Log 'lock de update antigo removido'
+      if ($updaterDead -or $age -gt 30) {
+        Log ("lock de update orfao removido (pid {0} morto={1}, idade {2:N1}min)" -f $lockPid, $updaterDead, $age)
         Remove-Item -LiteralPath $updateLock -Force -ErrorAction SilentlyContinue
       } else {
         $now = [DateTimeOffset]::Now
