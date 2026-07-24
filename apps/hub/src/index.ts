@@ -21,14 +21,14 @@ import { PushCenter } from "./push.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, createAgentEventBridge, createEventSequencer, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
-import { synthesize } from "./tts.js";
+import { synthesize, listVoices, hasVoice } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, type CouncilMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -43,7 +43,9 @@ const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
 const CWD = process.env.JARVIS_CWD || process.cwd();
 const LOCAL_ID = "local";
-const VOICE = process.env.JARVIS_VOICE || "en_GB-alan-medium";
+// Voz falada: mutável em runtime (trocável pela UI, persistida em voice-cfg.json). A resolução do
+// default fica logo após o carregamento do voiceCfg (precisa dele) — ver resolveDefaultVoice().
+let VOICE = process.env.JARVIS_VOICE || "en_GB-alan-medium";
 // cap how many messages we send/render on open — long sessions were heavy on mobile
 const HISTORY_CAP = Number(process.env.JARVIS_HISTORY_CAP || 120);
 
@@ -246,12 +248,35 @@ function saveSummaryCfg(): void { try { writeJsonAtomic(SUMMARY_FILE, summaryCfg
 // Voz ambiente (staging): política de escalada de modelo + modelos rápido/upgrade. Persistido.
 // escalate: "ask" (avisa e pede autorização por voz) | "auto" (sobe sozinho) | "<modelId>" (sobe pra esse).
 const VOICE_CFG_FILE = join(JARVIS_DIR, "voice-cfg.json");
-const voiceCfg: { agent: string; model?: string; effort?: string; escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number } = (() => {
+const voiceCfg: { agent: string; model?: string; effort?: string; escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number; voice?: string } = (() => {
   // relevance: "on" (padrão — filtra falas que não são comando/relacionadas antes de despachar) | "off".
   const d = { agent: process.env.JARVIS_WAKE_AGENT || DEFAULT_AGENT, model: process.env.JARVIS_WAKE_MODEL || undefined, effort: process.env.JARVIS_WAKE_EFFORT || undefined, escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high", relevance: (process.env.JARVIS_VOICE_RELEVANCE || "on") };
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(VOICE_CFG_FILE, "utf8")) }; } catch { return d; }
 })();
 function saveVoiceCfg(): void { try { writeJsonAtomic(VOICE_CFG_FILE, voiceCfg, { pretty: true }); } catch { /* ignore */ } }
+// Resolve o timbre falado agora que o voiceCfg carregou. Preferência: escolha explícita salva (UI) >
+// env JARVIS_VOICE > pt_BR (público padrão pt-BR — evita voz inglesa lendo português, Gap 4) >
+// primeira voz pt > default/1ª disponível. Só ajusta se a resolução encontrar um modelo instalado.
+(function resolveDefaultVoice() {
+  if (voiceCfg.voice && hasVoice(voiceCfg.voice)) { VOICE = voiceCfg.voice; return; }
+  if (process.env.JARVIS_VOICE && hasVoice(process.env.JARVIS_VOICE)) { VOICE = process.env.JARVIS_VOICE; return; }
+  if (hasVoice("pt_BR-faber-medium")) { VOICE = "pt_BR-faber-medium"; return; }
+  const all = listVoices();
+  const pt = all.find((v) => v.toLowerCase().startsWith("pt"));
+  if (pt) { VOICE = pt; return; }
+  if (hasVoice(VOICE)) return;             // o default embutido existe → mantém
+  if (all.length) VOICE = all[0];          // último recurso: qualquer voz instalada
+})();
+// Framework Jarvis — the canonical universal commands/skills/instructions live at frameworkRoot()
+// (~/.jarvis/framework) on this Hub machine. `preference` decides how a native-vs-universal "/name"
+// homonym resolves; `version` is the monotonic publish counter carried to every machine.
+const FRAMEWORK_CFG_FILE = join(JARVIS_DIR, "framework-config.json");
+const frameworkCfg: { preference: FrameworkPreference; version: number } = (() => {
+  try { const raw = JSON.parse(readFileSync(FRAMEWORK_CFG_FILE, "utf8")); return { preference: normalizeFrameworkPreference(raw?.preference), version: Math.max(0, Number(raw?.version) || 0) }; }
+  catch { return { preference: "ask", version: 0 }; }
+})();
+function saveFrameworkCfg(): void { try { writeJsonAtomic(FRAMEWORK_CFG_FILE, frameworkCfg, { pretty: true }); } catch { /* ignore */ } }
+const frameworkProvenance = new FrameworkProvenanceStore(JARVIS_DIR);
 const push = new PushCenter(JARVIS_DIR);
 // Bound method — the Hub keeps calling notifyEvent(...) everywhere, now delegated to the module.
 const notifyEvent = push.notifyEvent;
@@ -574,6 +599,14 @@ function sendMemoryFrame(origin: WebSocket, pending: PendingMemoryConfirmation, 
   if (!sentOrigin) send(origin, frame);
 }
 let reqSeq = 0;
+// Durable Framework Jarvis publish queue, mirroring pendingRunnerUpdates: a machine that is offline or
+// on an old protocol keeps its pending publish and receives it on reconnect. Keyed by runnerId.
+const FRAMEWORK_QUEUE_FILE = join(JARVIS_DIR, "hub", "pending-framework-publish.json");
+interface PendingFrameworkPublish { requestId: string; targetHash: string; targetVersion: number; requestedAt: number; lastAttemptAt?: number; }
+const pendingFrameworkPublish: Record<string, PendingFrameworkPublish> = readJson<Record<string, PendingFrameworkPublish>>(FRAMEWORK_QUEUE_FILE, {});
+function savePendingFrameworkPublish(): void { try { writeJsonAtomic(FRAMEWORK_QUEUE_FILE, pendingFrameworkPublish, { pretty: true }); } catch { /* best effort */ } }
+// requestId -> the client awaiting per-machine publish status (best-effort; cleared on reply).
+const frameworkPublishClients = new Map<string, { ws: WebSocket; runnerId: string }>();
 const runnerSessionState = new Map<string, Map<string, any>>();
 // which agents are actually usable on THIS (local) machine — probes availability, so the
 // UI can disable agents that aren't installed/authenticated here.
@@ -832,6 +865,28 @@ function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
   deliverPendingRunnerUpdate(rc, { retryNow: true });
 }
 
+function currentFrameworkManifest(): FrameworkManifest {
+  return readCanonicalFramework(frameworkRoot(), frameworkCfg.version);
+}
+/** Deliver a queued Framework publish to a connected, protocol-compatible runner. Reads the CURRENT
+ *  canonical tree so a machine that was offline gets the latest version, not a stale snapshot. */
+function deliverPendingFrameworkPublish(rc: RunnerConn): boolean {
+  const pending = pendingFrameworkPublish[rc.id];
+  if (!pending || rc.local || !rc.ws || rc.ws.readyState !== WebSocket.OPEN) return false;
+  if ((rc.info.protocolVersion || 1) < 7) return false; // old runner can't materialize; keep it queued
+  const manifest = currentFrameworkManifest();
+  const sent = sendToRunner(rc, { t: "framework_publish", requestId: pending.requestId, version: manifest.version, hash: manifest.hash, files: manifest.files });
+  if (sent) { pending.lastAttemptAt = Date.now(); pending.targetHash = manifest.hash; pending.targetVersion = manifest.version; savePendingFrameworkPublish(); }
+  return sent;
+}
+// Redeliver to machines that reconnected without an explicit register (or transiently failed).
+setInterval(() => {
+  for (const [id, pending] of Object.entries(pendingFrameworkPublish)) {
+    if (pending.lastAttemptAt && Date.now() - pending.lastAttemptAt < 60_000) continue;
+    const rc = runners.get(id); if (rc && rc.ws && rc.ws.readyState === WebSocket.OPEN) deliverPendingFrameworkPublish(rc);
+  }
+}, 60_000).unref?.();
+
 let hubUpdateInProgress = false;
 async function drainHubForUpdate(deadlineMs = 120_000): Promise<string | null> {
   const started = Date.now();
@@ -1018,6 +1073,15 @@ function relayRunner(rc: RunnerConn, m: any): void {
     const request = pendingRemoteMemoryApply.get(m.reqId), client = pendingReq.get(m.reqId);
     pendingRemoteMemoryApply.delete(m.reqId); pendingReq.delete(m.reqId);
     if (request && client) sendMemoryFrame(client, request.pending, { ...m, runnerId: rc.id });
+    return;
+  }
+  if (m.t === "framework_published") {
+    const target = frameworkPublishClients.get(m.requestId);
+    frameworkPublishClients.delete(m.requestId);
+    const pending = pendingFrameworkPublish[rc.id];
+    if (m.ok && pending && (!m.hash || m.hash === pending.targetHash)) { delete pendingFrameworkPublish[rc.id]; savePendingFrameworkPublish(); }
+    try { frameworkProvenance.append({ at: Date.now(), runnerId: rc.id, version: Number(m.version) || 0, hash: String(m.hash || ""), written: Number(m.written) || 0, removed: Number(m.removed) || 0, skipped: !!m.skipped }); } catch { /* best effort */ }
+    if (target?.ws) send(target.ws, { t: "framework_status", runnerId: rc.id, machine: runnerLabels[rc.id] || rc.info.host || rc.id, ok: !!m.ok, state: m.ok ? (m.skipped ? "current" : "materialized") : "error", version: m.version, error: m.error });
     return;
   }
   if (m.t === "execution_delegate_result") {
@@ -1386,6 +1450,7 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       const registered = runners.get(rid)!;
       if (info.updateResult && typeof info.updateResult.requestId === "string") completePendingRunnerUpdate(registered, info.updateResult);
       verifyOrDeliverRunnerUpdate(registered);
+      deliverPendingFrameworkPublish(registered); // a reconnecting machine picks up any queued Framework publish
       return;
     }
     if (!rid) return;
@@ -2553,7 +2618,7 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   // Power-triggers for the AGENT (echoed user message stays raw): "!cmd" runs + injects output;
   // otherwise "/cmd" expands to its prompt (scoped to this session's agent).
   const bang = await expandBang(text, info.cwd || CWD);
-  const cmdExp = bang ? null : expandCommand(text, info.cwd || CWD, cmdAgentOf(info.agent));
+  const cmdExp = bang ? null : expandCommand(text, info.cwd || CWD, cmdAgentOf(info.agent), { preference: frameworkCfg.preference });
   const agentSend = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
   const turnId = randomUUID();
   const manifest = buildContextManifest({
@@ -2796,6 +2861,12 @@ async function sendInitialState(ws: WebSocket): Promise<void> {
   // (mirrors the per-runner drive gate; the client then selects a machine it may access).
   if (canUseRunner(ws, LOCAL_ID)) { sendSessions(ws); send(ws, { t: "runs", runnerId: LOCAL_ID, active: [...activeRuns] }); }
   else send(ws, { t: "sessions", sessions: [], recentDirs: [] });
+  // Reidrata os runs ATIVOS dos runners REMOTOS no connect (o Hub já os rastreia em runnerActive).
+  // Sem isto, um reload / abrir em outro computador vendo uma sessão remota perdia o selo "em execução"
+  // na sidebar e o botão de parar — o stream do chat volta via turn-resume, mas o estado "ocupado" não.
+  for (const [rid, set] of runnerActive) {
+    if (rid !== LOCAL_ID && set.size && canUseRunner(ws, rid)) send(ws, { t: "runs", runnerId: rid, active: [...set] });
+  }
   await sendVoiceState(ws);
 }
 
@@ -2998,6 +3069,22 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
     voiceCfg.agent = voiceConfig.agent = nextAgent; voiceCfg.model = voiceConfig.model = nextModel; voiceCfg.effort = voiceConfig.effort = nextEffort;
     if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; if (typeof msg.relevance === "string") voiceCfg.relevance = msg.relevance;
     saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: { ...voiceCfg } }); return true; }
+  // --- catálogo de vozes / timbre falado (Gap 6): listar, trocar e ouvir prévia. Trocar é do dono
+  //     (é a voz GLOBAL do Hub); listar e a prévia são inofensivos e ficam liberados. ---
+  if (msg.t === "list_voices") { send(ws, { t: "voices", voices: listVoices(), current: VOICE }); return true; }
+  if (msg.t === "set_voice" && typeof msg.voice === "string") {
+    if (!requireOwner(ws)) return true;
+    if (!hasVoice(msg.voice)) { send(ws, { t: "error", message: `voz não encontrada: ${msg.voice}` }); return true; }
+    VOICE = msg.voice; voiceCfg.voice = msg.voice; saveVoiceCfg();
+    send(ws, { t: "voices", voices: listVoices(), current: VOICE }); return true;
+  }
+  if (msg.t === "preview_voice" && typeof msg.voice === "string") {
+    if (!hasVoice(msg.voice)) { send(ws, { t: "error", message: `voz não encontrada: ${msg.voice}` }); return true; }
+    const sample = (typeof msg.text === "string" && msg.text.trim()) ? msg.text.trim().slice(0, 200) : "Bom dia, senhor. Todos os sistemas estão operacionais.";
+    try { const wav = await synthesize(sample, msg.voice); send(ws, { t: "voice_preview", voice: msg.voice, audio: wav.toString("base64") }); }
+    catch (e) { send(ws, { t: "error", message: `falha ao gerar prévia da voz: ${(e as Error).message}` }); }
+    return true;
+  }
   return false;
 }
 
@@ -3648,6 +3735,75 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       Object.assign(executionCfg, next); saveExecutionCfg();
       send(ws, { t: "execution_cfg", cfg: executionCfg, saved: true, restartRequired: restartFields.length > 0, restartFields }); return;
     }
+    // Framework Jarvis — canonical universal commands/skills/instructions, published to every machine.
+    if (msg.t === "framework_cfg") {
+      if (!requireOwner(ws)) return;
+      const manifest = currentFrameworkManifest();
+      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, root: frameworkRoot(),
+        files: manifest.files.map((f) => ({ path: f.path })),
+        machines: allowedRunnerIds(ws).map((id) => ({ runnerId: id, label: id === LOCAL_ID ? (runnerLabels[LOCAL_ID] || "esta máquina") : (runnerLabels[id] || runners.get(id)?.info.host || id),
+          local: id === LOCAL_ID, online: id === LOCAL_ID || !!runners.get(id)?.ws, protocolVersion: runners.get(id)?.info.protocolVersion || (id === LOCAL_ID ? RUNNER_PROTOCOL_VERSION : 1), queued: !!pendingFrameworkPublish[id] })) });
+      return;
+    }
+    if (msg.t === "set_framework_cfg") {
+      if (!requireOwner(ws)) return;
+      frameworkCfg.preference = normalizeFrameworkPreference(msg.preference); saveFrameworkCfg();
+      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, saved: true });
+      return;
+    }
+    if (msg.t === "framework_read") {
+      if (!requireOwner(ws)) return;
+      const f = currentFrameworkManifest().files.find((x) => x.path === String(msg.path || ""));
+      send(ws, { t: "framework_file", path: String(msg.path || ""), content: f ? f.content : "", exists: !!f });
+      return;
+    }
+    if (msg.t === "framework_save") {
+      if (!requireOwner(ws)) return;
+      try { const path = writeFrameworkFile(String(msg.path || ""), String(msg.content ?? "")); send(ws, { t: "framework_saved", path, ok: true }); }
+      catch (e: any) { send(ws, { t: "framework_saved", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    if (msg.t === "framework_delete") {
+      if (!requireOwner(ws)) return;
+      try { deleteFrameworkFile(String(msg.path || "")); send(ws, { t: "framework_saved", path: String(msg.path || ""), ok: true, deleted: true }); }
+      catch (e: any) { send(ws, { t: "framework_saved", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    if (msg.t === "framework_import") {
+      if (!requireOwner(ws)) return;
+      try { const r = importFrameworkFromNative({}); send(ws, { t: "framework_imported", ok: true, imported: r.imported, skipped: r.skipped }); }
+      catch (e: any) { send(ws, { t: "framework_imported", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    if (msg.t === "publish_framework") {
+      if (!requireOwner(ws)) return;
+      const base = readCanonicalFramework(frameworkRoot(), frameworkCfg.version);
+      if (!base.files.length) { send(ws, { t: "framework_status", published: false, error: "o framework está vazio — adicione comandos, skills ou instruções antes de publicar" }); return; }
+      frameworkCfg.version = base.version + 1; saveFrameworkCfg();
+      const manifest: FrameworkManifest = { version: frameworkCfg.version, hash: base.hash, files: base.files };
+      const results: Array<Record<string, unknown>> = [];
+      for (const rid of allowedRunnerIds(ws)) {
+        const rc = runners.get(rid);
+        const label = rid === LOCAL_ID ? (runnerLabels[LOCAL_ID] || "esta máquina") : (runnerLabels[rid] || rc?.info.host || rid);
+        if (rid === LOCAL_ID) {
+          // The canonical tree IS this machine's copy; materialize records a receipt so its version tracks.
+          try { const r = materializeFramework(manifest, {}); frameworkProvenance.append({ at: Date.now(), runnerId: LOCAL_ID, version: r.version, hash: r.hash, written: r.written, removed: r.removed, skipped: r.skipped }); results.push({ runnerId: rid, label, local: true, state: "materialized" }); }
+          catch (e: any) { results.push({ runnerId: rid, label, local: true, state: "error", error: String(e?.message ?? e) }); }
+          continue;
+        }
+        const prior = pendingFrameworkPublish[rid];
+        if (prior) frameworkPublishClients.delete(prior.requestId); // drop the superseded waiter so it can't leak
+        const requestId = randomUUID();
+        pendingFrameworkPublish[rid] = { requestId, targetHash: manifest.hash, targetVersion: manifest.version, requestedAt: Date.now() };
+        if (rc && (rc.info.protocolVersion || 1) < 7) { results.push({ runnerId: rid, label, state: "needs_update" }); continue; }
+        frameworkPublishClients.set(requestId, { ws, runnerId: rid });
+        if (rc && rc.ws && rc.ws.readyState === WebSocket.OPEN && deliverPendingFrameworkPublish(rc)) results.push({ runnerId: rid, label, state: "sent" });
+        else results.push({ runnerId: rid, label, state: "queued" });
+      }
+      savePendingFrameworkPublish();
+      send(ws, { t: "framework_status", published: true, version: manifest.version, hash: manifest.hash, results });
+      return;
+    }
     if (msg.t === "policy_state") {
       if (!requireOwner(ws)) return;
       const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws);
@@ -3960,6 +4116,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       text = pre.text;
     }
     if (!text) return;
+    // Gap 8: se o DISPOSITIVO de origem compartilhou a localização (opt-in no cliente), anexa uma
+    // linha discreta ao pedido — para solicitações que dependem de "onde estou" (ex.: lugares por
+    // perto). A posição vem SEMPRE do device solicitante, nunca do Hub; ausente → nada muda.
+    if (msg.geo && typeof msg.geo === "object" && typeof msg.geo.lat === "number" && typeof msg.geo.lng === "number") {
+      const acc = typeof msg.geo.acc === "number" && msg.geo.acc > 0 ? `, precisão ~${Math.round(msg.geo.acc)} m` : "";
+      text = `[localização atual do dispositivo do usuário: latitude ${msg.geo.lat.toFixed(5)}, longitude ${msg.geo.lng.toFixed(5)}${acc}]\n${text}`;
+    }
     if (msg.t === "send" && typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
     const inboundActor = actorOf(ws);
     const inboundKey = recordPendingInboundTurn(activeRunner(ws), sid, msg, text, inboundActor);
@@ -4089,7 +4252,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // injects its output; otherwise a "/cmd" expands to its prompt (scoped to this session's agent).
     const scwd = store.get(sid)?.cwd || CWD;
     const bang = await expandBang(text, scwd);
-    const cmdExp = bang ? null : expandCommand(text, scwd, cmdAgentOf(store.get(sid)?.agent));
+    const cmdExp = bang ? null : expandCommand(text, scwd, cmdAgentOf(store.get(sid)?.agent), { preference: frameworkCfg.preference });
     await runManagedTurn(turnCtx, sid, {
       showText, agentText: bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText),
       model: decision.model,

@@ -25,6 +25,7 @@ import {
   updateCheck, updateApply, restartService, runnerSelfUpdateDecision, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang,
   previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest,
+  materializeFramework, FrameworkProvenanceStore,
   buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, fileDiffFromMessages, createAgentEventBridge, createEventSequencer,
   ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
   pendingActivityReplay,
@@ -102,6 +103,7 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
 const store = new Store({ agent: DEFAULT_AGENT, cwd: CWD });
 const contextManifests = new ContextManifestStore(JDIR);
 const memoryProvenance = new MemoryProvenanceStore(JDIR);
+const frameworkProvenance = new FrameworkProvenanceStore(JDIR);
 const nativeBindingCollisions = agents.nativeBindingCollisions();
 if (nativeBindingCollisions.length) console.error("[runner] colisões de sessão nativa detectadas; turnos afetados serão bloqueados:", JSON.stringify(nativeBindingCollisions));
 const executionStore = new ExecutionStore({ root: join(JDIR, "executions"), maxEventsPerRoot: EXECUTION_MAX_EVENTS });
@@ -922,7 +924,7 @@ function connect(): void {
         return;
       }
       if (m.t === "ping") { send({ t: "pong" }); return; }
-      if (updateInProgress && ["send", "execution_delegate", "council_start", "new", "configure"].includes(m.t)) {
+      if (updateInProgress && ["send", "execution_delegate", "council_start", "framework_publish", "new", "configure"].includes(m.t)) {
         send({ t: "error", reqId: m.reqId, message: "máquina drenando para atualização — tente novamente após ela reconectar" }); return;
       }
       if (m.t === "execution_manifest_request" && typeof m.reqId === "string") {
@@ -944,6 +946,18 @@ function connect(): void {
       if (m.t === "council_start" && typeof m.requestId === "string" && typeof m.sessionId === "string" && m.plan && typeof m.plan === "object") {
         if (!EXECUTIONS_ENABLED) { send({ t: "error", reqId: m.requestId, message: "acompanhamento de trabalhos está desabilitado neste Runner" }); return; }
         handleCouncilStart(m as any); return;
+      }
+      if (m.t === "framework_publish" && typeof m.requestId === "string" && typeof m.hash === "string" && Array.isArray(m.files)) {
+        // Materialize the published Framework Jarvis onto this machine (idempotent by hash). The core
+        // routine guards against path traversal, so a bad frame throws instead of writing outside root.
+        try {
+          const result = materializeFramework({ version: Number(m.version) || 0, hash: m.hash, files: m.files }, {});
+          frameworkProvenance.append({ at: Date.now(), runnerId: RUNNER_ID, version: result.version, hash: result.hash, written: result.written, removed: result.removed, skipped: result.skipped });
+          send({ t: "framework_published", requestId: m.requestId, ok: true, version: result.version, hash: result.hash, written: result.written, removed: result.removed, skipped: result.skipped });
+        } catch (e: any) {
+          send({ t: "framework_published", requestId: m.requestId, ok: false, error: "framework: " + String(e?.message ?? e) });
+        }
+        return;
       }
       if (m.t === "list") { pushSessions(); return; }
       if (m.t === "new") {

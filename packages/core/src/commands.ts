@@ -17,8 +17,11 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
+import { frameworkRoot, type FrameworkPreference } from "./framework.js";
 
-export type CmdAgent = "claude" | "codex" | "gemini" | "cursor" | "copilot" | "opencode" | "cline" | "qwen" | "continue" | "kiro" | "antigravity" | "aider";
+/** "jarvis" is the universal, provider-agnostic framework source — it is not a real adapter, so it is
+ *  offered alongside whatever AI is active (see expandCommand), not selected by cmdAgentOf. */
+export type CmdAgent = "jarvis" | "claude" | "codex" | "gemini" | "cursor" | "copilot" | "opencode" | "cline" | "qwen" | "continue" | "kiro" | "antigravity" | "aider";
 export interface SlashCommand {
   name: string;              // "flow:discovery" (Claude), "flow-discovery" (Codex), or a skill name
   description: string;
@@ -153,14 +156,36 @@ function scanBuiltins(out: SlashCommand[]): void {
 // Lower = higher priority within one provider: project > user > builtin.
 const prio = (c: SlashCommand): number => (c.source === "project" ? 0 : c.source === "user" ? 1 : 2);
 const leafOf = (name: string): string => name.split(":").pop() || name;
-function findCmd(all: SlashCommand[], typed: string): SlashCommand | undefined {
-  return all.find((c) => c.name === typed) || all.find((c) => leafOf(c.name) === leafOf(typed));
+/** Resolve the typed "/name" against the eligible pool. Exact name wins over a leaf-name match. When a
+ *  name exists BOTH natively and in the Jarvis framework, `preference` decides: "jarvis" picks the
+ *  universal one, "native"/"ask" prefer the AI's own (the composer surfaces both tags for "ask"). With
+ *  no framework homonym in play this is the legacy first-match, preserving provider priority. */
+function pickCommand(pool: SlashCommand[], typed: string, preference: FrameworkPreference): SlashCommand | undefined {
+  const exact = pool.filter((c) => c.name === typed);
+  const matches = exact.length ? exact : pool.filter((c) => leafOf(c.name) === leafOf(typed));
+  if (matches.length <= 1) return matches[0];
+  const jarvisM = matches.find((c) => c.agent === "jarvis");
+  const nativeM = matches.find((c) => c.agent !== "jarvis");
+  if (!jarvisM) return matches[0];        // e.g. claude vs codex homonym — keep priority order
+  if (!nativeM) return jarvisM;
+  return preference === "jarvis" ? jarvisM : nativeM;
 }
 /** The prompt a matched command/skill/mcp expands to. null = pass the raw "/name" through unchanged
  *  (built-ins — Claude resolves them itself; or an unreadable command file). */
 function expandOne(cmd: SlashCommand, args: string): string | null {
   if (cmd.kind === "builtin") return null;
-  if (cmd.kind === "skill") return `Use the "${cmd.name}" skill.` + (args ? ` Context: ${args}` : "");
+  if (cmd.kind === "skill") {
+    // Native skills are model-invoked by name (the provider loads the file). A Jarvis universal skill
+    // may run on an AI that has no such skill, so we INLINE its SKILL.md body — that is what makes it
+    // work anywhere. Fall back to the name-only hint if the body is unreadable/empty.
+    if (cmd.agent === "jarvis" && cmd.path) {
+      let body = "";
+      try { body = splitFrontmatter(readFileSync(cmd.path, "utf8")).body; } catch { body = ""; }
+      const sub = body.replace(/\$ARGUMENTS\b/g, args).replace(/\$\{ARGUMENTS\}/g, args).replace(/\$@/g, args).replace(/\$1\b/g, args).trim();
+      if (sub) return `Use a competência "${cmd.name}" do Framework Jarvis.\nInstruções:\n\n${sub}` + (args && sub === body.trim() ? `\n\nContexto: ${args}` : "");
+    }
+    return `Use the "${cmd.name}" skill.` + (args ? ` Context: ${args}` : "");
+  }
   if (cmd.kind === "mcp") return `Use the "${cmd.name}" MCP server's tools.` + (args ? ` ${args}` : "");
   let body = "";
   try { body = splitFrontmatter(readFileSync(cmd.path, "utf8")).body; } catch { return null; }
@@ -183,6 +208,7 @@ const cache = new Map<string, { key: string; data: SlashCommand[] }>();
 export function listCommands(cwd?: string): SlashCommand[] {
   const ch = claudeHome(), xh = codexHome();
   const ah = join(homedir(), ".agents");
+  const jf = frameworkRoot(); // universal "Framework Jarvis" source, shared across every AI
   const providerDirs: Array<[CmdAgent, string, string]> = [
     ["gemini", join(homedir(), ".gemini", "skills"), join(homedir(), ".gemini", "commands")],
     ["cursor", join(homedir(), ".cursor", "skills"), join(homedir(), ".cursor", "commands")],
@@ -191,8 +217,8 @@ export function listCommands(cwd?: string): SlashCommand[] {
     ["cline", join(homedir(), ".cline", "data", "settings", "skills"), join(homedir(), ".cline", "commands")],
     ["qwen", join(homedir(), ".qwen", "skills"), join(homedir(), ".qwen", "commands")],
   ];
-  const dirs = [join(ch, "skills"), join(ch, "commands"), join(xh, "skills"), join(xh, "prompts"), join(ah, "skills"), claudeJson(), process.env.JARVIS_CODEX_CONFIG || join(xh, "config.toml"), ...providerDirs.flatMap((x) => [x[1], x[2]])];
-  if (cwd) dirs.push(join(cwd, ".claude", "skills"), join(cwd, ".claude", "commands"), join(cwd, ".agents", "skills"), join(cwd, ".mcp.json"), join(cwd, ".cline", "mcp.json"), join(cwd, ".cursor", "mcp.json"));
+  const dirs = [join(ch, "skills"), join(ch, "commands"), join(xh, "skills"), join(xh, "prompts"), join(ah, "skills"), join(jf, "skills"), join(jf, "commands"), claudeJson(), process.env.JARVIS_CODEX_CONFIG || join(xh, "config.toml"), ...providerDirs.flatMap((x) => [x[1], x[2]])];
+  if (cwd) dirs.push(join(cwd, ".claude", "skills"), join(cwd, ".claude", "commands"), join(cwd, ".agents", "skills"), join(cwd, ".jarvis", "framework", "skills"), join(cwd, ".jarvis", "framework", "commands"), join(cwd, ".mcp.json"), join(cwd, ".cline", "mcp.json"), join(cwd, ".cursor", "mcp.json"));
   const key = dirs.map((d) => { try { return d + ":" + statSync(d).mtimeMs; } catch { return d + ":0"; } }).join("|");
   const ck = cwd || "";
   const hit = cache.get(ck);
@@ -204,12 +230,16 @@ export function listCommands(cwd?: string): SlashCommand[] {
   scanSkills(join(ah, "skills"), "codex", "user", out); // official cross-agent/Codex skill home
   scanCommands(join(xh, "prompts"), "codex", "user", out);   // Codex prompts are the equivalent of slash-commands
   for (const [agent, skills, commands] of providerDirs) { scanSkills(skills, agent, "user", out); scanCommands(commands, agent, "user", out); }
+  scanSkills(join(jf, "skills"), "jarvis", "user", out);   // universal skills — offered under every AI
+  scanCommands(join(jf, "commands"), "jarvis", "user", out);
   scanMcp(cwd, out);
   scanCodexMcp(out);
   scanBuiltins(out);
   if (cwd) {
     scanSkills(join(cwd, ".claude", "skills"), "claude", "project", out); scanCommands(join(cwd, ".claude", "commands"), "claude", "project", out);
     scanSkills(join(cwd, ".agents", "skills"), "codex", "project", out);
+    scanSkills(join(cwd, ".jarvis", "framework", "skills"), "jarvis", "project", out);
+    scanCommands(join(cwd, ".jarvis", "framework", "commands"), "jarvis", "project", out);
     scanSkills(join(cwd, ".cline", "skills"), "cline", "project", out);
     scanSkills(join(cwd, ".qwen", "skills"), "qwen", "project", out);
     scanCommands(join(cwd, ".cursor", "commands"), "cursor", "project", out);
@@ -237,10 +267,15 @@ export function listCommandsPublic(cwd?: string): Array<Omit<SlashCommand, "path
  *  chat still shows the raw "/name"). Name-tolerant: falls back to a leaf-name match. When `agent` is
  *  given, ONLY that agent's entries are considered (a Codex turn never runs a Claude command); pass
  *  the session's adapter name via cmdAgentOf. null when it isn't one — the caller sends `text` as-is. */
-export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | null): { name: string; expanded: string } | null {
-  if (agent === null) return null;   // adapter with no command system → nothing to expand
-  let all = listCommands(cwd);       // priority-sorted-then-alpha; find() returns the preferred on ties
-  if (agent) all = all.filter((c) => c.agent === agent);
+export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | null, opts?: { preference?: FrameworkPreference }): { name: string; expanded: string } | null {
+  const preference = opts?.preference ?? "ask";
+  const all = listCommands(cwd);     // priority-sorted-then-alpha
+  // Eligible pool: the active AI's own entries PLUS the universal Jarvis framework, which is offered
+  // under every AI. `agent === undefined` is the legacy unscoped view (all providers). `agent === null`
+  // is an adapter with no native command system — it still gets Jarvis universal commands.
+  const pool = agent === undefined ? all
+    : agent === null ? all.filter((c) => c.agent === "jarvis")
+    : all.filter((c) => c.agent === agent || c.agent === "jarvis");
   // A "/command" may sit after whitespace on ANY line, including mid-message. Expand the first such
   // token whose command has a prompt; surrounding text is kept as context. Built-ins
   // (expandOne → null) are left raw so `claude -p` resolves "/name" itself.
@@ -248,7 +283,7 @@ export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | nul
   for (let i = 0; i < lines.length; i++) {
     const m = /(^|[\s(])\/([A-Za-z0-9:_.-]+)(?:[ \t]+(.*))?$/.exec(lines[i]);
     if (!m) continue;
-    const cmd = findCmd(all, m[2]);
+    const cmd = pickCommand(pool, m[2], preference);
     if (!cmd) continue;
     const exp = expandOne(cmd, (m[3] || "").trim());
     if (exp == null) continue;   // built-in / unreadable → leave the line raw, keep scanning

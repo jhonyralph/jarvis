@@ -4,8 +4,8 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','setContinue','setContinueSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'setWake','setNoise','setPush','setBioLock','setShareGeo','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwFileList','fwPath','fwEditor','fwImport','fwDelete','fwSave','fwVersion','fwPublish','fwStatus','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -43,15 +43,27 @@
     let activeRuns=[]; const activeRunsByRunner={}; const unread=new Set(); // painel "rodando agora / precisa de você"
     const askingSids=new Set();  // machine+session keys still being analyzed for optional HITL
     // ---- config (persisted; refresh não perde estado) ----
-    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, silenceSec:1.8, wake:false, noise:true, voiceGate:false, shareGeo:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    // ---------- Gap 8: localização do DISPOSITIVO (opt-in) — anexada a pedidos que dependem de "onde estou"
+    //            (ex.: lugares por perto). Vem SEMPRE deste device; permissão só é pedida quando o usuário
+    //            liga a opção. Em app nativo (Capacitor) o navigator.geolocation também funciona no webview. ----------
+    let lastGeo=null;
+    function refreshGeo(){ if(!cfg.shareGeo||!navigator.geolocation)return;
+      navigator.geolocation.getCurrentPosition(
+        p=>{ lastGeo={lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy,ts:Date.now()}; },
+        ()=>{ /* negado/indisponível: segue sem localização */ }, {enableHighAccuracy:false,maximumAge:300000,timeout:8000}); }
+    function geoField(){ if(!cfg.shareGeo||!lastGeo)return undefined;
+      if(Date.now()-lastGeo.ts>15*60000){ refreshGeo(); return undefined; }   // muito antiga → renova para a próxima e não envia posição velha
+      return {lat:lastGeo.lat,lng:lastGeo.lng,acc:lastGeo.acc}; }
+    if(cfg.shareGeo) refreshGeo();   // aquece a posição no load se o usuário já optou por compartilhar
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
     let speak = cfg.voice, speakers = [];
     // ---------- i18n (pt-BR / en / es) — fundação: a chrome sempre-visível é traduzida via data-i18n;
     //            o restante cai no pt (fallback). Novos textos: adicione a chave nos 3 idiomas + data-i18n. ----------
     const I18N={
-      pt:{ newSession:'＋ Nova sessão', searchSessions:'buscar entre sessões', whatsUp:'o que está rolando', works:'Trabalhos', fleet:'Uso & custo', openMobile:'abrir no celular', devices:'dispositivos & convites', showMore:'Mostrar mais', settings:'⚙ Configurações', composerPh:'Fale ou digite…', secUpdate:'Atualização', secDefaults:'Padrões', secVoice:'Voz', secNotif:'Notificações', language:'Idioma', spSpeaking:'Jarvis falando…', spListening:'escutando…', spListeningAns:'escutando resposta…', spRefining:'Refinando…', spStopping:'parando…', spThinking:'Jarvis ouvindo…', machineOffline:'offline — as mensagens não serão entregues até ela voltar.', tFillOther:'Preencha o campo "Outros".', tPickOne:'Escolha uma opção ou marque "Outros".', tDelNoResp:'Sem resposta do servidor — a conversa NÃO foi removida.', tOpenFirst:'Abra uma conversa primeiro.', tPassShort:'Senha muito curta (mín. 8).', tPushUnsup:'Notificações não suportadas neste navegador.', tPushDenied:'Permissão de notificação negada.', tPushNoKey:'Servidor sem chave de push.', tMemReindexing:'Reindexando a memória semântica…', tRtFill:'Preencha o nome e o que rodar.', tFolderCopied:'Pasta copiada ✓', tDelFail:'Não consegui remover a conversa (talvez já não exista).', tShareIn:'Conteúdo compartilhado adicionado.', stAsking:'Jarvis perguntando…', stListeningAns:'Escutando resposta…', stSummarizing:'Gerando resumo…', stAnalyzing:'Analisando sessões…', lblAgent:'Agente padrão', lblModel:'Modelo padrão', lblEffort:'Esforço padrão', lblSlash:'Autocomplete de comandos ao digitar "/"', lblSpeakDefault:'Falar as respostas por padrão', lblContinue:'Após responder, continuar escutando follow-up', lblContinueWin:'Janela de escuta de continuação (segundos)', lblVoiceEscalate:'Refino por voz — modelo em análises difíceis', secAdvListen:'Escuta avançada', lblWake:'Wake word "Hey Jarvis" (na máquina)', lblNoise:'Filtro anti-ruído / detecção de fala (VAD)', lblPushDevice:'Notificar neste aparelho (Web Push)', lblBioLock:'Bloquear com biometria (Face ID / digital)', lblNotifyAbout:'Avisar sobre — vale só para este aparelho:', lblPushDone:'Sessão concluída (qualquer máquina)', lblPushError:'Falhas / erros', lblPushMachine:'Máquina ficou offline', lblDelivery:'Entrega', optEach:'Na hora, a cada evento', optGrouped:'Agrupar e avisar de tempos em tempos', lblEveryMin:'A cada quantos minutos', secRoutines:'Rotinas agendadas', secAutoRoute:'Roteamento automático, resumos e status', descAutoRoute:'A IA, o modelo e o esforço abaixo analisam mensagens em modo Automático e também executam resumos e consultas de status. Roda sempre no servidor (Hub).', lblVoiceRelevance:'Só despachar falas que são comando (filtro anti-ruído)', tVoiceIgnored:'🎙️ Ignorei — não pareceu um comando.', tQueued:'📋 Adicionado à fila — roda quando o turno atual terminar.' },
-      en:{ newSession:'＋ New session', searchSessions:'search across sessions', whatsUp:"what's going on", works:'Work', fleet:'Usage & cost', openMobile:'open on phone', devices:'devices & invites', showMore:'Show more', settings:'⚙ Settings', composerPh:'Speak or type…', secUpdate:'Update', secDefaults:'Defaults', secVoice:'Voice', secNotif:'Notifications', language:'Language', spSpeaking:'Jarvis speaking…', spListening:'listening…', spListeningAns:'listening for your answer…', spRefining:'Refining…', spStopping:'stopping…', spThinking:'Jarvis listening…', machineOffline:"is offline — messages won't be delivered until it's back.", tFillOther:'Fill in the "Other" field.', tPickOne:'Pick an option or check "Other".', tDelNoResp:'No response from the server — the conversation was NOT deleted.', tOpenFirst:'Open a conversation first.', tPassShort:'Password too short (min. 8).', tPushUnsup:'Notifications not supported in this browser.', tPushDenied:'Notification permission denied.', tPushNoKey:'Server has no push key.', tMemReindexing:'Reindexing semantic memory…', tRtFill:'Fill in the name and what to run.', tFolderCopied:'Folder copied ✓', tDelFail:"Couldn't delete the conversation (it may no longer exist).", tShareIn:'Shared content added.', stAsking:'Jarvis asking…', stListeningAns:'Listening for your answer…', stSummarizing:'Generating summary…', stAnalyzing:'Analyzing sessions…', lblAgent:'Default agent', lblModel:'Default model', lblEffort:'Default effort', lblSlash:'Command autocomplete when typing "/"', lblSpeakDefault:'Speak replies by default', lblContinue:'After replying, keep listening for a follow-up', lblContinueWin:'Follow-up listening window (seconds)', lblVoiceEscalate:'Voice refine — model for hard analysis', secAdvListen:'Advanced listening', lblWake:'Wake word "Hey Jarvis" (on the machine)', lblNoise:'Noise filter / voice activity detection (VAD)', lblPushDevice:'Notify on this device (Web Push)', lblBioLock:'Lock with biometrics (Face ID / fingerprint)', lblNotifyAbout:'Notify about — this device only:', lblPushDone:'Session done (any machine)', lblPushError:'Failures / errors', lblPushMachine:'A machine went offline', lblDelivery:'Delivery', optEach:'Immediately, each event', optGrouped:'Group and notify periodically', lblEveryMin:'Every how many minutes', secRoutines:'Scheduled routines', lblVoiceRelevance:'Only dispatch utterances that are commands (noise filter)', tVoiceIgnored:"🎙️ Ignored — didn't seem like a command.", tQueued:'📋 Queued — it will run when the current turn finishes.' },
-      es:{ newSession:'＋ Nueva sesión', searchSessions:'buscar entre sesiones', whatsUp:'qué está pasando', works:'Trabajos', fleet:'Uso y costo', openMobile:'abrir en el móvil', devices:'dispositivos e invitaciones', showMore:'Mostrar más', settings:'⚙ Configuración', composerPh:'Habla o escribe…', secUpdate:'Actualización', secDefaults:'Predeterminados', secVoice:'Voz', secNotif:'Notificaciones', language:'Idioma', spSpeaking:'Jarvis hablando…', spListening:'escuchando…', spListeningAns:'escuchando tu respuesta…', spRefining:'Refinando…', spStopping:'deteniendo…', spThinking:'Jarvis escuchando…', machineOffline:'desconectada — los mensajes no se entregarán hasta que vuelva.', tFillOther:'Completa el campo "Otros".', tPickOne:'Elige una opción o marca "Otros".', tDelNoResp:'Sin respuesta del servidor — la conversación NO fue eliminada.', tOpenFirst:'Abre una conversación primero.', tPassShort:'Contraseña muy corta (mín. 8).', tPushUnsup:'Notificaciones no soportadas neste navegador.', tPushDenied:'Permiso de notificación denegado.', tPushNoKey:'El servidor no tiene clave push.', tMemReindexing:'Reindexando la memoria semántica…', tRtFill:'Completa el nombre y qué ejecutar.', tFolderCopied:'Carpeta copiada ✓', tDelFail:'No pude eliminar la conversación (quizá ya no exista).', tShareIn:'Contenido compartido añadido.', stAsking:'Jarvis preguntando…', stListeningAns:'Escuchando tu respuesta…', stSummarizing:'Generando resumen…', stAnalyzing:'Analizando sesiones…', lblAgent:'Agente predeterminado', lblModel:'Modelo predeterminado', lblEffort:'Esfuerzo predeterminado', lblSlash:'Autocompletado de comandos al escribir "/"', lblSpeakDefault:'Leer las respuestas por defecto', lblContinue:'Tras responder, seguir escuchando un seguimiento', lblContinueWin:'Ventana de escucha de seguimiento (segundos)', lblVoiceEscalate:'Refinamiento por voz — modelo para análisis difíciles', secAdvListen:'Escucha avanzada', lblWake:'Palabra de activación "Hey Jarvis" (en la máquina)', lblNoise:'Filtro de ruido / detección de voz (VAD)', lblPushDevice:'Notificar en este dispositivo (Web Push)', lblBioLock:'Bloquear con biometría (Face ID / huella)', lblNotifyAbout:'Avisar sobre — solo este dispositivo:', lblPushDone:'Sesión terminada (cualquier máquina)', lblPushError:'Fallos / errores', lblPushMachine:'Una máquina se desconectó', lblDelivery:'Entrega', optEach:'Al instante, cada evento', optGrouped:'Agrupar y avisar periódicamente', lblEveryMin:'Cada cuántos minutos', secRoutines:'Rutinas programadas', lblVoiceRelevance:'Solo despachar frases que son comando (filtro de ruido)', tVoiceIgnored:'🎙️ Ignoré — no pareció un comando.', tQueued:'📋 En cola — se ejecutará cuando termine el turno actual.' },
+      pt:{ newSession:'＋ Nova sessão', searchSessions:'buscar entre sessões', whatsUp:'o que está rolando', works:'Trabalhos', fleet:'Uso & custo', openMobile:'abrir no celular', devices:'dispositivos & convites', showMore:'Mostrar mais', settings:'⚙ Configurações', composerPh:'Fale ou digite…', secUpdate:'Atualização', secDefaults:'Padrões', secVoice:'Voz', secNotif:'Notificações', language:'Idioma', spSpeaking:'Jarvis falando…', spListening:'escutando…', spListeningAns:'escutando resposta…', spRefining:'Refinando…', spStopping:'parando…', spThinking:'Jarvis ouvindo…', machineOffline:'offline — as mensagens não serão entregues até ela voltar.', tFillOther:'Preencha o campo "Outros".', tPickOne:'Escolha uma opção ou marque "Outros".', tDelNoResp:'Sem resposta do servidor — a conversa NÃO foi removida.', tOpenFirst:'Abra uma conversa primeiro.', tPassShort:'Senha muito curta (mín. 8).', tPushUnsup:'Notificações não suportadas neste navegador.', tPushDenied:'Permissão de notificação negada.', tPushNoKey:'Servidor sem chave de push.', tMemReindexing:'Reindexando a memória semântica…', tRtFill:'Preencha o nome e o que rodar.', tFolderCopied:'Pasta copiada ✓', tDelFail:'Não consegui remover a conversa (talvez já não exista).', tShareIn:'Conteúdo compartilhado adicionado.', stAsking:'Jarvis perguntando…', stListeningAns:'Escutando resposta…', stSummarizing:'Gerando resumo…', stAnalyzing:'Analisando sessões…', lblAgent:'Agente padrão', lblModel:'Modelo padrão', lblEffort:'Esforço padrão', lblSlash:'Autocomplete de comandos ao digitar "/"', lblSpeakDefault:'Falar as respostas por padrão', lblContinue:'Após responder, continuar escutando follow-up', lblContinueWin:'Janela de escuta de continuação (segundos)', lblSilenceWin:'Pausa antes de encerrar a fala (segundos)', lblVoiceTimbre:'Voz falada (timbre)', lblVoiceEscalate:'Refino por voz — modelo em análises difíceis', secAdvListen:'Escuta avançada', lblWake:'Wake word "Hey Jarvis" (na máquina)', lblNoise:'Filtro anti-ruído / detecção de fala (VAD)', lblPushDevice:'Notificar neste aparelho (Web Push)', lblBioLock:'Bloquear com biometria (Face ID / digital)', lblShareGeo:'Compartilhar a localização deste aparelho (para pedidos como “por perto”)', lblNotifyAbout:'Avisar sobre — vale só para este aparelho:', lblPushDone:'Sessão concluída (qualquer máquina)', lblPushError:'Falhas / erros', lblPushMachine:'Máquina ficou offline', lblDelivery:'Entrega', optEach:'Na hora, a cada evento', optGrouped:'Agrupar e avisar de tempos em tempos', lblEveryMin:'A cada quantos minutos', secRoutines:'Rotinas agendadas', secAutoRoute:'Roteamento automático, resumos e status', descAutoRoute:'A IA, o modelo e o esforço abaixo analisam mensagens em modo Automático e também executam resumos e consultas de status. Roda sempre no servidor (Hub).', lblVoiceRelevance:'Só despachar falas que são comando (filtro anti-ruído)', tVoiceIgnored:'🎙️ Ignorei — não pareceu um comando.', tQueued:'📋 Adicionado à fila — roda quando o turno atual terminar.' },
+      en:{ newSession:'＋ New session', searchSessions:'search across sessions', whatsUp:"what's going on", works:'Work', fleet:'Usage & cost', openMobile:'open on phone', devices:'devices & invites', showMore:'Show more', settings:'⚙ Settings', composerPh:'Speak or type…', secUpdate:'Update', secDefaults:'Defaults', secVoice:'Voice', secNotif:'Notifications', language:'Language', spSpeaking:'Jarvis speaking…', spListening:'listening…', spListeningAns:'listening for your answer…', spRefining:'Refining…', spStopping:'stopping…', spThinking:'Jarvis listening…', machineOffline:"is offline — messages won't be delivered until it's back.", tFillOther:'Fill in the "Other" field.', tPickOne:'Pick an option or check "Other".', tDelNoResp:'No response from the server — the conversation was NOT deleted.', tOpenFirst:'Open a conversation first.', tPassShort:'Password too short (min. 8).', tPushUnsup:'Notifications not supported in this browser.', tPushDenied:'Notification permission denied.', tPushNoKey:'Server has no push key.', tMemReindexing:'Reindexing semantic memory…', tRtFill:'Fill in the name and what to run.', tFolderCopied:'Folder copied ✓', tDelFail:"Couldn't delete the conversation (it may no longer exist).", tShareIn:'Shared content added.', stAsking:'Jarvis asking…', stListeningAns:'Listening for your answer…', stSummarizing:'Generating summary…', stAnalyzing:'Analyzing sessions…', lblAgent:'Default agent', lblModel:'Default model', lblEffort:'Default effort', lblSlash:'Command autocomplete when typing "/"', lblSpeakDefault:'Speak replies by default', lblContinue:'After replying, keep listening for a follow-up', lblContinueWin:'Follow-up listening window (seconds)', lblSilenceWin:'Pause before ending speech (seconds)', lblVoiceTimbre:'Spoken voice (timbre)', lblVoiceEscalate:'Voice refine — model for hard analysis', secAdvListen:'Advanced listening', lblWake:'Wake word "Hey Jarvis" (on the machine)', lblNoise:'Noise filter / voice activity detection (VAD)', lblPushDevice:'Notify on this device (Web Push)', lblBioLock:'Lock with biometrics (Face ID / fingerprint)', lblShareGeo:'Share this device’s location (for requests like “nearby”)', lblNotifyAbout:'Notify about — this device only:', lblPushDone:'Session done (any machine)', lblPushError:'Failures / errors', lblPushMachine:'A machine went offline', lblDelivery:'Delivery', optEach:'Immediately, each event', optGrouped:'Group and notify periodically', lblEveryMin:'Every how many minutes', secRoutines:'Scheduled routines', lblVoiceRelevance:'Only dispatch utterances that are commands (noise filter)', tVoiceIgnored:"🎙️ Ignored — didn't seem like a command.", tQueued:'📋 Queued — it will run when the current turn finishes.' },
+      es:{ newSession:'＋ Nueva sesión', searchSessions:'buscar entre sesiones', whatsUp:'qué está pasando', works:'Trabajos', fleet:'Uso y costo', openMobile:'abrir en el móvil', devices:'dispositivos e invitaciones', showMore:'Mostrar más', settings:'⚙ Configuración', composerPh:'Habla o escribe…', secUpdate:'Actualización', secDefaults:'Predeterminados', secVoice:'Voz', secNotif:'Notificaciones', language:'Idioma', spSpeaking:'Jarvis hablando…', spListening:'escuchando…', spListeningAns:'escuchando tu respuesta…', spRefining:'Refinando…', spStopping:'deteniendo…', spThinking:'Jarvis escuchando…', machineOffline:'desconectada — los mensajes no se entregarán hasta que vuelva.', tFillOther:'Completa el campo "Otros".', tPickOne:'Elige una opción o marca "Otros".', tDelNoResp:'Sin respuesta del servidor — la conversación NO fue eliminada.', tOpenFirst:'Abre una conversación primero.', tPassShort:'Contraseña muy corta (mín. 8).', tPushUnsup:'Notificaciones no soportadas neste navegador.', tPushDenied:'Permiso de notificación denegado.', tPushNoKey:'El servidor no tiene clave push.', tMemReindexing:'Reindexando la memoria semántica…', tRtFill:'Completa el nombre y qué ejecutar.', tFolderCopied:'Carpeta copiada ✓', tDelFail:'No pude eliminar la conversación (quizá ya no exista).', tShareIn:'Contenido compartido añadido.', stAsking:'Jarvis preguntando…', stListeningAns:'Escuchando tu respuesta…', stSummarizing:'Generando resumen…', stAnalyzing:'Analizando sesiones…', lblAgent:'Agente predeterminado', lblModel:'Modelo predeterminado', lblEffort:'Esfuerzo predeterminado', lblSlash:'Autocompletado de comandos al escribir "/"', lblSpeakDefault:'Leer las respuestas por defecto', lblContinue:'Tras responder, seguir escuchando un seguimiento', lblContinueWin:'Ventana de escucha de seguimiento (segundos)', lblSilenceWin:'Pausa antes de terminar el habla (segundos)', lblVoiceTimbre:'Voz hablada (timbre)', lblVoiceEscalate:'Refinamiento por voz — modelo para análisis difíciles', secAdvListen:'Escucha avanzada', lblWake:'Palabra de activación "Hey Jarvis" (en la máquina)', lblNoise:'Filtro de ruido / detección de voz (VAD)', lblPushDevice:'Notificar en este dispositivo (Web Push)', lblBioLock:'Bloquear con biometría (Face ID / huella)', lblShareGeo:'Compartir la ubicación de este dispositivo (para pedidos como “cerca”)', lblNotifyAbout:'Avisar sobre — solo este dispositivo:', lblPushDone:'Sesión terminada (cualquier máquina)', lblPushError:'Fallos / errores', lblPushMachine:'Una máquina se desconectó', lblDelivery:'Entrega', optEach:'Al instante, cada evento', optGrouped:'Agrupar y avisar periódicamente', lblEveryMin:'Cada cuántos minutos', secRoutines:'Rutinas programadas', lblVoiceRelevance:'Solo despachar frases que son comando (filtro de ruido)', tVoiceIgnored:'🎙️ Ignoré — no pareció un comando.', tQueued:'📋 En cola — se ejecutará cuando termine el turno actual.' },
     };
     Object.assign(I18N.en,{secAutoRoute:'Automatic routing, summaries and status',descAutoRoute:'The AI, model and effort below analyze messages in Automatic mode and also run summaries and status checks. It always runs on the Hub.'});
     Object.assign(I18N.es,{secAutoRoute:'Enrutamiento automático, resúmenes y estado',descAutoRoute:'La IA, el modelo y el esfuerzo siguientes analizan mensajes en modo Automático y también ejecutan resúmenes y consultas de estado. Siempre se ejecuta en el Hub.'});
@@ -224,7 +236,7 @@
     function sessionStateKey(sid,runner){ return (runner||selectedRunner())+'\0'+(sid||''); }
     function sessionRunner(){ return currentSession?(currentSessionRunner||selectedRunner()):selectedRunner(); }
     function sessionValue(state,sid,runner){ return state[sessionStateKey(sid,runner)]; }
-    const histCache=new Map(); const HIST_CACHE_MAX=12; let openingSession=null;
+    const histCache=new Map(); const HIST_CACHE_MAX=12; let openingSession=null, pendingNewSession=null;
     function cacheHist(m){ if(!m||!m.sessionId)return; const key=sessionStateKey(m.sessionId,m.runnerId||selectedRunner()); histCache.delete(key); histCache.set(key,m);
       if(histCache.size>HIST_CACHE_MAX) histCache.delete(histCache.keys().next().value); }
     function dedupeSessionsList(list){
@@ -232,6 +244,15 @@
       (list||[]).forEach(s=>{ if(!s||!s.id)return; const key=(s.runnerId||'local')+'|'+s.id; if(seen.has(key))return; seen.add(key); out.push(s); });
       return out;
     }
+    const optimisticSessions=new Map();
+    function machineLabel(id){ const m=machines.find(x=>x.id===id); return (m&&m.label)||id||'local'; }
+    function optimisticKey(s){ return (s.runnerId||'local')+'|'+s.id; }
+    function mergeOptimisticSessions(list){
+      const base=dedupeSessionsList(list), seen=new Set(base.map(optimisticKey)), now=Date.now(), fresh=[];
+      for(const [key,s] of optimisticSessions){ if(seen.has(key)){ optimisticSessions.delete(key); continue; } if((s._until||0)<now){ optimisticSessions.delete(key); continue; } fresh.push(s); }
+      return dedupeSessionsList([...fresh,...base]);
+    }
+    function upsertOptimisticSession(s){ if(!s||!s.id)return; const item={...s,_until:Date.now()+30000}; optimisticSessions.set(optimisticKey(item),item); sessions=mergeOptimisticSessions([item,...sessions]); renderRecents(); }
     function rememberHistoryActivity(messages){
       let lastTurn=null;
       (messages||[]).forEach(m=>(m.activity||[]).forEach(ev=>{
@@ -326,7 +347,23 @@
     // compõe as escolhas e envia como o PRÓXIMO input (o agente continua a partir daí). Agnóstico.
     let askActive=null, askVoice=false, askPendingVoice=false, ttsPlaying=false; // wizard de decisão (+voz)
     let stagingActive=false, curTtsAudio=null; // voz ambiente: refino por cima do agente + handle do TTS p/ interromper
-    function stopTTS(){ try{ if(curTtsAudio){ curTtsAudio.pause(); curTtsAudio=null; } }catch(e){} ttsPlaying=false; }
+    // ---- gerente central de áudio: serializa TODA reprodução (evita sobreposição de clips),
+    //      rastreia o handle atual (stop mata tudo, inclusive clips não-TTS) e mantém a ordem FIFO
+    //      (ex.: 1º o resultado da análise, 2º as perguntas). onEnd só dispara em término NATURAL
+    //      (não em stop/barge-in), pra não re-armar o mic ao ser interrompido. A promise SEMPRE resolve.
+    const audioMgr=(()=>{ let queue=[], cur=null, curItem=null;
+      function decode(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return URL.createObjectURL(new Blob([u],{type:'audio/wav'})); }
+      function next(){ if(cur) return; const item=queue.shift(); if(!item){ curItem=null; ttsPlaying=false; curTtsAudio=null; return; }
+        curItem=item; let url; try{ url=decode(item.b64); }catch(e){ curItem=null; item.resolve(); next(); return; }
+        const a=new Audio(url); cur=a; ttsPlaying=true; curTtsAudio=a;
+        const fin=()=>{ if(cur!==a) return; try{ URL.revokeObjectURL(url); }catch(e){} cur=null; curItem=null; try{ if(item.onEnd) item.onEnd(); }catch(e){} item.resolve(); next(); };
+        a.onended=fin; a.onerror=fin; a.play().catch(fin); }
+      function flush(){ const pend=queue.slice(); queue=[]; const ci=curItem; curItem=null; if(cur){ try{ cur.pause(); }catch(e){} cur=null; } ttsPlaying=false; curTtsAudio=null; if(ci) ci.resolve(); pend.forEach(it=>it.resolve()); }
+      return {
+        play(b64,opts){ opts=opts||{}; return new Promise(res=>{ const item={b64,onEnd:opts.onEnd,resolve:res}; if(opts.jump) flush(); queue.push(item); next(); }); },
+        stop(){ flush(); },
+        get active(){ return !!cur || queue.length>0; } }; })();
+    function stopTTS(){ audioMgr.stop(); }
     function renderAskCard(questions,runnerId){
       if(!Array.isArray(questions)||!questions.length) return;
       E.log.querySelectorAll('.askcard').forEach(c=>c.remove());  // idempotente: nunca empilha (resend no open)
@@ -382,8 +419,7 @@
     function askVoiceStep(){ const st=askActive; if(!st||!askVoice)return; const q=st.questions[st.step];
       const spoken=`${q.question}. Opções: ${q.options.map((o,i)=>(i+1)+', '+o.label).join('; ')}. Ou diga outros. Diga voltar ou avançar para navegar.`;
       status('speaking',t('stAsking')); tx({t:'say',text:spoken,sessionId:currentSession}); }
-    function playClip(b64){ return new Promise(res=>{ try{ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
-      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); a.onended=()=>res(); a.onerror=()=>res(); a.play().catch(()=>res()); }catch(e){ res(); } }); }
+    function playClip(b64){ return audioMgr.play(b64); }   // clip do wizard de voz: entra na MESMA fila (nunca sobrepõe)
     async function askVoicePlayAndListen(b64){ status('speaking',t('stAsking')); await playClip(b64);
       if(!askVoice||!askActive)return; status('listening',t('stListeningAns')); let clip;
       try{ clip=await recordClip(Math.max(5,cfg.continueSec)*1000); }catch(e){ status(''); return; }
@@ -726,21 +762,26 @@
     // #6: em "Todas as máquinas" não há máquina atual — escolher onde criar a sessão (só as online).
     function pickMachine(){ return new Promise(res=>{
       const ov=document.createElement('div'); ov.className='modal';
-      const card=document.createElement('div'); card.className='card'; card.style.minWidth='260px'; card.innerHTML='<b>Criar sessão em qual máquina?</b>';
-      const list=document.createElement('div'); list.style.cssText='display:flex;flex-direction:column;gap:6px;margin-top:12px';
+      const card=document.createElement('div'); card.className='card machinepick';
+      card.innerHTML='<div class="mph"><b>Criar nova sessão</b><span>Escolha onde o agente vai rodar.</span></div>';
+      const list=document.createElement('div'); list.className='mplist';
       const done=(v)=>{ if(ov.parentNode) document.body.removeChild(ov); res(v); };
-      machines.forEach(m=>{ const b=document.createElement('button'); b.className='ghost'; b.style.cssText='text-align:left;display:flex;align-items:center;gap:8px';
-        b.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span>'+esc(m.label)+(m.local?' <span class="mut">(servidor)</span>':(m.online?'':' <span class="mut">— offline</span>'));
+      machines.forEach(m=>{ const b=document.createElement('button'); b.className='mpopt'; b.type='button';
+        const agents=Array.isArray(m.agents)?m.agents.length:0, tag=m.local?'servidor':(m.online?'online':'offline');
+        b.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mpmain"><b>'+esc(m.label)+'</b><span>'+esc(tag)+(m.online&&agents?' · '+agents+' IA'+(agents===1?'':'s'):'')+'</span></span><span class="mcaret">›</span>';
         b.disabled=!m.online; b.onclick=()=>done(m.id); list.appendChild(b); });
       card.appendChild(list);
-      const cancel=document.createElement('button'); cancel.className='ghost'; cancel.textContent='Cancelar'; cancel.style.marginTop='12px'; cancel.onclick=()=>done(null); card.appendChild(cancel);
+      const cancel=document.createElement('button'); cancel.className='ghost mpcancel'; cancel.type='button'; cancel.textContent='Cancelar'; cancel.onclick=()=>done(null); card.appendChild(cancel);
       ov.appendChild(card); ov.onclick=(e)=>{ if(e.target===ov) done(null); }; document.body.appendChild(ov); }); }
     E.newSess.onclick=async()=>{ // cria sessão vazia (agente/pasta ajustáveis pelos pills até a 1ª msg)
       let target=currentMachine;
       if(currentMachine==='all'){ const mid=await pickMachine(); if(!mid) return; target=mid; if(mid!==routedMachine){ routedMachine=mid; tx({t:'runner',runnerId:mid}); } }
       const pm=machines.find(x=>x.id===target); const avail=(pm&&Array.isArray(pm.agents)&&pm.agents.length)?pm.agents:machineAgents();
       let agent=cfg.agent||currentAgent||(caps[0]||{}).name; if(!avail.includes(agent)) agent=avail[0]||agent;
-      const cwd=target==='local'?(cfg.lastCwd||''):''; creatingSession=true; tx({t:'new',agent,cwd}); closeSide(); };
+      const cwd=target==='local'?(cfg.lastCwd||''):'';
+      if(currentSession!=null){ draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; saveDrafts(); stashAttachments(currentSession,currentSessionRunner); }
+      pendingNewSession={runnerId:target,agent,cwd,at:Date.now()}; creatingSession=true; currentSession=null; currentSessionRunner=target; activeRuns=activeRunsByRunner[target]||[]; curStarted=false; curNative=false; curNativeWritable=false; curNativeId=''; attachments=[]; renderAttach(); clearQueue(); updateOfflineBanner(); setHash('');
+      E.title.textContent='Criando sessão...'; E.log.innerHTML=''; tx({t:'new',agent,cwd}); closeSide(); };
 
     // ---------- search (input com foco imediato; sem prompt) ----------
     E.searchBtn.onclick=()=>openSearch();
@@ -1149,11 +1190,21 @@
     E.settingsBtn.onclick=()=>{ E.settings.classList.remove('hidden'); const mc=availableMachineCaps(); fillSel(E.setAgent,mc.map(c=>({id:c.name,label:c.label||c.name})),cfg.agent||currentAgent); const c=mc.find(x=>x.name===E.setAgent.value)||capsFor(E.setAgent.value);
       const sm=selectableModels(c), defaultModel=(sm.some(m=>m.id===cfg.model)&&cfg.model)||(sm.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(sm[0]||{}).id||'';
       fillSel(E.setModel,modelControlOf(c)==='per_turn'?sm:[],defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
-      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'});
+      E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; if(E.setSilenceSec)E.setSilenceSec.value=cfg.silenceSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; if(E.setShareGeo)E.setShareGeo.checked=!!cfg.shareGeo; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'}); tx({t:'list_voices'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
-      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); E.executionSettings.classList.toggle('hidden',!isOwner); if(E.policySettings)E.policySettings.classList.toggle('hidden',!isOwner); if(isOwner){ fillRoutineMachines(); validateRoutineCron(); tx({t:'routines'}); tx({t:'execution_cfg'}); tx({t:'policy_state',sessionId:currentSession}); }
+      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); E.executionSettings.classList.toggle('hidden',!isOwner); if(E.frameworkSettings)E.frameworkSettings.classList.toggle('hidden',!isOwner); if(E.policySettings)E.policySettings.classList.toggle('hidden',!isOwner); if(isOwner){ fillRoutineMachines(); validateRoutineCron(); tx({t:'routines'}); tx({t:'execution_cfg'}); tx({t:'framework_cfg'}); tx({t:'policy_state',sessionId:currentSession}); }
       tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang; };
+    // Meu Framework (universal) — owner-only editor + fleet publish.
+    let fwMachineStatus={};
+    function fwStateLabel(st){ return ({materialized:'✓ materializado',current:'✓ já atual',sent:'enviado',queued:'na fila',needs_update:'⚠ máquina desatualizada',error:'⚠ erro',offline:'offline',pronta:'pronta',fonte:'fonte (esta máquina)'})[st]||st; }
+    function renderFwStatus(){ const ids=Object.keys(fwMachineStatus); E.fwStatus.innerHTML=ids.length?ids.map(id=>'<div>'+esc(fwMachineStatus[id].label)+' — '+esc(fwStateLabel(fwMachineStatus[id].state))+'</div>').join(''):'—'; }
+    if(E.setFwPref) E.setFwPref.onchange=()=>tx({t:'set_framework_cfg',preference:E.setFwPref.value});
+    if(E.fwFileList) E.fwFileList.onchange=()=>{ const p=E.fwFileList.value; if(p){ tx({t:'framework_read',path:p}); } else { E.fwPath.value=''; E.fwEditor.value=''; } };
+    if(E.fwSave) E.fwSave.onclick=()=>{ const p=(E.fwPath.value||'').trim(); if(!p){ toast('Informe o caminho (ex.: commands/plan.md)'); return; } tx({t:'framework_save',path:p,content:E.fwEditor.value}); };
+    if(E.fwDelete) E.fwDelete.onclick=()=>{ const p=(E.fwPath.value||'').trim(); if(!p){ toast('Selecione um arquivo para excluir'); return; } tx({t:'framework_delete',path:p}); };
+    if(E.fwImport) E.fwImport.onclick=()=>tx({t:'framework_import'});
+    if(E.fwPublish) E.fwPublish.onclick=()=>{ E.fwStatus.textContent='Publicando…'; tx({t:'publish_framework'}); };
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
     E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value), ms=selectableModels(c), model=(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.setModel,modelControlOf(c)==='per_turn'?ms:[],model); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
     // ---------- rotinas agendadas (owner) ----------
@@ -1284,9 +1335,9 @@
       if(isOwner&&adaptivePolicyDoc){ const doc=collectAdaptivePolicy(); if(!doc)return; tx({t:'set_adaptive_policy',doc,sessionId:currentSession}); }
       if(E.setGate.checked && !speakers.length){ addErr('Cadastre sua voz antes de exigir voz cadastrada (senão o modo voz fica bloqueado).'); E.setGate.checked=false; }
       Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
-      continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked,bioLock:!!(E.setBioLock&&E.setBioLock.checked),slashMenu:!E.setSlash||E.setSlash.checked});
+      continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,silenceSec:(E.setSilenceSec?(+E.setSilenceSec.value||1.8):1.8),wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked,shareGeo:!!(E.setShareGeo&&E.setShareGeo.checked),bioLock:!!(E.setBioLock&&E.setBioLock.checked),slashMenu:!E.setSlash||E.setSlash.checked});
       if(!slashOn()) closeTrig();
-      saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate});
+      saveCfg(); speak=cfg.voice; setSpeakBtn(); if(cfg.shareGeo) refreshGeo(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate});
       if(window.__jarvisNative){ if(cfg.wake){ window.__jarvisNative.wakeStart&&window.__jarvisNative.wakeStart(); } else { window.__jarvisNative.wakeStop&&window.__jarvisNative.wakeStop(); } }
       const pp=pushPrefs(); cfg.pushEvents=pp.events; cfg.pushMode=pp.mode; cfg.pushEvery=pp.everyMin;
       const wantPush=E.setPush.checked; if(wantPush&&!cfg.push) enablePush(); else if(!wantPush&&cfg.push) disablePush();
@@ -1307,7 +1358,7 @@
     E.dlgCancel.onclick=()=>dlgClose(null);
     E.dlgInput.onkeydown=(e)=>{ if(e.key==='Enter'){e.preventDefault();E.dlgOk.click();} else if(e.key==='Escape'){e.preventDefault();E.dlgCancel.click();} };
     // ---------- info completa da sessão (título do chat) ----------
-    // O #title trunca; hover mostra tudo (desktop) e clicar abre a info (funciona no mobile/touch).
+    // O header mostra até 2 linhas; o title nativo preserva o nome completo no hover/toque longo.
     function sessionInfoLines(){ const L=[]; const t=(E.title.textContent||'').trim();
       if(t && t!=='—' && t!=='Jarvis') L.push(['Conversa', t]);
       const mac=machines.find(m=>m.id===currentMachine);
@@ -1316,10 +1367,20 @@
       if(curCwd) L.push(['Pasta', curCwd]);
       if(curNative) L.push(['Modo', 'sessão nativa (somente leitura)']);
       return L; }
-    function refreshTitleInfo(){ const L=sessionInfoLines(); E.title.title = L.map(([k,v])=>k+': '+v).join('\n'); }
-    E.title.onclick=()=>{ const L=sessionInfoLines(); if(!L.length) return;
-      dialog({ title: L.map(([k,v])=>k+':\n'+v).join('\n\n'), okText: curCwd?'Copiar pasta':'Fechar', cancelText:'Fechar' })
-        .then(r=>{ if(r && curCwd){ try{ navigator.clipboard.writeText(curCwd).then(()=>toast(t('tFolderCopied'))).catch(()=>{}); }catch(e){} } }); };
+    function refreshTitleInfo(){ const L=sessionInfoLines(), full=L.map(([k,v])=>k+': '+v).join('\n'); E.title.title=full; E.title.setAttribute('aria-label',full||E.title.textContent||''); }
+    // ---------- catálogo de vozes (timbre falado): listar + ouvir amostra + escolher (Gap 6) ----------
+    let voiceList=[], voiceCur='';
+    function prettyVoice(v){ const m=/^([a-z]{2})_([A-Za-z]{2})-([^-]+)-(.+)$/.exec(v||''); if(!m) return v||'';
+      const langs={pt:'Português',en:'Inglês',es:'Espanhol',fr:'Francês',de:'Alemão',it:'Italiano',nl:'Holandês'};
+      const quals={x_low:'muito básica',low:'básica',medium:'média',high:'alta'};
+      return `${langs[m[1]]||m[1].toUpperCase()} (${m[2].toUpperCase()}) · ${m[3]} · ${quals[m[4]]||m[4]}`; }
+    function renderVoiceCatalog(){ const c=E.voiceCatalog; if(!c)return; c.innerHTML='';
+      if(!voiceList.length){ c.innerHTML='<span class="mut">Nenhuma voz instalada em ~/.jarvis/voices. Baixe uma (ex.: voz “high” para soar mais natural) com <code>python -m piper.download_voices</code>.</span>'; return; }
+      voiceList.forEach(v=>{ const on=v===voiceCur; const row=document.createElement('div'); row.style.cssText='display:flex;align-items:center;gap:6px';
+        const pick=document.createElement('button'); pick.type='button'; pick.className=on?'':'ghost'; pick.style.cssText='flex:1;justify-content:flex-start;text-align:left'; pick.textContent=(on?'✓ ':'')+prettyVoice(v); pick.title=v;
+        pick.onclick=()=>{ if(v!==voiceCur) tx({t:'set_voice',voice:v}); };
+        const play=document.createElement('button'); play.type='button'; play.className='ghost'; play.style.flex='none'; play.textContent='▶'; play.title='Ouvir amostra'; play.onclick=(e)=>{ e.stopPropagation(); tx({t:'preview_voice',voice:v}); };
+        row.appendChild(pick); row.appendChild(play); c.appendChild(row); }); }
     // ---------- voice enrollment / speaker list ----------
     function renderSpk(){ if(!E.spkList)return; E.spkList.innerHTML = speakers.length ? 'Vozes cadastradas: ' : 'Nenhuma voz cadastrada ainda.';
       speakers.forEach(n=>{ const c=document.createElement('span'); c.className='chip'; c.textContent='🗣 '+n+' ✕'; c.style.cursor='pointer';
@@ -1378,9 +1439,21 @@
     function workSyncInlineNode(n){ if(!n||!n.executionId)return; document.querySelectorAll(`.subagent[data-execution-id="${CSS.escape(n.executionId)}"]`).forEach(el=>{if(n.title){const title=el.querySelector('.satitle');if(title)title.textContent=n.title;}el.dataset.state=n.state||'unknown';const state=el.querySelector('.sastate');if(state)state.textContent=workStateLabel(n.state).toLowerCase();}); }
     function workMaybeInlineNode(n){ const runner=currentMachine==='all'?routedMachine:currentMachine;if(!strFlow||!n||!n.parentExecutionId||n.sessionId!==currentSession||n.runnerId!==runner)return;const existing=[...document.querySelectorAll('.subagent')].find(el=>el.dataset.executionId===n.executionId),id=existing&&existing.dataset.id||n.providerExecutionId||n.executionId;const rec=ensureSubAgent(id,n.title||n.role||'sub-agente',n.executionId);workSyncInlineNode(n);return rec; }
     function workSort(a,b){ const rank={waiting_input:0,running:1,queued:2,failed:3,orphaned:4,unknown:5,succeeded:6,cancelled:7}; return (rank[a.state]??8)-(rank[b.state]??8) || (workNum(b.endedAt||b.startedAt||b.queuedAt)-workNum(a.endedAt||a.startedAt||a.queuedAt)); }
+    function workSessionKey(s){ return (s.runnerId||'local')+'\0'+s.id; }
+    function workSessionCandidateFor(id,runnerId){ const rid=runnerId||''; return sessions.find(s=>s.id===id&&(!rid||(s.runnerId||'local')===rid))||sessions.find(s=>s.id===id)||null; }
+    function workSearchNorm(v){ return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(); }
+    function workSessionLabel(id,runnerId){
+      const s=workSessionCandidateFor(id,runnerId), n=[...workNodes.values()].find(x=>x.sessionId===id&&(!runnerId||x.runnerId===runnerId));
+      return (s&&s.title)||((id===currentSession&&(E.title.textContent||'').trim()&&!['—','Jarvis'].includes((E.title.textContent||'').trim()))?E.title.textContent.trim():'')||(n&&n.title)||id||'Sessão';
+    }
+    function workSessionSearchText(n){
+      const s=workSessionCandidateFor(n.sessionId,n.runnerId);
+      return workSearchNorm([n.sessionId,workSessionLabel(n.sessionId,n.runnerId),s&&s.agent,s&&s.cwd,s&&s.machine,machineLabel(n.runnerId),n.agent,n.cwd].filter(Boolean).join(' '));
+    }
     function workMatches(n){
       if(E.workMachine.value&&n.runnerId!==E.workMachine.value)return false;
-      if(E.workSession.value&&n.sessionId!==E.workSession.value)return false;
+      const sessionQuery=workSearchNorm((E.workSession.value||'').trim());
+      if(sessionQuery&&!workSessionSearchText(n).includes(sessionQuery))return false;
       if(E.workAgent.value&&n.agent!==E.workAgent.value)return false;
       if(workFilter==='waiting_input'||workFilter==='running'||workFilter==='queued')return n.state===workFilter&&!n.archivedAt;
       if(workFilter==='completed')return WORK_TERMINAL.has(n.state)&&!n.archivedAt;
@@ -1388,7 +1461,14 @@
     }
     function workVisibleSet(){ const yes=new Set(); [...workNodes.values()].forEach(n=>{ if(!workMatches(n))return; let cur=n, guard=0; while(cur&&guard++<50){yes.add(cur.executionId);cur=cur.parentExecutionId&&workNodes.get(cur.parentExecutionId);} }); return yes; }
     function workFillSelect(sel,vals,current,label){ const sorted=[...new Set(vals.filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b))); sel.innerHTML=''; const all=document.createElement('option'); all.value=''; all.textContent=label; sel.appendChild(all); sorted.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;o.selected=v===current;sel.appendChild(o);}); }
-    function workUpdateScopes(){ const ns=[...workNodes.values()]; workFillSelect(E.workMachine,ns.map(n=>n.runnerId),E.workMachine.value,'Todas'); workFillSelect(E.workSession,ns.map(n=>n.sessionId),E.workSession.value,'Todas'); workFillSelect(E.workAgent,ns.map(n=>n.agent),E.workAgent.value,'Todas'); }
+    function workFillSessionSearch(ns){
+      const dl=document.getElementById('workSessionList'); if(!dl)return;
+      const rows=new Map();
+      ns.forEach(n=>{ if(!n||!n.sessionId)return; const key=workSessionKey({id:n.sessionId,runnerId:n.runnerId}); if(!rows.has(key))rows.set(key,{id:n.sessionId,runnerId:n.runnerId,label:workSessionLabel(n.sessionId,n.runnerId)}); });
+      dl.innerHTML='';
+      [...rows.values()].sort((a,b)=>a.label.localeCompare(b.label)).forEach(s=>{ const o=document.createElement('option'); o.value=s.label; o.label=machineLabel(s.runnerId)+' · '+s.id; dl.appendChild(o); });
+    }
+    function workUpdateScopes(){ const ns=[...workNodes.values()]; workFillSelect(E.workMachine,ns.map(n=>n.runnerId),E.workMachine.value,'Todas'); workFillSessionSearch(ns); workFillSelect(E.workAgent,ns.map(n=>n.agent),E.workAgent.value,'Todas'); }
     function workRenderBadge(){ const ns=[...workNodes.values()].filter(n=>!n.archivedAt), need=ns.filter(n=>n.state==='waiting_input').length, active=ns.filter(n=>n.state==='running'||n.state==='queued').length, total=need||active;
       E.workBadge.classList.toggle('hidden',!total); E.workBadge.classList.toggle('need',!!need); E.workBadge.textContent=String(total||'');
       E.workBtn.setAttribute('aria-label',need?`Trabalhos, ${need} precisam de você`:active?`Trabalhos, ${active} ativos`:'Trabalhos'); }
@@ -1465,7 +1545,8 @@
     E.workBtn.onclick=()=>openWorkPanel(); E.workClose.onclick=()=>closeWorkPanel(); E.workBack.onclick=()=>{const prior=workSelected;workSelected='';E.workPanel.classList.remove('show-detail');renderWorkTree();renderWorkDetail();workSetHash(true);const n=prior&&E.workTree.querySelector(`.worknode[data-id="${CSS.escape(prior)}"]`);n&&n.focus();};
     E.workMax.onclick=()=>{const max=E.workPanel.classList.toggle('max');E.workMax.textContent=max?'🗗':'⛶';E.workMax.title=max?'Restaurar':'Maximizar';};
     E.workPanel.querySelectorAll('.workfilters [data-filter]').forEach(b=>b.onclick=()=>{workFilter=b.dataset.filter;E.workPanel.querySelectorAll('.workfilters [data-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderWorkTree();});
-    [E.workMachine,E.workSession,E.workAgent].forEach(s=>s.onchange=()=>renderWorkTree());
+    [E.workMachine,E.workAgent].forEach(s=>s.onchange=()=>renderWorkTree());
+    E.workSession.oninput=E.workSession.onchange=()=>renderWorkTree();
     E.workPanel.querySelectorAll('.worktabs [data-tab]').forEach(b=>{b.onclick=()=>{workTab=b.dataset.tab;renderWorkDetail();};b.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const tabs=[...E.workPanel.querySelectorAll('.worktabs [data-tab]')],i=tabs.indexOf(b),next=e.key==='Home'?tabs[0]:e.key==='End'?tabs[tabs.length-1]:tabs[(i+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length];next.click();next.focus();};});
     function workTreeScroller(){ return E.workTree&&E.workTree.closest('.worktreewrap'); }
     function loadMoreWork(){ if(!workNextCursor||workLoadingMore)return;workLoadingMore=true;E.workMore.disabled=true;E.workMore.textContent='Carregando…';tx({t:'executions_list',scope:'all',cursor:workNextCursor,limit:500}); }
@@ -1545,6 +1626,15 @@
         else if(m.t==='adaptive_approvals'){ renderAdaptiveApprovals(m.approvals||[]); }
         else if(m.t==='execution_cfg'){ const c=m.cfg||{}; E.setExecEnabled.checked=c.enabled!==false; E.setExecRetention.value=c.retentionDays||30; E.setExecMaxEvents.value=c.maxEvents||5000; E.setExecConcurrency.value=c.maxConcurrency||6; E.setExecDepth.value=c.maxDepth||3; E.setExecDefaultWrite.checked=!!c.defaultWrite; E.setExecWorktree.value=c.worktreeRoot||'';
           E.execCfgNote.textContent=m.saved?(m.restartRequired?'✓ Política salva. Reinicie o Hub para aplicar: '+(m.restartFields||[]).join(', ')+'.':'✓ Política salva e aplicada para novas delegações.'):'Ativação, retenção, limite do diário e raiz de worktrees exigem reinício; concorrência, profundidade e escrita padrão valem para novas delegações.'; }
+        else if(m.t==='framework_cfg'){ if(m.preference&&E.setFwPref)E.setFwPref.value=m.preference; if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version;
+          if(m.files){ const cur=E.fwFileList.value; E.fwFileList.innerHTML='<option value="">— novo arquivo —</option>'+m.files.map(f=>'<option value="'+esc(f.path)+'">'+esc(f.path)+'</option>').join(''); E.fwFileList.value=cur; }
+          if(m.machines){ fwMachineStatus={}; m.machines.forEach(mc=>{ fwMachineStatus[mc.runnerId]={label:mc.label,state:mc.local?'fonte':((mc.protocolVersion||1)<7?'needs_update':mc.queued?'queued':mc.online?'pronta':'offline')}; }); renderFwStatus(); } }
+        else if(m.t==='framework_file'){ E.fwPath.value=m.path||''; E.fwEditor.value=m.content||''; }
+        else if(m.t==='framework_saved'){ if(m.ok){ if(m.deleted){E.fwPath.value='';E.fwEditor.value='';} tx({t:'framework_cfg'}); toast(m.deleted?'Arquivo excluído':'Arquivo salvo'); } else toast('Erro: '+(m.error||'falha')); }
+        else if(m.t==='framework_imported'){ if(m.ok){ tx({t:'framework_cfg'}); toast('Importado: '+((m.imported||[]).join(', ')||'nada novo')+((m.skipped&&m.skipped.length)?' · pulado: '+m.skipped.join(', '):'')); } else toast('Erro: '+(m.error||'falha')); }
+        else if(m.t==='framework_status'){ if(m.error){ E.fwStatus.textContent=''; toast('Publicar: '+m.error); return; }
+          if(Array.isArray(m.results)){ m.results.forEach(r=>{ fwMachineStatus[r.runnerId]={label:r.label||r.runnerId,state:r.state}; }); if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version; renderFwStatus(); }
+          else if(m.runnerId){ fwMachineStatus[m.runnerId]={label:m.machine||m.runnerId,state:m.state}; renderFwStatus(); } }
         else if(m.t==='voice_cfg'){ renderVoiceCfg(m.cfg||{}); }
         else if(m.t==='routines'){ routineTimezone=m.timezone||routineTimezone; renderRoutines(m.routines||[]); validateRoutineCron(); }
         else if(m.t==='fleet'){ renderFleet(m); }
@@ -1591,7 +1681,7 @@
           // visão unificada: só o agregado (runnerId 'all') alimenta a lista; listas de máquina única
           // que chegam por troca de runner (ao abrir) são ignoradas aqui pra não sobrescrever o agregado.
           if(currentMachine==='all'){ if(m.runnerId!=='all') return; } else if(m.runnerId && m.runnerId!==currentMachine) return;
-          restoringMachine=false; sessions=dedupeSessionsList(m.sessions||[]); recentDirs=m.recentDirs||recentDirs;
+          restoringMachine=false; sessions=currentMachine==='all'?mergeOptimisticSessions(m.sessions||[]):dedupeSessionsList(m.sessions||[]); recentDirs=m.recentDirs||recentDirs;
           if(lastBump && Date.now()-lastBump.ts<12000){ const bi=sessions.findIndex(s=>s.id===lastBump.sid&&(currentMachine!=='all'||(s.runnerId||'local')===lastBump.runner)); if(bi>0){ const [bs]=sessions.splice(bi,1); sessions.unshift(bs); } }  // preserva o topo recém-enviado
           renderRecents(); if(!currentSession && !creatingSession && currentMachine!=='all'){
           const exists=(id)=> !!id && sessions.some(s=>s.id===id);
@@ -1600,11 +1690,16 @@
           if(pick) openSession(pick,currentMachine);
           else if(currentMachine==='local' && !hashSession()) E.newSess.onclick(); } }
         else if(m.t==='history'){
-          const historyRunner=m.runnerId||selectedRunner(), historyKey=sessionStateKey(m.sessionId,historyRunner); cacheHist({...m,runnerId:historyRunner});
+          const historyRunner=m.runnerId||(pendingNewSession&&pendingNewSession.runnerId)||selectedRunner(), historyKey=sessionStateKey(m.sessionId,historyRunner); cacheHist({...m,runnerId:historyRunner});
           if(historyRunner!==selectedRunner()&&historyKey!==openingSession)return;
           if(openingSession&&historyKey!==openingSession)return;
           if(currentSession && (m.sessionId!==currentSession||historyRunner!==currentSessionRunner)) return;
+          if(creatingSession&&currentMachine==='all'){
+            const s=m.session||{}, opt={id:m.sessionId,runnerId:historyRunner,machine:machineLabel(historyRunner),title:s.title||'Nova sessão',agent:s.agent||(pendingNewSession&&pendingNewSession.agent)||currentAgent,cwd:s.cwd||(pendingNewSession&&pendingNewSession.cwd)||'',updatedAt:Date.now(),started:(m.messages||[]).length>0,source:s.native?'native':'managed',writable:s.writable!==false};
+            upsertOptimisticSession(opt); scheduleAllRefresh();
+          }
           openingSession=null; creatingSession=false; applyHistory(m);
+          pendingNewSession=null;
         }
         else if(m.t==='message'){ const runner=frameRunner(m); if(m.message.role==='assistant') clearRestorable(m.message.sessionId,runner); if(currentFrame(m,m.message.sessionId)){ if(m.message.role==='assistant') clearPending(); if(!(m.message.role==='user'&&consumeOptimisticUser(m.message.sessionId,m.message))) addMsg(m.message); if(m.message.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
         else if(m.t==='queue'){ const runner=m.runnerId||selectedRunner(); queueBySession[sessionStateKey(m.sessionId,runner)]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession&&runner===currentSessionRunner) renderQueue(); }
@@ -1682,20 +1777,20 @@
         else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }
+        else if(m.t==='voices'){ voiceList=m.voices||[]; voiceCur=m.current||''; renderVoiceCatalog(); }   // catálogo de vozes (Gap 6)
+        else if(m.t==='voice_preview'){ if(m.audio) playAudioOnce(m.audio); }                                // ouvir amostra da voz
         else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
-        else if(m.t==='error'){ creatingSession=false; endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
+        else if(m.t==='error'){ creatingSession=false; pendingNewSession=null; endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
-    function playTTS(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
-      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking',t('spSpeaking')); ttsPlaying=true; curTtsAudio=a;
-      a.onended=()=>{ ttsPlaying=false; curTtsAudio=null; status('');
+    function playTTS(b64){ status('speaking',t('spSpeaking'));
+      audioMgr.play(b64,{ onEnd:()=>{ if(audioMgr.active) return;   // ainda há áudio na fila → adia re-armar o mic (evita voltar a ouvir no meio)
+        status('');
         if(stagingActive && !recording){ startRec(true); return; }               // refino por voz em andamento → continua ouvindo
         if(askPendingVoice){ askPendingVoice=false; startAskVoice(); return; }   // decisão pendente → wizard de voz
         if(askActive) return;                                                    // card de decisão aberto → não escuta em contínuo
-        if((cfg.continue || lastWasVoice) && !recording) startRec(true); };
-      a.play().catch(()=>{ ttsPlaying=false; status(''); }); }
+        if((cfg.continue || lastWasVoice) && !recording) startRec(true); } }); }
     // reprodução única (resumo falado): NÃO re-arma o mic
-    function playAudioOnce(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
-      const a=new Audio(URL.createObjectURL(new Blob([u],{type:'audio/wav'}))); status('speaking',t('spSpeaking')); a.onended=()=>status(''); a.play().catch(()=>status('')); }
+    function playAudioOnce(b64){ status('speaking',t('spSpeaking')); audioMgr.play(b64,{ onEnd:()=>{ if(!audioMgr.active) status(''); } }); }
     // ---------- voz ambiente: painel de refino (staging) ----------
     let stageEl=null;
     function showStage(m){ stagingActive=true;
@@ -1727,20 +1822,22 @@
         // VAD: detecta fala e fim de fala (silêncio após falar) para não gravar o tempo todo
         const ac=new AudioContext(); const src=ac.createMediaStreamSource(st); const an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
         const buf=new Uint8Array(an.fftSize); let spoke=false,silence=0,elapsed=0; const TH=cfg.noise?10:6;
+        const SIL=Math.min(6000,Math.max(600,Math.round((cfg.silenceSec||1.8)*1000)));   // Gap 2: pausa tolerada após falar (não corta pausa de raciocínio); configurável nos ajustes
         const poll=setInterval(()=>{ an.getByteTimeDomainData(buf); let mx=0; for(const v of buf) mx=Math.max(mx,Math.abs(v-128)); elapsed+=100;
           if(mx>TH){ spoke=true; silence=0; } else if(spoke){ silence+=100; }
-          if(auto && rec.state==='recording'){ if(spoke&&silence>=1100){ rec.stop(); }   // parou de falar -> encerra
+          if(auto && rec.state==='recording'){ if(spoke&&silence>=SIL){ rec.stop(); }   // parou de falar (pausa >= SIL) -> encerra
                     else if(!spoke&&elapsed>=6000){ rec.stop(); } }                        // ninguém falou em 6s -> desiste
         },100);
         rec.ondataavailable=(e)=>chunks.push(e.data);
         rec.onstop=async()=>{ clearInterval(poll); clearTimeout(contTimer); ac.close(); st.getTracks().forEach(t=>t.stop()); recording=false; E.mic.classList.remove('on'); E.mic.textContent='🎤'; if(E.micCancel)E.micCancel.classList.add('hidden'); status('');
           if(discardRec){ discardRec=false; return; }   // descartado pelo usuário -> nao envia
-          if(auto && !spoke) return; // continuação sem fala -> ignora (encerra a conversa hands-free)
+          if(auto && !spoke){ toast('🎤 Parei de ouvir (silêncio).'); return; } // Gap 5: avisa que encerrou de propósito — não fica ambíguo com travamento
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
           // barge-in: falar POR CIMA do agente (ou já em refino) → vai para o staging (refino), não pro chat
           if(ttsPlaying || stagingActive){ stopTTS(); stagingActive=true; showStage({say:'refinando…'}); status('speaking',t('spRefining')); tx({t:'stage_voice',audio:b64,ext:'webm',sessionId:currentSession}); return; }
           if(busy(currentSession)){ toast('⏳ Sessão ocupada — envie o áudio quando terminar.'); return; }   // voz não entra na fila (a fila envia texto)
-          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
+          status('busy','🎧 transcrevendo…');   // Gap 5: feedback claro durante o STT (antes só ficava mudo)
+          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),sessionId:currentSession,geo:geoField()}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?t('spListeningAns'):t('spListening'));
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ addErr('mic erro: '+e.message); recording=false; } }
@@ -1749,7 +1846,7 @@
     E.micCancel.onclick=()=>{ if(!recording||!rec)return; discardRec=true; try{rec.stop();}catch(e){} status(''); };
 
     // ---------- composer / misc ----------
-    E.speak.onclick=()=>{ speak=!speak; cfg.voice=speak; saveCfg(); setSpeakBtn(); };
+    E.speak.onclick=()=>{ speak=!speak; cfg.voice=speak; saveCfg(); setSpeakBtn(); if(!speak) stopTTS(); };   // mutar (🔇) também PARA o áudio que já está tocando
     function setSide(o){ E.side.classList.toggle('open',o); E.backdrop.classList.toggle('hidden',!o); }
     const closeSide=()=>setSide(false);
     E.menuBtn.onclick=()=>setSide(!E.side.classList.contains('open'));
@@ -1871,7 +1968,7 @@
       if(askActive&&sid===currentSession){ const runner=askActive.runnerId||sessionRunner(); try{askActive.card.remove();}catch(e){} askActive=null; askVoice=false; clearAsk(sid,runner); tx({t:'ask_clear',sessionId:sid}); }
       const askKey=askStateKey(sid); if(askingSids.delete(askKey)) tx({t:'ask_clear',sessionId:sid}); bumpSession(sid); markJustSent(sid);
       if(sid===currentSession){ stick=true; addOptimisticUser(sid,msgId,body,atts||[]); if(!curStarted){ curStarted=true; renderControls(); } showPending(); }
-      tx({t:'send',text:body,speak,model:curModel,effort:curEffort,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
+      tx({t:'send',text:body,speak,model:curModel,effort:curEffort,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId,geo:geoField()});
       refreshComposer(); }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
     // Fim de turno de uma sessão. O FLUSH da fila agora é do SERVIDOR (flushQueue no hub): ele
@@ -1916,6 +2013,7 @@
       if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),msgId:uid()}); return; }
       setRestorable(currentSession,text,atts); sendMsgTo(currentSession,text||'(anexo)',atts); };
     E.stopBtn.onclick=()=>{
+      stopTTS();   // parar o turno também silencia qualquer áudio em reprodução
       if(askActive){   // interromper a DECISÃO → dispensa o card e devolve o composer pra digitar manualmente
         askVoice=false; askPendingVoice=false;
         try{ const c=askActive.card; const nav=c.querySelector('.asknav'); if(nav)nav.remove(); c.classList.add('done'); c.classList.remove('min');
@@ -1948,7 +2046,9 @@
     function slashTok(){ const p=E.input.selectionStart||0, s=E.input.value.slice(0,p), m=/(^|[\s(])\/([\w:.\-]*)$/.exec(s); return m?{tok:m[2],start:m.index+m[1].length,end:p}:null; }
     function atTok(){ const p=E.input.selectionStart||0; const m=/(?:^|\s)@([\w./\-]*)$/.exec(E.input.value.slice(0,p)); return m?{tok:m[1],start:p-m[1].length-1,end:p}:null; }
     function filterCmds(tok){ const q=(tok||'').toLowerCase(); const ag=cmdAgentSel();
-      let arr=ag?cmdList.filter(c=>c.agent===ag):[];
+      // The universal Framework Jarvis (agent:'jarvis') is offered under EVERY AI, alongside the active
+      // adapter's own commands — even when the adapter has no native command system.
+      let arr=cmdList.filter(c=> c.agent==='jarvis' || (ag && c.agent===ag));
       arr=arr.filter(c=> !q || c.name.toLowerCase().includes(q) || (c.description||'').toLowerCase().includes(q));
       arr.sort((a,b)=>{ const ap=a.name.toLowerCase().startsWith(q)?0:1, bp=b.name.toLowerCase().startsWith(q)?0:1; return ap-bp || a.name.localeCompare(b.name); });
       return arr.slice(0,50); }
@@ -1957,7 +2057,7 @@
       if(!trigItems.length){ E.cmdPop.innerHTML='<div class="cmdempty">'+(trigMode==='file'?'Nenhum arquivo.':'Nenhum comando/skill.')+'</div>'; E.cmdPop.classList.remove('hidden'); return; }
       const rows=trigItems.map((it,i)=> trigMode==='file'
         ? '<div class="cmdit'+(i===trigIdx?' sel':'')+'" data-i="'+i+'"><span class="cn">📄 '+esc(it)+'</span></div>'
-        : '<div class="cmdit'+(i===trigIdx?' sel':'')+'" data-i="'+i+'"><span class="cn">/'+esc(it.name)+'</span><span class="ck">'+kindBadge(it.kind)+'</span><span class="cd">'+esc(it.description||it.argHint||'')+'</span></div>');
+        : '<div class="cmdit'+(i===trigIdx?' sel':'')+'" data-i="'+i+'"><span class="cn">/'+esc(it.name)+'</span><span class="ck">'+kindBadge(it.kind)+'</span>'+(it.agent==='jarvis'?'<span class="csrc">universal</span>':'')+'<span class="cd">'+esc(it.description||it.argHint||'')+'</span></div>');
       E.cmdPop.innerHTML='<div class="cmdhint">↑↓ navegar · Enter/Tab inserir · Esc fechar</div>'+rows.join(''); E.cmdPop.classList.remove('hidden');
       E.cmdPop.querySelectorAll('.cmdit').forEach(el=>{ el.onclick=()=>selectTrig(+el.dataset.i); });
       const s=E.cmdPop.querySelector('.cmdit.sel'); if(s) s.scrollIntoView({block:'nearest'}); }

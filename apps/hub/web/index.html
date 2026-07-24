@@ -42,8 +42,7 @@
     .spacer { flex:1; }
     main { flex:1; display:flex; flex-direction:column; min-width:0; }
     header { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); }
-    header #title { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1 1 auto; cursor:pointer; }
-    header #title:hover { color:var(--mut); }
+    header #title { font-weight:600; overflow:hidden; white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; line-height:1.25; min-width:0; flex:1 1 auto; cursor:default; }
     #dlgTitle { white-space:pre-line; }
     .dot { width:9px;height:9px;border-radius:50%;background:#f43f5e; flex:none; }
     .dot.on { background:#22c55e; }
@@ -302,9 +301,25 @@
     .councilcard .ctop { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .councilcard .ctop b { font-size:16px; }
     .councilcard textarea { min-height:132px; font-family:inherit; font-size:14px; line-height:1.4; }
-    .councilcard .cgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .councilcard .cgrid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; align-items:end; }
+    .councilcard .cfield { min-width:0; }
+    .councilcard .clabel { display:block; color:var(--mut); font-size:13px; }
+    .councilcard .cswitchfield { display:flex; flex-direction:column; gap:5px; min-width:0; }
+    .councilcard label.row.cswitchrow { min-height:43px; box-sizing:border-box; margin:0; padding:9px 11px; border:1px solid #ffffff26; border-radius:10px; background:var(--bg); align-items:center; justify-content:flex-start; }
     .councilcard .cactions { justify-content:flex-end; align-items:center; }
     @media (max-width:560px){ .councilcard .cgrid { grid-template-columns:1fr; } }
+    .machinepick { width:min(420px,calc(100vw - 28px)); padding:16px; border-radius:8px; }
+    .machinepick .mph { display:flex; flex-direction:column; gap:3px; margin-bottom:12px; }
+    .machinepick .mph b { font-size:15px; }
+    .machinepick .mph span { color:var(--mut); font-size:12px; }
+    .machinepick .mplist { display:flex; flex-direction:column; gap:6px; max-height:min(360px,55dvh); overflow:auto; }
+    .machinepick .mpopt { width:100%; min-height:50px; display:flex; align-items:center; gap:9px; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:#ffffff08; color:var(--text); text-align:left; font-weight:500; }
+    .machinepick .mpopt:hover:not(:disabled) { background:#ffffff10; border-color:#ffffff30; }
+    .machinepick .mpopt:disabled { opacity:.42; cursor:not-allowed; }
+    .machinepick .mpmain { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+    .machinepick .mpmain b, .machinepick .mpmain span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .machinepick .mpmain span { color:var(--mut); font-size:11.5px; }
+    .machinepick .mpcancel { width:100%; margin-top:10px; }
     .modal label > input::placeholder, #gate .gatebox input::placeholder { color:#64748b; }
     .modal input[type=text] { background:var(--bg); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:11px 13px; font:inherit; }
     /* Settings is a dense control surface: give it hierarchy, predictable controls and a mobile
@@ -479,6 +494,7 @@
     .cmdpop .cmdit:hover, .cmdpop .cmdit.sel { background:#1e2530; }
     .cmdpop .cmdit .cn { font-weight:600; color:#e6e9ee; white-space:nowrap; }
     .cmdpop .cmdit .ck { font-size:10px; text-transform:uppercase; letter-spacing:.04em; opacity:.55; border:1px solid #333a44; border-radius:6px; padding:1px 5px; }
+    .cmdpop .cmdit .csrc { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#8fb8ff; border:1px solid #35507e; border-radius:6px; padding:1px 5px; }
     .cmdpop .cmdit .cd { font-size:12px; opacity:.62; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
     .cmdpop .cmdempty { padding:10px; opacity:.6; font-size:13px; }
     /* Global execution graph (workflows, subagents and long-running processes). It intentionally
@@ -504,7 +520,9 @@
     .workfilters button[data-filter="waiting_input"][aria-pressed="true"] { background:#d9770633; border-color:#d97706; }
     .workscope { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; padding:0 12px 9px; border-bottom:1px solid var(--line); }
     .workscope label { min-width:0; color:var(--mut); font-size:10px; text-transform:uppercase; letter-spacing:.35px; }
-    .workscope select { display:block; width:100%; min-width:0; margin-top:3px; }
+    .workscope select, .workscope input { display:block; width:100%; min-width:0; margin-top:3px; }
+    .workscope input { box-sizing:border-box; background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:9px; padding:6px 8px; font:inherit; font-size:12.5px; }
+    .workscope input::placeholder { color:#788494; opacity:1; }
     .worklayout { min-height:0; flex:1; display:grid; grid-template-columns:minmax(240px,40%) minmax(0,1fr); }
     .worktreewrap { min-width:0; overflow:auto; border-right:1px solid var(--line); padding:8px; }
     #workTree { display:flex; flex-direction:column; gap:3px; }
@@ -685,7 +703,7 @@
       </div>
       <div class="workscope">
         <label>Máquina<select id="workMachine" aria-label="Filtrar por máquina"><option value="">Todas</option></select></label>
-        <label>Sessão<select id="workSession" aria-label="Filtrar por sessão"><option value="">Todas</option></select></label>
+        <label>Sessão<input id="workSession" list="workSessionList" aria-label="Filtrar por sessão" placeholder="Todas / buscar nome ou ID" autocomplete="off"><datalist id="workSessionList"></datalist></label>
         <label>IA<select id="workAgent" aria-label="Filtrar por IA"><option value="">Todas</option></select></label>
       </div>
       <div class="worklayout">
@@ -722,22 +740,22 @@
     <div class="row" style="justify-content:flex-end"><button id="dlgCancel" class="ghost" type="button">Cancelar</button><button id="dlgOk" type="button">OK</button></div>
   </div></div>
 
-
   <div id="councilModal" class="modal hidden"><div class="card councilcard">
     <div class="ctop"><b>Conselho</b><button id="councilClose" class="ghost" type="button" title="Fechar">✕</button></div>
     <label>Tema<textarea id="councilTopic" placeholder="O que o Conselho deve discutir?"></textarea></label>
     <div class="cgrid">
-      <label>Modo<select id="councilMode">
+      <label class="cfield">Modo<select id="councilMode">
         <option value="auto">Auto</option>
         <option value="quick">Rápido</option>
         <option value="technical">Técnico</option>
         <option value="critical">Crítico</option>
         <option value="deep">Profundo</option>
       </select></label>
-      <label class="row"><input id="councilContext" type="checkbox" checked>Usar contexto recente</label>
+      <div class="cswitchfield"><span class="clabel">Contexto</span><label class="row cswitchrow"><input id="councilContext" type="checkbox" checked>Usar contexto recente</label></div>
     </div>
     <div class="row cactions"><span id="councilNote" class="mut" style="font-size:12px;flex:1"></span><button id="councilCancel" class="ghost" type="button">Cancelar</button><button id="councilGo" type="button">Convocar</button></div>
   </div></div>
+
 
   <div id="canvasModal" class="modal hidden"><div class="card" style="min-width:min(520px,94vw);max-width:min(680px,96vw)">
     <div class="row" style="justify-content:space-between;align-items:center"><b id="canvasTitle">🎙 Jarvis</b><button id="canvasClose" class="ghost" type="button">✕</button></div>
@@ -840,8 +858,11 @@
       <label>Esforço da voz<select id="setVoiceEffort"></select></label>
     </div>
     <label class="row"><input type="checkbox" id="setVoice"> <span data-i18n="lblSpeakDefault">Falar as respostas por padrão</span></label>
+    <label style="margin-top:4px"><span data-i18n="lblVoiceTimbre">Voz falada (timbre)</span></label>
+    <div id="voiceCatalog" style="display:flex;flex-direction:column;gap:6px;margin:2px 0 6px"><span class="mut">carregando vozes…</span></div>
     <label class="row"><input type="checkbox" id="setContinue"> <span data-i18n="lblContinue">Após responder, continuar escutando follow-up</span></label>
     <label><span data-i18n="lblContinueWin">Janela de escuta de continuação (segundos)</span><input type="number" id="setContinueSec" min="5" max="120" step="5"></label>
+    <label><span data-i18n="lblSilenceWin">Pausa antes de encerrar a fala (segundos)</span><input type="number" id="setSilenceSec" min="0.6" max="6" step="0.1"></label>
     <label><span data-i18n="lblVoiceEscalate">Refino por voz — modelo em análises difíceis</span> <select id="setVoiceEscalate"></select></label>
     <label class="row"><input type="checkbox" id="setVoiceRelevance"> <span data-i18n="lblVoiceRelevance">Só despachar falas que são comando (filtro anti-ruído)</span></label>
     <div class="sec"><span data-i18n="secAdvListen">Escuta avançada</span> <span class="soon">em desenvolvimento</span></div>
@@ -850,6 +871,7 @@
     <div class="sec" data-i18n="secNotif">Notificações</div>
     <label class="row"><input type="checkbox" id="setPush"> <span data-i18n="lblPushDevice">Notificar neste aparelho (Web Push)</span></label>
     <label class="row biolockrow"><input type="checkbox" id="setBioLock"> <span data-i18n="lblBioLock">Bloquear com biometria (Face ID / digital)</span></label>
+    <label class="row"><input type="checkbox" id="setShareGeo"> <span data-i18n="lblShareGeo">Compartilhar a localização deste aparelho (para pedidos como “por perto”)</span></label>
     <div id="pushCfg" class="hidden" style="margin:2px 0 6px 14px">
       <div class="mut" data-i18n="lblNotifyAbout" style="font-size:11.5px;margin-bottom:4px">Avisar sobre — vale só para este aparelho:</div>
       <label class="row"><input type="checkbox" id="pushDone"> <span data-i18n="lblPushDone">Sessão concluída (qualquer máquina)</span></label>
@@ -900,6 +922,34 @@
       <label class="row"><input type="checkbox" id="setExecDefaultWrite"> Permitir escrita por padrão nas delegações gerenciadas</label>
       <label>Raiz dos worktrees isolados<input id="setExecWorktree" type="text" placeholder="Padrão: ~/.jarvis/worktrees" autocomplete="off"></label>
       <div id="execCfgNote" class="mut" style="font-size:11.5px">Carregando política…</div>
+    </div>
+    <div id="frameworkSettings" class="hidden">
+      <div class="sec">Meu Framework (universal)</div>
+      <div class="mut" style="font-size:12px;margin-bottom:6px">Comandos, skills e instruções que valem para <b>todas as IAs</b> e são publicados em <b>todas as suas máquinas</b>. O Jarvis é a fonte da verdade; os arquivos nativos de cada IA são adapters. Aparecem no menu “/” marcados como <b>universal</b>.</div>
+      <label>Quando um “/nome” existe nativo e universal
+        <select id="setFwPref">
+          <option value="ask">Perguntar (mostra os dois; prefere o nativo)</option>
+          <option value="native">Sempre o nativo da IA</option>
+          <option value="jarvis">Sempre o universal do Framework</option>
+        </select>
+      </label>
+      <div class="routine-grid" style="margin-top:6px">
+        <label>Arquivo<select id="fwFileList"><option value="">— novo arquivo —</option></select></label>
+        <label>Caminho<input id="fwPath" placeholder="commands/plan.md · skills/review/SKILL.md · instructions.md" autocomplete="off"></label>
+      </div>
+      <textarea id="fwEditor" rows="8" placeholder="Conteúdo do arquivo (markdown). Em comandos, use $ARGUMENTS onde entram os argumentos." style="width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+      <div class="row" style="gap:8px;justify-content:flex-end;margin-top:6px">
+        <button id="fwImport" class="ghost" type="button" title="Semear instructions.md a partir do CLAUDE.md/AGENTS.md/GEMINI.md desta máquina">Importar desta máquina</button>
+        <button id="fwDelete" class="ghost" type="button">Excluir</button>
+        <button id="fwSave" type="button">Salvar arquivo</button>
+      </div>
+      <div class="sec" style="margin-top:10px">Publicar</div>
+      <div class="mut" style="font-size:12px;margin-bottom:6px">Envia o framework para cada máquina. As que estiverem offline recebem ao reconectar.</div>
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <span id="fwVersion" class="mut" style="font-size:12px">—</span>
+        <button id="fwPublish" type="button">Publicar em todas as máquinas</button>
+      </div>
+      <div id="fwStatus" class="mut" style="font-size:12px;margin-top:6px">—</div>
     </div>
     <div class="sec" data-i18n="secAutoRoute">Roteamento automático, resumos e status</div>
     <div class="mut" data-i18n="descAutoRoute" style="font-size:12px;margin-bottom:4px">A IA, o modelo e o esforço abaixo analisam mensagens em modo Automático e também executam resumos e consultas de status. Roda sempre no servidor (Hub).</div>

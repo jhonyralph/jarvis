@@ -47,6 +47,18 @@ writeFileSync(join(CODEX, "prompts", "cx-only.md"), `Codex-only prompt for $ARGU
 writeFileSync(join(CODEX, "prompts", "plain.md"), `CODEX version of plain — should lose to Claude.`);
 writeFileSync(join(HOME, "claude.json"), JSON.stringify({ mcpServers: { "my-mcp": { type: "http", url: "https://x" } } }));
 writeFileSync(join(CODEX, "config.toml"), `[projects."x"]\ntrust_level = "trusted"\n[mcp_servers.cx-mcp]\ncommand = "node"\n`);
+// Framework Jarvis (universal) fixture: a skill whose name CLASHES with the Claude builtin "review",
+// plus a universal command "plan" that no provider defines natively.
+const JF = join(HOME, "framework");
+mkdirSync(join(JF, "skills", "review"), { recursive: true });
+mkdirSync(join(JF, "commands"), { recursive: true });
+writeFileSync(join(JF, "skills", "review", "SKILL.md"), `---
+name: review
+description: Universal review skill.
+---
+Review the diff carefully for $ARGUMENTS.`);
+writeFileSync(join(JF, "commands", "plan.md"), `Plan the work for $ARGUMENTS across steps.`);
+process.env.JARVIS_FRAMEWORK_HOME = JF;
 process.env.JARVIS_CLAUDE_HOME = CLAUDE;
 process.env.JARVIS_CODEX_HOME = CODEX;
 process.env.JARVIS_CLAUDE_JSON = join(HOME, "claude.json");
@@ -176,6 +188,44 @@ test("expandCommand returns null for non-commands and unknown names", () => {
   assert.equal(expandCommand("just a normal message"), null);
   assert.equal(expandCommand("/nope-not-real args"), null);
   assert.equal(expandCommand("email me at a/b"), null);
+});
+
+test("Framework Jarvis skills and commands are discovered as agent:jarvis", () => {
+  const all = listCommands();
+  const skill = all.find((c) => c.name === "review" && c.agent === "jarvis");
+  assert.ok(skill, "universal review skill discovered");
+  assert.equal(skill!.kind, "skill");
+  const plan = all.find((c) => c.name === "plan" && c.agent === "jarvis");
+  assert.ok(plan, "universal plan command discovered");
+  assert.equal(plan!.kind, "command");
+});
+
+test("a Jarvis universal command expands under ANY AI, including command-less adapters", () => {
+  // works under Codex (a native command system) even though "plan" is not a Codex command
+  assert.match(expandCommand("/plan the login flow", undefined, "codex")!.expanded, /Plan the work for the login flow/);
+  // works under an adapter cmdAgentOf maps to null (no native command system)
+  assert.match(expandCommand("/plan the login flow", undefined, null)!.expanded, /Plan the work for the login flow/);
+});
+
+test("a Jarvis skill INLINES its SKILL.md body (so an AI without the skill can still run it)", () => {
+  const r = expandCommand("/plan x", undefined, null); // sanity: framework reachable under null adapter
+  assert.ok(r);
+  const s = expandCommand("/review the auth diff", undefined, "codex");
+  assert.ok(s, "review resolves via the universal framework under Codex");
+  assert.match(s!.expanded, /Framework Jarvis/, "identifies the framework source");
+  assert.match(s!.expanded, /Review the diff carefully for the auth diff/, "the SKILL.md body is inlined and args substituted");
+  assert.doesNotMatch(s!.expanded, /Use the "review" skill\./, "not the name-only native hint");
+});
+
+test("preference decides a native-vs-Jarvis homonym", () => {
+  // "review" exists as a Claude builtin AND a Jarvis universal skill.
+  // native/ask → the builtin wins → passes through raw (expandCommand returns null).
+  assert.equal(expandCommand("/review x", undefined, "claude", { preference: "native" }), null, "native prefers the Claude builtin (raw pass-through)");
+  assert.equal(expandCommand("/review x", undefined, "claude"), null, "ask defaults to native-first");
+  // jarvis → the universal skill wins → inlined body.
+  const j = expandCommand("/review x", undefined, "claude", { preference: "jarvis" });
+  assert.ok(j, "jarvis preference resolves the universal skill");
+  assert.match(j!.expanded, /Review the diff carefully for x/);
 });
 
 test.after(() => rmSync(HOME, { recursive: true, force: true }));

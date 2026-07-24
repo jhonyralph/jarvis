@@ -16,8 +16,9 @@ import type { ExecutionHubToRunner, ExecutionRunnerToHub, ExecutionState, Manage
 
 export type RunnerOS = "linux" | "darwin" | "win32" | string;
 
-/** Increment when a protocol change affects observable turn/history semantics. */
-export const RUNNER_PROTOCOL_VERSION = 6;
+/** Increment when a protocol change affects observable turn/history semantics.
+ *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines). */
+export const RUNNER_PROTOCOL_VERSION = 7;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
@@ -178,6 +179,8 @@ export type RunnerToHub =
   | { t: "usage_info"; reqId: string; agent: string; plan: unknown | null; planStatus: "available" | "not_reported" | "unsupported" | "error" }
   | { t: "memory_preview"; reqId: string; sessionId?: string; token: string; target: string; note: string; appendText: string; beforeHash: string; exists: boolean; expiresAt: number }
   | { t: "memory_applied"; reqId: string; token: string; sessionId?: string; ok: boolean; target?: string; beforeHash?: string; afterHash?: string; error?: string }
+  /** Result of materializing a published Framework Jarvis on this machine (reply to framework_publish). */
+  | { t: "framework_published"; requestId: string; ok: boolean; version?: number; hash?: string; written?: number; removed?: number; skipped?: boolean; error?: string }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" }
   | ExecutionRunnerToHub;
@@ -219,6 +222,9 @@ export type HubToRunner =
   | { t: "usage"; reqId: string; agent?: string }
   /** Start a Jarvis Conselho workflow and persist the final synthesis into this managed session. */
   | { t: "council_start"; requestId: string; sessionId: string; requestText: string; mode: "quick" | "technical" | "critical" | "deep"; finalTaskId: string; title?: string; plan: ManagedExecutionPlanWire; policy?: ManagedExecutionPolicyWire }
+  /** Publish a Framework Jarvis snapshot to this machine; the Runner materializes it and replies
+   *  framework_published. Content-addressed by `hash` — a machine already on that hash is a no-op. */
+  | { t: "framework_publish"; requestId: string; version: number; hash: string; files: Array<{ path: string; content: string }> }
   /** enumerate this machine's slash-commands / skills (reply: command_list) */
   | { t: "commands"; reqId: string; sessionId?: string }
   /** "@" file-mention search under a session's cwd (reply: mention_list) */

@@ -3,11 +3,28 @@
  * call to the persistent Python voice service (services/voice) over local WS.
  */
 import { spawn } from "node:child_process";
-import { readFileSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, unlinkSync, existsSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 const VOICES = join(homedir(), ".jarvis", "voices");
+
+/** Nomes das vozes Piper instaladas em ~/.jarvis/voices (arquivos *.onnx, sem extensão). */
+export function listVoices(): string[] {
+  try {
+    return readdirSync(VOICES)
+      .filter((f) => f.endsWith(".onnx"))
+      .map((f) => f.slice(0, -5))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** true se o modelo de voz existe localmente. */
+export function hasVoice(voice: string): boolean {
+  return !!voice && existsSync(join(VOICES, `${voice}.onnx`));
+}
 const PY = process.env.JARVIS_PYTHON || "python";
 // fluidity tuning (env-overridable): slightly slower + a pause after each sentence reads
 // more naturally than Piper's default; noise-w adds a touch of prosody variation.
