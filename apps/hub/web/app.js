@@ -36,6 +36,9 @@
     let machines=[], currentMachine=localStorage.getItem('jarvis_machine')||'local', routedMachine='local', lastByMachine={}, restoringMachine=(currentMachine!=='local'&&currentMachine!=='all');
     // vista "Todas as máquinas": currentMachine==='all' é a VISÃO unificada; routedMachine é a máquina
     // real para onde o hub roteia (definida ao abrir/criar uma sessão da lista agregada). hue por nome.
+    // allViewMachines: quem contribuiu para a última agregação — uma máquina offline ou muda deixa de
+    // aparecer na lista, e sem este aviso a visão parecia simplesmente "perder sessões" sozinha.
+    let allViewMachines=[];
     function machineHue(s){ let h=0; s=String(s||''); for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return h%360; }
     let allRefreshT=null; function scheduleAllRefresh(){ if(currentMachine!=='all')return; clearTimeout(allRefreshT); allRefreshT=setTimeout(()=>{ if(currentMachine==='all') tx({t:'listAll'}); }, 1500); }
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
@@ -627,6 +630,11 @@
     function renderRecents(){ E.recents.innerHTML='';
       const visibleRuns=currentMachine==='all'?sessions.filter(s=>(activeRunsByRunner[s.runnerId||'local']||[]).includes(s.id)).length:activeRuns.length;
       if(visibleRuns){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+visibleRuns+' rodando agora'; E.recents.appendChild(h); }
+      // Visão unificada incompleta: diz QUAIS máquinas ficaram de fora, em vez de só mostrar menos itens.
+      if(currentMachine==='all'){ const missing=allViewMachines.filter(x=>x&&!x.contributed);
+        if(missing.length){ const w=document.createElement('div'); w.className='runhdr partial';
+          w.textContent='⚠ sem '+missing.map(x=>x.label+(x.online?' (não respondeu)':' (offline)')).join(', ');
+          w.title='A lista abaixo não inclui as sessões dessas máquinas.'; E.recents.appendChild(w); } }
       secCounts();
       sessions.slice(0,shown).forEach(s=>{ const runner=s.runnerId||selectedRunner(), run=(activeRunsByRunner[runner]||[]).includes(s.id), un=unread.has(sessionStateKey(s.id,runner))&&!run&&!(s.id===currentSession&&runner===currentSessionRunner);
       const d=document.createElement('div'); d.className='item'+(s.id===currentSession&&runner===currentSessionRunner?' active':'')+(run?' running':'')+(un?' unread':'');
@@ -661,7 +669,11 @@
     function renderMachines(){
       if(!E.machineBar) return;
       if(machines.length<=1){ E.machineBar.style.display='none'; return; }
-      if(currentMachine!=='all' && !machines.some(m=>m.id===currentMachine)) currentMachine='local';
+      // Máquina salva que não existe mais (revogada/renomeada): cai pra 'local' E apaga a preferência.
+      // Antes só o `currentMachine` era corrigido aqui — e como este render roda ANTES do bloco de
+      // restauração, aquele bloco já encontrava 'local' na lista e nunca chegava a limpar o storage.
+      // O id morto sobrevivia a todo reload, reabrindo a janela de divergência cliente⇄Hub a cada boot.
+      if(currentMachine!=='all' && !machines.some(m=>m.id===currentMachine)){ currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} }
       E.machineBar.style.display=''; E.machineBar.innerHTML='';
       const isAll=currentMachine==='all';
       const cur=isAll?{label:'Todas as máquinas',online:true}:(machines.find(m=>m.id===currentMachine)||machines[0]);
@@ -1603,7 +1615,19 @@
       if(gateMode==='verify'){ if(!val){ gateError('Informe a senha.'); return; } authPass=val; gateError(''); tx({t:'verify',pass:val}); return; }
       const label=gateEl.querySelector('#gateLabel').value.trim()||deviceLabelGuess();
       if(!val){ gateError('Informe o código.'); return; } gateError(''); tx({ t: gateClaimed?'redeem':'claim', code:val, label }); }
-    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); tx({t:'executions_list',scope:'all',limit:500}); if(authUser&&authUser.role==='owner')tx({t:'adaptive_approvals'}); if(currentMachine!=='local'){ restoringMachine=true; } else if(currentSession) openSession(currentSession,currentSessionRunner); if(cfg.push) enablePush(); requestCommands(); if(hashWork())openWorkPanel({fromHash:true}); }
+    function postAuth(){ tx({t:'wake',enabled:cfg.wake}); tx({t:'executions_list',scope:'all',limit:500}); if(authUser&&authUser.role==='owner')tx({t:'adaptive_approvals'});
+      // Socket NOVO: o Hub roteia toda conexão recém-autenticada para LOCAL (clientRunner é por socket).
+      // routedMachine é o espelho desse estado no cliente; se ele não voltar pra 'local' aqui, o
+      // openSession() acha que já está roteado pra máquina certa, NÃO reenvia {t:'runner'}, e todo
+      // open/send seguinte vai parar na máquina errada (sessão remota executada no Hub → erro).
+      routedMachine='local';
+      // 'all' é uma VISÃO sintética, não um runner: não existe machines[].id==='all'. Marcá-la como
+      // "máquina a restaurar" fazia o handler de 'machines' cair no else e derrubar a vista pra 'local',
+      // apagando a preferência salva — com a lista agregada (as duas máquinas) ainda na tela. Era a
+      // origem da mistura Desktop⇄Luby depois de cada reconexão. Ver o inicializador de restoringMachine.
+      if(currentMachine!=='local'&&currentMachine!=='all'){ restoringMachine=true; }
+      else if(currentSession) openSession(currentSession,currentSessionRunner);
+      if(cfg.push) enablePush(); requestCommands(); if(hashWork())openWorkPanel({fromHash:true}); }
     function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); if(window.__jarvisNative){ if(window.__jarvisNative.reregister&&cfg.push) window.__jarvisNative.reregister(); if(window.__jarvisNative.wakeStart&&cfg.wake) window.__jarvisNative.wakeStart(); } }
 
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
@@ -1681,6 +1705,7 @@
           // visão unificada: só o agregado (runnerId 'all') alimenta a lista; listas de máquina única
           // que chegam por troca de runner (ao abrir) são ignoradas aqui pra não sobrescrever o agregado.
           if(currentMachine==='all'){ if(m.runnerId!=='all') return; } else if(m.runnerId && m.runnerId!==currentMachine) return;
+          if(m.runnerId==='all') allViewMachines=Array.isArray(m.machines)?m.machines:[];
           restoringMachine=false; sessions=currentMachine==='all'?mergeOptimisticSessions(m.sessions||[]):dedupeSessionsList(m.sessions||[]); recentDirs=m.recentDirs||recentDirs;
           if(lastBump && Date.now()-lastBump.ts<12000){ const bi=sessions.findIndex(s=>s.id===lastBump.sid&&(currentMachine!=='all'||(s.runnerId||'local')===lastBump.runner)); if(bi>0){ const [bs]=sessions.splice(bi,1); sessions.unshift(bs); } }  // preserva o topo recém-enviado
           renderRecents(); if(!currentSession && !creatingSession && currentMachine!=='all'){

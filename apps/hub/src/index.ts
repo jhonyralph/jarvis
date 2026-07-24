@@ -18,6 +18,7 @@ import { homedir, hostname } from "node:os";
 import { join, normalize, dirname, basename } from "node:path";
 import QRCode from "qrcode";
 import { PushCenter } from "./push.js";
+import { RunnerListWaiters } from "./runnerListWaiters.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, createAgentEventBridge, createEventSequencer, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
@@ -944,8 +945,10 @@ setInterval(() => {
   }
 }, Math.min(60_000, UPDATE_RETRY_MS)).unref?.();
 
-// admin: waiters for a runner's next session list (used by the remote "ok" purge)
-const pendingRunnerList = new Map<string, (sessions: any[]) => void>();
+// Waiters for a runner's next session list (visão unificada, busca cross-machine, purge "ok" do admin).
+// Ver runnerListWaiters.ts: um slot único por runner fazia pedidos concorrentes se atropelarem, e a
+// máquina sumia da visão unificada de forma intermitente.
+const pendingRunnerList = new RunnerListWaiters();
 // Voice features (resumir/digest) run ON THE HUB, so for a session that lives on another machine
 // they need to pull it over the wire — the hub keeps no copy of a runner's sessions. Keyed by
 // reqId, resolved by the runner's {t:history}/{t:sessions} reply, and always timed out so a
@@ -987,9 +990,26 @@ function runnerHistory(rc: RunnerConn, sessionId: string): Promise<any> {
   const reqId = "hub-" + randomUUID().slice(0, 8);
   return askRunner(pendingRunnerHist, reqId, () => sendToRunner(rc, { t: "open", reqId, sessionId }), null);
 }
+/** Session list of a remote machine, plus whether the machine actually ANSWERED. A silent runner and a
+ *  runner with genuinely zero sessions both yield `[]`; only `answered` tells them apart, and the
+ *  unified view needs that difference to say "esta máquina não respondeu" instead of showing nothing. */
+function runnerSessionsResult(rc: RunnerConn): Promise<{ answered: boolean; sessions: any[] }> {
+  return new Promise((resolve) => {
+    // cancel/timer are declared BEFORE finish() can reach them: the send-failure path below calls
+    // finish synchronously, and a const captured later would be in its temporal dead zone.
+    let settled = false, cancel = (): void => { /* replaced below */ }, timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (answered: boolean, sessions: any[]): void => {
+      if (settled) return;
+      settled = true; cancel(); if (timer) clearTimeout(timer); resolve({ answered, sessions });
+    };
+    cancel = pendingRunnerList.add(rc.id, (sessions: any[]) => finish(true, sessions));
+    timer = setTimeout(() => finish(false, []), 6000);
+    if (!sendToRunner(rc, { t: "list" })) finish(false, []);
+  });
+}
 /** Session list of a remote machine. [] if the runner doesn't answer. */
-function runnerSessions(rc: RunnerConn): Promise<any[]> {
-  return askRunner<any[]>(pendingRunnerList, rc.id, () => sendToRunner(rc, { t: "list" }), [], 6000);
+async function runnerSessions(rc: RunnerConn): Promise<any[]> {
+  return (await runnerSessionsResult(rc)).sessions;
 }
 function runnerUsage(rc: RunnerConn, agent: string, fallback: any): Promise<any> {
   const reqId = "usage-" + randomUUID().slice(0, 8);
@@ -1104,8 +1124,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     mergeRunnerSessionState(rc.id, raw);
     const sessions = dedupeRunnerSessions(rc.id, raw);
     const recentDirs = Array.isArray(m.recentDirs) ? m.recentDirs.filter((d: unknown): d is string => typeof d === "string" && d.trim().length > 0) : [];
-    const cb = pendingRunnerList.get(rc.id);
-    if (cb) { pendingRunnerList.delete(rc.id); cb(sessions); }
+    pendingRunnerList.resolve(rc.id, sessions);
     for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions, recentDirs, runnerId: rc.id });
     return;
   }
@@ -1543,21 +1562,37 @@ function pushSessions(): void { const p = sessionsPayload(); for (const c of cli
  *  its runnerId + machine label so the UI can badge them and route an open to the owning machine.
  *  Remote lists are fetched concurrently with a per-runner timeout — a silent machine just yields
  *  nothing instead of hanging the whole view. */
-async function aggregateAllSessions(ws?: WebSocket): Promise<any[]> {
+async function aggregateAllSessions(ws?: WebSocket): Promise<{ sessions: any[]; machines: AggregateMachine[] }> {
   // Filter to the machines this connection may use so the "all machines" view never leaks sessions
   // from a runner a member wasn't granted. No ws (internal callers) => unfiltered.
   const canUse = (rid: string) => !ws || canUseRunner(ws, rid);
   const localLabel = runnerLabels[LOCAL_ID] || runners.get(LOCAL_ID)?.info.host || "Servidor";
   const out: any[] = canUse(LOCAL_ID) ? allSessions().map((s) => ({ ...s, runnerId: LOCAL_ID, machine: localLabel })) : [];
-  const online = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUse(r.id));
-  const lists = await Promise.all(online.map((rc) => runnerSessions(rc).then((ss) => ({ rc, ss })).catch(() => ({ rc, ss: [] as any[] }))));
-  for (const { rc, ss } of lists) {
+  const machines: AggregateMachine[] = canUse(LOCAL_ID)
+    ? [{ runnerId: LOCAL_ID, label: localLabel, online: true, contributed: true }]
+    : [];
+  // Every remote the connection may see — INCLUDING the offline ones. They used to be filtered out
+  // silently, so a machine that dropped just vanished from the unified list with no explanation (e a
+  // ordem parecia embaralhar sozinha quando ela voltava). Now it is reported as not contributing.
+  const remotes = [...runners.values()].filter((r) => !r.local && canUse(r.id));
+  const reachable = remotes.filter((r) => r.ws && r.ws.readyState === WebSocket.OPEN);
+  const lists = await Promise.all(reachable.map((rc) => runnerSessionsResult(rc).then((r) => ({ rc, ...r })).catch(() => ({ rc, answered: false, sessions: [] as any[] }))));
+  const answers = new Map(lists.map((l) => [l.rc.id, l]));
+  for (const rc of remotes) {
     const label = runnerLabels[rc.id] || rc.info.host || rc.id;
-    for (const s of ss) out.push({ ...s, runnerId: rc.id, machine: label });
+    const online = !!rc.ws && rc.ws.readyState === WebSocket.OPEN;
+    const answer = answers.get(rc.id);
+    machines.push({ runnerId: rc.id, label, online, contributed: !!answer?.answered });
+    for (const s of answer?.sessions || []) out.push({ ...s, runnerId: rc.id, machine: label });
   }
-  return out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  return { sessions: out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)), machines };
 }
 function sendSessions(ws: WebSocket): void { send(ws, sessionsPayload()); }
+
+/** Per-machine outcome of one unified-view aggregation. `contributed` is false when the machine is
+ *  offline OR was online but never answered the list within the timeout — the UI needs both cases to
+ *  say the view is partial instead of quietly showing fewer sessions. */
+interface AggregateMachine { runnerId: string; label: string; online: boolean; contributed: boolean }
 
 /** What to SPEAK for an agent reply: short answers are read verbatim (cleaned); long ones are
  *  condensed to a 1–3 sentence spoken summary (cheap model) so the audio doesn't drag on. */
@@ -3411,9 +3446,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (msg.t === "memory_append") { send(ws, { t: "error", message: "escrita de memória exige prévia e confirmação" }); return; }
     if (msg.t === "runner" && typeof msg.runnerId === "string") {
-      const target = runners.has(msg.runnerId) ? msg.runnerId : LOCAL_ID;
+      const known = runners.has(msg.runnerId);
+      const target = known ? msg.runnerId : LOCAL_ID;
       if (!canUseRunner(ws, target)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
       clientRunner.set(ws, target); subs.delete(ws);
+      // Antes o fallback para LOCAL era SILENCIOSO: o cliente seguia acreditando que estava na outra
+      // máquina enquanto o Hub roteava tudo para o Desktop — todo send/open caía na máquina errada sem
+      // nenhum sinal. Um id desconhecido agora vira erro visível (a lista de máquinas vai junto, e o
+      // cliente reconcilia o seletor com ela).
+      if (!known) send(ws, { t: "error", message: `máquina desconhecida "${msg.runnerId}" — roteando para ${runnerLabels[LOCAL_ID] || "esta máquina"}` });
       send(ws, { t: "machines", machines: machineList(ws) });
       if (target === LOCAL_ID) sendSessions(ws);
       else { const rc = runners.get(target); if (!rc || !sendToRunner(rc, { t: "list" })) send(ws, { t: "sessions", sessions: [], recentDirs: [], runnerId: target }); }
@@ -3425,7 +3466,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // unified "all machines" view: aggregate local + every online runner's sessions (tagged).
     if (msg.t === "listAll") {
-      aggregateAllSessions(ws).then((sessions) => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "sessions", runnerId: "all", sessions, recentDirs: recentDirsList() }); }).catch(() => { /* ignore */ });
+      aggregateAllSessions(ws).then(({ sessions, machines }) => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "sessions", runnerId: "all", sessions, machines, recentDirs: recentDirsList() }); }).catch(() => { /* ignore */ });
       return;
     }
     // when viewing a REMOTE machine, session ops are forwarded to that runner
@@ -4281,7 +4322,7 @@ startAdminApi({ updateRoot: UPDATE_ROOT, port: PORT, applyHubUpdate, rollbackHub
   if (hubUpdateInProgress) return { ok: false, busy: true, log: "outra atualização já está em andamento" };
   hubUpdateInProgress = true; const drainError = await drainHubForUpdate(); const result = drainError ? { ok: false, log: drainError } : await updateRollback(UPDATE_ROOT);
   if (result.ok) scheduleRestart(); else hubUpdateInProgress = false; return result;
-}, queueAllRunnerUpdates: queueAllRemoteRunnerUpdates, dropRevoked, refreshPrincipalRole, runners, runnerLabels, pendingRunnerList, sendToRunner });
+}, queueAllRunnerUpdates: queueAllRemoteRunnerUpdates, dropRevoked, refreshPrincipalRole, runners, runnerLabels, runnerSessions, sendToRunner });
 
 void refreshLocalAgents();
 setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min; probes are version/login-status checks, never inference turns

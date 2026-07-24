@@ -29,7 +29,10 @@ export interface AdminCtx {
   /** RunnerConn registry (structural: .id / .local / .ws are read) */
   runners: Map<string, { id: string; local: boolean; ws: WebSocket | null }>;
   runnerLabels: Record<string, string>;
-  pendingRunnerList: Map<string, (sessions: any[]) => void>;
+  /** Pull a runner's current session list (single-flight safe; [] if it stays silent). Injected as a
+   *  function rather than the raw waiter map so the admin purge can't clobber the unified view's
+   *  in-flight request — both used to share one slot per runner and starve each other. */
+  runnerSessions: (rc: any) => Promise<any[]>;
   sendToRunner: (rc: any, obj: unknown) => boolean;
 }
 
@@ -67,7 +70,7 @@ export function startAdminApi(ctx: AdminCtx): void {
             if (rc.local || !rc.ws || rc.ws.readyState !== WebSocket.OPEN) continue;
             let purged = 0;
             for (let round = 0; round < 60; round++) {
-              const sessions: any[] = await new Promise((resolve) => { ctx.pendingRunnerList.set(rc.id, resolve); ctx.sendToRunner(rc, { t: "list" }); setTimeout(() => { if (ctx.pendingRunnerList.delete(rc.id)) resolve([]); }, 6000); });
+              const sessions: any[] = await ctx.runnerSessions(rc);
               const okIds = sessions.filter((s) => typeof s?.id === "string" && s.source === "native" && String(s.title || "").trim().toLowerCase() === "ok").map((s) => s.id);
               if (!okIds.length) break;
               ctx.sendToRunner(rc, { t: "delete", sessionIds: okIds, alsoNative: true });
