@@ -27,6 +27,29 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
+// Network-first, but with a TIMEOUT that falls back to cache. Pure network-first (await fetch with
+// no timeout) was the mobile hang: on a slow/flaky link fetch doesn't reject, it just hangs, so the
+// SW blocked first paint until the full HTML + 287KB app.js finished downloading ("uma era" to open
+// on cellular). Now we race the network against ~2.5s; if a cached copy exists and the network is
+// slower than that, we serve the cache instantly and refresh it in the background. Fast connections
+// (LAN/desktop) still win the race almost always, so "reload is the deploy" stays intact there.
+const NET_TIMEOUT_MS = 2500;
+async function networkFirstWithTimeout(req, cacheKey) {
+  const cache = await caches.open(CACHE);
+  const cached = await cache.match(cacheKey || req);
+  const network = fetch(req).then((res) => { if (res && res.ok) cache.put(cacheKey || req, res.clone()); return res; });
+  if (!cached) {
+    // Nothing cached yet (first ever open): must wait for the network, but still fall back on error.
+    try { return await network; } catch { return (await cache.match(cacheKey || req)) || Response.error(); }
+  }
+  // Have a cached copy: give the network a short head start, else serve cache and let it refresh in bg.
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), NET_TIMEOUT_MS));
+  const winner = await Promise.race([network.catch(() => null), timeout]);
+  if (winner && winner.ok) return winner;   // network was fast enough → freshest copy (the deploy)
+  network.catch(() => {});                   // keep the background refresh alive without unhandled rejection
+  return cached;                             // slow/failed network → instant cached shell
+}
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
@@ -35,33 +58,15 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.startsWith("/pasted/")) return;    // user images: always live, never cached
 
   if (req.mode === "navigate") {
-    // NETWORK-FIRST so an online reload always deploys the latest HTML; cache is the offline safety net.
-    event.respondWith((async () => {
-      try {
-        const res = await fetch(req);
-        if (res && res.ok) { const c = await caches.open(CACHE); c.put("/", res.clone()); }
-        return res;
-      } catch {
-        return (await caches.match("/")) || (await caches.match(req)) || Response.error();
-      }
-    })());
+    event.respondWith(networkFirstWithTimeout(req, "/"));
     return;
   }
 
-  // app.js is the app CODE (the deploy artifact), not a static asset. NETWORK-FIRST like the HTML, so
-  // a normal online reload always ships the latest client — keeping "reload is the deploy" intact now
-  // that the JS lives in an external file. Cache is only the offline fallback. (Still pre-cached in the
-  // SHELL on install so an offline first-open works.)
+  // app.js is the app CODE (the deploy artifact), not a static asset — same network-first-with-timeout
+  // as the HTML so a normal online reload still ships the latest client, but a slow mobile link gets
+  // the cached script instantly instead of hanging on the 287KB download.
   if (url.pathname === "/app.js") {
-    event.respondWith((async () => {
-      try {
-        const res = await fetch(req);
-        if (res && res.ok) { const c = await caches.open(CACHE); c.put(req, res.clone()); }
-        return res;
-      } catch {
-        return (await caches.match(req)) || Response.error();
-      }
-    })());
+    event.respondWith(networkFirstWithTimeout(req, req));
     return;
   }
 

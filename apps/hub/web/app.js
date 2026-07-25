@@ -4,7 +4,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setSearch','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setShareGeo','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwFileList','fwPath','fwEditor','fwImport','fwDelete','fwSave','fwVersion','fwPublish','fwStatus','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -1206,7 +1206,46 @@
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
       const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); E.executionSettings.classList.toggle('hidden',!isOwner); if(E.frameworkSettings)E.frameworkSettings.classList.toggle('hidden',!isOwner); if(E.policySettings)E.policySettings.classList.toggle('hidden',!isOwner); if(isOwner){ fillRoutineMachines(); validateRoutineCron(); tx({t:'routines'}); tx({t:'execution_cfg'}); tx({t:'framework_cfg'}); tx({t:'policy_state',sessionId:currentSession}); }
+      settingsSetupNav(isOwner);
       tx({t:'voice_cfg'}); if(E.setLang) E.setLang.value=lang; };
+    // ---------- configurações: navegação lateral + busca (like Claude/VS Code) ----------
+    // Nenhuma lógica de preencher/salvar muda: os IDs dos controles são os mesmos; aqui só
+    // decidimos QUAL painel aparece. Owner-only: esconde os itens de nav e mostra um aviso.
+    function settingsGoto(name){ const root=E.settings; if(!root) return;
+      root.querySelectorAll('.snav').forEach(b=>b.classList.toggle('on',b.dataset.goto===name));
+      root.querySelectorAll('.spanel').forEach(p=>p.classList.toggle('hidden',p.dataset.panel!==name));
+      const panels=document.getElementById('setPanels'); if(panels) panels.scrollTop=0;
+    }
+    function settingsSetupNav(isOwner){ const root=E.settings; if(!root) return;
+      // itens exclusivos do dono sÃo escondidos da barra; os painéis mostram aviso se abertos por link/busca
+      root.querySelectorAll('.snav-owner').forEach(b=>b.classList.toggle('hidden',!isOwner));
+      const autoHint=document.getElementById('autoOwnerHint'), fwHint=document.getElementById('fwOwnerHint');
+      if(autoHint) autoHint.classList.toggle('hidden',!!isOwner);
+      if(fwHint) fwHint.classList.toggle('hidden',!!isOwner);
+      // volta pro painel Geral e limpa a busca toda vez que abre
+      if(E.setSearch) E.setSearch.value=''; settingsSearch(''); settingsGoto('geral');
+    }
+    // Busca: mostra TODOS os painéis mas filtra linha a linha (label/.sec) pelo texto, como no Claude.
+    function settingsSearch(q){ const root=E.settings; if(!root) return; q=(q||'').trim().toLowerCase();
+      root.classList.toggle('searching',!!q);
+      if(!q){ root.querySelectorAll('.searchhide').forEach(el=>el.classList.remove('searchhide')); root.querySelectorAll('.spanel.nomatch').forEach(p=>p.classList.remove('nomatch')); const nr=document.getElementById('setNoResults'); if(nr)nr.classList.add('hidden'); return; }
+      let total=0;
+      root.querySelectorAll('.spanel').forEach(p=>{ let shown=0; let curSec=null, secHas=false;
+        const flush=()=>{ if(curSec) curSec.classList.toggle('searchhide',!secHas); };
+        Array.from(p.children).forEach(el=>{
+          if(el.classList.contains('sec')){ flush(); curSec=el; secHas=false; return; }
+          if(el.tagName==='LABEL'){ const hit=el.textContent.toLowerCase().includes(q); el.classList.toggle('searchhide',!hit); if(hit){ shown++; secHas=true; } return; }
+          // blocos (routine-grid, div wrappers): varre labels internos
+          const labs=el.querySelectorAll?el.querySelectorAll('label'):[]; let any=false;
+          labs.forEach(l=>{ const hit=l.textContent.toLowerCase().includes(q); l.classList.toggle('searchhide',!hit); if(hit) any=true; });
+          if(labs.length){ if(any){ shown++; secHas=true; } }
+        });
+        flush(); p.classList.toggle('nomatch',shown===0); total+=shown;
+      });
+      const nr=document.getElementById('setNoResults'); if(nr)nr.classList.toggle('hidden',total>0);
+    }
+    document.querySelectorAll('#settings .snav').forEach(b=>b.onclick=()=>{ if(E.setSearch){E.setSearch.value='';} settingsSearch(''); settingsGoto(b.dataset.goto); });
+    if(E.setSearch) E.setSearch.oninput=()=>settingsSearch(E.setSearch.value);
     // Meu Framework (universal) — owner-only editor + fleet publish.
     let fwMachineStatus={};
     function fwStateLabel(st){ return ({materialized:'✓ materializado',current:'✓ já atual',sent:'enviado',queued:'na fila',needs_update:'⚠ máquina desatualizada',error:'⚠ erro',offline:'offline',pronta:'pronta',fonte:'fonte (esta máquina)'})[st]||st; }

@@ -322,18 +322,34 @@
     .machinepick .mpcancel { width:100%; margin-top:10px; }
     .modal label > input::placeholder, #gate .gatebox input::placeholder { color:#64748b; }
     .modal input[type=text] { background:var(--bg); color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:11px 13px; font:inherit; }
-    /* Settings is a dense control surface: give it hierarchy, predictable controls and a mobile
-       sheet layout instead of one long stream of unrelated fields. */
+    /* Settings is a dense control surface: a left nav (search + categories) drives a single visible
+       panel on the right — like Claude/VS Code — instead of one long stream of unrelated fields. */
     #settings { padding:clamp(0px,2vw,20px); }
-    #settings .settings-card { width:min(680px,100%); padding:0 22px 18px; gap:12px; scrollbar-gutter:stable; }
-    #settings .settings-title { position:sticky; top:0; z-index:2; display:flex; align-items:center; min-height:58px; margin:0 -22px 2px; padding:0 22px; background:linear-gradient(var(--panel) 78%,transparent); font-size:19px; letter-spacing:-.2px; }
+    #settings .settings-card { width:min(880px,100%); height:min(620px,90dvh); padding:0; gap:0; overflow:hidden; }
+    #settings .settings-head { display:flex; align-items:center; min-height:56px; padding:0 20px; border-bottom:1px solid var(--line); }
+    #settings .settings-title { font-size:18px; letter-spacing:-.2px; }
+    #settings .settings-body { display:flex; flex:1; min-height:0; }
+    #settings .settings-nav { flex:none; width:212px; border-right:1px solid var(--line); padding:12px 10px; overflow:auto; display:flex; flex-direction:column; gap:2px; }
+    #settings .settings-search { margin-bottom:8px; }
+    #settings .settings-search input { width:100%; box-sizing:border-box; min-height:38px; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:9px; padding:8px 11px; font:inherit; font-size:13.5px; }
+    #settings .snav { display:flex; align-items:center; gap:8px; text-align:left; background:transparent; border:0; color:#aeb9c8; font-size:13.5px; padding:9px 11px; border-radius:9px; cursor:pointer; width:100%; }
+    #settings .snav:hover { background:#ffffff0d; color:var(--text); }
+    #settings .snav.on { background:#ffffff14; color:var(--text); font-weight:600; }
+    #settings .settings-panels { flex:1; min-width:0; overflow:auto; padding:16px 22px 18px; scrollbar-gutter:stable; display:flex; flex-direction:column; gap:12px; }
+    #settings .spanel { display:flex; flex-direction:column; gap:12px; }
+    #settings .settings-empty { color:var(--mut); font-size:13px; padding:8px 2px; }
+    #settings.searching .settings-nav { display:none; }
+    #settings.searching .spanel { display:flex!important; }
+    #settings.searching .spanel.nomatch { display:none!important; }
     #settings .sec { border-top:1px solid var(--line); margin:10px 0 0; padding-top:18px; color:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.75px; }
+    #settings .spanel > .sec:first-child { border-top:0; margin-top:0; padding-top:0; }
     #settings label { gap:7px; color:#aeb9c8; font-size:13px; }
+    #settings label.searchhide, #settings .sec.searchhide { display:none!important; }
     #settings input:not([type=checkbox]), #settings select { width:100%; min-width:0; min-height:46px; box-sizing:border-box; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:10px; padding:10px 13px; font:inherit; font-size:14px; }
     #settings select { appearance:none; -webkit-appearance:none; padding-right:34px; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2394a3b8' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>"); background-repeat:no-repeat; background-position:right 12px center; }
     #settings input:not([type=checkbox]):focus, #settings select:focus { outline:none; border-color:#4f83ff; box-shadow:0 0 0 3px #2563eb30; }
     #settings input::placeholder { color:#788494; opacity:1; }
-    #settings .settings-actions { position:sticky; bottom:-18px; z-index:2; margin:8px -22px -18px; padding:14px 22px calc(14px + env(safe-area-inset-bottom)); background:linear-gradient(transparent 0,var(--panel) 22%); }
+    #settings .settings-actions { flex:none; z-index:2; margin:0; padding:12px 20px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:var(--panel); }
     #settings .settings-actions button { min-width:112px; min-height:44px; }
     #routinesSection { background:#ffffff05; border:1px solid var(--line); border-radius:14px; padding:0 14px 14px; margin-top:4px; }
     #routinesSection .sec { border-top:0; margin-top:0; }
@@ -351,9 +367,15 @@
     .routine-toggle { min-height:46px; margin:0!important; align-self:end; }
     @media (max-width:600px){
       #settings { align-items:stretch; justify-content:stretch; padding:0; }
-      #settings .settings-card { width:100%; max-height:100dvh; height:100dvh; border:0; border-radius:0; padding:0 18px 18px; }
-      #settings .settings-title { min-height:62px; margin:0 -18px 2px; padding:0 18px; }
-      #settings .settings-actions { margin:8px -18px -18px; padding-left:18px; padding-right:18px; }
+      #settings .settings-card { width:100%; max-height:100dvh; height:100dvh; border:0; border-radius:0; }
+      #settings .settings-head { min-height:56px; padding:0 18px; }
+      /* Mobile: nav vira uma faixa horizontal rolável em cima; o painel ativo ocupa a largura toda. */
+      #settings .settings-body { flex-direction:column; }
+      #settings .settings-nav { width:auto; flex:none; border-right:0; border-bottom:1px solid var(--line); padding:8px 10px; flex-direction:row; overflow-x:auto; gap:6px; }
+      #settings .settings-search { margin:0 4px 0 0; flex:none; min-width:150px; }
+      #settings .snav { width:auto; white-space:nowrap; flex:none; }
+      #settings.searching .settings-nav { display:flex; }
+      #settings .settings-panels { padding:14px 18px 16px; }
       .routine-grid { grid-template-columns:1fr; }
       .routine-path { grid-template-columns:1fr; }
       .routine-actions { grid-template-columns:1fr auto; }
@@ -814,150 +836,188 @@
   </div></div>
 
   <div id="settings" class="modal hidden"><div class="card settings-card">
-    <b class="settings-title">Configurações</b>
-    <label style="margin-top:6px"><span data-i18n="language">Idioma</span> <select id="setLang"><option value="pt">Português</option><option value="en">English</option><option value="es">Español</option></select></label>
-    <div class="sec" data-i18n="secUpdate">Atualização</div>
-    <div id="updStatus" class="mut" style="font-size:12px">—</div>
-    <div id="updActions" class="row hidden" style="margin-top:4px">
-      <label class="row" style="margin:0;flex:1"><input type="checkbox" id="updAll"> aplicar em todas as máquinas</label>
-      <button id="updApply" type="button">Atualizar</button>
+    <div class="settings-head"><b class="settings-title">Configurações</b></div>
+    <div class="settings-body">
+      <nav class="settings-nav" id="setNav">
+        <div class="settings-search"><input id="setSearch" type="search" placeholder="Procurar" autocomplete="off" spellcheck="false"></div>
+        <button type="button" class="snav on" data-goto="geral">⚙ Geral</button>
+        <button type="button" class="snav" data-goto="voz">🎙 Voz</button>
+        <button type="button" class="snav" data-goto="notif">🔔 Notificações</button>
+        <button type="button" class="snav snav-owner" data-goto="automacao">🤖 Automação</button>
+        <button type="button" class="snav snav-owner" data-goto="framework">🧩 Framework</button>
+        <button type="button" class="snav" data-goto="rota">🧭 Roteamento</button>
+        <button type="button" class="snav" data-goto="update">⬆ Atualização</button>
+      </nav>
+      <div class="settings-panels" id="setPanels">
+        <div class="settings-empty hidden" id="setNoResults">Nenhuma configuração encontrada.</div>
+
+        <section class="spanel" data-panel="geral">
+          <label><span data-i18n="language">Idioma</span> <select id="setLang"><option value="pt">Português</option><option value="en">English</option><option value="es">Español</option></select></label>
+          <div class="sec" data-i18n="secDefaults">Padrões</div>
+          <label><span data-i18n="lblAgent">Agente padrão</span> <select id="setAgent"></select></label>
+          <label><span data-i18n="lblModel">Modelo padrão</span> <select id="setModel"></select></label>
+          <label><span data-i18n="lblEffort">Esforço padrão</span> <select id="setEffort"></select></label>
+          <label class="row"><input type="checkbox" id="setSlash" checked> <span data-i18n="lblSlash">Autocomplete e sugestões ao digitar “/”, “@”, “#” e “!”</span></label>
+        </section>
+
+        <section class="spanel hidden" data-panel="voz">
+          <div class="sec" data-i18n="secVoice">Voz</div>
+          <div class="mut">Configuração independente do chat para comandos e respostas iniciados por voz.</div>
+          <div class="routine-grid">
+            <label>IA da voz<select id="setVoiceAgent"></select></label>
+            <label>Modelo da voz<select id="setVoiceModel"></select></label>
+            <label>Esforço da voz<select id="setVoiceEffort"></select></label>
+          </div>
+          <label class="row"><input type="checkbox" id="setVoice"> <span data-i18n="lblSpeakDefault">Falar as respostas por padrão</span></label>
+          <label style="margin-top:4px"><span data-i18n="lblVoiceTimbre">Voz falada (timbre)</span></label>
+          <div id="voiceCatalog" style="display:flex;flex-direction:column;gap:6px;margin:2px 0 6px"><span class="mut">carregando vozes…</span></div>
+          <label class="row"><input type="checkbox" id="setContinue"> <span data-i18n="lblContinue">Após responder, continuar escutando follow-up</span></label>
+          <label><span data-i18n="lblContinueWin">Janela de escuta de continuação (segundos)</span><input type="number" id="setContinueSec" min="5" max="120" step="5"></label>
+          <label><span data-i18n="lblSilenceWin">Pausa antes de encerrar a fala (segundos)</span><input type="number" id="setSilenceSec" min="0.6" max="6" step="0.1"></label>
+          <label><span data-i18n="lblVoiceEscalate">Refino por voz — modelo em análises difíceis</span> <select id="setVoiceEscalate"></select></label>
+          <label class="row"><input type="checkbox" id="setVoiceRelevance"> <span data-i18n="lblVoiceRelevance">Só despachar falas que são comando (filtro anti-ruído)</span></label>
+          <div class="sec"><span data-i18n="secAdvListen">Escuta avançada</span> <span class="soon">em desenvolvimento</span></div>
+          <label class="row"><input type="checkbox" id="setWake"> <span data-i18n="lblWake">Wake word "Hey Jarvis" (na máquina)</span> <span class="soon">requer wake_listener.py</span></label>
+          <label class="row"><input type="checkbox" id="setNoise"> <span data-i18n="lblNoise">Filtro anti-ruído / detecção de fala (VAD)</span></label>
+          <div class="sec">Identificação de voz (multiusuário)</div>
+          <label class="row"><input type="checkbox" id="setGate"> Exigir voz cadastrada (bloquear vozes desconhecidas)</label>
+          <div id="spkList" class="mut" style="font-size:12px;margin:4px 0"></div>
+          <div class="row"><button id="setEnroll" class="ghost" type="button">🎙 Cadastrar / atualizar minha voz</button></div>
+        </section>
+
+        <section class="spanel hidden" data-panel="notif">
+          <div class="sec" data-i18n="secNotif">Notificações</div>
+          <label class="row"><input type="checkbox" id="setPush"> <span data-i18n="lblPushDevice">Notificar neste aparelho (Web Push)</span></label>
+          <label class="row biolockrow"><input type="checkbox" id="setBioLock"> <span data-i18n="lblBioLock">Bloquear com biometria (Face ID / digital)</span></label>
+          <label class="row"><input type="checkbox" id="setShareGeo"> <span data-i18n="lblShareGeo">Compartilhar a localização deste aparelho (para pedidos como “por perto”)</span></label>
+          <div id="pushCfg" class="hidden" style="margin:2px 0 6px 14px">
+            <div class="mut" data-i18n="lblNotifyAbout" style="font-size:11.5px;margin-bottom:4px">Avisar sobre — vale só para este aparelho:</div>
+            <label class="row"><input type="checkbox" id="pushDone"> <span data-i18n="lblPushDone">Sessão concluída (qualquer máquina)</span></label>
+            <label class="row"><input type="checkbox" id="pushError"> <span data-i18n="lblPushError">Falhas / erros</span></label>
+            <label class="row"><input type="checkbox" id="pushMachine"> <span data-i18n="lblPushMachine">Máquina ficou offline</span></label>
+            <label><span data-i18n="lblDelivery">Entrega</span>
+              <select id="pushMode">
+                <option value="each" data-i18n="optEach">Na hora, a cada evento</option>
+                <option value="grouped" data-i18n="optGrouped">Agrupar e avisar de tempos em tempos</option>
+              </select>
+            </label>
+            <label id="pushEveryRow"><span data-i18n="lblEveryMin">A cada quantos minutos</span><input type="number" id="pushEvery" min="1" max="240" step="1"></label>
+          </div>
+        </section>
+
+        <section class="spanel hidden" data-panel="automacao">
+          <div id="policySettings" class="hidden">
+            <div class="sec">Políticas adaptativas</div>
+            <div id="policyNote" class="mut" style="font-size:12px;margin-bottom:6px">Carregando política…</div>
+            <div class="routine-grid">
+              <label>Modo de autonomia<select id="setPolicyMode"><option value="manual">Manual</option><option value="assisted">Assistido</option><option value="controlled_autonomy">Autonomia controlada</option></select></label>
+              <label>Memória<select id="setPolicyMemoryTarget"><option value="jarvis_only">Só no Jarvis</option><option value="repo_allowed">Repo permitido</option><option value="repo_required">Repo obrigatório</option><option value="disabled">Desabilitada</option></select></label>
+              <label>Risco exige aprovação acima de<select id="setPolicyRisk"><option value="low">Baixo</option><option value="medium">Médio</option><option value="high">Alto</option></select></label>
+              <label>Estimativa desconhecida<select id="setPolicyUnknown"><option value="ask">Perguntar</option><option value="reject">Recusar</option><option value="allow">Permitir</option></select></label>
+            </div>
+            <div class="routine-grid">
+              <label>Custo máximo USD <span class="mut">opcional</span><input id="setPolicyCost" type="number" min="0" step="0.01" placeholder="sem limite"></label>
+              <label>Tokens máximos <span class="mut">opcional</span><input id="setPolicyTokens" type="number" min="0" step="1000" placeholder="sem limite"></label>
+            </div>
+            <label class="row"><input type="checkbox" id="setPolicyRepoWrites"> Permitir escrita no repo quando a política permitir</label>
+            <label class="row"><input type="checkbox" id="setPolicyDiff" checked> Exigir preview/diff antes de escrever no repo</label>
+            <label class="row"><input type="checkbox" id="setPolicyAutoplay"> Permitir automações em cadeia sem confirmação</label>
+            <label class="row"><input type="checkbox" id="setPolicyBackground"> Permitir turnos em background</label>
+            <div class="row" style="gap:6px;flex-wrap:wrap">
+              <button id="setPolicyProject" class="ghost" type="button">Salvar para pasta atual</button>
+              <button id="setPolicySession" class="ghost" type="button">Salvar para sessão atual</button>
+            </div>
+            <label>Overrides avançados por projeto/subescopo/sessão/tarefa <span class="mut">JSON</span><textarea id="setPolicyOverrides" spellcheck="false" rows="5" placeholder='{"projects":[],"sessions":[],"tasks":[]}'></textarea></label>
+          </div>
+          <div id="routinesSection" class="hidden">
+            <div class="sec"><span data-i18n="secRoutines">Rotinas agendadas</span> <span class="soon">roda sozinho e te avisa</span></div>
+            <div id="routinesList" class="mut" style="font-size:12px;margin:4px 0">—</div>
+            <div class="routine-builder">
+              <label>Nome da rotina<input id="rtName" placeholder="Ex.: Briefing da manhã" autocomplete="off"></label>
+              <label>Instrução<input id="rtPrompt" placeholder="Ex.: rode os testes e me resuma" autocomplete="off"></label>
+              <div class="routine-grid">
+                <label>Máquina<select id="rtRunner"></select></label>
+                <label>IA<select id="rtAgent"></select></label>
+                <label>Modelo<select id="rtModel"></select></label>
+                <label>Esforço<select id="rtEffort"></select></label>
+              </div>
+              <div class="routine-path"><label>Pasta de trabalho <span class="mut">opcional</span><input id="rtCwd" placeholder="Ex.: C:\Workspace\projeto" autocomplete="off"></label><button id="rtBrowse" class="ghost" type="button">📁 Escolher pasta</button></div>
+              <div class="cron-box"><label>Agenda cron<input id="rtCron" value="0 8 * * 1-5" placeholder="minuto hora dia mês semana" spellcheck="false" autocomplete="off"></label><div id="rtCronHelp" class="cron-help mut">Cinco campos: minuto, hora, dia do mês, mês e dia da semana (0=domingo, 1=segunda).</div><div id="rtCronExamples" class="cron-examples"><button type="button" class="ghost" data-cron="0 8 * * *">Todo dia, 08:00</button><button type="button" class="ghost" data-cron="0 8 * * 1-5">Dias úteis, 08:00</button><button type="button" class="ghost" data-cron="*/15 * * * *">A cada 15 min</button><button type="button" class="ghost" data-cron="0 9 1 * *">Todo dia 1, 09:00</button><button type="button" class="ghost" data-cron="@weekly">Semanal</button></div></div>
+              <div class="routine-actions">
+                <label class="row routine-toggle"><input type="checkbox" id="rtSpeak"> Falar resultado</label>
+                <button id="rtAdd" type="button" disabled>Adicionar rotina</button>
+              </div>
+            </div>
+          </div>
+          <div id="executionSettings" class="hidden">
+            <div class="sec">Trabalhos e subagentes</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Configura o diário durável usado para acompanhar processos, subagentes e delegações. O modo somente leitura continua sendo o padrão seguro.</div>
+            <label class="row"><input type="checkbox" id="setExecEnabled"> Habilitar acompanhamento de trabalhos</label>
+            <div class="routine-grid">
+              <label>Retenção (dias)<input id="setExecRetention" type="number" min="1" max="3650" step="1"></label>
+              <label>Eventos por trabalho<input id="setExecMaxEvents" type="number" min="100" max="100000" step="100"></label>
+              <label>Concorrência gerenciada<input id="setExecConcurrency" type="number" min="1" max="32" step="1"></label>
+              <label>Profundidade máxima<input id="setExecDepth" type="number" min="1" max="10" step="1"></label>
+            </div>
+            <label class="row"><input type="checkbox" id="setExecDefaultWrite"> Permitir escrita por padrão nas delegações gerenciadas</label>
+            <label>Raiz dos worktrees isolados<input id="setExecWorktree" type="text" placeholder="Padrão: ~/.jarvis/worktrees" autocomplete="off"></label>
+            <div id="execCfgNote" class="mut" style="font-size:11.5px">Carregando política…</div>
+          </div>
+          <div id="autoOwnerHint" class="mut" style="font-size:12px">Esta seção é exclusiva do dono.</div>
+        </section>
+
+        <section class="spanel hidden" data-panel="framework">
+          <div id="frameworkSettings" class="hidden">
+            <div class="sec">Meu Framework (universal)</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Comandos, skills e instruções que valem para <b>todas as IAs</b> e são publicados em <b>todas as suas máquinas</b>. O Jarvis é a fonte da verdade; os arquivos nativos de cada IA são adapters. Aparecem no menu “/” marcados como <b>universal</b>.</div>
+            <label>Quando um “/nome” existe nativo e universal
+              <select id="setFwPref">
+                <option value="ask">Perguntar (mostra os dois; prefere o nativo)</option>
+                <option value="native">Sempre o nativo da IA</option>
+                <option value="jarvis">Sempre o universal do Framework</option>
+              </select>
+            </label>
+            <div class="routine-grid" style="margin-top:6px">
+              <label>Arquivo<select id="fwFileList"><option value="">— novo arquivo —</option></select></label>
+              <label>Caminho<input id="fwPath" placeholder="commands/plan.md · skills/review/SKILL.md · instructions.md" autocomplete="off"></label>
+            </div>
+            <textarea id="fwEditor" rows="8" placeholder="Conteúdo do arquivo (markdown). Em comandos, use $ARGUMENTS onde entram os argumentos." style="width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+            <div class="row" style="gap:8px;justify-content:flex-end;margin-top:6px">
+              <button id="fwImport" class="ghost" type="button" title="Semear instructions.md a partir do CLAUDE.md/AGENTS.md/GEMINI.md desta máquina">Importar desta máquina</button>
+              <button id="fwDelete" class="ghost" type="button">Excluir</button>
+              <button id="fwSave" type="button">Salvar arquivo</button>
+            </div>
+            <div class="sec" style="margin-top:10px">Publicar</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Envia o framework para cada máquina. As que estiverem offline recebem ao reconectar.</div>
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <span id="fwVersion" class="mut" style="font-size:12px">—</span>
+              <button id="fwPublish" type="button">Publicar em todas as máquinas</button>
+            </div>
+            <div id="fwStatus" class="mut" style="font-size:12px;margin-top:6px">—</div>
+          </div>
+          <div id="fwOwnerHint" class="mut" style="font-size:12px">Esta seção é exclusiva do dono.</div>
+        </section>
+
+        <section class="spanel hidden" data-panel="rota">
+          <div class="sec" data-i18n="secAutoRoute">Roteamento automático, resumos e status</div>
+          <div class="mut" data-i18n="descAutoRoute" style="font-size:12px;margin-bottom:4px">A IA, o modelo e o esforço abaixo analisam mensagens em modo Automático e também executam resumos e consultas de status. Roda sempre no servidor (Hub).</div>
+          <label>IA <select id="setSumAgent"></select></label>
+          <label>Modelo <select id="setSumModel"></select></label>
+          <label>Esforço <select id="setSumEffort"></select></label>
+        </section>
+
+        <section class="spanel hidden" data-panel="update">
+          <div class="sec" data-i18n="secUpdate">Atualização</div>
+          <div id="updStatus" class="mut" style="font-size:12px">—</div>
+          <div id="updActions" class="row hidden" style="margin-top:4px">
+            <label class="row" style="margin:0;flex:1"><input type="checkbox" id="updAll"> aplicar em todas as máquinas</label>
+            <button id="updApply" type="button">Atualizar</button>
+          </div>
+          <div id="updMachines"></div>
+          <div class="row" style="margin-top:4px"><button id="updCheck" class="ghost" type="button">Verificar agora</button></div>
+        </section>
+      </div>
     </div>
-    <div id="updMachines"></div>
-    <div class="row" style="margin-top:4px"><button id="updCheck" class="ghost" type="button">Verificar agora</button></div>
-    <div class="sec" data-i18n="secDefaults">Padrões</div>
-    <label><span data-i18n="lblAgent">Agente padrão</span> <select id="setAgent"></select></label>
-    <label><span data-i18n="lblModel">Modelo padrão</span> <select id="setModel"></select></label>
-    <label><span data-i18n="lblEffort">Esforço padrão</span> <select id="setEffort"></select></label>
-    <label class="row"><input type="checkbox" id="setSlash" checked> <span data-i18n="lblSlash">Autocomplete e sugestões ao digitar “/”, “@”, “#” e “!”</span></label>
-    <div id="policySettings" class="hidden">
-      <div class="sec">Políticas adaptativas</div>
-      <div id="policyNote" class="mut" style="font-size:12px;margin-bottom:6px">Carregando política…</div>
-      <div class="routine-grid">
-        <label>Modo de autonomia<select id="setPolicyMode"><option value="manual">Manual</option><option value="assisted">Assistido</option><option value="controlled_autonomy">Autonomia controlada</option></select></label>
-        <label>Memória<select id="setPolicyMemoryTarget"><option value="jarvis_only">Só no Jarvis</option><option value="repo_allowed">Repo permitido</option><option value="repo_required">Repo obrigatório</option><option value="disabled">Desabilitada</option></select></label>
-        <label>Risco exige aprovação acima de<select id="setPolicyRisk"><option value="low">Baixo</option><option value="medium">Médio</option><option value="high">Alto</option></select></label>
-        <label>Estimativa desconhecida<select id="setPolicyUnknown"><option value="ask">Perguntar</option><option value="reject">Recusar</option><option value="allow">Permitir</option></select></label>
-      </div>
-      <div class="routine-grid">
-        <label>Custo máximo USD <span class="mut">opcional</span><input id="setPolicyCost" type="number" min="0" step="0.01" placeholder="sem limite"></label>
-        <label>Tokens máximos <span class="mut">opcional</span><input id="setPolicyTokens" type="number" min="0" step="1000" placeholder="sem limite"></label>
-      </div>
-      <label class="row"><input type="checkbox" id="setPolicyRepoWrites"> Permitir escrita no repo quando a política permitir</label>
-      <label class="row"><input type="checkbox" id="setPolicyDiff" checked> Exigir preview/diff antes de escrever no repo</label>
-      <label class="row"><input type="checkbox" id="setPolicyAutoplay"> Permitir automações em cadeia sem confirmação</label>
-      <label class="row"><input type="checkbox" id="setPolicyBackground"> Permitir turnos em background</label>
-      <div class="row" style="gap:6px;flex-wrap:wrap">
-        <button id="setPolicyProject" class="ghost" type="button">Salvar para pasta atual</button>
-        <button id="setPolicySession" class="ghost" type="button">Salvar para sessão atual</button>
-      </div>
-      <label>Overrides avançados por projeto/subescopo/sessão/tarefa <span class="mut">JSON</span><textarea id="setPolicyOverrides" spellcheck="false" rows="5" placeholder='{"projects":[],"sessions":[],"tasks":[]}'></textarea></label>
-    </div>
-    <div class="sec" data-i18n="secVoice">Voz</div>
-    <div class="mut">Configuração independente do chat para comandos e respostas iniciados por voz.</div>
-    <div class="routine-grid">
-      <label>IA da voz<select id="setVoiceAgent"></select></label>
-      <label>Modelo da voz<select id="setVoiceModel"></select></label>
-      <label>Esforço da voz<select id="setVoiceEffort"></select></label>
-    </div>
-    <label class="row"><input type="checkbox" id="setVoice"> <span data-i18n="lblSpeakDefault">Falar as respostas por padrão</span></label>
-    <label style="margin-top:4px"><span data-i18n="lblVoiceTimbre">Voz falada (timbre)</span></label>
-    <div id="voiceCatalog" style="display:flex;flex-direction:column;gap:6px;margin:2px 0 6px"><span class="mut">carregando vozes…</span></div>
-    <label class="row"><input type="checkbox" id="setContinue"> <span data-i18n="lblContinue">Após responder, continuar escutando follow-up</span></label>
-    <label><span data-i18n="lblContinueWin">Janela de escuta de continuação (segundos)</span><input type="number" id="setContinueSec" min="5" max="120" step="5"></label>
-    <label><span data-i18n="lblSilenceWin">Pausa antes de encerrar a fala (segundos)</span><input type="number" id="setSilenceSec" min="0.6" max="6" step="0.1"></label>
-    <label><span data-i18n="lblVoiceEscalate">Refino por voz — modelo em análises difíceis</span> <select id="setVoiceEscalate"></select></label>
-    <label class="row"><input type="checkbox" id="setVoiceRelevance"> <span data-i18n="lblVoiceRelevance">Só despachar falas que são comando (filtro anti-ruído)</span></label>
-    <div class="sec"><span data-i18n="secAdvListen">Escuta avançada</span> <span class="soon">em desenvolvimento</span></div>
-    <label class="row"><input type="checkbox" id="setWake"> <span data-i18n="lblWake">Wake word "Hey Jarvis" (na máquina)</span> <span class="soon">requer wake_listener.py</span></label>
-    <label class="row"><input type="checkbox" id="setNoise"> <span data-i18n="lblNoise">Filtro anti-ruído / detecção de fala (VAD)</span></label>
-    <div class="sec" data-i18n="secNotif">Notificações</div>
-    <label class="row"><input type="checkbox" id="setPush"> <span data-i18n="lblPushDevice">Notificar neste aparelho (Web Push)</span></label>
-    <label class="row biolockrow"><input type="checkbox" id="setBioLock"> <span data-i18n="lblBioLock">Bloquear com biometria (Face ID / digital)</span></label>
-    <label class="row"><input type="checkbox" id="setShareGeo"> <span data-i18n="lblShareGeo">Compartilhar a localização deste aparelho (para pedidos como “por perto”)</span></label>
-    <div id="pushCfg" class="hidden" style="margin:2px 0 6px 14px">
-      <div class="mut" data-i18n="lblNotifyAbout" style="font-size:11.5px;margin-bottom:4px">Avisar sobre — vale só para este aparelho:</div>
-      <label class="row"><input type="checkbox" id="pushDone"> <span data-i18n="lblPushDone">Sessão concluída (qualquer máquina)</span></label>
-      <label class="row"><input type="checkbox" id="pushError"> <span data-i18n="lblPushError">Falhas / erros</span></label>
-      <label class="row"><input type="checkbox" id="pushMachine"> <span data-i18n="lblPushMachine">Máquina ficou offline</span></label>
-      <label><span data-i18n="lblDelivery">Entrega</span>
-        <select id="pushMode">
-          <option value="each" data-i18n="optEach">Na hora, a cada evento</option>
-          <option value="grouped" data-i18n="optGrouped">Agrupar e avisar de tempos em tempos</option>
-        </select>
-      </label>
-      <label id="pushEveryRow"><span data-i18n="lblEveryMin">A cada quantos minutos</span><input type="number" id="pushEvery" min="1" max="240" step="1"></label>
-    </div>
-    <div id="routinesSection" class="hidden">
-      <div class="sec"><span data-i18n="secRoutines">Rotinas agendadas</span> <span class="soon">roda sozinho e te avisa</span></div>
-      <div id="routinesList" class="mut" style="font-size:12px;margin:4px 0">—</div>
-      <div class="routine-builder">
-        <label>Nome da rotina<input id="rtName" placeholder="Ex.: Briefing da manhã" autocomplete="off"></label>
-        <label>Instrução<input id="rtPrompt" placeholder="Ex.: rode os testes e me resuma" autocomplete="off"></label>
-        <div class="routine-grid">
-          <label>Máquina<select id="rtRunner"></select></label>
-          <label>IA<select id="rtAgent"></select></label>
-          <label>Modelo<select id="rtModel"></select></label>
-          <label>Esforço<select id="rtEffort"></select></label>
-        </div>
-        <div class="routine-path"><label>Pasta de trabalho <span class="mut">opcional</span><input id="rtCwd" placeholder="Ex.: C:\Workspace\projeto" autocomplete="off"></label><button id="rtBrowse" class="ghost" type="button">📁 Escolher pasta</button></div>
-        <div class="cron-box"><label>Agenda cron<input id="rtCron" value="0 8 * * 1-5" placeholder="minuto hora dia mês semana" spellcheck="false" autocomplete="off"></label><div id="rtCronHelp" class="cron-help mut">Cinco campos: minuto, hora, dia do mês, mês e dia da semana (0=domingo, 1=segunda).</div><div id="rtCronExamples" class="cron-examples"><button type="button" class="ghost" data-cron="0 8 * * *">Todo dia, 08:00</button><button type="button" class="ghost" data-cron="0 8 * * 1-5">Dias úteis, 08:00</button><button type="button" class="ghost" data-cron="*/15 * * * *">A cada 15 min</button><button type="button" class="ghost" data-cron="0 9 1 * *">Todo dia 1, 09:00</button><button type="button" class="ghost" data-cron="@weekly">Semanal</button></div></div>
-        <div class="routine-actions">
-          <label class="row routine-toggle"><input type="checkbox" id="rtSpeak"> Falar resultado</label>
-          <button id="rtAdd" type="button" disabled>Adicionar rotina</button>
-        </div>
-      </div>
-    </div>
-    <div class="sec">Identificação de voz (multiusuário)</div>
-    <label class="row"><input type="checkbox" id="setGate"> Exigir voz cadastrada (bloquear vozes desconhecidas)</label>
-    <div id="spkList" class="mut" style="font-size:12px;margin:4px 0"></div>
-    <div class="row"><button id="setEnroll" class="ghost" type="button">🎙 Cadastrar / atualizar minha voz</button></div>
-    <div id="executionSettings" class="hidden">
-      <div class="sec">Trabalhos e subagentes</div>
-      <div class="mut" style="font-size:12px;margin-bottom:6px">Configura o diário durável usado para acompanhar processos, subagentes e delegações. O modo somente leitura continua sendo o padrão seguro.</div>
-      <label class="row"><input type="checkbox" id="setExecEnabled"> Habilitar acompanhamento de trabalhos</label>
-      <div class="routine-grid">
-        <label>Retenção (dias)<input id="setExecRetention" type="number" min="1" max="3650" step="1"></label>
-        <label>Eventos por trabalho<input id="setExecMaxEvents" type="number" min="100" max="100000" step="100"></label>
-        <label>Concorrência gerenciada<input id="setExecConcurrency" type="number" min="1" max="32" step="1"></label>
-        <label>Profundidade máxima<input id="setExecDepth" type="number" min="1" max="10" step="1"></label>
-      </div>
-      <label class="row"><input type="checkbox" id="setExecDefaultWrite"> Permitir escrita por padrão nas delegações gerenciadas</label>
-      <label>Raiz dos worktrees isolados<input id="setExecWorktree" type="text" placeholder="Padrão: ~/.jarvis/worktrees" autocomplete="off"></label>
-      <div id="execCfgNote" class="mut" style="font-size:11.5px">Carregando política…</div>
-    </div>
-    <div id="frameworkSettings" class="hidden">
-      <div class="sec">Meu Framework (universal)</div>
-      <div class="mut" style="font-size:12px;margin-bottom:6px">Comandos, skills e instruções que valem para <b>todas as IAs</b> e são publicados em <b>todas as suas máquinas</b>. O Jarvis é a fonte da verdade; os arquivos nativos de cada IA são adapters. Aparecem no menu “/” marcados como <b>universal</b>.</div>
-      <label>Quando um “/nome” existe nativo e universal
-        <select id="setFwPref">
-          <option value="ask">Perguntar (mostra os dois; prefere o nativo)</option>
-          <option value="native">Sempre o nativo da IA</option>
-          <option value="jarvis">Sempre o universal do Framework</option>
-        </select>
-      </label>
-      <div class="routine-grid" style="margin-top:6px">
-        <label>Arquivo<select id="fwFileList"><option value="">— novo arquivo —</option></select></label>
-        <label>Caminho<input id="fwPath" placeholder="commands/plan.md · skills/review/SKILL.md · instructions.md" autocomplete="off"></label>
-      </div>
-      <textarea id="fwEditor" rows="8" placeholder="Conteúdo do arquivo (markdown). Em comandos, use $ARGUMENTS onde entram os argumentos." style="width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:12px"></textarea>
-      <div class="row" style="gap:8px;justify-content:flex-end;margin-top:6px">
-        <button id="fwImport" class="ghost" type="button" title="Semear instructions.md a partir do CLAUDE.md/AGENTS.md/GEMINI.md desta máquina">Importar desta máquina</button>
-        <button id="fwDelete" class="ghost" type="button">Excluir</button>
-        <button id="fwSave" type="button">Salvar arquivo</button>
-      </div>
-      <div class="sec" style="margin-top:10px">Publicar</div>
-      <div class="mut" style="font-size:12px;margin-bottom:6px">Envia o framework para cada máquina. As que estiverem offline recebem ao reconectar.</div>
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <span id="fwVersion" class="mut" style="font-size:12px">—</span>
-        <button id="fwPublish" type="button">Publicar em todas as máquinas</button>
-      </div>
-      <div id="fwStatus" class="mut" style="font-size:12px;margin-top:6px">—</div>
-    </div>
-    <div class="sec" data-i18n="secAutoRoute">Roteamento automático, resumos e status</div>
-    <div class="mut" data-i18n="descAutoRoute" style="font-size:12px;margin-bottom:4px">A IA, o modelo e o esforço abaixo analisam mensagens em modo Automático e também executam resumos e consultas de status. Roda sempre no servidor (Hub).</div>
-    <label>IA <select id="setSumAgent"></select></label>
-    <label>Modelo <select id="setSumModel"></select></label>
-    <label>Esforço <select id="setSumEffort"></select></label>
     <div class="row settings-actions" style="justify-content:flex-end"><button id="setCancel" class="ghost" type="button">Fechar</button><button id="setClose" type="button">Salvar</button></div>
   </div></div>
 
