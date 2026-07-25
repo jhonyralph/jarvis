@@ -74,10 +74,13 @@ export function speechify(md: string): string {
     .trim();
 }
 
-/** Cap for spoken length: speak a chunk, then point to the chat. */
+/** Last-resort cap for spoken length (used only if the real LLM summary in `speechForReply`,
+ *  index.ts, fails or is unavailable). Cuts cleanly at a word boundary — does NOT announce
+ *  "o restante está no chat": the user already sees the full text on screen, and hearing that
+ *  fixed phrase every time a reply ran long felt robotic and repetitive. */
 export function speechifyCapped(md: string, max = 700): string {
   let s = speechify(md);
-  if (s.length > max) s = s.slice(0, max).replace(/\s+\S*$/, "") + "… o restante está no chat.";
+  if (s.length > max) s = s.slice(0, max).replace(/\s+\S*$/, "").replace(/[,;:]$/, "") + ".";
   return s;
 }
 

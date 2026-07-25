@@ -133,6 +133,55 @@ const tools: McpTool[] = [
     },
   },
   {
+    name: "jarvis_read_session",
+    description: "Lê o histórico (últimas mensagens) de uma sessão JÁ EXISTENTE, local ou em outra máquina — use para entender o que uma sessão específica já discutiu/fez antes de decidir agir sobre ela. Args: sessionId (obrigatório, veja jarvis_list_sessions), machine (id da máquina, padrão 'local').",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "id da sessão já existente (veja jarvis_list_sessions)" },
+        machine: { type: "string", description: "id da máquina (veja jarvis_list_machines); padrão 'local'" },
+      },
+      required: ["sessionId"],
+    },
+    handler: async (args) => {
+      await ready;
+      const sessionId = String(args.sessionId || "").trim();
+      if (!sessionId) return "erro: 'sessionId' vazio.";
+      const machine = args.machine ? String(args.machine) : "local";
+      send({ t: "runner", runnerId: machine });                    // switch active runner (ordered before 'open')
+      const h = await request({ t: "open", sessionId }, "history");
+      const msgs = Array.isArray(h.messages) ? h.messages : [];
+      const header = `Sessão ${sessionId} (${h.session?.title || "sem título"} · agente ${h.session?.agent || "?"} · pasta ${h.session?.cwd || "?"}) na máquina "${machine}"`;
+      if (!msgs.length) return `${header}: sem mensagens (ou sessão não encontrada nessa máquina).`;
+      const tail = msgs.slice(-20).map((m: any) => `[${m.role}] ${String(m.text || "").slice(0, 500)}`).join("\n");
+      return `${header} — últimas ${Math.min(20, msgs.length)} de ${msgs.length} mensagem(ns):\n${tail}`;
+    },
+  },
+  {
+    name: "jarvis_send_to_session",
+    description: "Envia uma mensagem/comando para uma sessão JÁ EXISTENTE (local ou em outra máquina) — NÃO cria sessão nova. Use para intervir numa sessão em andamento (ex.: pedir para parar, mudar de abordagem, dar mais uma instrução) depois de ler o contexto dela com jarvis_read_session. Se a sessão estiver ocupada, a mensagem entra na fila da própria sessão e roda quando o turno atual terminar. Args: sessionId (obrigatório), text (obrigatório), machine (id da máquina, padrão 'local').",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "id da sessão já existente (veja jarvis_list_sessions)" },
+        text: { type: "string", description: "o comando/mensagem a enviar para a sessão" },
+        machine: { type: "string", description: "id da máquina; padrão 'local'" },
+      },
+      required: ["sessionId", "text"],
+    },
+    handler: async (args) => {
+      await ready;
+      const sessionId = String(args.sessionId || "").trim();
+      const text = String(args.text || "").trim();
+      if (!sessionId) return "erro: 'sessionId' vazio.";
+      if (!text) return "erro: 'text' vazio.";
+      const machine = args.machine ? String(args.machine) : "local";
+      send({ t: "runner", runnerId: machine });                    // switch active runner (ordered before 'send')
+      send({ t: "send", sessionId, text });
+      return `Mensagem enviada para a sessão ${sessionId} na máquina "${machine}". Acompanhe no Jarvis (a resposta chega por lá / push) — se a sessão estava ocupada, a mensagem ficou na fila dela.`;
+    },
+  },
+  {
     name: "jarvis_delegate",
     description: "Executa um workflow provider-neutral de tarefas/subagentes na máquina explicitamente escolhida. Por padrão aguarda e devolve o relatório terminal; mode=background devolve só o aceite. Suporta DAG, modelo/esforço, orçamento e isolamento de escrita. A máquina nunca é escolhida ou trocada automaticamente.",
     inputSchema: JARVIS_DELEGATE_INPUT_SCHEMA,

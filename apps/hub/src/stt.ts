@@ -82,7 +82,11 @@ export async function transcribe(audio: Buffer, lang?: string, ext = "webm"): Pr
     const id = ++seq;
     const req = JSON.stringify({ id, path, lang: lang || null, hotwords: hotwords() }) + "\n";
     return await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => { pending.delete(id); reject(new Error("STT: tempo esgotado")); }, 60000);
+      // whisper_service.py processa UM pedido por vez (loop single-threaded): se este travar,
+      // qualquer pedido subsequente ficaria preso atrás dele e estouraria o mesmo timeout, um a
+      // um, indefinidamente. Tratamos o timeout como sinal de processo travado: mata + respawna
+      // limpo (killProc rejeita todos os pendentes de uma vez, incluindo este).
+      const timer = setTimeout(() => { killProc(new Error("STT: tempo esgotado")); }, 60000);
       pending.set(id, { resolve, reject, timer });
       try { proc!.stdin.write(req); } catch (e) { pending.delete(id); clearTimeout(timer); reject(e instanceof Error ? e : new Error(String(e))); }
     });

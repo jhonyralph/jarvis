@@ -21,7 +21,7 @@ import { PushCenter } from "./push.js";
 import { RunnerListWaiters } from "./runnerListWaiters.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, createAgentEventBridge, createEventSequencer, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, createAgentEventBridge, createEventSequencer, ackThenWork, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
 import { synthesize, listVoices, hasVoice } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
@@ -1648,8 +1648,11 @@ const turnCtx: TurnCtx = {
     const spoken = await speechForReply(replyText);
     if (!spoken) return;
     const wav = await synthesize(spoken, VOICE); const b64 = wav.toString("base64");
-    broadcast(sid, { t: "tts", sessionId: sid, audio: b64, text: spoken });
-    for (const a of (also || [])) if (a && a !== sid) broadcast(a, { t: "tts", sessionId: a, audio: b64, text: spoken }); // ex.: canal de voz (WAKE) quando vinculado a outra sessão
+    // Gap 17: se a fala do usuário que originou este turno foi um fechamento (CLOSING_RX), o client
+    // não deve re-armar o mic depois de tocar esta resposta — a conversa terminou naturalmente.
+    const closing = closingTurn.delete(sid) || undefined;
+    broadcast(sid, { t: "tts", sessionId: sid, audio: b64, text: spoken, closing });
+    for (const a of (also || [])) if (a && a !== sid) broadcast(a, { t: "tts", sessionId: a, audio: b64, text: spoken, closing }); // ex.: canal de voz (WAKE) quando vinculado a outra sessão
   },
   // Per-session spend cap (opt-in): JARVIS_SESSION_COST_CAP=<usd>. 0/unset = no cap (default, no
   // behavior change). Stops a runaway session from spending indefinitely without a human in the loop.
@@ -1742,8 +1745,33 @@ async function suggestSession(utterance: string, scope: { runnerId: string; cwd:
     return top ? { id: top.sessionId, title: top.title || top.id, score: Math.round(top.score * 100) } : null;
   } catch { return null; }
 }
+// Gap 21: a sessão JÁ ATIVA tem um digest semântico próprio (indexado após cada turno pela memória
+// — ver [[jarvis-hardening-milestone]], bloco "Semantic memory"). Comparamos a NOVA fala com o
+// digest da MESMA sessão (`sessionId` filter): similaridade muito baixa é sinal de desvio de
+// assunto. `memory.has(sid)` falso (sessão nova, ainda sem turno indexado) → nada a comparar, não
+// dispara — evita falso-positivo logo na primeira mensagem de uma sessão.
+async function looksLikeTopicShift(sid: string, text: string): Promise<boolean> {
+  if (!memory.has(sid)) return false;
+  const vec = await embedOne(text);
+  if (!vec.length) return false;
+  const [hit] = memory.search(vec, { topK: 1, minScore: 0, sessionId: sid });
+  return !!hit && hit.score < 0.15;
+}
 // ---- voz ambiente: staging (refinar a fala por voz ANTES de comprometer no chat real) --------
 const CONFIRM_RX = /\b(confirm(o|ar|ado)?|pode (mandar|enviar|ir)|manda(r)?|envia(r)?|isso mesmo|é isso|perfeito|fechou)\b/i;
+// Gap 13(b)/14: intenção de ABORTAR (não "adicionar contexto") quando o usuário fala por cima do
+// Jarvis ou durante um refino de staging já em andamento — "para, deixa pra lá" deve descartar o
+// rascunho de vez, não ser tratado como mais uma rodada de refino. ANCORADO À UTTERANCE INTEIRA
+// (igual ao CLOSING_RX do Gap 17) — "para" sozinho é comando de abortar, mas "isso é para o projeto
+// X" (preposição, no meio de uma frase maior) NÃO pode disparar isso; checado ANTES do CONFIRM_RX
+// (e antes de qualquer refino) em `stageHandle`.
+const ABORT_RX = /^\s*(para(r)?|cancela(r)?(\s+isso)?|deixa\s+pra\s+l[áa]|deixa\s+isso(\s+pra\s+l[áa])?|esque[çc]e(\s+isso)?|n[ãa]o\s+(é|era)\s+isso|n[ãa]o\s+precisa(va)?|desist[oi]|n[ãa]o\s+importa)\s*[.,!]*\s*$/i;
+// Gap 17: fechamento conversacional (agradecimento/despedida CURTO, sem pedido novo) — a UTTERANCE
+// INTEIRA precisa bater (não só conter a palavra), senão "obrigado por isso, mas..." seria tratado
+// como despedida. Quando bate, marcamos a sessão para o `speak()` sinalizar ao client (`closing`)
+// que não deve re-armar o microfone depois de tocar a resposta.
+const CLOSING_RX = /^\s*(muito\s+)?(obrigad[oa]s?|valeu|vlw|tchau|até\s+(mais|logo|depois|breve)|falou|é\s+isso(\s+mesmo)?|(só\s+)?isso\s+mesmo|beleza\s+obrigad[oa])[.! ]*$/i;
+const closingTurn = new Set<string>();
 interface StageScope { runnerId: string; sessionId: string; actor?: ContextActor }
 const stageKey = (scope: StageScope): string => decisionKey(scope.runnerId, scope.sessionId);
 const stageEscalatePending = new Map<string, string>();
@@ -1770,9 +1798,20 @@ async function stageRefinePass(scope: StageScope, utterance: string, model: stri
   addUsage(WAKE_SESSION, agent.name, reply.usage); // atribui usage/custo tipado à voz
   return parseRefine(reply.text);
 }
+/** Descarta o rascunho de staging em andamento (mesma lógica do botão "Cancelar" e do gatilho de
+ *  voz ABORT_RX) — extraído para os dois caminhos não divergirem. */
+function stageCancel(scope: StageScope): void {
+  const key = stageKey(scope);
+  staging.remove(key); stageEscalatePending.delete(key);
+  broadcastOn(scope.runnerId, scope.sessionId, { t: "stage", runnerId: scope.runnerId, sessionId: scope.sessionId, done: true });
+}
 async function stageHandle(scope: StageScope, utterance: string): Promise<void> {
   utterance = (utterance || "").trim();
   if (!utterance) return;
+  // Gap 13(b)/14: "para"/"cancela"/"deixa pra lá" — ABORTA de vez (não é mais uma rodada de refino).
+  // Checado antes de sequer abrir/tocar o staging: cobre tanto abortar um rascunho já em andamento
+  // quanto abortar logo na PRIMEIRA fala de um barge-in (draft ainda nem existe).
+  if (ABORT_RX.test(utterance)) { stageCancel(scope); await stageSpeak(scope, "Ok, cancelei."); return; }
   const key = stageKey(scope);
   let e = staging.get(key) || staging.start(key, { model: voiceCfg.fastModel, effort: voiceCfg.fastEffort });
   if (CONFIRM_RX.test(utterance) && e.draft) { await stageConfirm(scope); return; }   // confirmação por voz
@@ -2684,13 +2723,27 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
     if (tail) { try { tail.offset = statSync(tail.path).size; tail.buf = ""; } catch { /* ignore */ } tail.paused = false; }
   }
 }
+// Gap 18: "ack → processa → entrega" — busca cross-sessão e resumo/digest são operações genuinely
+// lentas (chamada de LLM sobre várias sessões) que hoje deixam o usuário em silêncio até o fim. Uma
+// confirmação curta e honesta ANTES do trabalho pesado (não um "filler" genérico) evita a sensação
+// de travado. Mecanismo portável em packages/core/src/progressive-reply.ts — este `ackSpeak` é só o
+// "como falar" específico do Jarvis (TTS via `synthesize`); a decisão de ONDE usar (aqui, e não em
+// toda resposta) é o que não generaliza — ver o doc-comment do módulo.
+async function ackSpeak(ws: WebSocket, text: string): Promise<void> {
+  try { const wav = await synthesize(speechify(text) || text, VOICE); send(ws, { t: "ack_speak", text, audio: wav.toString("base64") }); }
+  catch { /* o ack é best-effort — nunca deve travar ou falhar o trabalho real */ }
+}
 /** Cross-session search: reason over recent sessions, reply only to the asker (optionally spoken). */
 async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): Promise<void> {
   const extra = listNative(24).map((n) => ({ id: n.id, agent: n.agent, cwd: n.cwd, title: n.title, updatedAt: n.updatedAt, lastUser: "", lastAssistant: "" }));
-  const r = await runSessionSearch({ query, store, agents, extra: [...extra, ...(await runnerSessionExtras(ws, 8))] });
+  const r = await ackThenWork(
+    (t) => (speak ? ackSpeak(ws, t) : undefined),
+    "Só um instante, deixa eu ver nas suas sessões.",
+    async () => runSessionSearch({ query, store, agents, extra: [...extra, ...(await runnerSessionExtras(ws, 8))] }),
+  );
   let audio: string | undefined;
   if (speak) {
-    const spoken = speechifyCapped(r.answer);
+    const spoken = await speechForReply(r.answer);
     if (spoken) audio = (await synthesize(spoken, VOICE)).toString("base64");
   }
   send(ws, { t: "searchResult", query, answer: r.answer, matches: r.matches, action: r.action, audio });
@@ -2803,7 +2856,11 @@ async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Pr
     const sendOpts = await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort);
   let text = "";
   try {
-    const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__summary__", prompt, process.cwd(), sendOpts);
+    const reply = await ackThenWork(
+      (t) => (speak ? ackSpeak(ws, t) : undefined),
+      "Só um instante, já trago o resumo.",
+      async () => (agent.oneShot ? agent.oneShot(prompt, sendOpts) : agent.send("__summary__", prompt, process.cwd(), sendOpts)),
+    );
     addUsage("__summary__", agent.name, reply.usage);
     text = (reply.text || "").trim();
   } catch (e: any) {
@@ -2811,11 +2868,14 @@ async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Pr
     return;
   }
   let audio: string | undefined;
-  if (speak && text) { const spoken = speechifyCapped(text); if (spoken) audio = (await synthesize(spoken, VOICE)).toString("base64"); }
+  if (speak && text) { const spoken = await speechForReply(text); if (spoken) audio = (await synthesize(spoken, VOICE)).toString("base64"); }
   send(ws, { t: "summary", sessionId: sid, text, audio });
 }
 /** Cross-agent digest ("what's happening across your sessions") — cheap, spoken, not stored. */
 async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
+  // Gap 18: junta sessões locais + de cada máquina remota (uma chamada de rede por máquina) ANTES
+  // do resumo em si — genuinely lento o bastante pra merecer um ack imediato.
+  if (speak) void ackSpeak(ws, "Só um instante, buscando o status de tudo.");
   // A member only hears the machines they were granted: the local (Hub) sessions require local access,
   // and remote machines are filtered below — otherwise the digest leaked titles/state of every machine.
   const canLocal = canUseRunner(ws, LOCAL_ID);
@@ -2862,7 +2922,7 @@ async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
     return;
   }
   let audio: string | undefined;
-  if (speak && text) { const spoken = speechifyCapped(text); if (spoken) audio = (await synthesize(spoken, VOICE)).toString("base64"); }
+  if (speak && text) { const spoken = await speechForReply(text); if (spoken) audio = (await synthesize(spoken, VOICE)).toString("base64"); }
   send(ws, { t: "summary", sessionId: "__digest__", text, audio });
 }
 /** Current speaker-id config + enrolled voiceprints (listing is cheap — no torch). */
@@ -3073,7 +3133,7 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
   }
   if (msg.t === "stage_text" && typeof msg.text === "string") { await stageHandle(scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), msg.text); return true; }
   if (msg.t === "stage_confirm") { await stageConfirm(scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined)); return true; }
-  if (msg.t === "stage_cancel") { const current = scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), key = stageKey(current); staging.remove(key); stageEscalatePending.delete(key); broadcastOn(current.runnerId, current.sessionId, { t: "stage", runnerId: current.runnerId, sessionId: current.sessionId, done: true }); return true; }
+  if (msg.t === "stage_cancel") { stageCancel(scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined)); return true; }
   if (msg.t === "stage_state") { const current = scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), e = staging.get(stageKey(current)); if (e?.draft) send(ws, { t: "stage", runnerId: current.runnerId, sessionId: current.sessionId, draft: e.draft }); return true; }
   if (msg.t === "stage_escalate_ok") { await stageEscalateApprove(scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), true); return true; }
   if (msg.t === "stage_escalate_no") { await stageEscalateApprove(scope(typeof msg.sessionId === "string" ? msg.sessionId : undefined), false); return true; }
@@ -4155,6 +4215,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, { t: "voice_timing", stt: sttMs, speaker: spkMs, preflight: preMs });
       if (needGate && !pre.relevant) { send(ws, { t: "voice_ignored", sessionId: sid, text: pre.text }); return; }
       text = pre.text;
+      if (CLOSING_RX.test(text)) closingTurn.add(sid); else closingTurn.delete(sid);
+      // Gap 21: desvio de assunto NO MEIO de uma sessão já ativa. Diferente de `suggestSession`
+      // (que resolve wake-word FRESCO, sem sessão), aqui comparamos a nova fala com o digest
+      // semântico da PRÓPRIA sessão atual (indexado após cada turno) — se a similaridade for muito
+      // baixa, é sinal de que isso não tem nada a ver com o que já estava rolando. NÃO bloqueia nem
+      // decide sozinho: só SUGERE (o usuário decide se quer abrir uma sessão nova), e roda em
+      // paralelo ao turno normal (não atrasa a resposta).
+      void looksLikeTopicShift(sid, text).then((shift) => { if (shift) send(ws, { t: "topic_shift", sessionId: sid, text }); }).catch(() => { /* sugestão é best-effort */ });
     }
     if (!text) return;
     // Gap 8: se o DISPOSITIVO de origem compartilhou a localização (opt-in no cliente), anexa uma
@@ -4277,33 +4345,44 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       return;
     }
 
-    // Continue an imported native CLI session (resumes the real claude session; persists in its jsonl).
-    if (isNativeId(sid)) {
-      const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
-      await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], actor: actorOf(ws) });
-      clearPendingInboundTurn(inboundKey);
-      return;
-    }
+    // Reserve the slot SYNCHRONOUSLY — no `await` between the guard check above and this line.
+    // Without this, two messages for the same session (e.g. a text `send` and a `voice` whose STT
+    // already ran) can both pass the check above before either registers, and both end up running
+    // a turn concurrently on the same session (interleaved agent_event streams, garbled replies).
+    // agentTurn()'s own activeRuns.add()/delete() become idempotent no-ops once this fires first;
+    // the release in `finally` below covers paths (like isNativeId) that never reach agentTurn.
+    activeRuns.add(sid); broadcastRuns();
+    try {
+      // Continue an imported native CLI session (resumes the real claude session; persists in its jsonl).
+      if (isNativeId(sid)) {
+        const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
+        await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], actor: actorOf(ws) });
+        clearPendingInboundTurn(inboundKey);
+        return;
+      }
 
-    // --- normal Jarvis session (agent + cwd locked at creation) ---
-    // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
-    const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
-    const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
-    // Power-triggers, resolved for the AGENT only (chat keeps showing the raw text): "!cmd" runs and
-    // injects its output; otherwise a "/cmd" expands to its prompt (scoped to this session's agent).
-    const scwd = store.get(sid)?.cwd || CWD;
-    const bang = await expandBang(text, scwd);
-    const cmdExp = bang ? null : expandCommand(text, scwd, cmdAgentOf(store.get(sid)?.agent), { preference: frameworkCfg.preference });
-    await runManagedTurn(turnCtx, sid, {
-      showText, agentText: bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText),
-      model: decision.model,
-      effort: decision.effort,
-      speaker, images, files, speak: !!msg.speak,
-      turnId: typeof msg.msgId === "string" ? msg.msgId : undefined,
-      actor: actorOf(ws),
-      onError: (message, limit) => send(ws, { t: "error", message, limit }),
-    });
-    clearPendingInboundTurn(inboundKey);
+      // --- normal Jarvis session (agent + cwd locked at creation) ---
+      // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
+      const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
+      const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
+      // Power-triggers, resolved for the AGENT only (chat keeps showing the raw text): "!cmd" runs and
+      // injects its output; otherwise a "/cmd" expands to its prompt (scoped to this session's agent).
+      const scwd = store.get(sid)?.cwd || CWD;
+      const bang = await expandBang(text, scwd);
+      const cmdExp = bang ? null : expandCommand(text, scwd, cmdAgentOf(store.get(sid)?.agent), { preference: frameworkCfg.preference });
+      await runManagedTurn(turnCtx, sid, {
+        showText, agentText: bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText),
+        model: decision.model,
+        effort: decision.effort,
+        speaker, images, files, speak: !!msg.speak,
+        turnId: typeof msg.msgId === "string" ? msg.msgId : undefined,
+        actor: actorOf(ws),
+        onError: (message, limit) => send(ws, { t: "error", message, limit }),
+      });
+      clearPendingInboundTurn(inboundKey);
+    } finally {
+      activeRuns.delete(sid); broadcastRuns();
+    }
     } catch (e) {
       console.error("[hub] erro ao processar", msg.t, "-", String((e as any)?.message ?? e));
       if (String((e as any)?.message ?? e) !== ABORTED) try { send(ws, { t: "error", message: "erro interno ao processar a mensagem" }); } catch { /* ignore */ }

@@ -1767,7 +1767,7 @@
           if(inCur){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; curNativeId=''; renderNativeChip(); setHash(''); }
           deleted.forEach(id=>{ const key=sessionStateKey(id,sessionRunner()); if(sessionPrefs[key])delete sessionPrefs[key]; if(sessionRunner()==='local'&&sessionPrefs[id])delete sessionPrefs[id]; }); saveSessionPrefs();
           if(!m.ok) toast(t('tDelFail')); }
-        else if(m.t==='tts'){ if(m.for==='ask'){ if(!m.sessionId||currentFrame(m))askVoicePlayAndListen(m.audio); } else if(currentFrame(m)) playTTS(m.audio); }
+        else if(m.t==='tts'){ if(m.for==='ask'){ if(!m.sessionId||currentFrame(m))askVoicePlayAndListen(m.audio); } else if(currentFrame(m)) playTTS(m.audio,!!m.closing); }
         else if(m.t==='ask_choice'){ askVoiceApply(m); }
         else if(m.t==='searchResult'){ clearPending();
           if(m.hits!==undefined){ if(!E.searchModal.classList.contains('hidden') && m.query===E.searchInput.value.trim()) renderHits(E.searchResults,m); }   // filtro literal digitado (ignora resposta obsoleta)
@@ -1794,6 +1794,8 @@
         else if(m.t==='summary'){ endVoiceOp(); status(''); if(m.audio) playAudioOnce(m.audio); if(m.text) toast('🔊 '+m.text); }
         else if(m.t==='busy'){ endVoiceOp(); clearPending(); status(''); toast('⏳ '+(m.message||'Já estou gerando um áudio — aguarde.')); }
         else if(m.t==='voice_ignored'){ endVoiceOp(); clearPending(); status(''); toast(t('tVoiceIgnored')); }
+        else if(m.t==='topic_shift'){ toast('💭 Isso parece outro assunto — se quiser, abra uma sessão nova pra ele (menu ➕).'); }
+        else if(m.t==='ack_speak'){ if(m.audio) playAudioOnce(m.audio); }   // Gap 18: confirmação curta ANTES do trabalho lento (busca/resumo/digest) — não mexe no status/turno
         else if(m.t==='queued'){ const runner=frameRunner(m); endVoiceOp(); justSent.delete(sessionStateKey(m.sessionId,runner)); const msg=m.message||(m.update?'Atualização em andamento — mensagem ficou na fila.':'Mensagem na fila — aguardando o turno atual terminar'); refreshComposer(); if(currentFrame(m)){ clearPending(); status('busy',msg); } toast(m.update?'🔄 '+msg:t('tQueued')); }
         else if(m.t==='voice_timing'){ try{ console.log('[voz] STT '+m.stt+'ms · locutor '+m.speaker+'ms · correção+gate '+m.preflight+'ms'); }catch(e){} }
         else if(m.t==='runs'){ const runner=m.runnerId||selectedRunner(), prev=activeRunsByRunner[runner]||[], now=m.active||[], sent=[...justSent].filter(key=>key.startsWith(runner+'\0')).map(key=>key.slice(runner.length+1)), finished=[...new Set([...prev,...sent])].filter(id=>!now.includes(id)); prev.forEach(id=>{ if(!now.includes(id)&&!(id===currentSession&&runner===currentSessionRunner)) unread.add(sessionStateKey(id,runner)); }); activeRunsByRunner[runner]=now; if(runner===sessionRunner())activeRuns=now; now.forEach(id=>justSent.delete(sessionStateKey(id,runner))); finished.forEach(id=>onTurnEnd(id,runner)); renderRecents(); refreshComposer(); scheduleAllRefresh(); }
@@ -1807,9 +1809,10 @@
         else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
         else if(m.t==='error'){ creatingSession=false; pendingNewSession=null; endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
     }
-    function playTTS(b64){ status('speaking',t('spSpeaking'));
+    function playTTS(b64,closing){ status('speaking',t('spSpeaking'));
       audioMgr.play(b64,{ onEnd:()=>{ if(audioMgr.active) return;   // ainda há áudio na fila → adia re-armar o mic (evita voltar a ouvir no meio)
         status('');
+        if(closing){ lastWasVoice=false; return; }                               // Gap 17: fechamento (ex. "obrigado") → não volta a escutar sozinho
         if(stagingActive && !recording){ startRec(true); return; }               // refino por voz em andamento → continua ouvindo
         if(askPendingVoice){ askPendingVoice=false; startAskVoice(); return; }   // decisão pendente → wizard de voz
         if(askActive) return;                                                    // card de decisão aberto → não escuta em contínuo
@@ -1847,10 +1850,16 @@
         // VAD: detecta fala e fim de fala (silêncio após falar) para não gravar o tempo todo
         const ac=new AudioContext(); const src=ac.createMediaStreamSource(st); const an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
         const buf=new Uint8Array(an.fftSize); let spoke=false,silence=0,elapsed=0; const TH=cfg.noise?10:6;
-        const SIL=Math.min(6000,Math.max(600,Math.round((cfg.silenceSec||1.8)*1000)));   // Gap 2: pausa tolerada após falar (não corta pausa de raciocínio); configurável nos ajustes
+        const baseSIL=Math.min(6000,Math.max(600,Math.round((cfg.silenceSec||1.8)*1000)));   // Gap 2: pausa tolerada após falar (não corta pausa de raciocínio); configurável nos ajustes
+        // Gap 12 (parcial, sem precisar de transcrição incremental): silêncio ADAPTATIVO por gravação.
+        // Quem já pausou quase até o limite E retomou a fala (sinal de que está pensando em voz alta,
+        // não que terminou) ganha mais paciência nas pausas SEGUINTES desta mesma gravação — até um
+        // teto — em vez de um threshold fixo que trata toda pausa de raciocínio igual.
+        let adaptiveSIL=baseSIL, nearMiss=false;
         const poll=setInterval(()=>{ an.getByteTimeDomainData(buf); let mx=0; for(const v of buf) mx=Math.max(mx,Math.abs(v-128)); elapsed+=100;
-          if(mx>TH){ spoke=true; silence=0; } else if(spoke){ silence+=100; }
-          if(auto && rec.state==='recording'){ if(spoke&&silence>=SIL){ rec.stop(); }   // parou de falar (pausa >= SIL) -> encerra
+          if(mx>TH){ if(spoke&&nearMiss) adaptiveSIL=Math.min(baseSIL+2000,adaptiveSIL+400); spoke=true; silence=0; nearMiss=false; }
+          else if(spoke){ silence+=100; if(silence>=adaptiveSIL*0.6) nearMiss=true; }
+          if(auto && rec.state==='recording'){ if(spoke&&silence>=adaptiveSIL){ rec.stop(); }   // parou de falar (pausa >= limiar adaptativo) -> encerra
                     else if(!spoke&&elapsed>=6000){ rec.stop(); } }                        // ninguém falou em 6s -> desiste
         },100);
         rec.ondataavailable=(e)=>chunks.push(e.data);
