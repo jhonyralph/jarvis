@@ -172,6 +172,20 @@ async function maybeSelfUpdate(reason: string, forceCheck = false): Promise<void
   updateInProgress = true;
   const requestId = `self:${Date.now()}`;
   console.warn(`[runner] auto-update (${reason}): ${decision.reason}; alvo ${decision.targetCommit}`);
+  // CAUSA-RAIZ do incidente de node_modules corrompido: no Windows, `npm ci` IN-PROCESS apaga
+  // node_modules inteiro enquanto o PRÓPRIO runner (node -> tsx -> esbuild.exe filho) ainda segura
+  // arquivos abertos (ex. node_modules/@esbuild/win32-x64/esbuild.exe) — a exclusão trava nesse
+  // arquivo, o npm ci aborta com o node_modules já destruído, tsx some, o runner nunca mais sobe, e
+  // cada tentativa seguinte (a cada desconexão) repete o mesmo wipe. O handoff (mata o runner
+  // primeiro, libera o lock, SÓ DEPOIS roda git+npm ci num processo externo) é o único caminho
+  // seguro nessa plataforma — NUNCA cair para updateApply in-process aqui no Windows.
+  if (process.platform === "win32") {
+    const handed = await handoffWindowsRunnerUpdate({ requestId, targetCommit: decision.targetCommit, force: false });
+    if (handed) return; // handoff mata este processo (process.exit) — não há mais "depois" neste caminho
+    console.warn(`[runner] auto-update (${reason}): handoff Windows indisponível — adiando (não aplico npm ci in-process nesta plataforma)`);
+    updateInProgress = false;
+    return;
+  }
   let result: UpdateResult;
   try { result = await updateApply(RUNNER_ROOT, { targetCommit: decision.targetCommit }); }
   catch (error: any) { result = { ok: false, retryable: true, log: "falha inesperada no auto-update: " + String(error?.message ?? error) }; }
@@ -292,6 +306,11 @@ $previous = ""
 $current = ""
 $rolledBack = $false
 try {
+  # Registra o PID REAL deste script (não o pid que o Node capturou do spawn, que se torna
+  # incorreto assim que trocamos para "cmd /c start /b" — cmd.exe encerra quase na hora,
+  # deixando o launcher achar o updater morto e destravar o lock com o update ainda rodando).
+  # Best-effort: se falhar, o Node já escreveu um pid provisório antes de spawnar.
+  try { [ordered]@{ requestId = $RequestId; targetCommit = $Target; pid = $PID; at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } | ConvertTo-Json | Set-Content -Path $LockFile -Encoding UTF8 } catch {}
   Add-Progress "parando runner antes do upgrade"
   # The launcher is the scheduled task. Keep it alive: the update lock makes it wait while this
   # detached updater owns the checkout. Stopping the task here can also terminate this script and
@@ -356,12 +375,18 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
     // #3: o updater loga num arquivo PRÓPRIO (runner-update.log). Antes escrevia no runner.log, que o
     // launcher mantém aberto (*>>): uma sharing violation engolia todo o rastro do updater ao morrer.
     writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), pid: process.pid, force: !!m.force }), "utf8");
-    const updater = spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true });
+    // Spawnar "powershell.exe" direto com detached:true não sobrevive de forma confiável à saída
+    // do processo pai no Windows (PS 5.1) — o updater podia morrer em silêncio antes da 1ª linha
+    // (era a causa do incidente anterior: lock órfão, luby offline ~30min). Rotear por
+    // "cmd /c start /b" é o padrão que realmente destaca o processo do job/console do pai.
+    const updater = spawn("cmd.exe", ["/c", "start", "\"\"", "/b", "powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true });
     updater.unref();
-    // #2: o lock deve carregar o PID do UPDATER, não o do runner (que morre por design e é inútil para
-    // liveness). Assim o launcher limpa o lock assim que ESTE processo sumir, em vez de esperar 30 min
-    // por idade — foi o que prendeu a Luby offline quando o updater morreu antes da 1ª linha.
-    if (updater.pid) { try { writeFileSync(UPDATE_LOCK_FILE, JSON.stringify({ requestId, targetCommit, pid: updater.pid, at: Date.now() }), "utf8"); } catch { /* best-effort: o lock já existe */ } }
+    // #2 (ajustado): o pid do `cmd.exe` spawnado aqui NÃO é o do updater real — cmd.exe encerra
+    // quase imediatamente após o "start" disparar o powershell. Escrevemos um pid provisório (o
+    // deste próprio processo runner) só para não deixar o lock sem pid; o SCRIPT gravado no arquivo
+    // (detachedWindowsRunnerUpdateScript) se auto-registra com `$PID` real como primeiríssima ação —
+    // essa segunda escrita, feita pelo processo que realmente vive até o fim, é a que conta para o
+    // launcher detectar corretamente se o updater morreu (start-runner.ps1).
   } catch (error: any) {
     try { unlinkSync(UPDATE_LOCK_FILE); } catch { /* ignore */ }
     console.warn("[runner] update externo Windows indisponível:", String(error?.message ?? error).slice(0, 160));
@@ -1110,6 +1135,15 @@ function connect(): void {
           send({ t: "update_done", requestId: m.requestId, ok: false, log }); updateInProgress = false; return;
         }
         if (await handoffWindowsRunnerUpdate(m)) return;
+        // Cinto de segurança: no Windows, se o handoff (que mata este processo primeiro) não pôde
+        // ser entregue, NÃO cair para `updateApply` in-process — é exatamente o `npm ci` correndo
+        // com o próprio esbuild.exe travado que corrompeu o node_modules no incidente anterior.
+        if (process.platform === "win32") {
+          const log = "handoff Windows indisponível — recuso aplicar in-process (destruiria node_modules com o runner ainda vivo); tente novamente";
+          send({ t: "update_done", requestId: m.requestId, ok: false, retryable: true, log });
+          updateInProgress = false;
+          return;
+        }
         let r: UpdateResult;
         try { r = await updateApply(RUNNER_ROOT, { force: !!m.force, targetCommit: typeof m.targetCommit === "string" ? m.targetCommit : undefined }); }
         catch (error: any) { const log = "falha inesperada ao preparar atualização: " + String(error?.message ?? error); send({ t: "update_done", requestId: m.requestId, ok: false, log }); updateInProgress = false; return; }

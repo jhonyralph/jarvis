@@ -270,7 +270,10 @@ export function restartService(kind: "hub" | "runner"): void {
       // process is enough. Start-ScheduledTask is still fired unconditionally as a fallback for a
       // stale/dead supervisor; the task is installed with IgnoreNew, so this is a no-op if alive.
       : `Start-Sleep 5; Start-ScheduledTask -TaskName '${task}' -EA SilentlyContinue`;
-    spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", cmd], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+    // Spawnar "powershell.exe" direto com detached:true não sobrevive de forma confiável à saída
+    // do processo pai no Windows (PS 5.1) — mesmo achado do updater externo do runner
+    // (apps/runner/src/index.ts handoffWindowsRunnerUpdate). "cmd /c start /b" destaca de verdade.
+    spawn("cmd.exe", ["/c", "start", "\"\"", "/b", "powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", cmd], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } else if (p === "darwin") {
     const label = kind === "hub" ? "com.jarvis.hub" : "com.jarvis.runner";
     spawn("/bin/sh", ["-c", `sleep 3; launchctl kickstart -k gui/$(id -u)/${label}`], { detached: true, stdio: "ignore" }).unref();

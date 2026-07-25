@@ -32,6 +32,7 @@ $updateLock = Join-Path $stateRoot '.jarvis\runner-update.lock'
 $tsx = Join-Path $root 'node_modules\tsx\dist\cli.mjs'
 Set-Location "$root\apps\runner"
 $lastUpdateWaitLog = [DateTimeOffset]::MinValue
+$lastRepairAt = [DateTimeOffset]::MinValue
 # Loop de supervisão: NUNCA sai. (Re)sobe o runner em foreground; quando o node encerra,
 # registra e reinicia após um pequeno backoff.
 while ($true) {
@@ -68,7 +69,24 @@ while ($true) {
   }
   Log 'iniciando runner...'
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\runner\src\index.ts" *>> $log }
-  else { Log 'tsx nao encontrado na raiz - caindo pro npm'; & npm.cmd --prefix "$root\apps\runner" start *>> $log }
+  else {
+    # tsx sumiu da raiz — o `npm start` de fallback também depende dele, então cairia no MESMO
+    # crash loop de 3s pra sempre (foi o que aconteceu quando um `npm ci` in-process corrompeu o
+    # node_modules). Auto-repara: roda `npm ci` na raiz UMA VEZ a cada 5 min (nunca mais rápido que
+    # isso — não pode virar loop de reinstalação a cada 3s) antes de tentar `npm start`.
+    $sinceRepair = ([DateTimeOffset]::Now - $lastRepairAt).TotalMinutes
+    if ($sinceRepair -ge 5) {
+      $lastRepairAt = [DateTimeOffset]::Now
+      Log 'tsx nao encontrado na raiz - reparando com "npm ci" antes de tentar de novo'
+      Push-Location $root
+      try { & npm.cmd ci *>> $log; Log ('npm ci concluido (codigo ' + $LASTEXITCODE + ')') }
+      catch { Log ('npm ci falhou: ' + $_) }
+      finally { Pop-Location }
+    } else {
+      Log ('tsx nao encontrado na raiz - reparo tentado ha ' + [Math]::Round($sinceRepair,1) + 'min, aguardando janela de 5min - caindo pro npm')
+    }
+    & npm.cmd --prefix "$root\apps\runner" start *>> $log
+  }
   Log 'runner encerrou - reiniciando em 3s'
   Start-Sleep -Seconds 3
 }
