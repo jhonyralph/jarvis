@@ -23,7 +23,7 @@ import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateCheck, updateApply, restartService, runnerSelfUpdateDecision, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
-  listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang,
+  listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, detectPreviewCandidates,
   previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest,
   materializeFramework, FrameworkProvenanceStore,
   buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, fileDiffFromMessages, createAgentEventBridge, createEventSequencer,
@@ -519,6 +519,22 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
 
 /** cwd / agent of a session on THIS machine (managed or native), for "@" search, "!" and "#" memory. */
 function sessCwd(sid?: string): string { if (!sid) return CWD; if (isNativeId(sid)) return nativeInfo(sid)?.cwd || CWD; return store.get(sid)?.cwd || CWD; }
+
+/** Run a command and return stdout ("" on failure/timeout) — feeds Design Mode preview discovery. */
+function previewExec(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(cmd, args, { windowsHide: true });
+      let out = "";
+      let settled = false;
+      const finish = (v: string) => { if (settled) return; settled = true; clearTimeout(timer); try { child.kill(); } catch { /* already gone */ } resolve(v); };
+      const timer = setTimeout(() => finish(out), 2500);
+      child.stdout?.on("data", (d) => { out += String(d); if (out.length > 512_000) finish(out); });
+      child.on("error", () => finish(""));
+      child.on("close", () => finish(out));
+    } catch { resolve(""); }
+  });
+}
 function sessAgent(sid?: string): string | undefined { if (!sid) return undefined; if (isNativeId(sid)) return nativeInfo(sid)?.agent; return store.get(sid)?.agent; }
 
 interface PendingMemoryPreview {
@@ -1078,6 +1094,14 @@ function connect(): void {
       }
       if (m.t === "commands") { const cwd = sessCwd(m.sessionId); send({ t: "command_list", reqId: m.reqId, cwd, commands: listCommandsPublic(cwd) }); return; }
       if (m.t === "mention") { if (typeof m.sessionId === "string" && store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não expõe arquivos pelo chat" }); return; } send({ t: "mention_list", reqId: m.reqId, files: listMentionFiles(sessCwd(m.sessionId), typeof m.q === "string" ? m.q : "") }); return; }
+      if (m.t === "preview_query" && typeof m.sessionId === "string") {
+        const cwd = sessCwd(m.sessionId);
+        try {
+          const candidates = await detectPreviewCandidates(cwd, { platform: platform(), exec: previewExec, now: () => Date.now() });
+          send({ t: "preview_list", reqId: m.reqId, sessionId: m.sessionId, candidates });
+        } catch { send({ t: "preview_list", reqId: m.reqId, sessionId: m.sessionId, candidates: [] }); }
+        return;
+      }
       if (m.t === "memory_preview" && typeof m.text === "string") {
         if (typeof m.sessionId === "string" && store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não aceita memória pelo chat" }); return; }
         try {

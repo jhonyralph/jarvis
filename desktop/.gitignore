@@ -1,0 +1,6 @@
+# This app has its own toolchain, kept out of the repo (mirrors mobile/).
+node_modules/
+dist/
+out/
+*.log
+.DS_Store

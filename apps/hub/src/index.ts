@@ -1246,6 +1246,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
   }
   if (m.t === "command_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "command_list", runnerId: rc.id, cwd: m.cwd, commands: m.commands || [] }); } return; }
   if (m.t === "mention_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "mention_list", files: m.files || [] }); } return; }
+  if (m.t === "preview_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "worktree_preview", sessionId: m.sessionId, candidates: m.candidates || [] }); } return; }
   if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries }); } return; }
   if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); } return; }
   if (m.t === "error") {
@@ -3546,6 +3547,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (msg.t === "new") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "new", reqId, agent: msg.agent, cwd: msg.cwd }); return; }
         if (msg.t === "readfile" && typeof msg.path === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readfile", reqId, path: msg.path, cwd: msg.cwd }); return; }
         if (msg.t === "listdir") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "listdir", reqId, path: msg.path }); return; }
+        if (msg.t === "getWorktreePreview" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); if (!sendToRunner(rc, { t: "preview_query", reqId, sessionId: msg.sessionId })) { pendingReq.delete(reqId); send(ws, { t: "worktree_preview", sessionId: msg.sessionId, candidates: [] }); } return; }
         if (msg.t === "configure" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "configure", reqId, sessionId: msg.sessionId, agent: msg.agent, cwd: msg.cwd }); return; }
         if (msg.t === "open" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); subs.set(ws, msg.sessionId); sendToRunner(rc, { t: "open", reqId, sessionId: msg.sessionId }); return; }
         if (msg.t === "send" && typeof msg.text === "string") {

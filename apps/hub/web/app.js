@@ -11,6 +11,7 @@
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
       'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileCopy','fileClose','nativeChip',
+      'designBtn','designPanel','designUrl','designDetect','designGrab','designClose','designHost','designCompose','designSel','designNote','designSend','designCancel','designStatus',
       'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
     // hidden file input (created dynamically)
@@ -1062,6 +1063,51 @@
       if(P.App) P.App.addListener('appStateChange',function(s){ if(s&&s.isActive){ try{ maybeBioLock(); }catch(e){} } });
       try{ maybeBioLock(); }catch(e){}
     })();
+    // --- Electron desktop shell bridge (window.jarvis) + Design Mode. Runs ONLY inside the Electron
+    //     app; a plain browser / Capacitor has no window.jarvis, so the button stays hidden and every
+    //     other path is untouched (LEI 2). The <webview> preview is created here; main does the
+    //     privileged grab/capture via window.jarvis.browser (see desktop/). ---
+    (function(){ var J=window.jarvis; if(!J||!J.capabilities||!J.capabilities.designMode||!J.browser) return;
+      try{ document.documentElement.classList.add('electron'); }catch(e){}
+      if(E.designBtn) E.designBtn.classList.remove('hidden'); })();
+    var designWV=null, designSelData=null, pendingPreview=null;
+    function designWCId(){ try{ return designWV&&designWV.getWebContentsId(); }catch(e){ return null; } }
+    function designStatus(s){ if(E.designStatus) E.designStatus.textContent=s||''; }
+    function ensureDesignWebview(url){ if(!E.designHost) return;
+      if(!designWV){ designWV=document.createElement('webview'); designWV.setAttribute('allowpopups','false'); designWV.style.cssText='width:100%;height:100%;border:0;background:#fff'; E.designHost.innerHTML=''; E.designHost.appendChild(designWV); }
+      if(url){ try{ designWV.src=url; }catch(e){} } }
+    function openDesign(){ if(!(window.jarvis&&window.jarvis.capabilities&&window.jarvis.capabilities.designMode)) return;
+      E.designPanel.classList.remove('hidden'); ensureDesignWebview(E.designUrl.value||''); if(!E.designUrl.value) detectDesignPreview(); }
+    function closeDesign(){ E.designPanel.classList.add('hidden'); E.designCompose.classList.add('hidden'); designSelData=null;
+      try{ var id=designWCId(); if(id!=null&&window.jarvis.browser) window.jarvis.browser.cancelGrab(id).catch(function(){}); }catch(e){}
+      if(E.designHost) E.designHost.innerHTML=''; designWV=null; }
+    function detectDesignPreview(){ designStatus('Detectando preview…'); var done=false;
+      var timer=setTimeout(function(){ if(done)return; done=true; pendingPreview=null; designStatus('Nenhum preview detectado — digite a URL manualmente.'); },4000);
+      pendingPreview=function(cands){ if(done)return; done=true; clearTimeout(timer);
+        if(cands&&cands.length){ E.designUrl.value=cands[0].url; ensureDesignWebview(cands[0].url); designStatus('Preview: '+cands[0].url+(cands.length>1?(' (+'+(cands.length-1)+' outra(s))'):'')); }
+        else designStatus('Nenhum preview detectado — digite a URL manualmente.'); };
+      tx({t:'getWorktreePreview',sessionId:currentSession,runnerId:sessionRunner()}); }
+    async function grabDesignElement(){ var B=window.jarvis&&window.jarvis.browser, id=designWCId();
+      if(!B||id==null){ designStatus('Preview ainda não está pronto — carregue uma URL primeiro.'); return; }
+      designStatus('Clique num elemento do preview…  (Esc cancela)');
+      try{ await B.setGrabMode(id,true); var sel=await B.awaitGrabSelection(id); designSelData=sel;
+        var shot=await B.captureSelectionScreenshot(id,sel.rect); designSelData._png=(shot&&shot.pngDataUrl)?shot.pngDataUrl:null;
+        E.designSel.textContent=sel.selector+(sel.sourceRef?('   ·   '+sel.sourceRef.file+':'+sel.sourceRef.line):'')+(sel.redactions?('   ·   '+sel.redactions+' redigido(s)'):'');
+        E.designCompose.classList.remove('hidden'); designStatus('Elemento selecionado — descreva o ajuste e envie.'); try{ E.designNote.focus(); }catch(e){}
+      }catch(err){ designStatus('Seleção cancelada.'); } }
+    function designFeedbackMd(sel,note){ var L=['## Design Feedback','- URL: '+sel.url,'- Seletor: `'+sel.selector+'`'];
+      if(sel.sourceRef) L.push('- Fonte: `'+sel.sourceRef.file+':'+sel.sourceRef.line+':'+sel.sourceRef.column+'` ('+sel.sourceRef.framework+')');
+      if(sel.components&&sel.components.length) L.push('- Componentes: '+sel.components.join(' → '));
+      L.push('- Tamanho: '+Math.round(sel.rect.width)+'×'+Math.round(sel.rect.height)+' px');
+      if(sel.a11y&&(sel.a11y.role||sel.a11y.name)) L.push('- A11y: '+[sel.a11y.role,sel.a11y.name].filter(Boolean).join(' / '));
+      var st=sel.computedStyles||{},ks=Object.keys(st); if(ks.length){ L.push('- Estilos computados:'); ks.forEach(function(k){ L.push('  - '+k+': '+st[k]); }); }
+      L.push('','```html',sel.htmlSnippet||'','```','','### Pedido',note||'(sem comentário)'); return L.join('\n'); }
+    function sendDesignFeedback(){ if(!designSelData) return; var note=(E.designNote.value||'').trim();
+      var atts=[{name:'design-feedback.md',content:designFeedbackMd(designSelData,note)}];
+      if(designSelData._png){ var b64=String(designSelData._png).split(',')[1]||''; if(b64) atts.push({name:'screenshot.png',content:b64,image:true,preview:designSelData._png}); }
+      try{ sendMsgTo(currentSession, note||'Corrija o elemento apontado no Design Feedback anexo.', atts); }
+      catch(e){ designStatus('Falha ao enviar: '+((e&&e.message)||e)); return; }
+      E.designNote.value=''; E.designCompose.classList.add('hidden'); designSelData=null; designStatus('Enviado ao agente.'); }
     // Native background wake-word fired → start the same auto voice capture the Python wake listener uses.
     function onNativeWake(){ try{ if(typeof recording!=='undefined'&&recording) return; startRec(true); }catch(e){} }
     // Drop OS-shared text into the composer (called by the native bridge's share-in handler).
@@ -1593,6 +1639,13 @@
       if(ev.kind!=='node_created'){const list=workEvents.get(ev.executionId)||[];if(!ev.eventId||!list.some(x=>x.eventId===ev.eventId)){list.push(ev);if(list.length>5000)list.splice(0,list.length-5000);workEvents.set(ev.executionId,list);}}
       workRenderBadge(); workUpdateScopes(); renderWorkTree(true); if(workSelected===ev.executionId&&!E.workPanel.classList.contains('hidden')){const atEnd=E.workDetailBody.scrollHeight-E.workDetailBody.scrollTop-E.workDetailBody.clientHeight<45;if(atEnd){renderWorkDetail();E.workDetailBody.scrollTop=E.workDetailBody.scrollHeight;}else{workUnseen++;E.workNew.textContent=workUnseen+' novo'+(workUnseen===1?' evento':'s eventos');E.workNew.classList.remove('hidden');}} if(ev.kind==='input_requested')workAnnounce('Um trabalho precisa de você.'); }
     function workApplySnapshot(m){ workLoaded=true;workLoadError='';if(m.scope==='all'&&!workLoadingMore)workNodes.clear();workLoadingMore=false;workNextCursor=m.nextCursor||'';E.workMore.classList.toggle('hidden',!workNextCursor);E.workMore.disabled=false;E.workMore.textContent='Mostrar mais';(Array.isArray(m.nodes)?m.nodes:[]).forEach(n=>{if(n&&n.executionId){workNodes.set(n.executionId,n);workSyncInlineNode(n);}});workRenderBadge();workUpdateScopes();renderWorkTree();scheduleAutoPager(maybeAutoMoreWork);const wanted=hashWork();if(wanted&&workNodes.has(wanted)&&workSelected!==wanted){if(E.workPanel.classList.contains('hidden'))openWorkPanel({fromHash:true});openWorkNode(wanted,{fromHash:true});}else if(workSelected&&!workNodes.has(workSelected)){workSelected='';renderWorkDetail();} }
+    if(E.designBtn) E.designBtn.onclick=()=>{ E.designPanel.classList.contains('hidden')?openDesign():closeDesign(); };
+    if(E.designClose) E.designClose.onclick=()=>closeDesign();
+    if(E.designDetect) E.designDetect.onclick=()=>{ ensureDesignWebview(E.designUrl.value||''); detectDesignPreview(); };
+    if(E.designGrab) E.designGrab.onclick=()=>grabDesignElement();
+    if(E.designSend) E.designSend.onclick=()=>sendDesignFeedback();
+    if(E.designCancel) E.designCancel.onclick=()=>{ E.designCompose.classList.add('hidden'); designSelData=null; try{ var id=designWCId(); if(id!=null&&window.jarvis.browser) window.jarvis.browser.cancelGrab(id); }catch(e){} };
+    if(E.designUrl) E.designUrl.onchange=()=>ensureDesignWebview(E.designUrl.value||'');
     E.workBtn.onclick=()=>openWorkPanel(); E.workClose.onclick=()=>closeWorkPanel(); E.workBack.onclick=()=>{const prior=workSelected;workSelected='';E.workPanel.classList.remove('show-detail');renderWorkTree();renderWorkDetail();workSetHash(true);const n=prior&&E.workTree.querySelector(`.worknode[data-id="${CSS.escape(prior)}"]`);n&&n.focus();};
     E.workMax.onclick=()=>{const max=E.workPanel.classList.toggle('max');E.workMax.textContent=max?'🗗':'⛶';E.workMax.title=max?'Restaurar':'Maximizar';};
     E.workPanel.querySelectorAll('.workfilters [data-filter]').forEach(b=>b.onclick=()=>{workFilter=b.dataset.filter;E.workPanel.querySelectorAll('.workfilters [data-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderWorkTree();});
@@ -1732,6 +1785,7 @@
         else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
         else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=(m.runnerId||routedMachine||currentMachine||'local')+'|'+(m.cwd||curCwd||''); cmdReqPending=false; if(trigOpen()&&trigMode==='cmd') updateTrig(); }
         else if(m.t==='mention_list'){ fileList=m.files||[]; if(trigOpen()&&trigMode==='file'){ trigItems=fileList.slice(0,50); trigIdx=trigItems.length?0:-1; renderTrig(); } }
+        else if(m.t==='worktree_preview'){ if(pendingPreview){ const f=pendingPreview; pendingPreview=null; f(m.candidates||[]); } }
         else if(m.t==='machines'){ machines=m.machines||[]; machines.forEach(mm=>{ const u=mm.updatePending;if(!u){const prior=updMach[mm.id];if(prior&&['queued','sent','awaiting_restart'].includes(prior.state)&&mm.online&&!mm.stale)updMach[mm.id]={label:mm.label,state:'verified',why:'reiniciou e versão confirmada'};return;} const state=u.state||'queued';updMach[mm.id]={label:mm.label,state,dirty:state==='blocked',why:state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':(mm.online?'aguardando nova tentativa':'offline — atualização guardada')};}); renderUpdMachines(); renderUpdate(); renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
           if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }

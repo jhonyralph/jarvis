@@ -17,8 +17,10 @@ import type { ExecutionHubToRunner, ExecutionRunnerToHub, ExecutionState, Manage
 export type RunnerOS = "linux" | "darwin" | "win32" | string;
 
 /** Increment when a protocol change affects observable turn/history semantics.
- *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines). */
-export const RUNNER_PROTOCOL_VERSION = 7;
+ *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
+ *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
+ *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
+export const RUNNER_PROTOCOL_VERSION = 8;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
@@ -119,6 +121,17 @@ export interface TouchedFileMeta { path: string; action: "read" | "edit" | "writ
 /** One row of a rendered diff: ' ' context, '+' add, '-' del, '@' section marker. */
 export interface DiffRowMeta { t: " " | "+" | "-" | "@" | string; s: string; }
 
+/** A candidate dev-server preview URL discovered on the machine that owns a session (Design Mode, v8).
+ *  Found by attributing a listening port to a process whose cwd is under the session's cwd, or by
+ *  reading the URL a dev-server prints. The URL host is loopback for the local runner; a remote runner
+ *  fills its own reachable (tailnet) host. */
+export interface PreviewCandidate {
+  url: string;
+  port: number;
+  source: "pty-advertised" | "port-scan";
+  detectedAt: number;
+}
+
 // --- Runner -> Hub ---
 export type RunnerToHub =
   | { t: "register"; token: string; info: RunnerInfo }
@@ -181,6 +194,8 @@ export type RunnerToHub =
   | { t: "memory_applied"; reqId: string; token: string; sessionId?: string; ok: boolean; target?: string; beforeHash?: string; afterHash?: string; error?: string }
   /** Result of materializing a published Framework Jarvis on this machine (reply to framework_publish). */
   | { t: "framework_published"; requestId: string; ok: boolean; version?: number; hash?: string; written?: number; removed?: number; skipped?: boolean; error?: string }
+  /** Preview URL candidates for a session's cwd (reply to Hub->Runner "preview_query"). */
+  | { t: "preview_list"; reqId: string; sessionId: string; candidates: PreviewCandidate[] }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" }
   | ExecutionRunnerToHub;
@@ -245,6 +260,8 @@ export type HubToRunner =
    *  force discards local changes on disposable child machines and may be persisted by the Hub
    *  for offline fleet updates. The Hub's own checkout remains conservative unless forced there. */
   | { t: "update"; requestId?: string; targetCommit?: string; force?: boolean }
+  /** Ask this machine for dev-server preview URLs under a session's cwd (Design Mode). */
+  | { t: "preview_query"; reqId: string; sessionId: string }
   | { t: "ping" }
   | ExecutionHubToRunner;
 

@@ -30,9 +30,13 @@ defined there.
 - **Runner** — one per desktop. Registers with the Hub and runs `AgentAdapter`s
   locally. Executes/streams supported agent sessions on that machine. Desktop A
   can run Claude while Desktop B runs Gemini or Cursor Agent — same lifecycle.
-- **Client** — the Hub's PWA (mobile + desktop browsers), later a native app.
-  Thin: shows chat, sends text, push-to-talk audio, and can subscribe as a
-  **listener** to play spoken (TTS) responses.
+- **Client** — the Hub's single web UI (`apps/hub/web`), reachable three ways over one
+  code core: the **PWA** (mobile + desktop browsers), the **Capacitor** shell (mobile app),
+  and the **Electron** shell (rich desktop client). Thin: shows chat, sends text,
+  push-to-talk audio, and can subscribe as a **listener** to play spoken (TTS) responses.
+  Each native shell adds capabilities via a feature-detected `window.jarvis` bridge (no-op
+  in a plain browser, so the UI is never forked). The Electron client additionally hosts
+  **Design Mode** — see [`specs/DSK-01-12-desktop-design-mode.md`](specs/DSK-01-12-desktop-design-mode.md).
 
 ## Adapters (the agnostic core) — `packages/core`
 

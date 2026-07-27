@@ -230,6 +230,19 @@
     /* file viewer / diff — right-side panel (desktop), full overlay (mobile) */
     #filePanel { flex:0 0 clamp(360px,42%,760px); display:flex; flex-direction:column; min-width:0; border-left:1px solid var(--line); background:var(--panel); }
     #filePanel.hidden { display:none; }
+    /* Design Mode (Electron only) — full-window overlay hosting the preview <webview> + grab compose. */
+    #designPanel { position:fixed; inset:0; z-index:60; display:flex; flex-direction:column; background:var(--panel); }
+    #designPanel.hidden { display:none; }
+    #designPanel .fphead { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
+    #designUrl { flex:1; min-width:0; background:transparent; color:inherit; border:1px solid var(--line); border-radius:8px; padding:5px 9px; font-size:12.5px; font-family:ui-monospace,Menlo,Consolas,monospace; }
+    #designHost { flex:1; min-height:0; background:#fff; }
+    #designHost webview { width:100%; height:100%; border:0; }
+    #designCompose { border-top:1px solid var(--line); padding:8px 12px; display:flex; flex-direction:column; gap:6px; }
+    #designCompose.hidden { display:none; }
+    #designSel { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; color:var(--mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #designNote { background:transparent; color:inherit; border:1px solid var(--line); border-radius:8px; padding:6px 9px; font:inherit; resize:vertical; }
+    .designactions { display:flex; gap:8px; justify-content:flex-end; }
+    #designStatus { padding:5px 12px; font-size:11.5px; color:var(--mut); border-top:1px solid var(--line); }
     #app.work-file-split { --work-split-w:clamp(380px,42vw,760px); }
     #app.work-file-split main { margin-right:var(--work-split-w); }
     #app.work-file-split #workPanel,
@@ -684,6 +697,7 @@
         <div class="controls">
           <div class="ctlpills">
             <button type="button" id="attach" class="ghost" title="Anexar">＋</button>
+            <button type="button" id="designBtn" class="ghost hidden" title="Design Mode — apontar num elemento do preview">🎯</button>
             <button type="button" id="councilBtn" class="ghost" title="Convocar Conselho">Conselho</button>
             <span id="status"></span>
             <span class="spacer"></span>
@@ -710,6 +724,25 @@
       </div>
       <div id="fileMeta" class="fpmeta"></div>
       <pre id="fileBody" class="filebody"></pre>
+    </aside>
+    <aside id="designPanel" class="hidden" aria-label="Design Mode">
+      <div class="fphead">
+        <b title="Design Mode">🎯</b>
+        <input id="designUrl" placeholder="http://127.0.0.1:5173" autocomplete="off" spellcheck="false" />
+        <button id="designDetect" class="ghost" type="button" title="Detectar o preview no runner">Detectar</button>
+        <button id="designGrab" class="ghost" type="button" title="Selecionar um elemento">Selecionar</button>
+        <button id="designClose" class="ghost" type="button" title="Fechar">✕</button>
+      </div>
+      <div id="designHost"></div>
+      <div id="designCompose" class="hidden">
+        <div id="designSel"></div>
+        <textarea id="designNote" rows="2" placeholder="O que ajustar neste elemento…"></textarea>
+        <div class="designactions">
+          <button id="designCancel" class="ghost" type="button">Descartar</button>
+          <button id="designSend" class="pill" type="button">Enviar pro agente</button>
+        </div>
+      </div>
+      <div id="designStatus"></div>
     </aside>
     <aside id="workPanel" class="hidden" aria-label="Trabalhos" aria-hidden="true">
       <div class="workhead">
