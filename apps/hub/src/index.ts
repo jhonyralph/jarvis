@@ -29,7 +29,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -706,8 +706,8 @@ const LOCAL_OPS = new Set(["sendTo", "search"]);
 // Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
-const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "council_start", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
-const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "summarize", "digest", "routine_run"]);
+const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "council_start", "tournament_start", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
+const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "tournament_start", "summarize", "digest", "routine_run"]);
 function holdForHubUpdate(ws: WebSocket, msg: any): boolean {
   if (!hubUpdateInProgress || !UPDATE_BLOCKED_OPS.has(msg.t)) return false;
   const runnerId = activeRunner(ws);
@@ -2327,6 +2327,60 @@ async function startLocalCouncil(ws: WebSocket, input: {
   });
 }
 
+/** Lê estado/custo/tokens de cada candidato do execution store (mesmo caminho do councilFinalSummary),
+ *  para alimentar a seleção determinística do vencedor. */
+function tournamentCandidateResults(source: ExecutionStore, rootExecutionId: string, candidateTaskIds: string[], scores: Map<string, number>): TournamentCandidateResult[] {
+  return candidateTaskIds.map((taskId) => {
+    const node = source.findNode(managedChildExecutionId(rootExecutionId, taskId))?.node;
+    const m = node?.metrics?.self;
+    const tokens = (m?.inputTokens || 0) + (m?.outputTokens || 0);
+    return { id: taskId, state: (node?.state as ManagedTaskState) ?? "queued", score: scores.get(taskId), costUsd: m?.costUsd, tokens: tokens || undefined };
+  });
+}
+/** Torneio local: fan-out da MESMA tarefa para N candidatos + juiz + promoção do vencedor (Orca #3).
+ *  Espelha startLocalCouncil (mesma malha ManagedExecution/store/broadcast). */
+async function startLocalTournament(ws: WebSocket, input: { sessionId: string; task: string; competitors: TournamentCompetitor[]; criteria?: string; write?: boolean }): Promise<void> {
+  if (!executionCfg.enabled) { send(ws, { t: "error", message: "Torneio exige Trabalhos habilitado" }); return; }
+  if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Torneio ainda não grava resultado em sessão nativa" }); return; }
+  if (store.isHidden(input.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita Torneio" }); return; }
+  const s = store.get(input.sessionId);
+  if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
+  let built;
+  try { built = buildTournamentPlan({ runnerId: LOCAL_ID, sessionId: input.sessionId, cwd: s.cwd || CWD, task: input.task, competitors: input.competitors, criteria: input.criteria, write: input.write }); }
+  catch (e: any) { send(ws, { t: "error", message: "Torneio: " + String(e?.message ?? e) }); return; }
+  const requestText = `🏆 Torneio (${input.competitors.length} candidatos): ${input.task.split(/\r?\n/)[0].slice(0, 200)}`;
+  const ts = Date.now();
+  store.add(input.sessionId, { role: "user", text: requestText, ts, agent: "jarvis" });
+  broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "user", text: requestText, ts, agent: "jarvis" } });
+  pushSessions();
+  auth.audit("tournament_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${built.rootExecutionId}: ${input.competitors.length} cand.` });
+
+  const ctrl = new AbortController();
+  localManagedRuns.add(built.rootExecutionId); localExecutionAborts.set(built.rootExecutionId, ctrl); broadcastRuns();
+  void localManagedExecution.run(built.plan, {
+    title: built.title, policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy(built.policy, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: s.cwd || CWD }).policy)),
+    signal: ctrl.signal,
+    onAccepted: (rootExecutionId) => send(ws, { t: "tournament_started", runnerId: LOCAL_ID, sessionId: input.sessionId, rootExecutionId }),
+  }).then((report) => {
+    const judgeSummary = councilFinalSummary(localExecutionStore, built.rootExecutionId, built.judgeTaskId);
+    const verdict = parseJudgeScores(judgeSummary);
+    const scores = new Map(verdict.scores.map((sc) => [sc.id, sc.score]));
+    const results = tournamentCandidateResults(localExecutionStore, built.rootExecutionId, built.candidateTaskIds, scores);
+    const outcome = selectTournamentWinner(results, { declaredWinnerId: verdict.declaredWinnerId });
+    const text = formatTournamentFinalMessage({ rootExecutionId: built.rootExecutionId, outcome, summary: report.state === "succeeded" ? judgeSummary : undefined });
+    const at = Date.now();
+    store.add(input.sessionId, { role: "assistant", text, ts: at, agent: "jarvis" });
+    broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "assistant", text, ts: at, agent: "jarvis" } });
+    pushSessions();
+  }).catch((error) => {
+    send(ws, { t: "error", message: "Torneio: " + String((error as Error)?.message || error) });
+  }).finally(() => {
+    localManagedRuns.delete(built.rootExecutionId);
+    if (localExecutionAborts.get(built.rootExecutionId) === ctrl) localExecutionAborts.delete(built.rootExecutionId);
+    broadcastRuns();
+  });
+}
+
 async function startRemoteCouncil(ws: WebSocket, rc: RunnerConn, input: {
   sessionId: string;
   topic: string;
@@ -3803,6 +3857,24 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!rc) { send(ws, { t: "error", message: "máquina desconhecida" }); return; }
         await startRemoteCouncil(ws, rc, input);
       }
+      return;
+    }
+    // Torneio (Orca #3): fan-out da MESMA tarefa para N candidatos + juiz + promoção do vencedor.
+    // LOCAL-only por enquanto (o caminho remoto exigiria handler no runner, como o council).
+    if (msg.t === "tournament_start" && typeof msg.sessionId === "string" && typeof msg.task === "string") {
+      if (activeRunner(ws) !== LOCAL_ID) { send(ws, { t: "error", message: "Torneio só roda na máquina local por enquanto" }); return; }
+      const task = msg.task.slice(0, 20_000).trim();
+      if (!task) { send(ws, { t: "error", message: "Torneio: tarefa vazia" }); return; }
+      // competitors explícitos, ou N cópias do agente da sessão (default 3, clamp 2..6).
+      const sAgent = store.get(msg.sessionId)?.agent || agents.default;
+      let competitors: TournamentCompetitor[] = Array.isArray(msg.competitors)
+        ? msg.competitors.filter((c: any) => c && typeof c.agent === "string").map((c: any) => ({ agent: c.agent, model: typeof c.model === "string" ? c.model : undefined, effort: typeof c.effort === "string" ? c.effort : undefined, label: typeof c.label === "string" ? c.label : undefined }))
+        : [];
+      if (competitors.length < 2) {
+        const count = Math.min(6, Math.max(2, Number(msg.count) || 3));
+        competitors = Array.from({ length: count }, (_v, i) => ({ agent: sAgent, model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, label: `${sAgent} #${i + 1}` }));
+      }
+      await startLocalTournament(ws, { sessionId: msg.sessionId, task, competitors, criteria: typeof msg.criteria === "string" ? msg.criteria : undefined, write: msg.write !== false });
       return;
     }
     // summary/digest one-shot config (which agent/model/effort — cheap by default)

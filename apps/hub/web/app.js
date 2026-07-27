@@ -4,7 +4,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','treeBtn','treeModal','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setSearch','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','treeBtn','treeModal','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','tourneyBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setSearch','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setShareGeo','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwFileList','fwPath','fwEditor','fwImport','fwDelete','fwSave','fwVersion','fwPublish','fwStatus','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -817,6 +817,14 @@
     }
     function closeCouncil(){ E.councilModal.classList.add('hidden'); E.councilGo.disabled=false; E.councilNote.textContent=''; }
     E.councilBtn.onclick=openCouncil;
+    // Torneio (Orca #3): N candidatos resolvem a MESMA tarefa em worktrees isoladas, um juiz pontua
+    // e o vencedor é promovido. Trigger mínimo: pede a tarefa e dispara 3 candidatos do agente atual.
+    if(E.tourneyBtn) E.tourneyBtn.onclick=async()=>{
+      if(!currentSession||curNative){ toast('Abra uma sessão (não nativa) com pasta de trabalho primeiro.'); return; }
+      const task=await dialog({title:'🏆 Torneio — 3 candidatos competem na mesma tarefa',input:true,placeholder:'Descreva a tarefa a resolver…',okText:'Iniciar'});
+      if(!task) return;
+      tx({t:'tournament_start',sessionId:currentSession,task,count:3});
+      toast('🏆 Torneio iniciado — acompanhe em Trabalhos.'); };
     E.councilClose.onclick=closeCouncil; E.councilCancel.onclick=closeCouncil;
     E.councilModal.onclick=(e)=>{ if(e.target===E.councilModal) closeCouncil(); };
     E.councilGo.onclick=()=>{
@@ -2128,6 +2136,7 @@
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!curBusy);
       E.input.disabled=block; E.sendBtn.disabled=block; if(E.mic)E.mic.disabled=block;
       if(E.councilBtn){ E.councilBtn.disabled=!currentSession||curNative; E.councilBtn.title=curNative?'Conselho ainda não grava resultado em sessão nativa':'Convocar Conselho'; }
+      if(E.tourneyBtn){ E.tourneyBtn.disabled=!currentSession||curNative; E.tourneyBtn.title=curNative?'Torneio ainda não grava resultado em sessão nativa':'Torneio: N candidatos, o melhor vence'; }
       E.input.placeholder=ro?'Sessão nativa — somente leitura':(running?'Turno em andamento — enviar adiciona à fila automática':t('composerPh'));
       renderQueue(); updateStopStatus(); maybeReload(); }
     // id de mensagem p/ idempotência: o runner executa um turnId no máximo uma vez (re-entrega do
