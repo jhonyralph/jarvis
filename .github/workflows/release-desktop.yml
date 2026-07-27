@@ -1,0 +1,84 @@
+name: Release desktop
+
+# Builds the Electron desktop shell (desktop/) for Windows, macOS and Linux and — on a version tag —
+# publishes the installers to a GitHub Release. electron-updater (wired in desktop/main.js) then serves
+# auto-updates from those Releases. See desktop/README.md and docs/specs/DSK-01-12-*.
+#
+# Two ways to run:
+#   • push a tag `vX.Y.Z`         → build all three OSes AND publish the Release (auto-update source).
+#   • Actions → "Release desktop" → run manually. Builds all three; only publishes if you tick `publish`.
+#     Use the no-publish manual run first to prove the three OSes build before cutting a real release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish installers to a GitHub Release (leave off to only build)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # electron-builder needs this to create/update the Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+          - os: macos-latest
+            target: mac
+          - os: ubuntu-latest
+            target: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # desktop/ is intentionally OUTSIDE the npm workspace (its own Electron toolchain), so install
+      # and build run from there and never touch the Hub/runner install.
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm install
+
+      # `--publish` decides whether artifacts are uploaded to a Release:
+      #   • tag push            → always (this is a real release).
+      #   • manual + publish=on → always.
+      #   • manual + publish=off→ never (just prove it builds).
+      - name: Resolve publish mode
+        id: mode
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ] || [ "${{ inputs.publish }}" = "true" ]; then
+            echo "publish=always" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=never" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build (electron-builder)
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # electron-builder's GitHub publish provider reads this
+          # No signing certs configured yet (operator's step — see desktop/README.md). Without this,
+          # macOS builds fail trying to auto-discover an identity; disable discovery so an UNSIGNED
+          # build still succeeds. Replace with real CSC_* secrets when signing/notarization is set up.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist -- --${{ matrix.target }} --publish ${{ steps.mode.outputs.publish }}
+
+      # Always keep the installers as workflow artifacts too, so a no-publish run is still downloadable.
+      - name: Upload installers as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-desktop-${{ matrix.target }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+            desktop/dist/*.AppImage
+            desktop/dist/*.yml
+          if-no-files-found: warn
