@@ -31,3 +31,6 @@ data/
 Thumbs.db
 .idea/
 .vscode/
+
+# worktrees efêmeros criados por agentes em background (Agent tool isolation)
+.claude/worktrees/
