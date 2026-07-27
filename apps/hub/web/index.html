@@ -395,6 +395,15 @@
       .routine-actions > button { width:100%; }
     }
     .pop { max-height:70vh; overflow:auto; }
+    /* file-tree (Orca #1): linhas com indentação por profundidade, ícone pasta/arquivo, hover. */
+    #treeBody .trow { display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:7px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #treeBody .trow:hover { background:#ffffff0d; }
+    #treeBody .trow .tw { flex:none; width:14px; text-align:center; color:var(--mut); font-size:11px; }
+    #treeBody .trow .ti { flex:none; }
+    #treeBody .trow .tn { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    #treeBody .tchildren { display:none; }
+    #treeBody .tchildren.open { display:block; }
+    #treeBody .tloading, #treeBody .tempty { color:var(--mut); font-size:12px; padding:3px 6px; }
     button.danger { background:#dc2626; }
     /* recents: agent badge + native tag */
     #recents .item { display:flex; align-items:center; gap:6px; }
@@ -652,6 +661,7 @@
         <div class="link" id="searchBtn" title="Buscar entre sessões"><span class="qic">🔎</span><span class="qtx" data-i18n="searchSessions">buscar entre sessões</span></div>
         <div class="link" id="digestBtn" title="O que está rolando entre as sessões"><span class="qic">🎧</span><span class="qtx" data-i18n="whatsUp">o que está rolando</span></div>
         <button type="button" class="link" id="workBtn" title="Acompanhar trabalhos, subagentes e processos"><span class="qic">🧩</span><span class="qtx" data-i18n="works">Trabalhos</span><span id="workBadge" class="wbadge hidden" aria-hidden="true"></span></button>
+        <button type="button" class="link" id="treeBtn" title="Explorar arquivos da pasta desta sessão"><span class="qic">🗂</span><span class="qtx" data-i18n="filesTree">arquivos</span></button>
         <div class="link" id="fleetBtn" title="Uso & custo — máquinas, tokens e gasto por IA/sessão"><span class="qic">📊</span><span class="qtx" data-i18n="fleet">Uso & custo</span></div>
         <div class="link" id="qrBtn" title="Abrir no celular"><span class="qic">📱</span><span class="qtx" data-i18n="openMobile">abrir no celular</span></div>
         <div class="link hidden" id="secBtn" title="Dispositivos &amp; convites"><span class="qic">🔐</span><span class="qtx" data-i18n="devices">dispositivos &amp; convites</span></div>
@@ -821,6 +831,11 @@
   <div id="fleetModal" class="modal hidden"><div class="card" style="min-width:min(440px,92vw)">
     <div class="row" style="justify-content:space-between;align-items:center"><b>📊 Uso &amp; custo</b><button id="fleetClose" class="ghost" type="button">Fechar</button></div>
     <div id="fleetBody" class="mut" style="font-size:13px">Carregando…</div>
+  </div></div>
+  <div id="treeModal" class="modal hidden"><div class="card" style="width:min(520px,94vw);height:min(660px,88dvh);gap:8px">
+    <div class="row" style="justify-content:space-between;align-items:center"><b>🗂 <span data-i18n="filesTree">Arquivos</span></b><button id="treeClose" class="ghost" type="button">Fechar</button></div>
+    <div id="treeRootPath" class="mut" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</div>
+    <div id="treeBody" style="flex:1;min-height:0;overflow:auto;font-size:13px">—</div>
   </div></div>
   <div id="qrModal" class="modal hidden"><div class="card">
     <b>📱 Abrir no celular</b>

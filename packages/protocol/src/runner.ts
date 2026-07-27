@@ -179,8 +179,10 @@ export type RunnerToHub =
   | { t: "message"; sessionId: string; message: RunnerMsg }
   | { t: "activity"; sessionId: string; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[] }
   | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; truncated?: boolean; error?: string }
-  /** directory listing for the folder browser (reply to Hub->Runner "listdir") */
-  | { t: "dirs"; reqId: string; path: string; parent: string; entries: string[] }
+  /** directory listing for the folder browser (reply to Hub->Runner "listdir").
+   *  `files` is present only when the request set `files:true` (the file-tree panel); the legacy
+   *  folder-picker omits it and keeps seeing directories only. */
+  | { t: "dirs"; reqId: string; path: string; parent: string; entries: string[]; files?: string[] }
   /** Correlated result of a remote delete. `ids` contains only sessions actually removed. */
   | { t: "deleted"; reqId: string; sessionId?: string; ids: string[]; ok: boolean; okCount: number }
   | { t: "runs"; active: string[] }
@@ -226,7 +228,7 @@ export type HubToRunner =
   /** create a fresh managed session on the runner (reply: history with the new id) */
   | { t: "new"; reqId: string; agent?: string; cwd?: string }
   /** folder browser for the "new conversation" dialog (reply: dirs) */
-  | { t: "listdir"; reqId: string; path?: string }
+  | { t: "listdir"; reqId: string; path?: string; files?: boolean }
   /** change agent/cwd of a not-yet-started session (reply: history) */
   | { t: "configure"; reqId: string; sessionId: string; agent?: string; cwd?: string }
   | { t: "delete"; reqId: string; sessionId?: string; sessionIds?: string[]; alsoNative?: boolean }

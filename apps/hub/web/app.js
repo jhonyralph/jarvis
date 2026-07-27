@@ -4,7 +4,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setSearch','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','treeBtn','treeModal','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setSearch','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setShareGeo','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwFileList','fwPath','fwEditor','fwImport','fwDelete','fwSave','fwVersion','fwPublish','fwStatus','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -1206,6 +1206,39 @@
 
     E.agentBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.agentBtn,buildAgentPop); };
     E.cwdBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.cwdBtn,buildFolderPop); };
+    // ---------- árvore de arquivos (Orca #1) — explora a pasta da sessão, lazy por pasta ----------
+    let treeMode=false; const treePending=new Map(); // path -> nó de pasta aguardando o `dirs`
+    function treeJoin(base,name){ const sep=base.includes('\\')?'\\':'/'; return base.replace(/[\\/]$/,'')+sep+name; }
+    function treeRunner(){ return routedMachine||sessionRunner()||'local'; }
+    function makeFolderNode(fullpath,label,depth){
+      const row=document.createElement('div'); row.className='trow'; row.style.paddingLeft=(depth*14+6)+'px';
+      const tw=document.createElement('span'); tw.className='tw'; tw.textContent='▸';
+      const ti=document.createElement('span'); ti.className='ti'; ti.textContent='📁';
+      const tn=document.createElement('span'); tn.className='tn'; tn.textContent=label; tn.title=fullpath;
+      row.append(tw,ti,tn);
+      const children=document.createElement('div'); children.className='tchildren';
+      const node={row,children,tw,fullpath,depth,loaded:false,open:false};
+      row.onclick=()=>toggleFolder(node);
+      return node;
+    }
+    function toggleFolder(node){
+      if(!node.loaded){ node.tw.textContent='⏳'; treePending.set(node.fullpath,node); tx({t:'listdir',runnerId:treeRunner(),path:node.fullpath,files:true}); return; }
+      node.open=!node.open; node.children.classList.toggle('open',node.open); node.tw.textContent=node.open?'▾':'▸';
+    }
+    function renderTreeChildren(node,m){
+      node.loaded=true; node.open=true; node.tw.textContent='▾'; node.children.classList.add('open'); node.children.innerHTML='';
+      const dirs=m.entries||[], files=m.files||[];
+      if(!dirs.length && !files.length){ const e=document.createElement('div'); e.className='tempty'; e.style.paddingLeft=((node.depth+1)*14+6)+'px'; e.textContent='(vazio)'; node.children.appendChild(e); return; }
+      dirs.forEach(name=>{ const child=makeFolderNode(treeJoin(m.path,name),name,node.depth+1); node.children.append(child.row,child.children); });
+      files.forEach(name=>{ const r=document.createElement('div'); r.className='trow'; r.style.paddingLeft=((node.depth+1)*14+6)+'px';
+        const ti=document.createElement('span'); ti.className='ti'; ti.textContent='📄'; const tn=document.createElement('span'); tn.className='tn'; tn.textContent=name; tn.title=treeJoin(m.path,name);
+        r.append(ti,tn); r.onclick=()=>{ E.treeModal.classList.add('hidden'); treeMode=false; openFile(treeJoin(m.path,name)); }; node.children.appendChild(r); });
+    }
+    function openTree(){ if(!curCwd){ toast('Abra uma sessão com uma pasta de trabalho para explorar os arquivos.'); return; }
+      treeMode=true; treePending.clear(); E.treeModal.classList.remove('hidden'); E.treeRootPath.textContent=curCwd; E.treeBody.innerHTML='';
+      const root=makeFolderNode(curCwd, curCwd.split(/[\\/]/).filter(Boolean).pop()||curCwd, 0); E.treeBody.append(root.row,root.children); toggleFolder(root); }
+    if(E.treeBtn) E.treeBtn.onclick=openTree;
+    if(E.treeClose) E.treeClose.onclick=()=>{ E.treeModal.classList.add('hidden'); treeMode=false; };
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
@@ -1791,7 +1824,9 @@
           if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }
         else if(m.t==='filecontent'){ showFile(m); }
         else if(m.t==='filediff'){ showDiff(m); }
-        else if(m.t==='dirs'){ browsePath=m.path; if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
+        else if(m.t==='dirs'){ browsePath=m.path;
+          if(treePending.has(m.path)){ const node=treePending.get(m.path); treePending.delete(m.path); renderTreeChildren(node,m); return; }   // Orca #1: resposta pra árvore de arquivos
+          if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
           if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',runnerId:browseRunner,path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
         else if(m.t==='cron_validation'){ if(String(m.cron||'').trim()!==(E.rtCron.value||'').trim())return; cronOk=!!m.ok; E.rtAdd.disabled=!cronOk; E.rtCronHelp.className='cron-help '+(cronOk?'ok':'err'); E.rtCronHelp.textContent=cronOk?('✓ '+m.description+' · '+m.expression+' · fuso '+routineTimezone):('⚠ '+m.error); }
         else if(m.t==='sessions'){

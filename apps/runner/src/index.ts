@@ -1050,8 +1050,11 @@ function connect(): void {
       if (m.t === "listdir") {
         const base = (typeof m.path === "string" && m.path) ? m.path : homedir();
         try {
-          const entries = readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name).sort((a, b) => a.localeCompare(b));
-          send({ t: "dirs", reqId: m.reqId, path: base, parent: dirname(base), entries });
+          const all = readdirSync(base, { withFileTypes: true }).filter((e) => !e.name.startsWith("."));
+          const entries = all.filter((e) => e.isDirectory()).map((e) => e.name).sort((a, b) => a.localeCompare(b));
+          // `files` só quando o cliente pede (m.files) — folder-picker legado não pede e segue só com pastas.
+          const files = m.files ? all.filter((e) => e.isFile()).map((e) => e.name).sort((a, b) => a.localeCompare(b)) : undefined;
+          send({ t: "dirs", reqId: m.reqId, path: base, parent: dirname(base), entries, files });
         } catch (e: any) { send({ t: "error", reqId: m.reqId, message: "listdir: " + String(e?.message ?? e) }); }
         return;
       }
