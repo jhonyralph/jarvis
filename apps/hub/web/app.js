@@ -1161,13 +1161,20 @@
     const ph=(t)=>{ const d=document.createElement('div'); d.className='ph'; d.textContent=t; return d; };
 
     function machineAgents(){ const id=currentMachine==='all'?routedMachine:currentMachine, m=machines.find(x=>x.id===id); return m&&Array.isArray(m.agents)?m.agents:caps.map(c=>c.name); }
-    function buildAgentPop(p){ p.appendChild(ph('Agente / IA')); const avail=machineAgents(), pref=sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}, prefKey=sessionStateKey(currentSession,currentSessionRunner);
+    // Orca #2: por padrão o picker mostra só as IAs que dá pra usar (linkadas/instaladas). As
+    // realmente indisponíveis (não instaladas / sem login) ficam atrás de um "mostrar indisponíveis"
+    // — não some pra sempre, só sai da frente. A IA atual sempre aparece, mesmo se ficou indisponível.
+    let agentPopShowAll=false;
+    function buildAgentPop(p){ p.innerHTML=''; p.appendChild(ph('Agente / IA')); const avail=machineAgents(), pref=sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}, prefKey=sessionStateKey(currentSession,currentSessionRunner);
       if(!curStarted&&!curNative){ const a=document.createElement('div'); a.className='opt'+(pref.agent===AUTO_AGENT?' sel':''); a.innerHTML='✨ Automático'+(pref.agent===AUTO_AGENT?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const np=Object.assign({},pref,{agent:AUTO_AGENT,model:AUTO_MODEL,effort:AUTO_EFFORT}); sessionPrefs[prefKey]=np; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); }
-      machineCaps().forEach(c=>{ const ok=avail.includes(c.name); const o=document.createElement('div'); o.className='opt'+(c.name===currentAgent?' sel':'')+(ok?'':' disabled');
+      const unusable=(c)=>(c.support==='not_installed'||c.support==='unauthenticated');
+      const caps=machineCaps(); const hidden=caps.filter(c=>unusable(c)&&c.name!==currentAgent);
+      caps.forEach(c=>{ if(!agentPopShowAll&&unusable(c)&&c.name!==currentAgent) return; const ok=avail.includes(c.name); const o=document.createElement('div'); o.className='opt'+(c.name===currentAgent?' sel':'')+(ok?'':' disabled');
         const state=c.support==='limited'?'limitado':c.support==='unverified'?'não verificado':c.support==='unauthenticated'?'sem login':c.support==='not_installed'?'não instalado':''; o.title=c.reason||'';
         o.innerHTML='🤖 '+esc(c.label||c.name)+(c.name===currentAgent?'<span class="r">atual</span>':(!ok?'<span class="r">indisponível</span>':(state?'<span class="r">'+esc(state)+'</span>':'')));
         if(ok) o.onclick=()=>{ closePop(); const np=Object.assign({},pref,{agent:c.name}); sessionPrefs[prefKey]=np; saveSessionPrefs(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); else renderControls(); };
-        p.appendChild(o); }); }
+        p.appendChild(o); });
+      if(hidden.length&&!agentPopShowAll){ const t=document.createElement('div'); t.className='opt mut'; t.style.fontSize='12px'; t.textContent='+ '+hidden.length+' indisponíve'+(hidden.length>1?'is':'l')+' (mostrar)'; t.onclick=()=>{ agentPopShowAll=true; buildAgentPop(p); }; p.appendChild(t); } }
 
     function buildModelPop(p){ const c=capsFor(currentAgent), control=modelControlOf(c), prefKey=sessionStateKey(currentSession,currentSessionRunner); p.appendChild(ph('Modelo')); if(control!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=control==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } { const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='✨ Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.model=AUTO_MODEL; sessionPrefs[prefKey]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
@@ -1204,7 +1211,7 @@
       tx({t:'listdir',runnerId:browseRunner,path:initial||''}); }
     function buildFolderPop(p){ buildFolderBrowser(p,{runnerId:routedMachine||'local',initial:curCwd||cfg.lastCwd||'',showRecents:true,onUse:b=>tx({t:'configure',sessionId:currentSession,cwd:b})}); }
 
-    E.agentBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.agentBtn,buildAgentPop); };
+    E.agentBtn.onclick=()=>{ if(curStarted||curNative)return; agentPopShowAll=false; togglePop(E.agentBtn,buildAgentPop); };
     E.cwdBtn.onclick=()=>{ if(curStarted||curNative)return; togglePop(E.cwdBtn,buildFolderPop); };
     // ---------- árvore de arquivos (Orca #1) — explora a pasta da sessão, lazy por pasta ----------
     let treeMode=false; const treePending=new Map(); // path -> nó de pasta aguardando o `dirs`
