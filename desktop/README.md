@@ -75,6 +75,33 @@ npm run dist           # electron-builder → dist/ (per-OS installers)
 switch to a `generic` self-hosted provider to keep it private). macOS signing/notarization and
 Windows signing are **your build step** — add the certs/env before a public release.
 
+### Finding the app in the OS
+
+After installing, "search for Jarvis" works on all three — but each platform gets there differently:
+
+| OS | Installer | How it's found |
+|---|---|---|
+| Windows | `Jarvis-Setup-x.y.z.exe` (NSIS) | Start Menu shortcut → **Win key → "jarvis"** |
+| macOS | `.dmg` → drag to Applications | Spotlight (**⌘+Space → "jarvis"**), Launchpad |
+| Linux | **`.deb`** | registers a `.desktop` entry → app menu / GNOME search |
+| Linux | `.AppImage` | **portable, does NOT register itself** — it only shows up in the menu if you use [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher). Prefer the `.deb` if you want it searchable. |
+
+`Keywords` in the Linux desktop entry also match `ai`, `agent`, `claude`, `codex`, `assistant`.
+
+### Icon
+
+`electron-builder` needs a bitmap (it can't use `icon.svg`), and picks up `build/icon.png`
+automatically when present. Generate it once from the PWA artwork — no extra dependency, it renders
+with the Electron you already have:
+
+```sh
+cd desktop && npm run icon    # apps/hub/web/icon.svg -> build/icon.png (1024x1024)
+```
+
+Commit `build/icon.png`. Without it the app builds fine but ships the **default Electron icon**.
+The script needs a graphical session (it renders in a hidden window), so run it on a desktop
+machine, not over a headless SSH/CI shell.
+
 ## Status
 
 - **Phase 0 (this):** the shell — loads the live Hub UI, auto-update, `window.jarvis` identity

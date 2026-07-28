@@ -28,8 +28,31 @@ publish:
 mac:
   target: [dmg, zip] # zip is required for electron-updater on macOS
   category: public.app-category.developer-tools
+  # Arrastar para /Applications já faz o Spotlight indexar: "⌘+espaço → jarvis" acha o app.
+
 win:
   target: [nsis]
+nsis:
+  # Atalho no Menu Iniciar é o que faz "tecla Windows → jarvis" encontrar o app. É o default do
+  # electron-builder, mas explicitado porque é requisito, não detalhe de implementação.
+  createStartMenuShortcut: true
+  createDesktopShortcut: true
+  shortcutName: Jarvis
+  # Instalação por usuário: não pede UAC/admin, que é o esperado para um cliente de desktop.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
 linux:
-  target: [AppImage]
+  # AppImage é portátil, mas NÃO se registra no menu de aplicativos sozinho — baixar e rodar não faz
+  # o app aparecer na busca do sistema (só com AppImageLauncher instalado). O `deb` instala de
+  # verdade e cria a entrada .desktop, então quem usa Debian/Ubuntu acha o Jarvis na busca como nos
+  # outros SOs. Os dois alvos são publicados: AppImage para quem quer portátil, deb para integrar.
+  target: [AppImage, deb]
   category: Development
+  synopsis: Voice-first control plane for coding agents
+  desktop:
+    # `Keywords` alimenta a busca do GNOME/KDE — digitar "agent" ou "claude" também encontra.
+    Name: Jarvis
+    Keywords: jarvis;ai;agent;claude;codex;assistant;
+    StartupWMClass: Jarvis

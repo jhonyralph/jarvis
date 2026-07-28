@@ -6,6 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "icon": "electron scripts/make-icon.mjs",
     "dist": "electron-builder",
     "doctor": "node -e \"try{console.log('electron', require('electron/package.json').version)}catch{console.log('electron: not installed — run npm install')}\""
   },
