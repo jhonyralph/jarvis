@@ -710,7 +710,7 @@
       const frag=document.createDocumentFragment();
       (m.rows||[]).forEach((r,idx)=>{ const ln=idx+1; const cls=r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx';
         const row=document.createElement('div'); row.className='frow d-'+cls; row.dataset.ln=ln;
-        const g=document.createElement('span'); g.className='fgutter'; g.textContent=(r.t==='+'||r.t==='-')?r.t:(r.t==='@'?'@':ln); g.onclick=()=>annoPick(ln);
+        const g=document.createElement('span'); g.className='fgutter'; g.textContent=(r.t==='+'||r.t==='-')?r.t:(r.t==='@'?'@':ln);
         const c=document.createElement('span'); c.className='fcontent'; c.textContent=r.s;
         row.append(g,c); frag.appendChild(row); });
       E.fileBody.appendChild(frag);
@@ -729,7 +729,7 @@
       const lines=String(content).split('\n'); const frag=document.createDocumentFragment();
       lines.forEach((line,idx)=>{ const ln=idx+1;
         const row=document.createElement('div'); row.className='frow'; row.dataset.ln=ln;
-        const g=document.createElement('span'); g.className='fgutter'; g.textContent=ln; g.onclick=()=>annoPick(ln);
+        const g=document.createElement('span'); g.className='fgutter'; g.textContent=ln;
         const c=document.createElement('span'); c.className='fcontent';
         const hl=useHl?highlight(line,name):null; if(hl!=null&&hl!=='') c.innerHTML=hl; else c.textContent=line;
         row.append(g,c); frag.appendChild(row); });
@@ -754,6 +754,15 @@
         nt.querySelector('.an-t').textContent=a.text; nt.querySelector('.an-x').onclick=()=>{ annos.splice(i,1); annoSave(); annoRenderNotes(); };
         anchor.after(nt); });
       const n=annos.length; if(E.annoSend){ E.annoSend.classList.toggle('hidden', n===0); if(E.annoCount)E.annoCount.textContent=n; } }
+    // seleção por CLIQUE (início→fim em dois cliques) OU CLIQUE-E-ARRASTA no gutter (cima↔baixo).
+    // Delegação em E.fileBody (uma vez) — sobrevive ao re-render das linhas.
+    (function(){ let dragging=false, moved=false, anchor=0;
+      const lnAt=(e)=>{ const el=document.elementFromPoint(e.clientX,e.clientY); const row=el&&el.closest?el.closest('.frow'):null; return row?+row.dataset.ln:0; };
+      E.fileBody.addEventListener('pointerdown',(e)=>{ const g=e.target.closest?e.target.closest('.fgutter'):null; if(!g)return; const row=g.closest('.frow'); if(!row)return; e.preventDefault(); dragging=true; moved=false; anchor=+row.dataset.ln; });
+      E.fileBody.addEventListener('pointermove',(e)=>{ if(!dragging)return; const ln=lnAt(e); if(!ln)return; if(!moved){ moved=true; document.body.style.userSelect='none'; } annoSel={from:Math.min(anchor,ln),to:Math.max(anchor,ln)}; annoPaint(); });
+      const end=()=>{ if(!dragging)return; dragging=false; document.body.style.userSelect=''; if(!moved) annoPick(anchor); }; // sem arrastar = clique (início→fim em 2 cliques)
+      E.fileBody.addEventListener('pointerup',end); E.fileBody.addEventListener('pointercancel',end);
+    })();
     if(E.annoAdd) E.annoAdd.onclick=annoAddCurrent;
     if(E.annoCancelSel) E.annoCancelSel.onclick=()=>{ annoSel=null; annoPaint(); };
     if(E.annoSend) E.annoSend.onclick=()=>annoSendPop();
