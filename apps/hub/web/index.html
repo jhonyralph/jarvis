@@ -228,7 +228,9 @@
     .mut { color:var(--mut); font-size:12.5px; word-break:break-all; }
     .soon { font-size:10px; background:#ffffff14; border-radius:6px; padding:1px 5px; color:var(--mut); }
     /* file viewer / diff — right-side panel (desktop), full overlay (mobile) */
-    #filePanel, #treePanel { flex:0 0 clamp(360px,42%,760px); display:flex; flex-direction:column; min-width:0; border-left:1px solid var(--line); background:var(--panel); }
+    #filePanel, #treePanel { display:flex; flex-direction:column; min-width:0; border-left:1px solid var(--line); background:var(--panel); }
+    #filePanel { flex:0 0 var(--file-w,clamp(360px,42%,760px)); }
+    #treePanel { flex:0 0 var(--tree-w,clamp(220px,24%,320px)); order:5; }   /* explorer estreito, sempre na borda direita */
     #filePanel.hidden, #treePanel.hidden { display:none; }
     #treePanel .fphead { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
     #treePanel .fpname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -401,6 +403,7 @@
     /* file-tree (Orca #1): linhas com indentação por profundidade, ícone pasta/arquivo, hover. */
     #treeBody .trow { display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:7px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #treeBody .trow:hover { background:#ffffff0d; }
+    #treeBody .trow.tsel { background:#2563eb2e; color:var(--text); }
     #treeBody .trow .tw { flex:none; width:14px; text-align:center; color:var(--mut); font-size:11px; }
     #treeBody .trow .ti { flex:none; }
     #treeBody .trow .tn { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }

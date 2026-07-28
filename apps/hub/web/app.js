@@ -47,7 +47,7 @@
     let activeRuns=[]; const activeRunsByRunner={}; const unread=new Set(); // painel "rodando agora / precisa de você"
     const askingSids=new Set();  // machine+session keys still being analyzed for optional HITL
     // ---- config (persisted; refresh não perde estado) ----
-    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, silenceSec:1.8, wake:false, noise:true, voiceGate:false, shareGeo:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, silenceSec:1.8, wake:false, noise:true, voiceGate:false, shareGeo:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec', treeOpen:false, fileLayout:'side' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     // ---------- Gap 8: localização do DISPOSITIVO (opt-in) — anexada a pedidos que dependem de "onde estou"
     //            (ex.: lugares por perto). Vem SEMPRE deste device; permissão só é pedida quando o usuário
     //            liga a opção. Em app nativo (Capacitor) o navigator.geolocation também funciona no webview. ----------
@@ -307,7 +307,7 @@
       currentSession=m.sessionId; currentSessionRunner=targetRunner; lastByMachine[currentMachine]=m.sessionId; unread.delete(sessionStateKey(m.sessionId,targetRunner)); updateOfflineBanner();
       currentAgent=(m.session||{}).agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null; lastRouteReason='';   // modelo/esforço reais da sessão da máquina (só nativas mandam)
-      if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0;
+      if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0; maybeRestoreTree();
       E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
       updateStopStatus();   // reflete o "parando…" da sessão ATUAL (por sessão, não global)
@@ -1247,15 +1247,20 @@
       dirs.forEach(name=>{ const child=makeFolderNode(treeJoin(m.path,name),name,node.depth+1); node.children.append(child.row,child.children); });
       files.forEach(name=>{ const r=document.createElement('div'); r.className='trow'; r.style.paddingLeft=((node.depth+1)*14+6)+'px';
         const ti=document.createElement('span'); ti.className='ti'; ti.textContent='📄'; const tn=document.createElement('span'); tn.className='tn'; tn.textContent=name; tn.title=treeJoin(m.path,name);
-        r.append(ti,tn); r.onclick=()=>{ closeTree(); openFile(treeJoin(m.path,name)); }; node.children.appendChild(r); });
+        // Árvore PERMANECE aberta ao abrir um arquivo — só fecha quando o usuário clica no ícone de novo.
+        r.append(ti,tn); r.onclick=()=>{ treeSelectFile(r); openFile(treeJoin(m.path,name)); }; node.children.appendChild(r); });
     }
-    function closeTree(){ E.treePanel.classList.add('hidden'); treeMode=false; }
+    function treeSelectFile(row){ E.treeBody.querySelectorAll('.trow.tsel').forEach(x=>x.classList.remove('tsel')); if(row) row.classList.add('tsel'); }
+    function closeTree(){ E.treePanel.classList.add('hidden'); treeMode=false; cfg.treeOpen=false; saveCfg(); }
     function openTree(){ if(!E.treePanel.classList.contains('hidden')){ closeTree(); return; }   // clicar de novo fecha
       if(!curCwd){ toast('Abra uma sessão com uma pasta de trabalho para explorar os arquivos.'); return; }
       treeMode=true; treePending.clear(); E.treePanel.classList.remove('hidden'); E.treeRootPath.textContent=curCwd; E.treeRootPath.title=curCwd; E.treeBody.innerHTML='';
-      const root=makeFolderNode(curCwd, curCwd.split(/[\\/]/).filter(Boolean).pop()||curCwd, 0); E.treeBody.append(root.row,root.children); toggleFolder(root); }
+      const root=makeFolderNode(curCwd, curCwd.split(/[\\/]/).filter(Boolean).pop()||curCwd, 0); E.treeBody.append(root.row,root.children); toggleFolder(root);
+      cfg.treeOpen=true; saveCfg(); }
     if(E.treeBtn) E.treeBtn.onclick=openTree;
     if(E.treeClose) E.treeClose.onclick=closeTree;
+    // restaura a árvore aberta após carregar uma sessão com pasta (persistência visual)
+    function maybeRestoreTree(){ if(cfg.treeOpen && curCwd && E.treePanel.classList.contains('hidden')){ openTree(); } }
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
