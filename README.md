@@ -87,18 +87,28 @@ Everything external enters through a swappable adapter (`AgentAdapter`,
 git clone https://github.com/jhonyralph/jarvis && cd jarvis
 ```
 
-**Guided setup (recommended)** — one command that installs deps, writes config,
-registers the autostart service, starts the Hub, prints your **claim code**, and
-ends with a health check:
+**Guided setup (recommended)** — the **same command on every OS**: installs deps, writes config,
+registers the autostart service, starts the Hub, prints your **claim code**, and ends with a health
+check. `scripts/run.mjs` detects the platform and calls the right `.ps1`/`.sh` for you:
 
 ```sh
-# macOS / Linux
-sh scripts/jarvis-setup.sh
+npm install && npm run setup
 ```
-```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File scripts\jarvis-setup.ps1
-```
+
+Every operational script is exposed the same way (run `npm run scripts:list` to see them all):
+
+| Command | Does |
+|---|---|
+| `npm run setup` | guided Hub install |
+| `npm run doctor` | read-only environment check |
+| `npm run install:runner` | make this machine a runner |
+| `npm run install:desktop` | install/run the Electron client |
+| `npm run start:hub` / `start:runner` | run in the foreground |
+| `npm run jarvis -- update` | admin CLI (update, status…) |
+
+Arguments pass through after `--`, e.g. `npm run doctor -- -Role runner` or
+`npm run install:desktop -- --run`. The per-OS scripts under `scripts/` still work if you prefer
+calling them directly.
 
 Or do it by hand:
 
