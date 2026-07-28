@@ -228,8 +228,11 @@
     .mut { color:var(--mut); font-size:12.5px; word-break:break-all; }
     .soon { font-size:10px; background:#ffffff14; border-radius:6px; padding:1px 5px; color:var(--mut); }
     /* file viewer / diff — right-side panel (desktop), full overlay (mobile) */
-    #filePanel { flex:0 0 clamp(360px,42%,760px); display:flex; flex-direction:column; min-width:0; border-left:1px solid var(--line); background:var(--panel); }
-    #filePanel.hidden { display:none; }
+    #filePanel, #treePanel { flex:0 0 clamp(360px,42%,760px); display:flex; flex-direction:column; min-width:0; border-left:1px solid var(--line); background:var(--panel); }
+    #filePanel.hidden, #treePanel.hidden { display:none; }
+    #treePanel .fphead { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
+    #treePanel .fpname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    @media (max-width:820px){ #treePanel { position:fixed; inset:0; z-index:46; flex:none; border-left:0; } }
     /* Design Mode (Electron only) — full-window overlay hosting the preview <webview> + grab compose. */
     #designPanel { position:fixed; inset:0; z-index:60; display:flex; flex-direction:column; background:var(--panel); }
     #designPanel.hidden { display:none; }
@@ -661,10 +664,6 @@
         <div class="link" id="searchBtn" title="Buscar entre sessões"><span class="qic">🔎</span><span class="qtx" data-i18n="searchSessions">buscar entre sessões</span></div>
         <div class="link" id="digestBtn" title="O que está rolando entre as sessões"><span class="qic">🎧</span><span class="qtx" data-i18n="whatsUp">o que está rolando</span></div>
         <button type="button" class="link" id="workBtn" title="Acompanhar trabalhos, subagentes e processos"><span class="qic">🧩</span><span class="qtx" data-i18n="works">Trabalhos</span><span id="workBadge" class="wbadge hidden" aria-hidden="true"></span></button>
-        <button type="button" class="link" id="treeBtn" title="Explorar arquivos da pasta desta sessão"><span class="qic">🗂</span><span class="qtx" data-i18n="filesTree">arquivos</span></button>
-        <div class="link" id="fleetBtn" title="Uso & custo — máquinas, tokens e gasto por IA/sessão"><span class="qic">📊</span><span class="qtx" data-i18n="fleet">Uso & custo</span></div>
-        <div class="link" id="qrBtn" title="Abrir no celular"><span class="qic">📱</span><span class="qtx" data-i18n="openMobile">abrir no celular</span></div>
-        <div class="link hidden" id="secBtn" title="Dispositivos &amp; convites"><span class="qic">🔐</span><span class="qtx" data-i18n="devices">dispositivos &amp; convites</span></div>
       </div>
       <div id="listTabs">
         <button type="button" class="ltab active" id="tabRec">🕘 Histórico<span class="tcnt" id="recCnt"></span></button>
@@ -689,6 +688,7 @@
         <span id="nativeChip" class="natchip hidden" title="Sessão nativa vinculada — clique para copiar o comando de retomada"></span>
         <span class="spacer"></span>
         <button type="button" id="sumHdr" class="ghost" title="Resumir esta conversa e falar (só esta sessão)">🔊<span class="blbl">Resumir</span></button>
+        <button type="button" id="treeBtn" class="ghost treeicon" title="Arquivos da pasta desta sessão (abre/fecha ao lado)">🗂</button>
       </header>
       <div id="limit" class="hidden"></div>
       <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
@@ -735,6 +735,14 @@
       </div>
       <div id="fileMeta" class="fpmeta"></div>
       <pre id="fileBody" class="filebody"></pre>
+    </aside>
+    <aside id="treePanel" class="hidden" aria-label="Arquivos da pasta">
+      <div class="fphead">
+        <b title="Arquivos da pasta desta sessão">🗂</b>
+        <span id="treeRootPath" class="fpname" style="font-weight:400;font-size:11.5px;color:var(--mut)">—</span>
+        <button id="treeClose" class="ghost" type="button" title="Fechar">✕</button>
+      </div>
+      <div id="treeBody" style="flex:1;min-height:0;overflow:auto;font-size:13px;padding:6px 4px">—</div>
     </aside>
     <aside id="designPanel" class="hidden" aria-label="Design Mode">
       <div class="fphead">
@@ -833,11 +841,6 @@
     <div class="row" style="justify-content:space-between;align-items:center"><b>📊 Uso &amp; custo</b><button id="fleetClose" class="ghost" type="button">Fechar</button></div>
     <div id="fleetBody" class="mut" style="font-size:13px">Carregando…</div>
   </div></div>
-  <div id="treeModal" class="modal hidden"><div class="card" style="width:min(520px,94vw);height:min(660px,88dvh);gap:8px">
-    <div class="row" style="justify-content:space-between;align-items:center"><b>🗂 <span data-i18n="filesTree">Arquivos</span></b><button id="treeClose" class="ghost" type="button">Fechar</button></div>
-    <div id="treeRootPath" class="mut" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</div>
-    <div id="treeBody" style="flex:1;min-height:0;overflow:auto;font-size:13px">—</div>
-  </div></div>
   <div id="qrModal" class="modal hidden"><div class="card">
     <b>📱 Abrir no celular</b>
     <div class="mut">Aponte a câmera do celular (com Tailscale ligado) para o QR:</div>
@@ -895,6 +898,7 @@
         <button type="button" class="snav snav-owner" data-goto="automacao">🤖 Automação</button>
         <button type="button" class="snav snav-owner" data-goto="framework">🧩 Framework</button>
         <button type="button" class="snav" data-goto="rota">🧭 Roteamento</button>
+        <button type="button" class="snav" data-goto="conta">🔗 Conta &amp; dispositivos</button>
         <button type="button" class="snav" data-goto="update">⬆ Atualização</button>
       </nav>
       <div class="settings-panels" id="setPanels">
@@ -1053,6 +1057,14 @@
           <label>IA <select id="setSumAgent"></select></label>
           <label>Modelo <select id="setSumModel"></select></label>
           <label>Esforço <select id="setSumEffort"></select></label>
+        </section>
+
+        <section class="spanel hidden" data-panel="conta">
+          <div class="sec">Conta &amp; dispositivos</div>
+          <div class="mut" style="font-size:12px;margin-bottom:6px">Uso &amp; custo da frota, abrir no celular e gerenciar dispositivos/convites.</div>
+          <button type="button" id="fleetBtn" class="ghost" style="justify-content:flex-start">📊 Uso &amp; custo</button>
+          <button type="button" id="qrBtn" class="ghost" style="justify-content:flex-start">📱 Abrir no celular</button>
+          <button type="button" id="secBtn" class="ghost hidden" style="justify-content:flex-start">🔐 Dispositivos &amp; convites</button>
         </section>
 
         <section class="spanel hidden" data-panel="update">

@@ -4,7 +4,7 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','treeBtn','treeModal','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','tourneyBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setSearch','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','tourneyBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setSearch','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setShareGeo','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwFileList','fwPath','fwEditor','fwImport','fwDelete','fwSave','fwVersion','fwPublish','fwStatus','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -840,10 +840,10 @@
     // ícones de áudio lado a lado não diziam qual era o escopo de cada um.
     E.sumHdr.onclick=()=>{ if(!currentSession){ toast(t('tOpenFirst')); return; }
       if(!startVoiceOp('summarize',E.sumHdr,'⏳',currentSession))return; status('speaking',t('stSummarizing')); tx({t:'summarize',sessionId:currentSession,speak:true}); };
-    E.qrBtn.onclick=()=>{ tx({t:'qr',url:location.origin}); closeSide(); };
+    E.qrBtn.onclick=()=>{ tx({t:'qr',url:location.origin}); closeSide(); E.settings.classList.add('hidden'); };
     E.qrClose.onclick=()=>E.qrModal.classList.add('hidden');
     // ---------- painel "Uso & custo" (máquinas + custo por IA/sessão) ----------
-    E.fleetBtn.onclick=()=>{ E.fleetBody.innerHTML='Carregando…'; E.fleetModal.classList.remove('hidden'); closeSide(); tx({t:'fleet'}); };
+    E.fleetBtn.onclick=()=>{ E.fleetBody.innerHTML='Carregando…'; E.fleetModal.classList.remove('hidden'); closeSide(); E.settings.classList.add('hidden'); tx({t:'fleet'}); };
     E.fleetClose.onclick=()=>E.fleetModal.classList.add('hidden');
     // ---------- canvas: overlay central iterativo (voz: resolução de sessão, pasta, confirmação; depois imagens/diagramas) ----------
     function hideCanvas(){ E.canvasModal.classList.add('hidden'); }
@@ -939,7 +939,7 @@
 
     // ---- segurança: dispositivos & convites (dono) ----
     function updateOwnerUI(){ if(authUser&&authUser.role==='owner') E.secBtn.classList.remove('hidden'); else E.secBtn.classList.add('hidden'); }
-    E.secBtn.onclick=()=>{ tx({t:'sec_state'}); E.secOut.classList.add('hidden'); E.secModal.classList.remove('hidden'); closeSide(); };
+    E.secBtn.onclick=()=>{ tx({t:'sec_state'}); E.secOut.classList.add('hidden'); E.secModal.classList.remove('hidden'); closeSide(); E.settings.classList.add('hidden'); };
     E.secClose.onclick=()=>E.secModal.classList.add('hidden');
     E.secGen.onclick=()=>{ tx({t:'sec_invite', role:E.secRole.value, ttlSec:Number(E.secTtl.value)}); };
     let secRepoUrl='';
@@ -1247,13 +1247,15 @@
       dirs.forEach(name=>{ const child=makeFolderNode(treeJoin(m.path,name),name,node.depth+1); node.children.append(child.row,child.children); });
       files.forEach(name=>{ const r=document.createElement('div'); r.className='trow'; r.style.paddingLeft=((node.depth+1)*14+6)+'px';
         const ti=document.createElement('span'); ti.className='ti'; ti.textContent='📄'; const tn=document.createElement('span'); tn.className='tn'; tn.textContent=name; tn.title=treeJoin(m.path,name);
-        r.append(ti,tn); r.onclick=()=>{ E.treeModal.classList.add('hidden'); treeMode=false; openFile(treeJoin(m.path,name)); }; node.children.appendChild(r); });
+        r.append(ti,tn); r.onclick=()=>{ closeTree(); openFile(treeJoin(m.path,name)); }; node.children.appendChild(r); });
     }
-    function openTree(){ if(!curCwd){ toast('Abra uma sessão com uma pasta de trabalho para explorar os arquivos.'); return; }
-      treeMode=true; treePending.clear(); E.treeModal.classList.remove('hidden'); E.treeRootPath.textContent=curCwd; E.treeBody.innerHTML='';
+    function closeTree(){ E.treePanel.classList.add('hidden'); treeMode=false; }
+    function openTree(){ if(!E.treePanel.classList.contains('hidden')){ closeTree(); return; }   // clicar de novo fecha
+      if(!curCwd){ toast('Abra uma sessão com uma pasta de trabalho para explorar os arquivos.'); return; }
+      treeMode=true; treePending.clear(); E.treePanel.classList.remove('hidden'); E.treeRootPath.textContent=curCwd; E.treeRootPath.title=curCwd; E.treeBody.innerHTML='';
       const root=makeFolderNode(curCwd, curCwd.split(/[\\/]/).filter(Boolean).pop()||curCwd, 0); E.treeBody.append(root.row,root.children); toggleFolder(root); }
     if(E.treeBtn) E.treeBtn.onclick=openTree;
-    if(E.treeClose) E.treeClose.onclick=()=>{ E.treeModal.classList.add('hidden'); treeMode=false; };
+    if(E.treeClose) E.treeClose.onclick=closeTree;
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
