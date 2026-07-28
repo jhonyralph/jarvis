@@ -8,7 +8,9 @@
     "start": "electron .",
     "icon": "electron scripts/make-icon.mjs",
     "dist": "electron-builder",
-    "doctor": "node -e \"try{console.log('electron', require('electron/package.json').version)}catch{console.log('electron: not installed — run npm install')}\""
+    "doctor": "node -e \"try{console.log('electron', require('electron/package.json').version)}catch{console.log('electron: not installed — run npm install')}\"",
+    "shortcut": "node scripts/make-shortcut.mjs",
+    "shortcut:remove": "node scripts/make-shortcut.mjs --remove"
   },
   "devDependencies": {
     "electron": "^34.0.0",

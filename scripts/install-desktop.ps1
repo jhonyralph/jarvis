@@ -18,7 +18,8 @@ param(
   [string]$HubUrl = "",
   [switch]$Run,
   [switch]$Build,
-  [switch]$Force   # reinstala do zero (apaga node_modules do desktop)
+  [switch]$Force,      # reinstala do zero (apaga node_modules do desktop)
+  [switch]$NoShortcut  # nao criar o atalho no Menu Iniciar
 )
 
 $ErrorActionPreference = 'Stop'
@@ -130,7 +131,22 @@ if ($HubUrl) {
   Warn 'JARVIS_APP_HUB_URL nao definido - o app vai apontar para http://127.0.0.1:4577' 'para um Hub remoto: -HubUrl "https://<hub>.ts.net"'
 }
 
-# --- 4. build / run (opcionais) ----------------------------------------------------------------
+# --- 4. atalho no lancador do SO ----------------------------------------------------------------
+# Instalar e depois ter que abrir "na mao" (npm start) e ruim: o app tem que ficar encontravel pela
+# tecla Windows como qualquer outro. O atalho aponta para ESTE checkout, entao continua rodando o
+# codigo atual - sem reempacotar a cada mudanca.
+Write-Host ''
+Write-Host 'Atalho' -ForegroundColor White
+Push-Location $app
+try {
+  if (-not $NoShortcut) {
+    & node (Join-Path $app 'scripts\make-shortcut.mjs')
+    if ($LASTEXITCODE -ne 0) { Warn 'nao consegui criar o atalho' 'crie manualmente com: cd desktop; npm run shortcut' }
+    else { Ok 'atalho no Menu Iniciar (tecla Windows -> "Jarvis")' }
+  } else { Ok 'atalho ignorado (-NoShortcut)' }
+} finally { Pop-Location }
+
+# --- 5. build / run (opcionais) ----------------------------------------------------------------
 Push-Location $app
 try {
   if ($Build) {

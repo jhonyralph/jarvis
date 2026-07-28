@@ -16,13 +16,14 @@
 # Exit code: 0 = ok, 1 = falhou (cada falha imprime a correção concreta).
 set -u
 
-HUB_URL=""; DO_RUN=0; DO_BUILD=0; DO_FORCE=0
+HUB_URL=""; DO_RUN=0; DO_BUILD=0; DO_FORCE=0; NO_SHORTCUT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --hub|-h) HUB_URL="${2:-}"; shift 2;;
     --run|-r) DO_RUN=1; shift;;
     --build|-b) DO_BUILD=1; shift;;
     --force|-f) DO_FORCE=1; shift;;
+    --no-shortcut) NO_SHORTCUT=1; shift;;
     *) echo "arg desconhecido: $1"; exit 1;;
   esac
 done
@@ -138,7 +139,26 @@ else
   warn "JARVIS_APP_HUB_URL não definido - o app vai apontar para http://127.0.0.1:4577" "para um Hub remoto: --hub https://<hub>.ts.net"
 fi
 
-# --- 4. build / run (opcionais) ----------------------------------------------------------------
+# --- 4. atalho no lançador do SO ----------------------------------------------------------------
+# Instalar e depois ter que abrir "na mão" (npm start) é ruim: o app tem que ficar encontrável na
+# busca do sistema como qualquer outro. O atalho aponta para ESTE checkout, então continua rodando o
+# código atual — sem reempacotar a cada mudança. (macOS: .app em ~/Applications, indexado pelo
+# Spotlight; Linux: .desktop em ~/.local/share/applications.)
+printf '\nAtalho\n'
+if [ "$NO_SHORTCUT" -eq 0 ]; then
+  if node "$APP/scripts/make-shortcut.mjs"; then
+    case "$(uname -s)" in
+      Darwin) ok "atalho em ~/Applications (Spotlight: ⌘+espaço -> \"Jarvis\")";;
+      *) ok "entrada no menu de aplicativos (busque por \"Jarvis\")";;
+    esac
+  else
+    warn "não consegui criar o atalho" "crie manualmente com: cd desktop && npm run shortcut"
+  fi
+else
+  ok "atalho ignorado (--no-shortcut)"
+fi
+
+# --- 5. build / run (opcionais) ----------------------------------------------------------------
 if [ "$DO_BUILD" -eq 1 ]; then
   printf '\nBuild do instalador\n'
   case "$(uname -s)" in Darwin) TARGET="--mac";; *) TARGET="--linux";; esac

@@ -77,7 +77,21 @@ Windows signing are **your build step** — add the certs/env before a public re
 
 ### Finding the app in the OS
 
-After installing, "search for Jarvis" works on all three — but each platform gets there differently:
+**Running from source already gives you a launcher.** `npm run install:desktop` finishes by creating
+a shortcut that points at *this checkout*, so you press the Windows key / ⌘+Space / open the app menu,
+type "Jarvis", and it opens — no packaging step, and it always runs the current code (the
+"reload is the deploy" model still applies).
+
+| OS | What it creates |
+|---|---|
+| Windows | `Jarvis.lnk` in the per-user Start Menu |
+| macOS | a minimal `Jarvis.app` in `~/Applications` (Spotlight only indexes bundles, not scripts) |
+| Linux | `~/.local/share/applications/jarvis.desktop` |
+
+Skip it with `--no-shortcut` (`-NoShortcut` on Windows); manage it directly with
+`npm run shortcut` / `npm run shortcut:remove` inside `desktop/`.
+
+**Packaged installs** register themselves the usual way — each platform gets there differently:
 
 | OS | Installer | How it's found |
 |---|---|---|
