@@ -12,7 +12,28 @@ for the full spec and the phased plan.
 > (Electron + electron-builder) that you install here, so it **never** touches the Hub/runner
 > install or CI. Mirrors `mobile/`.
 
-## Run it (Phase 0 — no build step)
+## Install & run
+
+Use the per-OS installer script — it checks Node/npm versions, installs the dependencies
+(`npm ci` when a lockfile exists, `npm install` otherwise), **verifies the Electron binary
+actually downloaded** (it fails silently behind a proxy), warns about missing Linux system
+libraries, and can build or launch the app:
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1 -HubUrl "https://jarvis.your-tailnet.ts.net"
+powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1 -Run     # install + launch
+powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1 -Build   # install + build installer
+```
+
+```sh
+# macOS / Linux
+./scripts/install-desktop.sh --hub https://jarvis.your-tailnet.ts.net
+./scripts/install-desktop.sh --run      # install + launch
+./scripts/install-desktop.sh --build    # install + build installer
+```
+
+Manual equivalent (if you prefer):
 
 ```sh
 cd desktop
