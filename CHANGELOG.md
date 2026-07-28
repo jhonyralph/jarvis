@@ -1,3 +1,16 @@
+# [0.2.0](https://github.com/jhonyralph/jarvis/compare/v0.1.0...v0.2.0) (2026-07-28)
+
+
+### Bug Fixes
+
+* **test:** corrige 3 testes que so falhavam no Linux (CI vermelho desde 22/07) ([72f3f2b](https://github.com/jhonyralph/jarvis/commit/72f3f2b163d782f3d2044fcb2afaafcff1a274ff))
+* **test:** e2e de update espera o Hub morrer antes de resubir na mesma porta ([c9aa5bd](https://github.com/jhonyralph/jarvis/commit/c9aa5bdc89bcbc4f1965d7f4b5f199035d22957f))
+
+
+### Features
+
+* **desktop:** atualizacao do app controlada pela UI web (banner + verificar + instalar) ([b85fed7](https://github.com/jhonyralph/jarvis/commit/b85fed74c4b9a86b79507000068d4a55420a061c))
+
 # Changelog
 
 All notable changes to Jarvis. Versions follow the root `package.json`.
