@@ -1,3 +1,10 @@
+## [0.2.1](https://github.com/jhonyralph/jarvis/compare/v0.2.0...v0.2.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **ci:** anexa instaladores na release do semantic-release (releaseType: release) ([ac3967e](https://github.com/jhonyralph/jarvis/commit/ac3967e0efddca3d01d14482cdff564bf362e322))
+
 # [0.2.0](https://github.com/jhonyralph/jarvis/compare/v0.1.0...v0.2.0) (2026-07-28)
 
 
