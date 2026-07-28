@@ -20,6 +20,10 @@ publish:
   provider: github
   owner: jhonyralph
   repo: jarvis
+  # O semantic-release JÁ cria a Release publicada; o default do electron-builder é `draft` e ele
+  # então recusa anexar ("existing type not compatible with publishing type") — pulando os
+  # instaladores em silêncio, com exit 0. `release` faz ele subir os assets na release existente.
+  releaseType: release
 
 mac:
   target: [dmg, zip] # zip is required for electron-updater on macOS
