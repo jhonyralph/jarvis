@@ -38,3 +38,4 @@ export * from "./council.js";
 export * from "./tournament.js";
 export * from "./framework.js";
 export * from "./preview.js";
+export * from "./terminal.js";

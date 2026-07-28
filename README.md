@@ -103,6 +103,9 @@ Every operational script is exposed the same way (run `npm run scripts:list` to 
 | `npm run doctor` | read-only environment check |
 | `npm run install:runner` | make this machine a runner |
 | `npm run install:desktop` | install/run the Electron client |
+| `npm run build:android` | generate the Android debug APK |
+| `npm run build:aab` | generate the Android release bundle |
+| `npm run build:apple` / `build:ios` | prepare/open the iOS project on macOS |
 | `npm run start:hub` / `start:runner` | run in the foreground |
 | `npm run jarvis -- update` | admin CLI (update, status…) |
 
@@ -159,8 +162,8 @@ sh scripts/jarvis.sh invite     # invite for another device
 powershell -File scripts\jarvis.ps1 owner
 ```
 
-Open the printed link on the device. The UI can also mint these: 🔐 → **＋
-Adicionar máquina**.
+Open the printed link on the device. The UI can also mint these: ⚙ Settings →
+**🔐 Dispositivos & convites** → **＋ Adicionar máquina**.
 
 ### 3. More machines (runners)
 

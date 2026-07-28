@@ -8,8 +8,8 @@
 // Everything else (POST, /pasted/ images, cross-origin) is passed straight through, untouched.
 // Bumped v1 → v2 when the app JS moved out of index.html into /app.js: the shell now MUST cache the
 // external script or an offline open would render an empty page.
-const CACHE = "jarvis-shell-v2";
-const SHELL = ["/", "/app.js", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "jarvis-shell-v3";
+const SHELL = ["/", "/app.js", "/manifest.webmanifest", "/icon.svg", "/vendor/xterm/xterm.css", "/vendor/xterm/xterm.js", "/vendor/xterm/addon-fit.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {

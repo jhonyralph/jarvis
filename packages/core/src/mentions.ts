@@ -26,7 +26,7 @@ export function listMentionFiles(cwd: string, query = "", limit = 40): string[] 
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
       if (e.isDirectory()) {
-        if (depth < 8 && !e.name.startsWith(".") && !SKIP_DIRS.has(e.name)) stack.push({ dir: join(dir, e.name), depth: depth + 1 });
+        if (depth < 8 && !SKIP_DIRS.has(e.name)) stack.push({ dir: join(dir, e.name), depth: depth + 1 });
         continue;
       }
       if (!e.isFile()) continue;

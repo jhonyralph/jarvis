@@ -30,6 +30,7 @@ import {
   ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
   pendingActivityReplay,
   formatCouncilFinalMessage, managedChildExecutionId,
+  TerminalManager,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type MemoryAppendPreview,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
@@ -106,6 +107,7 @@ const memoryProvenance = new MemoryProvenanceStore(JDIR);
 const frameworkProvenance = new FrameworkProvenanceStore(JDIR);
 const nativeBindingCollisions = agents.nativeBindingCollisions();
 if (nativeBindingCollisions.length) console.error("[runner] colisões de sessão nativa detectadas; turnos afetados serão bloqueados:", JSON.stringify(nativeBindingCollisions));
+void agents.describe().catch((e) => console.warn("[runner] catálogo de IAs não aqueceu em background:", String(e?.message ?? e)));
 const executionStore = new ExecutionStore({ root: join(JDIR, "executions"), maxEventsPerRoot: EXECUTION_MAX_EVENTS });
 const compactedExecutions = executionStore.compactBefore(Date.now() - EXECUTION_RETENTION_DAYS * 86_400_000);
 if (compactedExecutions.roots) console.log(`[runner] retenção de trabalhos: ${compactedExecutions.roots} diário(s) compactado(s), ${compactedExecutions.droppedEvents} evento(s) detalhado(s) removido(s)`);
@@ -152,6 +154,12 @@ function flushOutbox(): void {
   console.log(`[runner] reconectado — reenviando ${pending.length} evento(s) de turno bufferizados`);
   for (const m of pending) send(m);
 }
+const terminals = new TerminalManager({
+  defaultCwd: CWD,
+  max: Math.max(1, Number(process.env.JARVIS_TERMINAL_MAX || 4)),
+  onOutput: (terminal, data) => send({ t: "terminal_output", terminalId: terminal.id, data }),
+  onExit: (terminal, exitCode, signal) => send({ t: "terminal_closed", terminalId: terminal.id, exitCode, signal }),
+});
 
 async function maybeSelfUpdate(reason: string, forceCheck = false): Promise<void> {
   if (RUNNER_SELF_UPDATE_MS <= 0) return;
@@ -310,7 +318,7 @@ try {
   # incorreto assim que trocamos para "cmd /c start /b" — cmd.exe encerra quase na hora,
   # deixando o launcher achar o updater morto e destravar o lock com o update ainda rodando).
   # Best-effort: se falhar, o Node já escreveu um pid provisório antes de spawnar.
-  try { [ordered]@{ requestId = $RequestId; targetCommit = $Target; pid = $PID; at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } | ConvertTo-Json | Set-Content -Path $LockFile -Encoding UTF8 } catch {}
+  try { [ordered]@{ requestId = $RequestId; targetCommit = $Target; pid = $PID; provisional = $false; phase = "running"; at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } | ConvertTo-Json | Set-Content -Path $LockFile -Encoding UTF8 } catch {}
   Add-Progress "parando runner antes do upgrade"
   # The launcher is the scheduled task. Keep it alive: the update lock makes it wait while this
   # detached updater owns the checkout. Stopping the task here can also terminate this script and
@@ -339,6 +347,7 @@ try {
   $current = Git-Out @("rev-parse", "--short", "HEAD")
   $receipt = [ordered]@{ requestId = $RequestId; targetCommit = $Target; current = $current; preparedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
   $receipt | ConvertTo-Json -Depth 5 | Set-Content -Path $ReceiptFile -Encoding UTF8
+  Write-Result $true $false $current
 } catch {
   Add-Progress ("ERRO na preparação: " + $_)
   if ($previous) {
@@ -371,7 +380,7 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
   const scriptPath = join(JDIR, `runner-update-${Date.now()}.ps1`);
   cleanupRunnerUpdateScripts();
   try {
-    writeFileSync(UPDATE_LOCK_FILE, JSON.stringify({ requestId, targetCommit, pid: process.pid, at: Date.now() }), "utf8");
+    writeFileSync(UPDATE_LOCK_FILE, JSON.stringify({ requestId, targetCommit, pid: process.pid, provisional: true, phase: "handoff", at: Date.now() }), "utf8");
     // #3: o updater loga num arquivo PRÓPRIO (runner-update.log). Antes escrevia no runner.log, que o
     // launcher mantém aberto (*>>): uma sharing violation engolia todo o rastro do updater ao morrer.
     writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), pid: process.pid, force: !!m.force }), "utf8");
@@ -433,7 +442,9 @@ function stopTail(sid: string): void { const t = tails.get(sid); if (t) { clearI
 // otherwise pin the machine to "no AI" for the whole TTL. Success is cached for an hour, failure
 // only long enough to avoid a probe storm, so the machine recovers on its own after a login.
 let agentsCache: { at: number; list: string[] } | null = null;
+let agentsCacheReady = false;
 const OK_TTL = 3_600_000, FAIL_TTL = 30_000;
+function availableAgentsSnapshot(): string[] { return agentsCacheReady ? (agentsCache?.list || []) : agents.names(); }
 async function availableAgents(): Promise<string[]> {
   if (agentsCache && Date.now() - agentsCache.at < (agentsCache.list.length ? OK_TTL : FAIL_TTL)) return agentsCache.list;
   const out: string[] = [];
@@ -443,7 +454,17 @@ async function availableAgents(): Promise<string[]> {
   // look healthy in the UI and turned a clear auth problem into a mystery 401 on send.
   if (!out.length) console.warn('[runner] nenhuma IA disponível — autentique nesta máquina (ex.: `claude login`)');
   agentsCache = { at: Date.now(), list: out };
+  agentsCacheReady = true;
   return out;
+}
+async function agentUsageSnapshot(): Promise<Record<string, unknown | null>> {
+  const agentUsage: Record<string, unknown | null> = {};
+  for (const name of agents.names()) { const a = agents.get(name); try { agentUsage[name] = a.usage ? await a.usage() : null; } catch { agentUsage[name] = null; } }
+  return agentUsage;
+}
+async function publishAgentCatalog(): Promise<void> {
+  const [available, descriptors, agentUsage] = await Promise.all([availableAgents(), agents.describe(), agentUsageSnapshot()]);
+  send({ t: "caps", agent: DEFAULT_AGENT, caps: descriptors, agents: available, agentUsage });
 }
 
 function allSessions(): RunnerSession[] {
@@ -939,18 +960,13 @@ function connect(): void {
   hb.unref?.();
   sock.on("open", async () => {
     reconnectDelay = 1000;
-    const available = await availableAgents();
-    // Publish the full catalog (including not_installed/unauthenticated reasons). `agents` remains
-    // the executable allow-list; descriptors let the UI explain why another adapter is unavailable.
-    const descriptors = await agents.describe();
-    const agentUsage: Record<string, unknown | null> = {};
-    for (const name of agents.names()) { const a = agents.get(name); try { agentUsage[name] = a.usage ? await a.usage() : null; } catch { agentUsage[name] = null; } }
     const info: RunnerInfo = {
-      runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: available,
-      agentDescriptors: descriptors, agentUsage, protocolVersion: RUNNER_PROTOCOL_VERSION,
+      runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: availableAgentsSnapshot(),
+      agentDescriptors: agents.describeSnapshot(), agentUsage: {}, protocolVersion: RUNNER_PROTOCOL_VERSION,
       version: VERSION, commit: await repoCommit(RUNNER_ROOT), updateReceipt: updateReceipt(), updateResult: readUpdateResult(), label: process.env.JARVIS_LABEL || undefined,
     };
     send({ t: "register", token: TOKEN, info });
+    void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));
   });
   sock.on("message", async (data) => {
     lastInbound = Date.now();
@@ -962,7 +978,7 @@ function connect(): void {
         clearUpdateResult();
         flushOutbox();
         pushExecutionManifest(`welcome:${RUNNER_ID}`);
-        pushSessions(); pushRuns(); send({ t: "caps", agent: DEFAULT_AGENT, caps: await agents.describe() });
+        pushSessions(); pushRuns(); void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));
         return;
       }
       if (m.t === "reject") {
@@ -972,6 +988,29 @@ function connect(): void {
         return;
       }
       if (m.t === "ping") { send({ t: "pong" }); return; }
+      if (m.t === "terminal_open") {
+        if (updateInProgress) { send({ t: "terminal_error", reqId: m.reqId, message: "máquina drenando para atualização — tente novamente após ela reconectar" }); return; }
+        try {
+          const terminal = terminals.open({ cwd: m.cwd, shell: m.shell, title: m.title, cols: m.cols, rows: m.rows });
+          send({ t: "terminal_opened", reqId: m.reqId, terminal });
+        } catch (error: any) {
+          send({ t: "terminal_error", reqId: m.reqId, message: String(error?.message ?? error) });
+        }
+        return;
+      }
+      if (m.t === "terminal_list") { send({ t: "terminal_list", reqId: m.reqId, terminals: terminals.list() }); return; }
+      if (m.t === "terminal_input" && typeof m.terminalId === "string" && typeof m.data === "string") {
+        if (!terminals.input(m.terminalId, m.data)) send({ t: "terminal_error", terminalId: m.terminalId, message: "terminal não encontrado" });
+        return;
+      }
+      if (m.t === "terminal_resize" && typeof m.terminalId === "string") {
+        if (!terminals.resize(m.terminalId, m.cols, m.rows)) send({ t: "terminal_error", terminalId: m.terminalId, message: "terminal não encontrado" });
+        return;
+      }
+      if (m.t === "terminal_close" && typeof m.terminalId === "string") {
+        if (!terminals.close(m.terminalId)) send({ t: "terminal_error", terminalId: m.terminalId, message: "terminal não encontrado" });
+        return;
+      }
       if (updateInProgress && ["send", "execution_delegate", "council_start", "framework_publish", "new", "configure"].includes(m.t)) {
         send({ t: "error", reqId: m.reqId, message: "máquina drenando para atualização — tente novamente após ela reconectar" }); return;
       }
@@ -1050,7 +1089,7 @@ function connect(): void {
       if (m.t === "listdir") {
         const base = (typeof m.path === "string" && m.path) ? m.path : homedir();
         try {
-          const all = readdirSync(base, { withFileTypes: true }).filter((e) => !e.name.startsWith("."));
+          const all = readdirSync(base, { withFileTypes: true });
           const entries = all.filter((e) => e.isDirectory()).map((e) => e.name).sort((a, b) => a.localeCompare(b));
           // `files` só quando o cliente pede (m.files) — folder-picker legado não pede e segue só com pastas.
           const files = m.files ? all.filter((e) => e.isFile()).map((e) => e.name).sort((a, b) => a.localeCompare(b)) : undefined;
@@ -1082,7 +1121,7 @@ function connect(): void {
         );
         return;
       }
-      if (m.t === "caps") { send({ t: "caps", agent: m.agent || DEFAULT_AGENT, caps: await agents.describe() }); return; }
+      if (m.t === "caps") { await publishAgentCatalog(); return; }
       if (m.t === "usage" && typeof m.reqId === "string") {
         const name = typeof m.agent === "string" && agents.names().includes(m.agent) ? m.agent : DEFAULT_AGENT;
         const adapter = agents.get(name);
@@ -1220,6 +1259,7 @@ function shutdown(sig: string): void {
   if (shuttingDown) return; shuttingDown = true;
   if (runAborts.size) console.log(`[runner] ${sig} — abortando ${runAborts.size} turno(s) em andamento`);
   for (const [, ctrl] of runAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
+  try { terminals.closeAll(); } catch { /* ignore */ }
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));

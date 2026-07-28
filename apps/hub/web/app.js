@@ -1,12 +1,22 @@
     // Register the service worker on every load (not just when push is enabled) so the app shell is
     // cached and opens OFFLINE — a dropped Tailscale link no longer yields a blank page. Caching is
     // network-first for the HTML, so an online reload still deploys the latest UI (see web/sw.js).
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    try {
+      const cap = window.Capacitor;
+      if (cap && (cap.isNativePlatform?.() || /^(android|ios)$/.test(cap.getPlatform?.() || ''))) {
+        document.documentElement.classList.add('native-shell');
+      }
+    } catch {}
+    try {
+      if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      }
+    } catch {}
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','fleetBtn','fleetModal','fleetBody','fleetClose','councilBtn','tourneyBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrBtn','qrModal','qrImg','qrUrl','qrClose','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setSearch','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setShareGeo','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwFileList','fwPath','fwEditor','fwImport','fwDelete','fwSave','fwVersion','fwPublish','fwStatus','setCancel','setClose','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
-      'secBtn','secModal','secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secClose',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','councilBtn','tourneyBtn','councilModal','councilClose','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','settingsBtn','settings','setSearch','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'setWake','setNoise','setPush','setBioLock','setShareGeo','setGate','setSlash','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwFileList','fwPath','fwEditor','fwImport','fwDelete','fwSave','fwVersion','fwPublish','fwStatus','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
@@ -107,12 +117,96 @@
     // present-tense verb → past-tense, once the action has finished
     const pastVerb={Read:'Lido',Edit:'Editado',Write:'Criado',NotebookEdit:'Editado',MultiEdit:'Editado',Grep:'Buscado',Glob:'Listado',WebFetch:'Aberto',WebSearch:'Pesquisado',Bash:'Executado'};
     function pastify(name,summary){ const pv=pastVerb[name]; return pv?String(summary||'').replace(/^\S+/,pv):summary; }
+    function fileBaseName(path){ return String(path||'').split(/[\\/]/).pop()||String(path||'arquivo'); }
+    function normPathKey(path){ return String(path||'').replace(/\\/g,'/').trim().toLowerCase(); }
+    function isFileToolName(name){ return /Edit$/.test(name||'')||name==='Write'||name==='Read'||name==='NotebookEdit'; }
+    function isMutableFileTool(name){ return /Edit$/.test(name||'')||name==='Write'||name==='NotebookEdit'; }
+    function isGenericThinking(text){ return /^(pensando|thinking)\s*[.….]?$/i.test(String(text||'Pensando').trim()||'Pensando'); }
+    function fileGroupKey(ev){ return ev&&ev.path&&isMutableFileTool(ev.name)?'file\0'+(ev.parentId||'root')+'\0'+normPathKey(ev.path):''; }
+    function sameFileGroup(a,b){ return fileGroupKey(a)&&fileGroupKey(a)===fileGroupKey(b); }
+    function isRepeatableTool(name){ return ['Bash','Grep','Glob','WebFetch','WebSearch'].includes(name||''); }
+    function compactToolText(ev){ return String((ev&&ev.summary)||'').replace(/\s+/g,' ').trim(); }
+    function repeatToolKey(ev){ const txt=compactToolText(ev); return ev&&isRepeatableTool(ev.name)&&txt?'repeat\0'+(ev.parentId||'root')+'\0'+ev.name+'\0'+txt.toLowerCase():''; }
+    function sameRepeatGroup(a,b){ return repeatToolKey(a)&&repeatToolKey(a)===repeatToolKey(b); }
+    function fileGroupTitle(items,done){
+      const list=items||[], first=list[0]||{}, base=fileBaseName(first.path), n=list.length;
+      const verb=done?(first.name==='Write'&&n===1?'Criado':'Editado'):(first.name==='Write'&&n===1?'Criando':'Editando');
+      return `${verb} ${base}${n>1?' · '+n+' alterações':''}`;
+    }
+    function sumCounts(items){ return (items||[]).reduce((a,x)=>({adds:a.adds+(x.adds||0),dels:a.dels+(x.dels||0)}),{adds:0,dels:0}); }
+    function renderGroupBody(group,opts){
+      const body=group.querySelector('.tgbody'); if(!body)return; body.innerHTML='';
+      (group._items||[]).forEach((it,i)=>{
+        const row=document.createElement('div'); row.className='tgitem';
+        const title=document.createElement('span'); title.className='tgtitle'; title.textContent=(i+1)+'. '+pastify(it.name,it.summary||it.name||fileBaseName(it.path)); row.appendChild(title);
+        if(it.adds||it.dels){ const c=document.createElement('span'); c.className='tcnt'; c.innerHTML=`<span class="fadd">+${it.adds||0}</span> <span class="fdel">-${it.dels||0}</span>`;
+          if(it.rows&&it.rows.length){ c.classList.add('clk'); c.title='Ver o diff desta alteração'; c.onclick=(e)=>{ e.stopPropagation(); toggleInlineDiff(row,it.rows,it.adds,it.dels); }; }
+          row.appendChild(c); }
+        if(it.detail){ row.title='Detalhe disponível no resumo expandido'; }
+        body.appendChild(row);
+      });
+    }
+    function refreshToolGroup(group,done,opts){
+      const items=group._items||[], first=items[0]||{}, title=fileGroupTitle(items,done);
+      group.dataset.sum=title; group.dataset.name=first.name||'Edit';
+      const ttl=group.querySelector('.ttl'); if(ttl) ttl.textContent=title;
+      const multi=items.length>1, btn=group.querySelector('.xpand'), body=group.querySelector('.tgbody');
+      group.classList.toggle('single',!multi);
+      if(btn){ btn.classList.toggle('hidden',!multi); btn.disabled=!multi; if(!multi){ btn.textContent='▸'; btn.title=''; } }
+      if(!multi){ group.classList.remove('expanded'); if(body){ body.classList.add('hidden'); body.innerHTML=''; } }
+      const c=sumCounts(items), cnt=group.querySelector('.tcnt.total');
+      if(cnt){
+        cnt.innerHTML=`<span class="fadd">+${c.adds||0}</span> <span class="fdel">-${c.dels||0}</span>`;
+        cnt.classList.remove('clk'); cnt.title=''; cnt.onclick=null;
+        if(!multi&&first.rows&&first.rows.length){ cnt.classList.add('clk'); cnt.title='Ver o diff desta alteração'; cnt.onclick=(e)=>{ e.stopPropagation(); toggleInlineDiff(group,first.rows,first.adds,first.dels); }; }
+        else if(!multi&&first.path){ cnt.classList.add('clk'); cnt.title='Ver diff no painel'; cnt.onclick=(e)=>{ e.stopPropagation(); openFile(first.path,'edit',opts); }; }
+      }
+      if(multi) renderGroupBody(group,opts);
+    }
+    function toolGroupEl(items,done,opts){
+      const list=(items||[]).slice(), first=list[0]||{}, d=document.createElement('div'); d.className='strtool strgroup'; d._items=list; d.dataset.group='file';
+      const head=document.createElement('div'); head.className='strtoolhead';
+      const btn=document.createElement('button'); btn.type='button'; btn.className='xpand'; btn.title='Expandir alterações'; btn.textContent='▸'; head.appendChild(btn);
+      const ico=document.createElement('span'); ico.textContent=toolIcon(first.name); head.appendChild(ico);
+      const ttl=document.createElement('span'); ttl.className='ttl'; ttl.textContent=fileGroupTitle(list,done); head.appendChild(ttl);
+      if(first.path){ ttl.classList.add('clk'); ttl.title='Abrir '+first.path; ttl.onclick=(e)=>{ e.stopPropagation(); openFile(first.path,'read',opts); }; }
+      const counts=sumCounts(list); if(counts.adds||counts.dels){ const c=document.createElement('span'); c.className='tcnt total'; head.appendChild(c); }
+      const body=document.createElement('div'); body.className='tdetail tgbody hidden'; d.appendChild(head); d.appendChild(body);
+      btn.onclick=(e)=>{ e.stopPropagation(); const open=body.classList.toggle('hidden'); d.classList.toggle('expanded',!open); btn.textContent=open?'▸':'▾'; btn.title=open?'Expandir alterações':'Recolher alterações'; };
+      refreshToolGroup(d,done,opts); if(done)d.classList.add('tdone'); return d;
+    }
+    function appendToolGroupItem(group,item,done,opts){ group._items=group._items||[]; group._items.push(item); refreshToolGroup(group,done,opts); if(done)group.classList.add('tdone'); else group.classList.remove('tdone'); }
+    function repeatGroupTitle(items,done){
+      const list=items||[], first=list[0]||{}, n=list.length, txt=(done?pastify(first.name,first.summary||first.name):(first.summary||first.name)||'').replace(/\s+/g,' ');
+      const one=txt.length>96?txt.slice(0,93)+'…':txt;
+      return `${one}${n>1?' · '+n+' vezes':''}`;
+    }
+    function refreshRepeatGroup(group,done){
+      const items=group._items||[], first=items[0]||{}, title=repeatGroupTitle(items,done);
+      group.dataset.sum=title; group.dataset.name=first.name||'Bash';
+      const ttl=group.querySelector('.ttl'); if(ttl)ttl.textContent=title;
+      const body=group.querySelector('.tgbody'); if(body){ body.innerHTML=''; items.forEach((it,i)=>{ const row=document.createElement('div'); row.className='tgitem';
+        const title=document.createElement('span'); title.className='tgtitle'; title.textContent=(i+1)+'. '+pastify(it.name,it.summary||it.name||'ação'); row.appendChild(title);
+        if(it.detail){ const btn=document.createElement('button'); btn.type='button'; btn.className='xpand'; btn.textContent='▸'; btn.title='Ver detalhe'; const det=document.createElement('div'); det.className='tdiff hidden'; det.textContent=it.detail; btn.onclick=e=>{e.stopPropagation();const h=det.classList.toggle('hidden');btn.textContent=h?'▸':'▾';}; row.appendChild(btn); body.appendChild(row); body.appendChild(det); }
+        else body.appendChild(row); }); }
+    }
+    function repeatGroupEl(items,done){
+      const list=(items||[]).slice(), first=list[0]||{}, d=document.createElement('div'); d.className='strtool strrepeat'; d._items=list; d.dataset.group='repeat';
+      const head=document.createElement('div'); head.className='strtoolhead';
+      const btn=document.createElement('button'); btn.type='button'; btn.className='xpand'; btn.title='Expandir execuções'; btn.textContent='▸'; head.appendChild(btn);
+      const ico=document.createElement('span'); ico.textContent=toolIcon(first.name); head.appendChild(ico);
+      const ttl=document.createElement('span'); ttl.className='ttl'; head.appendChild(ttl);
+      const body=document.createElement('div'); body.className='tdetail tgbody hidden'; d.appendChild(head); d.appendChild(body);
+      btn.onclick=e=>{e.stopPropagation();const h=body.classList.toggle('hidden');d.classList.toggle('expanded',!h);btn.textContent=h?'▸':'▾';btn.title=h?'Expandir execuções':'Recolher execuções';};
+      refreshRepeatGroup(d,done); if(done)d.classList.add('tdone'); return d;
+    }
+    function appendRepeatGroupItem(group,item,done){ group._items=group._items||[]; group._items.push(item); refreshRepeatGroup(group,done); if(done)group.classList.add('tdone'); else group.classList.remove('tdone'); }
     // A tool-activity block (icon + summary + optional +/- counts). File tools are clickable
     // → open the viewer/diff panel. done=true shows past tense ("Editado"); reused by streaming
     // (present tense while running, flipped on done) AND by rebuilt history (already done).
     function toolRowEl(name,summary,path,adds,dels,done,rows,detail,opts){
       const d=document.createElement('div'); d.className='strtool'; d.dataset.name=name||''; d.dataset.sum=summary||'';
-      const isFile=/Edit$/.test(name||'')||name==='Write'||name==='Read'||name==='NotebookEdit';
+      const isFile=isFileToolName(name);
       const head=document.createElement('div'); head.className='strtoolhead';
       head.innerHTML=`<span>${toolIcon(name)}</span><span class="ttl">${esc((done?pastify(name,summary):summary)||name||'')}</span>`;
       const ttl=head.querySelector('.ttl');
@@ -142,7 +236,7 @@
       (rows||[]).forEach(r=>{ const cls=r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx'; const ln=document.createElement('span'); ln.className='dline '+cls; ln.textContent=r.s; w.appendChild(ln); });
       block.appendChild(w); w.scrollIntoView({block:'nearest'}); }
     // flip a live tool block to past tense when its turn finishes
-    function setToolDone(block){ if(block.classList.contains('tdone'))return; const nm=block.dataset.name, ttl=block.querySelector('.ttl'); if(ttl&&nm) ttl.textContent=pastify(nm,block.dataset.sum); block.classList.add('tdone'); }
+    function setToolDone(block){ if(block.classList.contains('tdone'))return; if(block.classList.contains('strgroup')){ refreshToolGroup(block,true); block.classList.add('tdone'); return; } if(block.classList.contains('strrepeat')){ refreshRepeatGroup(block,true); block.classList.add('tdone'); return; } const nm=block.dataset.name, ttl=block.querySelector('.ttl'); if(ttl&&nm) ttl.textContent=pastify(nm,block.dataset.sum); block.classList.add('tdone'); }
     // Flip the tools ALREADY placed in a container to past tense ("Editando"→"Editado") the moment the
     // NEXT action in that container starts — a finished action shouldn't sit in present tense for the
     // rest of a long turn (it used to flip only when the WHOLE turn ended). Direct children only, so a
@@ -193,6 +287,32 @@
         .trim().toLowerCase();
       return target?'read\0'+(parentId||'root')+'\0'+target:'';
     }
+    function compactActivity(items){
+      const fileCounts={};
+      (items||[]).forEach(ev=>{ const k=ev&&ev.kind==='tool'&&fileGroupKey(ev); if(k)fileCounts[k]=(fileCounts[k]||0)+1; });
+      const out=[], fileGroups={};
+      (items||[]).forEach(ev=>{
+        if(ev&&ev.kind==='thinking'&&isGenericThinking(ev.text))return;
+        const fk=ev&&ev.kind==='tool'&&fileGroupKey(ev);
+        if(fk&&fileCounts[fk]>1){
+          if(fileGroups[fk]){ fileGroups[fk].items.push(ev); return; }
+          const group={kind:'tool_group',parentId:ev.parentId,executionId:ev.executionId,items:[ev]};
+          fileGroups[fk]=group; out.push(group); return;
+        }
+        if(fk){
+          const prev=out[out.length-1];
+          if(prev&&prev.kind==='tool_group'&&sameFileGroup(prev.items[0],ev)){ prev.items.push(ev); return; }
+          if(prev&&prev.kind==='tool'&&sameFileGroup(prev,ev)){ out[out.length-1]={kind:'tool_group',parentId:prev.parentId,executionId:prev.executionId,items:[prev,ev]}; return; }
+        }
+        if(ev&&ev.kind==='tool'&&repeatToolKey(ev)){
+          const prev=out[out.length-1];
+          if(prev&&prev.kind==='tool_repeat_group'&&sameRepeatGroup(prev.items[0],ev)){ prev.items.push(ev); return; }
+          if(prev&&prev.kind==='tool'&&sameRepeatGroup(prev,ev)){ out[out.length-1]={kind:'tool_repeat_group',parentId:prev.parentId,executionId:prev.executionId,items:[prev,ev]}; return; }
+        }
+        out.push(ev);
+      });
+      return out;
+    }
     function normalizeActivity(events){ const out=[], tools={};
       const addTool=t=>{ const callKey=t.toolId?(t.parentId||'root')+'\0'+t.toolId:''; const readKey=readToolKey(t.name,t.path,t.summary,t.detail,t.parentId); const key=readKey||callKey,old=key&&tools[key]; if(old)Object.assign(old,t);else{if(key)tools[key]=t;out.push(t);} };
       (events||[]).forEach(ev=>{ if(ev&&ev.schemaVersion===1){
@@ -200,7 +320,7 @@
           else if(ev.kind==='thinking') out.push({kind:'thinking',text:ev.text,parentId:ev.parentId,executionId:ev.executionId});
           else if(/^tool_/.test(ev.kind)&&ev.tool) addTool({kind:'tool',name:ev.tool.name,summary:ev.tool.summary,detail:ev.tool.detail,path:ev.tool.path,adds:ev.tool.adds,dels:ev.tool.dels,rows:ev.tool.rows,toolId:ev.tool.callId,parentId:ev.tool.parentId,status:ev.tool.status,error:ev.tool.error,executionId:ev.executionId});
           else if(ev.kind==='plan') out.push({kind:'tool',name:'Plan',summary:ev.plan&&ev.plan.title||ev.text||'Plano atualizado',status:'completed',parentId:ev.parentId,executionId:ev.executionId});
-        } else if(ev&&ev.kind==='tool') addTool({...ev}); else out.push(ev); }); return out; }
+        } else if(ev&&ev.kind==='tool') addTool({...ev}); else out.push(ev); }); return compactActivity(out); }
     function renderActivityBlock(events,opts){
       const flow=document.createElement('div'); flow.className='strflow acthist';
       const subAgents={}; let curTextEl=null, curTextRaw='', rootText=false;
@@ -214,7 +334,13 @@
         closeTextBlock(); flow.appendChild(wrap);
         const rec={wrap,body,title,countEl,open,count:0,preview:null,previewText:''}; subAgents[id]=rec; if(executionId)bindInlineWork(rec,executionId); return rec; }
       normalizeActivity(events).forEach(ev=>{
-        if(ev.kind==='tool'){
+        if(ev.kind==='tool_group'){
+          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); sa.body.appendChild(toolGroupEl(ev.items,true,opts)); sa.count+=(ev.items||[]).length; sa.countEl.textContent=sa.count; return; }
+          closeTextBlock(); flow.appendChild(toolGroupEl(ev.items,true,opts));
+        } else if(ev.kind==='tool_repeat_group'){
+          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); sa.body.appendChild(repeatGroupEl(ev.items,true)); sa.count+=(ev.items||[]).length; sa.countEl.textContent=sa.count; return; }
+          closeTextBlock(); flow.appendChild(repeatGroupEl(ev.items,true));
+        } else if(ev.kind==='tool'){
           if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); sa.body.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail,opts)); sa.count++; sa.countEl.textContent=sa.count; return; }
           if((ev.name==='Task'||ev.name==='Agent')&&ev.toolId){ ensureSA(ev.toolId,(ev.summary||'').replace(/^Subagente:\s*/,'')||'sub-agente',ev.executionId); return; }
           closeTextBlock(); flow.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail,opts));
@@ -251,6 +377,71 @@
     }
     const optimisticSessions=new Map();
     function machineLabel(id){ const m=machines.find(x=>x.id===id); return (m&&m.label)||id||'local'; }
+    const termMap={}, termOrder=[]; let termActive='';
+    const termKey=(runner,id)=>(runner||'local')+'\0'+id;
+    function termMachineLabel(runner){ return machineLabel(runner||selectedRunner()); }
+    function termCwd(){ return curCwd||cfg.lastCwd||''; }
+    function setTermEmpty(title,text){
+      if(!E.termEmpty)return;
+      E.termEmpty.classList.remove('hidden');
+      E.termEmpty.innerHTML='<b></b><span></span>';
+      E.termEmpty.querySelector('b').textContent=title||'Nenhum terminal aberto';
+      E.termEmpty.querySelector('span').textContent=text||'Abra uma aba para executar comandos diretamente na máquina selecionada.';
+    }
+    function termFit(rec){
+      if(!rec||!rec.term||!rec.fit)return;
+      try{ rec.fit.fit(); tx({t:'terminal_resize',runnerId:rec.runnerId,terminalId:rec.id,cols:rec.term.cols,rows:rec.term.rows}); }catch(e){}
+    }
+    function renderTermTabs(){
+      if(!E.termTabs)return; E.termTabs.innerHTML='';
+      termOrder.filter(k=>termMap[k]).forEach(k=>{
+        const rec=termMap[k], b=document.createElement('button'); b.type='button'; b.className='termtab'+(k===termActive?' active':''); b.title=(rec.cwd||'')+' · '+termMachineLabel(rec.runnerId);
+        const lbl=document.createElement('span'); lbl.className='tlbl'; lbl.textContent=(rec.title||'Terminal')+' · '+termMachineLabel(rec.runnerId); b.appendChild(lbl);
+        const x=document.createElement('button'); x.type='button'; x.className='tx'; x.textContent='✕'; x.title='Fechar terminal'; x.onclick=(e)=>{ e.stopPropagation(); tx({t:'terminal_close',runnerId:rec.runnerId,terminalId:rec.id}); closeTermLocal(k,false); };
+        b.appendChild(x); b.onclick=()=>selectTerm(k); E.termTabs.appendChild(b);
+      });
+      if(E.termEmpty)E.termEmpty.classList.toggle('hidden',termOrder.some(k=>termMap[k]));
+      if(E.termMeta){ const rec=termMap[termActive]; E.termMeta.textContent=rec?`${termMachineLabel(rec.runnerId)} · ${rec.cwd||'pasta padrão'}`:`${machineLabel(selectedRunner())} · pasta da sessão`; }
+    }
+    function selectTerm(k){
+      if(!termMap[k])return; termActive=k;
+      Object.keys(termMap).forEach(x=>{ if(termMap[x].pane)termMap[x].pane.classList.toggle('hidden',x!==k); });
+      renderTermTabs(); setTimeout(()=>{ const rec=termMap[k]; if(rec){ termFit(rec); try{rec.term.focus();}catch(e){} } },0);
+    }
+    function closeTermLocal(k){
+      const rec=termMap[k]; if(!rec)return;
+      try{ rec.term.dispose(); }catch(e){}
+      if(rec.pane&&rec.pane.parentNode)rec.pane.parentNode.removeChild(rec.pane);
+      delete termMap[k]; const i=termOrder.indexOf(k); if(i>=0)termOrder.splice(i,1);
+      if(termActive===k) termActive=termOrder.find(x=>termMap[x])||'';
+      if(termActive) selectTerm(termActive); else renderTermTabs();
+    }
+    function ensureTerm(terminal,runnerId){
+      if(!terminal||!terminal.id||!E.termBody)return null; const runner=runnerId||selectedRunner(), k=termKey(runner,terminal.id);
+      let rec=termMap[k]; if(rec){ Object.assign(rec,{title:terminal.title||rec.title,cwd:terminal.cwd||rec.cwd,shell:terminal.shell||rec.shell,runnerId:runner}); renderTermTabs(); return rec; }
+      const pane=document.createElement('div'); pane.className='termpane hidden'; pane.dataset.key=k; E.termBody.appendChild(pane);
+      const Term=window.Terminal, Fit=window.FitAddon&&window.FitAddon.FitAddon;
+      if(!Term){ pane.classList.remove('hidden'); pane.textContent='xterm não carregou'; if(E.termPanel){ E.termPanel.classList.remove('hidden'); E.termPanel.setAttribute('aria-hidden','false'); } if(E.termEmpty)E.termEmpty.classList.add('hidden'); return null; }
+      pane.classList.remove('hidden');
+      const term=new Term({ cursorBlink:true, convertEol:false, scrollback:8000, fontFamily:'ui-monospace, Menlo, Consolas, monospace', fontSize:13, theme:{ background:'#05070a', foreground:'#d1d5db', cursor:'#93c5fd', selectionBackground:'#2563eb55' } });
+      const fit=Fit?new Fit():null; if(fit)term.loadAddon(fit); term.open(pane);
+      rec=termMap[k]={ id:terminal.id, title:terminal.title||'Terminal', cwd:terminal.cwd||'', shell:terminal.shell||'', runnerId:runner, term, fit, pane };
+      term.onData(data=>tx({t:'terminal_input',runnerId:runner,terminalId:terminal.id,data}));
+      term.onResize(size=>tx({t:'terminal_resize',runnerId:runner,terminalId:terminal.id,cols:size.cols,rows:size.rows}));
+      termOrder.push(k); if(E.termPanel){ E.termPanel.classList.remove('hidden'); E.termPanel.setAttribute('aria-hidden','false'); } selectTerm(k); setTimeout(()=>termFit(rec),50); return rec;
+    }
+    function openTermPanel(create){
+      if(!E.termPanel)return; E.termPanel.classList.remove('hidden'); E.termPanel.setAttribute('aria-hidden','false'); renderTermTabs();
+      if(create!==false) newTerminal(); else tx({t:'terminal_list',runnerId:selectedRunner()});
+    }
+    function closeTermPanel(){ if(!E.termPanel)return; E.termPanel.classList.add('hidden'); E.termPanel.setAttribute('aria-hidden','true'); }
+    function newTerminal(){
+      const runnerId=selectedRunner(), reqId='term-'+uid(); tx({t:'terminal_open',reqId,runnerId,cwd:termCwd(),cols:100,rows:30,title:machineLabel(runnerId)});
+      if(E.termMeta)E.termMeta.textContent='Abrindo terminal em '+machineLabel(runnerId)+'…';
+      setTermEmpty('Abrindo terminal…','Aguardando resposta de '+machineLabel(runnerId)+'.');
+    }
+    const termResizeObs=window.ResizeObserver?new ResizeObserver(()=>{ const rec=termMap[termActive]; if(rec)termFit(rec); }):null;
+    if(termResizeObs&&E.termBody)termResizeObs.observe(E.termBody);
     function optimisticKey(s){ return (s.runnerId||'local')+'|'+s.id; }
     function mergeOptimisticSessions(list){
       const base=dedupeSessionsList(list), seen=new Set(base.map(optimisticKey)), now=Date.now(), fresh=[];
@@ -278,7 +469,7 @@
       const s=sessions.find(x=>x.id===id)||{};
       currentAgent=s.agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=s.cwd||''; curNative=!!s.native||isNative(id);
       curNativeWritable=false; curNativeId=''; curStarted=!!s.started; sessDeclModel=s.model||null; sessDeclEffort=s.effort||null; lastRouteReason='';
-      E.title.textContent=s.title||'Carregando sessão...'; refreshTitleInfo(); syncModelEffort();
+      E.title.textContent=s.title||'Carregando sessão...'; refreshTitleInfo(); syncModelEffort(); clearLimitBanner();
       clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false; updateStopStatus();
       const row=document.createElement('div'); row.className='msg bot pending sessionload';
@@ -309,7 +500,7 @@
       currentAgent=(m.session||{}).agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null; lastRouteReason='';   // modelo/esforço reais da sessão da máquina (só nativas mandam)
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0; maybeRestoreTree();
-      E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; E.log.innerHTML='';
+      E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearLimitBanner(); clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
       updateStopStatus();   // reflete o "parando…" da sessão ATUAL (por sessão, não global)
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
@@ -451,8 +642,8 @@
     const toolIcon = n => ({Bash:'🖥',Read:'📄',Edit:'✏️',Write:'✏️',NotebookEdit:'✏️',MultiEdit:'✏️',Grep:'🔎',Glob:'📁',Task:'🤖',Agent:'🤖',WebFetch:'🌐',WebSearch:'🌐',Thinking:'◔',Plan:'📋'}[n]||'🔧');
     // strFlow = container ordenado; curTextEl = bloco de texto aberto (null após uma ferramenta,
     // pra o próximo texto virar um bloco NOVO); curTextRaw = markdown acumulado desse bloco.
-    let strEl=null, strFlow=null, curTextEl=null, curTextRaw='', sawText=false, strTimer=null, strStart=0, strTimeEl=null, subAgents={}, liveTools={}, turnUsage=null, seenAgentEvents=new Set(), liveTurnId=null, cleanCancel=false;
-    function streamStartUI(startedAt){ if(strEl)return; clearPending(); curTextEl=null; curTextRaw=''; sawText=false; const at=Number(startedAt); strStart=Number.isFinite(at)&&at>0?Math.min(at,Date.now()):Date.now(); subAgents={}; liveTools={}; turnUsage=null;
+    let strEl=null, strFlow=null, curTextEl=null, curTextRaw='', sawText=false, strTimer=null, strStart=0, strTimeEl=null, subAgents={}, liveTools={}, liveFileGroups={}, liveLastGroupKey={}, looseActivityGroups={}, looseLastGroupKey='', turnUsage=null, seenAgentEvents=new Set(), liveTurnId=null, cleanCancel=false;
+    function streamStartUI(startedAt){ if(strEl)return; clearPending(); curTextEl=null; curTextRaw=''; sawText=false; const at=Number(startedAt); strStart=Number.isFinite(at)&&at>0?Math.min(at,Date.now()):Date.now(); subAgents={}; liveTools={}; liveFileGroups={}; liveLastGroupKey={}; turnUsage=null;
       strEl=document.createElement('div'); strEl.className='msg bot streaming';
       // loading + timer FICAM NO FIM do bloco (abaixo da atividade): strflow primeiro, strhead depois.
       strEl.innerHTML='<div class="strflow"></div><div class="strhead"><span class="spin"></span><span class="strtime">0s</span></div>';
@@ -460,6 +651,8 @@
       strTimer=setInterval(()=>{ if(!strTimeEl)return; const s=Math.floor((Date.now()-strStart)/1000); strTimeEl.textContent=(s>=60?`${Math.floor(s/60)}m ${s%60}s`:`${s}s`); },1000);
       E.log.appendChild(strEl); autoScroll(); }
     function closeTextBlock(){ curTextEl=null; curTextRaw=''; }   // próximo texto abre bloco novo (após tool)
+    function liveScope(parentId){ return parentId||'root'; }
+    function breakLiveGroup(parentId){ liveLastGroupKey[liveScope(parentId)]=''; }
     // A collapsible container for one spawned sub-agent (Task tool). Its nested tool calls +
     // text preview show "o que ele está fazendo"; the count badge shows progress at a glance.
     function ensureSubAgent(id,desc,executionId){ if(!strFlow)streamStartUI(); if(subAgents[id]){ if(desc)subAgents[id].title.textContent=desc; if(executionId)bindInlineWork(subAgents[id],executionId); return subAgents[id]; }
@@ -471,22 +664,32 @@
       closeTextBlock(); strFlow.appendChild(wrap);
       const rec={wrap,body,title,countEl,open,count:0,preview:null,previewText:''}; subAgents[id]=rec; if(executionId)bindInlineWork(rec,executionId); return rec; }
     function bindInlineWork(rec,executionId){ if(!rec||!rec.open||!executionId)return; rec.wrap.dataset.executionId=executionId; rec.open.classList.add('ready'); rec.open.onclick=e=>{e.stopPropagation();openWorkPanel();openWorkNode(executionId);}; const n=workNodes.get(executionId);if(n){if(n.title)rec.title.textContent=n.title;rec.wrap.dataset.state=n.state||'unknown';const state=rec.wrap.querySelector('.sastate');if(state)state.textContent=workStateLabel(n.state).toLowerCase();} }
+    function appendLiveTool(container,item,done,opts){
+      const fk=fileGroupKey(item), rk=repeatToolKey(item), k=fk||rk, scope=liveScope(item.parentId);
+      if(fk&&liveFileGroups[fk]&&liveFileGroups[fk].isConnected){ const g=liveFileGroups[fk]; appendToolGroupItem(g,item,done,opts); liveLastGroupKey[scope]=fk; return g; }
+      if(rk&&liveLastGroupKey[scope]===rk&&liveFileGroups[rk]&&liveFileGroups[rk].isConnected){ const g=liveFileGroups[rk]; appendRepeatGroupItem(g,item,done); return g; }
+      if(k){ flipDone(container); const g=fk?toolGroupEl([item],done,opts):repeatGroupEl([item],done); container.appendChild(g); liveFileGroups[k]=g; liveLastGroupKey[scope]=k; return g; }
+      breakLiveGroup(item.parentId); const row=toolRowEl(item.name,item.summary,item.path,item.adds,item.dels,done,item.rows,item.detail,opts); container.appendChild(row); return row;
+    }
     function streamTool(name,summary,toolId,parentId,path,adds,dels,rows,detail,status,error,executionId){ if(!strFlow)streamStartUI();
+      const item={kind:'tool',name,summary,path,adds,dels,rows,detail,toolId,parentId,status,error,executionId};
+      const done=status!=='started';
       const readKey=readToolKey(name,path,summary,detail,parentId);
       const liveKey=readKey||(toolId?(parentId||'root')+'\0'+toolId:'');
-      if(liveKey&&liveTools[liveKey]){ const row=liveTools[liveKey]; if(summary){row.dataset.sum=summary;const ttl=row.querySelector('.ttl');if(ttl)ttl.textContent=(status&&status!=='started'?pastify(name,summary):summary)||name||'';} if(status&&status!=='started')setToolDone(row); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} autoScroll(); return; }
-      if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); flipDone(sa.body); const row=toolRowEl(name,summary,path,adds,dels,status!=='started',rows,detail); sa.body.appendChild(row); if(liveKey)liveTools[liveKey]=row; sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
-      if((name==='Task'||name==='Agent')&&toolId){ flipDone(strFlow); ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente',executionId); autoScroll(); return; }
-      closeTextBlock(); flipDone(strFlow); const row=toolRowEl(name,summary,path,adds,dels,status!=='started',rows,detail); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} strFlow.appendChild(row); if(liveKey)liveTools[liveKey]=row; autoScroll(); }
-    function streamThinking(text,parentId,executionId){ streamTool('Thinking',text||'Pensando…','thinking:'+Object.keys(liveTools).length,parentId,null,0,0,null,null,'started',null,executionId); }
+      if(liveKey&&liveTools[liveKey]){ const row=liveTools[liveKey]; if(row.classList.contains('strgroup')){ const list=row._items||[], hit=list.find(x=>x.toolId&&x.toolId===toolId)||(list[list.length-1]||{}); Object.assign(hit,item); refreshToolGroup(row,done); } else if(row.classList.contains('strrepeat')){ const list=row._items||[], hit=list.find(x=>x.toolId&&x.toolId===toolId)||(list[list.length-1]||{}); Object.assign(hit,item); refreshRepeatGroup(row,done); } else if(summary){row.dataset.sum=summary;const ttl=row.querySelector('.ttl');if(ttl)ttl.textContent=(done?pastify(name,summary):summary)||name||'';} if(done)setToolDone(row); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} autoScroll(); return; }
+      if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); if(!fileGroupKey(item)&&!repeatToolKey(item))flipDone(sa.body); const row=appendLiveTool(sa.body,item,done); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} if(liveKey)liveTools[liveKey]=row; sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
+      if((name==='Task'||name==='Agent')&&toolId){ breakLiveGroup(parentId); flipDone(strFlow); ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente',executionId); autoScroll(); return; }
+      closeTextBlock(); if(!fileGroupKey(item)&&!repeatToolKey(item))flipDone(strFlow); const row=appendLiveTool(strFlow,item,done); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} if(liveKey)liveTools[liveKey]=row; autoScroll(); }
+    function streamThinking(text,parentId,executionId){ if(isGenericThinking(text))return; breakLiveGroup(parentId); streamTool('Thinking',text||'Pensando…','thinking:'+Object.keys(liveTools).length,parentId,null,0,0,null,null,'started',null,executionId); }
     function streamText(t,parentId,executionId){
+      breakLiveGroup(parentId);
       if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); autoScroll(); return; }
       if(!strFlow)streamStartUI();
       // Abre um bloco NOVO de texto se o anterior foi fechado por uma ferramenta; senão acumula.
       // Um novo bloco de texto significa que as ferramentas anteriores já terminaram → passa pra passado.
       if(!curTextEl){ flipDone(strFlow); curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; strFlow.appendChild(curTextEl); }
       curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); sawText=true; autoScroll(); }
-    function streamFinish(){ strEl=strFlow=curTextEl=strTimeEl=null; curTextRaw=''; sawText=false; liveTools={}; turnUsage=null; }
+    function streamFinish(){ strEl=strFlow=curTextEl=strTimeEl=null; curTextRaw=''; sawText=false; liveTools={}; liveFileGroups={}; liveLastGroupKey={}; turnUsage=null; }
     function usageCostText(usage,digits=4){ if(!usage||!(usage.costUsd>=0))return''; const p=usage.costKind==='billed'?'$':usage.costKind==='estimated_api_equivalent'?'≈$':'Σ$'; return p+Number(usage.costUsd||0).toFixed(digits); }
     function usageSummary(usage){ if(!usage)return''; const cost=usageCostText(usage); const toks=usage.outputTokens||0; const kind=usage.costKind==='billed'?'cobrado reportado':usage.costKind==='estimated_api_equivalent'?'equivalente estimado':usage.costKind==='subscription_included'?'incluído na assinatura':usage.costKind==='tokens_only'?'somente tokens':'custo indisponível'; return `${cost?cost+' · ':''}${toks} tokens · ${kind}`; }
     function streamDone(finalText,usage){ if(strTimer){clearInterval(strTimer);strTimer=null;}
@@ -511,8 +714,45 @@
         const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ '+(reason||'interrompido'); strEl.appendChild(n);
         streamFinish(); }
       else addErr('⏹ '+(reason||'interrompido')); autoScroll(); }
-    function streamErr(message){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending(); if(strEl){ const head=strEl.querySelector('.strhead'); if(head)head.remove(); strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone); const n=document.createElement('div'); n.className='usage err'; n.textContent='⚠ '+(message||'Falha na execução'); strEl.appendChild(n); streamFinish(); } else addErr(message||'Falha na execução'); autoScroll(); }
-    function addErr(t){ const d=document.createElement('div'); d.className='msg err'; d.textContent=t; E.log.appendChild(d); }
+    function streamErr(message){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending(); if(strEl){ const head=strEl.querySelector('.strhead'); if(head)head.remove(); strEl.querySelectorAll('.strtool[data-name]').forEach(setToolDone); strEl.appendChild(errorBoxEl(message||'Falha na execução')); streamFinish(); } else addErr(message||'Falha na execução'); autoScroll(); }
+    function stripAnsi(s){ return String(s||'').replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g,''); }
+    function compactErrorSummary(text,title){
+      const clean=stripAnsi(text).replace(/^erro:\s*/i,'').trim();
+      if(!clean)return title||'Falha na execução';
+      if(/(?:limite|usage limit|rate limit|quota|429)/i.test(clean))return 'Limite atingido. Detalhes disponíveis abaixo.';
+      const line=(clean.split(/\r?\n/).map(x=>x.trim()).find(Boolean)||clean).replace(/\s+/g,' ');
+      return line.length>180?line.slice(0,177)+'…':line;
+    }
+    function errorTitle(text,opts){
+      if(opts&&opts.title)return opts.title;
+      return (opts&&opts.limit)||/(?:limite|usage limit|rate limit|quota|429)/i.test(String(text||''))?'Limite de uso atingido':'Falha na execução';
+    }
+    function compactErrorDetail(text){
+      const clean=stripAnsi(text).trim();
+      const max=80000;
+      if(clean.length<=max)return clean;
+      const keep=Math.floor((max-180)/2), omitted=clean.length-(keep*2);
+      return clean.slice(0,keep)+'\n\n... detalhe encurtado na interface: '+omitted+' caracteres no meio ...\n\n'+clean.slice(-keep);
+    }
+    function clearLimitBanner(){ if(!E.limit)return; E.limit.textContent=''; E.limit.title=''; E.limit.classList.add('hidden'); }
+    function errorBoxEl(text,opts={}){
+      const full=stripAnsi(text||'Falha na execução').trim()||'Falha na execução', title=errorTitle(full,opts), summary=opts.summary||compactErrorSummary(full,title), detail=compactErrorDetail(full);
+      const box=document.createElement('div'); box.className='errbox';
+      const head=document.createElement('div'); head.className='errhead';
+      const mark=document.createElement('span'); mark.className='errmark'; mark.textContent='⚠'; head.appendChild(mark);
+      const copy=document.createElement('div'); copy.className='errtext';
+      const ttl=document.createElement('span'); ttl.className='errtitle'; ttl.textContent=title; copy.appendChild(ttl);
+      if(summary&&summary!==title){ const sum=document.createElement('span'); sum.className='errsummary'; sum.textContent=' — '+summary; copy.appendChild(sum); }
+      head.appendChild(copy);
+      if(detail&&detail!==summary&&detail!==title){
+        const btn=document.createElement('button'); btn.type='button'; btn.className='errtoggle'; btn.textContent='Ver detalhes'; btn.setAttribute('aria-expanded','false');
+        const det=document.createElement('div'); det.className='errdetail hidden'; det.textContent=detail;
+        btn.onclick=(e)=>{ e.stopPropagation(); const open=det.classList.toggle('hidden'); btn.textContent=open?'Ver detalhes':'Recolher'; btn.setAttribute('aria-expanded',String(!open)); };
+        head.appendChild(btn); box.appendChild(head); box.appendChild(det);
+      } else box.appendChild(head);
+      return box;
+    }
+    function addErr(t,opts){ const d=document.createElement('div'); d.className='msg err'; d.appendChild(errorBoxEl(t,opts)); E.log.appendChild(d); autoScroll(); }
     function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
       (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}" data-runner="${esc(x.runnerId||'')}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
         (x.why||x.progress?`<br><span class="mut">${esc(x.why||x.progress||'')}</span>`:'')+
@@ -562,8 +802,8 @@
     // Painel de arquivo com DOIS modos: diff (só a alteração) e arquivo completo (igual no chat).
     // curFileDiffable = há um diff pra mostrar (aberto por uma edição, numa sessão). Guardado pra
     // o toggle poder recarregar o outro modo sem reabrir.
-    let curFilePath='', curFileView='full', curFileDiffable=false;
-    let curFileFmt=(cfg.fileFmt==='raw')?'raw':'fmt', lastFileMsg=null;
+    let curFilePath='', curFileView='full', curFileDiffable=false, curFileLine=0;
+    let curFileFmt=(cfg.fileFmt==='raw')?'raw':'fmt', lastFileMsg=null, curFileSig='', fileLastLoadAt=0;
     const isMdName=(n)=>/\.(md|markdown|mdx)$/i.test(n||'');
     // Markdown → HTML seguro: escapa TUDO primeiro (conteúdo do repo é não-confiável) e só então
     // aplica a marcação. Cobre títulos, negrito/itálico, código inline e em bloco (com highlight),
@@ -573,14 +813,14 @@
       const escA=(s)=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
       const mathSpan=(tex,disp)=>'<span class="katex-math" data-d="'+(disp?'1':'0')+'" data-tex="'+escA(tex)+'"></span>';
       const inline=(s)=>{ const M=[];
-        // extrai fórmulas $...$ ANTES de escapar (o TeX fica cru); placeholders 
-        s=s.replace(/\$([^$\n]+?)\$/g,(m,tex)=>/^\s|\s$/.test(tex)?m:(' '+(M.push(tex)-1)+' '));
+        // extrai fórmulas $...$ ANTES de escapar (o TeX fica cru); placeholders
+        s=s.replace(/\$([^$\n]+?)\$/g,(m,tex)=>/^\s|\s$/.test(tex)?m:('\0'+(M.push(tex)-1)+'\0'));
         s=esc(s)
           .replace(/`([^`]+)`/g,(_,c)=>'<code>'+c+'</code>')
           .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
           .replace(/(^|[^*])\*([^*]+)\*/g,'$1<em>$2</em>')
           .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
-        return s.replace(/ (\d+) /g,(_,k)=>mathSpan(M[+k],false)); };
+        return s.replace(/\0(\d+)\0/g,(_,k)=>mathSpan(M[+k],false)); };
       const lines=String(md).split(/\r?\n/); let html='',i=0,inList=false,inQuote=false;
       const closeList=()=>{ if(inList){ html+='</ul>'; inList=false; } };
       const closeQuote=()=>{ if(inQuote){ html+='</blockquote>'; inQuote=false; } };
@@ -629,7 +869,7 @@
     }
     function setWorkFileSplit(on){ const app=document.getElementById('app'); if(app)app.classList.toggle('work-file-split',!!on); }
     const APP=()=>document.getElementById('app');
-    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); APP().classList.remove('file-full','file-open','tab-chat'); }
+    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); APP().classList.remove('file-full','file-open','tab-chat'); curFileSig=''; lastFileMsg=null; }
     function markFileOpen(){ APP().classList.add('file-open'); }
     // largura/altura persistidas do painel de arquivo (redimensionável) + modo de layout (lado a
     // lado / empilhado / abas), tudo salvo em cfg e reaplicado no reload.
@@ -643,26 +883,28 @@
     if(E.fileLayoutSw) E.fileLayoutSw.querySelectorAll('button').forEach(b=>b.onclick=()=>applyFileLayout(b.dataset.fl));
     // arraste horizontal (lado a lado) → --file-w; vertical (empilhado) → --file-h
     function fileDrag(handle,vertical){ if(!handle)return; let on=false;
-      const move=(e)=>{ if(!on)return; if(vertical){ const h=Math.max(120,Math.min(window.innerHeight-160, window.innerHeight-(e.clientY))); APP().style.setProperty('--file-h', h+'px'); } else { const w=Math.max(300,Math.min(window.innerWidth-260, window.innerWidth-(e.clientX))); APP().style.setProperty('--file-w', w+'px'); } };
+      const move=(e)=>{ if(!on)return; if(vertical){ const bottom=cssPx('--safe-bottom'); const h=Math.max(120,Math.min(window.innerHeight-160-bottom, window.innerHeight-bottom-(e.clientY))); APP().style.setProperty('--file-h', h+'px'); } else { const w=Math.max(300,Math.min(window.innerWidth-260, window.innerWidth-(e.clientX))); APP().style.setProperty('--file-w', w+'px'); } };
       const up=()=>{ if(!on)return; on=false; document.body.style.userSelect=''; if(vertical){ const h=parseInt(getComputedStyle(APP()).getPropertyValue('--file-h'))||0; if(h){ cfg.fileH=h; saveCfg(); } } else { const w=parseInt(getComputedStyle(APP()).getPropertyValue('--file-w'))||0; if(w){ cfg.fileW=w; saveCfg(); } } window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
       handle.addEventListener('pointerdown',(e)=>{ if(APP().classList.contains('file-full'))return; on=true; document.body.style.userSelect='none'; e.preventDefault(); window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); }); }
     fileDrag(E.fileResize,false); fileDrag(E.fileResizeV,true);
     if(E.fileFull) E.fileFull.onclick=()=>APP().classList.toggle('file-full');
     if(E.tabChatBtn) E.tabChatBtn.onclick=()=>{ APP().classList.add('tab-chat'); E.tabChatBtn.classList.add('on'); E.tabFileBtn&&E.tabFileBtn.classList.remove('on'); };
     if(E.tabFileBtn) E.tabFileBtn.onclick=()=>{ APP().classList.remove('tab-chat'); E.tabFileBtn.classList.add('on'); E.tabChatBtn&&E.tabChatBtn.classList.remove('on'); };
-    function openFile(path,action,opts){ const keep=!!(opts&&opts.keepWork); if(E.workPanel&&!E.workPanel.classList.contains('hidden')&&!keep)closeWorkPanel(); setWorkFileSplit(keep); E.filePanel.classList.remove('hidden'); markFileOpen(); APP().classList.remove('tab-chat'); if(E.tabFileBtn){E.tabFileBtn.classList.add('on');E.tabChatBtn&&E.tabChatBtn.classList.remove('on');} E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
-      curFilePath=path; curFileDiffable=(action==='edit' && !!currentSession); curFileView=curFileDiffable?'diff':'full';
+    function fileNorm(p){ return String(p||'').replace(/\\/g,'/').replace(/\/+$/,''); }
+    function fileMatchesOpen(path){ const a=fileNorm(path), b=fileNorm(curFilePath); return !!a && !!b && (a===b || a.endsWith('/'+b) || b.endsWith('/'+a)); }
+    function fileSig(m){ return [m&&m.path||'', m&&m.mtimeMs!=null?m.mtimeMs:'', m&&m.size!=null?m.size:'', m&&m.truncated?'t':'', m&&m.image?'i':'', m&&m.error||''].join('|'); }
+    function diffSig(m){ return [m&&m.path||'', m&&m.adds||0, m&&m.dels||0, (m&&m.rows||[]).map(r=>(r.t||'')+':'+(r.s||'')).join('\n'), m&&m.error||''].join('|'); }
+    function fileOverlayCoversTree(){ return typeof matchMedia==='function' && matchMedia('(max-width:820px)').matches; }
+    function openFile(path,action,opts){ const keep=!!(opts&&opts.keepWork); if(E.workPanel&&!E.workPanel.classList.contains('hidden')&&!keep)closeWorkPanel(); if(!keep&&fileOverlayCoversTree()&&E.treePanel&&!E.treePanel.classList.contains('hidden'))closeTree(); setWorkFileSplit(keep); E.filePanel.classList.remove('hidden'); markFileOpen(); APP().classList.remove('tab-chat'); if(E.tabFileBtn){E.tabFileBtn.classList.add('on');E.tabChatBtn&&E.tabChatBtn.classList.remove('on');} E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
+      curFilePath=path; curFileLine=Math.max(0,Number(opts&&opts.line)||0); curFileDiffable=(action==='edit' && !!currentSession); curFileView=curFileDiffable?'diff':'full';
       renderFileViewBtns(); loadFileView(); }
-    function loadFileView(){ E.fileStat.textContent=''; E.fileMeta.textContent=curFilePath; E.fileBody.className='filebody plain'; E.fileBody.textContent='Carregando…';
+    function loadFileView(opts){ const silent=!!(opts&&opts.silent); fileLastLoadAt=Date.now(); if(!silent){ curFileSig=''; E.fileStat.textContent=''; E.fileMeta.textContent=curFilePath; E.fileBody.className='filebody plain'; E.fileBody.textContent='Carregando…'; }
       if(curFileView==='diff' && curFileDiffable){ tx({t:'readdiff',sessionId:currentSession,path:curFilePath}); } else { tx({t:'readfile',path:curFilePath,cwd:curCwd}); } }
     function renderFileViewBtns(){ if(!E.fileView)return; E.fileView.classList.toggle('hidden',!curFileDiffable); // sem diff → sem toggle (só arquivo)
       E.fileView.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===curFileView)); }
     if(E.fileView) E.fileView.querySelectorAll('button').forEach(b=>b.onclick=()=>{ if(curFileView===b.dataset.v)return; curFileView=b.dataset.v; renderFileViewBtns(); loadFileView(); });
-    // Shows the underlying native session id (real claude/codex session) bound to this UI session,
-    // so the user can see it "aparecer" and resume it in a terminal. Click = copy the resume command.
-    function renderNativeChip(){ const c=E.nativeChip; if(!c)return; if(!curNativeId){ c.classList.add('hidden'); c.textContent=''; return; }
-      const cli=(currentAgent==='codex')?'codex':'claude'; const short=curNativeId.length>10?curNativeId.slice(0,8)+'…':curNativeId;
-      c.textContent='🔗 '+short; c.dataset.cmd=cli+' --resume '+curNativeId; c.title='No terminal: '+c.dataset.cmd+' — clique para copiar'; c.classList.remove('hidden'); }
+    setInterval(()=>{ if(!curFilePath||E.filePanel.classList.contains('hidden'))return; if(document.hidden)return; if(!ws||ws.readyState!==1)return; if(Date.now()-fileLastLoadAt<1500)return; loadFileView({silent:true}); },2500);
+    function renderNativeChip(){ const c=E.nativeChip; if(!c)return; c.classList.add('hidden'); c.textContent=''; c.dataset.cmd=''; }
     E.nativeChip.onclick=()=>{ const cmd=E.nativeChip.dataset.cmd||''; if(!cmd)return; (navigator.clipboard?navigator.clipboard.writeText(cmd):Promise.reject()).then(()=>{ const o=E.nativeChip.textContent; E.nativeChip.textContent='copiado ✓'; setTimeout(()=>E.nativeChip.textContent=o,1400); }).catch(()=>toast(cmd)); };
     // ---- lightweight, self-contained syntax highlighter (no external deps) ----
     const HL_KW={ ts:'abstract as async await break case catch class const continue declare default delete do else enum export extends false finally for from function get if implements import in infer instanceof interface keyof let namespace new null of private protected public readonly return satisfies set static super switch this throw true try type typeof undefined var void while yield',
@@ -723,11 +965,11 @@
           push(cls,w); i=j; prev=REGEX_KW.has(w)?w:'w'; continue; }
         out+=hlEsc(c); if(!/\s/.test(c))prev=c; i++; }
       return out; }
-    function showFile(m){ if(E.filePanel.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileStat.textContent=''; E.fileBody.className='filebody plain';
+    function showFile(m,opts){ if(E.filePanel.classList.contains('hidden')||!fileMatchesOpen(m.path))return; const sig=fileSig(m); if(!(opts&&opts.force)&&sig&&sig===curFileSig)return; curFileSig=sig; curFilePath=m.path||curFilePath; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileStat.textContent=''; E.fileBody.className='filebody plain';
       if(m.error){ E.fileMeta.textContent=m.path||''; E.fileBody.textContent='⚠ '+m.error; return; }
       const kb=m.size?(m.size<1024?m.size+' B':(m.size/1024).toFixed(1)+' KB'):''; E.fileMeta.textContent=(m.path||'')+(kb?' · '+kb:'')+(m.truncated?' · (primeiros 512KB)':'');
       if(m.image&&m.content){ const src='data:'+(m.mime||'image/*')+';base64,'+m.content; E.fileBody.className='filebody plain'; E.fileBody.innerHTML='';
-        const im=document.createElement('img'); im.src=src; im.alt=m.name||''; im.style.cssText='max-width:100%;height:auto;border-radius:8px;cursor:zoom-in;display:block'; im.onclick=()=>openImg(src); E.fileBody.appendChild(im); E.fileBody.scrollTop=0; return; }
+        lastFileMsg=m; const im=document.createElement('img'); im.src=src; im.alt=m.name||''; im.style.cssText='max-width:100%;height:auto;border-radius:8px;cursor:zoom-in;display:block'; im.onclick=()=>openImg(src); E.fileBody.appendChild(im); E.fileBody.scrollTop=0; return; }
       lastFileMsg=m; const nm=m.name||m.path||'', content=m.content||'', md=isMdName(nm), canHl=hlLang(nm)!=null;
       // toggle Formatado/Bruto aparece para .md (renderiza markdown) e para código (liga/desliga cores)
       if(E.fileFmt){ E.fileFmt.classList.toggle('hidden', !(md||canHl)); renderFileFmtBtns(); }
@@ -735,8 +977,8 @@
       else { renderFileLines(content, nm, curFileFmt==='fmt' && canHl, m.path||nm); }
       E.fileBody.scrollTop=0; }
     function renderFileFmtBtns(){ if(!E.fileFmt)return; E.fileFmt.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.f===curFileFmt)); }
-    if(E.fileFmt) E.fileFmt.querySelectorAll('button').forEach(b=>b.onclick=()=>{ if(curFileFmt===b.dataset.f)return; curFileFmt=b.dataset.f; cfg.fileFmt=curFileFmt; saveCfg(); renderFileFmtBtns(); if(lastFileMsg) showFile(lastFileMsg); });
-    function showDiff(m){ if(E.filePanel.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileMeta.textContent=m.path||'';
+    if(E.fileFmt) E.fileFmt.querySelectorAll('button').forEach(b=>b.onclick=()=>{ if(curFileFmt===b.dataset.f)return; curFileFmt=b.dataset.f; cfg.fileFmt=curFileFmt; saveCfg(); renderFileFmtBtns(); if(lastFileMsg) showFile(lastFileMsg,{force:true}); });
+    function showDiff(m){ if(E.filePanel.classList.contains('hidden')||!fileMatchesOpen(m.path))return; const sig=diffSig(m); if(sig&&sig===curFileSig)return; curFileSig=sig; curFilePath=m.path||curFilePath; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileMeta.textContent=m.path||'';
       if(m.error){ E.fileStat.textContent=''; E.fileBody.className='filebody plain'; E.fileBody.textContent='⚠ '+m.error; return; }
       E.fileStat.innerHTML=`<span class="add">+${m.adds||0}</span> <span class="del">-${m.dels||0}</span>`;
       E.fileBody.className='filebody lines'; E.fileBody.innerHTML='';
@@ -747,7 +989,7 @@
         const c=document.createElement('span'); c.className='fcontent'; c.textContent=r.s;
         row.append(g,c); frag.appendChild(row); });
       E.fileBody.appendChild(frag);
-      annoSetup('diff', (m.path||'')+' (diff)'); E.fileBody.scrollTop=0; }
+      annoSetup('diff', (m.path||'')+' (diff)'); E.fileBody.scrollTop=0; scrollFileLine(); }
 
     // ---------- comentários/anotações no arquivo ou diff (Orca "Annotate AI Diffs" — Opção A) ----------
     // Ancora notas a uma linha ou faixa de linhas; junta várias e envia tudo para a IA escolhida.
@@ -767,27 +1009,38 @@
         const hl=useHl?highlight(line,name):null; if(hl!=null&&hl!=='') c.innerHTML=hl; else c.textContent=line;
         row.append(g,c); frag.appendChild(row); });
       E.fileBody.appendChild(frag);
-      annoSetup('file', path||name);
+      annoSetup('file', path||name); scrollFileLine();
     }
+    function scrollFileLine(){ if(!curFileLine)return; requestAnimationFrame(()=>{ const row=E.fileBody.querySelector('.frow[data-ln="'+curFileLine+'"]'); if(!row)return; row.classList.add('selrange'); row.scrollIntoView({block:'center'}); }); }
     function annoSetup(view, path){ curAnnoView=view; if(annoPath!==path){ annoPath=path; annoLoad(); } annoSel=null; annoBarHide(); annoRenderNotes(); }
     function annoTeardown(){ annoSel=null; annoBarHide(); if(E.annoSend)E.annoSend.classList.add('hidden'); }
     function annoRows(){ return E.fileBody.querySelectorAll('.frow'); }
     function annoPick(ln){ if(!annoSel) annoSel={from:ln,to:ln}; else annoSel={from:Math.min(annoSel.from,ln),to:Math.max(annoSel.to,ln)}; annoPaint(); }
+    function annoLabel(a){ if(!a)return ''; return a.from===a.to?('Linha '+a.from):('Linhas '+a.from+'–'+a.to); }
     function annoPaint(){ annoRows().forEach(r=>{ const n=+r.dataset.ln; r.classList.toggle('selrange', !!annoSel && n>=annoSel.from && n<=annoSel.to); });
-      if(annoSel){ E.annoSelLbl.textContent = annoSel.from===annoSel.to?('Linha '+annoSel.from):('Linhas '+annoSel.from+'–'+annoSel.to); E.annoBar.classList.add('on'); } else annoBarHide(); }
+      if(annoSel){ E.annoSelLbl.textContent = annoLabel(annoSel); E.annoBar.classList.add('on'); } else annoBarHide(); }
     function annoBarHide(){ if(E.annoBar)E.annoBar.classList.remove('on'); }
     function annoSnippet(from,to){ const out=[]; annoRows().forEach(r=>{ const n=+r.dataset.ln; if(n>=from&&n<=to){ const c=r.querySelector('.fcontent'); out.push(c?c.textContent:''); } }); return out.join('\n'); }
     async function annoAddCurrent(){ if(!annoSel)return; const from=annoSel.from,to=annoSel.to;
-      const text=await dialog({title:'💬 Comentar '+(from===to?('linha '+from):('linhas '+from+'–'+to)),input:true,placeholder:'Escreva seu comentário para a IA…',okText:'Adicionar'});
-      if(!text)return; annos.push({from,to,snippet:annoSnippet(from,to),text}); annoSave(); annoSel=null; annoPaint(); annoRenderNotes(); }
+      const text=await dialog({title:'💬 Comentar '+annoLabel(annoSel).toLowerCase(),input:true,placeholder:'Escreva seu comentário para a IA…',okText:'Adicionar'});
+      if(!text)return; annos.push({from,to,snippet:annoSel.snippet||annoSnippet(from,to),text}); annoSave(); annoSel=null; annoPaint(); annoRenderNotes(); }
     function annoRenderNotes(){ E.fileBody.querySelectorAll('.anno-note').forEach(x=>x.remove());
       annos.forEach((a,i)=>{ const anchor=[...annoRows()].find(r=>+r.dataset.ln===a.to); if(!anchor)return;
         const nt=document.createElement('div'); nt.className='anno-note';
-        nt.innerHTML='<span class="an-x" title="Remover">✕</span><div class="an-h">NOTA · '+(a.from===a.to?('LINHA '+a.from):('LINHAS '+a.from+'–'+a.to))+'</div><div class="an-t"></div>';
+        nt.innerHTML='<span class="an-x" title="Remover">✕</span><div class="an-h">NOTA · '+annoLabel(a).toUpperCase()+'</div><div class="an-t"></div>';
         nt.querySelector('.an-t').textContent=a.text; nt.querySelector('.an-x').onclick=()=>{ annos.splice(i,1); annoSave(); annoRenderNotes(); };
         anchor.after(nt); });
       const n=annos.length; if(E.annoSend){ E.annoSend.classList.toggle('hidden', n===0); if(E.annoCount)E.annoCount.textContent=n; } }
-    // seleção por CLIQUE (início→fim em dois cliques) OU CLIQUE-E-ARRASTA no gutter (cima↔baixo).
+    function annoLineFromNode(node){ const el=node&&node.nodeType===1?node:node&&node.parentElement; const row=el&&el.closest?el.closest('.frow'):null; return row?+row.dataset.ln:0; }
+    function annoCaptureNativeSelection(){ const sel=window.getSelection&&window.getSelection(); if(!sel||sel.isCollapsed||!sel.rangeCount)return; const txt=sel.toString().trim(); if(!txt)return;
+      const range=sel.getRangeAt(0); if(!E.fileBody.contains(range.commonAncestorContainer))return;
+      const a=annoLineFromNode(range.startContainer), b=annoLineFromNode(range.endContainer); if(!a||!b)return;
+      annoSel={from:Math.min(a,b),to:Math.max(a,b),snippet:txt}; annoPaint(); }
+    let annoNativeT=null;
+    document.addEventListener('selectionchange',()=>{ clearTimeout(annoNativeT); annoNativeT=setTimeout(annoCaptureNativeSelection,120); });
+    E.fileBody.addEventListener('mouseup',()=>setTimeout(annoCaptureNativeSelection,0));
+    E.fileBody.addEventListener('touchend',()=>setTimeout(annoCaptureNativeSelection,180),{passive:true});
+    // seleção por TEXTO nativo ou por CLIQUE (início→fim em dois cliques) no gutter.
     // Delegação em E.fileBody (uma vez) — sobrevive ao re-render das linhas.
     (function(){ let dragging=false, moved=false, anchor=0;
       const lnAt=(e)=>{ const el=document.elementFromPoint(e.clientX,e.clientY); const row=el&&el.closest?el.closest('.frow'):null; return row?+row.dataset.ln:0; };
@@ -931,7 +1184,7 @@
     // Só as sessões nativas mandam isso; sessão gerenciada deixa null e cai no pref/default como antes.
     let sessDeclModel=null, sessDeclEffort=null, lastRouteReason='';
     function routeAutoFor(sid){ const p=sessionValue(sessionPrefs,sid,sessionRunner())||{}; return {agent:p.agent===AUTO_AGENT,model:p.model===AUTO_MODEL,effort:p.effort===AUTO_EFFORT}; }
-    function syncModelEffort(){ const c=capsFor(currentAgent); const pref=sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{};
+    function syncModelEffort(){ const c=capsFor(currentAgent); const pref=currentSession==null?{}:(sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{});
       // Prioridade do modelo: escolha explícita do usuário nesta sessão > o que a sessão realmente usa
       // (nativa) > default global salvo > default do agente. Assim uma sessão da máquina abre já com o
       // modelo/esforço dela, mas se você trocar pelo seletor a SUA escolha manda dali em diante.
@@ -1026,11 +1279,6 @@
     // ícones de áudio lado a lado não diziam qual era o escopo de cada um.
     E.sumHdr.onclick=()=>{ if(!currentSession){ toast(t('tOpenFirst')); return; }
       if(!startVoiceOp('summarize',E.sumHdr,'⏳',currentSession))return; status('speaking',t('stSummarizing')); tx({t:'summarize',sessionId:currentSession,speak:true}); };
-    E.qrBtn.onclick=()=>{ tx({t:'qr',url:location.origin}); closeSide(); E.settings.classList.add('hidden'); };
-    E.qrClose.onclick=()=>E.qrModal.classList.add('hidden');
-    // ---------- painel "Uso & custo" (máquinas + custo por IA/sessão) ----------
-    E.fleetBtn.onclick=()=>{ E.fleetBody.innerHTML='Carregando…'; E.fleetModal.classList.remove('hidden'); closeSide(); E.settings.classList.add('hidden'); tx({t:'fleet'}); };
-    E.fleetClose.onclick=()=>E.fleetModal.classList.add('hidden');
     // ---------- canvas: overlay central iterativo (voz: resolução de sessão, pasta, confirmação; depois imagens/diagramas) ----------
     function hideCanvas(){ E.canvasModal.classList.add('hidden'); }
     function renderCanvas(m){ if(m.op==='close'){ hideCanvas(); return; }
@@ -1124,9 +1372,9 @@
     E.fileCopy.onclick=()=>{ const dl=E.fileBody.querySelectorAll('.dline'); const t=dl.length?[...dl].map(x=>x.textContent).join('\n'):(E.fileBody.textContent||''); (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>{E.fileCopy.textContent='Copiado ✓';setTimeout(()=>E.fileCopy.textContent='Copiar',1500);}).catch(()=>{}); };
 
     // ---- segurança: dispositivos & convites (dono) ----
-    function updateOwnerUI(){ if(authUser&&authUser.role==='owner') E.secBtn.classList.remove('hidden'); else E.secBtn.classList.add('hidden'); }
-    E.secBtn.onclick=()=>{ tx({t:'sec_state'}); E.secOut.classList.add('hidden'); E.secModal.classList.remove('hidden'); closeSide(); E.settings.classList.add('hidden'); };
-    E.secClose.onclick=()=>E.secModal.classList.add('hidden');
+    // O item de nav é owner-only via .snav-owner (settingsSetupNav); aqui só reagimos a uma troca de
+    // papel com as configurações JÁ abertas, senão o painel continuaria listado para um membro.
+    function updateOwnerUI(){ settingsOwnerVisibility(!!(authUser&&authUser.role==='owner')); }
     E.secGen.onclick=()=>{ tx({t:'sec_invite', role:E.secRole.value, ttlSec:Number(E.secTtl.value)}); };
     let secRepoUrl='';
     E.secRunGen.onclick=()=>{ tx({t:'mint_runner', label:E.secRunLabel.value.trim()}); E.secRunLabel.value=''; };
@@ -1206,6 +1454,9 @@
       }catch(e){ toast('Falha ao ativar notificações: '+(e.message||e)); return false; } }
     async function disablePush(){ if(window.__jarvisNative&&window.__jarvisNative.disablePush) return window.__jarvisNative.disablePush();
       cfg.push=false; saveCfg(); try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription(); if(sub){ tx({t:'unsubscribe',endpoint:sub.endpoint}); await sub.unsubscribe(); } }catch(e){} }
+    async function updatePushPrefs(pp){ if(window.__jarvisNative&&window.__jarvisNative.updatePush) return window.__jarvisNative.updatePush(pp);
+      try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription(); if(sub) tx({t:'push_prefs', endpoint:sub.endpoint, prefs:pp}); return true; }catch(e){ return false; } }
+    var bioOverlay=null, bioPrompting=false, bioUnlockedAt=0;
     // --- Native shell bridge (Capacitor). Populated ONLY inside the mobile app; a plain browser hits
     //     the early return and window.__jarvisNative stays undefined, so every PWA path above is
     //     untouched. Plugins are exposed at window.Capacitor.Plugins by the native shell at runtime —
@@ -1216,7 +1467,17 @@
       var N=window.__jarvisNative={platform:platform};
       try{ document.documentElement.classList.add('native','native-'+platform); }catch(e){}
       // ---- push (FCM/APNs) → registers the device token with the Hub (mobile_push_register) ----
-      if(P.PushNotifications){
+      if(P.PushNotifications&&platform==='android'){
+        var PN=P.PushNotifications;
+        N.nativePushBlocked=true;
+        N.push=async function(){ try{
+          var perm=await PN.checkPermissions(); if(perm.receive!=='granted') perm=await PN.requestPermissions();
+          if(perm.receive!=='granted'){ toast(t('tPushDenied')); cfg.push=false; cfg.pushPendingNative=false; saveCfg(); return false; }
+          cfg.push=true; cfg.pushPendingNative=true; saveCfg(); toast('Permissão de notificações salva. A entrega remota precisa de FCM configurado no APK.'); return true;
+        }catch(e){ toast('Falha ao pedir permissão de notificações: '+(e.message||e)); cfg.push=false; cfg.pushPendingNative=false; saveCfg(); return false; } };
+        N.disablePush=async function(){ cfg.push=false; cfg.pushPendingNative=false; saveCfg(); return true; };
+        N.updatePush=async function(){ if(cfg.pushPendingNative){ saveCfg(); return true; } return false; };
+      } else if(P.PushNotifications){
         var PN=P.PushNotifications, wantEvents=['done','error'];
         PN.addListener('registration',function(t){ if(t&&t.value){ N._lastToken=t.value; tx({t:'mobile_push_register',token:t.value,platform:platform,events:wantEvents}); } });
         PN.addListener('registrationError',function(e){ try{ toast('Push nativo falhou: '+((e&&e.error)||e)); }catch(_){} });
@@ -1227,6 +1488,7 @@
           await PN.register(); cfg.push=true; saveCfg(); return true;
         }catch(e){ toast('Falha no push nativo: '+(e.message||e)); return false; } };
         N.disablePush=async function(){ cfg.push=false; saveCfg(); try{ if(N._lastToken) tx({t:'mobile_push_unregister',token:N._lastToken}); }catch(e){} };
+        N.updatePush=async function(prefs){ wantEvents=(prefs&&prefs.events&&prefs.events.length)?prefs.events:wantEvents; if(N._lastToken) tx({t:'mobile_push_register',token:N._lastToken,platform:platform,events:wantEvents}); return true; };
         // Re-send the token after each (re)connect + on relaunch (the Hub upserts, so it's cheap).
         N.reregister=function(){ if(N._lastToken) tx({t:'mobile_push_register',token:N._lastToken,platform:platform,events:wantEvents}); else if(cfg.push) N.push(pushPrefs()); };
       }
@@ -1345,12 +1607,12 @@
     // Drop OS-shared text into the composer (called by the native bridge's share-in handler).
     function applyShareIn(text){ try{ if(!text)return; var v=E.input.value; E.input.value=(v?v+'\n':'')+String(text); E.input.dispatchEvent(new Event('input')); E.input.focus(); toast(t('tShareIn')); }catch(e){} }
     // Biometric lock overlay (native only). Shown when cfg.bioLock; cleared once the OS confirms identity.
-    var bioOverlay=null;
-    async function maybeBioLock(){ if(!(window.__jarvisNative&&window.__jarvisNative.unlock&&cfg.bioLock)) return; if(bioOverlay) return;
+    async function maybeBioLock(){ if(!(window.__jarvisNative&&window.__jarvisNative.unlock&&cfg.bioLock)) return; if(bioOverlay||bioPrompting||Date.now()-bioUnlockedAt<5000) return;
       bioOverlay=document.createElement('div'); bioOverlay.className='biolock';
       bioOverlay.innerHTML='<div class="biolock-in"><div style="font-size:44px">🔒</div><div style="margin:10px 0 16px">Jarvis bloqueado</div><button type="button" id="bioUnlockBtn" class="primary">Desbloquear</button></div>';
       document.body.appendChild(bioOverlay);
-      var go=async function(){ if(await window.__jarvisNative.unlock()){ if(bioOverlay){ bioOverlay.remove(); bioOverlay=null; } } };
+      var overlay=bioOverlay;
+      var go=async function(){ if(bioPrompting) return; bioPrompting=true; try{ if(await window.__jarvisNative.unlock()){ bioUnlockedAt=Date.now(); if(overlay&&overlay.parentNode) overlay.remove(); if(bioOverlay===overlay) bioOverlay=null; document.querySelectorAll('.biolock').forEach(function(x){ if(x!==bioOverlay) x.remove(); }); } } finally { bioPrompting=false; } };
       var b=bioOverlay.querySelector('#bioUnlockBtn'); if(b) b.onclick=go; go();
     }
     let searchMode='literal', semanticSearchScope='project', searchTimer=null;
@@ -1382,14 +1644,27 @@
 
     // ---------- footer popovers (pills clicáveis) ----------
     let popMode=null;
-    function closePop(){ E.pop.classList.add('hidden'); E.pop.innerHTML=''; E.pop._anchor=null; popMode=null; }
-    function openPop(anchor,build){ closePop(); build(E.pop); E.pop.classList.remove('hidden'); E.pop._anchor=anchor;
-      const r=anchor.getBoundingClientRect(), pr=E.pop.getBoundingClientRect();
-      const left=Math.max(8,Math.min(r.left, innerWidth-pr.width-8)); let top=r.top-pr.height-8; if(top<8) top=r.bottom+8;
-      E.pop.style.left=left+'px'; E.pop.style.top=top+'px'; }
+    function closePop(){ E.pop.classList.add('hidden'); E.pop.classList.remove('usage-pop'); E.pop.innerHTML=''; E.pop._anchor=null; E.pop.style.left=''; E.pop.style.top=''; E.pop.style.maxHeight=''; popMode=null; }
+    function cssPx(name){ const v=parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)); return Number.isFinite(v)?v:0; }
+    function placePop(){
+      if(E.pop.classList.contains('hidden')||!E.pop._anchor)return;
+      const r=E.pop._anchor.getBoundingClientRect(), margin=8, safeTop=cssPx('--safe-top'), safeBottom=cssPx('--safe-bottom');
+      const minY=safeTop+margin, maxY=innerHeight-safeBottom-margin;
+      const above=Math.max(140,Math.floor(r.top-minY-margin)), below=Math.max(140,Math.floor(maxY-r.bottom-margin));
+      const useAbove=above>=below, maxH=useAbove?above:below;
+      E.pop.style.maxHeight=maxH+'px';
+      const pr=E.pop.getBoundingClientRect();
+      const left=Math.max(margin,Math.min(r.left, innerWidth-pr.width-margin));
+      let top=useAbove?(r.top-pr.height-margin):(r.bottom+margin);
+      if(top<minY)top=minY;
+      if(top+pr.height>maxY)top=Math.max(minY,maxY-pr.height);
+      E.pop.style.left=left+'px'; E.pop.style.top=top+'px';
+    }
+    function openPop(anchor,build){ closePop(); build(E.pop); E.pop.classList.remove('hidden'); E.pop._anchor=anchor; E.pop.scrollTop=0; placePop(); requestAnimationFrame(placePop); }
     function togglePop(anchor,build){ if(!E.pop.classList.contains('hidden') && E.pop._anchor===anchor) closePop(); else openPop(anchor,build); }
     document.addEventListener('click',(e)=>{ if(E.pop.classList.contains('hidden'))return; if(E.pop.contains(e.target)||(E.pop._anchor&&E.pop._anchor.contains(e.target)))return; closePop(); });
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape') closePop(); });
+    window.addEventListener('resize',placePop);
     const ph=(t)=>{ const d=document.createElement('div'); d.className='ph'; d.textContent=t; return d; };
 
     function machineAgents(){ const id=currentMachine==='all'?routedMachine:currentMachine, m=machines.find(x=>x.id===id); return m&&Array.isArray(m.agents)?m.agents:caps.map(c=>c.name); }
@@ -1397,28 +1672,31 @@
     // realmente indisponíveis (não instaladas / sem login) ficam atrás de um "mostrar indisponíveis"
     // — não some pra sempre, só sai da frente. A IA atual sempre aparece, mesmo se ficou indisponível.
     let agentPopShowAll=false;
-    function buildAgentPop(p){ p.innerHTML=''; p.appendChild(ph('Agente / IA')); const avail=machineAgents(), pref=sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}, prefKey=sessionStateKey(currentSession,currentSessionRunner);
-      if(!curStarted&&!curNative){ const a=document.createElement('div'); a.className='opt'+(pref.agent===AUTO_AGENT?' sel':''); a.innerHTML='✨ Automático'+(pref.agent===AUTO_AGENT?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const np=Object.assign({},pref,{agent:AUTO_AGENT,model:AUTO_MODEL,effort:AUTO_EFFORT}); sessionPrefs[prefKey]=np; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); }
+    function buildAgentPop(p){ p.innerHTML=''; p.appendChild(ph(currentSession==null?'Agente / IA padrão':'Agente / IA')); const avail=machineAgents(), pref=currentSession==null?{}:(sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}), prefKey=sessionStateKey(currentSession,currentSessionRunner);
+      if(currentSession==null){ const n=document.createElement('div'); n.className='mut'; n.style.cssText='padding:0 2px 8px;font-size:11.5px'; n.textContent='Sem sessão aberta: esta escolha vira padrão para a próxima sessão.'; p.appendChild(n); }
+      if(currentSession!=null&&!curStarted&&!curNative){ const a=document.createElement('div'); a.className='opt'+(pref.agent===AUTO_AGENT?' sel':''); a.innerHTML='✨ Automático'+(pref.agent===AUTO_AGENT?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const np=Object.assign({},pref,{agent:AUTO_AGENT,model:AUTO_MODEL,effort:AUTO_EFFORT}); sessionPrefs[prefKey]=np; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); }
       const unusable=(c)=>(c.support==='not_installed'||c.support==='unauthenticated');
       const caps=machineCaps(); const hidden=caps.filter(c=>unusable(c)&&c.name!==currentAgent);
       caps.forEach(c=>{ if(!agentPopShowAll&&unusable(c)&&c.name!==currentAgent) return; const ok=avail.includes(c.name); const o=document.createElement('div'); o.className='opt'+(c.name===currentAgent?' sel':'')+(ok?'':' disabled');
         const state=c.support==='limited'?'limitado':c.support==='unverified'?'não verificado':c.support==='unauthenticated'?'sem login':c.support==='not_installed'?'não instalado':''; o.title=c.reason||'';
         o.innerHTML='🤖 '+esc(c.label||c.name)+(c.name===currentAgent?'<span class="r">atual</span>':(!ok?'<span class="r">indisponível</span>':(state?'<span class="r">'+esc(state)+'</span>':'')));
-        if(ok) o.onclick=()=>{ closePop(); const np=Object.assign({},pref,{agent:c.name}); sessionPrefs[prefKey]=np; saveSessionPrefs(); if(c.name!==currentAgent) tx({t:'configure',sessionId:currentSession,agent:c.name}); else renderControls(); };
+        if(ok) o.onclick=()=>{ closePop(); if(currentSession==null){ cfg.agent=c.name; currentAgent=c.name; saveCfg(); syncModelEffort(); return; } const prev=currentAgent, np=Object.assign({},pref,{agent:c.name}); sessionPrefs[prefKey]=np; saveSessionPrefs(); currentAgent=c.name; sessDeclModel=null; sessDeclEffort=null; syncModelEffort(); if(c.name!==prev) tx({t:'configure',sessionId:currentSession,agent:c.name}); else renderControls(); };
         p.appendChild(o); });
       if(hidden.length&&!agentPopShowAll){ const t=document.createElement('div'); t.className='opt mut'; t.style.fontSize='12px'; t.textContent='+ '+hidden.length+' indisponíve'+(hidden.length>1?'is':'l')+' (mostrar)'; t.onclick=()=>{ agentPopShowAll=true; buildAgentPop(p); }; p.appendChild(t); } }
 
-    function buildModelPop(p){ const c=capsFor(currentAgent), control=modelControlOf(c), prefKey=sessionStateKey(currentSession,currentSessionRunner); p.appendChild(ph('Modelo'));
+    function buildModelPop(p){ const c=capsFor(currentAgent), control=modelControlOf(c), prefKey=sessionStateKey(currentSession,currentSessionRunner), defaultScope=currentSession==null; p.appendChild(ph(defaultScope?'Modelo padrão':'Modelo'));
       // Sincronizar (dono): rebusca o catálogo de TODAS as IAs (a atual primeiro) e realoca modelos
       // removidos para o mais próximo por família, mantendo o nível — nas configs de resumo/voz/rotinas.
       if(authUser&&authUser.role==='owner'){ const s=document.createElement('div'); s.className='opt'; s.style.cssText='border-bottom:1px solid var(--line);margin-bottom:4px'; s.innerHTML='↻ Sincronizar modelos <span class="mut" style="font-size:11px">catálogo + configs</span>'; s.title='Rebusca os modelos de todas as IAs (a atual primeiro) e ajusta as configurações que fixam um modelo para o candidato mais próximo por família, mantendo o mesmo nível'; s.onclick=()=>{ closePop(); toast('↻ Sincronizando modelos…'); tx({t:'sync_models',agent:currentAgent}); }; p.appendChild(s); }
-      if(control!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=control==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } { const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='✨ Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); const pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.model=AUTO_MODEL; sessionPrefs[prefKey]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
+      if(defaultScope){ const n=document.createElement('div'); n.className='mut'; n.style.cssText='padding:0 2px 8px;font-size:11.5px'; n.textContent='Sem sessão aberta: esta escolha vira padrão para a próxima sessão.'; p.appendChild(n); }
+      if(control!=='per_turn'){ const n=document.createElement('div'); n.className='mut'; n.style.padding='10px'; n.textContent=control==='configuration_only'?'Este CLI define o modelo na própria configuração; o Jarvis não envia um modelo por turno.':'O provedor escolhe o modelo automaticamente.'; p.appendChild(n); return; } { const a=document.createElement('div'); a.className='opt'+(curModel==null?' sel':''); a.innerHTML='✨ Automático'+(curModel==null?'<span class="r">atual</span>':''); a.onclick=()=>{ closePop(); if(defaultScope){ cfg.model=''; cfg.effort=''; saveCfg(); syncModelEffort(); return; } const pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.model=AUTO_MODEL; sessionPrefs[prefKey]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(a); } selectableModels(c).forEach(mm=>{ const o=document.createElement('div'); o.className='opt'+(mm.id===curModel?' sel':'');
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
-      o.onclick=()=>{ closePop(); const pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}), efs=effortsFor(currentAgent,mm.id); pref.model=mm.id; if(pref.effort&&pref.effort!==AUTO_EFFORT&&!efs.includes(pref.effort))pref.effort=AUTO_EFFORT; sessionPrefs[prefKey]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(o); }); }
+      o.onclick=()=>{ closePop(); const efs=effortsFor(currentAgent,mm.id); if(defaultScope){ cfg.model=mm.id; if(cfg.effort&&!efs.includes(cfg.effort))cfg.effort=''; saveCfg(); syncModelEffort(); return; } const pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.model=mm.id; if(pref.effort&&pref.effort!==AUTO_EFFORT&&!efs.includes(pref.effort))pref.effort=AUTO_EFFORT; sessionPrefs[prefKey]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(o); }); }
 
     function buildEffortPop(p){ const efs=effortsFor(currentAgent,curModel); p.appendChild(ph('Esforço · '+(currentAgent||'')));
       if(!efs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='sem níveis para este modelo'; p.appendChild(d); return; }
-      const saveEffort=(value)=>{ curEffort=value; const key=sessionStateKey(currentSession,currentSessionRunner), pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.effort=value==null?AUTO_EFFORT:value; sessionPrefs[key]=pref; saveSessionPrefs(); renderControls(); };
+      if(currentSession==null){ const n=document.createElement('div'); n.className='mut'; n.style.cssText='padding:0 2px 8px;font-size:11.5px'; n.textContent='Sem sessão aberta: este esforço vira padrão para a próxima sessão.'; p.appendChild(n); }
+      const saveEffort=(value)=>{ curEffort=value; if(currentSession==null){ cfg.effort=value||''; saveCfg(); renderControls(); return; } const key=sessionStateKey(currentSession,currentSessionRunner), pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.effort=value==null?AUTO_EFFORT:value; sessionPrefs[key]=pref; saveSessionPrefs(); renderControls(); };
       // Automático is a routing mode, not a point below "Mínimo" on the effort scale.
       // Keep it separate so the slider remains a truthful low → high representation.
       const auto=document.createElement('button'); auto.type='button'; auto.className='opt effort-auto'+(curEffort==null?' sel':''); auto.setAttribute('aria-pressed',String(curEffort==null));
@@ -1475,7 +1753,7 @@
       dirs.forEach(name=>{ const child=makeFolderNode(treeJoin(m.path,name),name,node.depth+1); node.children.append(child.row,child.children); });
       files.forEach(name=>{ const r=document.createElement('div'); r.className='trow'; r.style.paddingLeft=((node.depth+1)*14+6)+'px';
         const ti=document.createElement('span'); ti.className='ti'; ti.textContent='📄'; const tn=document.createElement('span'); tn.className='tn'; tn.textContent=name; tn.title=treeJoin(m.path,name);
-        // Árvore PERMANECE aberta ao abrir um arquivo — só fecha quando o usuário clica no ícone de novo.
+        // No desktop a árvore permanece aberta; no mobile o painel de arquivo precisa virar o foco.
         r.append(ti,tn); r.onclick=()=>{ treeSelectFile(r); openFile(treeJoin(m.path,name)); }; node.children.appendChild(r); });
     }
     function treeSelectFile(row){ E.treeBody.querySelectorAll('.trow.tsel').forEach(x=>x.classList.remove('tsel')); if(row) row.classList.add('tsel'); }
@@ -1487,6 +1765,10 @@
       cfg.treeOpen=true; saveCfg(); }
     if(E.treeBtn) E.treeBtn.onclick=openTree;
     if(E.treeClose) E.treeClose.onclick=closeTree;
+    if(E.termBtn) E.termBtn.onclick=()=>openTermPanel(true);
+    if(E.termNew) E.termNew.onclick=newTerminal;
+    if(E.termClose) E.termClose.onclick=closeTermPanel;
+    if(E.termMax) E.termMax.onclick=()=>{ E.termPanel.classList.toggle('max'); setTimeout(()=>{ const rec=termMap[termActive]; if(rec)termFit(rec); },50); };
     // restaura a árvore aberta após carregar uma sessão com pasta (persistência visual)
     function maybeRestoreTree(){ if(cfg.treeOpen && curCwd && E.treePanel.classList.contains('hidden')){ openTree(); } }
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
@@ -1510,21 +1792,21 @@
       if(mins<=0)return'já'; if(mins<60)return`em ${mins}min`; const h=Math.floor(mins/60),m=mins%60;
       if(h<24)return`em ${h}h${m?(' '+m+'min'):''}`; const dd=['dom','seg','ter','qua','qui','sex','sáb']; return `${dd[d.getDay()]}, ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
     const ubar=(pct,color)=>`<div class="ubar"><span style="width:${Math.min(100,pct||0)}%;background:${color}"></span></div>`;
-    function buildUsagePop(p){ popMode='usage'; const c=modelContext();
+    function buildUsagePop(p){ popMode='usage'; p.classList.add('usage-pop'); const c=modelContext();
       let h='<div class="upop"><div class="uh">Janela de contexto</div>';
       if(c&&lastInputTokens){ const pc=ctxPct(); h+=`<div class="urow"><span>${kfmt(lastInputTokens)} / ${kfmt(c)}</span><b>${pc}%</b></div>`+ubar(pc, pc>85?'#f85149':pc>60?'#e3b341':'#3fb950'); }
       else h+='<div class="umut">envie uma mensagem para medir</div>';
       h+='<div class="uh" style="margin-top:12px">Custo da sessão</div><div id="usessc">'+sessCostRow()+'</div>';
-      h+='<div class="uh" style="margin-top:12px">Limites do plano</div><div id="uplan" class="umut">carregando…</div></div>';
+      h+='<div class="uh" style="margin-top:12px">Limites do plano</div><div id="uplan" class="umut uloading">consultando o provedor…</div></div>';
       const usageRunner=currentMachine==='all'?routedMachine:currentMachine, usageAgent=currentAgent||availableMachineCaps()[0]?.name||caps[0]?.name||'';
       p.innerHTML=h; if(planKey===usageRunner+'\0'+usageAgent) renderPlan(planUsage); tx({t:'get_usage',agent:usageAgent,runnerId:usageRunner}); }
     function renderPlan(plan){ const el=document.getElementById('uplan'); if(!el)return;
-      if(!plan){ el.className='umut'; el.textContent=planStatus==='unsupported'?'o CLI desta IA não publica limites de conta':planStatus==='error'?'erro ao consultar o provedor':'nenhum limite foi reportado pelo provedor'; return; }
+      if(!plan){ el.className='umut'; el.textContent=planStatus==='unsupported'?'o CLI desta IA não publica limites de conta':planStatus==='error'?'erro ao consultar o provedor':'nenhum limite foi reportado pelo provedor'; requestAnimationFrame(placePop); return; }
       const w=(lbl,x,color)=> x?`<div class="urow"><span>${esc(lbl)}</span><b>${planPctText(x)}</b></div>`+ubar(planUsed(x),color)+(x.resetsAt?`<div class="umut ureset">reinicia ${fmtReset(x.resetsAt)}</div>`:''):'';
       let h=w('Limite de 5 horas',plan.fiveHour,'#2563eb')+w('Semanal · todos os modelos',plan.sevenDay,'#7c3aed');
       (plan.extra||[]).forEach(e=>h+=w(e.label,e,'#7c3aed'));
       if(plan.source) h+=`<div class="umut">fonte: ${esc(plan.source)}</div>`;
-      el.className=''; el.innerHTML=h||'<span class="umut">sem dados</span>'; }
+      el.className=''; el.innerHTML=h||'<span class="umut">sem dados</span>'; requestAnimationFrame(placePop); }
     E.usageBtn.onclick=()=>togglePop(E.usageBtn,buildUsagePop);
 
     // ---------- settings (persistente) ----------
@@ -1540,24 +1822,49 @@
     // ---------- configurações: navegação lateral + busca (like Claude/VS Code) ----------
     // Nenhuma lógica de preencher/salvar muda: os IDs dos controles são os mesmos; aqui só
     // decidimos QUAL painel aparece. Owner-only: esconde os itens de nav e mostra um aviso.
+    // "O painel X está à vista?" = configurações abertas E o painel não escondido (na busca todos
+    // aparecem). Usado por eventos do servidor que só devem repintar o que o usuário está vendo.
+    function settingsPanelOpen(name){ const root=E.settings; if(!root||root.classList.contains('hidden')) return false;
+      const p=root.querySelector(`.spanel[data-panel="${name}"]`); return !!p&&!p.classList.contains('hidden'); }
+    function isNativeShell(){ return document.documentElement.classList.contains('native-shell')||document.documentElement.classList.contains('native'); }
     function settingsGoto(name){ const root=E.settings; if(!root) return;
+      if(name==='celular'&&isNativeShell()) name='geral';
       root.querySelectorAll('.snav').forEach(b=>b.classList.toggle('on',b.dataset.goto===name));
       root.querySelectorAll('.spanel').forEach(p=>p.classList.toggle('hidden',p.dataset.panel!==name));
       const panels=document.getElementById('setPanels'); if(panels) panels.scrollTop=0;
+      settingsLoadPanel(name);
     }
-    function settingsSetupNav(isOwner){ const root=E.settings; if(!root) return;
+    // "Uso & custo", "Abrir no celular" e "Dispositivos & convites" eram MODAIS abertos por botões que
+    // fechavam as configurações — abrir um item tirava o usuário de onde ele estava. Agora são painéis
+    // como os outros, e o fetch que morava no clique do botão passa a acontecer ao ENTRAR no painel
+    // (toda reentrada refaz, para não mostrar custo/convite velho).
+    function settingsLoadPanel(name){
+      if(name==='uso'){ E.fleetBody.innerHTML='Carregando…'; tx({t:'fleet'}); }
+      // O QR codifica location.origin — a mesma página — então nunca fica "velho": não limpamos a
+      // imagem para não piscar o alt quebrado a cada reentrada.
+      else if(name==='celular'&&!isNativeShell()){ if(!E.qrImg.getAttribute('src')) E.qrUrl.textContent='Gerando QR…'; tx({t:'qr',url:location.origin}); }
+      else if(name==='dispositivos'&&authUser&&authUser.role==='owner'){ E.secOut.classList.add('hidden'); tx({t:'sec_state'}); }
+    }
+    // Só a visibilidade owner-only — separado de settingsSetupNav porque uma troca de papel com a tela
+    // aberta não pode jogar o usuário de volta pro painel Geral.
+    function settingsOwnerVisibility(isOwner){ const root=E.settings; if(!root) return;
       // itens exclusivos do dono sÃo escondidos da barra; os painéis mostram aviso se abertos por link/busca
       root.querySelectorAll('.snav-owner').forEach(b=>b.classList.toggle('hidden',!isOwner));
-      const autoHint=document.getElementById('autoOwnerHint'), fwHint=document.getElementById('fwOwnerHint');
-      if(autoHint) autoHint.classList.toggle('hidden',!!isOwner);
-      if(fwHint) fwHint.classList.toggle('hidden',!!isOwner);
+      [['autoOwnerHint',null],['fwOwnerHint',null],['secOwnerHint','secSettings']].forEach(([hintId,bodyId])=>{
+        const hint=document.getElementById(hintId); if(hint) hint.classList.toggle('hidden',!!isOwner);
+        if(bodyId){ const body=document.getElementById(bodyId); if(body) body.classList.toggle('hidden',!isOwner); }
+      });
+    }
+    function settingsSetupNav(isOwner){ const root=E.settings; if(!root) return;
+      settingsOwnerVisibility(isOwner);
       // volta pro painel Geral e limpa a busca toda vez que abre
       if(E.setSearch) E.setSearch.value=''; settingsSearch(''); settingsGoto('geral');
     }
     // Busca: mostra TODOS os painéis mas filtra linha a linha (label/.sec) pelo texto, como no Claude.
+    const setSearchLoaded=new Set();
     function settingsSearch(q){ const root=E.settings; if(!root) return; q=(q||'').trim().toLowerCase();
       root.classList.toggle('searching',!!q);
-      if(!q){ root.querySelectorAll('.searchhide').forEach(el=>el.classList.remove('searchhide')); root.querySelectorAll('.spanel.nomatch').forEach(p=>p.classList.remove('nomatch')); const nr=document.getElementById('setNoResults'); if(nr)nr.classList.add('hidden'); return; }
+      if(!q){ root.querySelectorAll('.searchhide').forEach(el=>el.classList.remove('searchhide')); root.querySelectorAll('.spanel.nomatch').forEach(p=>p.classList.remove('nomatch')); const nr=document.getElementById('setNoResults'); if(nr)nr.classList.add('hidden'); setSearchLoaded.clear(); return; }
       let total=0;
       root.querySelectorAll('.spanel').forEach(p=>{ let shown=0; let curSec=null, secHas=false;
         const flush=()=>{ if(curSec) curSec.classList.toggle('searchhide',!secHas); };
@@ -1570,6 +1877,9 @@
           if(labs.length){ if(any){ shown++; secHas=true; } }
         });
         flush(); p.classList.toggle('nomatch',shown===0); total+=shown;
+        // A busca também "abre" painéis: sem isto, achar "senha do dono" mostraria a seção com as
+        // listas vazias. Uma vez por busca, para não disparar fetch a cada tecla.
+        if(shown&&!setSearchLoaded.has(p.dataset.panel)){ setSearchLoaded.add(p.dataset.panel); settingsLoadPanel(p.dataset.panel); }
       });
       const nr=document.getElementById('setNoResults'); if(nr)nr.classList.toggle('hidden',total>0);
     }
@@ -1640,7 +1950,7 @@
     function renderAdaptiveApprovals(items){
       const rows=Array.isArray(items)?items:[];
       if(!rows.length){ if(adaptiveApprovalEl){ adaptiveApprovalEl.remove(); adaptiveApprovalEl=null; } return; }
-      if(!adaptiveApprovalEl){ adaptiveApprovalEl=document.createElement('div'); adaptiveApprovalEl.className='toast'; adaptiveApprovalEl.style.cssText='right:14px;left:auto;bottom:82px;max-width:min(420px,calc(100vw - 28px));display:flex;flex-direction:column;gap:8px;align-items:stretch'; document.body.appendChild(adaptiveApprovalEl); }
+      if(!adaptiveApprovalEl){ adaptiveApprovalEl=document.createElement('div'); adaptiveApprovalEl.className='toast'; adaptiveApprovalEl.style.cssText='right:14px;left:auto;bottom:calc(82px + var(--safe-bottom));max-width:min(420px,calc(100vw - 28px));display:flex;flex-direction:column;gap:8px;align-items:stretch'; document.body.appendChild(adaptiveApprovalEl); }
       adaptiveApprovalEl.innerHTML='<b>Precisa de aprovação</b>';
       rows.slice(0,5).forEach(a=>{
         const row=document.createElement('div'); row.style.cssText='display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;border-top:1px solid #ffffff24;padding-top:7px';
@@ -1708,7 +2018,7 @@
     E.updApply.onclick=()=>{ const now=Date.now(); if(now-updArmed<4000){ updArmed=0; E.updApply.textContent='Atualizar'; E.updStatus.textContent='Atualizando… (o Hub vai reiniciar)'; E.updActions.classList.add('hidden'); tx({t:'update_apply',allMachines:E.updAll.checked}); }
       else { updArmed=now; E.updApply.textContent='Confirmar?'; setTimeout(()=>{ if(Date.now()-updArmed>=4000) E.updApply.textContent='Atualizar'; },4200); } };
     E.setEnroll.onclick=()=>enrollFlow();
-    E.setClose.onclick=()=>{
+    E.setClose.onclick=async()=>{
       const isOwner=authUser&&authUser.role==='owner';
       if(isOwner){ const numeric=[E.setExecRetention,E.setExecMaxEvents,E.setExecConcurrency,E.setExecDepth]; if(adaptivePolicyDoc) numeric.push(E.setPolicyCost,E.setPolicyTokens); const invalid=numeric.find(x=>!x.checkValidity()); if(invalid){ invalid.reportValidity(); return; }
         tx({t:'set_execution_cfg',enabled:E.setExecEnabled.checked,retentionDays:+E.setExecRetention.value,maxEvents:+E.setExecMaxEvents.value,maxConcurrency:+E.setExecConcurrency.value,maxDepth:+E.setExecDepth.value,defaultWrite:E.setExecDefaultWrite.checked,worktreeRoot:(E.setExecWorktree.value||'').trim()}); }
@@ -1720,18 +2030,25 @@
       saveCfg(); speak=cfg.voice; setSpeakBtn(); if(cfg.shareGeo) refreshGeo(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate});
       if(window.__jarvisNative){ if(cfg.wake){ window.__jarvisNative.wakeStart&&window.__jarvisNative.wakeStart(); } else { window.__jarvisNative.wakeStop&&window.__jarvisNative.wakeStop(); } }
       const pp=pushPrefs(); cfg.pushEvents=pp.events; cfg.pushMode=pp.mode; cfg.pushEvery=pp.everyMin;
-      const wantPush=E.setPush.checked; if(wantPush&&!cfg.push) enablePush(); else if(!wantPush&&cfg.push) disablePush();
-      // Ja inscrito: so atualiza as prefs — re-inscrever trocaria o endpoint a toa.
-      else if(wantPush&&cfg.push){ (async()=>{ try{ const reg=await navigator.serviceWorker.getRegistration(); const sub=reg&&await reg.pushManager.getSubscription();
-        if(sub) tx({t:'push_prefs', endpoint:sub.endpoint, prefs:pp}); }catch(e){} })(); }
-      E.settings.classList.add('hidden'); };
+      const wantPush=E.setPush.checked;
+      try{
+        if(wantPush&&!cfg.push){ const ok=await enablePush(); cfg.push=!!ok; if(E.setPush)E.setPush.checked=!!ok; }
+        else if(!wantPush&&cfg.push){ await disablePush(); cfg.push=false; }
+        // Ja inscrito: so atualiza as prefs — re-inscrever trocaria o endpoint a toa.
+        else if(wantPush&&cfg.push){ await updatePushPrefs(pp); }
+      }catch(e){ cfg.push=false; if(E.setPush)E.setPush.checked=false; toast('Falha ao salvar notificações: '+(e&&e.message?e.message:e)); }
+      saveCfg(); renderPushCfg();
+      // Salvar NÃO fecha: mexer em várias abas de configuração exigia reabrir tudo a cada ajuste.
+      // O feedback vira o próprio botão (e o toast), então continua claro que gravou.
+      E.setClose.textContent='Salvo ✓'; setTimeout(()=>{ E.setClose.textContent='Salvar'; },1600); toast('Configurações salvas.'); };
     E.setCancel.onclick=()=>E.settings.classList.add('hidden'); // fecha sem salvar
+    if(E.setX) E.setX.onclick=()=>E.settings.classList.add('hidden'); // mesmo fechar, no canto do card
 
     // ---------- generic dialog (substitui alert/confirm/prompt nativos) ----------
     let dlgResolve=null;
     function dialog({title,input=false,placeholder='',value='',okText='OK',cancelText='Cancelar',danger=false}){
       return new Promise(res=>{ dlgResolve=res; E.dlgTitle.textContent=title; E.dlgInput.classList.toggle('hidden',!input); E.dlgInput.value=value; E.dlgInput.placeholder=placeholder;
-        E.dlgOk.textContent=okText; E.dlgCancel.textContent=cancelText; E.dlgOk.classList.toggle('danger',!!danger); E.dlg.classList.remove('hidden');
+        E.dlgOk.textContent=okText; E.dlgCancel.textContent=cancelText||''; E.dlgCancel.classList.toggle('hidden',cancelText==null); E.dlgOk.classList.toggle('danger',!!danger); E.dlg.classList.remove('hidden');
         if(input) setTimeout(()=>{E.dlgInput.focus();E.dlgInput.select();},30); }); }
     function dlgClose(val){ E.dlg.classList.add('hidden'); const r=dlgResolve; dlgResolve=null; if(r) r(val); }
     E.dlgOk.onclick=()=>dlgClose(E.dlgInput.classList.contains('hidden')?true:E.dlgInput.value.trim());
@@ -1748,6 +2065,7 @@
       if(curNative) L.push(['Modo', 'sessão nativa (somente leitura)']);
       return L; }
     function refreshTitleInfo(){ const L=sessionInfoLines(), full=L.map(([k,v])=>k+': '+v).join('\n'); E.title.title=full; E.title.setAttribute('aria-label',full||E.title.textContent||''); }
+    E.title.onclick=()=>{ const L=sessionInfoLines(); const full=L.length?L.map(([k,v])=>k+': '+v).join('\n'):(E.title.textContent||'Jarvis'); dialog({title:full,okText:'Fechar',cancelText:null}); };
     // ---------- catálogo de vozes (timbre falado): listar + ouvir amostra + escolher (Gap 6) ----------
     let voiceList=[], voiceCur='';
     function prettyVoice(v){ const m=/^([a-z]{2})_([A-Za-z]{2})-([^-]+)-(.+)$/.exec(v||''); if(!m) return v||'';
@@ -2065,14 +2383,20 @@
           renderUpdMachines(); }
         else if(m.t==='update_result'){ if(m.ok){ toast('✅ '+((m.log||'atualizado').split('\n').pop()||'').slice(0,80)); } else { toast('⚠ Falha: '+(m.log||'').slice(0,120)); if(E.updStatus) E.updStatus.textContent='⚠ '+(m.log||'').slice(0,140); E.updActions.classList.remove('hidden'); } }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
-        else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} enter(); }
+        else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} if(!currentAgent) currentAgent=cfg.agent||m.default||(caps[0]||{}).name||null; syncModelEffort(); clearLimitBanner(); enter(); }
+        else if(m.t==='agent_catalog'){ caps=m.agents||caps; if(m.default&&!cfg.agent){cfg.agent=m.default;saveCfg();} if(!currentAgent) currentAgent=cfg.agent||m.default||(caps[0]||{}).name||null; syncModelEffort(); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') tx({t:'routines'}); }
         else if(m.t==='models_synced'){ caps=m.agents||caps; if(typeof syncModelEffort==='function') syncModelEffort(); const ch=m.changes||[]; toast(ch.length?('✅ Modelos sincronizados — '+ch.length+' ajuste'+(ch.length>1?'s':'')):'✅ Modelos sincronizados — nada a ajustar'); if(ch.length) syncReport(ch); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') tx({t:'routines'}); }
         else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=(m.runnerId||routedMachine||currentMachine||'local')+'|'+(m.cwd||curCwd||''); cmdReqPending=false; if(trigOpen()&&trigMode==='cmd') updateTrig(); }
         else if(m.t==='mention_list'){ fileList=m.files||[]; if(trigOpen()&&trigMode==='file'){ trigItems=fileList.slice(0,50); trigIdx=trigItems.length?0:-1; renderTrig(); } }
         else if(m.t==='worktree_preview'){ if(pendingPreview){ const f=pendingPreview; pendingPreview=null; f(m.candidates||[]); } }
-        else if(m.t==='machines'){ machines=m.machines||[]; machines.forEach(mm=>{ const u=mm.updatePending;if(!u){const prior=updMach[mm.id];if(prior&&['queued','sent','awaiting_restart'].includes(prior.state)&&mm.online&&!mm.stale)updMach[mm.id]={label:mm.label,state:'verified',why:'reiniciou e versão confirmada'};return;} const state=u.state||'queued';updMach[mm.id]={label:mm.label,state,dirty:state==='blocked',why:state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':(mm.online?'aguardando nova tentativa':'offline — atualização guardada')};}); renderUpdMachines(); renderUpdate(); renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(!E.secModal.classList.contains('hidden')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
+        else if(m.t==='machines'){ machines=m.machines||[]; machines.forEach(mm=>{ const u=mm.updatePending;if(!u){const prior=updMach[mm.id];if(prior&&['queued','sent','awaiting_restart'].includes(prior.state)&&mm.online&&!mm.stale)updMach[mm.id]={label:mm.label,state:'verified',why:'reiniciou e versão confirmada'};return;} const state=u.state||'queued';updMach[mm.id]={label:mm.label,state,dirty:state==='blocked',why:state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':(mm.online?'aguardando nova tentativa':'offline — atualização guardada')};}); if(currentSession==null){ const ac=availableMachineCaps(); if(!currentAgent||!ac.some(c=>c.name===currentAgent)) currentAgent=(ac[0]||machineCaps()[0]||{}).name||currentAgent; syncModelEffort(); } renderUpdMachines(); renderUpdate(); renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(settingsPanelOpen('dispositivos')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
           if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }
+        else if(m.t==='terminal_opened'){ const rec=ensureTerm(m.terminal,m.runnerId||selectedRunner()); if(rec)toast('⌘ Terminal aberto em '+termMachineLabel(rec.runnerId)); }
+        else if(m.t==='terminal_output'){ const rec=termMap[termKey(m.runnerId||selectedRunner(),m.terminalId)]; if(rec&&rec.term)rec.term.write(m.data||''); }
+        else if(m.t==='terminal_closed'){ const k=termKey(m.runnerId||selectedRunner(),m.terminalId); if(termMap[k])closeTermLocal(k); }
+        else if(m.t==='terminal_list'){ (m.terminals||[]).forEach(ti=>ensureTerm(ti,m.runnerId||selectedRunner())); renderTermTabs(); }
+        else if(m.t==='terminal_error'){ const msg=m.message||'erro'; toast('⚠ Terminal: '+msg); const rec=termMap[termKey(m.runnerId||selectedRunner(),m.terminalId)]; if(rec&&rec.term)rec.term.writeln('\r\n[erro] '+msg); else { if(E.termPanel){ E.termPanel.classList.remove('hidden'); E.termPanel.setAttribute('aria-hidden','false'); } setTermEmpty('Terminal não abriu',msg); } }
         else if(m.t==='filecontent'){ showFile(m); }
         else if(m.t==='filediff'){ showDiff(m); }
         else if(m.t==='dirs'){ browsePath=m.path;
@@ -2132,13 +2456,18 @@
           else if(ev.kind==='text'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.parentId,ev.executionId); }
           else if(ev.kind==='done'){ clearRestorable(m.sessionId,frameRunner(m)); if(typeof m.sessionCost==='number'){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text, m.usage); onTurnEnd(m.sessionId,frameRunner(m)); }
           else if(ev.kind==='cancelled'){ streamCancelled(); onTurnEnd(m.sessionId,frameRunner(m)); }
-          else if(ev.kind==='error'){ streamErr(); onTurnEnd(m.sessionId,frameRunner(m)); } }
+          else if(ev.kind==='error'){ streamErr(ev.text||ev.message); onTurnEnd(m.sessionId,frameRunner(m)); } }
         else if(m.t==='activity'){ if(!currentFrame(m))return;
           // espelho ao vivo de uma sessão nativa: o evento já é uma ação CONCLUÍDA (o tail lê o que
           // foi escrito) → tool row completo (done): "Editado", contagem +/-, abrir arquivo, diff.
-          const d=toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows,m.detail);
+          if(m.name==='Thinking'&&isGenericThinking(m.summary||m.name))return;
+          const item={kind:'tool',name:m.name,summary:m.summary||m.name||'',path:m.path,adds:m.adds,dels:m.dels,rows:m.rows,detail:m.detail};
+          const fk=fileGroupKey(item), rk=repeatToolKey(item), k=fk||rk; let d;
+          if(fk&&looseActivityGroups[fk]&&looseActivityGroups[fk].isConnected){ d=looseActivityGroups[fk]; appendToolGroupItem(d,item,true); looseLastGroupKey=fk; }
+          else if(rk&&looseLastGroupKey===rk&&looseActivityGroups[rk]&&looseActivityGroups[rk].isConnected){ d=looseActivityGroups[rk]; appendRepeatGroupItem(d,item,true); }
+          else { d=fk?toolGroupEl([item],true):(rk?repeatGroupEl([item],true):toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows,m.detail)); if(k){looseActivityGroups[k]=d;looseLastGroupKey=k;}else looseLastGroupKey=''; if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); }
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
-          if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); autoScroll(); }
+          autoScroll(); }
         else if(m.t==='usage'){ if(currentFrame(m)&&m.usage){ E.usage.textContent=usageSummary(m.usage); if(m.usage.contextTokens||m.usage.inputTokens)lastInputTokens=m.usage.contextTokens||m.usage.inputTokens;if(m.usage.contextWindowTokens)lastContextWindow=m.usage.contextWindowTokens;updUsagePill(); } }
         else if(m.t==='usage_info'){ planUsage=m.plan||null; planStatus=m.planStatus||null; planKey=(m.runnerId||'local')+'\0'+(m.agent||''); if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
         else if(m.t==='session'){ if(currentFrame(m) && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
@@ -2178,7 +2507,7 @@
         else if(m.t==='queued'){ const runner=frameRunner(m); endVoiceOp(); justSent.delete(sessionStateKey(m.sessionId,runner)); const msg=m.message||(m.update?'Atualização em andamento — mensagem ficou na fila.':'Mensagem na fila — aguardando o turno atual terminar'); refreshComposer(); if(currentFrame(m)){ clearPending(); status('busy',msg); } toast(m.update?'🔄 '+msg:t('tQueued')); }
         else if(m.t==='voice_timing'){ try{ console.log('[voz] STT '+m.stt+'ms · locutor '+m.speaker+'ms · correção+gate '+m.preflight+'ms'); }catch(e){} }
         else if(m.t==='runs'){ const runner=m.runnerId||selectedRunner(), prev=activeRunsByRunner[runner]||[], now=m.active||[], sent=[...justSent].filter(key=>key.startsWith(runner+'\0')).map(key=>key.slice(runner.length+1)), finished=[...new Set([...prev,...sent])].filter(id=>!now.includes(id)); prev.forEach(id=>{ if(!now.includes(id)&&!(id===currentSession&&runner===currentSessionRunner)) unread.add(sessionStateKey(id,runner)); }); activeRunsByRunner[runner]=now; if(runner===sessionRunner())activeRuns=now; now.forEach(id=>justSent.delete(sessionStateKey(id,runner))); finished.forEach(id=>onTurnEnd(id,runner)); renderRecents(); refreshComposer(); scheduleAllRefresh(); }
-        else if(m.t==='qr'){ E.qrImg.src=m.dataUri; E.qrUrl.textContent=m.url; E.qrModal.classList.remove('hidden'); }
+        else if(m.t==='qr'){ E.qrImg.src=m.dataUri; E.qrUrl.textContent=m.url; }
         else if(m.t==='pushkey'){ if(pushKeyResolve){ const r=pushKeyResolve; pushKeyResolve=null; r(m.key); } }
         else if(m.t==='wake_state'){ cfg.wake=m.enabled; saveCfg(); if(E.setWake) E.setWake.checked=m.enabled; }
         else if(m.t==='wake_event'){ status('listening', m.phase==='capturing'?'Jarvis ouvindo…':'Jarvis'); }
@@ -2186,7 +2515,7 @@
         else if(m.t==='voices'){ voiceList=m.voices||[]; voiceCur=m.current||''; renderVoiceCatalog(); }   // catálogo de vozes (Gap 6)
         else if(m.t==='voice_preview'){ if(m.audio) playAudioOnce(m.audio); }                                // ouvir amostra da voz
         else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
-        else if(m.t==='error'){ creatingSession=false; pendingNewSession=null; endVoiceOp(); clearPending(); onTurnEnd(currentSession); addErr('erro: '+m.message); if(m.limit){ E.limit.textContent='⚠ Limite de uso atingido: '+m.message; E.limit.classList.remove('hidden'); } } };
+        else if(m.t==='error'){ creatingSession=false; pendingNewSession=null; endVoiceOp(); clearPending(); onTurnEnd(currentSession); clearLimitBanner(); addErr(m.message||'Falha na execução',{limit:!!m.limit}); } };
     }
     function playTTS(b64,closing){ status('speaking',t('spSpeaking'));
       audioMgr.play(b64,{ onEnd:()=>{ if(audioMgr.active) return;   // ainda há áudio na fila → adia re-armar o mic (evita voltar a ouvir no meio)
@@ -2202,7 +2531,7 @@
     let stageEl=null;
     function showStage(m){ stagingActive=true;
       if(!stageEl){ stageEl=document.createElement('div'); stageEl.id='stagePanel';
-        stageEl.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:88px;z-index:55;width:min(560px,94vw);background:var(--panel);border:1px solid #a78bfa66;border-radius:14px;padding:12px 14px;box-shadow:0 10px 34px #000b';
+        stageEl.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + var(--safe-bottom));z-index:55;width:min(560px,94vw);background:var(--panel);border:1px solid #a78bfa66;border-radius:14px;padding:12px 14px;box-shadow:0 10px 34px #000b';
         document.body.appendChild(stageEl); }
       renderStage(m||{}); }
     function renderStage(m){ if(!stageEl)return;
@@ -2222,7 +2551,7 @@
     function hideStage(){ stagingActive=false; stopTTS(); if(stageEl){ stageEl.remove(); stageEl=null; } status(''); }
     function toast(t){ const d=document.createElement('div'); d.className='toast'; d.textContent=t; d.onclick=()=>d.remove(); document.body.appendChild(d); setTimeout(()=>{ if(d.parentNode) d.remove(); },9000); }
     // Relatório da sincronização de modelos: painel dismissível listando cada config que mudou (de → para).
-    function syncReport(changes){ const ov=document.createElement('div'); ov.className='card'; ov.style.cssText='position:fixed;right:16px;bottom:16px;max-width:390px;z-index:9999;background:var(--panel,#1b1d22);border:1px solid var(--line,#333);border-radius:10px;padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.45);font-size:13px';
+    function syncReport(changes){ const ov=document.createElement('div'); ov.className='card'; ov.style.cssText='position:fixed;right:16px;bottom:calc(16px + var(--safe-bottom));max-width:390px;z-index:9999;background:var(--panel,#1b1d22);border:1px solid var(--line,#333);border-radius:10px;padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.45);font-size:13px';
       const h=document.createElement('div'); h.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:600'; h.innerHTML='<span>Modelos realocados</span>';
       const x=document.createElement('button'); x.className='ghost'; x.textContent='✕'; x.style.cssText='border:0;background:none;cursor:pointer;font-size:14px;padding:0 4px'; x.onclick=()=>ov.remove(); h.appendChild(x); ov.appendChild(h);
       changes.forEach(c=>{ const row=document.createElement('div'); row.style.cssText='margin:6px 0;line-height:1.35'; row.innerHTML='<div style="opacity:.85">'+esc(c.scope)+' <span class="mut">('+esc(c.agent)+')</span></div><div><span class="mut">'+esc(c.from)+'</span> → <b>'+esc(c.to)+'</b></div>'; ov.appendChild(row); });
@@ -2270,6 +2599,15 @@
     const closeSide=()=>setSide(false);
     E.menuBtn.onclick=()=>setSide(!E.side.classList.contains('open'));
     E.backdrop.onclick=closeSide; E.sideClose.onclick=closeSide;
+    function parseFileHref(raw){
+      let h=String(raw||'').trim(), line=0;
+      try{ h=decodeURIComponent(h); }catch(e){}
+      h=h.replace(/^<|>$/g,'').replace(/^file:\/+/i,'').replace(/\\/g,'/');
+      h=h.replace(/^\/([A-Za-z]:\/)/,'$1');
+      const m=h.match(/^(.*):(\d+)(?::\d+)?$/);
+      if(m&&m[1]){ h=m[1]; line=Number(m[2])||0; }
+      return {path:h,line};
+    }
     E.log.addEventListener('click',(e)=>{
       if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
       const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); if(exec.dataset.runner){ routedMachine=exec.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort,auto:routeAutoFor(exec.dataset.id)}); openSession(exec.dataset.id,exec.dataset.runner); return; }
@@ -2277,9 +2615,9 @@
       // file references in the chat (markdown links) must NOT navigate away — open in the panel.
       const a=e.target.closest && e.target.closest('a'); if(a){ const href=a.getAttribute('href')||'';
         if(/^(https?:|mailto:|tel:|#)/i.test(href)) return; // real links pass through
-        e.preventDefault(); const norm=s=>s.replace(/\\/g,'/'); const h=norm(href).replace(/^\.\//,''); const base=h.split('/').pop();
+        e.preventDefault(); const parsed=parseFileHref(href), norm=s=>s.replace(/\\/g,'/'); const h=norm(parsed.path).replace(/^\.\//,''); const base=h.split('/').pop();
         const f=curFiles.find(x=>norm(x.path).endsWith(h)) || curFiles.find(x=>norm(x.path).split('/').pop()===base);
-        if(f) openFile(f.path,f.action); else openFile(href); }
+        if(f) openFile(f.path,f.action,{line:parsed.line}); else openFile(parsed.path,'read',{line:parsed.line}); }
     });
     E.attach.onclick=()=>E.file.click();
     const readB64 = f => new Promise(r=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.readAsDataURL(f); });

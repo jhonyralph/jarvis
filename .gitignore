@@ -11,6 +11,11 @@ build/
 *.tsbuildinfo
 jarvis-dist.tgz
 *.tgz
+*.apk
+*.aab
+*.ipa
+*.xcarchive
+*.xcarchive/
 
 # local runtime data / models / audio (never commit — huge, and local-only by design)
 *.wav
@@ -25,6 +30,9 @@ data/
 .env
 .env.*
 !.env.runner.example
+*.keystore
+*.jks
+*.p12
 
 # os / editor
 .DS_Store

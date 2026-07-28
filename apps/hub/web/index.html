@@ -12,11 +12,15 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Jarvis" />
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
   <style>
-    :root { color-scheme: light dark; --bg:#0b0d10; --side:#0e1216; --panel:#161b21; --me:#2563eb; --bot:#1b2127; --text:#e6e9ec; --mut:#8b98a5; --line:#ffffff14; --code:#0d1117; }
+    :root { color-scheme: light dark; --bg:#0b0d10; --side:#0e1216; --panel:#161b21; --me:#2563eb; --bot:#1b2127; --text:#e6e9ec; --mut:#8b98a5; --line:#ffffff14; --code:#0d1117; --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px); --safe-left:env(safe-area-inset-left,0px); --safe-right:env(safe-area-inset-right,0px); --safe-height:calc(100dvh - var(--safe-top) - var(--safe-bottom)); }
+    html.native-shell { --safe-top:max(env(safe-area-inset-top,0px),28px); --safe-bottom:max(env(safe-area-inset-bottom,0px),12px); }
+    html.native-shell .snav[data-goto="celular"], html.native .snav[data-goto="celular"],
+    html.native-shell .spanel[data-panel="celular"], html.native .spanel[data-panel="celular"] { display:none !important; }
     * { box-sizing: border-box; }
-    body { margin:0; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); height:100dvh; overflow:hidden; }
-    #app { display:flex; height:100dvh; }
+    body { margin:0; padding-top:var(--safe-top); font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); height:100dvh; overflow:hidden; }
+    #app { display:flex; height:100%; }
     /* A lateral era UMA coluna rolável: com 25 recentes + 60 arquivos dava 3328px num viewport de
        800 — pra ver Arquivos você rolava por cima dos Recentes, e o ⚙ ficava a 2500px de scroll.
        Agora a lateral não rola: cada lista rola dentro de si, e as duas ficam visíveis juntas. */
@@ -40,9 +44,9 @@
     #quickRow { display:flex; flex-direction:column; gap:2px; }
     .link .qic { margin-right:5px; }
     .spacer { flex:1; }
-    main { flex:1; display:flex; flex-direction:column; min-width:0; }
+    main { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
     header { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); }
-    header #title { font-weight:600; overflow:hidden; white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; line-height:1.25; min-width:0; flex:1 1 auto; cursor:default; }
+    header #title { font-weight:600; overflow:hidden; white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; line-height:1.25; min-width:0; flex:1 1 auto; cursor:pointer; }
     #dlgTitle { white-space:pre-line; }
     .dot { width:9px;height:9px;border-radius:50%;background:#f43f5e; flex:none; }
     .dot.on { background:#22c55e; }
@@ -54,9 +58,10 @@
     button.ghost { background:var(--panel); color:var(--text); border:1px solid #ffffff1f; font-weight:500; }
     button.on { background:#22c55e; color:#04210f; }
     #newSess { width:100%; }
-    #limit { padding:10px 14px; background:#7c2d12; color:#fed7aa; font-size:13px; }
-    #log { flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:14px; scrollbar-gutter:stable both-edges; }
-    .msg.me { align-self:flex-end; background:var(--me); color:#fff; padding:9px 13px; border-radius:14px; white-space:pre-wrap; max-width:min(88%,760px); overflow-wrap:anywhere; }
+    #limit { padding:10px 14px; background:#7c2d12; color:#fed7aa; font-size:13px; overflow-wrap:anywhere; max-height:30dvh; overflow:auto; }
+    #log { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; padding:18px; display:flex; flex-direction:column; gap:14px; scrollbar-gutter:stable both-edges; min-width:0; -webkit-overflow-scrolling:touch; }
+    #log > .msg, #log > .restorebar { flex:0 0 auto; }
+    .msg.me { align-self:flex-end; background:var(--me); color:#fff; padding:9px 13px; border-radius:14px; white-space:pre-wrap; max-width:min(88%,760px); overflow-wrap:anywhere; word-break:break-word; min-width:0; overflow:visible; }
     .msg.me.optimistic { opacity:.78; }
     .msg.me .msgimgs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
     .msg.me .msgimgs:last-child { margin-bottom:0; }
@@ -66,13 +71,24 @@
     .msg.me .filechip { font-size:12px; background:#ffffff1a; border:1px solid var(--line); border-radius:8px; padding:4px 9px; cursor:pointer; color:inherit; }
     .msg.me .filechip:hover { background:#ffffff2a; }
     .msg.me .filechip.nocontent { cursor:default; opacity:.6; }
-    .filemodalcard { width:min(760px,94vw); max-height:88dvh; }
-    .filemodalbody { overflow:auto; max-height:70dvh; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; font:13px ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
-    #dropHint { display:none; position:fixed; inset:0; z-index:60; background:#0b1220cc; backdrop-filter:blur(2px); align-items:center; justify-content:center; padding:24px; }
+    .filemodalcard { width:min(760px,94vw); max-height:min(88dvh,calc(var(--safe-height) - 32px)); }
+    .filemodalbody { overflow:auto; max-height:min(70dvh,calc(var(--safe-height) - 128px)); background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; font:13px ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+    #dropHint { display:none; position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:60; background:#0b1220cc; backdrop-filter:blur(2px); align-items:center; justify-content:center; padding:24px; }
     body.dragging #dropHint { display:flex; }
     #dropHint .dhbox { border:2px dashed #3b82f6; border-radius:16px; padding:28px 40px; font-size:16px; color:#dbeafe; background:#1e293b99; pointer-events:none; }
-    .msg.bot { align-self:flex-start; background:var(--bot); padding:2px 15px; border-radius:14px; max-width:min(88%,760px); overflow-wrap:anywhere; min-width:0; }
-    .msg.err { align-self:center; color:#fca5a5; font-size:13px; }
+    .msg.bot { align-self:flex-start; background:var(--bot); padding:2px 15px; border-radius:14px; max-width:min(88%,760px); overflow-wrap:anywhere; word-break:break-word; min-width:0; overflow:visible; }
+    .msg.bot > * { min-width:0; max-width:100%; }
+    .msg.err { align-self:center; color:#fca5a5; font-size:13px; max-width:min(92%,760px); min-width:0; overflow:visible; }
+    .errbox { display:flex; flex-direction:column; gap:6px; max-width:100%; overflow:hidden; color:#fecaca; background:#7f1d1d1a; border:1px solid #ef444455; border-radius:10px; padding:8px 11px; }
+    .errhead { display:flex; align-items:flex-start; gap:8px; min-width:0; }
+    .errmark { flex:none; line-height:1.4; }
+    .errtext { flex:1; min-width:0; overflow:hidden; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+    .errtitle { color:#fee2e2; font-weight:650; }
+    .errsummary { color:#fca5a5; }
+    .errtoggle { flex:none; background:none; border:0; color:#fca5a5; cursor:pointer; font-size:12px; font-weight:600; padding:1px 2px; white-space:nowrap; }
+    .errtoggle:hover { color:#fee2e2; }
+    .errdetail { max-height:320px; overflow:auto; background:#111827; border:1px solid var(--line); border-radius:8px; padding:8px; color:#fecaca; font:12px ui-monospace,Menlo,Consolas,monospace; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; min-width:0; max-width:100%; }
+    .errdetail.hidden { display:none; }
     .msg.bot.pending { padding:11px 15px; }
     .msg.bot.sessionload { background:#111827; border:1px solid var(--line); color:var(--mut); }
     .work { display:inline-flex; align-items:center; gap:9px; color:var(--mut); font-size:14px; }
@@ -83,10 +99,10 @@
     .strhead { display:inline-flex; align-items:center; gap:8px; color:var(--mut); font-size:12.5px; }
     .strtools { display:flex; flex-direction:column; gap:4px; }
     /* fluxo ao vivo: texto e ferramentas INTERCALADOS na ordem de chegada (como o histórico) */
-    .strflow { display:flex; flex-direction:column; gap:7px; }
-    .strflow .strtext { background:none; padding:0; }
-    .strtool { display:flex; flex-direction:column; font-size:12.5px; color:#cbd5e1; background:#ffffff0d; border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow-wrap:anywhere; }
-    .strtool .strtoolhead { display:flex; align-items:center; gap:7px; }
+    .strflow { display:flex; flex-direction:column; gap:7px; min-width:0; max-width:100%; }
+    .strflow .strtext { background:none; padding:0; min-width:0; max-width:100%; overflow-wrap:anywhere; }
+    .strtool { display:flex; flex-direction:column; font-size:12.5px; color:#cbd5e1; background:#ffffff0d; border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow-wrap:anywhere; min-width:0; max-width:100%; overflow:hidden; }
+    .strtool .strtoolhead { display:flex; align-items:center; gap:7px; min-width:0; }
     .strtool.act { align-self:flex-start; max-width:min(88%,760px); }
     /* comando/ação muito grande: recolhe em 2 linhas e oferece expandir */
     .strtool.clamp .ttl { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
@@ -99,6 +115,10 @@
     .strtool .tcnt.clk { cursor:pointer; } .strtool .tcnt.clk:hover { background:#ffffff1f; }
     .strtool .fadd { color:#3fb950; flex:none; } .strtool .fdel { color:#f85149; flex:none; }
     .strtool .tdetail { margin-top:6px; border-top:1px solid var(--line); padding-top:6px; max-height:360px; overflow:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; color:#cbd5e1; } .strtool .tdetail.hidden { display:none; }
+    .strgroup .tgbody, .strrepeat .tgbody { display:flex; flex-direction:column; gap:5px; font-family:inherit; }
+    .strgroup .tgitem, .strrepeat .tgitem { display:flex; align-items:center; gap:8px; min-width:0; padding:3px 0; border-bottom:1px solid #ffffff0c; }
+    .strgroup .tgitem:last-child, .strrepeat .tgitem:last-child { border-bottom:0; }
+    .strgroup .tgtitle, .strrepeat .tgtitle { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#cbd5e1; }
     .strtool .tdiff { margin-top:6px; border-top:1px solid var(--line); padding-top:6px; max-height:360px; overflow:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.5; }
     .strtool .tdiff .dline { display:block; white-space:pre-wrap; overflow-wrap:anywhere; padding:0 2px; }
     .strtool .tdiff .dline.add { background:#2ea04326; } .strtool .tdiff .dline.add::before { content:'+ '; color:#3fb950; }
@@ -152,7 +172,7 @@
     .msg.bot p { margin:.55em 0; } .msg.bot h4 { margin:.7em 0 .3em; font-size:15px; }
     .msg.bot ul,.msg.bot ol { margin:.4em 0; padding-left:1.3em; }
     .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; overflow-wrap:anywhere; }
-    .msg.bot pre { position:relative; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; max-width:100%; }
+    .msg.bot pre { position:relative; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; max-width:100%; min-width:0; }
     .msg.bot pre code { overflow-wrap:normal; white-space:pre; }
     .msg.bot pre code { background:none; padding:0; display:block; } .msg.bot pre .copy { position:absolute; top:6px; right:6px; padding:3px 8px; font-size:11px; }
     .msg.bot table { border-collapse:collapse; margin:.5em 0; display:block; overflow-x:auto; }
@@ -187,10 +207,10 @@
     #scrollBtn.hidden { display:none; }
     @keyframes sbpulse { 0%,100%{opacity:.3} 50%{opacity:.68} }
     .usage { color:var(--mut); font-size:11.5px; }
-    .modal { position:fixed; inset:0; background:#000a; display:flex; align-items:center; justify-content:center; padding:16px; z-index:30; }
-    .modal .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; width:min(480px,100%); display:flex; flex-direction:column; gap:11px; max-height:90dvh; overflow:auto; }
-    #imgModal .imgwrap { position:relative; max-width:96vw; max-height:92dvh; }
-    #imgModal img { max-width:96vw; max-height:92dvh; width:auto; height:auto; border-radius:10px; object-fit:contain; display:block; }
+    .modal { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); background:#000a; display:flex; align-items:center; justify-content:center; padding:16px; z-index:30; }
+    .modal .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; width:min(480px,100%); display:flex; flex-direction:column; gap:11px; max-height:min(90dvh,calc(var(--safe-height) - 32px)); overflow:auto; }
+    #imgModal .imgwrap { position:relative; max-width:96vw; max-height:min(92dvh,var(--safe-height)); }
+    #imgModal img { max-width:96vw; max-height:min(92dvh,var(--safe-height)); width:auto; height:auto; border-radius:10px; object-fit:contain; display:block; }
     #imgModal .imgx { position:absolute; top:-12px; right:-12px; width:34px; height:34px; border-radius:50%; background:#000c; color:#fff; border:1px solid var(--line); cursor:pointer; font-size:15px; display:flex; align-items:center; justify-content:center; }
     #imgModal .imgx:hover { background:#ef4444; }
     .modal label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--mut); }
@@ -253,15 +273,15 @@
     #filePanel.hidden, #treePanel.hidden { display:none; }
     #treePanel .fphead { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
     #treePanel .fpname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    @media (max-width:820px){ #treePanel { position:fixed; inset:0; z-index:46; flex:none; border-left:0; } }
+    @media (max-width:820px){ #treePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:46; flex:none; border-left:0; } }
     /* Design Mode (Electron only) — full-window overlay hosting the preview <webview> + grab compose. */
-    #designPanel { position:fixed; inset:0; z-index:60; display:flex; flex-direction:column; background:var(--panel); }
+    #designPanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:60; display:flex; flex-direction:column; background:var(--panel); }
     #designPanel.hidden { display:none; }
     #designPanel .fphead { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
     #designUrl { flex:1; min-width:0; background:transparent; color:inherit; border:1px solid var(--line); border-radius:8px; padding:5px 9px; font-size:12.5px; font-family:ui-monospace,Menlo,Consolas,monospace; }
     #designHost { flex:1; min-height:0; background:#fff; }
     #designHost webview { width:100%; height:100%; border:0; }
-    #designCompose { border-top:1px solid var(--line); padding:8px 12px; display:flex; flex-direction:column; gap:6px; }
+    #designCompose { border-top:1px solid var(--line); padding:8px 12px calc(8px + var(--safe-bottom)); display:flex; flex-direction:column; gap:6px; }
     #designCompose.hidden { display:none; }
     #designSel { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; color:var(--mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #designNote { background:transparent; color:inherit; border:1px solid var(--line); border-radius:8px; padding:6px 9px; font:inherit; resize:vertical; }
@@ -271,8 +291,8 @@
     #app.work-file-split main, #app.work-file-split #center > header { margin-right:var(--work-split-w); }
     #app.work-file-split #workPanel,
     #app.work-file-split #filePanel { position:fixed; right:0; width:var(--work-split-w); flex:none; z-index:45; border-left:1px solid var(--line); }
-    #app.work-file-split #workPanel { top:0; bottom:50%; }
-    #app.work-file-split #filePanel { top:50%; bottom:0; }
+    #app.work-file-split #workPanel { top:var(--safe-top); bottom:50%; }
+    #app.work-file-split #filePanel { top:50%; bottom:var(--safe-bottom); }
     #filePanel { position:relative; }
     #filePanel .fpresize { position:absolute; left:-3px; top:0; bottom:0; width:7px; cursor:col-resize; z-index:6; }
     #filePanel .fpresize.v { left:0; right:0; top:-3px; bottom:auto; width:auto; height:7px; cursor:row-resize; display:none; }
@@ -280,7 +300,7 @@
     #app.flay-stacked #filePanel .fpresize:not(.v) { display:none; }
     #app.flay-stacked #filePanel .fpresize.v { display:block; }
     #app.flay-tabs #filePanel .fpresize { display:none; }
-    #app.file-full #filePanel { position:fixed; inset:0; z-index:60; flex:none; width:auto; }
+    #app.file-full #filePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:60; flex:none; width:auto; }
     #app.file-full #treePanel { display:none; }   /* em tela cheia, só o arquivo */
     @media (max-width:820px){ #filePanel .fpresize { display:none; } }
     #filePanel .fphead { display:flex; align-items:center; gap:6px; padding:4px 8px; min-height:38px; border-bottom:1px solid var(--line); }
@@ -311,6 +331,7 @@
     .filebody .hl-com, .filemodalbody .hl-com { color:#7c8797; font-style:italic; } .filebody .hl-str, .filemodalbody .hl-str { color:#98c379; } .filebody .hl-num, .filemodalbody .hl-num { color:#d19a66; }
     .filebody .hl-kw, .filemodalbody .hl-kw { color:#c678dd; } .filebody .hl-lit, .filemodalbody .hl-lit { color:#56b6c2; } .filebody .hl-type, .filemodalbody .hl-type { color:#e5c07b; } .filebody .hl-fn, .filemodalbody .hl-fn { color:#61afef; }
     .filebody .hl-tag, .filemodalbody .hl-tag { color:#e06c75; } .filebody .hl-attr, .filemodalbody .hl-attr { color:#e5c07b; }
+    .filebody, .filebody .fcontent { user-select:text; -webkit-user-select:text; }
     /* linhas com gutter (numeração) para ancorar comentários (Annotate — Orca) */
     .filebody.lines { padding:8px 0; white-space:normal; }
     .filebody .frow { display:flex; align-items:flex-start; padding:0 8px; white-space:pre; }
@@ -327,7 +348,7 @@
     .filebody .anno-note .an-h { font-size:11px; color:#93c5fd; font-weight:700; letter-spacing:.3px; }
     .filebody .anno-note .an-t { font-size:13px; color:var(--text); margin-top:2px; }
     .filebody .anno-note .an-x { float:right; cursor:pointer; color:var(--mut); }
-    #annoBar { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); z-index:7; display:none; gap:8px; align-items:center; background:#0f172a; border:1px solid var(--line); border-radius:10px; padding:6px 8px; box-shadow:0 6px 20px #0008; }
+    #annoBar { position:absolute; bottom:calc(14px + var(--safe-bottom)); left:50%; transform:translateX(-50%); z-index:7; display:none; gap:8px; align-items:center; background:#0f172a; border:1px solid var(--line); border-radius:10px; padding:6px 8px; box-shadow:0 6px 20px #0008; }
     #annoBar.on { display:flex; }
     #annoBar button { min-height:34px; }
     .filebody .dline { display:block; padding:0 12px; white-space:pre-wrap; overflow-wrap:anywhere; }
@@ -342,11 +363,20 @@
        de virar uma 3ª/4ª coluna que sufoca o chat. Abaixo de 820px eles ocupam a tela toda (regra
        abaixo). Assim nenhuma resolução perde espaço com colunas espremidas. */
     @media (min-width:821px) and (max-width:1000px){
-      #filePanel { position:fixed; top:0; right:0; bottom:0; width:min(88vw,600px); flex:none; z-index:48; box-shadow:-10px 0 28px #0008; }
-      #treePanel { position:fixed; top:0; right:0; bottom:0; width:min(78vw,340px); flex:none; order:0; z-index:47; box-shadow:-10px 0 28px #0008; }
+      #filePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); width:min(88vw,600px); flex:none; z-index:48; box-shadow:-10px 0 28px #0008; }
+      #treePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); width:min(78vw,340px); flex:none; order:0; z-index:47; box-shadow:-10px 0 28px #0008; }
       #app.flay-stacked #cbody, #app.flay-tabs #cbody { flex-direction:row; }
     }
-    @media (max-width:820px){ #filePanel { position:fixed; inset:0; z-index:40; flex:none; border-left:0; } #app.work-file-split main, #app.work-file-split #center > header { margin-right:0; } #app.work-file-split #workPanel { inset:0; width:100%; height:100dvh; } #app.work-file-split #filePanel { inset:0; width:auto; z-index:50; } }
+    @media (max-width:820px){
+      #filePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:40; flex:none; border-left:0; }
+      #fileLayoutSw, #fileFull, #fileTabs { display:none !important; }
+      #app.flay-tabs.file-open:not(.tab-chat) > #center > header { display:flex; }
+      #app.flay-tabs.file-open:not(.tab-chat) #cbody > main { display:flex; }
+      #app.flay-tabs.file-open.tab-chat #filePanel:not(.hidden) { display:flex; }
+      #app.work-file-split main, #app.work-file-split #center > header { margin-right:0; }
+      #app.work-file-split #workPanel { top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); width:100%; height:auto; }
+      #app.work-file-split #filePanel { top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); width:auto; z-index:50; }
+    }
     .dirlist { border:1px solid var(--line); border-radius:10px; overflow:auto; max-height:240px; }
     .dirlist div { padding:8px 12px; cursor:pointer; font-size:13.5px; border-bottom:1px solid var(--line); } .dirlist div:hover { background:#ffffff0d; }
     /* clickable footer pills (agent / folder / model / effort) */
@@ -356,13 +386,15 @@
     #modelName { text-transform:capitalize; }
     .pill.lock { color:var(--mut); cursor:default; opacity:.75; } .pill.lock:hover { border-color:#ffffff1f; background:var(--panel); }
     /* popover anchored above a pill */
-    .pop { position:fixed; z-index:40; background:var(--panel); border:1px solid #ffffff2b; border-radius:12px; padding:10px; box-shadow:0 14px 44px #000b; min-width:230px; max-width:340px; }
+    .pop { position:fixed; z-index:40; background:var(--panel); border:1px solid #ffffff2b; border-radius:12px; padding:10px; box-shadow:0 14px 44px #000b; min-width:230px; max-width:340px; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+    .pop.usage-pop { width:min(360px,calc(100vw - 16px)); }
     .pop .ph { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin:0 2px 8px; }
     .upop .uh { font-size:11px; color:var(--mut); text-transform:uppercase; letter-spacing:.4px; margin:0 0 6px; }
     .upop .urow { display:flex; justify-content:space-between; align-items:baseline; font-size:12.5px; margin:0 0 4px; gap:8px; }
     .upop .urow b { font-variant-numeric:tabular-nums; }
     .upop .ubar { height:6px; background:#ffffff14; border-radius:99px; overflow:hidden; margin:0 0 8px; } .upop .ubar span { display:block; height:100%; border-radius:99px; }
     .upop .umut { color:var(--mut); font-size:11.5px; } .upop .ureset { margin:-4px 0 8px; }
+    .upop .uloading { min-height:96px; display:flex; align-items:center; }
     .pop .opt { padding:8px 9px; border-radius:8px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:8px; }
     .pop button.opt { width:100%; border:0; background:transparent; color:inherit; font:inherit; text-align:left; }
     .pop .opt:hover { background:#ffffff0d; } .pop .opt.sel { background:#ffffff17; }
@@ -413,9 +445,12 @@
     /* Settings is a dense control surface: a left nav (search + categories) drives a single visible
        panel on the right — like Claude/VS Code — instead of one long stream of unrelated fields. */
     #settings { padding:clamp(0px,2vw,20px); }
-    #settings .settings-card { width:min(880px,100%); height:min(620px,90dvh); padding:0; gap:0; overflow:hidden; }
+    #settings .settings-card { width:min(880px,100%); height:min(620px,calc(var(--safe-height) - 32px)); padding:0; gap:0; overflow:hidden; }
     #settings .settings-head { display:flex; align-items:center; min-height:56px; padding:0 20px; border-bottom:1px solid var(--line); }
     #settings .settings-title { font-size:18px; letter-spacing:-.2px; }
+    /* Fechar no canto: o botão do rodapé some sob o teclado no celular e exige rolar até o fim
+       nos painéis longos — o ✕ fica sempre visível, na posição que todo mundo procura. */
+    #settings .settings-x { margin-left:auto; flex:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:9px; font-size:15px; line-height:1; }
     #settings .settings-body { display:flex; flex:1; min-height:0; }
     #settings .settings-nav { flex:none; width:212px; border-right:1px solid var(--line); padding:12px 10px; overflow:auto; display:flex; flex-direction:column; gap:2px; }
     #settings .settings-search { margin-bottom:8px; }
@@ -425,6 +460,10 @@
     #settings .snav.on { background:#ffffff14; color:var(--text); font-weight:600; }
     #settings .settings-panels { flex:1; min-width:0; overflow:auto; padding:16px 22px 18px; scrollbar-gutter:stable; display:flex; flex-direction:column; gap:12px; }
     #settings .spanel { display:flex; flex-direction:column; gap:12px; }
+    /* O conteúdo owner-only mora num wrapper (para o .hidden do não-dono valer para o bloco todo);
+       sem isto ele viraria bloco e perderia o espaçamento vertical dos demais painéis. */
+    #settings #secSettings { display:flex; flex-direction:column; gap:12px; }
+    #settings #secSettings > .sec:first-child { border-top:0; margin-top:0; padding-top:0; }
     #settings .settings-empty { color:var(--mut); font-size:13px; padding:8px 2px; }
     #settings.searching .settings-nav { display:none; }
     #settings.searching .spanel { display:flex!important; }
@@ -455,7 +494,7 @@
     .routine-toggle { min-height:46px; margin:0!important; align-self:end; }
     @media (max-width:600px){
       #settings { align-items:stretch; justify-content:stretch; padding:0; }
-      #settings .settings-card { width:100%; max-height:100dvh; height:100dvh; border:0; border-radius:0; }
+      #settings .settings-card { width:100%; max-height:100%; height:100%; border:0; border-radius:0; }
       #settings .settings-head { min-height:56px; padding:0 18px; }
       /* Mobile: nav vira uma faixa horizontal rolável em cima; o painel ativo ocupa a largura toda. */
       #settings .settings-body { flex-direction:column; }
@@ -469,7 +508,7 @@
       .routine-actions { grid-template-columns:1fr auto; }
       .routine-actions > button { width:100%; }
     }
-    .pop { max-height:70vh; overflow:auto; }
+    .pop { max-height:calc(var(--safe-height) - 16px); }
     /* file-tree (Orca #1): linhas com indentação por profundidade, ícone pasta/arquivo, hover. */
     #treeBody .trow { display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:7px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #treeBody .trow:hover { background:#ffffff0d; }
@@ -502,7 +541,7 @@
     #side .rsec { display:flex; align-items:center; justify-content:space-between; }
     .busy { opacity:.55 !important; cursor:progress !important; pointer-events:none; }
     /* auth gate (device pairing) */
-    #gate { display:none; position:fixed; inset:0; z-index:9999; background:#0b0f14; align-items:center; justify-content:center; padding:20px; }
+    #gate { display:none; position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:9999; background:#0b0f14; align-items:center; justify-content:center; padding:20px; }
     #gate .gatebox { width:100%; max-width:360px; display:flex; flex-direction:column; gap:12px; text-align:center; }
     #gate .gatelogo { font-size:34px; font-weight:700; }
     #gate #gateTitle { opacity:.85; font-size:15px; line-height:1.4; }
@@ -539,7 +578,7 @@
     #machineBar .mtag.warn { opacity:1; color:#e3b341; border-color:#e3b34155; background:#e3b3411a; }
     #machineBar .mpen { flex:none; background:none; border:0; color:inherit; opacity:.5; cursor:pointer; font-size:13px; padding:2px 4px; }
     #machineBar .mpen:hover { opacity:1; }
-    .toast { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; cursor:pointer; }
+    .toast { position:fixed; bottom:calc(84px + var(--safe-bottom)); left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; cursor:pointer; }
     #roBanner { padding:8px 14px; background:#1e293b; color:#cbd5e1; font-size:12.5px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px; }
     #offlineBar { padding:8px 14px; background:#7c2d12; color:#fed7aa; font-size:12.5px; border-bottom:1px solid var(--line); }
     #appUpdBar { display:flex; align-items:center; gap:10px; padding:7px 14px; background:#14324d; color:#cfe6ff; font-size:12.5px; border-bottom:1px solid var(--line); }
@@ -549,9 +588,11 @@
     /* native-only (Capacitor shell adds html.native): biometric toggle + lock overlay */
     .biolockrow { display:none; }
     html.native .biolockrow { display:flex; }
-    .biolock { position:fixed; inset:0; z-index:9999; background:#0d1117; display:flex; align-items:center; justify-content:center; text-align:center; color:#e8eef5; }
+    .nativepushnote { display:none; }
+    html.native-android .nativepushnote { display:block; }
+    .biolock { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:9999; background:#0d1117; display:flex; align-items:center; justify-content:center; text-align:center; color:#e8eef5; }
     .biolock-in { display:flex; flex-direction:column; align-items:center; }
-    .natchip { font-size:11px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#93c5fd; background:#1e293b; border:1px solid #334155; border-radius:999px; padding:2px 9px; cursor:pointer; white-space:nowrap; max-width:38vw; overflow:hidden; text-overflow:ellipsis; }
+    .natchip { display:none; font-size:11px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#93c5fd; background:#1e293b; border:1px solid #334155; border-radius:999px; padding:2px 9px; cursor:pointer; white-space:nowrap; max-width:38vw; overflow:hidden; text-overflow:ellipsis; }
     .natchip:hover { background:#243049; color:#bfdbfe; }
     /* indicador de "processando" no CABEÇALHO da conversa — visível mesmo quando o menu/lista fica
        escondido (mobile), então dá pra saber que a sessão aberta está rodando sem depender do menu. */
@@ -566,7 +607,7 @@
       header { padding:12px 14px; gap:10px; } header #title { font-size:16px; }
       #menuBtn { display:inline-flex; align-items:center; justify-content:center; min-width:42px; min-height:42px; font-size:19px; }
       /* off-canvas sidebar with backdrop + close button */
-      #side { position:fixed; z-index:30; height:100dvh; width:86vw; max-width:340px; transform:translateX(-100%); transition:transform .22s ease; padding:14px; gap:8px; box-shadow:2px 0 28px #0008; }
+      #side { position:fixed; z-index:30; top:var(--safe-top); bottom:var(--safe-bottom); left:var(--safe-left); height:auto; width:86vw; max-width:340px; transform:translateX(-100%); transition:transform .22s ease; padding:14px; gap:8px; box-shadow:2px 0 28px #0008; }
       #side.open { transform:none; }
       #sideClose { display:flex; align-self:flex-end; min-width:40px; min-height:40px; align-items:center; justify-content:center; font-size:18px; margin-bottom:2px; }
       #backdrop { display:block; position:fixed; inset:0; background:#0009; z-index:25; }
@@ -632,11 +673,30 @@
     #workBtn .wbadge.hidden { display:none; }
     #workPanel { flex:0 0 clamp(420px,48%,780px); min-width:0; display:flex; flex-direction:column; border-left:1px solid var(--line); background:var(--panel); }
     #workPanel.hidden { display:none; }
-    #workPanel.max { position:fixed; inset:0; z-index:45; border-left:0; }
+    #workPanel.max { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:45; border-left:0; }
+    #termPanel { flex:0 0 clamp(460px,50%,820px); min-width:0; min-height:0; display:flex; flex-direction:column; border-left:1px solid var(--line); background:#05070a; }
+    #termPanel.hidden { display:none; }
+    #termPanel.max { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:46; border-left:0; }
+    .termhead { display:flex; align-items:center; gap:8px; padding:7px 9px; border-bottom:1px solid var(--line); background:#0d1117; }
+    .termhead .tmtitle { display:flex; flex-direction:column; min-width:0; flex:1; }
+    .termhead .tmtitle b { font-size:13px; line-height:1.2; }
+    .termhead .tmtitle span { color:var(--mut); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .termtabs { display:flex; gap:5px; padding:6px 7px; border-bottom:1px solid var(--line); background:#080b10; overflow-x:auto; }
+    .termtab { display:inline-flex; align-items:center; gap:6px; max-width:220px; flex:none; background:#ffffff0d; color:#cbd5e1; border:1px solid var(--line); border-radius:8px; padding:5px 7px; font-size:12px; cursor:pointer; }
+    .termtab.active { border-color:#2563eb99; background:#2563eb22; color:#fff; }
+    .termtab .tlbl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .termtab .tx { background:none; border:0; color:#94a3b8; padding:0 2px; font-size:12px; line-height:1; }
+    .termtab .tx:hover { color:#fca5a5; }
+    #termBody { flex:1 1 auto; min-height:0; position:relative; background:#05070a; }
+    .termpane { position:absolute; inset:0; padding:8px; min-width:0; min-height:0; }
+    .termpane.hidden { display:none; }
+    .termpane .xterm { height:100%; }
+    .termempty { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--mut); text-align:center; padding:24px; }
+    .termempty b { color:var(--text); }
     .workhead { display:flex; align-items:center; gap:8px; min-height:54px; padding:8px 12px; border-bottom:1px solid var(--line); }
     .workhead .wtitle { flex:1; min-width:0; display:flex; align-items:center; gap:8px; font-size:15px; }
-    .workhead button { min-width:40px; min-height:40px; padding:7px 10px; }
-    #workBack { display:none; }
+    .workhead button { width:40px; height:40px; min-width:40px; min-height:40px; padding:0; display:inline-flex; align-items:center; justify-content:center; line-height:1; font-size:18px; }
+    #workBack { display:none; font-size:22px; font-weight:700; }
     #workLive { flex:none; font-size:11px; color:#55d187; }
     #workLive.offline { color:#f59e0b; }
     .workfilters { display:flex; gap:6px; padding:9px 12px 7px; overflow:auto; scrollbar-width:none; border-bottom:1px solid var(--line); }
@@ -703,7 +763,8 @@
     #workMore { width:100%; margin-top:8px; }
     .sr-only { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important; }
     @media (max-width:820px) {
-      #workPanel { position:fixed; inset:0; z-index:45; width:100%; height:100dvh; flex:none; border-left:0; }
+      #workPanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:45; width:100%; height:auto; flex:none; border-left:0; }
+      #termPanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:46; width:100%; height:auto; flex:none; border-left:0; }
       #workMax { display:none; }
       .workscope { grid-template-columns:1fr; }
       .worklayout { display:block; min-height:0; }
@@ -711,7 +772,8 @@
       #workPanel:not(.show-detail) .workdetail { display:none; }
       #workPanel.show-detail .worktreewrap { display:none; }
       #workPanel.show-detail #workBack { display:inline-flex; }
-      .workhead button { min-width:44px; min-height:44px; }
+      .workhead button { width:44px; height:44px; min-width:44px; min-height:44px; }
+      #workBack { font-size:24px; }
       .workfilters { flex-wrap:wrap; overflow:visible; }
       .workfilters button { flex:1 1 100px; min-height:44px; }
       .worknode { min-height:50px; }
@@ -765,6 +827,7 @@
         <span id="nativeChip" class="natchip hidden" title="Sessão nativa vinculada — clique para copiar o comando de retomada"></span>
         <span class="spacer"></span>
         <button type="button" id="sumHdr" class="ghost" title="Resumir esta conversa e falar (só esta sessão)">🔊<span class="blbl">Resumir</span></button>
+        <button type="button" id="termBtn" class="ghost" title="Abrir terminal nesta máquina">⌘<span class="blbl">Terminal</span></button>
         <button type="button" id="treeBtn" class="ghost treeicon" title="Arquivos da pasta desta sessão (abre/fecha ao lado)">🗂</button>
       </header>
       <div id="fileTabs"><button type="button" id="tabChatBtn">💬 Chat</button><button type="button" id="tabFileBtn">📄 Arquivo</button></div>
@@ -824,6 +887,16 @@
       <pre id="fileBody" class="filebody"></pre>
       <div id="annoBar"><span id="annoSelLbl" class="mut" style="font-size:12px"></span><button id="annoAdd" type="button">💬 Comentar</button><button id="annoCancelSel" class="ghost" type="button">✕</button></div>
     </aside>
+    <aside id="termPanel" class="hidden" aria-label="Terminais" aria-hidden="true">
+      <div class="termhead">
+        <div class="tmtitle"><b>⌘ Terminais</b><span id="termMeta">Máquina atual · pasta da sessão</span></div>
+        <button id="termNew" class="ghost" type="button" title="Abrir nova aba de terminal">＋ Novo</button>
+        <button id="termMax" class="ghost" type="button" title="Maximizar">⛶</button>
+        <button id="termClose" class="ghost" type="button" title="Fechar painel">✕</button>
+      </div>
+      <div id="termTabs" class="termtabs"></div>
+      <div id="termBody"><div id="termEmpty" class="termempty"><b>Nenhum terminal aberto</b><span>Abra uma aba para executar comandos diretamente na máquina selecionada.</span></div></div>
+    </aside>
     </div><!-- /cbody -->
     </div><!-- /center -->
     <aside id="treePanel" class="hidden" aria-label="Arquivos da pasta">
@@ -855,7 +928,7 @@
     </aside>
     <aside id="workPanel" class="hidden" aria-label="Trabalhos" aria-hidden="true">
       <div class="workhead">
-        <button id="workBack" class="ghost" type="button" title="Voltar para a lista" aria-label="Voltar para a lista">‹</button>
+        <button id="workBack" class="ghost" type="button" title="Voltar para a lista" aria-label="Voltar para a lista">←</button>
         <div class="wtitle"><b>🧩 Trabalhos</b><span id="workLive" role="status">ao vivo</span></div>
         <button id="workMax" class="ghost" type="button" title="Maximizar" aria-label="Maximizar painel">⛶</button>
         <button id="workClose" class="ghost" type="button" title="Fechar" aria-label="Fechar Trabalhos">✕</button>
@@ -927,17 +1000,6 @@
     <div class="row" style="justify-content:space-between;align-items:center"><b id="canvasTitle">🎙 Jarvis</b><button id="canvasClose" class="ghost" type="button">✕</button></div>
     <div id="canvasBody" style="margin-top:6px"></div>
   </div></div>
-  <div id="fleetModal" class="modal hidden"><div class="card" style="min-width:min(440px,92vw)">
-    <div class="row" style="justify-content:space-between;align-items:center"><b>📊 Uso &amp; custo</b><button id="fleetClose" class="ghost" type="button">Fechar</button></div>
-    <div id="fleetBody" class="mut" style="font-size:13px">Carregando…</div>
-  </div></div>
-  <div id="qrModal" class="modal hidden"><div class="card">
-    <b>📱 Abrir no celular</b>
-    <div class="mut">Aponte a câmera do celular (com Tailscale ligado) para o QR:</div>
-    <img id="qrImg" alt="QR code" style="align-self:center;max-width:300px;width:100%;border-radius:12px;background:#fff">
-    <div class="mut" id="qrUrl" style="text-align:center;word-break:break-all"></div>
-    <div class="row" style="justify-content:flex-end"><button id="qrClose" class="ghost" type="button">Fechar</button></div>
-  </div></div>
 
   <div id="imgModal" class="modal hidden"><div class="imgwrap"><button type="button" id="imgClose" class="imgx" title="Fechar">✕</button><img id="imgModalPic" alt=""></div></div>
 
@@ -978,7 +1040,7 @@
   </div></div>
 
   <div id="settings" class="modal hidden"><div class="card settings-card">
-    <div class="settings-head"><b class="settings-title">Configurações</b></div>
+    <div class="settings-head"><b class="settings-title">Configurações</b><button type="button" id="setX" class="ghost settings-x" title="Fechar" aria-label="Fechar">✕</button></div>
     <div class="settings-body">
       <nav class="settings-nav" id="setNav">
         <div class="settings-search"><input id="setSearch" type="search" placeholder="Procurar" autocomplete="off" spellcheck="false"></div>
@@ -988,7 +1050,9 @@
         <button type="button" class="snav snav-owner" data-goto="automacao">🤖 Automação</button>
         <button type="button" class="snav snav-owner" data-goto="framework">🧩 Framework</button>
         <button type="button" class="snav" data-goto="rota">🧭 Roteamento</button>
-        <button type="button" class="snav" data-goto="conta">🔗 Conta &amp; dispositivos</button>
+        <button type="button" class="snav" data-goto="uso">📊 Uso &amp; custo</button>
+        <button type="button" class="snav" data-goto="celular">📱 Abrir no celular</button>
+        <button type="button" class="snav snav-owner" data-goto="dispositivos">🔐 Dispositivos &amp; convites</button>
         <button type="button" class="snav" data-goto="update">⬆ Atualização</button>
       </nav>
       <div class="settings-panels" id="setPanels">
@@ -1031,6 +1095,7 @@
         <section class="spanel hidden" data-panel="notif">
           <div class="sec" data-i18n="secNotif">Notificações</div>
           <label class="row"><input type="checkbox" id="setPush"> <span data-i18n="lblPushDevice">Notificar neste aparelho (Web Push)</span></label>
+          <div class="mut nativepushnote" style="font-size:12px;margin:-4px 0 6px">No APK Android, o app pode salvar a permissão e as preferências. A entrega remota exige FCM configurado no build.</div>
           <label class="row biolockrow"><input type="checkbox" id="setBioLock"> <span data-i18n="lblBioLock">Bloquear com biometria (Face ID / digital)</span></label>
           <label class="row"><input type="checkbox" id="setShareGeo"> <span data-i18n="lblShareGeo">Compartilhar a localização deste aparelho (para pedidos como “por perto”)</span></label>
           <div id="pushCfg" class="hidden" style="margin:2px 0 6px 14px">
@@ -1149,12 +1214,45 @@
           <label>Esforço <select id="setSumEffort"></select></label>
         </section>
 
-        <section class="spanel hidden" data-panel="conta">
-          <div class="sec">Conta &amp; dispositivos</div>
-          <div class="mut" style="font-size:12px;margin-bottom:6px">Uso &amp; custo da frota, abrir no celular e gerenciar dispositivos/convites.</div>
-          <button type="button" id="fleetBtn" class="ghost" style="justify-content:flex-start">📊 Uso &amp; custo</button>
-          <button type="button" id="qrBtn" class="ghost" style="justify-content:flex-start">📱 Abrir no celular</button>
-          <button type="button" id="secBtn" class="ghost hidden" style="justify-content:flex-start">🔐 Dispositivos &amp; convites</button>
+        <section class="spanel hidden" data-panel="uso">
+          <div class="sec">📊 Uso &amp; custo</div>
+          <div id="fleetBody" class="mut" style="font-size:13px">Carregando…</div>
+        </section>
+
+        <section class="spanel hidden" data-panel="celular">
+          <div class="sec">📱 Abrir no celular</div>
+          <div class="mut">Aponte a câmera do celular (com Tailscale ligado) para o QR:</div>
+          <img id="qrImg" alt="QR code" style="align-self:center;max-width:300px;width:100%;border-radius:12px;background:#fff">
+          <div class="mut" id="qrUrl" style="text-align:center;word-break:break-all"></div>
+        </section>
+
+        <section class="spanel hidden" data-panel="dispositivos">
+          <div id="secSettings" class="hidden">
+            <div class="sec">🖥 Máquinas (runners)</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Adicione outro computador (Windows/Mac/Linux) para rodar agentes. Gera o token e o comando pronto de instalação.</div>
+            <label>Nome da máquina <input id="secRunLabel" placeholder="ex.: MacBook, PC do escritório" autocomplete="off"></label>
+            <div class="row"><button id="secRunGen" type="button">＋ Adicionar máquina</button></div>
+            <div id="secRunOut" class="hidden" style="margin-top:6px"></div>
+            <div id="secRunners" class="mut" style="font-size:12px">—</div>
+            <div class="sec">Gerar convite (pessoa / navegador)</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Crie um convite e compartilhe o link/código. Quem abrir vira um dispositivo conectado (revogável).</div>
+            <label>Papel <select id="secRole"><option value="member">Membro</option><option value="owner">Dono</option></select></label>
+            <label>Validade do acesso <select id="secTtl"><option value="3600">1 hora</option><option value="86400" selected>1 dia</option><option value="604800">7 dias</option><option value="2592000">1 mês</option><option value="7776000">3 meses</option><option value="31536000">1 ano</option><option value="0">Sem expiração</option></select></label>
+            <div class="row"><button id="secGen" type="button">Gerar convite</button></div>
+            <div id="secOut" class="hidden" style="margin-top:6px"></div>
+            <div class="sec">Convites pendentes</div>
+            <div id="secInvites" class="mut" style="font-size:12px">—</div>
+            <div class="sec">Dispositivos conectados</div>
+            <div id="secDevices" class="mut" style="font-size:12px">—</div>
+            <div class="sec">🔒 Senha do dono (2º fator)</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Com senha, um token vazado não basta — todo login novo pede a senha também.</div>
+            <div id="secPassStatus" class="mut" style="font-size:12px;margin-bottom:4px">—</div>
+            <label>Nova senha <input id="secPass" type="password" placeholder="mín. 8 caracteres" autocomplete="new-password"></label>
+            <label class="row"><input type="checkbox" id="secPassRemember" checked> Lembrar neste dispositivo</label>
+            <div class="row"><button id="secPassSet" type="button">Definir / trocar</button><button id="secPassClear" class="ghost" type="button">Remover</button></div>
+            <div class="row" style="margin-top:8px"><button id="secRevokeAll" class="ghost" type="button">Revogar todos os outros</button></div>
+          </div>
+          <div id="secOwnerHint" class="mut" style="font-size:12px">Esta seção é exclusiva do dono.</div>
         </section>
 
         <section class="spanel hidden" data-panel="update">
@@ -1180,33 +1278,8 @@
     <div class="row settings-actions" style="justify-content:flex-end"><button id="setCancel" class="ghost" type="button">Fechar</button><button id="setClose" type="button">Salvar</button></div>
   </div></div>
 
-  <div id="secModal" class="modal hidden"><div class="card">
-    <b>🔐 Dispositivos &amp; convites</b>
-    <div class="sec">🖥 Máquinas (runners)</div>
-    <div class="mut" style="font-size:12px;margin-bottom:6px">Adicione outro computador (Windows/Mac/Linux) para rodar agentes. Gera o token e o comando pronto de instalação.</div>
-    <label>Nome da máquina <input id="secRunLabel" placeholder="ex.: MacBook, PC do escritório" autocomplete="off"></label>
-    <div class="row"><button id="secRunGen" type="button">＋ Adicionar máquina</button></div>
-    <div id="secRunOut" class="hidden" style="margin-top:6px"></div>
-    <div id="secRunners" class="mut" style="font-size:12px">—</div>
-    <div class="sec">Gerar convite (pessoa / navegador)</div>
-    <div class="mut" style="font-size:12px;margin-bottom:6px">Crie um convite e compartilhe o link/código. Quem abrir vira um dispositivo conectado (revogável).</div>
-    <label>Papel <select id="secRole"><option value="member">Membro</option><option value="owner">Dono</option></select></label>
-    <label>Validade do acesso <select id="secTtl"><option value="3600">1 hora</option><option value="86400" selected>1 dia</option><option value="604800">7 dias</option><option value="2592000">1 mês</option><option value="7776000">3 meses</option><option value="31536000">1 ano</option><option value="0">Sem expiração</option></select></label>
-    <div class="row"><button id="secGen" type="button">Gerar convite</button></div>
-    <div id="secOut" class="hidden" style="margin-top:6px"></div>
-    <div class="sec">Convites pendentes</div>
-    <div id="secInvites" class="mut" style="font-size:12px">—</div>
-    <div class="sec">Dispositivos conectados</div>
-    <div id="secDevices" class="mut" style="font-size:12px">—</div>
-    <div class="sec">🔒 Senha do dono (2º fator)</div>
-    <div class="mut" style="font-size:12px;margin-bottom:6px">Com senha, um token vazado não basta — todo login novo pede a senha também.</div>
-    <div id="secPassStatus" class="mut" style="font-size:12px;margin-bottom:4px">—</div>
-    <label>Nova senha <input id="secPass" type="password" placeholder="mín. 8 caracteres" autocomplete="new-password"></label>
-    <label class="row"><input type="checkbox" id="secPassRemember" checked> Lembrar neste dispositivo</label>
-    <div class="row"><button id="secPassSet" type="button">Definir / trocar</button><button id="secPassClear" class="ghost" type="button">Remover</button></div>
-    <div class="row" style="justify-content:space-between;margin-top:8px"><button id="secRevokeAll" class="ghost" type="button">Revogar todos os outros</button><button id="secClose" type="button">Fechar</button></div>
-  </div></div>
-
+  <script src="/vendor/xterm/xterm.js"></script>
+  <script src="/vendor/xterm/addon-fit.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -80,10 +80,14 @@ Run `npx cap sync` again after any web change (`npm run sync-web` first) or plug
 
 **Fast path (debug APK, installable on any device with "unknown sources"):**
 ```sh
-cd mobile/android
-./gradlew assembleDebug          # Windows: .\gradlew.bat assembleDebug
+npm run build:android
 ```
 Output: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`
+
+That command stages `apps/hub/web` into `mobile/www`, syncs Capacitor, discovers the Android SDK
+from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or standard install paths, writes
+`mobile/android/local.properties`, points the APK at your Hub from `JARVIS_APP_HUB_URL`,
+`JARVIS_PUBLIC_URL`, or `~/.jarvis/hub.env`, patches plugin SDK mismatches, then runs Gradle.
 
 **Or from Android Studio:** `cd mobile && npm run open:android`, then Run ▶ on a device/emulator, or
 `Build > Build Bundle(s)/APK(s) > Build APK(s)`.
@@ -105,15 +109,15 @@ Output: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`
    *Build > Generate Signed Bundle/APK* wizard writes this for you if you prefer clicking).
 3. Build:
    ```sh
-   ./gradlew assembleRelease      # APK  -> app/build/outputs/apk/release/app-release.apk
-   ./gradlew bundleRelease        # AAB  -> app/build/outputs/bundle/release/app-release.aab (Play Store)
+   npm run build:android:release  # APK -> mobile/android/app/build/outputs/apk/release/app-release.apk
+   npm run build:aab              # AAB -> mobile/android/app/build/outputs/bundle/release/app-release.aab
    ```
 Install a debug/release APK on a plugged-in phone: `adb install -r app-debug.apk`.
 
 ## 4B. iOS — build the IPA (macOS only)
 
 ```sh
-cd mobile && npm run open:ios          # opens ios/App/App.xcworkspace in Xcode
+npm run build:apple          # opens mobile/ios/App/App.xcworkspace in Xcode
 ```
 In Xcode:
 1. Select the **App** target → **Signing & Capabilities** → pick your **Team** (a free Apple ID works

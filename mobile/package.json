@@ -6,9 +6,28 @@
   "//deps": "Deps are installed by the README steps (npm install @capacitor/core@latest ... ) so versions resolve to whatever Capacitor major is current on YOUR machine — this scaffold pins nothing it can't verify.",
   "scripts": {
     "sync-web": "node sync-web.mjs",
-    "sync": "node sync-web.mjs && npx cap sync",
+    "android:icons": "node generate-android-icons.mjs",
+    "sync": "node sync-web.mjs && node generate-android-icons.mjs && npx cap sync",
+    "android:sdk": "node android-sdk.mjs",
+    "android:debug": "node build-android.mjs assembleDebug",
+    "android:release": "node build-android.mjs assembleRelease",
+    "build:android": "node ../scripts/build-mobile.mjs android",
+    "build:android:release": "node ../scripts/build-mobile.mjs android-release",
+    "build:aab": "node ../scripts/build-mobile.mjs aab",
+    "build:ios": "node ../scripts/build-mobile.mjs ios",
+    "build:apple": "node ../scripts/build-mobile.mjs apple",
     "open:android": "npx cap open android",
     "open:ios": "npx cap open ios",
     "doctor": "npx cap doctor"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/cli": "^8.4.2",
+    "@capacitor/core": "^8.4.2",
+    "@capacitor/push-notifications": "^8.1.2",
+    "@capacitor/share": "^8.0.1",
+    "capacitor-native-biometric": "^4.2.2",
+    "send-intent": "^7.0.0"
   }
 }

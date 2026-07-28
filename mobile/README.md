@@ -43,6 +43,21 @@ npm run open:android   # or: npm run open:ios
 
 Verify the toolchain any time with `npm run doctor` (`npx cap doctor`).
 
+For Android debug builds, use the repo helper instead of running Gradle directly:
+
+```sh
+npm run build:android
+```
+
+It stages the web UI, runs `cap sync android`, discovers the Android SDK from
+`ANDROID_HOME`, `ANDROID_SDK_ROOT`, or the standard OS install paths, writes
+`android/local.properties`, points the APK at your Hub from `JARVIS_APP_HUB_URL`,
+`JARVIS_PUBLIC_URL`, or `~/.jarvis/hub.env`, then runs `gradlew assembleDebug`.
+
+Other root-level build commands follow the same dispatcher pattern as install/setup:
+`npm run build:android:release`, `npm run build:aab`, and `npm run build:apple`. Apple/iOS builds
+must run on macOS with Xcode.
+
 ## OTA web updates ("update without a new store version")
 
 Point the app at your Hub so it loads the **live** UI over the air:

@@ -91,7 +91,7 @@ Use only for runner cwd parity tests.`);
     const inbox = new Inbox(ws);
     const version = await inbox.take((m) => m.t === "version");
     assert.equal(version.contractVersion, 1);
-    const machines = await inbox.take((m) => m.t === "machines" && m.machines?.some((x: any) => !x.local && x.online), 15_000);
+    const machines = await inbox.take((m) => m.t === "machines" && m.machines?.some((x: any) => !x.local && x.online && x.agents?.includes("mock") && x.agentDescriptors?.some((d: any) => d.name === "mock" && d.support === "limited")), 15_000);
     const remote = machines.machines.find((x: any) => !x.local && x.online);
     assert.ok(remote.agents.includes("mock"));
     assert.ok(remote.agentDescriptors?.some((x: any) => x.name === "mock" && x.support === "limited"));

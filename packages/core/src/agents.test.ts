@@ -80,6 +80,23 @@ test("AgentRegistry UI catalog exposes modelControl at the legacy top level and 
   assert.ok(codex.models.length > 0);
 });
 
+test("AgentRegistry caches UI catalog and refresh forces rediscovery", async () => {
+  let calls = 0;
+  const adapter = {
+    name: "fixture",
+    capabilities: async () => { calls++; return { models: [] }; },
+    available: async () => true,
+    send: async () => ({ text: "" }),
+  };
+  const reg = new AgentRegistry("fixture").register(adapter as any);
+  assert.equal((await reg.describe())[0].name, "fixture");
+  assert.equal(calls, 1);
+  assert.equal((await reg.describe())[0].name, "fixture");
+  assert.equal(calls, 1, "hot describe returns cached catalog");
+  await reg.refresh();
+  assert.equal(calls, 2, "explicit refresh bypasses cache");
+});
+
 test("model selection rejects a stale model or unsupported effort before spawn", () => {
   const caps = { models: [{ id: "m1", efforts: ["low", "high"] }] };
   assert.throws(() => validateModelSelection(caps, { model: "gone" }), /não existe/);

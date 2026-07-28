@@ -406,8 +406,16 @@ export function assertNativeSessionBinding(bindings: Iterable<[string, string]>,
   if (conflict) throw new Error(`colisão de sessão nativa: ${nativeSessionId} já pertence à sessão Jarvis ${conflict[0]}`);
 }
 
+export type AgentRegistryDescription = Array<
+  { name: string; modelControl?: AgentCapabilities["modelControl"] }
+  & AgentCaps
+  & Partial<Pick<AgentDescriptor, "label" | "support" | "reason" | "cli" | "capabilities" | "execution" | "discoveredAt">>
+>;
+
 export class AgentRegistry {
   private byName = new Map<string, AgentAdapter>();
+  private describeCache?: { at: number; value: AgentRegistryDescription };
+  private describeRefresh?: Promise<AgentRegistryDescription>;
   constructor(private defaultName: string) {}
   register(a: AgentAdapter): this {
     this.byName.set(a.name, a);
@@ -429,8 +437,7 @@ export class AgentRegistry {
     if (pref && this.byName.has(pref)) return this.byName.get(pref)!;
     return this.byName.get("claude-code") || this.get();
   }
-  /** Backward-compatible UI catalog enriched with the canonical descriptor. */
-  async describe(): Promise<Array<{ name: string; modelControl?: AgentCapabilities["modelControl"] } & AgentCaps & Partial<Pick<AgentDescriptor, "label" | "support" | "reason" | "cli" | "capabilities" | "execution" | "discoveredAt">>>> {
+  private async computeDescribe(): Promise<AgentRegistryDescription> {
     return Promise.all([...this.byName.values()].map(async (a) => {
       const caps = await a.capabilities();
       if (!a.descriptor) return { name: a.name, ...caps, support: "limited" as const, reason: "adapter sem descriptor canônico" };
@@ -439,11 +446,55 @@ export class AgentRegistry {
       return { name: a.name, ...caps, modelControl: d.capabilities.modelControl, label: d.label, support: problems.length ? "limited" as const : d.support, reason: problems.length ? `descriptor inválido: ${problems.join("; ")}` : d.reason, cli: d.cli, capabilities: d.capabilities, execution: d.execution, discoveredAt: d.discoveredAt };
     }));
   }
+
+  private async refreshDescribeCache(): Promise<AgentRegistryDescription> {
+    if (this.describeRefresh) return this.describeRefresh;
+    this.describeRefresh = this.computeDescribe()
+      .then((value) => {
+        this.describeCache = { at: Date.now(), value };
+        return value;
+      })
+      .finally(() => { this.describeRefresh = undefined; });
+    return this.describeRefresh;
+  }
+
+  /** Backward-compatible UI catalog enriched with the canonical descriptor.
+   *  Cached stale-while-revalidate: UI reads stay fast, while stale catalogs are rechecked in the
+   *  background. Use refresh() for an explicit blocking revalidation. */
+  async describe(): Promise<AgentRegistryDescription> {
+    const now = Date.now();
+    const freshMs = Math.max(5_000, Number(process.env.JARVIS_AGENT_CATALOG_FRESH_MS || 10 * 60_000));
+    const staleMs = Math.max(freshMs, Number(process.env.JARVIS_AGENT_CATALOG_STALE_MS || 60 * 60_000));
+    if (this.describeCache) {
+      const age = now - this.describeCache.at;
+      if (age < freshMs) return this.describeCache.value;
+      if (age < staleMs) {
+        void this.refreshDescribeCache().catch(() => { /* keep stale cache */ });
+        return this.describeCache.value;
+      }
+    }
+    return this.refreshDescribeCache();
+  }
+
+  /** Synchronous non-blocking catalog for UI boot. It returns the last validated catalog when present,
+   *  otherwise a minimal selectable skeleton and warms the real catalog in the background. */
+  describeSnapshot(): AgentRegistryDescription {
+    if (this.describeCache) return this.describeCache.value;
+    void this.refreshDescribeCache().catch(() => { /* snapshot remains minimal */ });
+    return this.names().map((name) => ({
+      name,
+      models: [],
+      autoModel: true,
+      support: "unverified" as const,
+      reason: "catálogo carregando em segundo plano",
+    }));
+  }
   /** Bust every adapter's cached model catalog, then re-discover live. Returns the fresh UI catalog
    *  with `preferred` (the user's current agent) first, so the client can update it before the rest. */
   async refresh(preferred?: string): Promise<Awaited<ReturnType<AgentRegistry["describe"]>>> {
     for (const a of this.byName.values()) a.invalidateCapabilities?.();
-    const desc = await this.describe();
+    this.describeCache = undefined;
+    const desc = await this.refreshDescribeCache();
     return preferred ? [...desc].sort((a, b) => Number(b.name === preferred) - Number(a.name === preferred)) : desc;
   }
   setDefault(name: string): void {

@@ -85,7 +85,8 @@ access to a runner can make the agent do anything on that machine. So:
 
 ## Owner passphrase (2FA)
 
-Optional. Set it in the UI (🔐 panel) or `jarvis.ps1 passphrase-set -pass "…"`.
+Optional. Set it in the UI (⚙ Settings → **🔐 Dispositivos & convites**, owner only) or
+`jarvis.ps1 passphrase-set -pass "…"`.
 Once set, every new login (and reconnect from a fresh page) must present the
 passphrase after the device token — so a stolen token alone is useless. Verify
 attempts are per-IP rate-limited (low-entropy secret). The device may remember it

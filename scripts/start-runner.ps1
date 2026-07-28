@@ -33,25 +33,52 @@ $tsx = Join-Path $root 'node_modules\tsx\dist\cli.mjs'
 Set-Location "$root\apps\runner"
 $lastUpdateWaitLog = [DateTimeOffset]::MinValue
 $lastRepairAt = [DateTimeOffset]::MinValue
+$quickCrashCount = 0
+function Repair-Dependencies([string]$Reason) {
+  $script:lastRepairAt = [DateTimeOffset]::Now
+  Log ("reparando dependencias: " + $Reason)
+  Push-Location $root
+  try {
+    & npm.cmd ci *>> $log
+    $installCode = $LASTEXITCODE
+    Log ('npm ci concluido (codigo ' + $installCode + ')')
+    if ($installCode -eq 0) {
+      & npm.cmd run update:verify --if-present *>> $log
+      Log ('update:verify concluido (codigo ' + $LASTEXITCODE + ')')
+    }
+  } catch {
+    Log ('reparo de dependencias falhou: ' + $_)
+  } finally {
+    Pop-Location
+  }
+}
 # Loop de supervisão: NUNCA sai. (Re)sobe o runner em foreground; quando o node encerra,
 # registra e reinicia após um pequeno backoff.
 while ($true) {
   if (Test-Path $updateLock) {
     try {
       $lockPid = $null
-      try { $lockPid = [int]((Get-Content -Raw -LiteralPath $updateLock | ConvertFrom-Json).pid) } catch { $lockPid = $null }
-      # #2: se o lock nomeia o processo do updater e ele JA morreu, o update abortou -> limpa na hora,
-      # sem esperar 30 min. So cai no timeout por idade quando o pid e ilegivel (lock de formato antigo).
+      $provisional = $false
+      try {
+        $lockData = Get-Content -Raw -LiteralPath $updateLock | ConvertFrom-Json
+        $lockPid = [int]$lockData.pid
+        $provisional = [bool]$lockData.provisional
+      } catch {
+        $lockPid = $null
+        $provisional = $false
+      }
+      # Lock real nomeia o updater e pode ser limpo se o PID morreu. Lock provisório nomeia o runner
+      # que está saindo durante o handoff; não limpe por PID morto antes do script externo assumir.
       $updaterDead = $false
       if ($lockPid) { $updaterDead = -not [bool](Get-Process -Id $lockPid -ErrorAction SilentlyContinue) }
       $age = ((Get-Date) - (Get-Item -LiteralPath $updateLock).LastWriteTime).TotalMinutes
-      if ($updaterDead -or $age -gt 30) {
-        Log ("lock de update orfao removido (pid {0} morto={1}, idade {2:N1}min)" -f $lockPid, $updaterDead, $age)
+      if (($provisional -and $age -gt 5) -or ((-not $provisional) -and $updaterDead) -or $age -gt 30) {
+        Log ("lock de update orfao removido (pid {0} morto={1}, provisório={2}, idade {3:N1}min)" -f $lockPid, $updaterDead, $provisional, $age)
         Remove-Item -LiteralPath $updateLock -Force -ErrorAction SilentlyContinue
       } else {
         $now = [DateTimeOffset]::Now
         if (($now - $lastUpdateWaitLog).TotalSeconds -ge 60) {
-          Log 'update em andamento - aguardando script externo terminar'
+          Log ("update em andamento - aguardando script externo terminar (provisório={0})" -f $provisional)
           $lastUpdateWaitLog = $now
         }
         Start-Sleep -Seconds 3
@@ -67,6 +94,7 @@ while ($true) {
       continue
     }
   }
+  $startedAt = [DateTimeOffset]::Now
   Log 'iniciando runner...'
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\runner\src\index.ts" *>> $log }
   else {
@@ -76,17 +104,20 @@ while ($true) {
     # isso — não pode virar loop de reinstalação a cada 3s) antes de tentar `npm start`.
     $sinceRepair = ([DateTimeOffset]::Now - $lastRepairAt).TotalMinutes
     if ($sinceRepair -ge 5) {
-      $lastRepairAt = [DateTimeOffset]::Now
-      Log 'tsx nao encontrado na raiz - reparando com "npm ci" antes de tentar de novo'
-      Push-Location $root
-      try { & npm.cmd ci *>> $log; Log ('npm ci concluido (codigo ' + $LASTEXITCODE + ')') }
-      catch { Log ('npm ci falhou: ' + $_) }
-      finally { Pop-Location }
+      Repair-Dependencies 'tsx nao encontrado na raiz'
     } else {
       Log ('tsx nao encontrado na raiz - reparo tentado ha ' + [Math]::Round($sinceRepair,1) + 'min, aguardando janela de 5min - caindo pro npm')
     }
     & npm.cmd --prefix "$root\apps\runner" start *>> $log
   }
-  Log 'runner encerrou - reiniciando em 3s'
+  $runtimeSec = ([DateTimeOffset]::Now - $startedAt).TotalSeconds
+  if ($runtimeSec -lt 15) { $quickCrashCount += 1 } else { $quickCrashCount = 0 }
+  if ($quickCrashCount -ge 3) {
+    $sinceRepair = ([DateTimeOffset]::Now - $lastRepairAt).TotalMinutes
+    if ($sinceRepair -ge 5) { Repair-Dependencies ("runner encerrou rapido " + $quickCrashCount + " vezes") }
+    else { Log ('runner em crash loop, mas reparo foi tentado ha ' + [Math]::Round($sinceRepair,1) + 'min') }
+    $quickCrashCount = 0
+  }
+  Log ('runner encerrou apos ' + [Math]::Round($runtimeSec,1) + 's - reiniciando em 3s')
   Start-Sleep -Seconds 3
 }

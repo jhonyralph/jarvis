@@ -40,7 +40,7 @@ export interface RunnerInfo {
   /** Durable proof that dependencies/validation completed for a correlated update before restart. */
   updateReceipt?: { requestId: string; targetCommit: string; current: string; preparedAt: number };
   /** Durable failure/success log produced by an external updater before the runner restarted. */
-  updateResult?: { requestId: string; ok: boolean; log?: string; current?: string; restartRequired?: boolean; rolledBack?: boolean; retryable?: boolean; preparedAt?: number };
+  updateResult?: { requestId: string; ok: boolean; log?: string; current?: string; targetCommit?: string; restartRequired?: boolean; rolledBack?: boolean; retryable?: boolean; dirty?: boolean; behind?: number; preparedAt?: number };
   /** friendly name set at install (JARVIS_LABEL); the Hub uses it as the initial label */
   label?: string;
   /** true for the Hub's own embedded runner ("machine 0") */
@@ -132,6 +132,18 @@ export interface PreviewCandidate {
   detectedAt: number;
 }
 
+/** Interactive terminal session hosted by one Runner/Hub machine. */
+export interface TerminalInfo {
+  id: string;
+  title: string;
+  cwd: string;
+  shell: string;
+  cols: number;
+  rows: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- Runner -> Hub ---
 export type RunnerToHub =
   | { t: "register"; token: string; info: RunnerInfo }
@@ -140,7 +152,7 @@ export type RunnerToHub =
   | { t: "update_done"; requestId?: string; ok: boolean; dirty?: boolean; behind?: number; log?: string; current?: string; restartRequired?: boolean; rolledBack?: boolean; retryable?: boolean }
   | { t: "busy"; message: string } // recusa de turno concorrente na mesma sessão
   | { t: "sessions"; sessions: RunnerSession[]; recentDirs?: string[] }
-  | { t: "caps"; agent: string; caps: unknown }
+  | { t: "caps"; agent: string; caps: unknown; agents?: string[]; agentUsage?: Record<string, unknown | null> }
   | {
       t: "history";
       reqId: string;
@@ -178,7 +190,7 @@ export type RunnerToHub =
   | { t: "stream"; sessionId: string; agent?: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
   | { t: "activity"; sessionId: string; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[] }
-  | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; truncated?: boolean; error?: string }
+  | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; mtimeMs?: number; truncated?: boolean; error?: string; image?: boolean; mime?: string }
   /** directory listing for the folder browser (reply to Hub->Runner "listdir").
    *  `files` is present only when the request set `files:true` (the file-tree panel); the legacy
    *  folder-picker omits it and keeps seeing directories only. */
@@ -198,6 +210,12 @@ export type RunnerToHub =
   | { t: "framework_published"; requestId: string; ok: boolean; version?: number; hash?: string; written?: number; removed?: number; skipped?: boolean; error?: string }
   /** Preview URL candidates for a session's cwd (reply to Hub->Runner "preview_query"). */
   | { t: "preview_list"; reqId: string; sessionId: string; candidates: PreviewCandidate[] }
+  /** Interactive terminal lifecycle/output (reply to terminal_* Hub commands). */
+  | { t: "terminal_opened"; reqId?: string; terminal: TerminalInfo }
+  | { t: "terminal_output"; terminalId: string; data: string }
+  | { t: "terminal_closed"; terminalId: string; exitCode?: number; signal?: number }
+  | { t: "terminal_list"; reqId?: string; terminals: TerminalInfo[] }
+  | { t: "terminal_error"; reqId?: string; terminalId?: string; message: string }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" }
   | ExecutionRunnerToHub;
@@ -264,6 +282,12 @@ export type HubToRunner =
   | { t: "update"; requestId?: string; targetCommit?: string; force?: boolean }
   /** Ask this machine for dev-server preview URLs under a session's cwd (Design Mode). */
   | { t: "preview_query"; reqId: string; sessionId: string }
+  /** Interactive terminal control. Only Hubs should send these; authz is enforced at the Hub. */
+  | { t: "terminal_open"; reqId: string; cwd?: string; shell?: string; title?: string; cols?: number; rows?: number }
+  | { t: "terminal_input"; terminalId: string; data: string }
+  | { t: "terminal_resize"; terminalId: string; cols: number; rows: number }
+  | { t: "terminal_close"; terminalId: string }
+  | { t: "terminal_list"; reqId?: string }
   | { t: "ping" }
   | ExecutionHubToRunner;
 

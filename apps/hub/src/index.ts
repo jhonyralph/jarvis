@@ -29,7 +29,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -117,6 +117,7 @@ const remoteContextManifests = new ContextManifestStore(JARVIS_DIR, "remote-cont
 const memoryProvenance = new MemoryProvenanceStore(JARVIS_DIR);
 const nativeBindingCollisions = agents.nativeBindingCollisions();
 if (nativeBindingCollisions.length) console.error("[hub] colisões de sessão nativa detectadas; turnos afetados serão bloqueados:", JSON.stringify(nativeBindingCollisions));
+void agents.describe().catch((e) => console.warn("[hub] catálogo de IAs não aqueceu em background:", String(e?.message ?? e)));
 const LOCAL_EXECUTION_DIR = join(JARVIS_DIR, "executions");
 const MIRROR_EXECUTION_DIR = join(JARVIS_DIR, "hub", "executions");
 const EXECUTION_UI_FILE = join(JARVIS_DIR, "hub", "execution-ui.json");
@@ -611,6 +612,7 @@ const runnerSessionState = new Map<string, Map<string, any>>();
 // which agents are actually usable on THIS (local) machine — probes availability, so the
 // UI can disable agents that aren't installed/authenticated here.
 let localAgents: string[] = [];
+let localAgentsReady = false;
 async function refreshLocalAgents(): Promise<void> {
   const out: string[] = [];
   for (const n of agents.names()) { try { if (await agents.get(n).available()) out.push(n); } catch { /* skip */ } }
@@ -623,8 +625,10 @@ async function refreshLocalAgents(): Promise<void> {
     for (const name of agents.names()) { const a = agents.get(name); try { agentUsage[name] = a.usage ? await a.usage() : null; } catch { agentUsage[name] = null; } }
     local.info.agentUsage = agentUsage;
   }
-  if (next.join() !== localAgents.join()) { localAgents = next; broadcastMachines(); }
-  else localAgents = next;
+  const changed = next.join() !== localAgents.join() || !localAgentsReady;
+  localAgents = next;
+  localAgentsReady = true;
+  if (changed) broadcastMachines();
 }
 
 // --- self-update (git): "new version" = new commits on origin/<branch>. ---
@@ -706,7 +710,7 @@ const LOCAL_OPS = new Set(["sendTo", "search"]);
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
 const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "council_start", "tournament_start", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
-const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "tournament_start", "summarize", "digest", "routine_run"]);
+const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "tournament_start", "summarize", "digest", "routine_run", "terminal_open"]);
 function holdForHubUpdate(ws: WebSocket, msg: any): boolean {
   if (!hubUpdateInProgress || !UPDATE_BLOCKED_OPS.has(msg.t)) return false;
   const runnerId = activeRunner(ws);
@@ -763,7 +767,7 @@ function machineList(ws?: WebSocket): any[] {
     const offlineMs = online || !since ? 0 : Date.now() - since;
     return {
       id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os,
-      agents: r.local ? localAgents : (r.info.agents || []), agentDescriptors: r.info.agentDescriptors || [],
+      agents: r.local ? (localAgentsReady ? localAgents : agents.names()) : (r.info.agents || []), agentDescriptors: r.info.agentDescriptors || [],
       protocolVersion: r.info.protocolVersion || 1, compatible: (r.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION,
       online, local: !!r.local, commit, hubCommit, stale, offlineMs, updatePending: pendingRunnerUpdates[r.id] || null,
     };
@@ -783,6 +787,47 @@ if (OFFLINE_ALERT_MS > 0) setInterval(() => {
 }, 60000).unref?.();
 function broadcastMachines(): void { for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w)) send(w, { t: "machines", machines: machineList(w) }); } }
 function sendToRunner(rc: RunnerConn, obj: unknown): boolean { if (rc.ws && rc.ws.readyState === WebSocket.OPEN) { rc.ws.send(JSON.stringify(obj)); return true; } return false; }
+const terminalOwners = new Map<string, string>(); // terminalId -> runnerId
+const terminalWatchers = new Map<string, Set<WebSocket>>(); // terminalId -> UI sockets that opened/listed it
+function rememberTerminalWatcher(terminalId: unknown, ws?: WebSocket): void {
+  if (!ws || typeof terminalId !== "string" || !terminalId) return;
+  let set = terminalWatchers.get(terminalId);
+  if (!set) { set = new Set(); terminalWatchers.set(terminalId, set); }
+  set.add(ws);
+}
+function broadcastTerminal(runnerId: string, frame: Record<string, unknown>): void {
+  const terminalId = typeof frame.terminalId === "string" ? frame.terminalId : (frame.terminal as any)?.id;
+  const targets = new Set<WebSocket>(clientsOn(runnerId));
+  if (typeof terminalId === "string") for (const ws of terminalWatchers.get(terminalId) || []) targets.add(ws);
+  for (const c of targets) if (c.readyState === c.OPEN) send(c, { ...frame, runnerId });
+  if (frame.t === "terminal_closed" && typeof terminalId === "string") terminalWatchers.delete(terminalId);
+}
+const localTerminals = new TerminalManager({
+  defaultCwd: CWD,
+  max: Math.max(1, Number(process.env.JARVIS_TERMINAL_MAX || 4)),
+  onOutput: (terminal, data) => broadcastTerminal(LOCAL_ID, { t: "terminal_output", terminalId: terminal.id, data }),
+  onExit: (terminal, exitCode, signal) => {
+    terminalOwners.delete(terminal.id);
+    broadcastTerminal(LOCAL_ID, { t: "terminal_closed", terminalId: terminal.id, exitCode, signal });
+  },
+});
+function openLocalTerminal(ws: WebSocket, msg: any): void {
+  try {
+    const cwd = typeof msg.cwd === "string" && msg.cwd ? msg.cwd : sessionCwd(subs.get(ws));
+    const terminal = localTerminals.open({ cwd, shell: msg.shell, title: msg.title, cols: msg.cols, rows: msg.rows });
+    terminalOwners.set(terminal.id, LOCAL_ID);
+    rememberTerminalWatcher(terminal.id, ws);
+    auth.audit("terminal_open", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${terminal.id}: ${terminal.cwd}` });
+    broadcastTerminal(LOCAL_ID, { t: "terminal_opened", reqId: msg.reqId, terminal });
+  } catch (error: any) {
+    send(ws, { t: "terminal_error", reqId: msg.reqId, runnerId: LOCAL_ID, message: String(error?.message ?? error) });
+  }
+}
+function terminalRunner(msg: any, ws: WebSocket): string {
+  return typeof msg.runnerId === "string" && msg.runnerId ? msg.runnerId
+    : typeof msg.terminalId === "string" && terminalOwners.get(msg.terminalId) ? terminalOwners.get(msg.terminalId)!
+    : activeRunner(ws);
+}
 
 function queueRunnerUpdate(runnerId: string, targetCommit: string, opts?: { force?: boolean }): PendingRunnerUpdate {
   const existing = pendingRunnerUpdates[runnerId];
@@ -1070,6 +1115,13 @@ function relayRunner(rc: RunnerConn, m: any): void {
     return;
   }
   if (m.t === "execution_usage_record") { addUsage(String(m.sessionId || m.rootExecutionId), String(m.agent || "remote-unknown"), m.usage, rc.id); return; }
+  if (m.t === "caps") {
+    if (Array.isArray(m.caps)) rc.info.agentDescriptors = m.caps;
+    if (Array.isArray(m.agents)) rc.info.agents = m.agents.filter((x: unknown) => typeof x === "string");
+    if (m.agentUsage && typeof m.agentUsage === "object") rc.info.agentUsage = m.agentUsage;
+    broadcastMachines();
+    return;
+  }
   if (m.t === "usage_info") {
     const cb = pendingRunnerUsage.get(m.reqId);
     if (cb) { pendingRunnerUsage.delete(m.reqId); cb(m); }
@@ -1246,8 +1298,33 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "command_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "command_list", runnerId: rc.id, cwd: m.cwd, commands: m.commands || [] }); } return; }
   if (m.t === "mention_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "mention_list", files: m.files || [] }); } return; }
   if (m.t === "preview_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "worktree_preview", sessionId: m.sessionId, candidates: m.candidates || [] }); } return; }
+  if (m.t === "terminal_opened" && m.terminal?.id) {
+    terminalOwners.set(String(m.terminal.id), rc.id);
+    const c = m.reqId && pendingReq.get(m.reqId);
+    if (c) { pendingReq.delete(m.reqId); rememberTerminalWatcher(String(m.terminal.id), c); }
+    broadcastTerminal(rc.id, { t: "terminal_opened", reqId: m.reqId, terminal: m.terminal });
+    return;
+  }
+  if (m.t === "terminal_output" && typeof m.terminalId === "string") { terminalOwners.set(m.terminalId, rc.id); broadcastTerminal(rc.id, { t: "terminal_output", terminalId: m.terminalId, data: String(m.data || "") }); return; }
+  if (m.t === "terminal_closed" && typeof m.terminalId === "string") { terminalOwners.delete(m.terminalId); broadcastTerminal(rc.id, { t: "terminal_closed", terminalId: m.terminalId, exitCode: m.exitCode, signal: m.signal }); return; }
+  if (m.t === "terminal_list") {
+    for (const terminal of m.terminals || []) if (terminal?.id) terminalOwners.set(String(terminal.id), rc.id);
+    const c = m.reqId && pendingReq.get(m.reqId);
+    if (c) {
+      pendingReq.delete(m.reqId);
+      for (const terminal of m.terminals || []) rememberTerminalWatcher(terminal?.id, c);
+    }
+    broadcastTerminal(rc.id, { t: "terminal_list", reqId: m.reqId, terminals: Array.isArray(m.terminals) ? m.terminals : [] });
+    return;
+  }
+  if (m.t === "terminal_error") {
+    const c = m.reqId && pendingReq.get(m.reqId);
+    if (c) { pendingReq.delete(m.reqId); send(c, { t: "terminal_error", runnerId: rc.id, reqId: m.reqId, terminalId: m.terminalId, message: String(m.message || "erro no terminal") }); }
+    else broadcastTerminal(rc.id, { t: "terminal_error", reqId: m.reqId, terminalId: m.terminalId, message: String(m.message || "erro no terminal") });
+    return;
+  }
   if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries, files: m.files }); } return; }
-  if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); } return; }
+  if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, mtimeMs: m.mtimeMs, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); } return; }
   if (m.t === "error") {
     const replay = m.reqId && executionReplayRequests.get(m.reqId);
     if (replay) { executionReplayRequests.delete(m.reqId); mirrorExecutionStore(rc.id).setConnection(replay.rootExecutionId, "desynced"); broadcastExecutionConnection(rc.id, "desynced"); console.error(`[hub] replay de execução falhou em ${rc.id}: ${m.message}`); return; }
@@ -2997,12 +3074,25 @@ function webVersion(): string {
   return String(Math.floor(latest));
 }
 let lastWebVersion = webVersion();
-setInterval(() => { const v = webVersion(); if (v !== lastWebVersion) { lastWebVersion = v; broadcastAll({ t: "version", v, contractVersion: AGENT_EVENT_SCHEMA_VERSION, runnerProtocolVersion: RUNNER_PROTOCOL_VERSION }); } }, 15_000).unref?.();
+let settlingWebVersion = lastWebVersion;
+// Só anuncia quando a versão ESTABILIZA por um ciclo inteiro. index.html e app.js são salvos em
+// momentos diferentes durante uma edição; anunciar no meio empurra um par INCONSISTENTE (HTML novo +
+// JS velho) para todo cliente aberto. Um `getElementById` que virou null aborta o app.js no topo — o
+// `connect()` do fim nunca roda, e a janela fica morta (sem WebSocket, portanto sem nem receber o
+// próximo "version" para se recuperar). Custa até um ciclo extra de propagação; evita a tela morta.
+setInterval(() => {
+  const v = webVersion();
+  if (v !== settlingWebVersion) { settlingWebVersion = v; return; }   // ainda mudando: espera assentar
+  if (v !== lastWebVersion) { lastWebVersion = v; broadcastAll({ t: "version", v, contractVersion: AGENT_EVENT_SCHEMA_VERSION, runnerProtocolVersion: RUNNER_PROTOCOL_VERSION }); }
+}, 15_000).unref?.();
 
 /** Push the app's initial state to a (now authenticated) client. */
 async function sendInitialState(ws: WebSocket): Promise<void> {
   send(ws, { t: "version", v: webVersion(), contractVersion: AGENT_EVENT_SCHEMA_VERSION, runnerProtocolVersion: RUNNER_PROTOCOL_VERSION });
-  send(ws, { t: "hello", agents: await agents.describe(), default: agents.default });
+  send(ws, { t: "hello", agents: agents.describeSnapshot(), default: agents.default });
+  void agents.describe().then((catalog) => {
+    if (ws.readyState === WebSocket.OPEN) send(ws, { t: "agent_catalog", agents: catalog, default: agents.default });
+  }).catch(() => { /* hello already carried a minimal usable catalog */ });
   send(ws, { t: "machines", machines: machineList(ws) });
   send(ws, { t: "update_status", status: updateStatus });
   // The initial view is the local machine — only push its sessions/runs to a principal allowed to use
@@ -3312,6 +3402,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     subs.delete(ws);
     wakeClients.delete(ws);
     updateWatchers.delete(ws);
+    for (const [terminalId, watchers] of terminalWatchers) {
+      watchers.delete(ws);
+      if (!watchers.size) terminalWatchers.delete(terminalId);
+    }
     clearUnauthTimer(ws);
     syncTails();
   });
@@ -3446,6 +3540,55 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // --- machine selection + routing to remote runners -----------------------
     if (msg.t === "machines") { send(ws, { t: "machines", machines: machineList(ws) }); return; }
+    if (msg.t === "terminal_open" || msg.t === "terminal_input" || msg.t === "terminal_resize" || msg.t === "terminal_close" || msg.t === "terminal_list") {
+      if (!requireOwner(ws)) return;
+      const rid = terminalRunner(msg, ws);
+      if (!canUseRunner(ws, rid)) { send(ws, { t: "terminal_error", runnerId: rid, reqId: msg.reqId, terminalId: msg.terminalId, message: "sem acesso a esta máquina" }); return; }
+      if (rid === LOCAL_ID) {
+        if (msg.t === "terminal_open") { openLocalTerminal(ws, { ...msg, reqId: typeof msg.reqId === "string" ? msg.reqId : "term-" + randomUUID() }); return; }
+        if (msg.t === "terminal_list") { send(ws, { t: "terminal_list", runnerId: LOCAL_ID, reqId: msg.reqId, terminals: localTerminals.list() }); return; }
+        if (msg.t === "terminal_input" && typeof msg.terminalId === "string" && typeof msg.data === "string") {
+          if (!localTerminals.input(msg.terminalId, msg.data)) send(ws, { t: "terminal_error", runnerId: LOCAL_ID, terminalId: msg.terminalId, message: "terminal não encontrado" });
+          return;
+        }
+        if (msg.t === "terminal_resize" && typeof msg.terminalId === "string") {
+          if (!localTerminals.resize(msg.terminalId, msg.cols, msg.rows)) send(ws, { t: "terminal_error", runnerId: LOCAL_ID, terminalId: msg.terminalId, message: "terminal não encontrado" });
+          return;
+        }
+        if (msg.t === "terminal_close" && typeof msg.terminalId === "string") {
+          if (localTerminals.close(msg.terminalId)) terminalOwners.delete(msg.terminalId);
+          else send(ws, { t: "terminal_error", runnerId: LOCAL_ID, terminalId: msg.terminalId, message: "terminal não encontrado" });
+          return;
+        }
+      }
+      const rc = runners.get(rid);
+      if (!rc?.ws) { send(ws, { t: "terminal_error", runnerId: rid, reqId: msg.reqId, terminalId: msg.terminalId, message: "máquina offline" }); return; }
+      if (msg.t === "terminal_open") {
+        const reqId = typeof msg.reqId === "string" ? msg.reqId : "term-" + randomUUID();
+        const cwd = typeof msg.cwd === "string" && msg.cwd ? msg.cwd : sessionCwdOn(rid, subs.get(ws));
+        auth.audit("terminal_open", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: rid, detail: cwd || "(cwd padrão)" });
+        pendingReq.set(reqId, ws);
+        if (!sendToRunner(rc, { t: "terminal_open", reqId, cwd, shell: msg.shell, title: msg.title, cols: msg.cols, rows: msg.rows })) {
+          pendingReq.delete(reqId);
+          send(ws, { t: "terminal_error", runnerId: rid, reqId, message: "não foi possível abrir terminal na máquina" });
+        }
+        return;
+      }
+      if (msg.t === "terminal_list") {
+        const reqId = typeof msg.reqId === "string" ? msg.reqId : "term-" + randomUUID();
+        pendingReq.set(reqId, ws);
+        if (!sendToRunner(rc, { t: "terminal_list", reqId })) {
+          pendingReq.delete(reqId);
+          send(ws, { t: "terminal_list", runnerId: rid, reqId, terminals: [] });
+        }
+        return;
+      }
+      if (msg.t === "terminal_input" && typeof msg.terminalId === "string" && typeof msg.data === "string") { sendToRunner(rc, { t: "terminal_input", terminalId: msg.terminalId, data: msg.data }); return; }
+      if (msg.t === "terminal_resize" && typeof msg.terminalId === "string") { sendToRunner(rc, { t: "terminal_resize", terminalId: msg.terminalId, cols: Number(msg.cols) || 100, rows: Number(msg.rows) || 30 }); return; }
+      if (msg.t === "terminal_close" && typeof msg.terminalId === "string") { sendToRunner(rc, { t: "terminal_close", terminalId: msg.terminalId }); return; }
+      send(ws, { t: "terminal_error", runnerId: rid, message: "mensagem de terminal inválida" });
+      return;
+    }
     // Slash-command / skill list for the composer's "/" autocomplete, for the machine in view. Local
     // is read straight off disk; a remote machine's list is fetched from its runner (it owns the files).
     if (msg.t === "commands") {
@@ -3721,7 +3864,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "listdir") {
       const base = typeof msg.path === "string" && msg.path ? msg.path : homedir();
       try {
-        const all = readdirSync(base, { withFileTypes: true }).filter((e) => !e.name.startsWith("."));
+        const all = readdirSync(base, { withFileTypes: true });
         const entries = all.filter((e) => e.isDirectory()).map((e) => e.name).sort((a, b) => a.localeCompare(b));
         // `files` só é preenchido quando o cliente pede (msg.files) — o folder-picker legado não pede,
         // então segue vendo só pastas. O painel de árvore de arquivos (Orca #1) pede e recebe os dois.
@@ -4543,6 +4686,7 @@ function hubShutdown(sig: string): void {
   if (localAborts.size) console.log(`[hub] ${sig} — abortando ${localAborts.size} turno(s) local(is) em andamento`);
   for (const [, ctrl] of localAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
   for (const [, ctrl] of routeAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
+  try { localTerminals.closeAll(); } catch { /* ignore */ }
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
 }
 process.on("SIGTERM", () => hubShutdown("SIGTERM"));

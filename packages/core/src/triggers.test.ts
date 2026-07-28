@@ -11,16 +11,21 @@ import { expandBang, appendMemory, applyMemoryAppend, MemoryProvenanceStore, pre
 
 const ROOT = mkdtempSync(join(tmpdir(), "jarvis-trig-"));
 mkdirSync(join(ROOT, "src"), { recursive: true });
+mkdirSync(join(ROOT, ".github", "workflows"), { recursive: true });
 mkdirSync(join(ROOT, "node_modules", "pkg"), { recursive: true });
 writeFileSync(join(ROOT, "README.md"), "readme");
 writeFileSync(join(ROOT, "src", "index.ts"), "code");
 writeFileSync(join(ROOT, "src", "helper.ts"), "code");
+writeFileSync(join(ROOT, ".env"), "TOKEN=test");
+writeFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "name: ci");
 writeFileSync(join(ROOT, "node_modules", "pkg", "dep.js"), "dep");
 
 test("listMentionFiles finds files under cwd, skips node_modules, matches a query", () => {
   const all = listMentionFiles(ROOT);
   assert.ok(all.includes("README.md"));
+  assert.ok(all.includes(".env"));
   assert.ok(all.includes("src/index.ts"));
+  assert.ok(all.includes(".github/workflows/ci.yml"));
   assert.ok(!all.some((f) => f.includes("node_modules")), "node_modules is skipped");
   const q = listMentionFiles(ROOT, "helper");
   assert.deepEqual(q, ["src/helper.ts"]);
