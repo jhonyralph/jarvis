@@ -1,3 +1,10 @@
+# [0.3.0](https://github.com/jhonyralph/jarvis/compare/v0.2.1...v0.3.0) (2026-07-28)
+
+
+### Features
+
+* **scripts:** comando unico multiplataforma para os scripts operacionais ([a3d9530](https://github.com/jhonyralph/jarvis/commit/a3d9530cb54fe69fb833533409b9778d1c515424))
+
 ## [0.2.1](https://github.com/jhonyralph/jarvis/compare/v0.2.0...v0.2.1) (2026-07-28)
 
 
