@@ -575,6 +575,39 @@ export function createAdaptiveApprovalRequest(input: {
   };
 }
 
+/**
+ * Reconhece um COMANDO de aprovação ("aprova a pendência", "quais aprovações estão pendentes").
+ *
+ * Isto roda ANTES do turno normal e, quando casa, a mensagem é consumida — nunca chega ao agente.
+ * Por isso um falso positivo é caro: a fala/mensagem do usuário some. Duas regras evitam isso:
+ *
+ *  1. Verbo e objeto vêm de grupos DISJUNTOS. A versão anterior aceitava `pendência` nos dois lados
+ *     do E lógico, então QUALQUER texto contendo a palavra virava "listar aprovações" — responder um
+ *     card de decisão com "…fechar a pendência do ícone…" era engolido com "Não há aprovações
+ *     pendentes.".
+ *  2. Só texto curto e de uma linha é considerado. Comando é curto; resposta de card/parágrafo não.
+ */
+export function adaptiveApprovalVoiceCommand(text: string): "approve" | "reject" | "list" | null {
+  const raw = String(text ?? "").trim();
+  // Um comando falado/digitado é curto e de uma linha só; um parágrafo (ou resposta de card, que vem
+  // com várias linhas) nunca deve sequestrar o turno.
+  if (!raw || raw.length > 120 || /[\n\r]/.test(raw)) return null;
+
+  // Acento QUEBRA \b em JS (ç e ã não são caracteres de palavra), então /\baprova\b/ casava dentro
+  // de "aprovação" e "rejeita a aprovação" era lido como aprovar. Removendo os diacríticos antes,
+  // "aprovacao" é uma palavra só e o limite volta a significar o que se espera.
+  const s = raw.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  // Objeto do comando: sobre O QUE se está aprovando. Não contém verbos.
+  if (!/\b(aprovacao|aprovacoes|pendencia|pendencias|pendente|pendentes|rotina|fila|background)\b/.test(s)) return null;
+
+  // Rejeitar vem ANTES de aprovar: "rejeita a aprovação" cita as duas ideias, e a intenção é a do
+  // verbo, não a do substantivo.
+  if (/\b(rejeit(a|ar|o)|recus(a|ar|o)|neg(a|ar|o)|cancel(a|ar|o))\b/.test(s)) return "reject";
+  if (/\b(aprov(a|ar|ado|e)?|autoriz(a|ar|o)|liber(a|ar|o)|pode rodar)\b/.test(s)) return "approve";
+  if (/\b(list(a|ar|e)?|mostr(a|ar|e)|quais|quantas|status|ver)\b/.test(s)) return "list";
+  return null;
+}
+
 export function loadAdaptivePolicyDocument(file: string, now = Date.now()): AdaptivePolicyDocument {
   return normalizeAdaptivePolicyDocument(readJson<unknown>(file, undefined), now);
 }

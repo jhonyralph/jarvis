@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  adaptiveApprovalVoiceCommand,
   adaptiveAutonomyPreset,
   applyAdaptiveAutonomyPreset,
   defaultAdaptivePolicy,
@@ -205,4 +206,31 @@ test("adaptive autonomy presets map modes to coherent controls", () => {
   assert.equal(applied.autonomy.mode, "controlled_autonomy");
   assert.equal(applied.autonomy.allowQueueAutoplay, true);
   assert.equal(applied.autonomy.allowBackgroundTurns, true);
+});
+
+// Um comando de aprovação CONSOME a mensagem antes do turno normal: falso positivo faz a fala do
+// usuário sumir. Estes casos travam a fronteira entre "comando" e "mensagem que só cita a palavra".
+test("comando de aprovação exige verbo E objeto — citar 'pendência' não basta", () => {
+  // O caso real que quebrou: responder um card de decisão era engolido com "Não há aprovações
+  // pendentes.", porque 'pendência' satisfazia os dois lados do E lógico sozinha.
+  assert.equal(adaptiveApprovalVoiceCommand("Decisões escolhidas:\n- Como você quer fechar a pendência do ícone do app?\n  → Abrir item pendente"), null);
+  assert.equal(adaptiveApprovalVoiceCommand("fechar a pendência do ícone"), null, "sem verbo de comando não é comando");
+  assert.equal(adaptiveApprovalVoiceCommand("abrir item pendente"), null);
+  assert.equal(adaptiveApprovalVoiceCommand("temos uma pendência no deploy"), null);
+});
+
+test("comandos reais de aprovação continuam reconhecidos", () => {
+  assert.equal(adaptiveApprovalVoiceCommand("aprova a pendência"), "approve");
+  assert.equal(adaptiveApprovalVoiceCommand("pode rodar a rotina"), "approve");
+  assert.equal(adaptiveApprovalVoiceCommand("rejeita a aprovação"), "reject");
+  assert.equal(adaptiveApprovalVoiceCommand("quais aprovações estão pendentes?"), "list");
+  assert.equal(adaptiveApprovalVoiceCommand("lista as pendências"), "list");
+});
+
+test("texto longo ou multilinha nunca vira comando (é conversa, não ordem)", () => {
+  const longo = "aprova a pendência " + "x".repeat(130);
+  assert.equal(adaptiveApprovalVoiceCommand(longo), null);
+  assert.equal(adaptiveApprovalVoiceCommand("aprova a pendência\nmas antes me explica o que é"), null);
+  assert.equal(adaptiveApprovalVoiceCommand(""), null);
+  assert.equal(adaptiveApprovalVoiceCommand(undefined as unknown as string), null);
 });
