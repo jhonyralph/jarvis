@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/jhonyralph/jarvis/compare/v0.4.1...v0.5.0) (2026-07-28)
+
+
+### Features
+
+* **desktop:** install:desktop ja deixa o atalho pronto no lancador do SO ([6069b16](https://github.com/jhonyralph/jarvis/commit/6069b1608d6daee4cfd3978d2daf2d15d54d1d61))
+
 ## [0.4.1](https://github.com/jhonyralph/jarvis/compare/v0.4.0...v0.4.1) (2026-07-28)
 
 
