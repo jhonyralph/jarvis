@@ -243,7 +243,7 @@
     #app.flay-tabs #filePanel { flex:1; }
     #app.flay-tabs.file-open:not(.tab-chat) #cbody > main { display:none; }
     #app.flay-tabs.file-open.tab-chat #filePanel { display:none; }
-    #filePanel, #treePanel { display:flex; flex-direction:column; min-width:0; border-left:1px solid var(--line); background:var(--panel); }
+    #filePanel, #treePanel { display:flex; flex-direction:column; min-width:0; min-height:0; border-left:1px solid var(--line); background:var(--panel); }
     #filePanel { flex:0 0 var(--file-w,clamp(360px,42%,760px)); }
     #treePanel { flex:0 0 var(--tree-w,clamp(220px,24%,320px)); order:5; }   /* explorer estreito, sempre na borda direita */
     #filePanel.hidden, #treePanel.hidden { display:none; }
