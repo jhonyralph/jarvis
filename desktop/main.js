@@ -13,6 +13,7 @@
 const { app, BrowserWindow, shell, ipcMain, webContents } = require("electron")
 const path = require("node:path")
 const { registerBrowserIpc } = require("./src/browser/register-browser-ipc")
+const { registerUpdaterIpc } = require("./src/updater/register-updater-ipc")
 
 // Where the live Hub UI lives. Same env name as the Capacitor shell (mobile/capacitor.config.ts).
 const HUB_URL = process.env.JARVIS_APP_HUB_URL || "http://127.0.0.1:4577"
@@ -98,21 +99,18 @@ function createWindow() {
   mainWindow.loadURL(HUB_URL).catch(() => scheduleReload())
 }
 
-// Optional auto-update in a packaged build. Kept soft so `npm start` works without electron-updater.
-function maybeInitAutoUpdate() {
-  if (!app.isPackaged) return
-  try {
-    const { autoUpdater } = require("electron-updater")
-    autoUpdater.checkForUpdatesAndNotify().catch(() => {})
-  } catch {
-    /* electron-updater not installed — skip silently */
-  }
-}
-
 app.whenReady().then(() => {
   registerBrowserIpc({ ipcMain, webContents })
+  // Auto-update is driven by the web UI (banner + "check" + "restart and install"), so the user
+  // sees it in the same place as everything else instead of a native dialog. Packaged builds only;
+  // a dev run reports "unsupported" and the UI simply hides the controls.
+  const updater = registerUpdaterIpc({
+    ipcMain,
+    isPackaged: () => app.isPackaged,
+    getWindow: () => mainWindow,
+  })
   createWindow()
-  maybeInitAutoUpdate()
+  updater.checkOnBoot()
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

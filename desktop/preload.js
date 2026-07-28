@@ -35,6 +35,18 @@ const bridge = {
       ipcRenderer.invoke("jarvis:browser:captureSelectionScreenshot", webContentsId, rect),
     cancelGrab: (webContentsId) => ipcRenderer.invoke("jarvis:browser:cancelGrab", webContentsId),
   },
+  // Auto-update surfaced IN the web UI: check on demand, listen to progress, install when the user
+  // says so. Every method resolves to {state:"unsupported"} in a dev run / plain browser, so the UI
+  // just hides the controls (LEI 2: absent capability is a detectable no-op).
+  updater: {
+    check: () => ipcRenderer.invoke("jarvis:updater:check"),
+    install: () => ipcRenderer.invoke("jarvis:updater:install"),
+    onEvent: (cb) => {
+      const h = (_e, payload) => { try { cb(payload); } catch { /* a UI handler must not kill the bridge */ } };
+      ipcRenderer.on("jarvis:updater:event", h);
+      return () => ipcRenderer.removeListener("jarvis:updater:event", h);
+    },
+  },
 }
 
 contextBridge.exposeInMainWorld("jarvis", Object.freeze(bridge))

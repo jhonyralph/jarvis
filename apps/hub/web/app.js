@@ -10,6 +10,7 @@
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
+      'appUpdBar','appUpdBox','appUpdStatus','appUpdCheck','appUpdInstall',
       'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileFmt','fileCopy','fileFull','fileClose','annoSend','annoCount','annoBar','annoSelLbl','annoAdd','annoCancelSel','fileResize','fileResizeV','fileLayoutSw','fileTabs','tabChatBtn','tabFileBtn','nativeChip',
       'designBtn','designPanel','designUrl','designDetect','designGrab','designClose','designHost','designCompose','designSel','designNote','designSend','designCancel','designStatus',
       'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
@@ -1255,6 +1256,44 @@
       // ---- re-lock on resume + lock on launch ----
       if(P.App) P.App.addListener('appStateChange',function(s){ if(s&&s.isActive){ try{ maybeBioLock(); }catch(e){} } });
       try{ maybeBioLock(); }catch(e){}
+    })();
+    // --- Atualização do APP desktop (Electron). O shell empacotado expõe window.jarvis.updater; num
+    //     navegador comum / Capacitor ele não existe e todo este bloco é um no-op (LEI 2), então os
+    //     controles ficam escondidos. A UI mostra banner + "Verificar" + "Reiniciar e instalar" aqui
+    //     mesmo, em vez de um diálogo nativo que o resto da interface não conhece. ---
+    (function(){ var U=window.jarvis&&window.jarvis.updater; if(!U) return;
+      var st={state:'idle'};
+      function label(){ switch(st.state){
+        case 'checking': return 'Procurando atualização…';
+        case 'available': return 'Atualização '+(st.version||'')+' encontrada — baixando…';
+        case 'downloading': return 'Baixando atualização… '+(st.percent||0)+'%';
+        case 'downloaded': return 'Atualização '+(st.version||'')+' pronta para instalar.';
+        case 'none': return 'Você está na versão mais recente'+(window.jarvis.shellVersion?(' ('+window.jarvis.shellVersion+')'):'')+'.';
+        case 'error': return '⚠ '+(st.error||'falha ao verificar atualização');
+        case 'unsupported': return 'Auto-update indisponível nesta execução (build não empacotado).';
+        default: return 'Versão '+(window.jarvis.shellVersion||'?')+'.'; } }
+      function render(){
+        if(E.appUpdBox) E.appUpdBox.classList.remove('hidden');
+        if(E.appUpdStatus) E.appUpdStatus.textContent=label();
+        var ready=st.state==='downloaded';
+        if(E.appUpdInstall) E.appUpdInstall.classList.toggle('hidden',!ready);
+        if(E.appUpdCheck) E.appUpdCheck.disabled=(st.state==='checking'||st.state==='downloading');
+        // banner no topo só quando há algo acionável (baixando ou pronto) — não polui o resto do tempo
+        if(E.appUpdBar){
+          var show=ready||st.state==='downloading'||st.state==='available';
+          E.appUpdBar.classList.toggle('hidden',!show);
+          if(show){ E.appUpdBar.innerHTML=''; var t=document.createElement('span'); t.textContent='⬆ '+label(); E.appUpdBar.appendChild(t);
+            var sp=document.createElement('span'); sp.className='spacer'; E.appUpdBar.appendChild(sp);
+            if(ready){ var b=document.createElement('button'); b.textContent='Reiniciar e instalar'; b.onclick=doInstall; E.appUpdBar.appendChild(b); }
+            var x=document.createElement('button'); x.className='ghost'; x.textContent='✕'; x.title='Ocultar'; x.onclick=()=>E.appUpdBar.classList.add('hidden'); E.appUpdBar.appendChild(x); }
+        }
+      }
+      async function doCheck(){ st={state:'checking'}; render(); try{ var r=await U.check(); if(r&&r.state==='unsupported'){ st=r; } else if(r&&r.state==='error'){ st=r; } render(); }catch(e){ st={state:'error',error:String(e&&e.message||e)}; render(); } }
+      async function doInstall(){ try{ var r=await U.install(); if(r&&r.ok===false) toast('⚠ '+(r.error||'nada para instalar')); }catch(e){ toast('⚠ falha ao instalar'); } }
+      U.onEvent(function(ev){ if(ev&&ev.state){ st=ev; render(); } });
+      if(E.appUpdCheck) E.appUpdCheck.onclick=doCheck;
+      if(E.appUpdInstall) E.appUpdInstall.onclick=doInstall;
+      render();
     })();
     // --- Electron desktop shell bridge (window.jarvis) + Design Mode. Runs ONLY inside the Electron
     //     app; a plain browser / Capacitor has no window.jarvis, so the button stays hidden and every

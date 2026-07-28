@@ -542,6 +542,10 @@
     .toast { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; cursor:pointer; }
     #roBanner { padding:8px 14px; background:#1e293b; color:#cbd5e1; font-size:12.5px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px; }
     #offlineBar { padding:8px 14px; background:#7c2d12; color:#fed7aa; font-size:12.5px; border-bottom:1px solid var(--line); }
+    #appUpdBar { display:flex; align-items:center; gap:10px; padding:7px 14px; background:#14324d; color:#cfe6ff; font-size:12.5px; border-bottom:1px solid var(--line); }
+    #appUpdBar.hidden { display:none; }
+    #appUpdBar button { padding:4px 10px; min-height:0; font-size:12px; }
+    #appUpdBar .spacer { flex:1; }
     /* native-only (Capacitor shell adds html.native): biometric toggle + lock overlay */
     .biolockrow { display:none; }
     html.native .biolockrow { display:flex; }
@@ -769,6 +773,7 @@
       <div id="limit" class="hidden"></div>
       <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
       <div id="offlineBar" class="hidden"></div>
+      <div id="appUpdBar" class="hidden"></div>
       <div id="log"></div>
       <form id="composer">
         <button type="button" id="scrollBtn" class="hidden" title="Ir para as mensagens recentes"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 16 18 9"></polyline></svg></button>
@@ -1153,6 +1158,14 @@
         </section>
 
         <section class="spanel hidden" data-panel="update">
+          <div id="appUpdBox" class="hidden">
+            <div class="sec">Aplicativo desktop</div>
+            <div id="appUpdStatus" class="mut" style="font-size:12px">—</div>
+            <div class="row" style="margin-top:6px;gap:8px">
+              <button id="appUpdCheck" class="ghost" type="button">Verificar atualização</button>
+              <button id="appUpdInstall" class="hidden" type="button">Reiniciar e instalar</button>
+            </div>
+          </div>
           <div class="sec" data-i18n="secUpdate">Atualização</div>
           <div id="updStatus" class="mut" style="font-size:12px">—</div>
           <div id="updActions" class="row hidden" style="margin-top:4px">
