@@ -589,6 +589,15 @@
         if(q){ closeList(); if(!inQuote){ html+='<blockquote>'; inQuote=true; } html+=inline(q[1])+'<br>'; i++; continue; }
         const li=ln.match(/^\s*[-*+]\s+(.*)$/)||ln.match(/^\s*\d+[.)]\s+(.*)$/);
         if(li){ closeQuote(); if(!inList){ html+='<ul>'; inList=true; } html+='<li>'+inline(li[1])+'</li>'; i++; continue; }
+        // tabela GFM: linha com | seguida de uma linha separadora (---|---)
+        if(ln.includes('|') && i+1<lines.length && /^\s*\|?[\s:|-]*-[\s:|-]*$/.test(lines[i+1])){
+          closeList(); closeQuote();
+          const cells=(r)=>r.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(c=>c.trim());
+          const head=cells(ln); i+=2;
+          let t='<table class="mdtable"><thead><tr>'+head.map(c=>'<th>'+inline(c)+'</th>').join('')+'</tr></thead><tbody>';
+          while(i<lines.length && lines[i].includes('|') && lines[i].trim()){ t+='<tr>'+cells(lines[i]).map(c=>'<td>'+inline(c)+'</td>').join('')+'</tr>'; i++; }
+          html+=t+'</tbody></table>'; continue;
+        }
         if(!ln.trim()){ closeList(); closeQuote(); i++; continue; }
         closeQuote(); html+='<p>'+inline(ln)+'</p>'; i++;
       }
