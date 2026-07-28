@@ -1,0 +1,71 @@
+name: Release
+
+# Release automático a cada push em main: o semantic-release lê os conventional commits, decide o
+# próximo semver, atualiza CHANGELOG + package.json (raiz e desktop), cria a tag e o GitHub Release.
+# Se (e só se) houve release, dispara o build dos instaladores desktop para aquela tag.
+#
+# Nada é publicado quando os commits não pedem release (ex.: só `docs:`/`chore:`) — o semantic-release
+# simplesmente não corta versão.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false # nunca cancelar um release pela metade
+
+permissions:
+  contents: write # criar tag, commit do bump e o Release
+  issues: write # comentários do @semantic-release/github
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.sr.outputs.published }}
+      version: ${{ steps.sr.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # semantic-release precisa do histórico completo p/ achar a última tag
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+
+      # Portão de qualidade: um release quebrado é pior que nenhum release.
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Web client syntax (app.js — não coberto pelo tsc)
+        run: node --check apps/hub/web/app.js
+
+      - name: semantic-release
+        id: sr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Plugins ficam aqui (e não em devDependencies) para não pesar o `npm ci` de quem instala o
+        # Jarvis — só o CI de release precisa deles.
+        run: |
+          npx --yes \
+            -p semantic-release@24 \
+            -p @semantic-release/changelog@6 \
+            -p @semantic-release/git@10 \
+            -p @semantic-release/exec@6 \
+            semantic-release
+
+  # Uma tag criada com o GITHUB_TOKEN NÃO dispara outros workflows (proteção anti-recursão do
+  # GitHub), então o `on: push: tags` do release-desktop.yml nunca rodaria aqui. Chamamos ele
+  # explicitamente, passando a tag recém-criada.
+  desktop:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    uses: ./.github/workflows/release-desktop.yml
+    permissions:
+      contents: write
+    with:
+      ref: v${{ needs.release.outputs.version }}

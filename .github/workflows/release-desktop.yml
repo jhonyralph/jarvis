@@ -17,6 +17,15 @@ on:
         description: "Publish installers to a GitHub Release (leave off to only build)"
         type: boolean
         default: false
+  # Chamado pelo release.yml depois que o semantic-release cria a tag. Necessário porque uma tag
+  # criada com o GITHUB_TOKEN NÃO dispara outros workflows (proteção anti-recursão do GitHub), então
+  # o gatilho `push: tags` acima nunca rodaria para releases automáticos.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Tag/ref a construir (ex.: v1.2.3)"
+        type: string
+        required: true
 
 permissions:
   contents: write   # electron-builder needs this to create/update the Release
@@ -35,7 +44,11 @@ jobs:
             target: linux
     runs-on: ${{ matrix.os }}
     steps:
+      # Quando chamado pelo release.yml, constrói exatamente a TAG recém-criada (o checkout padrão
+      # apontaria para o commit anterior ao bump de versão do semantic-release).
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -54,7 +67,9 @@ jobs:
         id: mode
         shell: bash
         run: |
-          if [ "${{ github.ref_type }}" = "tag" ] || [ "${{ inputs.publish }}" = "true" ]; then
+          # publica quando: (a) veio de uma tag, (b) o release.yml chamou passando a tag, ou
+          # (c) foi disparo manual com publish=on. Manual sem publish = só prova que builda.
+          if [ "${{ github.ref_type }}" = "tag" ] || [ -n "${{ inputs.ref }}" ] || [ "${{ inputs.publish }}" = "true" ]; then
             echo "publish=always" >> "$GITHUB_OUTPUT"
           else
             echo "publish=never" >> "$GITHUB_OUTPUT"

@@ -1,7 +1,13 @@
 # Changelog
 
-All notable changes to Jarvis. Versions follow the root `package.json`; cut a release with
-`scripts/release.ps1 <version>` (bumps → packs → tags).
+All notable changes to Jarvis. Versions follow the root `package.json`.
+
+Releases are **automatic**: every push to `main` runs `.github/workflows/release.yml`, which reads the
+[Conventional Commits](https://www.conventionalcommits.org) since the last tag, decides the next
+semver, updates this file and both `package.json`s (root + `desktop/`), tags, publishes the GitHub
+Release and builds the desktop installers for it. `feat:` → minor, `fix:`/`perf:` → patch,
+`BREAKING CHANGE:` → major; a push with only `docs:`/`chore:`/`style:` cuts no release.
+`scripts/release.ps1` stays available for a manual/offline cut.
 
 ## [0.1.0] — baseline
 
