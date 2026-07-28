@@ -294,6 +294,9 @@ const MIME: Record<string, string> = {
   ".webp": "image/webp",
   ".svg": "image/svg+xml",
   ".webmanifest": "application/manifest+json",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
 };
 
 // Hardening headers on every response — clickjacking, sniffing, referrer leak,

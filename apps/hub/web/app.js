@@ -569,11 +569,17 @@
     // listas, citações, links, hr. Sem libs externas.
     function renderMarkdown(md){
       const esc=(s)=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-      const inline=(s)=>esc(s)
-        .replace(/`([^`]+)`/g,(_,c)=>'<code>'+c+'</code>')
-        .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
-        .replace(/(^|[^*])\*([^*]+)\*/g,'$1<em>$2</em>')
-        .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+      const escA=(s)=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+      const mathSpan=(tex,disp)=>'<span class="katex-math" data-d="'+(disp?'1':'0')+'" data-tex="'+escA(tex)+'"></span>';
+      const inline=(s)=>{ const M=[];
+        // extrai fórmulas $...$ ANTES de escapar (o TeX fica cru); placeholders 
+        s=s.replace(/\$([^$\n]+?)\$/g,(m,tex)=>/^\s|\s$/.test(tex)?m:(' '+(M.push(tex)-1)+' '));
+        s=esc(s)
+          .replace(/`([^`]+)`/g,(_,c)=>'<code>'+c+'</code>')
+          .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+          .replace(/(^|[^*])\*([^*]+)\*/g,'$1<em>$2</em>')
+          .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+        return s.replace(/ (\d+) /g,(_,k)=>mathSpan(M[+k],false)); };
       const lines=String(md).split(/\r?\n/); let html='',i=0,inList=false,inQuote=false;
       const closeList=()=>{ if(inList){ html+='</ul>'; inList=false; } };
       const closeQuote=()=>{ if(inQuote){ html+='</blockquote>'; inQuote=false; } };
@@ -581,7 +587,13 @@
         const fence=ln.match(/^\s*```(\w*)/);
         if(fence){ closeList(); closeQuote(); const lang=fence[1]; const buf=[]; i++;
           while(i<lines.length && !/^\s*```/.test(lines[i])){ buf.push(lines[i]); i++; } i++;
-          const raw=buf.join('\n'); const hl=highlight(raw, lang?('x.'+lang):'x.txt'); html+='<pre class="mdcode">'+(hl!=null?hl:esc(raw))+'</pre>'; continue; }
+          const raw=buf.join('\n');
+          if(lang==='mermaid'){ html+='<pre class="mermaid">'+esc(raw)+'</pre>'; continue; }   // diagrama (renderizado no enhanceMarkdown)
+          const hl=highlight(raw, lang?('x.'+lang):'x.txt'); html+='<pre class="mdcode">'+(hl!=null?hl:esc(raw))+'</pre>'; continue; }
+        // fórmula em bloco: $$ ... $$ (uma linha ou várias)
+        const bm1=ln.match(/^\s*\$\$(.+?)\$\$\s*$/);
+        if(bm1){ closeList(); closeQuote(); html+='<div class="katex-math" data-d="1" data-tex="'+escA(bm1[1])+'"></div>'; i++; continue; }
+        if(/^\s*\$\$\s*$/.test(ln)){ closeList(); closeQuote(); const buf=[]; i++; while(i<lines.length && !/^\s*\$\$\s*$/.test(lines[i])){ buf.push(lines[i]); i++; } i++; html+='<div class="katex-math" data-d="1" data-tex="'+escA(buf.join('\n'))+'"></div>'; continue; }
         const h=ln.match(/^(#{1,6})\s+(.*)$/);
         if(h){ closeList(); closeQuote(); html+='<h'+h[1].length+'>'+inline(h[2])+'</h'+h[1].length+'>'; i++; continue; }
         if(/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(ln)){ closeList(); closeQuote(); html+='<hr>'; i++; continue; }
@@ -602,6 +614,17 @@
         closeQuote(); html+='<p>'+inline(ln)+'</p>'; i++;
       }
       closeList(); closeQuote(); return html;
+    }
+    // Libs pesadas (Mermaid ~3MB, KaTeX) são EMPACOTADAS localmente em /vendor (offline, sem CDN) e
+    // carregadas SOB DEMANDA só quando um markdown tem diagrama/fórmula — não pesam no boot.
+    const _asset={};
+    function loadScriptOnce(src){ if(_asset[src])return _asset[src]; _asset[src]=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); return _asset[src]; }
+    function loadCssOnce(href){ if(_asset[href])return; _asset[href]=1; const l=document.createElement('link'); l.rel='stylesheet'; l.href=href; document.head.appendChild(l); }
+    async function enhanceMarkdown(el){
+      const maths=el.querySelectorAll('.katex-math');
+      if(maths.length){ loadCssOnce('/vendor/katex/katex.min.css'); try{ await loadScriptOnce('/vendor/katex/katex.min.js'); maths.forEach(m=>{ try{ window.katex.render(m.dataset.tex, m, {displayMode:m.dataset.d==='1', throwOnError:false}); }catch(e){ m.textContent=m.dataset.tex; } }); }catch(e){} }
+      const mer=[...el.querySelectorAll('.mermaid')].filter(x=>!x.dataset.done);
+      if(mer.length){ try{ await loadScriptOnce('/vendor/mermaid.min.js'); if(!window._mermInit){ window.mermaid.initialize({startOnLoad:false, theme:'dark', securityLevel:'strict'}); window._mermInit=true; } mer.forEach(x=>x.dataset.done='1'); await window.mermaid.run({nodes:mer}); }catch(e){ /* fica como texto do diagrama */ } }
     }
     function setWorkFileSplit(on){ const app=document.getElementById('app'); if(app)app.classList.toggle('work-file-split',!!on); }
     const APP=()=>document.getElementById('app');
@@ -707,7 +730,7 @@
       lastFileMsg=m; const nm=m.name||m.path||'', content=m.content||'', md=isMdName(nm), canHl=hlLang(nm)!=null;
       // toggle Formatado/Bruto aparece para .md (renderiza markdown) e para código (liga/desliga cores)
       if(E.fileFmt){ E.fileFmt.classList.toggle('hidden', !(md||canHl)); renderFileFmtBtns(); }
-      if(md && curFileFmt==='fmt'){ E.fileBody.className='filebody mdview'; E.fileBody.innerHTML=renderMarkdown(content); annoTeardown(); }
+      if(md && curFileFmt==='fmt'){ E.fileBody.className='filebody mdview'; E.fileBody.innerHTML=renderMarkdown(content); enhanceMarkdown(E.fileBody); annoTeardown(); }
       else { renderFileLines(content, nm, curFileFmt==='fmt' && canHl, m.path||nm); }
       E.fileBody.scrollTop=0; }
     function renderFileFmtBtns(){ if(!E.fileFmt)return; E.fileFmt.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.f===curFileFmt)); }
