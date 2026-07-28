@@ -21,7 +21,7 @@ import { PushCenter } from "./push.js";
 import { RunnerListWaiters } from "./runnerListWaiters.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, createAgentEventBridge, createEventSequencer, ackThenWork, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, resolveClosestModel, createAgentEventBridge, createEventSequencer, ackThenWork, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
 import { synthesize, listVoices, hasVoice } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
@@ -3897,6 +3897,53 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (model?.efforts.length) summaryCfg.effort = model.efforts.includes(requestedEffort) ? requestedEffort : (model.defaultEffort || model.efforts[0]);
       saveSummaryCfg();
       send(ws, { t: "summary_cfg", cfg: summaryCfg, agents: await agents.describe() });
+      return;
+    }
+    // Sincronizar modelos: bust every adapter's ~1h capability cache, re-discover live (current agent
+    // first), then repin every model-bearing setting whose id no longer exists onto the closest
+    // surviving model "by family" (resolveClosestModel), keeping the same effort level. Auto-applied
+    // and persisted; the reply carries a full change report so the user sees exactly what moved.
+    if (msg.t === "sync_models") {
+      if (!requireOwner(ws)) return;
+      const preferred = typeof msg.agent === "string" && agents.has(msg.agent) ? msg.agent : undefined;
+      const catalog = await agents.refresh(preferred);
+      const capsOf = (name: string) => catalog.find((c) => c.name === name) || { models: [] };
+      const changes: Array<{ scope: string; agent: string; from: string; to: string; reason?: string }> = [];
+      const label = (m?: string, e?: string) => `${m || "auto"}${e ? " · " + e : ""}`;
+      const remap = (scope: string, agentName: string, model: string | undefined, effort: string | undefined,
+        apply: (model: string | undefined, effort: string | undefined) => void) => {
+        const r = resolveClosestModel(model, effort, capsOf(agentName));
+        if (!r.changed) return;
+        apply(r.model, r.effort);
+        changes.push({ scope, agent: agentName, from: label(model, effort), to: label(r.model, r.effort), reason: r.reason });
+      };
+      // resumos / auto-rota / status
+      remap("Resumos e auto-rota", summaryCfg.agent, summaryCfg.model, summaryCfg.effort, (m, e) => { if (m) summaryCfg.model = m; if (e) summaryCfg.effort = e; });
+      // voz: principal + modelo rápido + modelo de upgrade + escalada (quando nomeia um modelo)
+      remap("Voz (principal)", voiceCfg.agent, voiceCfg.model, voiceCfg.effort, (m, e) => { voiceCfg.model = voiceConfig.model = m; voiceCfg.effort = voiceConfig.effort = e; });
+      remap("Voz (rápido)", voiceCfg.agent, voiceCfg.fastModel, voiceCfg.fastEffort, (m, e) => { if (m) voiceCfg.fastModel = m; if (e) voiceCfg.fastEffort = e; });
+      remap("Voz (upgrade)", voiceCfg.agent, voiceCfg.upgradeModel, voiceCfg.upgradeEffort, (m, e) => { if (m) voiceCfg.upgradeModel = m; if (e) voiceCfg.upgradeEffort = e; });
+      if (voiceCfg.escalate && voiceCfg.escalate !== "ask" && voiceCfg.escalate !== "auto") {
+        remap("Voz (escalada)", voiceCfg.agent, voiceCfg.escalate, undefined, (m) => { if (m) voiceCfg.escalate = m; });
+      }
+      saveSummaryCfg(); saveVoiceCfg();
+      // rotinas: só o modelo FIXADO (não os campos marcados como automáticos), por rotina.
+      for (const r of routines.list()) {
+        if (!r.agent || !agents.has(r.agent)) continue;      // rotina em agente automático → nada fixado
+        const model = r.auto?.model ? undefined : r.model;   // campo em automático → roteador decide, não mexe
+        if (!model) continue;
+        const effort = r.auto?.effort ? undefined : r.effort;
+        const res = resolveClosestModel(model, effort, capsOf(r.agent));
+        if (!res.changed) continue;
+        routines.update(r.id, { model: res.model, effort: res.effort });
+        changes.push({ scope: `Rotina "${r.name}"`, agent: r.agent, from: label(model, effort), to: label(res.model, res.effort), reason: res.reason });
+      }
+      // Empurra o catálogo fresco para todos via `machines` (agentDescriptors) — os pickers leem dali,
+      // sem o `enter()` disruptivo de um `hello`. O solicitante recebe configs atualizadas + relatório.
+      await refreshLocalAgents(); broadcastMachines();
+      send(ws, { t: "voice_cfg", cfg: { ...voiceCfg } });
+      send(ws, { t: "summary_cfg", cfg: summaryCfg, agents: await agents.describe() });
+      send(ws, { t: "models_synced", changes, agents: catalog, default: agents.default });
       return;
     }
     if (msg.t === "execution_cfg") { if (!requireOwner(ws)) return; send(ws, { t: "execution_cfg", cfg: executionCfg, restartFields: ["enabled", "retentionDays", "maxEvents", "worktreeRoot"] }); return; }

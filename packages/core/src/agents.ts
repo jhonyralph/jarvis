@@ -166,6 +166,80 @@ export function validateModelSelection(caps: AgentCaps, opts?: SendOpts): void {
   if (opts.effort && model.efforts.length && !model.efforts.includes(opts.effort)) throw new Error(`esforço '${opts.effort}' não é suportado por ${opts.model}`);
 }
 
+// ---------------------------------------------------------------------------
+// Catalog sync. When a provider ships new models, settings that PIN a concrete model id
+// (summary/voice/routines) can end up referencing an id that no longer exists — which then
+// silently degrades to the provider default, or hard-throws in managed/routine/council paths
+// (validateModelSelection). resolveClosestModel picks the nearest surviving model "by family"
+// (shared distinctive name tokens, newest version) and reconciles the pinned effort onto the
+// closest level the replacement supports. Pure + deterministic (no Date/random) so it is testable
+// and never invents an id — it only ever returns something already in the fresh catalog.
+
+/** Canonical low→high reasoning ladder, used to reconcile a pinned effort onto a model that no
+ *  longer offers it. Superset of every adapter's own ladder (Claude, Codex per-model). */
+const EFFORT_LADDER = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode"];
+/** Distinctive lowercase name tokens of a model id, dropping pure version numbers
+ *  ("gpt-5.6-sol" → ["gpt","sol"]; "5.6" is not a family token). */
+const modelWords = (id: string): string[] =>
+  id.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).filter((w) => !/^\d+(?:\.\d+)?$/.test(w));
+/** First numeric version in an id ("gpt-5.6-sol" → 5.6), for "newest of the same family" ranking. */
+const modelVersion = (id: string): number => { const m = id.toLowerCase().match(/\d+(?:\.\d+)?/); return m ? Number(m[0]) : 0; };
+/** Family closeness of `cand` to `oldId`: sum of shared name tokens weighted by rarity across the
+ *  catalog — a token present in every model ("gpt", "claude") counts ≈0; a unique variant ("sol") counts 1. */
+function familyScore(oldId: string, cand: ModelInfo, catalog: ModelInfo[]): number {
+  const want = new Set(modelWords(oldId));
+  let score = 0;
+  for (const w of modelWords(cand.id)) {
+    if (!want.has(w)) continue;
+    const df = catalog.reduce((n, m) => n + (modelWords(m.id).includes(w) ? 1 : 0), 0) || 1;
+    score += 1 / df;
+  }
+  return score;
+}
+/** Reconcile a pinned effort onto a model's supported ladder: keep if offered, else the nearest
+ *  level by ladder index (ties → the model's own default). Undefined effort ("auto") stays auto. */
+function closestEffort(oldEffort: string | undefined, model: ModelInfo): string | undefined {
+  const efforts = model.efforts || [];
+  if (!oldEffort || !efforts.length) return oldEffort && efforts.includes(oldEffort) ? oldEffort : undefined;
+  if (efforts.includes(oldEffort)) return oldEffort;
+  const target = EFFORT_LADDER.indexOf(oldEffort);
+  if (target < 0) return model.defaultEffort || efforts[0];
+  let best = model.defaultEffort && efforts.includes(model.defaultEffort) ? model.defaultEffort : efforts[0];
+  let bestD = Infinity;
+  for (const e of efforts) {
+    const idx = EFFORT_LADDER.indexOf(e); if (idx < 0) continue;
+    const d = Math.abs(idx - target);
+    if (d < bestD) { best = e; bestD = d; }
+  }
+  return best;
+}
+
+export interface ModelRemap { model?: string; effort?: string; changed: boolean; reason?: string; }
+
+/** Keep a pinned (model, effort) if it still exists in the fresh catalog, otherwise return the
+ *  closest surviving replacement by family. Leaves "auto" (no model) and an empty catalog untouched. */
+export function resolveClosestModel(oldModel: string | undefined, oldEffort: string | undefined, caps: AgentCaps): ModelRemap {
+  const models = caps.models || [];
+  if (!oldModel) return { model: oldModel, effort: oldEffort, changed: false };
+  if (!models.length) return { model: oldModel, effort: oldEffort, changed: false, reason: "catálogo vazio — mantido" };
+  const exact = models.find((m) => m.id === oldModel);
+  if (exact) {
+    const effort = closestEffort(oldEffort, exact);
+    return { model: exact.id, effort, changed: effort !== oldEffort, reason: effort !== oldEffort ? `esforço '${oldEffort}' → '${effort}'` : undefined };
+  }
+  const ranked = [...models].sort((a, b) => {
+    const fs = familyScore(oldModel, b, models) - familyScore(oldModel, a, models);
+    if (fs) return fs;
+    return modelVersion(b.id) - modelVersion(a.id);
+  });
+  const hasFamilySignal = familyScore(oldModel, ranked[0], models) > 0;
+  const pick = hasFamilySignal
+    ? (ranked.find((m) => m.selectable !== false) || ranked[0])
+    : (models.find((m) => m.id === caps.defaultModel) || ranked.find((m) => m.selectable !== false) || ranked[0]);
+  const effort = closestEffort(oldEffort, pick);
+  return { model: pick.id, effort, changed: true, reason: `modelo '${oldModel}' não existe mais → '${pick.id}'` };
+}
+
 /** Thrown when a run is cancelled via its AbortSignal — distinct from a real failure, so the
  *  caller can treat it as "cancelled by the user" (no error toast, no error notification). */
 export const ABORTED = "__aborted__";
@@ -304,6 +378,9 @@ export interface AgentAdapter {
   usage?(): Promise<AgentUsage | null>;
   /** Versioned support/capability snapshot. Legacy adapters without it are always limited. */
   descriptor?(): Promise<AgentDescriptor>;
+  /** Drop any cached model catalog so the next capabilities() re-discovers models live. Adapters
+   *  without a capabilities cache can omit this. Used by the "sincronizar modelos" flow. */
+  invalidateCapabilities?(): void;
 }
 
 export interface NativeSessionCollision {
@@ -361,6 +438,13 @@ export class AgentRegistry {
       const problems = descriptorProblems(d);
       return { name: a.name, ...caps, modelControl: d.capabilities.modelControl, label: d.label, support: problems.length ? "limited" as const : d.support, reason: problems.length ? `descriptor inválido: ${problems.join("; ")}` : d.reason, cli: d.cli, capabilities: d.capabilities, execution: d.execution, discoveredAt: d.discoveredAt };
     }));
+  }
+  /** Bust every adapter's cached model catalog, then re-discover live. Returns the fresh UI catalog
+   *  with `preferred` (the user's current agent) first, so the client can update it before the rest. */
+  async refresh(preferred?: string): Promise<Awaited<ReturnType<AgentRegistry["describe"]>>> {
+    for (const a of this.byName.values()) a.invalidateCapabilities?.();
+    const desc = await this.describe();
+    return preferred ? [...desc].sort((a, b) => Number(b.name === preferred) - Number(a.name === preferred)) : desc;
   }
   setDefault(name: string): void {
     if (this.byName.has(name)) this.defaultName = name;
@@ -514,6 +598,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     this.capsCache = { at: Date.now(), caps };
     return caps;
   }
+  invalidateCapabilities(): void { this.capsCache = undefined; }
 
   async available(): Promise<boolean> {
     try {
@@ -917,6 +1002,7 @@ export class CodexAdapter implements AgentAdapter {
     this.capsCache = { at: Date.now(), caps };
     return caps;
   }
+  invalidateCapabilities(): void { this.capsCache = undefined; }
 
   async available(): Promise<boolean> {
     try {

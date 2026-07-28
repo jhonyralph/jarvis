@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions } from "./agents.js";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("native continuity rejects one provider thread bound to multiple Jarvis sessions", () => {
@@ -294,4 +294,64 @@ test("codexItemToEvents: tool calls + web search map to a tool row; unknowns are
   assert.equal(codexItemToEvents({ type: "web_search", query: "typescript enums" }, false).events[0].name, "WebSearch");
   assert.deepEqual(codexItemToEvents({ type: "some_future_kind" }, true).events, [], "unknown item type → no events");
   assert.deepEqual(codexItemToEvents({}, true).events, [], "missing type → no events");
+});
+
+// --- catalog sync: repin a dead model id onto the closest surviving model by family ---
+const NEW_CODEX = {
+  models: [
+    { id: "gpt-5.7-sol", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultEffort: "low" },
+    { id: "gpt-5.7-terra", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultEffort: "medium" },
+    { id: "gpt-5.7-luna", efforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "medium" },
+    { id: "gpt-5.6", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "medium" },
+  ],
+  defaultModel: undefined as string | undefined,
+};
+
+test("resolveClosestModel keeps a still-valid pin untouched", () => {
+  const r = resolveClosestModel("gpt-5.7-terra", "high", NEW_CODEX);
+  assert.equal(r.changed, false);
+  assert.equal(r.model, "gpt-5.7-terra");
+  assert.equal(r.effort, "high");
+});
+
+test("resolveClosestModel maps a dead id to the same variant, newest version, keeping effort", () => {
+  const r = resolveClosestModel("gpt-5.6-sol", "max", NEW_CODEX);
+  assert.equal(r.changed, true);
+  assert.equal(r.model, "gpt-5.7-sol", "same 'sol' family beats other variants that only share 'gpt'");
+  assert.equal(r.effort, "max", "effort survives because the replacement still offers it");
+});
+
+test("resolveClosestModel reconciles an unsupported effort to the nearest level", () => {
+  // gpt-5.7-luna has no 'ultra'; nearest below it on the ladder is 'max'.
+  const r = resolveClosestModel("gpt-5.6-luna", "ultra", NEW_CODEX);
+  assert.equal(r.model, "gpt-5.7-luna");
+  assert.equal(r.effort, "max");
+});
+
+test("resolveClosestModel drops an unsupported effort even when the model id still exists", () => {
+  const r = resolveClosestModel("gpt-5.6", "ultra", NEW_CODEX); // gpt-5.6 tops out at xhigh
+  assert.equal(r.model, "gpt-5.6");
+  assert.equal(r.effort, "xhigh");
+  assert.equal(r.changed, true);
+});
+
+test("resolveClosestModel leaves 'auto' (no pinned model) and empty catalogs untouched", () => {
+  assert.deepEqual(resolveClosestModel(undefined, undefined, NEW_CODEX), { model: undefined, effort: undefined, changed: false });
+  const empty = resolveClosestModel("gpt-5.6-sol", "high", { models: [] });
+  assert.equal(empty.changed, false);
+  assert.equal(empty.model, "gpt-5.6-sol", "never invents a replacement when there is no catalog to match against");
+});
+
+test("resolveClosestModel: when the variant is gone it stays within the provider (never invents an id)", () => {
+  const noSol = { models: NEW_CODEX.models.filter((m) => !m.id.includes("sol")), defaultModel: "gpt-5.7-terra" };
+  const r = resolveClosestModel("gpt-5.6-sol", "high", noSol);
+  assert.equal(r.changed, true);
+  assert.ok(noSol.models.some((m) => m.id === r.model), "replacement is always a real id from the fresh catalog");
+});
+
+test("resolveClosestModel preserves Claude family aliases (they survive catalog churn)", () => {
+  const claude = { models: [{ id: "opus", efforts: ["low", "high"], defaultEffort: "high" }, { id: "sonnet", efforts: ["low", "high"], defaultEffort: "high" }], defaultModel: "opus" };
+  const r = resolveClosestModel("opus", "high", claude);
+  assert.equal(r.changed, false);
+  assert.equal(r.model, "opus");
 });
