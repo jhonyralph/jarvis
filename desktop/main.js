@@ -16,7 +16,13 @@ const { registerBrowserIpc } = require("./src/browser/register-browser-ipc")
 const { registerUpdaterIpc } = require("./src/updater/register-updater-ipc")
 
 // Where the live Hub UI lives. Same env name as the Capacitor shell (mobile/capacitor.config.ts).
-const HUB_URL = process.env.JARVIS_APP_HUB_URL || "http://127.0.0.1:4577"
+// Normalizado/validado: um valor em formato errado não falha alto — o app entraria no loop de
+// reconexão e ficaria numa tela vazia sem dizer o porquê (ver src/shared/hub-url.js).
+const { normalizeHubUrl } = require("./src/shared/hub-url")
+const hubTarget = normalizeHubUrl(process.env.JARVIS_APP_HUB_URL)
+const HUB_URL = hubTarget.url
+if (hubTarget.warning) console.warn(`[jarvis] ${hubTarget.warning}`)
+console.log(`[jarvis] Hub: ${HUB_URL}${hubTarget.usedFallback ? " (padrão — defina JARVIS_APP_HUB_URL para um Hub remoto)" : ""}`)
 
 // Retry loading the Hub UI with backoff — the Hub may still be starting, or a remote Hub may be
 // briefly unreachable on the tailnet. We never fabricate state; we just keep trying to connect.

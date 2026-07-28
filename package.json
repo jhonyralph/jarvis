@@ -10,7 +10,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test \"packages/*/src/**/*.test.ts\" \"apps/*/src/**/*.test.ts\"",
+    "test": "node --import tsx --test \"packages/*/src/**/*.test.ts\" \"apps/*/src/**/*.test.ts\" \"desktop/src/**/*.test.js\"",
     "test:agents": "node --import tsx --test packages/core/src/agent-contract.test.ts packages/core/src/agents.test.ts packages/core/src/native.test.ts packages/core/src/turn.test.ts",
     "test:e2e": "node --import tsx --test apps/hub/src/parity.e2e.test.ts",
     "agents:report": "node --import tsx scripts/agent-report.ts",

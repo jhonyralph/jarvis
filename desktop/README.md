@@ -45,6 +45,20 @@ Without `JARVIS_APP_HUB_URL` it points at `http://127.0.0.1:4577` (a Hub on this
 window loads the live Hub UI, so a web change you deploy on the Hub is instantly live here — just
 reload. Only **native** changes (this shell) need a repackage.
 
+### `JARVIS_APP_HUB_URL` format
+
+The value is normalized by [`src/shared/hub-url.js`](src/shared/hub-url.js) — the same rule in the
+app **and** in the installer scripts, so a bad value is rejected while you're installing instead of
+leaving the app spinning in its reconnect backoff on a blank window:
+
+| You pass | You get | Why |
+|---|---|---|
+| *(unset)* | `http://127.0.0.1:4577` | Hub on this machine — the normal case, not a warning |
+| `https://hub.ts.net/` | `https://hub.ts.net` | trailing slash / path stripped to the origin |
+| `hub.ts.net` | `http://hub.ts.net` | missing scheme is the most common typo |
+| `ws://hub.ts.net` | `http://hub.ts.net` | that's the **runner** address; the window loads a page |
+| `file:///x`, garbage | *default + explicit reason* | never silently broken |
+
 ## Privacy (LEI 5)
 
 The shell reaches the Hub **only over your private network** (Tailscale/loopback). There is **no

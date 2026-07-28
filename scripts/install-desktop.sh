@@ -111,6 +111,15 @@ fi
 # --- 3. Hub de destino -------------------------------------------------------------------------
 printf '\nHub\n'
 if [ -n "$HUB_URL" ]; then
+  # Valida/normaliza com a MESMA regra do app (desktop/src/shared/hub-url.js) em vez de
+  # reimplementar: "jarvis.ts.net" ganha http://, ws:// vira http://, barra final some, esquema
+  # inválido é recusado AQUI — antes de ser persistido no rc e quebrar só ao abrir o app.
+  if ! NORMALIZED="$(node "$REPO/desktop/src/shared/hub-url.js" "$HUB_URL" 2>&1)"; then
+    bad "--hub inválida: $NORMALIZED" "use algo como --hub https://jarvis.sua-tailnet.ts.net"
+    printf '\n%sInstalação incompleta.%s\n' "$R" "$N"; exit 1
+  fi
+  [ "$NORMALIZED" != "$HUB_URL" ] && ok "URL normalizada: '$HUB_URL' -> $NORMALIZED"
+  HUB_URL="$NORMALIZED"
   export JARVIS_APP_HUB_URL="$HUB_URL"
   # persiste no shell rc do usuário (idempotente: substitui a linha anterior se já existir)
   RC="$HOME/.zshrc"; [ -n "${BASH_VERSION:-}" ] && [ -f "$HOME/.bashrc" ] && RC="$HOME/.bashrc"

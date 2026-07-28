@@ -109,9 +109,21 @@ if ($script:fail -gt 0) { Write-Host ''; Write-Host 'Instalacao incompleta.' -Fo
 Write-Host ''
 Write-Host 'Hub' -ForegroundColor White
 if ($HubUrl) {
-  [Environment]::SetEnvironmentVariable('JARVIS_APP_HUB_URL', $HubUrl, 'User')
-  $env:JARVIS_APP_HUB_URL = $HubUrl
-  Ok "JARVIS_APP_HUB_URL=$HubUrl (salvo para o seu usuario)"
+  # Valida/normaliza com a MESMA regra do app (desktop/src/shared/hub-url.js) em vez de reimplementar:
+  # "jarvis.ts.net" ganha http://, ws:// vira http://, barra final some, esquema invalido e recusado
+  # aqui - antes de virar variavel de ambiente persistida e quebrar so na hora de abrir o app.
+  # O CLI escreve tudo em stdout (URL ou motivo) e sinaliza pelo exit code — nada de stderr, que com
+  # $ErrorActionPreference='Stop' viraria um NativeCommandError renderizado por cima desta mensagem.
+  $normalized = (& node (Join-Path $repo 'desktop\src\shared\hub-url.js') $HubUrl | Out-String).Trim()
+  $urlExit = $LASTEXITCODE
+  if ($urlExit -ne 0) {
+    Bad "HubUrl invalida: $normalized" 'use algo como -HubUrl "https://jarvis.sua-tailnet.ts.net"'
+  } else {
+    [Environment]::SetEnvironmentVariable('JARVIS_APP_HUB_URL', $normalized, 'User')
+    $env:JARVIS_APP_HUB_URL = $normalized
+    if ($normalized -ne $HubUrl) { Ok "JARVIS_APP_HUB_URL=$normalized (normalizada de '$HubUrl', salva para o seu usuario)" }
+    else { Ok "JARVIS_APP_HUB_URL=$normalized (salvo para o seu usuario)" }
+  }
 } elseif ($env:JARVIS_APP_HUB_URL) {
   Ok "JARVIS_APP_HUB_URL=$($env:JARVIS_APP_HUB_URL) (ja definido)"
 } else {
