@@ -283,6 +283,25 @@
     .filebody .hl-com, .filemodalbody .hl-com { color:#7c8797; font-style:italic; } .filebody .hl-str, .filemodalbody .hl-str { color:#98c379; } .filebody .hl-num, .filemodalbody .hl-num { color:#d19a66; }
     .filebody .hl-kw, .filemodalbody .hl-kw { color:#c678dd; } .filebody .hl-lit, .filemodalbody .hl-lit { color:#56b6c2; } .filebody .hl-type, .filemodalbody .hl-type { color:#e5c07b; } .filebody .hl-fn, .filemodalbody .hl-fn { color:#61afef; }
     .filebody .hl-tag, .filemodalbody .hl-tag { color:#e06c75; } .filebody .hl-attr, .filemodalbody .hl-attr { color:#e5c07b; }
+    /* linhas com gutter (numeração) para ancorar comentários (Annotate — Orca) */
+    .filebody.lines { padding:8px 0; white-space:normal; }
+    .filebody .frow { display:flex; align-items:flex-start; padding:0 8px; white-space:pre; }
+    .filebody .frow:hover { background:#ffffff08; }
+    .filebody .fgutter { flex:none; width:44px; text-align:right; padding-right:12px; color:#5c6673; user-select:none; cursor:pointer; }
+    .filebody .fgutter:hover { color:#93c5fd; }
+    .filebody .fcontent { flex:1; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .filebody .frow.d-add { background:#2ea04322; } .filebody .frow.d-add .fgutter { color:#3fb950; }
+    .filebody .frow.d-del { background:#f8514922; } .filebody .frow.d-del .fgutter { color:#f85149; }
+    .filebody .frow.d-sec .fcontent { color:#93c5fd; background:#1e293b; }
+    .filebody .frow.selrange { background:#2563eb22; }
+    .filebody .frow.selrange .fgutter { color:#93c5fd; }
+    .filebody .anno-note { display:block; margin:4px 8px 4px 52px; padding:7px 10px; background:#1e2a3a; border-left:3px solid #3b82f6; border-radius:0 8px 8px 0; white-space:normal; font-family:inherit; }
+    .filebody .anno-note .an-h { font-size:11px; color:#93c5fd; font-weight:700; letter-spacing:.3px; }
+    .filebody .anno-note .an-t { font-size:13px; color:var(--text); margin-top:2px; }
+    .filebody .anno-note .an-x { float:right; cursor:pointer; color:var(--mut); }
+    #annoBar { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); z-index:7; display:none; gap:8px; align-items:center; background:#0f172a; border:1px solid var(--line); border-radius:10px; padding:6px 8px; box-shadow:0 6px 20px #0008; }
+    #annoBar.on { display:flex; }
+    #annoBar button { min-height:34px; }
     .filebody .dline { display:block; padding:0 12px; white-space:pre-wrap; overflow-wrap:anywhere; }
     .filebody .dline.add { background:#2ea04326; } .filebody .dline.add::before { content:'+ '; color:#3fb950; }
     .filebody .dline.del { background:#f8514926; } .filebody .dline.del::before { content:'- '; color:#f85149; }
@@ -750,12 +769,14 @@
         <span id="fileStat" class="fpstat"></span>
         <span id="fileView" class="fpview hidden"><button type="button" data-v="diff">Diff</button><button type="button" data-v="full">Arquivo</button></span>
         <span id="fileFmt" class="fpview hidden"><button type="button" data-f="fmt">Formatado</button><button type="button" data-f="raw">Bruto</button></span>
+        <button id="annoSend" class="ghost hidden" type="button" title="Enviar comentários para uma IA">✈️ <span id="annoCount">0</span></button>
         <button id="fileCopy" class="ghost" type="button" title="Copiar">Copiar</button>
         <button id="fileFull" class="ghost" type="button" title="Ver só o arquivo (tela cheia) / voltar">⤢</button>
         <button id="fileClose" class="ghost" type="button" title="Fechar">✕</button>
       </div>
       <div id="fileMeta" class="fpmeta"></div>
       <pre id="fileBody" class="filebody"></pre>
+      <div id="annoBar"><span id="annoSelLbl" class="mut" style="font-size:12px"></span><button id="annoAdd" type="button">💬 Comentar</button><button id="annoCancelSel" class="ghost" type="button">✕</button></div>
     </aside>
     <aside id="treePanel" class="hidden" aria-label="Arquivos da pasta">
       <div class="fphead">

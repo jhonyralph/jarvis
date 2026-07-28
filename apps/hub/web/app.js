@@ -10,7 +10,7 @@
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
-      'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileFmt','fileCopy','fileFull','fileClose','nativeChip',
+      'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileFmt','fileCopy','fileFull','fileClose','annoSend','annoCount','annoBar','annoSelLbl','annoAdd','annoCancelSel','nativeChip',
       'designBtn','designPanel','designUrl','designDetect','designGrab','designClose','designHost','designCompose','designSel','designNote','designSend','designCancel','designStatus',
       'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
@@ -686,18 +686,76 @@
       lastFileMsg=m; const nm=m.name||m.path||'', content=m.content||'', md=isMdName(nm), canHl=hlLang(nm)!=null;
       // toggle Formatado/Bruto aparece para .md (renderiza markdown) e para código (liga/desliga cores)
       if(E.fileFmt){ E.fileFmt.classList.toggle('hidden', !(md||canHl)); renderFileFmtBtns(); }
-      if(md && curFileFmt==='fmt'){ E.fileBody.className='filebody mdview'; E.fileBody.innerHTML=renderMarkdown(content); }
-      else if(curFileFmt==='fmt' && canHl){ const hl=highlight(content,nm); if(hl!=null){ E.fileBody.className='filebody code'; E.fileBody.innerHTML=hl; } else { E.fileBody.className='filebody plain'; E.fileBody.textContent=content; } }
-      else { E.fileBody.className='filebody plain'; E.fileBody.textContent=content; }
+      if(md && curFileFmt==='fmt'){ E.fileBody.className='filebody mdview'; E.fileBody.innerHTML=renderMarkdown(content); annoTeardown(); }
+      else { renderFileLines(content, nm, curFileFmt==='fmt' && canHl, m.path||nm); }
       E.fileBody.scrollTop=0; }
     function renderFileFmtBtns(){ if(!E.fileFmt)return; E.fileFmt.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.f===curFileFmt)); }
     if(E.fileFmt) E.fileFmt.querySelectorAll('button').forEach(b=>b.onclick=()=>{ if(curFileFmt===b.dataset.f)return; curFileFmt=b.dataset.f; cfg.fileFmt=curFileFmt; saveCfg(); renderFileFmtBtns(); if(lastFileMsg) showFile(lastFileMsg); });
     function showDiff(m){ if(E.filePanel.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileMeta.textContent=m.path||'';
       if(m.error){ E.fileStat.textContent=''; E.fileBody.className='filebody plain'; E.fileBody.textContent='⚠ '+m.error; return; }
       E.fileStat.innerHTML=`<span class="add">+${m.adds||0}</span> <span class="del">-${m.dels||0}</span>`;
-      E.fileBody.className='filebody'; E.fileBody.innerHTML='';
-      (m.rows||[]).forEach(r=>{ const cls=r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx'; const ln=document.createElement('span'); ln.className='dline '+cls; ln.textContent=r.s; E.fileBody.appendChild(ln); });
-      E.fileBody.scrollTop=0; }
+      E.fileBody.className='filebody lines'; E.fileBody.innerHTML='';
+      const frag=document.createDocumentFragment();
+      (m.rows||[]).forEach((r,idx)=>{ const ln=idx+1; const cls=r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx';
+        const row=document.createElement('div'); row.className='frow d-'+cls; row.dataset.ln=ln;
+        const g=document.createElement('span'); g.className='fgutter'; g.textContent=(r.t==='+'||r.t==='-')?r.t:(r.t==='@'?'@':ln); g.onclick=()=>annoPick(ln);
+        const c=document.createElement('span'); c.className='fcontent'; c.textContent=r.s;
+        row.append(g,c); frag.appendChild(row); });
+      E.fileBody.appendChild(frag);
+      annoSetup('diff', (m.path||'')+' (diff)'); E.fileBody.scrollTop=0; }
+
+    // ---------- comentários/anotações no arquivo ou diff (Orca "Annotate AI Diffs" — Opção A) ----------
+    // Ancora notas a uma linha ou faixa de linhas; junta várias e envia tudo para a IA escolhida.
+    // Persistido por arquivo em localStorage (some junto quando o usuário limpa). Trecho vai junto
+    // para a IA ter o contexto exato mesmo sem números de linha do diff.
+    let annos=[], annoSel=null, curAnnoView='file', annoPath='';
+    function annoKey(p){ return 'jarvis_anno:'+p; }
+    function annoLoad(){ try{ annos=JSON.parse(localStorage.getItem(annoKey(annoPath))||'[]'); }catch(e){ annos=[]; } }
+    function annoSave(){ try{ if(annos.length) localStorage.setItem(annoKey(annoPath), JSON.stringify(annos)); else localStorage.removeItem(annoKey(annoPath)); }catch(e){} }
+    function renderFileLines(content, name, useHl, path){
+      E.fileBody.className='filebody lines'; E.fileBody.innerHTML='';
+      const lines=String(content).split('\n'); const frag=document.createDocumentFragment();
+      lines.forEach((line,idx)=>{ const ln=idx+1;
+        const row=document.createElement('div'); row.className='frow'; row.dataset.ln=ln;
+        const g=document.createElement('span'); g.className='fgutter'; g.textContent=ln; g.onclick=()=>annoPick(ln);
+        const c=document.createElement('span'); c.className='fcontent';
+        const hl=useHl?highlight(line,name):null; if(hl!=null&&hl!=='') c.innerHTML=hl; else c.textContent=line;
+        row.append(g,c); frag.appendChild(row); });
+      E.fileBody.appendChild(frag);
+      annoSetup('file', path||name);
+    }
+    function annoSetup(view, path){ curAnnoView=view; if(annoPath!==path){ annoPath=path; annoLoad(); } annoSel=null; annoBarHide(); annoRenderNotes(); }
+    function annoTeardown(){ annoSel=null; annoBarHide(); if(E.annoSend)E.annoSend.classList.add('hidden'); }
+    function annoRows(){ return E.fileBody.querySelectorAll('.frow'); }
+    function annoPick(ln){ if(!annoSel) annoSel={from:ln,to:ln}; else annoSel={from:Math.min(annoSel.from,ln),to:Math.max(annoSel.to,ln)}; annoPaint(); }
+    function annoPaint(){ annoRows().forEach(r=>{ const n=+r.dataset.ln; r.classList.toggle('selrange', !!annoSel && n>=annoSel.from && n<=annoSel.to); });
+      if(annoSel){ E.annoSelLbl.textContent = annoSel.from===annoSel.to?('Linha '+annoSel.from):('Linhas '+annoSel.from+'–'+annoSel.to); E.annoBar.classList.add('on'); } else annoBarHide(); }
+    function annoBarHide(){ if(E.annoBar)E.annoBar.classList.remove('on'); }
+    function annoSnippet(from,to){ const out=[]; annoRows().forEach(r=>{ const n=+r.dataset.ln; if(n>=from&&n<=to){ const c=r.querySelector('.fcontent'); out.push(c?c.textContent:''); } }); return out.join('\n'); }
+    async function annoAddCurrent(){ if(!annoSel)return; const from=annoSel.from,to=annoSel.to;
+      const text=await dialog({title:'💬 Comentar '+(from===to?('linha '+from):('linhas '+from+'–'+to)),input:true,placeholder:'Escreva seu comentário para a IA…',okText:'Adicionar'});
+      if(!text)return; annos.push({from,to,snippet:annoSnippet(from,to),text}); annoSave(); annoSel=null; annoPaint(); annoRenderNotes(); }
+    function annoRenderNotes(){ E.fileBody.querySelectorAll('.anno-note').forEach(x=>x.remove());
+      annos.forEach((a,i)=>{ const anchor=[...annoRows()].find(r=>+r.dataset.ln===a.to); if(!anchor)return;
+        const nt=document.createElement('div'); nt.className='anno-note';
+        nt.innerHTML='<span class="an-x" title="Remover">✕</span><div class="an-h">NOTA · '+(a.from===a.to?('LINHA '+a.from):('LINHAS '+a.from+'–'+a.to))+'</div><div class="an-t"></div>';
+        nt.querySelector('.an-t').textContent=a.text; nt.querySelector('.an-x').onclick=()=>{ annos.splice(i,1); annoSave(); annoRenderNotes(); };
+        anchor.after(nt); });
+      const n=annos.length; if(E.annoSend){ E.annoSend.classList.toggle('hidden', n===0); if(E.annoCount)E.annoCount.textContent=n; } }
+    if(E.annoAdd) E.annoAdd.onclick=annoAddCurrent;
+    if(E.annoCancelSel) E.annoCancelSel.onclick=()=>{ annoSel=null; annoPaint(); };
+    if(E.annoSend) E.annoSend.onclick=()=>annoSendPop();
+    // envia todos os comentários para a IA ESCOLHIDA (pop com as IAs disponíveis)
+    function annoSendPop(){ if(!annos.length)return; if(!currentSession){ toast('Abra uma conversa primeiro.'); return; }
+      openPop(E.annoSend,(p)=>{ p.appendChild(ph('Enviar comentários para')); const caps=machineCaps().filter(c=>machineAgents().includes(c.name));
+        (caps.length?caps:[{name:currentAgent||'jarvis',label:'Sessão atual'}]).forEach(c=>{ const o=document.createElement('div'); o.className='opt'; o.textContent='🤖 '+(c.label||c.name); o.onclick=()=>{ closePop(); annoDispatch(c.name); }; p.appendChild(o); }); }); }
+    function annoDispatch(agent){ const path=annoPath.replace(/ \(diff\)$/,'');
+      let msg='Revise e aplique os comentários abaixo no arquivo `'+path+'`:\n\n';
+      annos.forEach((a,i)=>{ msg+='### Comentário '+(i+1)+' — '+(a.from===a.to?('linha '+a.from):('linhas '+a.from+'–'+a.to))+'\n```\n'+a.snippet+'\n```\n'+a.text+'\n\n'; });
+      msg+='Aplique os ajustes conforme os comentários acima.';
+      if(agent && agent!==currentAgent && !curStarted && !curNative){ tx({t:'configure',sessionId:currentSession,agent}); }
+      sendMsgTo(currentSession, msg);
+      annos=[]; annoSave(); annoRenderNotes(); toast('✈️ Comentários enviados para a IA.'); }
 
     // Ao enviar, a sessão vira a MAIS RECENTE → sobe pro topo do menu na hora (o servidor confirma depois).
     let lastBump=null;
