@@ -10,7 +10,7 @@
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
-      'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileCopy','fileClose','nativeChip',
+      'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileCopy','fileFull','fileClose','nativeChip',
       'designBtn','designPanel','designUrl','designDetect','designGrab','designClose','designHost','designCompose','designSel','designNote','designSend','designCancel','designStatus',
       'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
@@ -563,7 +563,16 @@
     // o toggle poder recarregar o outro modo sem reabrir.
     let curFilePath='', curFileView='full', curFileDiffable=false;
     function setWorkFileSplit(on){ const app=document.getElementById('app'); if(app)app.classList.toggle('work-file-split',!!on); }
-    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); }
+    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); document.getElementById('app').classList.remove('file-full'); }
+    // largura persistida do painel de arquivo (redimensionável arrastando a borda esquerda)
+    function applyFileWidth(){ if(cfg.fileW){ document.getElementById('app').style.setProperty('--file-w', cfg.fileW+'px'); } }
+    applyFileWidth();
+    (function(){ const rz=document.getElementById('fileResize'); if(!rz)return; let dragging=false;
+      const move=(e)=>{ if(!dragging)return; const w=Math.max(300,Math.min(window.innerWidth-260, window.innerWidth-(e.clientX))); document.getElementById('app').style.setProperty('--file-w', w+'px'); };
+      const up=()=>{ if(!dragging)return; dragging=false; document.body.style.userSelect=''; const w=parseInt(getComputedStyle(document.getElementById('app')).getPropertyValue('--file-w'))||0; if(w){ cfg.fileW=w; saveCfg(); } window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+      rz.addEventListener('pointerdown',(e)=>{ if(document.getElementById('app').classList.contains('file-full'))return; dragging=true; document.body.style.userSelect='none'; e.preventDefault(); window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); });
+    })();
+    if(E.fileFull) E.fileFull.onclick=()=>{ document.getElementById('app').classList.toggle('file-full'); };
     function openFile(path,action,opts){ const keep=!!(opts&&opts.keepWork); if(E.workPanel&&!E.workPanel.classList.contains('hidden')&&!keep)closeWorkPanel(); setWorkFileSplit(keep); E.filePanel.classList.remove('hidden'); E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
       curFilePath=path; curFileDiffable=(action==='edit' && !!currentSession); curFileView=curFileDiffable?'diff':'full';
       renderFileViewBtns(); loadFileView(); }
