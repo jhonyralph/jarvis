@@ -150,6 +150,9 @@ test("failed git cleanup preserves the lease so release can be retried", () => {
 });
 
 test("filesystem root is never accepted as the managed worktree root", () => {
-  const root = dirname(resolve("C:/"));
+  // A raiz precisa ser obtida de forma PORTÁVEL: `resolve("C:/")` só é raiz no Windows — no Linux
+  // "C:/" vira um caminho RELATIVO (…/jarvis/C:), então o dirname devolvia uma pasta comum e o
+  // teste falhava lá por comparar a coisa errada. `resolve("/")` dá "C:\" no Windows e "/" no Linux.
+  const root = resolve("/");
   assert.throws(() => new ManagedWorktreeManager(root), (error: unknown) => error instanceof ManagedWorkspaceError && error.code === "UNSAFE_WORKTREE_ROOT");
 });

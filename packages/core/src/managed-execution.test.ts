@@ -9,6 +9,12 @@ import type { ManagedExecutionPlan } from "./execution-orchestrator.js";
 import type { ManagedWorkspaceLease } from "./execution-worktree.js";
 import { ManagedExecutionService, managedChildExecutionId, type ManagedHiddenSessionGateway } from "./managed-execution.js";
 
+// Caminhos da fixture precisam ser ABSOLUTOS na plataforma atual: "C:\..." literal so e absoluto no
+// Windows — no Linux era tratado como relativo e o caminho do artefato nunca virava relativo ao
+// worktree, quebrando o teste la. resolve("/x") da "C:\x" no Windows e "/x" no Linux.
+const WORKTREE = resolve("/managed-worktree");
+const REPO_ROOT = resolve("/repo");
+
 class FakeAdapter implements AgentAdapter {
   readonly name = "codex";
   availableValue = true;
@@ -50,7 +56,7 @@ class Sessions implements ManagedHiddenSessionGateway {
 
 const plan = (patch: Partial<ManagedExecutionPlan> = {}): ManagedExecutionPlan => ({
   rootExecutionId: "workflow-1", runnerId: "local",
-  tasks: [{ id: "task-1", title: "Implementar", prompt: "Faça a alteração", agent: "codex", cwd: "C:\\repo", model: "gpt", effort: "high", depth: 1, write: true }],
+  tasks: [{ id: "task-1", title: "Implementar", prompt: "Faça a alteração", agent: "codex", cwd: REPO_ROOT, model: "gpt", effort: "high", depth: 1, write: true }],
   ...patch,
 });
 
@@ -65,8 +71,8 @@ function fixture(options: { progress?: boolean; readonly?: boolean } = {}) {
     prepare(input: { executionId: string; cwd: string; write?: boolean }): ManagedWorkspaceLease {
       return { leaseId: "00000000-0000-0000-0000-000000000001", executionId: input.executionId,
         access: input.write ? "isolated_write" as const : "read_only" as const,
-        cwd: input.write ? "C:\\managed-worktree" : input.cwd, repoRoot: "C:\\repo", gitRepository: true,
-        worktree: input.write ? "C:\\managed-worktree" : undefined, baseCommit: input.write ? "a".repeat(40) : undefined,
+        cwd: input.write ? WORKTREE : input.cwd, repoRoot: REPO_ROOT, gitRepository: true,
+        worktree: input.write ? WORKTREE : undefined, baseCommit: input.write ? "a".repeat(40) : undefined,
         baseIncludesUncommitted: false };
     },
     release(lease: ManagedWorkspaceLease, releaseOptions: { executionTerminal: boolean }) {
@@ -87,7 +93,7 @@ test("managed service persists workflow/child, runs writer only in worktree and 
   try {
     const report = await f.service.run(plan(), { title: "Entrega" });
     assert.equal(report.state, "succeeded");
-    assert.equal(f.adapter.cwd, "C:\\managed-worktree");
+    assert.equal(f.adapter.cwd, WORKTREE);
     assert.match(f.adapter.prompt || "", /não faça merge\/rebase\/push/);
     assert.equal(f.sessions.created.length, 2, "root and child use hidden-session boundary");
     assert.deepEqual(f.sessions.messages.map((m) => m.role), ["user", "assistant"]);
@@ -107,7 +113,7 @@ test("managed service persists workflow/child, runs writer only in worktree and 
     assert.equal(native?.state, "succeeded");
     assert.equal(native?.summary, "ok");
     assert.equal(native?.metrics.self.outputTokens, 2);
-    assert.equal(native?.cwd, "C:\\managed-worktree");
+    assert.equal(native?.cwd, WORKTREE);
     assert.equal(f.store.snapshot("workflow-1")?.artifacts[0]?.relativePath, "src/a.ts");
     assert.equal(f.store.snapshot("workflow-1")?.artifacts[0]?.adds, 2);
   } finally { f.cleanup(); }

@@ -10,12 +10,17 @@ import WebSocket from "ws";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
-async function freePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => { const address = server.address(); const port = typeof address === "object" && address ? address.port : 0; server.close(() => resolve(port)); });
-  });
+/** Reserva N portas livres DE UMA VEZ: mantém todos os sockets abertos enquanto escolhe, e só então
+ *  fecha. Pedir uma por vez (abre→lê→fecha, repete) devolve a MESMA porta no Linux, onde o kernel
+ *  reusa a porta efêmera recém-liberada — dois "free ports" viravam o mesmo número e o processo
+ *  falhava ao bindar, com ECONNREFUSED difícil de diagnosticar. */
+async function freePorts(count: number): Promise<number[]> {
+  const servers = await Promise.all(Array.from({ length: count }, () => new Promise<ReturnType<typeof createServer>>((resolve, reject) => {
+    const server = createServer(); server.once("error", reject); server.listen(0, "127.0.0.1", () => resolve(server));
+  })));
+  const ports = servers.map((server) => { const address = server.address(); return typeof address === "object" && address ? address.port : 0; });
+  await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  return ports;
 }
 
 function child(entry: string, env: NodeJS.ProcessEnv): { process: ChildProcess; logs: () => string } {
@@ -74,7 +79,7 @@ name: remote-only
 description: Remote cwd only test skill.
 ---
 Use only for runner cwd parity tests.`);
-  const hubPort = await freePort(), adminPort = await freePort();
+  const [hubPort, adminPort] = await freePorts(2);
   const common = { JARVIS_AUTH: "off", JARVIS_ENABLE_MOCK: "1", JARVIS_AGENT: "mock", JARVIS_SEARCH_AGENT: "mock", JARVIS_CWD: ROOT, JARVIS_HOME: home, USERPROFILE: home, HOME: home, NODE_ENV: "test" };
   const hub = child("apps/hub/src/index.ts", { ...common, JARVIS_PORT: String(hubPort), JARVIS_ADMIN_PORT: String(adminPort) });
   let runner: ReturnType<typeof child> | undefined; let ws: WebSocket | undefined; let ws2: WebSocket | undefined;
@@ -410,7 +415,7 @@ Use only for runner cwd parity tests.`);
 
 test("remote live activity survives a Hub restart and replays from the Runner journal", { timeout: 40_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), "jarvis-restart-e2e-"));
-  const hubPort = await freePort(), adminPort = await freePort();
+  const [hubPort, adminPort] = await freePorts(2);
   const common = { JARVIS_AUTH: "off", JARVIS_ENABLE_MOCK: "1", JARVIS_AGENT: "mock", JARVIS_CWD: ROOT, JARVIS_HOME: home, USERPROFILE: home, HOME: home, NODE_ENV: "test" };
   let hub = child("apps/hub/src/index.ts", { ...common, JARVIS_PORT: String(hubPort), JARVIS_ADMIN_PORT: String(adminPort) });
   let runner: ReturnType<typeof child> | undefined, ws: WebSocket | undefined;

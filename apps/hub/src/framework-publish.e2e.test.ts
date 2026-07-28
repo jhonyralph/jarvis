@@ -18,7 +18,17 @@ import WebSocket from "ws";
 import { RUNNER_PROTOCOL_VERSION } from "@jarvis/protocol";
 
 const pExecFile = promisify(execFile);
-async function freePort(): Promise<number> { return new Promise((res, rej) => { const s = createServer(); s.once("error", rej); s.listen(0, "127.0.0.1", () => { const a = s.address(); const p = typeof a === "object" && a ? a.port : 0; s.close(() => res(p)); }); }); }
+/** Reserva N portas livres DE UMA VEZ (todos os sockets abertos antes de fechar). Pedir uma por vez
+ *  devolve a MESMA porta no Linux — o kernel reusa a efêmera recém-liberada — e o processo então
+ *  falha ao bindar as duas, aparecendo como ECONNREFUSED. */
+async function freePorts(count: number): Promise<number[]> {
+  const servers = await Promise.all(Array.from({ length: count }, () => new Promise<ReturnType<typeof createServer>>((res, rej) => {
+    const s = createServer(); s.once("error", rej); s.listen(0, "127.0.0.1", () => res(s));
+  })));
+  const ports = servers.map((s) => { const a = s.address(); return typeof a === "object" && a ? a.port : 0; });
+  await Promise.all(servers.map((s) => new Promise<void>((res) => s.close(() => res()))));
+  return ports;
+}
 async function stop(pid?: number): Promise<void> { if (!pid) return; try { if (process.platform === "win32") await pExecFile("taskkill", ["/pid", String(pid), "/T", "/F"]); else process.kill(-pid, "SIGTERM"); } catch { /* already gone */ } }
 async function waitHealth(port: number): Promise<void> { const end = Date.now() + 20_000; while (Date.now() < end) { try { const r = await fetch(`http://127.0.0.1:${port}/health`); if (r.ok) return; } catch { /* booting */ } await new Promise((r) => setTimeout(r, 100)); } throw new Error("Hub did not become healthy"); }
 function inbox(ws: WebSocket) {
@@ -39,7 +49,7 @@ test("publish_framework fans out to a runner and confirms back to the client", {
   // Seed the canonical framework the Hub will read at publish time.
   mkdirSync(join(home, ".jarvis", "framework", "commands"), { recursive: true });
   writeFileSync(join(home, ".jarvis", "framework", "commands", "plan.md"), "Plan the work for $ARGUMENTS.");
-  const port = await freePort(), adminPort = await freePort();
+  const [port, adminPort] = await freePorts(2);
   let hub: ReturnType<typeof spawn> | undefined, hubPid: number | undefined;
   try {
     hub = spawn(process.execPath, ["--import", "tsx", "apps/hub/src/index.ts"], { cwd: root, detached: process.platform !== "win32", stdio: "ignore",

@@ -10,7 +10,18 @@ import WebSocket from "ws";
 import { RUNNER_PROTOCOL_VERSION } from "@jarvis/protocol";
 
 const pExecFile = promisify(execFile);
-async function freePort(): Promise<number> { return new Promise((resolvePort, reject) => { const server = createServer(); server.once("error", reject); server.listen(0, "127.0.0.1", () => { const address = server.address(); const port = typeof address === "object" && address ? address.port : 0; server.close(() => resolvePort(port)); }); }); }
+/** Reserva N portas livres DE UMA VEZ: mantém todos os sockets abertos enquanto escolhe, e só então
+ *  fecha. Pedir uma por vez (abre→lê→fecha, repete) devolve a MESMA porta no Linux, onde o kernel
+ *  reusa a porta efêmera recém-liberada — o Hub então tentava bindar HTTP e admin na mesma porta,
+ *  não subia, e o teste morria com ECONNREFUSED (falha só no CI Linux). */
+async function freePorts(count: number): Promise<number[]> {
+  const servers = await Promise.all(Array.from({ length: count }, () => new Promise<ReturnType<typeof createServer>>((res, rej) => {
+    const server = createServer(); server.once("error", rej); server.listen(0, "127.0.0.1", () => res(server));
+  })));
+  const ports = servers.map((server) => { const address = server.address(); return typeof address === "object" && address ? address.port : 0; });
+  await Promise.all(servers.map((server) => new Promise<void>((res) => server.close(() => res()))));
+  return ports;
+}
 async function stop(pid?: number): Promise<void> { if (!pid) return; try { if (process.platform === "win32") await pExecFile("taskkill", ["/pid", String(pid), "/T", "/F"]); else process.kill(-pid, "SIGTERM"); } catch { /* already stopped */ } }
 async function waitHealth(port: number): Promise<void> { const end = Date.now() + 20_000; while (Date.now() < end) { try { const r = await fetch(`http://127.0.0.1:${port}/health`); if (r.ok) return; } catch { /* booting */ } await new Promise((r) => setTimeout(r, 100)); } throw new Error("Hub did not become healthy"); }
 
@@ -29,7 +40,7 @@ async function connectRunner(port: number, info: Record<string, unknown>): Promi
 
 test("old/offline runners retain an update until restart and commit verification", { timeout: 60_000 }, async () => {
   const root = resolve(import.meta.dirname, "../../.."), home = mkdtempSync(join(tmpdir(), "jarvis-update-hub-"));
-  const port = await freePort(), adminPort = await freePort(); let hub: ReturnType<typeof spawn> | undefined, hubPid: number | undefined;
+  const [port, adminPort] = await freePorts(2); let hub: ReturnType<typeof spawn> | undefined, hubPid: number | undefined;
   const start = async () => {
     hub = spawn(process.execPath, ["--import", "tsx", "apps/hub/src/index.ts"], { cwd: root, detached: process.platform !== "win32", stdio: "ignore",
       env: { ...process.env, JARVIS_PORT: String(port), JARVIS_ADMIN_PORT: String(adminPort), JARVIS_HOME: home, JARVIS_AUTH: "off", JARVIS_AGENT: "mock", JARVIS_ENABLE_MOCK: "1" } });
