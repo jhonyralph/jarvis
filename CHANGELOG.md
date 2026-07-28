@@ -1,3 +1,10 @@
+## [0.3.1](https://github.com/jhonyralph/jarvis/compare/v0.3.0...v0.3.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **desktop:** valida e normaliza JARVIS_APP_HUB_URL numa regra unica ([7d41b45](https://github.com/jhonyralph/jarvis/commit/7d41b4558af51cfd9480a7ff579d36c4d231f226))
+
 # [0.3.0](https://github.com/jhonyralph/jarvis/compare/v0.2.1...v0.3.0) (2026-07-28)
 
 
