@@ -15,7 +15,9 @@
     "test:e2e": "node --import tsx --test apps/hub/src/parity.e2e.test.ts",
     "agents:report": "node --import tsx scripts/agent-report.ts",
     "update:verify": "npm run check",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "prepare": "git config core.hooksPath .githooks || exit 0"
   },
   "engines": {
     "node": ">=22"

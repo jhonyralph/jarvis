@@ -1,0 +1,43 @@
+#!/usr/bin/env sh
+# Gate de pre-push — roda LOCALMENTE o mesmo que o CI roda, antes de o commit sair da máquina.
+#
+# Motivo: um push em main dispara release automático (.github/workflows/release.yml). Se o código
+# quebra, o release simplesmente não sai e o repo fica com main vermelho até alguém perceber —
+# aconteceu: o CI ficou 6 dias vermelho sem ninguém notar.
+#
+# LIMITE HONESTO: isto roda só NA SUA PLATAFORMA. Falhas específicas de outro SO (as que já nos
+# morderam: caminhos "C:/" que só são absolutos no Windows, portas efêmeras reusadas no Linux)
+# continuam sendo pegas apenas pelo CI, que roda Ubuntu + Windows. Este gate elimina o caso comum
+# (typecheck/teste quebrado), não substitui o CI.
+#
+# Pular em uma emergência: git push --no-verify
+
+set -e
+
+# Nada a validar quando o push só apaga refs remotas.
+only_deletes=1
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] || only_deletes=0
+done
+[ "$only_deletes" = "1" ] && exit 0
+
+printf '\n[pre-push] validando antes de enviar (pule com --no-verify)\n'
+
+fail() { printf '\n[pre-push] BLOQUEADO: %s\n\n' "$1" >&2; exit 1; }
+
+printf '  -> typecheck\n'
+npm run --silent typecheck || fail 'typecheck falhou'
+
+printf '  -> testes\n'
+npm test --silent >/dev/null 2>&1 || {
+  # roda de novo mostrando a saída: o resumo silencioso não ajuda a consertar
+  npm test
+  fail 'testes falharam'
+}
+
+# app.js não é coberto pelo tsc e é o arquivo que mais mexemos — um erro de sintaxe aqui derruba a
+# UI inteira e só apareceria no navegador.
+printf '  -> sintaxe do client (app.js)\n'
+node --check apps/hub/web/app.js || fail 'apps/hub/web/app.js tem erro de sintaxe'
+
+printf '[pre-push] ok\n\n'

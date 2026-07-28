@@ -385,6 +385,24 @@ npm test            # node --test (persistence, store, native parsers, auth, gua
 npm run check       # both of the above
 ```
 
+### Git hooks (release gates)
+
+`npm install` points `core.hooksPath` at [`.githooks/`](.githooks) (same idea as husky, no extra
+dependency). Two gates guard the automatic release:
+
+- **`pre-push`** — runs typecheck, the test suite and `node --check apps/hub/web/app.js` before the
+  push leaves your machine. A push to `main` cuts a release, so broken code there means no release
+  and a red `main` nobody notices.
+- **`commit-msg`** — enforces [Conventional Commits](https://www.conventionalcommits.org), because
+  the version is derived from the message: a message off-format doesn't fail loudly, it just never
+  becomes a release.
+
+Both are bypassable in an emergency with `--no-verify`, and reinstallable with `npm run hooks:install`.
+
+**They don't replace CI.** Hooks run only on *your* OS; the failures that actually broke `main`
+recently were Linux-only (a `"C:/"` path that is only absolute on Windows; an ephemeral port the
+Linux kernel handed out twice). CI runs Ubuntu **and** Windows — that stays the authority.
+
 State is persisted as **crash-safe JSON** via `writeJsonAtomic`
 ([`packages/core/src/persist.ts`](packages/core/src/persist.ts)): temp-file +
 fsync + atomic rename with a `.bak`, so a crash mid-write can't corrupt or lose

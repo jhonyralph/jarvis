@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+# Gate de commit-msg — exige Conventional Commits.
+#
+# Motivo: o release é automático e derivado DA MENSAGEM (.releaserc.json). Uma mensagem fora do
+# padrão não quebra nada visivelmente — ela só não conta para a versão: o commit entra em main e o
+# semantic-release ignora, então a correção nunca vira release e ninguém percebe. Este gate torna
+# esse erro impossível de passar despercebido.
+#
+# Formato: <tipo>(escopo opcional)!: assunto
+#   feat: nova funcionalidade      -> bump MINOR
+#   fix: / perf: correção          -> bump PATCH
+#   ! ou "BREAKING CHANGE:" no corpo -> bump MAJOR
+#   docs/style/refactor/test/build/ci/chore/revert -> nenhum release (mudança interna)
+#
+# Pular em uma emergência: git commit --no-verify
+
+msg_file="$1"
+# Primeira linha não-comentário (o editor do git inclui linhas com '#').
+subject=$(grep -v '^#' "$msg_file" | sed '/^[[:space:]]*$/d' | head -n 1)
+
+# Casos legítimos que não seguem o padrão.
+case "$subject" in
+  "Merge "*|"Revert "*|"fixup!"*|"squash!"*|"chore(release):"*) exit 0 ;;
+esac
+
+pattern='^(feat|fix|perf|refactor|docs|style|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+'
+if printf '%s' "$subject" | grep -Eq "$pattern"; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+
+[commit-msg] BLOQUEADO: a mensagem não segue Conventional Commits.
+
+  recebido: $subject
+
+  esperado: <tipo>(escopo): descrição
+  exemplos: feat(voz): fila de áudio serializada
+            fix(ui): input do chat sumia no modo empilhado
+            docs: atualiza README do desktop
+
+  tipos: feat fix perf refactor docs style test build ci chore revert
+  (feat -> minor, fix/perf -> patch, "!" ou BREAKING CHANGE -> major,
+   os demais não cortam release)
+
+  emergência: git commit --no-verify
+
+EOF
+exit 1
