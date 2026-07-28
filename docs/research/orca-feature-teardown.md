@@ -270,21 +270,27 @@ Store + TestFlight + APK.
 
 ## Prioridade pro Jarvis — top-5 (esforço × impacto), sem git/PR/Linear
 
-1. **Design Mode** (já é Fase 1 do `DSK-01-12`). O "review AI output" que você amou; diferenciado e já
-   especificado. **Alto impacto, esforço médio.**
-2. **Reconnect-survival + status por hook.** Runner dono do PTY longevo; Hub reata por session-id e
-   replica status `working/blocked/waiting/done`. Robustez essencial pra voice-first + celular que
-   pisca. **Alto impacto, esforço médio.**
-3. **Orquestração → fan-out "compara e promove".** Reusa mailbox + decision-gates; a parte de
-   scoring+merge automático é o que você adiciona sobre o `jarvis_delegate` (Fase 2). **Alto impacto,
-   esforço alto.**
-4. **PTY ack-gated backpressure + restore-de-snapshot.** Streaming de terminal/atividade robusto sem
-   framework. **Impacto médio-alto, esforço médio.**
-5. **Seletor auth-aware + registro declarativo de agentes.** O ponto "só mostrar linkado" (refinamento
-   do que você já tem) + tabela `satisfies Record<Agent,…>`. **Impacto médio, esforço baixo.**
+> **STATUS (2026-07-27):** ver detalhe na memória `orca-features-batch`.
 
-**Extras baratos:** disciplina de tema por CSS-vars (sem build); persistência de layout com guard Zod;
-skills como stubs-gatilho + guia servido; snapshot-then-act-by-ref pra comando de voz.
+1. **Design Mode** (Fase 1 do `DSK-01-12`) — ✅ **implementado no cliente Electron** (`desktop/`,
+   commit 36c6f75). No navegador puro não roda (precisa de privilégios de `<webview>`); o
+   contraponto web é a **anotação de arquivos/diffs** (ver `docs/file-explorer-and-review.md`).
+2. **Reconnect-survival + status por hook** — ✅ **já existia** no Jarvis (Outbox/turn-resume +
+   `activeRuns`/`waiting_input`/`pendingAsk`, do milestone de hardening); a premissa do teardown
+   estava desatualizada. Nada novo a construir.
+3. **Orquestração → fan-out "compara e promove"** — ✅ **implementado** (`packages/core/src/tournament.ts`
+   + wiring no Hub `startLocalTournament` + botão "Torneio"). Remoto (runner-side) fica de follow-up.
+4. **PTY ack-gated backpressure + restore-de-snapshot** — ⏳ não portado (Jarvis usa adapters, não é
+   dono de PTY; o reconnect já é coberto pelo Outbox). Fica como referência.
+5. **Seletor auth-aware** — ✅ **implementado** (picker esconde não-instaladas/sem-login por padrão).
+
+**Também feito (extras):** file-tree explorer, viewer line-numbered redimensionável + tela cheia,
+highlighter reescrito (regex/template-aware), toggle Markdown Formatado/Bruto, **anotação de linha/
+trecho → lote → enviar p/ IA escolhida** (Annotate, Opção A), Configurações com nav+busca, CI de
+release do desktop (3 SOs). Ver `docs/file-explorer-and-review.md`.
+
+**Extras ainda abertos:** persistência de layout com guard Zod; skills como stubs-gatilho + guia
+servido; snapshot-then-act-by-ref pra comando de voz; modos empilhado/abas do viewer.
 
 ## Não portar (de propósito)
 

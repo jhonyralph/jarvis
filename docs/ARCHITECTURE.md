@@ -49,7 +49,16 @@ defined there.
   replay window, preventing duplicate completed responses.
 - `packages/core/src/agent-contract.ts` — descriptors, models, usage and event
   schema; the current web transport still carries the compatible `stream` shape.
-- `packages/protocol/src/runner.ts` — actual Hub↔Runner WebSocket contract.
+- `packages/core/src/council.ts` — multi-agent debate plan (Conselho).
+- `packages/core/src/tournament.ts` — fan the same task out to N candidates in
+  isolated worktrees, a judge scores them, and `selectTournamentWinner` promotes
+  the winner deterministically (pure/testable; wired in the Hub via
+  `startLocalTournament`, mirroring the council path).
+- `packages/core/src/progressive-reply.ts` — portable "ack → process → deliver"
+  helper for slow voice/agent replies (see `docs/voice-progressive-disclosure.md`).
+- `packages/protocol/src/runner.ts` — actual Hub↔Runner WebSocket contract. The
+  `listdir`/`dirs` messages carry an optional `files` array for the file-tree
+  explorer (the legacy folder-picker omits the flag and still sees folders only).
 
 ## Voice pipeline (local)
 
