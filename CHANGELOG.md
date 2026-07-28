@@ -1,3 +1,10 @@
+## [0.4.1](https://github.com/jhonyralph/jarvis/compare/v0.4.0...v0.4.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **hub:** responder um card de decisao nao vira mais 'Nao ha aprovacoes pendentes' ([af15019](https://github.com/jhonyralph/jarvis/commit/af150190732925c9f85c54f114de26dcdb6d9b8b))
+
 # [0.4.0](https://github.com/jhonyralph/jarvis/compare/v0.3.1...v0.4.0) (2026-07-28)
 
 
