@@ -231,8 +231,9 @@
     /* #center = header full-width no topo + #cbody (main + filePanel) embaixo. Os modos de layout do
        arquivo (lado a lado / empilhado / abas) mexem só no #cbody; o work-file-split (painel Trabalhos
        + arquivo) usa position:fixed e continua tendo precedência quando aberto. */
-    #center { flex:1; display:flex; flex-direction:column; min-width:0; }
-    #cbody { flex:1; display:flex; min-width:0; }
+    #center { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
+    #cbody { flex:1; display:flex; min-width:0; min-height:0; }
+    #cbody > main { min-height:0; }
     #app.flay-stacked #cbody { flex-direction:column; }
     #app.flay-stacked #filePanel { flex:0 0 var(--file-h,45%); border-left:0; border-top:1px solid var(--line); }
     #fileTabs { display:none; }
