@@ -1,3 +1,10 @@
+## [0.5.1](https://github.com/jhonyralph/jarvis/compare/v0.5.0...v0.5.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **runner:** harden mobile and update recovery ([931eaf8](https://github.com/jhonyralph/jarvis/commit/931eaf84c0c73d297d7f82cfbc8ce608eff4c1ad))
+
 # [0.5.0](https://github.com/jhonyralph/jarvis/compare/v0.4.1...v0.5.0) (2026-07-28)
 
 
