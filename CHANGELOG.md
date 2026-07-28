@@ -1,3 +1,10 @@
+# [0.4.0](https://github.com/jhonyralph/jarvis/compare/v0.3.1...v0.4.0) (2026-07-28)
+
+
+### Features
+
+* **desktop:** app encontravel na busca do sistema nos tres SOs ([5266baa](https://github.com/jhonyralph/jarvis/commit/5266baadfee3104ea3067f294fbb0d5f1bc3b43d))
+
 ## [0.3.1](https://github.com/jhonyralph/jarvis/compare/v0.3.0...v0.3.1) (2026-07-28)
 
 
