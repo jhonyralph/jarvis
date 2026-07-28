@@ -10,7 +10,7 @@
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
-      'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileFmt','fileCopy','fileFull','fileClose','annoSend','annoCount','annoBar','annoSelLbl','annoAdd','annoCancelSel','nativeChip',
+      'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileFmt','fileCopy','fileFull','fileClose','annoSend','annoCount','annoBar','annoSelLbl','annoAdd','annoCancelSel','fileResize','fileResizeV','fileLayoutSw','fileTabs','tabChatBtn','tabFileBtn','nativeChip',
       'designBtn','designPanel','designUrl','designDetect','designGrab','designClose','designHost','designCompose','designSel','designNote','designSend','designCancel','designStatus',
       'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
@@ -595,17 +595,29 @@
       closeList(); closeQuote(); return html;
     }
     function setWorkFileSplit(on){ const app=document.getElementById('app'); if(app)app.classList.toggle('work-file-split',!!on); }
-    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); document.getElementById('app').classList.remove('file-full'); }
-    // largura persistida do painel de arquivo (redimensionável arrastando a borda esquerda)
-    function applyFileWidth(){ if(cfg.fileW){ document.getElementById('app').style.setProperty('--file-w', cfg.fileW+'px'); } }
+    const APP=()=>document.getElementById('app');
+    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); APP().classList.remove('file-full','file-open','tab-chat'); }
+    function markFileOpen(){ APP().classList.add('file-open'); }
+    // largura/altura persistidas do painel de arquivo (redimensionável) + modo de layout (lado a
+    // lado / empilhado / abas), tudo salvo em cfg e reaplicado no reload.
+    function applyFileWidth(){ if(cfg.fileW) APP().style.setProperty('--file-w', cfg.fileW+'px'); if(cfg.fileH) APP().style.setProperty('--file-h', cfg.fileH+'px'); }
     applyFileWidth();
-    (function(){ const rz=document.getElementById('fileResize'); if(!rz)return; let dragging=false;
-      const move=(e)=>{ if(!dragging)return; const w=Math.max(300,Math.min(window.innerWidth-260, window.innerWidth-(e.clientX))); document.getElementById('app').style.setProperty('--file-w', w+'px'); };
-      const up=()=>{ if(!dragging)return; dragging=false; document.body.style.userSelect=''; const w=parseInt(getComputedStyle(document.getElementById('app')).getPropertyValue('--file-w'))||0; if(w){ cfg.fileW=w; saveCfg(); } window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
-      rz.addEventListener('pointerdown',(e)=>{ if(document.getElementById('app').classList.contains('file-full'))return; dragging=true; document.body.style.userSelect='none'; e.preventDefault(); window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); });
-    })();
-    if(E.fileFull) E.fileFull.onclick=()=>{ document.getElementById('app').classList.toggle('file-full'); };
-    function openFile(path,action,opts){ const keep=!!(opts&&opts.keepWork); if(E.workPanel&&!E.workPanel.classList.contains('hidden')&&!keep)closeWorkPanel(); setWorkFileSplit(keep); E.filePanel.classList.remove('hidden'); E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
+    function applyFileLayout(mode){ mode=['side','stacked','tabs'].includes(mode)?mode:'side'; cfg.fileLayout=mode; saveCfg();
+      APP().classList.remove('flay-side','flay-stacked','flay-tabs'); APP().classList.add('flay-'+mode);
+      if(mode!=='tabs') APP().classList.remove('tab-chat');
+      if(E.fileLayoutSw) E.fileLayoutSw.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.fl===mode)); }
+    applyFileLayout(cfg.fileLayout);
+    if(E.fileLayoutSw) E.fileLayoutSw.querySelectorAll('button').forEach(b=>b.onclick=()=>applyFileLayout(b.dataset.fl));
+    // arraste horizontal (lado a lado) → --file-w; vertical (empilhado) → --file-h
+    function fileDrag(handle,vertical){ if(!handle)return; let on=false;
+      const move=(e)=>{ if(!on)return; if(vertical){ const h=Math.max(120,Math.min(window.innerHeight-160, window.innerHeight-(e.clientY))); APP().style.setProperty('--file-h', h+'px'); } else { const w=Math.max(300,Math.min(window.innerWidth-260, window.innerWidth-(e.clientX))); APP().style.setProperty('--file-w', w+'px'); } };
+      const up=()=>{ if(!on)return; on=false; document.body.style.userSelect=''; if(vertical){ const h=parseInt(getComputedStyle(APP()).getPropertyValue('--file-h'))||0; if(h){ cfg.fileH=h; saveCfg(); } } else { const w=parseInt(getComputedStyle(APP()).getPropertyValue('--file-w'))||0; if(w){ cfg.fileW=w; saveCfg(); } } window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+      handle.addEventListener('pointerdown',(e)=>{ if(APP().classList.contains('file-full'))return; on=true; document.body.style.userSelect='none'; e.preventDefault(); window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); }); }
+    fileDrag(E.fileResize,false); fileDrag(E.fileResizeV,true);
+    if(E.fileFull) E.fileFull.onclick=()=>APP().classList.toggle('file-full');
+    if(E.tabChatBtn) E.tabChatBtn.onclick=()=>{ APP().classList.add('tab-chat'); E.tabChatBtn.classList.add('on'); E.tabFileBtn&&E.tabFileBtn.classList.remove('on'); };
+    if(E.tabFileBtn) E.tabFileBtn.onclick=()=>{ APP().classList.remove('tab-chat'); E.tabFileBtn.classList.add('on'); E.tabChatBtn&&E.tabChatBtn.classList.remove('on'); };
+    function openFile(path,action,opts){ const keep=!!(opts&&opts.keepWork); if(E.workPanel&&!E.workPanel.classList.contains('hidden')&&!keep)closeWorkPanel(); setWorkFileSplit(keep); E.filePanel.classList.remove('hidden'); markFileOpen(); APP().classList.remove('tab-chat'); if(E.tabFileBtn){E.tabFileBtn.classList.add('on');E.tabChatBtn&&E.tabChatBtn.classList.remove('on');} E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
       curFilePath=path; curFileDiffable=(action==='edit' && !!currentSession); curFileView=curFileDiffable?'diff':'full';
       renderFileViewBtns(); loadFileView(); }
     function loadFileView(){ E.fileStat.textContent=''; E.fileMeta.textContent=curFilePath; E.fileBody.className='filebody plain'; E.fileBody.textContent='Carregando…';

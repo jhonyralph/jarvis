@@ -228,6 +228,20 @@
     .mut { color:var(--mut); font-size:12.5px; word-break:break-all; }
     .soon { font-size:10px; background:#ffffff14; border-radius:6px; padding:1px 5px; color:var(--mut); }
     /* file viewer / diff — right-side panel (desktop), full overlay (mobile) */
+    /* #center = header full-width no topo + #cbody (main + filePanel) embaixo. Os modos de layout do
+       arquivo (lado a lado / empilhado / abas) mexem só no #cbody; o work-file-split (painel Trabalhos
+       + arquivo) usa position:fixed e continua tendo precedência quando aberto. */
+    #center { flex:1; display:flex; flex-direction:column; min-width:0; }
+    #cbody { flex:1; display:flex; min-width:0; }
+    #app.flay-stacked #cbody { flex-direction:column; }
+    #app.flay-stacked #filePanel { flex:0 0 var(--file-h,45%); border-left:0; border-top:1px solid var(--line); }
+    #fileTabs { display:none; }
+    #app.flay-tabs.file-open #fileTabs { display:flex; gap:6px; padding:6px 10px; border-bottom:1px solid var(--line); flex:none; }
+    #fileTabs button { flex:1; min-height:34px; }
+    #fileTabs button.on { background:#ffffff14; }
+    #app.flay-tabs #filePanel { flex:1; }
+    #app.flay-tabs.file-open:not(.tab-chat) #cbody > main { display:none; }
+    #app.flay-tabs.file-open.tab-chat #filePanel { display:none; }
     #filePanel, #treePanel { display:flex; flex-direction:column; min-width:0; border-left:1px solid var(--line); background:var(--panel); }
     #filePanel { flex:0 0 var(--file-w,clamp(360px,42%,760px)); }
     #treePanel { flex:0 0 var(--tree-w,clamp(220px,24%,320px)); order:5; }   /* explorer estreito, sempre na borda direita */
@@ -249,14 +263,18 @@
     .designactions { display:flex; gap:8px; justify-content:flex-end; }
     #designStatus { padding:5px 12px; font-size:11.5px; color:var(--mut); border-top:1px solid var(--line); }
     #app.work-file-split { --work-split-w:clamp(380px,42vw,760px); }
-    #app.work-file-split main { margin-right:var(--work-split-w); }
+    #app.work-file-split main, #app.work-file-split #center > header { margin-right:var(--work-split-w); }
     #app.work-file-split #workPanel,
     #app.work-file-split #filePanel { position:fixed; right:0; width:var(--work-split-w); flex:none; z-index:45; border-left:1px solid var(--line); }
     #app.work-file-split #workPanel { top:0; bottom:50%; }
     #app.work-file-split #filePanel { top:50%; bottom:0; }
     #filePanel { position:relative; }
     #filePanel .fpresize { position:absolute; left:-3px; top:0; bottom:0; width:7px; cursor:col-resize; z-index:6; }
+    #filePanel .fpresize.v { left:0; right:0; top:-3px; bottom:auto; width:auto; height:7px; cursor:row-resize; display:none; }
     #filePanel .fpresize:hover { background:#2563eb55; }
+    #app.flay-stacked #filePanel .fpresize:not(.v) { display:none; }
+    #app.flay-stacked #filePanel .fpresize.v { display:block; }
+    #app.flay-tabs #filePanel .fpresize { display:none; }
     #app.file-full #filePanel { position:fixed; inset:0; z-index:60; flex:none; width:auto; }
     #app.file-full #treePanel { display:none; }   /* em tela cheia, só o arquivo */
     @media (max-width:820px){ #filePanel .fpresize { display:none; } }
@@ -310,7 +328,7 @@
     #files .item { cursor:default; } #files .item.readable { cursor:pointer; display:flex; align-items:center; gap:6px; } #files .item.readable:hover { background:#ffffff0d; }
     #files .rtitle { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } #files .rbadge { flex:none; font-size:12px; }
     #files .fadd { color:#3fb950; font-size:10.5px; flex:none; } #files .fdel { color:#f85149; font-size:10.5px; flex:none; }
-    @media (max-width:820px){ #filePanel { position:fixed; inset:0; z-index:40; flex:none; border-left:0; } #app.work-file-split main { margin-right:0; } #app.work-file-split #workPanel { inset:0; width:100%; height:100dvh; } #app.work-file-split #filePanel { inset:0; width:auto; z-index:50; } }
+    @media (max-width:820px){ #filePanel { position:fixed; inset:0; z-index:40; flex:none; border-left:0; } #app.work-file-split main, #app.work-file-split #center > header { margin-right:0; } #app.work-file-split #workPanel { inset:0; width:100%; height:100dvh; } #app.work-file-split #filePanel { inset:0; width:auto; z-index:50; } }
     .dirlist { border:1px solid var(--line); border-radius:10px; overflow:auto; max-height:240px; }
     .dirlist div { padding:8px 12px; cursor:pointer; font-size:13.5px; border-bottom:1px solid var(--line); } .dirlist div:hover { background:#ffffff0d; }
     /* clickable footer pills (agent / folder / model / effort) */
@@ -717,7 +735,7 @@
       <div class="spacer"></div>
       <button id="settingsBtn" class="ghost" data-i18n="settings">⚙ Configurações</button>
     </aside>
-    <main>
+    <div id="center">
       <header>
         <button id="menuBtn" class="ghost">☰</button>
         <span class="dot" id="dot"></span>
@@ -727,6 +745,9 @@
         <button type="button" id="sumHdr" class="ghost" title="Resumir esta conversa e falar (só esta sessão)">🔊<span class="blbl">Resumir</span></button>
         <button type="button" id="treeBtn" class="ghost treeicon" title="Arquivos da pasta desta sessão (abre/fecha ao lado)">🗂</button>
       </header>
+      <div id="cbody">
+      <div id="fileTabs"><button type="button" id="tabChatBtn">💬 Chat</button><button type="button" id="tabFileBtn">📄 Arquivo</button></div>
+      <main>
       <div id="limit" class="hidden"></div>
       <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
       <div id="offlineBar" class="hidden"></div>
@@ -764,7 +785,9 @@
     </main>
     <aside id="filePanel" class="hidden">
       <div class="fpresize" id="fileResize" title="Arraste para redimensionar"></div>
+      <div class="fpresize v" id="fileResizeV" title="Arraste para redimensionar"></div>
       <div class="fphead">
+        <span id="fileLayoutSw" class="fpview"><button type="button" data-fl="side" title="Lado a lado">⬌</button><button type="button" data-fl="stacked" title="Empilhado (abaixo do chat)">⬍</button><button type="button" data-fl="tabs" title="Abas (chat ou arquivo)">▭</button></span>
         <span id="fileName" class="fpname">—</span>
         <span id="fileStat" class="fpstat"></span>
         <span id="fileView" class="fpview hidden"><button type="button" data-v="diff">Diff</button><button type="button" data-v="full">Arquivo</button></span>
@@ -778,6 +801,8 @@
       <pre id="fileBody" class="filebody"></pre>
       <div id="annoBar"><span id="annoSelLbl" class="mut" style="font-size:12px"></span><button id="annoAdd" type="button">💬 Comentar</button><button id="annoCancelSel" class="ghost" type="button">✕</button></div>
     </aside>
+    </div><!-- /cbody -->
+    </div><!-- /center -->
     <aside id="treePanel" class="hidden" aria-label="Arquivos da pasta">
       <div class="fphead">
         <b title="Arquivos da pasta desta sessão">🗂</b>
