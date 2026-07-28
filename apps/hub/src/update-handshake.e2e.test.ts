@@ -22,7 +22,26 @@ async function freePorts(count: number): Promise<number[]> {
   await Promise.all(servers.map((server) => new Promise<void>((res) => server.close(() => res()))));
   return ports;
 }
-async function stop(pid?: number): Promise<void> { if (!pid) return; try { if (process.platform === "win32") await pExecFile("taskkill", ["/pid", String(pid), "/T", "/F"]); else process.kill(-pid, "SIGTERM"); } catch { /* already stopped */ } }
+/** Mata o Hub e ESPERA ele morrer de fato. Antes só disparava o sinal e voltava: no Linux o SIGTERM
+ *  é assíncrono, então o processo velho ainda segurava a porta quando o teste subia o Hub seguinte
+ *  na MESMA porta. O novo falhava ao bindar, o waitHealth passava (quem respondia era o velho) e a
+ *  conexão seguinte estourava ECONNREFUSED quando o velho enfim saía. No Windows o `taskkill /F` já
+ *  era síncrono — por isso a falha só aparecia no CI Linux. */
+async function stop(child?: ReturnType<typeof spawn>): Promise<void> {
+  const pid = child?.pid;
+  if (!child || !pid || child.exitCode !== null) return;
+  const exited = new Promise<void>((res) => child.once("exit", () => res()));
+  try {
+    if (process.platform === "win32") await pExecFile("taskkill", ["/pid", String(pid), "/T", "/F"]);
+    else process.kill(-pid, "SIGTERM");
+  } catch { /* already stopped */ }
+  // se não sair em 5s, força e espera de novo — nunca devolver com a porta ainda ocupada
+  const forced = new Promise<void>((res) => setTimeout(res, 5_000));
+  if (await Promise.race([exited.then(() => true), forced.then(() => false)]) === false) {
+    try { if (process.platform !== "win32") process.kill(-pid, "SIGKILL"); } catch { /* gone */ }
+    await Promise.race([exited, new Promise<void>((res) => setTimeout(res, 3_000))]);
+  }
+}
 async function waitHealth(port: number): Promise<void> { const end = Date.now() + 20_000; while (Date.now() < end) { try { const r = await fetch(`http://127.0.0.1:${port}/health`); if (r.ok) return; } catch { /* booting */ } await new Promise((r) => setTimeout(r, 100)); } throw new Error("Hub did not become healthy"); }
 
 function inbox(ws: WebSocket) {
@@ -54,7 +73,7 @@ test("old/offline runners retain an update until restart and commit verification
     const first = await old.box.take((m) => m.t === "update" || m.t === "reject");
     assert.equal(first.t, "update", "an authenticated old protocol must be quarantined for update, not rejected");
     assert.ok(first.requestId && first.targetCommit); old.ws.close();
-    await stop(hubPid); hub = undefined; hubPid = undefined;
+    await stop(hub); hub = undefined; hubPid = undefined;
 
     await start();
     const current = await connectRunner(port, { runnerId, host: "runner", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION, commit: "old0000" });
@@ -91,7 +110,7 @@ test("old/offline runners retain an update until restart and commit verification
     assert.equal(afterReceipt[repairId], undefined, "same-SHA repair clears only with its matching durable receipt");
     withReceipt.ws.close();
 
-    await stop(hubPid); hub = undefined; hubPid = undefined;
+    await stop(hub); hub = undefined; hubPid = undefined;
     const staleId = "runner-stale-target-e2e";
     const currentHead = (await pExecFile("git", ["rev-parse", "--short", "HEAD"], { cwd: root })).stdout.trim();
     writeFileSync(join(home, ".jarvis", "hub", "pending-runner-updates.json"), JSON.stringify({
@@ -110,5 +129,5 @@ test("old/offline runners retain an update until restart and commit verification
     const rejected = await future.box.take((m) => m.t === "reject" || m.t === "update");
     assert.equal(rejected.t, "reject", "a newer runner protocol must never be auto-downgraded");
     assert.match(rejected.reason, /Atualize o Hub primeiro/); future.ws.close();
-  } finally { await stop(hubPid); rmSync(home, { recursive: true, force: true }); }
+  } finally { await stop(hub); rmSync(home, { recursive: true, force: true }); }
 });
