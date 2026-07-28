@@ -10,7 +10,7 @@
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
-      'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileCopy','fileFull','fileClose','nativeChip',
+      'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileFmt','fileCopy','fileFull','fileClose','nativeChip',
       'designBtn','designPanel','designUrl','designDetect','designGrab','designClose','designHost','designCompose','designSel','designNote','designSend','designCancel','designStatus',
       'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
       'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status'].reduce((o,k)=>(o[k]=$(k),o),{});
@@ -562,6 +562,38 @@
     // curFileDiffable = há um diff pra mostrar (aberto por uma edição, numa sessão). Guardado pra
     // o toggle poder recarregar o outro modo sem reabrir.
     let curFilePath='', curFileView='full', curFileDiffable=false;
+    let curFileFmt=(cfg.fileFmt==='raw')?'raw':'fmt', lastFileMsg=null;
+    const isMdName=(n)=>/\.(md|markdown|mdx)$/i.test(n||'');
+    // Markdown → HTML seguro: escapa TUDO primeiro (conteúdo do repo é não-confiável) e só então
+    // aplica a marcação. Cobre títulos, negrito/itálico, código inline e em bloco (com highlight),
+    // listas, citações, links, hr. Sem libs externas.
+    function renderMarkdown(md){
+      const esc=(s)=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+      const inline=(s)=>esc(s)
+        .replace(/`([^`]+)`/g,(_,c)=>'<code>'+c+'</code>')
+        .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+        .replace(/(^|[^*])\*([^*]+)\*/g,'$1<em>$2</em>')
+        .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+      const lines=String(md).split(/\r?\n/); let html='',i=0,inList=false,inQuote=false;
+      const closeList=()=>{ if(inList){ html+='</ul>'; inList=false; } };
+      const closeQuote=()=>{ if(inQuote){ html+='</blockquote>'; inQuote=false; } };
+      while(i<lines.length){ let ln=lines[i];
+        const fence=ln.match(/^\s*```(\w*)/);
+        if(fence){ closeList(); closeQuote(); const lang=fence[1]; const buf=[]; i++;
+          while(i<lines.length && !/^\s*```/.test(lines[i])){ buf.push(lines[i]); i++; } i++;
+          const raw=buf.join('\n'); const hl=highlight(raw, lang?('x.'+lang):'x.txt'); html+='<pre class="mdcode">'+(hl!=null?hl:esc(raw))+'</pre>'; continue; }
+        const h=ln.match(/^(#{1,6})\s+(.*)$/);
+        if(h){ closeList(); closeQuote(); html+='<h'+h[1].length+'>'+inline(h[2])+'</h'+h[1].length+'>'; i++; continue; }
+        if(/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(ln)){ closeList(); closeQuote(); html+='<hr>'; i++; continue; }
+        const q=ln.match(/^\s*>\s?(.*)$/);
+        if(q){ closeList(); if(!inQuote){ html+='<blockquote>'; inQuote=true; } html+=inline(q[1])+'<br>'; i++; continue; }
+        const li=ln.match(/^\s*[-*+]\s+(.*)$/)||ln.match(/^\s*\d+[.)]\s+(.*)$/);
+        if(li){ closeQuote(); if(!inList){ html+='<ul>'; inList=true; } html+='<li>'+inline(li[1])+'</li>'; i++; continue; }
+        if(!ln.trim()){ closeList(); closeQuote(); i++; continue; }
+        closeQuote(); html+='<p>'+inline(ln)+'</p>'; i++;
+      }
+      closeList(); closeQuote(); return html;
+    }
     function setWorkFileSplit(on){ const app=document.getElementById('app'); if(app)app.classList.toggle('work-file-split',!!on); }
     function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); document.getElementById('app').classList.remove('file-full'); }
     // largura persistida do painel de arquivo (redimensionável arrastando a borda esquerda)
@@ -614,19 +646,52 @@
           else if(m[3]) out+='<span class="hl-str">'+hlEsc(m[3])+'</span>';
           else if(m[4]) out+='<span class="hl-attr">'+hlEsc(m[4])+'</span>'; }
         return out+hlEsc(code.slice(last)); }
-      const kw=new Set((HL_KW[lang]||HL_KW.ts).split(' ')); const rx=(lang==='py'||lang==='sh')?HL_RX.hash:HL_RX.ts; rx.lastIndex=0;
-      let out='',last=0,m; while((m=rx.exec(code))){ out+=hlEsc(code.slice(last,m.index)); last=rx.lastIndex;
+      const kw=new Set((HL_KW[lang]||HL_KW.ts).split(' '));
+      if(lang==='py'||lang==='sh') return hlHash(code,kw);
+      return hlJs(code,kw); }
+    // Tokenizador char-a-char p/ JS/TS-like: conserta o bug do matcher por regex único, onde uma
+    // aspa DENTRO de uma regex literal (ex.: str.replace(/'/g,"\\'")) começava uma "string" e engolia
+    // o código até a próxima aspa, pintando tudo errado. Aqui regex literais e template `${}` são
+    // reconhecidos como tokens próprios, então aspas dentro deles não desregulam mais as cores.
+    const REGEX_KW=new Set('return typeof instanceof in of case do else void delete new throw yield await'.split(' '));
+    function regexPos(prev){ return prev==='' || REGEX_KW.has(prev) || '([{,;=:!&|?+-*%<>~^'.includes(prev); }
+    function hlHash(code,kw){ const rx=HL_RX.hash; rx.lastIndex=0; let out='',last=0,m;
+      while((m=rx.exec(code))){ out+=hlEsc(code.slice(last,m.index)); last=rx.lastIndex;
         if(m[1]) out+='<span class="hl-com">'+hlEsc(m[1])+'</span>';
         else if(m[2]) out+='<span class="hl-str">'+hlEsc(m[2])+'</span>';
         else if(m[3]) out+='<span class="hl-num">'+hlEsc(m[3])+'</span>';
         else { const w=m[4]; out+= kw.has(w)?'<span class="hl-kw">'+w+'</span>' : HL_LIT.has(w)?'<span class="hl-lit">'+w+'</span>' : /^[A-Z]/.test(w)?'<span class="hl-type">'+w+'</span>' : code[rx.lastIndex]==='('?'<span class="hl-fn">'+w+'</span>':hlEsc(w); } }
       return out+hlEsc(code.slice(last)); }
+    function hlJs(code,kw){ let out='',i=0; const n=code.length; let prev='';
+      const push=(cls,txt)=>{ out+= cls?('<span class="'+cls+'">'+hlEsc(txt)+'</span>'):hlEsc(txt); };
+      while(i<n){ const c=code[i];
+        if(c===' '||c==='\t'||c==='\n'||c==='\r'){ let j=i+1; while(j<n&&/\s/.test(code[j]))j++; out+=hlEsc(code.slice(i,j)); i=j; continue; }
+        if(c==='/'&&code[i+1]==='/'){ let j=i+2; while(j<n&&code[j]!=='\n')j++; push('hl-com',code.slice(i,j)); i=j; continue; }
+        if(c==='/'&&code[i+1]==='*'){ let j=code.indexOf('*/',i+2); j=j<0?n:j+2; push('hl-com',code.slice(i,j)); i=j; continue; }
+        if(c==='"'||c==="'"){ let j=i+1; while(j<n){ if(code[j]==='\\'){j+=2;continue;} if(code[j]===c){j++;break;} if(code[j]==='\n')break; j++; } push('hl-str',code.slice(i,j)); i=j; prev=c; continue; }
+        if(c==='`'){ let j=i+1; while(j<n){ if(code[j]==='\\'){j+=2;continue;} if(code[j]==='`'){j++;break;} j++; } push('hl-str',code.slice(i,j)); i=j; prev='`'; continue; }
+        if(c==='/'&&regexPos(prev)){ let j=i+1,ok=false,cls=false; while(j<n){ const d=code[j]; if(d==='\\'){j+=2;continue;} if(d==='\n')break; if(d==='[')cls=true; else if(d===']')cls=false; else if(d==='/'&&!cls){ j++; ok=true; break; } j++; }
+          if(ok){ while(j<n&&/[a-z]/i.test(code[j]))j++; push('hl-str',code.slice(i,j)); i=j; prev='/'; continue; } }
+        if(/[0-9]/.test(c)||(c==='.'&&/[0-9]/.test(code[i+1]||''))){ let j=i+1; while(j<n&&/[\w.]/.test(code[j]))j++; push('hl-num',code.slice(i,j)); i=j; prev='0'; continue; }
+        if(/[A-Za-z_$]/.test(c)){ let j=i+1; while(j<n&&/[\w$]/.test(code[j]))j++; const w=code.slice(i,j); let cls=null;
+          if(kw.has(w))cls='hl-kw'; else if(HL_LIT.has(w))cls='hl-lit'; else if(/^[A-Z]/.test(w))cls='hl-type'; else { let k=j; while(k<n&&/\s/.test(code[k]))k++; if(code[k]==='(')cls='hl-fn'; }
+          push(cls,w); i=j; prev=REGEX_KW.has(w)?w:'w'; continue; }
+        out+=hlEsc(c); if(!/\s/.test(c))prev=c; i++; }
+      return out; }
     function showFile(m){ if(E.filePanel.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileStat.textContent=''; E.fileBody.className='filebody plain';
       if(m.error){ E.fileMeta.textContent=m.path||''; E.fileBody.textContent='⚠ '+m.error; return; }
       const kb=m.size?(m.size<1024?m.size+' B':(m.size/1024).toFixed(1)+' KB'):''; E.fileMeta.textContent=(m.path||'')+(kb?' · '+kb:'')+(m.truncated?' · (primeiros 512KB)':'');
       if(m.image&&m.content){ const src='data:'+(m.mime||'image/*')+';base64,'+m.content; E.fileBody.className='filebody plain'; E.fileBody.innerHTML='';
         const im=document.createElement('img'); im.src=src; im.alt=m.name||''; im.style.cssText='max-width:100%;height:auto;border-radius:8px;cursor:zoom-in;display:block'; im.onclick=()=>openImg(src); E.fileBody.appendChild(im); E.fileBody.scrollTop=0; return; }
-      const hl=highlight(m.content||'',m.name||m.path); if(hl!=null){ E.fileBody.classList.add('code'); E.fileBody.innerHTML=hl; } else E.fileBody.textContent=m.content||''; E.fileBody.scrollTop=0; }
+      lastFileMsg=m; const nm=m.name||m.path||'', content=m.content||'', md=isMdName(nm), canHl=hlLang(nm)!=null;
+      // toggle Formatado/Bruto aparece para .md (renderiza markdown) e para código (liga/desliga cores)
+      if(E.fileFmt){ E.fileFmt.classList.toggle('hidden', !(md||canHl)); renderFileFmtBtns(); }
+      if(md && curFileFmt==='fmt'){ E.fileBody.className='filebody mdview'; E.fileBody.innerHTML=renderMarkdown(content); }
+      else if(curFileFmt==='fmt' && canHl){ const hl=highlight(content,nm); if(hl!=null){ E.fileBody.className='filebody code'; E.fileBody.innerHTML=hl; } else { E.fileBody.className='filebody plain'; E.fileBody.textContent=content; } }
+      else { E.fileBody.className='filebody plain'; E.fileBody.textContent=content; }
+      E.fileBody.scrollTop=0; }
+    function renderFileFmtBtns(){ if(!E.fileFmt)return; E.fileFmt.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.f===curFileFmt)); }
+    if(E.fileFmt) E.fileFmt.querySelectorAll('button').forEach(b=>b.onclick=()=>{ if(curFileFmt===b.dataset.f)return; curFileFmt=b.dataset.f; cfg.fileFmt=curFileFmt; saveCfg(); renderFileFmtBtns(); if(lastFileMsg) showFile(lastFileMsg); });
     function showDiff(m){ if(E.filePanel.classList.contains('hidden'))return; E.fileName.textContent=m.name||(m.path||'').split(/[\\/]/).pop()||'arquivo'; E.fileName.title=m.path||''; E.fileMeta.textContent=m.path||'';
       if(m.error){ E.fileStat.textContent=''; E.fileBody.className='filebody plain'; E.fileBody.textContent='⚠ '+m.error; return; }
       E.fileStat.innerHTML=`<span class="add">+${m.adds||0}</span> <span class="del">-${m.dels||0}</span>`;

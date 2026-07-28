@@ -271,6 +271,15 @@
     .filebody { flex:1; background:var(--code); margin:0; overflow:auto; padding:10px 0; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.5; white-space:pre; color:var(--text); }
     .filebody.plain { white-space:pre; padding:12px; }
     .filebody.code { white-space:pre; padding:12px; tab-size:2; }
+    .filebody.mdview { white-space:normal; padding:14px 18px; font-family:inherit; font-size:14px; line-height:1.6; }
+    .filebody.mdview h1,.filebody.mdview h2,.filebody.mdview h3,.filebody.mdview h4 { line-height:1.3; margin:14px 0 6px; }
+    .filebody.mdview h1 { font-size:1.5em } .filebody.mdview h2 { font-size:1.3em } .filebody.mdview h3 { font-size:1.12em }
+    .filebody.mdview p { margin:6px 0 } .filebody.mdview ul { margin:6px 0; padding-left:22px } .filebody.mdview li { margin:2px 0 }
+    .filebody.mdview code { background:#ffffff14; padding:1px 5px; border-radius:5px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.9em; }
+    .filebody.mdview pre.mdcode { background:#0d1117; padding:10px 12px; border-radius:8px; overflow:auto; white-space:pre; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.5; margin:8px 0; }
+    .filebody.mdview pre.mdcode code { background:none; padding:0; }
+    .filebody.mdview blockquote { border-left:3px solid var(--line); margin:8px 0; padding:2px 12px; color:var(--mut); }
+    .filebody.mdview a { color:#61afef; } .filebody.mdview hr { border:0; border-top:1px solid var(--line); margin:12px 0; }
     .filebody .hl-com, .filemodalbody .hl-com { color:#7c8797; font-style:italic; } .filebody .hl-str, .filemodalbody .hl-str { color:#98c379; } .filebody .hl-num, .filemodalbody .hl-num { color:#d19a66; }
     .filebody .hl-kw, .filemodalbody .hl-kw { color:#c678dd; } .filebody .hl-lit, .filemodalbody .hl-lit { color:#56b6c2; } .filebody .hl-type, .filemodalbody .hl-type { color:#e5c07b; } .filebody .hl-fn, .filemodalbody .hl-fn { color:#61afef; }
     .filebody .hl-tag, .filemodalbody .hl-tag { color:#e06c75; } .filebody .hl-attr, .filemodalbody .hl-attr { color:#e5c07b; }
@@ -740,6 +749,7 @@
         <span id="fileName" class="fpname">—</span>
         <span id="fileStat" class="fpstat"></span>
         <span id="fileView" class="fpview hidden"><button type="button" data-v="diff">Diff</button><button type="button" data-v="full">Arquivo</button></span>
+        <span id="fileFmt" class="fpview hidden"><button type="button" data-f="fmt">Formatado</button><button type="button" data-f="raw">Bruto</button></span>
         <button id="fileCopy" class="ghost" type="button" title="Copiar">Copiar</button>
         <button id="fileFull" class="ghost" type="button" title="Ver só o arquivo (tela cheia) / voltar">⤢</button>
         <button id="fileClose" class="ghost" type="button" title="Fechar">✕</button>
