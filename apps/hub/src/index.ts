@@ -12,37 +12,47 @@
  *   JARVIS_AGENT_PERMISSION_MODE  full-access | provider-default
  */
 import { createServer } from "node:http";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join, normalize, dirname, basename } from "node:path";
 import QRCode from "qrcode";
-import { PushCenter } from "./push.js";
+import { PushCenter, type PushActor } from "./push.js";
 import { RunnerListWaiters } from "./runnerListWaiters.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, resolveClosestModel, createAgentEventBridge, createEventSequencer, ackThenWork, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
-import { synthesize, listVoices, hasVoice } from "./tts.js";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, resolveClosestModel, createAgentEventBridge, createEventSequencer, ackThenWork, routePersonalIntent, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
+import { synthesize, listVoices, listVoiceCatalog, hasVoice } from "./tts.js";
 import { transcribe } from "./stt.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
-import { RUNNER_PROTOCOL_VERSION, isExecutionState, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
+import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
 import { startAdminApi } from "./adminApi.js";
-import { runManagedTurn, type TurnCtx } from "./turn.js";
+import { runManagedTurn, type ManagedTurnInput, type TurnCtx } from "./turn.js";
 import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
 import { buildCouncilRoutePrompt, councilRouteFallback, parseCouncilRouteDecision, type CouncilRouteDecision } from "./councilRoute.js";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
+import { PersonalAssistantService } from "./personalAssistant.js";
+import { createBuiltInPersonalSources, createPersonalSourceFactory } from "./personalSources.js";
+import { createPersonalProactiveScheduler } from "./personalProactiveIntegration.js";
+import { preparePersonalTurnContext, type PreparedPersonalTurnContext } from "./personalTurnContext.js";
+import { PersonalSessionBindings, type PersonalSessionGeneration } from "./personalSessionBindings.js";
+import { ExecutionOwnershipStore } from "./executionOwnership.js";
+import { PendingRequestRegistry, SessionDispatchReservations, remoteErrorRoute, type PendingRequest, type SessionDispatchLease } from "./sessionIsolation.js";
 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
 const CWD = process.env.JARVIS_CWD || process.cwd();
+const CONTEXT_PMTILES_FILE = process.env.JARVIS_PMTILES_FILE ? normalize(process.env.JARVIS_PMTILES_FILE) : "";
+const CONTEXT_MAP_STYLE_FILE = process.env.JARVIS_MAP_STYLE_FILE ? normalize(process.env.JARVIS_MAP_STYLE_FILE) : "";
 const LOCAL_ID = "local";
 // Voz falada: mutável em runtime (trocável pela UI, persistida em voice-cfg.json). A resolução do
 // default fica logo após o carregamento do voiceCfg (precisa dele) — ver resolveDefaultVoice().
@@ -84,16 +94,23 @@ async function indexSession(sid: string): Promise<void> {
   try {
     const s = store.get(sid);
     if (!s || !s.messages.length) return;
+    const ownerGeneration = captureSessionOwnerGeneration(LOCAL_ID, sid);
+    if (ownerGeneration.conflicted) return;
+    const updatedAt = s.updatedAt;
     const lastUser = [...s.messages].reverse().find((m) => m.role === "user")?.text || "";
     const lastAsst = [...s.messages].reverse().find((m) => m.role === "assistant")?.text || "";
     const text = `${s.title}\n${lastUser}\n${lastAsst}`.slice(0, 2000);
     const vec = await embedOne(text);
-    if (vec.length) memory.upsert({ id: s.id, sessionId: s.id, runnerId: LOCAL_ID, agent: s.agent, cwd: s.cwd, title: s.title, text: text.slice(0, 400), ts: s.updatedAt, vec });
+    const current = store.get(sid);
+    if (!current || current.updatedAt !== updatedAt || !sessionOwnerGenerationCurrent(ownerGeneration)) return;
+    if (vec.length) memory.upsert({ id: s.id, sessionId: s.id, runnerId: LOCAL_ID, ownerId: ownerGeneration.principalId, agent: s.agent, cwd: s.cwd, title: s.title, text: text.slice(0, 400), ts: updatedAt, vec });
   } catch { /* embedding unavailable — memory is opt-in */ }
 }
 async function indexRunnerSession(rc: RunnerConn, sid: string): Promise<void> {
   try {
-    const h = await runnerHistory(rc, sid);
+    const ownerGeneration = captureSessionOwnerGeneration(rc.id, sid);
+    if (ownerGeneration.conflicted) return;
+    const h = await runnerHistory(rc, sid, { principalId: ownerGeneration.principalId, generation: ownerGeneration });
     const messages = Array.isArray(h?.messages) ? h.messages : [];
     if (!h || !messages.length) return;
     const lastUser = [...messages].reverse().find((m: any) => m?.role === "user")?.text || "";
@@ -102,7 +119,8 @@ async function indexRunnerSession(rc: RunnerConn, sid: string): Promise<void> {
     const title = `${label} · ${h.title || sid}`;
     const text = `${title}\n${lastUser}\n${lastAsst}`.slice(0, 2000);
     const vec = await embedOne(text);
-    if (vec.length) memory.upsert({ id: `runner:${rc.id}:${sid}`, sessionId: sid, runnerId: rc.id, agent: h.agent, cwd: h.cwd, title, text: text.slice(0, 400), ts: Date.now(), vec, ...classifyMemoryText({ text, cwd: h.cwd }) });
+    if (!sessionOwnerGenerationCurrent(ownerGeneration)) return;
+    if (vec.length) memory.upsert({ id: `runner:${rc.id}:${sid}`, sessionId: sid, runnerId: rc.id, ownerId: ownerGeneration.principalId, agent: h.agent, cwd: h.cwd, title, text: text.slice(0, 400), ts: Date.now(), vec, ...classifyMemoryText({ text, cwd: h.cwd }) });
   } catch { /* embedding unavailable — memory is opt-in */ }
 }
 // dedicated, locked-agent/cwd session that the machine wake listener injects into
@@ -112,6 +130,18 @@ store.ensure(WAKE_SESSION, { agent: process.env.JARVIS_WAKE_AGENT || agents.defa
 // + subscriptions live locally; the push protocol relays via the browser's FCM/APNs
 // (payload is encrypted). ----
 const JARVIS_DIR = join(process.env.JARVIS_HOME || homedir(), ".jarvis");
+const personalSessionBindings = new PersonalSessionBindings(join(JARVIS_DIR, "hub", "personal-session-bindings.json"));
+const ADAPTIVE_POLICY_FILE = join(JARVIS_DIR, "policies.json");
+let adaptivePolicyDoc: AdaptivePolicyDocument = loadAdaptivePolicyDocument(ADAPTIVE_POLICY_FILE);
+const personalAssistant = new PersonalAssistantService({
+  root: join(JARVIS_DIR, "personal"),
+  sourceFactory: createPersonalSourceFactory(),
+  allowPersonalContext: () => {
+    try { return resolveAdaptivePolicy(adaptivePolicyDoc, {}).policy.memory.allowPersonalContext === true; }
+    catch { return false; }
+  },
+});
+for (const source of createBuiltInPersonalSources()) personalAssistant.registerSource(source);
 const contextManifests = new ContextManifestStore(JARVIS_DIR);
 const remoteContextManifests = new ContextManifestStore(JARVIS_DIR, "remote-context-manifests.jsonl");
 const memoryProvenance = new MemoryProvenanceStore(JARVIS_DIR);
@@ -122,8 +152,7 @@ const LOCAL_EXECUTION_DIR = join(JARVIS_DIR, "executions");
 const MIRROR_EXECUTION_DIR = join(JARVIS_DIR, "hub", "executions");
 const EXECUTION_UI_FILE = join(JARVIS_DIR, "hub", "execution-ui.json");
 const EXECUTION_CFG_FILE = join(JARVIS_DIR, "execution-config.json");
-const ADAPTIVE_POLICY_FILE = join(JARVIS_DIR, "policies.json");
-let adaptivePolicyDoc: AdaptivePolicyDocument = loadAdaptivePolicyDocument(ADAPTIVE_POLICY_FILE);
+const executionOwnership = new ExecutionOwnershipStore(join(JARVIS_DIR, "hub", "execution-ownership.json"));
 function saveAdaptivePolicy(): void { saveAdaptivePolicyDocument(ADAPTIVE_POLICY_FILE, adaptivePolicyDoc); }
 interface AdaptiveDecisionLogEvent { ts: number; kind: string; action: string; reason: string; sessionId?: string; detail?: string; policyId?: string; }
 const ADAPTIVE_DECISIONS_FILE = join(JARVIS_DIR, "adaptive-decisions.json");
@@ -276,12 +305,40 @@ const frameworkCfg: { preference: FrameworkPreference; version: number } = (() =
 function saveFrameworkCfg(): void { try { writeJsonAtomic(FRAMEWORK_CFG_FILE, frameworkCfg, { pretty: true }); } catch { /* ignore */ } }
 const frameworkProvenance = new FrameworkProvenanceStore(JARVIS_DIR);
 const push = new PushCenter(JARVIS_DIR);
-// Bound method — the Hub keeps calling notifyEvent(...) everywhere, now delegated to the module.
-const notifyEvent = push.notifyEvent;
+function reconcilePushDevices(): void {
+  if (!auth.AUTH_ENABLED) return;
+  auth.pruneExpiredDevices();
+  push.purgeUnknownDevices(auth.listDevices().map((device) => ({ principalId: device.userId, deviceId: device.id })), true);
+}
+reconcilePushDevices();
+const sessionNotificationTargets = new Map<string, PushActor>();
+function notificationKey(runnerId: string, sessionId: string): string { return `${runnerId}\u0000${sessionId}`; }
+function rememberSessionNotificationTarget(runnerId: string, sessionId: string, actor?: ContextActor): void {
+  const principalId = actor?.userId || "local";
+  sessionNotificationTargets.set(notificationKey(runnerId, sessionId), { principalId });
+}
+function notificationTargetForSession(runnerId: string, sessionId: string): PushActor | undefined {
+  const remembered = sessionNotificationTargets.get(notificationKey(runnerId, sessionId));
+  if (remembered?.principalId) return remembered;
+  const binding = personalSessionBindings.get(runnerId, sessionId);
+  return binding ? { principalId: binding.principalId } : undefined;
+}
+// PushCenter rejects destination-less content. Operational alerts expand to each owner principal;
+// session events pass the initiating principal explicitly at their call sites.
+const notifyEvent = (...args: Parameters<PushCenter["notifyEvent"]>): void => {
+  const [kind, title, body, tag, target] = args;
+  const targets = target?.principalId
+    ? [target]
+    : !auth.AUTH_ENABLED
+      ? [{ principalId: "local" }]
+      : [...new Set(auth.listDevices().filter((device) => device.role === "owner").map((device) => device.userId))].map((principalId) => ({ principalId }));
+  for (const destination of targets) push.notifyEvent(kind, title, body, tag, destination);
+};
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
+  ".mjs": "text/javascript",
   ".css": "text/css",
   ".json": "application/json",
   ".png": "image/png",
@@ -312,7 +369,7 @@ function secHeaders(nonce?: string): Record<string, string> {
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
     "referrer-policy": "no-referrer",
-    "permissions-policy": "microphone=(self), camera=(), geolocation=()",
+    "permissions-policy": "microphone=(self), camera=(), geolocation=(self)",
     "content-security-policy": csp(nonce),
   };
 }
@@ -326,6 +383,33 @@ const server = createServer((req, res) => {
     let online = 0; for (const r of runners.values()) if (r.ws) online++;
     res.writeHead(200, { ...secHeaders(), "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify({ ok: true, version: VERSION, uptime: Math.round(process.uptime()), runners: online }));
+    return;
+  }
+  // MapLibre starts with a private, network-free background style. Optional local files are fixed
+  // by Hub environment variables; the request cannot select a path, so these routes never expose
+  // arbitrary files from the host.
+  if (urlPath === "/context/maps/style.json") {
+    let style: unknown = { version: 8, sources: {}, layers: [{ id: "background", type: "background", paint: { "background-color": "#10151d" } }] };
+    if (CONTEXT_MAP_STYLE_FILE && existsSync(CONTEXT_MAP_STYLE_FILE) && statSync(CONTEXT_MAP_STYLE_FILE).isFile()) {
+      try { style = JSON.parse(readFileSync(CONTEXT_MAP_STYLE_FILE, "utf8")); } catch { /* use the private fallback */ }
+    }
+    res.writeHead(200, { ...secHeaders(), "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    res.end(JSON.stringify(style));
+    return;
+  }
+  if (urlPath === "/context/maps/region.pmtiles") {
+    if (!CONTEXT_PMTILES_FILE || !existsSync(CONTEXT_PMTILES_FILE) || !statSync(CONTEXT_PMTILES_FILE).isFile()) { res.writeHead(404, secHeaders()).end("local map is not configured"); return; }
+    const size = statSync(CONTEXT_PMTILES_FILE).size;
+    const match = /^bytes=(\d+)-(\d*)$/.exec(String(req.headers.range || ""));
+    let start = 0, end = size - 1;
+    if (match) { start = Number(match[1]); end = match[2] ? Math.min(size - 1, Number(match[2])) : size - 1; }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= size) { res.writeHead(416, { ...secHeaders(), "content-range": `bytes */${size}` }).end(); return; }
+    const length = end - start + 1, body = Buffer.allocUnsafe(length), fd = openSync(CONTEXT_PMTILES_FILE, "r"); let offset = 0;
+    try { while (offset < length) { const read = readSync(fd, body, offset, length - offset, start + offset); if (!read) break; offset += read; } }
+    finally { closeSync(fd); }
+    if (offset !== length) { res.writeHead(500, secHeaders()).end("local map read failed"); return; }
+    res.writeHead(match ? 206 : 200, { ...secHeaders(), "content-type": "application/octet-stream", "accept-ranges": "bytes", "content-length": length, ...(match ? { "content-range": `bytes ${start}-${end}/${size}` } : {}), "cache-control": "private, max-age=86400" });
+    res.end(body);
     return;
   }
   // pasted/attached images, served for the in-chat preview — basename only (no traversal)
@@ -426,7 +510,7 @@ function send(ws: WebSocket, obj: unknown): void {
 function broadcastOn(runnerId: string, sessionId: string, obj: unknown): void {
   const frame = obj && typeof obj === "object" && !Array.isArray(obj) ? { ...(obj as Record<string, unknown>), runnerId } : obj;
   const s = JSON.stringify(frame);
-  for (const c of clientsOn(runnerId)) if (c.readyState === c.OPEN && subs.get(c) === sessionId) c.send(s);
+  for (const c of clientsOn(runnerId)) if (c.readyState === c.OPEN && subs.get(c) === sessionId && canAccessSession(c, runnerId, sessionId)) c.send(s);
 }
 function broadcast(sessionId: string, obj: unknown): void { broadcastOn(LOCAL_ID, sessionId, obj); }
 /** to every UI client (skips runner sockets) */
@@ -454,7 +538,11 @@ function sendPendingAsk(ws: WebSocket, runnerId: string, sid: string): void {
   const pa = pendingAsk.get(key); if (pa) send(ws, { t: "ask", runnerId, sessionId: sid, questions: pa.questions });
 }
 // runs/sessions are per-machine: only clients viewing the LOCAL machine get local ones.
-function broadcastRuns(): void { const s = JSON.stringify({ t: "runs", runnerId: LOCAL_ID, active: [...activeRuns] }); for (const c of clientsOn(LOCAL_ID)) if (c.readyState === c.OPEN) c.send(s); }
+function broadcastRuns(): void {
+  for (const c of clientsOn(LOCAL_ID)) if (c.readyState === c.OPEN) {
+    send(c, { t: "runs", runnerId: LOCAL_ID, active: [...activeRuns].filter((sid) => canAccessSession(c, LOCAL_ID, sid)) });
+  }
+}
 // single-flight global para operações de voz (resumo/digest): só 1 por vez em toda a instância,
 // independente de qual chat/cliente pediu. Guard no servidor complementa a trava de UI (multi-device).
 let voiceOpBusy = false;
@@ -469,11 +557,139 @@ function actorOf(ws: WebSocket, source: ContextActor["source"] = "user"): Contex
   const principal = principalOf(ws);
   return { userId: principal?.userId || undefined, deviceId: principal?.deviceId || undefined, source };
 }
+function socketPrincipalId(ws: WebSocket): string { return principalOf(ws)?.userId || "local"; }
+function localManagedSessionForNative(nativeSessionId: string): string | undefined {
+  for (const session of store.list()) {
+    try {
+      const nativeId = agents.get(session.agent).nativeSessionId?.(session.id);
+      if (nativeId && nativeIdForAgent(session.agent, nativeId) === nativeSessionId) return session.id;
+    } catch { /* an unavailable adapter cannot establish an alias */ }
+  }
+  return undefined;
+}
+function sessionAliases(runnerId: string, sessionId: string): string[] {
+  const aliases = new Set([sessionId]);
+  if (runnerId === LOCAL_ID) {
+    if (isNativeId(sessionId)) {
+      const managed = localManagedSessionForNative(sessionId); if (managed) aliases.add(managed);
+    } else {
+      const session = store.get(sessionId);
+      try {
+        const nativeId = session && agents.get(session.agent).nativeSessionId?.(session.id);
+        const nativeKey = session && nativeId ? nativeIdForAgent(session.agent, nativeId) : null;
+        if (nativeKey) aliases.add(nativeKey);
+      } catch { /* no established native alias */ }
+    }
+  } else if (isNativeId(sessionId)) {
+    const managed = managedRunnerSessionForNative(runnerId, sessionId); if (managed) aliases.add(managed);
+  } else {
+    const state = runnerSessionState.get(runnerId)?.get(sessionId);
+    const nativeKey = state?.nativeId && state?.agent ? nativeIdForAgent(String(state.agent), String(state.nativeId)) : null;
+    if (nativeKey) aliases.add(nativeKey);
+  }
+  return [...aliases].sort();
+}
+interface SessionOwnerGeneration {
+  runnerId: string;
+  sessionId: string;
+  aliases: string[];
+  snapshots: PersonalSessionGeneration[];
+  principalId?: string;
+  conflicted: boolean;
+}
+function captureSessionOwnerGeneration(runnerId: string, sessionId: string): SessionOwnerGeneration {
+  const aliases = sessionAliases(runnerId, sessionId);
+  const snapshots = aliases.map((alias) => personalSessionBindings.capture(runnerId, alias));
+  const owners = new Set(snapshots.map((snapshot) => snapshot.principalId).filter((value): value is string => !!value));
+  return { runnerId, sessionId, aliases, snapshots, principalId: owners.size === 1 ? [...owners][0] : undefined, conflicted: owners.size > 1 };
+}
+function sessionOwnerGenerationCurrent(generation: SessionOwnerGeneration): boolean {
+  const aliases = sessionAliases(generation.runnerId, generation.sessionId);
+  return aliases.length === generation.aliases.length
+    && aliases.every((alias, index) => alias === generation.aliases[index])
+    && generation.snapshots.every((snapshot) => personalSessionBindings.matches(snapshot));
+}
+function synchronizePersonalSessionAliases(runnerId: string, sessionId: string): void {
+  const generation = captureSessionOwnerGeneration(runnerId, sessionId);
+  if (generation.conflicted) throw new Error("conflicting personal ownership across session aliases");
+  if (generation.principalId) personalSessionBindings.claimMany(runnerId, generation.aliases, generation.principalId);
+}
+function preparePendingDeleteTargets(runnerId: string, sessionIds: string[], alsoNative: boolean): PendingDeleteTarget[] {
+  return sessionIds.map((sessionId) => {
+    synchronizePersonalSessionAliases(runnerId, sessionId);
+    const aliases = alsoNative && !isNativeId(sessionId) ? sessionAliases(runnerId, sessionId) : [sessionId];
+    return { sessionId, invalidations: aliases.map((alias) => personalSessionBindings.capture(runnerId, alias)) };
+  });
+}
+function canAccessSession(ws: WebSocket, runnerId: string, sessionId: string): boolean {
+  const generation = captureSessionOwnerGeneration(runnerId, sessionId);
+  return !generation.conflicted && generation.snapshots.every((snapshot) => !snapshot.principalId || snapshot.principalId === socketPrincipalId(ws));
+}
+function bindPersonalSession(runnerId: string, sessionId: string, actor: ContextActor): void {
+  const principalId = actor.userId || "local";
+  const aliases = sessionAliases(runnerId, sessionId);
+  const changed = aliases.some((alias) => !personalSessionBindings.get(runnerId, alias));
+  personalSessionBindings.claimMany(runnerId, aliases, principalId);
+  if (!changed) return;
+
+  // Existing viewers and queued work from a different principal must not cross the point where
+  // personal data starts entering the transcript.
+  for (const client of clientsOn(runnerId)) {
+    if (subs.get(client) !== sessionId || canAccessSession(client, runnerId, sessionId)) continue;
+    subs.delete(client);
+    send(client, { t: "session_access_revoked", runnerId, sessionId, message: "Esta sessão passou a conter contexto pessoal de outro usuário." });
+  }
+  const queue = queueOf(runnerId, sessionId), filtered = queue.filter((item) => (item.actor?.userId || "local") === principalId);
+  if (filtered.length !== queue.length) {
+    queues.set(scopedSessionKey(runnerId, sessionId), filtered);
+    saveQueues();
+  }
+  if (runnerId === LOCAL_ID) {
+    let pendingChanged = false;
+    for (const [id, item] of pendingInboundTurns) {
+      if (item.sessionId !== sessionId || (item.actor?.userId || "local") === principalId) continue;
+      pendingInboundTurns.delete(id); pendingChanged = true;
+    }
+    if (pendingChanged) savePendingInboundTurns();
+  }
+  syncTails();
+}
 /** Fully authed = token accepted AND (no owner passphrase OR this session verified it). */
 function fullyAuthed(ws: WebSocket): boolean { if (!auth.AUTH_ENABLED) return true; const p = principals.get(ws); return !!p && (!auth.hasPassphrase() || p.verified); }
 function clearUnauthTimer(ws: WebSocket): void { const t = unauthTimers.get(ws); if (t) { clearTimeout(t); unauthTimers.delete(ws); } }
 function uaOf(req: any): string | undefined { const ua = req?.headers?.["user-agent"]; return typeof ua === "string" ? ua.slice(0, 200) : undefined; }
 function clientMeta(req: any): { ip: string; ua?: string } { return { ip: guard.clientIp(req), ua: uaOf(req) }; }
+function isLocalWakeMsg(ip: string, msg: any): boolean {
+  if (!guard.isLoopback(ip)) return false;
+  if (msg.t === "wake_hello" || msg.t === "wake_event") return true;
+  return msg.t === "send" && msg.sessionId === WAKE_SESSION && msg.speak === true && typeof msg.text === "string";
+}
+
+async function personalContextForChat(runnerId: string, sid: string, text: string, actor: ContextActor, afterBinding?: () => boolean): Promise<PreparedPersonalTurnContext | undefined> {
+  rememberSessionNotificationTarget(runnerId, sid, actor);
+  const allowed = effectivePolicyFor(sid).policy.memory.allowPersonalContext === true;
+  if (!allowed || !routePersonalIntent(text)) return undefined;
+  bindPersonalSession(runnerId, sid, actor);
+  if (afterBinding && !afterBinding()) throw new Error("a autorização da sessão mudou durante a vinculação pessoal");
+  const key = scopedSessionKey(runnerId, sid), ctrl = new AbortController();
+  routeAborts.set(key, ctrl);
+  try {
+    const work = preparePersonalTurnContext({
+      assistant: personalAssistant,
+      text,
+      allowed,
+      signal: ctrl.signal,
+      actor: { principalId: actor.userId || "local", deviceId: actor.deviceId || "local", owner: false },
+      onError: (error) => console.warn("[personal] contexto do turno indisponível:", String((error as Error)?.message || error)),
+    });
+    const aborted = new Promise<never>((_resolve, reject) => ctrl.signal.addEventListener("abort", () => reject(new Error(ABORTED)), { once: true }));
+    const prepared = await Promise.race([work, aborted]);
+    if (prepared) broadcastOn(runnerId, sid, { t: "personal_turn_suggestions", runnerId, sessionId: sid, intent: prepared.intent.intent, purpose: prepared.purpose, response: prepared.response });
+    return prepared;
+  } finally {
+    if (routeAborts.get(key) === ctrl) routeAborts.delete(key);
+  }
+}
 let warnedInsecure = false;
 function maybeWarnInsecure(req: any): void {
   if (!warnedInsecure && auth.AUTH_ENABLED && guard.isInsecurePublic(req)) {
@@ -546,6 +762,35 @@ const pendingRunnerUpdates: Record<string, PendingRunnerUpdate> = (() => {
 function savePendingRunnerUpdates(): void { try { writeJsonAtomic(RUNNER_UPDATES_FILE, pendingRunnerUpdates, { pretty: true }); } catch (e) { console.error("[hub] não consegui persistir fila de atualização:", String((e as any)?.message ?? e)); } }
 const runners = new Map<string, RunnerConn>();
 const runnerSockets = new Set<WebSocket>();
+const personalProactiveIntervalMs = Math.max(60_000, Number(process.env.JARVIS_PERSONAL_PROACTIVE_INTERVAL_MIN || 5) * 60_000 || 300_000);
+const personalProactiveScheduler = createPersonalProactiveScheduler({
+  assistant: personalAssistant,
+  push,
+  listDevices: () => auth.listDevices(),
+  includeLocalDevice: !auth.AUTH_ENABLED,
+  listRoutines: (target) => routines.list().filter((routine) => {
+    if (!routine.enabled) return false;
+    const principalMatches = routine.principalId
+      ? routine.principalId === target.principalId
+      : !auth.AUTH_ENABLED && target.principalId === "local";
+    return principalMatches && (!routine.deviceId || routine.deviceId === target.deviceId);
+  }),
+  intervalMs: personalProactiveIntervalMs,
+  sendInApp: (notification, target) => {
+    let delivered = false;
+    for (const client of wss.clients) {
+      const ws = client as WebSocket;
+      if (ws.readyState !== ws.OPEN || runnerSockets.has(ws)) continue;
+      const principal = principalOf(ws);
+      const principalId = principal?.userId || "local", deviceId = principal?.deviceId || "local";
+      if (principalId !== target.principalId || deviceId !== target.deviceId) continue;
+      send(ws, { t: "personal_proactive_notification", notification });
+      delivered = true;
+    }
+    return delivered;
+  },
+  onError: (error, context) => console.warn("[personal] proatividade:", context.phase || "run", String((error as Error)?.message || error)),
+});
 runners.set(LOCAL_ID, { id: LOCAL_ID, ws: null, local: true, lastSeen: Date.now(), info: { runnerId: LOCAL_ID, host: hostname(), os: process.platform, agents: [], protocolVersion: RUNNER_PROTOCOL_VERSION, local: true } });
 // Labels are the durable machine inventory. Rebuild offline placeholders after every Hub restart so
 // they remain selectable and, critically, can retain a pending update until they reconnect.
@@ -554,13 +799,40 @@ for (const [id, label] of Object.entries(runnerLabels)) if (id !== LOCAL_ID && !
 }
 const clientRunner = new WeakMap<WebSocket, string>();
 const runnerActive = new Map<string, Set<string>>(); // runnerId -> session ids running there
+const runnerActiveEpoch = new Map<string, number>();
+function runnerRunKey(runnerId: string, sid: string): string { return scopedSessionKey(runnerId, sid); }
+function bumpRunnerActiveEpoch(runnerId: string, sid: string): number {
+  const key = runnerRunKey(runnerId, sid), next = (runnerActiveEpoch.get(key) || 0) + 1;
+  runnerActiveEpoch.set(key, next);
+  return next;
+}
+function broadcastRunnerRuns(runnerId: string): void {
+  const active = [...(runnerActive.get(runnerId) || new Set<string>())];
+  for (const c of clientsOn(runnerId)) send(c, { t: "runs", runnerId, active: active.filter((sid) => canAccessSession(c, runnerId, sid)) });
+}
 function markRunnerSessionActive(runnerId: string, sid: string): void {
   if (!runnerId || !sid) return;
   const set = runnerActive.get(runnerId) || new Set<string>();
   if (set.has(sid)) return;
   set.add(sid);
   runnerActive.set(runnerId, set);
-  for (const c of clientsOn(runnerId)) send(c, { t: "runs", runnerId, active: [...set] });
+  bumpRunnerActiveEpoch(runnerId, sid);
+  broadcastRunnerRuns(runnerId);
+}
+function clearRunnerSessionActive(runnerId: string, sid: string): boolean {
+  const set = runnerActive.get(runnerId);
+  if (!set?.has(sid)) return false;
+  set.delete(sid);
+  runnerActive.set(runnerId, set);
+  broadcastRunnerRuns(runnerId);
+  return true;
+}
+function releaseRunnerSessionAfterTerminal(runnerId: string, sid: string): void {
+  const epoch = runnerActiveEpoch.get(runnerRunKey(runnerId, sid)) || 0;
+  setTimeout(() => {
+    if ((runnerActiveEpoch.get(runnerRunKey(runnerId, sid)) || 0) !== epoch) return;
+    if (clearRunnerSessionActive(runnerId, sid)) void maybeFlushQueue(runnerId, sid, false);
+  }, 1500).unref?.();
 }
 // When each currently-offline runner dropped (cleared on reconnect), so the fleet view can show
 // "offline há Xm" and a periodic sweep can alert once when a machine stays down past the threshold.
@@ -570,7 +842,43 @@ const OFFLINE_ALERT_MS = Math.max(0, Number(process.env.JARVIS_OFFLINE_ALERT_MIN
 // Clients with the update panel open. A machine's result arrives asynchronously (it may be busy,
 // or restarting), long after the request returned — this is who gets told.
 const updateWatchers = new Set<WebSocket>();
-const pendingReq = new Map<string, WebSocket>();
+interface PendingDeleteTarget {
+  sessionId: string;
+  invalidations: PersonalSessionGeneration[];
+}
+interface PendingRequestMetadata {
+  deleteTargets?: PendingDeleteTarget[];
+  rootExecutionId?: string;
+}
+const pendingReq = new PendingRequestRegistry<WebSocket, PendingRequestMetadata>();
+const dispatchReservations = new SessionDispatchReservations();
+const dispatchOwnerGenerations = new Map<string, SessionOwnerGeneration>();
+const pendingDispatchFlush = new Set<string>();
+function runnerRequestId(prefix = "r"): string { return `${prefix}-${randomUUID()}`; }
+function registerPendingRequest(input: {
+  requestId?: string;
+  ws: WebSocket;
+  runnerId: string;
+  operation: string;
+  sessionIds?: Iterable<string>;
+  metadata?: PendingRequestMetadata;
+}): string {
+  const requestId = input.requestId || runnerRequestId();
+  pendingReq.set(requestId, { socket: input.ws, runnerId: input.runnerId, principalId: socketPrincipalId(input.ws), operation: input.operation, sessionIds: input.sessionIds, metadata: input.metadata });
+  return requestId;
+}
+function pendingRequestAuthorized(request: PendingRequest<WebSocket, PendingRequestMetadata>): boolean {
+  return request.socket.readyState === request.socket.OPEN
+    && isAuthed(request.socket)
+    && socketPrincipalId(request.socket) === request.principalId
+    && canUseRunner(request.socket, request.runnerId)
+    && (!request.metadata?.rootExecutionId || executionOwnership.allows(request.runnerId, request.metadata.rootExecutionId, request.principalId))
+    && request.sessionIds.every((sessionId) => canAccessSession(request.socket, request.runnerId, sessionId));
+}
+function takePendingRequest(rc: RunnerConn, requestId: unknown, operations: Iterable<string>, sessionId?: string): PendingRequest<WebSocket, PendingRequestMetadata> | undefined {
+  if (typeof requestId !== "string") return undefined;
+  return pendingReq.take(requestId, { runnerId: rc.id, operations: new Set(operations), sessionId, authorize: pendingRequestAuthorized });
+}
 interface PendingMemoryConfirmation {
   runnerId: string;
   sessionId?: string;
@@ -581,6 +889,7 @@ interface PendingMemoryConfirmation {
   text?: string;
   cwd?: string;
   agent?: string;
+  ownerGeneration?: SessionOwnerGeneration;
 }
 const pendingMemoryConfirmations = new Map<string, PendingMemoryConfirmation>();
 const pendingRemoteMemoryPreview = new Map<string, { ws: WebSocket; runnerId: string; sessionId?: string; actor: ContextActor }>();
@@ -599,7 +908,6 @@ function sendMemoryFrame(origin: WebSocket, pending: PendingMemoryConfirmation, 
   }
   if (!sentOrigin) send(origin, frame);
 }
-let reqSeq = 0;
 // Durable Framework Jarvis publish queue, mirroring pendingRunnerUpdates: a machine that is offline or
 // on an old protocol keeps its pending publish and receives it on reconnect. Keyed by runnerId.
 const FRAMEWORK_QUEUE_FILE = join(JARVIS_DIR, "hub", "pending-framework-publish.json");
@@ -681,6 +989,44 @@ function splitScopedSessionKey(key: string): { runnerId: string; sessionId: stri
   const separator = key.indexOf("\0");
   return separator < 0 ? { runnerId: LOCAL_ID, sessionId: key } : { runnerId: key.slice(0, separator), sessionId: key.slice(separator + 1) };
 }
+function sessionDispatchBusy(runnerId: string, sessionId: string): boolean {
+  return dispatchReservations.isHeld(runnerId, sessionId)
+    || routeAborts.has(scopedSessionKey(runnerId, sessionId))
+    || (runnerId === LOCAL_ID ? activeRuns.has(sessionId) : runnerActive.get(runnerId)?.has(sessionId) === true);
+}
+function reserveSessionDispatch(runnerId: string, sessionId: string, principalId: string, operation: string): SessionDispatchLease | undefined {
+  if (sessionDispatchBusy(runnerId, sessionId)) return undefined;
+  const generation = captureSessionOwnerGeneration(runnerId, sessionId);
+  if (generation.conflicted || (generation.principalId && generation.principalId !== principalId)) return undefined;
+  const lease = dispatchReservations.tryAcquire(runnerId, sessionId, principalId, operation);
+  if (lease) dispatchOwnerGenerations.set(lease.token, generation);
+  return lease;
+}
+function refreshSessionDispatchAuthorization(lease: SessionDispatchLease): boolean {
+  if (!dispatchReservations.isCurrent(lease)) return false;
+  const generation = captureSessionOwnerGeneration(lease.runnerId, lease.sessionId);
+  if (generation.conflicted || (generation.principalId && generation.principalId !== lease.principalId)) return false;
+  dispatchOwnerGenerations.set(lease.token, generation);
+  return true;
+}
+function sessionDispatchAuthorized(lease: SessionDispatchLease, ws?: WebSocket, rc?: RunnerConn): boolean {
+  if (!dispatchReservations.isCurrent(lease)) return false;
+  const reservedGeneration = dispatchOwnerGenerations.get(lease.token);
+  if (!reservedGeneration || !sessionOwnerGenerationCurrent(reservedGeneration)) return false;
+  if (ws && (socketPrincipalId(ws) !== lease.principalId || !canUseRunner(ws, lease.runnerId) || !canAccessSession(ws, lease.runnerId, lease.sessionId))) return false;
+  if (!ws && auth.AUTH_ENABLED && !auth.canAccessRunner(lease.principalId, lease.runnerId)) return false;
+  const generation = captureSessionOwnerGeneration(lease.runnerId, lease.sessionId);
+  if (generation.conflicted || (generation.principalId && generation.principalId !== lease.principalId)) return false;
+  if (rc && (runners.get(lease.runnerId) !== rc || !rc.ws || rc.ws.readyState !== WebSocket.OPEN)) return false;
+  return true;
+}
+function releaseSessionDispatch(lease: SessionDispatchLease): void {
+  dispatchOwnerGenerations.delete(lease.token);
+  if (!dispatchReservations.release(lease)) return;
+  const key = scopedSessionKey(lease.runnerId, lease.sessionId);
+  if (!pendingDispatchFlush.delete(key)) return;
+  queueMicrotask(() => { void maybeFlushQueue(lease.runnerId, lease.sessionId, false); });
+}
 function replayRoute(ws: WebSocket, runnerId: string, sid: string): void {
   if (routeAborts.has(scopedSessionKey(runnerId, sid))) send(ws, { t: "auto_route", sessionId: sid, state: "started" });
 }
@@ -698,9 +1044,19 @@ function canUseRunner(ws: WebSocket, rid: string): boolean {
 function allowedRunnerIds(ws: WebSocket): string[] {
   return [...new Set([LOCAL_ID, ...runners.keys(), ...Object.keys(runnerLabels)])].filter((runnerId) => canUseRunner(ws, runnerId));
 }
+function messageSessionScope(ws: WebSocket, msg: any): { runnerId: string; sessionIds: string[] } | undefined {
+  const runnerId = msg.t === "sendTo" ? LOCAL_ID : activeRunner(ws);
+  const sessionIds: string[] = Array.isArray(msg.sessionIds)
+    ? msg.sessionIds.filter((value: unknown): value is string => typeof value === "string" && value.length > 0)
+    : typeof msg.sessionId === "string" && msg.sessionId ? [msg.sessionId] : [];
+  if (!sessionIds.length && ["send", "voice", "cancel"].includes(msg.t)) {
+    const viewed = subs.get(ws); if (viewed) sessionIds.push(viewed);
+  }
+  return sessionIds.length ? { runnerId, sessionIds: [...new Set(sessionIds)] } : undefined;
+}
 // The session ops that act on a machine (local or the selected runner). A member without a grant for
 // the target machine may not run any of these — mirrors the forwarded-op list below.
-const RUNNER_OPS = new Set(["list", "open", "send", "new", "listdir", "configure", "readfile", "readdiff", "delete", "dropLast"]);
+const RUNNER_OPS = new Set(["list", "open", "send", "new", "listdir", "configure", "readfile", "readdiff", "delete", "dropLast", "getWorktreePreview"]);
 // Ops that ALWAYS read or execute the LOCAL (Hub) machine's own sessions, regardless of which runner
 // is selected — they never take the remote-forward path. These were NOT in RUNNER_OPS, so a member
 // without local access reached them: `sendTo` executes a turn ON THE HUB (normally full-access),
@@ -997,10 +1353,44 @@ const pendingRunnerList = new RunnerListWaiters();
 // they need to pull it over the wire — the hub keeps no copy of a runner's sessions. Keyed by
 // reqId, resolved by the runner's {t:history}/{t:sessions} reply, and always timed out so a
 // silent runner degrades instead of hanging the single-flight voice lock.
-const pendingRunnerHist = new Map<string, (h: any) => void>();
+interface RunnerHistoryScope {
+  ws?: WebSocket;
+  principalId?: string;
+  generation?: SessionOwnerGeneration;
+}
+interface PendingRunnerHistory extends RunnerHistoryScope {
+  runnerId: string;
+  sessionId: string;
+  generation: SessionOwnerGeneration;
+  resolve: (history: any) => void;
+}
+const pendingRunnerHist = new Map<string, PendingRunnerHistory>();
 const pendingRunnerUsage = new Map<string, (u: any) => void>();
 interface ExecutionReplayRequest { runnerId: string; rootExecutionId: string; replace: boolean; events: ExecutionEvent[]; }
 const executionReplayRequests = new Map<string, ExecutionReplayRequest>();
+interface ExecutionPrincipalHint { principalId: string; expiresAt: number; }
+const executionPrincipalHints = new Map<string, ExecutionPrincipalHint>();
+function executionTurnKey(runnerId: string, turnId: string): string { return `${runnerId}\u0000${turnId}`; }
+function rememberExecutionPrincipal(runnerId: string, turnId: string, principalId: string): void {
+  executionPrincipalHints.set(executionTurnKey(runnerId, turnId), { principalId, expiresAt: Date.now() + 6 * 60 * 60_000 });
+  if (executionPrincipalHints.size > 2_000) {
+    const now = Date.now();
+    for (const [key, hint] of executionPrincipalHints) if (hint.expiresAt <= now || executionPrincipalHints.size > 1_500) executionPrincipalHints.delete(key);
+  }
+}
+function sendOwnedRunnerTurn(rc: RunnerConn, sessionId: string, turnId: string, principalId: string, frame: Record<string, unknown>): boolean {
+  const key = executionTurnKey(rc.id, turnId);
+  rememberExecutionPrincipal(rc.id, turnId, principalId);
+  if (sendToRunner(rc, { ...frame, sessionId, turnId })) return true;
+  executionPrincipalHints.delete(key);
+  return false;
+}
+function claimRemoteExecutionOwner(rc: RunnerConn, event: ExecutionEvent): void {
+  if (executionOwnership.get(rc.id, event.rootExecutionId)) return;
+  const hint = executionPrincipalHints.get(executionTurnKey(rc.id, event.rootTurnId));
+  if (!hint || hint.expiresAt <= Date.now()) return;
+  executionOwnership.claim(rc.id, event.rootExecutionId, hint.principalId);
+}
 function requestExecutionReplay(rc: RunnerConn, rootExecutionId: string, afterSeq: number, replace = false, prior: ExecutionEvent[] = []): void {
   const reqId = `exec-${randomUUID()}`;
   executionReplayRequests.set(reqId, { runnerId: rc.id, rootExecutionId, replace, events: prior });
@@ -1030,9 +1420,28 @@ function askRunner<T>(map: Map<string, (v: any) => void>, key: string, sendIt: (
   });
 }
 /** History of a session that lives on `rc` (remote). null if the runner doesn't answer. */
-function runnerHistory(rc: RunnerConn, sessionId: string): Promise<any> {
-  const reqId = "hub-" + randomUUID().slice(0, 8);
-  return askRunner(pendingRunnerHist, reqId, () => sendToRunner(rc, { t: "open", reqId, sessionId }), null);
+function runnerHistory(rc: RunnerConn, sessionId: string, scope: RunnerHistoryScope = {}): Promise<any> {
+  const reqId = runnerRequestId("hub-history");
+  const generation = scope.generation || captureSessionOwnerGeneration(rc.id, sessionId);
+  return new Promise((resolve) => {
+    pendingRunnerHist.set(reqId, { ...scope, principalId: scope.ws ? socketPrincipalId(scope.ws) : scope.principalId, runnerId: rc.id, sessionId, generation, resolve });
+    if (!sendToRunner(rc, { t: "open", reqId, sessionId })) { pendingRunnerHist.delete(reqId); resolve(null); return; }
+    setTimeout(() => { if (pendingRunnerHist.delete(reqId)) resolve(null); }, 8_000).unref?.();
+  });
+}
+function runnerHistoryWaiterAuthorized(waiter: PendingRunnerHistory, rc: RunnerConn, sessionId: unknown): boolean {
+  if (waiter.runnerId !== rc.id || sessionId !== waiter.sessionId) return false;
+  if (!waiter.generation.snapshots.every((snapshot) => personalSessionBindings.matches(snapshot))) return false;
+  if (waiter.ws && (socketPrincipalId(waiter.ws) !== waiter.principalId || !canUseRunner(waiter.ws, rc.id) || !canAccessSession(waiter.ws, rc.id, waiter.sessionId))) return false;
+  const current = captureSessionOwnerGeneration(rc.id, waiter.sessionId);
+  return !current.conflicted && (!current.principalId || !waiter.principalId || current.principalId === waiter.principalId);
+}
+function rememberRunnerHistoryState(rc: RunnerConn, m: any): boolean {
+  const states = runnerSessionState.get(rc.id) || new Map<string, any>();
+  states.set(m.sessionId, { ...(states.get(m.sessionId) || {}), id: m.sessionId, title: m.title, agent: m.agent, cwd: m.cwd, nativeId: m.nativeId, model: m.model, effort: m.effort, started: Number(m.total) > 0, source: /^(claude:|codex:)/.test(m.sessionId || "") ? "native" : "managed" });
+  runnerSessionState.set(rc.id, states);
+  try { synchronizePersonalSessionAliases(rc.id, m.sessionId); return true; }
+  catch (error) { console.error(`[hub] alias remoto de ${rc.id}/${m.sessionId} recusado:`, String((error as Error)?.message || error)); return false; }
 }
 /** Session list of a remote machine, plus whether the machine actually ANSWERED. A silent runner and a
  *  runner with genuinely zero sessions both yield `[]`; only `answered` tells them apart, and the
@@ -1063,6 +1472,10 @@ function mergeRunnerSessionState(runnerId: string, sessions: any[]): Map<string,
   const states = runnerSessionState.get(runnerId) || new Map<string, any>();
   for (const s of sessions) if (s?.id) states.set(s.id, { ...(states.get(s.id) || {}), ...s });
   runnerSessionState.set(runnerId, states);
+  for (const s of sessions) if (s?.id) {
+    try { synchronizePersonalSessionAliases(runnerId, String(s.id)); }
+    catch (error) { console.error(`[hub] alias remoto de ${runnerId}/${s.id} recusado:`, String((error as Error)?.message || error)); }
+  }
   return states;
 }
 function dedupeRunnerSessions(runnerId: string, sessions: any[]): any[] {
@@ -1088,7 +1501,9 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "pong") return; // heartbeat ack — rc.lastSeen already refreshed by the caller
   if (m.t === "execution_manifest") { reconcileExecutionManifest(rc, Array.isArray(m.entries) ? m.entries : []); return; }
   if (m.t === "execution_event") {
-    const mirror = mirrorExecutionStore(rc.id), result = mirror.ingest(m.event as ExecutionEvent);
+    const event = m.event as ExecutionEvent;
+    claimRemoteExecutionOwner(rc, event);
+    const mirror = mirrorExecutionStore(rc.id), result = mirror.ingest(event);
     if (result.status === "applied") { mirror.setConnection(m.event.rootExecutionId, "online"); broadcastExecutionEvent(rc.id, result.event); }
     else if (result.status === "gap") { mirror.setConnection(m.event.rootExecutionId, "reconciling"); broadcastExecutionConnection(rc.id, "reconciling"); requestExecutionReplay(rc, m.event.rootExecutionId, result.expectedSeq - 1); }
     else if (result.status === "journal_mismatch") { mirror.setConnection(m.event.rootExecutionId, "reconciling"); broadcastExecutionConnection(rc.id, "reconciling"); requestExecutionReplay(rc, m.event.rootExecutionId, 0, true); }
@@ -1099,6 +1514,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     const pending = executionReplayRequests.get(m.reqId); if (!pending || pending.runnerId !== rc.id || pending.rootExecutionId !== m.rootExecutionId) return;
     executionReplayRequests.delete(m.reqId);
     const batch = Array.isArray(m.events) ? m.events as ExecutionEvent[] : [], mirror = mirrorExecutionStore(rc.id);
+    for (const event of batch) claimRemoteExecutionOwner(rc, event);
     if (pending.replace) pending.events.push(...batch);
     else for (const event of batch) {
       const result = mirror.ingest(event);
@@ -1132,18 +1548,20 @@ function relayRunner(rc: RunnerConn, m: any): void {
     return;
   }
   if (m.t === "memory_preview") {
-    const pending = pendingRemoteMemoryPreview.get(m.reqId), client = pendingReq.get(m.reqId);
+    const pending = pendingRemoteMemoryPreview.get(m.reqId);
+    const request = takePendingRequest(rc, m.reqId, ["memory_preview"], pending?.sessionId);
     pendingRemoteMemoryPreview.delete(m.reqId); pendingReq.delete(m.reqId);
-    if (!pending || !client || pending.runnerId !== rc.id || typeof m.token !== "string") return;
-    const confirmation: PendingMemoryConfirmation = { runnerId: rc.id, sessionId: pending.sessionId, actor: pending.actor, mode: "repo-remote", expiresAt: Number(m.expiresAt) || Date.now() + MEMORY_PREVIEW_TTL_MS };
+    if (!pending || !request || pending.runnerId !== rc.id || pending.ws !== request.socket || typeof m.token !== "string") return;
+    const confirmation: PendingMemoryConfirmation = { runnerId: rc.id, sessionId: pending.sessionId, actor: pending.actor, mode: "repo-remote", expiresAt: Number(m.expiresAt) || Date.now() + MEMORY_PREVIEW_TTL_MS, ownerGeneration: pending.sessionId ? captureSessionOwnerGeneration(rc.id, pending.sessionId) : undefined };
     pendingMemoryConfirmations.set(m.token, confirmation);
-    sendMemoryFrame(client, confirmation, { t: "memory_preview", token: m.token, target: m.target, note: m.note, appendText: m.appendText, beforeHash: m.beforeHash, exists: !!m.exists, expiresAt: m.expiresAt, runnerId: rc.id, sessionId: pending.sessionId, mode: "repo" });
+    sendMemoryFrame(request.socket, confirmation, { t: "memory_preview", token: m.token, target: m.target, note: m.note, appendText: m.appendText, beforeHash: m.beforeHash, exists: !!m.exists, expiresAt: m.expiresAt, runnerId: rc.id, sessionId: pending.sessionId, mode: "repo" });
     return;
   }
   if (m.t === "memory_applied") {
-    const request = pendingRemoteMemoryApply.get(m.reqId), client = pendingReq.get(m.reqId);
+    const memoryRequest = pendingRemoteMemoryApply.get(m.reqId);
+    const request = takePendingRequest(rc, m.reqId, ["memory_apply"], memoryRequest?.pending.sessionId);
     pendingRemoteMemoryApply.delete(m.reqId); pendingReq.delete(m.reqId);
-    if (request && client) sendMemoryFrame(client, request.pending, { ...m, runnerId: rc.id });
+    if (memoryRequest && request && memoryRequest.ws === request.socket) sendMemoryFrame(request.socket, memoryRequest.pending, { ...m, runnerId: rc.id });
     return;
   }
   if (m.t === "framework_published") {
@@ -1161,13 +1579,15 @@ function relayRunner(rc: RunnerConn, m: any): void {
       sendToRunner(rc, { t: "execution_control", requestId: `late-${randomUUID()}`, executionId: m.rootExecutionId, action: "cancel_subtree" });
       return;
     }
+    const pending = typeof m.requestId === "string" ? pendingReq.get(m.requestId) : undefined;
+    if (!m.ok && pending?.runnerId === rc.id && pending.operation === "execution_delegate" && pending.metadata?.rootExecutionId) executionOwnership.remove(rc.id, pending.metadata.rootExecutionId);
     executionUiState.commands[m.requestId] = m; saveExecutionUiState();
-    const client = pendingReq.get(m.requestId); if (client) { pendingReq.delete(m.requestId); send(client, m); }
+    const request = takePendingRequest(rc, m.requestId, ["execution_delegate"]); if (request) send(request.socket, m);
     return;
   }
   if (m.t === "execution_control_result") {
     executionUiState.commands[m.requestId] = m; saveExecutionUiState();
-    const client = pendingReq.get(m.requestId); if (client) { pendingReq.delete(m.requestId); send(client, m); }
+    const request = takePendingRequest(rc, m.requestId, ["execution_control"]); if (request) send(request.socket, m);
     return;
   }
   if (m.t === "sessions") {
@@ -1176,26 +1596,47 @@ function relayRunner(rc: RunnerConn, m: any): void {
     const sessions = dedupeRunnerSessions(rc.id, raw);
     const recentDirs = Array.isArray(m.recentDirs) ? m.recentDirs.filter((d: unknown): d is string => typeof d === "string" && d.trim().length > 0) : [];
     pendingRunnerList.resolve(rc.id, sessions);
-    for (const c of clientsOn(rc.id)) send(c, { t: "sessions", sessions, recentDirs, runnerId: rc.id });
+    for (const c of clientsOn(rc.id)) {
+      const visible = visibleSessions(c, rc.id, sessions);
+      send(c, { t: "sessions", sessions: visible, recentDirs: recentDirsList(10, visible), runnerId: rc.id });
+    }
     return;
   }
-  if (m.t === "deleted") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); for (const sid of m.ids || []) mirrorExecutionStore(rc.id).deleteSession(sid); send(c, { t: "deleted", sessionId: m.sessionId, ids: m.ids || [], ok: !!m.ok, okCount: Number(m.okCount) || 0 }); } return; }
+  if (m.t === "deleted") {
+    const request = takePendingRequest(rc, m.reqId, ["delete"]);
+    if (!request) return;
+    const responseIds = Array.isArray(m.ids) ? m.ids.filter((id: unknown): id is string => typeof id === "string") : [];
+    const returned = [...new Set<string>(responseIds.filter((id: string) => request.sessionIds.includes(id)))];
+    const accepted: string[] = [];
+    for (const sessionId of returned) {
+      const target = request.metadata?.deleteTargets?.find((candidate) => candidate.sessionId === sessionId);
+      if (!target) continue;
+      const invalidated = personalSessionBindings.invalidateManyIfCurrent(target.invalidations);
+      if (!invalidated.some((snapshot) => snapshot.sessionId === sessionId)) continue;
+      accepted.push(sessionId);
+      const state = runnerSessionState.get(rc.id); state?.delete(sessionId);
+      for (const snapshot of invalidated) removeSessionExecutionAndMemory(rc.id, snapshot.sessionId);
+    }
+    send(request.socket, { t: "deleted", sessionId: m.sessionId, ids: accepted, ok: accepted.length === request.sessionIds.length, okCount: accepted.length });
+    return;
+  }
   if (m.t === "history") {
-    const states = runnerSessionState.get(rc.id) || new Map<string, any>();
-    states.set(m.sessionId, { ...(states.get(m.sessionId) || {}), id: m.sessionId, agent: m.agent, cwd: m.cwd, nativeId: m.nativeId, model: m.model, effort: m.effort, started: Number(m.total) > 0, source: /^(claude:|codex:)/.test(m.sessionId || "") ? "native" : "managed" });
-    runnerSessionState.set(rc.id, states);
     const hcb = pendingRunnerHist.get(m.reqId);
-    if (hcb) { pendingRunnerHist.delete(m.reqId); hcb(m); return; }
-    const c = pendingReq.get(m.reqId);
-    if (c) {
-      pendingReq.delete(m.reqId);
+    if (hcb) {
+      pendingRunnerHist.delete(m.reqId);
+      if (!runnerHistoryWaiterAuthorized(hcb, rc, m.sessionId) || !rememberRunnerHistoryState(rc, m)) { hcb.resolve(null); return; }
+      hcb.resolve(m); return;
+    }
+    const request = takePendingRequest(rc, m.reqId, ["open", "new", "configure"], m.sessionId);
+    if (request) {
+      if (!rememberRunnerHistoryState(rc, m) || !canAccessSession(request.socket, rc.id, m.sessionId)) return;
       const native = /^(claude:|codex:)/.test(m.sessionId || "");
     const messages = Array.isArray(m.messages) ? m.messages : [];
     const liveKey = scopedSessionKey(rc.id, m.sessionId);
     if (Array.isArray(m.liveActivity) && m.liveActivity.length) activityBuf.set(liveKey, m.liveActivity.slice(0, 1_200));
     else if ([...messages].reverse().some((message: any) => message?.role === "assistant")) activityBuf.delete(liveKey);
       const su = effectiveSessionUsage(m.sessionId, messages, rc.id);
-      send(c, {
+      send(request.socket, {
         t: "history", runnerId: rc.id, sessionId: m.sessionId,
         session: {
           agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId,
@@ -1207,13 +1648,13 @@ function relayRunner(rc: RunnerConn, m: any): void {
         messages: messages.map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity, contextManifest: x.contextManifest })),
         files: m.files,
       });
-      replayRoute(c, rc.id, m.sessionId); replayActivity(c, rc.id, m.sessionId);
-      sendPendingAsk(c, rc.id, m.sessionId);
-      send(c, { t: "queue", runnerId: rc.id, sessionId: m.sessionId, items: queueOf(rc.id, m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
+      replayRoute(request.socket, rc.id, m.sessionId); replayActivity(request.socket, rc.id, m.sessionId);
+      sendPendingAsk(request.socket, rc.id, m.sessionId);
+      send(request.socket, { t: "queue", runnerId: rc.id, sessionId: m.sessionId, items: queueOf(rc.id, m.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
     }
     return;
   }
-  if (m.t === "filediff") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); } return; }
+  if (m.t === "filediff") { const request = takePendingRequest(rc, m.reqId, ["filediff"]); if (request) send(request.socket, { t: "filediff", path: m.path, name: m.name, rows: m.rows, adds: m.adds, dels: m.dels, error: m.error }); return; }
   if (m.t === "agent_event") {
     const event = m.event as AgentEvent, sid = m.sessionId, mkey = rc.id + "\0" + sid;
     if (event.kind === "accepted") { activityBuf.set(mkey, []); remoteTurnStart.set(mkey, Date.now()); }
@@ -1224,20 +1665,21 @@ function relayRunner(rc: RunnerConn, m: any): void {
       if (t0 && event.kind !== "cancelled") metrics.record({ runnerId: rc.id, agent: m.agent, model: event.usage?.model, ms: Date.now() - t0, ok: event.kind === "completed", ts: Date.now() });
       remoteTurnStart.delete(mkey);
       if (event.kind !== "completed") remoteSpeak.delete(mkey);
+      releaseRunnerSessionAfterTerminal(rc.id, sid);
     }
-    for (const c of clientsOn(rc.id)) send(c, { t: "agent_event", runnerId: rc.id, sessionId: sid, event, sessionCost: costOf(sid, rc.id), sessionUsage: sessionUsage(sid, rc.id) });
+    for (const c of clientsOn(rc.id)) if (canAccessSession(c, rc.id, sid)) send(c, { t: "agent_event", runnerId: rc.id, sessionId: sid, event, sessionCost: costOf(sid, rc.id), sessionUsage: sessionUsage(sid, rc.id) });
     const label = runnerLabels[rc.id] || rc.info.host || rc.id;
     if (event.kind === "completed") {
       const replyText = event.text || "";
       if (remoteSpeak.delete(mkey) && replyText) void (async () => {
         try {
           const wav = await synthesize(replyText, VOICE);
-          for (const c of clientsOn(rc.id)) if (subs.get(c) === sid) send(c, { t: "tts", runnerId: rc.id, sessionId: sid, audio: wav.toString("base64"), text: replyText });
+          for (const c of clientsOn(rc.id)) if (subs.get(c) === sid && canAccessSession(c, rc.id, sid)) send(c, { t: "tts", runnerId: rc.id, sessionId: sid, audio: wav.toString("base64"), text: replyText });
         } catch { /* TTS is best-effort. */ }
       })();
-      notifyEvent("done", `${label} · sessão concluída`, replyText, sid);
+      notifyEvent("done", `${label} · sessão concluída`, replyText, sid, notificationTargetForSession(rc.id, sid));
     }
-    else if (event.kind === "failed") notifyEvent("error", `${label} · falhou`, event.text || "", sid);
+    else if (event.kind === "failed") notifyEvent("error", `${label} · falhou`, event.text || "", sid, notificationTargetForSession(rc.id, sid));
     if (event.kind === "completed") { void runAsking(rc.id, sid, event.text || ""); void indexRunnerSession(rc, sid); }
     return;
   }
@@ -1250,13 +1692,15 @@ function relayRunner(rc: RunnerConn, m: any): void {
     const states = runnerSessionState.get(rc.id) || new Map<string, any>();
     states.set(m.sessionId, { ...(states.get(m.sessionId) || {}), id: m.sessionId, nativeId: m.nativeId });
     runnerSessionState.set(rc.id, states);
-    for (const c of clientsOn(rc.id)) send(c, { t: "session", runnerId: rc.id, sessionId: m.sessionId, nativeId: m.nativeId });
+    try { synchronizePersonalSessionAliases(rc.id, m.sessionId); }
+    catch (error) { console.error(`[hub] alias remoto de ${rc.id}/${m.sessionId} recusado:`, String((error as Error)?.message || error)); return; }
+    for (const c of clientsOn(rc.id)) if (canAccessSession(c, rc.id, m.sessionId)) send(c, { t: "session", runnerId: rc.id, sessionId: m.sessionId, nativeId: m.nativeId });
     return;
   }
   if (m.t === "context_manifest" && m.manifest) {
     const manifest: ContextManifest = { ...m.manifest, runnerId: rc.id, sessionId: m.sessionId };
     try { remoteContextManifests.append(manifest); } catch (error) { console.warn("[hub] manifesto remoto não persistido:", String(error)); }
-    for (const c of clientsOn(rc.id)) if (subs.get(c) === m.sessionId) send(c, { t: "context_manifest", runnerId: rc.id, sessionId: m.sessionId, manifest });
+    for (const c of clientsOn(rc.id)) if (subs.get(c) === m.sessionId && canAccessSession(c, rc.id, m.sessionId)) send(c, { t: "context_manifest", runnerId: rc.id, sessionId: m.sessionId, manifest });
     return;
   }
   if (m.t === "stream") {
@@ -1271,23 +1715,33 @@ function relayRunner(rc: RunnerConn, m: any): void {
         const t0 = remoteTurnStart.get(mkey);
         if (t0 && ev.kind !== "cancelled") metrics.record({ runnerId: rc.id, agent: m.agent, model: ev.usage?.model, ms: Date.now() - t0, ok: ev.kind === "done", ts: Date.now() });
         remoteTurnStart.delete(mkey);
+        releaseRunnerSessionAfterTerminal(rc.id, sid);
       } }
-    for (const c of clientsOn(rc.id)) send(c, { t: "stream", runnerId: rc.id, sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage, sessionCost: costOf(m.sessionId, rc.id), sessionUsage: sessionUsage(m.sessionId, rc.id) });
+    for (const c of clientsOn(rc.id)) if (canAccessSession(c, rc.id, m.sessionId)) send(c, { t: "stream", runnerId: rc.id, sessionId: m.sessionId, ev: m.ev, usage: m.ev?.usage, sessionCost: costOf(m.sessionId, rc.id), sessionUsage: sessionUsage(m.sessionId, rc.id) });
     // Turnos de máquina remota terminavam em silêncio: só o cliente conectado ficava sabendo.
     const label = runnerLabels[rc.id] || rc.info.host || rc.id;
-    if (m.ev?.kind === "done") notifyEvent("done", `${label} · sessão concluída`, m.ev.text || "", m.sessionId);
-    else if (m.ev?.kind === "error") notifyEvent("error", `${label} · falhou`, m.ev.text || "", m.sessionId);
+    if (m.ev?.kind === "done") notifyEvent("done", `${label} · sessão concluída`, m.ev.text || "", m.sessionId, notificationTargetForSession(rc.id, m.sessionId));
+    else if (m.ev?.kind === "error") notifyEvent("error", `${label} · falhou`, m.ev.text || "", m.sessionId, notificationTargetForSession(rc.id, m.sessionId));
     return;
   }
-  if (m.t === "busy") { for (const c of clientsOn(rc.id)) send(c, { t: "busy", message: m.message }); return; }
-  if (m.t === "message") { for (const c of clientsOn(rc.id)) send(c, { t: "message", runnerId: rc.id, message: { sessionId: m.sessionId, ...m.message } }); return; }
-  if (m.t === "activity") { for (const c of clientsOn(rc.id)) send(c, { t: "activity", runnerId: rc.id, sessionId: m.sessionId, name: m.name, summary: m.summary, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows }); return; }
+  if (m.t === "busy") {
+    if (typeof m.sessionId === "string") broadcastOn(rc.id, m.sessionId, { t: "busy", message: "A sessão já está processando outro turno." });
+    else console.warn(`[hub] resposta busy sem escopo descartada de ${rc.id}`);
+    return;
+  }
+  if (m.t === "message") { for (const c of clientsOn(rc.id)) if (canAccessSession(c, rc.id, m.sessionId)) send(c, { t: "message", runnerId: rc.id, message: { sessionId: m.sessionId, ...m.message } }); return; }
+  if (m.t === "activity") { for (const c of clientsOn(rc.id)) if (canAccessSession(c, rc.id, m.sessionId)) send(c, { t: "activity", runnerId: rc.id, sessionId: m.sessionId, name: m.name, summary: m.summary, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, background: m.background }); return; }
   if (m.t === "runs") {
     const prev = runnerActive.get(rc.id) || new Set<string>();
     const now = new Set<string>(m.active || []);
+    for (const sid of now) if (!prev.has(sid)) bumpRunnerActiveEpoch(rc.id, sid);
     runnerActive.set(rc.id, now);
-    for (const c of clientsOn(rc.id)) send(c, { t: "runs", runnerId: rc.id, active: m.active || [] });
+    broadcastRunnerRuns(rc.id);
     for (const sid of prev) if (!now.has(sid)) void maybeFlushQueue(rc.id, sid, false); // turno do runner terminou → roda a fila DELE
+    return;
+  }
+  if (m.t === "cancel_result" && typeof m.sessionId === "string") {
+    if (!m.active && clearRunnerSessionActive(rc.id, m.sessionId)) void maybeFlushQueue(rc.id, m.sessionId, false);
     return;
   }
   // Update outcome of a machine. Goes to whoever asked (any owner watching the update panel),
@@ -1295,13 +1749,17 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "update_done") {
     completePendingRunnerUpdate(rc, m); return;
   }
-  if (m.t === "command_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "command_list", runnerId: rc.id, cwd: m.cwd, commands: m.commands || [] }); } return; }
-  if (m.t === "mention_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "mention_list", files: m.files || [] }); } return; }
-  if (m.t === "preview_list") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "worktree_preview", sessionId: m.sessionId, candidates: m.candidates || [] }); } return; }
+  if (m.t === "command_list") { const request = takePendingRequest(rc, m.reqId, ["commands"]); if (request) send(request.socket, { t: "command_list", runnerId: rc.id, cwd: m.cwd, commands: m.commands || [] }); return; }
+  if (m.t === "mention_list") { const request = takePendingRequest(rc, m.reqId, ["mention"]); if (request) send(request.socket, { t: "mention_list", files: m.files || [] }); return; }
+  if (m.t === "preview_list") { const request = takePendingRequest(rc, m.reqId, ["preview"], m.sessionId); if (request) send(request.socket, { t: "worktree_preview", sessionId: m.sessionId, candidates: m.candidates || [] }); return; }
+  if (m.t === "browser_event" && typeof m.sessionId === "string" && m.event) {
+    for (const c of clientsOn(rc.id)) if (subs.get(c) === m.sessionId && canAccessSession(c, rc.id, m.sessionId)) send(c, { t: "browser_event", runnerId: rc.id, sessionId: m.sessionId, event: m.event });
+    return;
+  }
   if (m.t === "terminal_opened" && m.terminal?.id) {
     terminalOwners.set(String(m.terminal.id), rc.id);
-    const c = m.reqId && pendingReq.get(m.reqId);
-    if (c) { pendingReq.delete(m.reqId); rememberTerminalWatcher(String(m.terminal.id), c); }
+    const request = takePendingRequest(rc, m.reqId, ["terminal_open"]);
+    if (request) rememberTerminalWatcher(String(m.terminal.id), request.socket);
     broadcastTerminal(rc.id, { t: "terminal_opened", reqId: m.reqId, terminal: m.terminal });
     return;
   }
@@ -1309,33 +1767,65 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "terminal_closed" && typeof m.terminalId === "string") { terminalOwners.delete(m.terminalId); broadcastTerminal(rc.id, { t: "terminal_closed", terminalId: m.terminalId, exitCode: m.exitCode, signal: m.signal }); return; }
   if (m.t === "terminal_list") {
     for (const terminal of m.terminals || []) if (terminal?.id) terminalOwners.set(String(terminal.id), rc.id);
-    const c = m.reqId && pendingReq.get(m.reqId);
-    if (c) {
-      pendingReq.delete(m.reqId);
-      for (const terminal of m.terminals || []) rememberTerminalWatcher(terminal?.id, c);
+    const request = takePendingRequest(rc, m.reqId, ["terminal_list"]);
+    if (request) {
+      for (const terminal of m.terminals || []) rememberTerminalWatcher(terminal?.id, request.socket);
     }
     broadcastTerminal(rc.id, { t: "terminal_list", reqId: m.reqId, terminals: Array.isArray(m.terminals) ? m.terminals : [] });
     return;
   }
   if (m.t === "terminal_error") {
-    const c = m.reqId && pendingReq.get(m.reqId);
-    if (c) { pendingReq.delete(m.reqId); send(c, { t: "terminal_error", runnerId: rc.id, reqId: m.reqId, terminalId: m.terminalId, message: String(m.message || "erro no terminal") }); }
-    else broadcastTerminal(rc.id, { t: "terminal_error", reqId: m.reqId, terminalId: m.terminalId, message: String(m.message || "erro no terminal") });
+    const route = remoteErrorRoute(m);
+    let request: PendingRequest<WebSocket, PendingRequestMetadata> | undefined;
+    if (route.scope === "request") {
+      const pending = pendingReq.get(route.requestId);
+      request = pending ? takePendingRequest(rc, route.requestId, [pending.operation]) : undefined;
+    }
+    if (request) send(request.socket, { t: "terminal_error", runnerId: rc.id, reqId: route.scope === "request" ? route.requestId : undefined, terminalId: m.terminalId, message: "erro no terminal remoto" });
+    else {
+      const routedSessionId = "sessionId" in route ? route.sessionId : undefined;
+      if (routedSessionId) broadcastOn(rc.id, routedSessionId, { t: "terminal_error", terminalId: m.terminalId, message: "erro no terminal remoto" });
+      else console.warn(`[hub] erro de terminal remoto sem escopo descartado de ${rc.id}`);
+    }
     return;
   }
-  if (m.t === "dirs") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries, files: m.files }); } return; }
-  if (m.t === "filecontent") { const c = pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, mtimeMs: m.mtimeMs, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); } return; }
+  if (m.t === "dirs") { const request = takePendingRequest(rc, m.reqId, ["listdir"]); if (request) send(request.socket, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries, files: m.files }); return; }
+  if (m.t === "filecontent") { const request = takePendingRequest(rc, m.reqId, ["readfile"]); if (request) send(request.socket, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, mtimeMs: m.mtimeMs, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); return; }
   if (m.t === "error") {
-    const replay = m.reqId && executionReplayRequests.get(m.reqId);
-    if (replay) { executionReplayRequests.delete(m.reqId); mirrorExecutionStore(rc.id).setConnection(replay.rootExecutionId, "desynced"); broadcastExecutionConnection(rc.id, "desynced"); console.error(`[hub] replay de execução falhou em ${rc.id}: ${m.message}`); return; }
-    const memoryApply = m.reqId && pendingRemoteMemoryApply.get(m.reqId);
-    if (memoryApply) {
-      pendingRemoteMemoryApply.delete(m.reqId!); pendingReq.delete(m.reqId!);
-      sendMemoryFrame(memoryApply.ws, memoryApply.pending, { t: "memory_applied", token: memoryApply.token, ok: false, error: m.message, runnerId: rc.id, sessionId: memoryApply.pending.sessionId });
-      return;
+    const route = remoteErrorRoute(m);
+    if (route.scope === "request") {
+      const requestId = route.requestId;
+      const replay = executionReplayRequests.get(requestId);
+      if (replay?.runnerId === rc.id) {
+        executionReplayRequests.delete(requestId);
+        mirrorExecutionStore(rc.id).setConnection(replay.rootExecutionId, "desynced");
+        broadcastExecutionConnection(rc.id, "desynced");
+        console.error(`[hub] replay de execução falhou em ${rc.id}`);
+        return;
+      }
+      const memoryApply = pendingRemoteMemoryApply.get(requestId);
+      if (memoryApply?.pending.runnerId === rc.id) {
+        const request = takePendingRequest(rc, requestId, ["memory_apply"], memoryApply.pending.sessionId);
+        pendingRemoteMemoryApply.delete(requestId);
+        if (request) sendMemoryFrame(request.socket, memoryApply.pending, { t: "memory_applied", token: memoryApply.token, ok: false, error: "a máquina não aplicou a memória", runnerId: rc.id, sessionId: memoryApply.pending.sessionId });
+        return;
+      }
+      const history = pendingRunnerHist.get(requestId);
+      if (history?.runnerId === rc.id) { pendingRunnerHist.delete(requestId); history.resolve(null); return; }
+      const preview = pendingRemoteMemoryPreview.get(requestId);
+      const pending = pendingReq.get(requestId);
+      if (pending) {
+        const request = takePendingRequest(rc, requestId, [pending.operation], preview?.sessionId);
+        if (preview?.runnerId === rc.id) pendingRemoteMemoryPreview.delete(requestId);
+        if (request) send(request.socket, { t: "error", message: `a operação remota ${request.operation} falhou` });
+        return;
+      }
+      if (preview?.runnerId === rc.id) { pendingRemoteMemoryPreview.delete(requestId); return; }
     }
-    if (m.reqId) pendingRemoteMemoryPreview.delete(m.reqId);
-    const c = m.reqId && pendingReq.get(m.reqId); if (c) { pendingReq.delete(m.reqId); send(c, { t: "error", message: m.message }); } else for (const cc of clientsOn(rc.id)) send(cc, { t: "error", message: m.message }); return;
+    const routedSessionId = "sessionId" in route ? route.sessionId : undefined;
+    if (routedSessionId) broadcastOn(rc.id, routedSessionId, { t: "error", message: "operação remota falhou" });
+    else console.warn(`[hub] erro remoto sem escopo descartado de ${rc.id}`);
+    return;
   }
 }
 
@@ -1351,6 +1841,19 @@ type ExecutionLocation = { runnerId: string; store: ExecutionStore; rootExecutio
 function executionSources(): Array<{ runnerId: string; store: ExecutionStore }> {
   if (!executionCfg.enabled) return [];
   return [{ runnerId: LOCAL_ID, store: localExecutionStore }, ...[...executionMirrors].map(([runnerId, store]) => ({ runnerId, store }))];
+}
+function canAccessExecutionRoot(ws: WebSocket, runnerId: string, rootExecutionId: string): boolean {
+  return canUseRunner(ws, runnerId) && executionOwnership.allows(runnerId, rootExecutionId, socketPrincipalId(ws));
+}
+function removeSessionExecutionAndMemory(runnerId: string, sessionId: string): void {
+  const source = runnerId === LOCAL_ID ? localExecutionStore : mirrorExecutionStore(runnerId);
+  const rootIds = source.rootsForSession(sessionId).map((snapshot) => snapshot.rootExecutionId);
+  source.deleteSession(sessionId);
+  for (const rootExecutionId of rootIds) {
+    try { executionOwnership.remove(runnerId, rootExecutionId); }
+    catch (error) { console.error(`[hub] ownership da execução ${rootExecutionId} não removido:`, String((error as Error)?.message || error)); }
+  }
+  memory.removeSession(sessionId, runnerId);
 }
 function executionNodeBySession(sessionId: string): ExecutionNode | undefined {
   for (const source of executionSources()) for (const entry of source.store.manifest()) {
@@ -1395,12 +1898,17 @@ function executionEventsForNode(store: ExecutionStore, rootExecutionId: string, 
 function broadcastExecutionEvent(runnerId: string, event: ExecutionEvent): void {
   for (const client of wss.clients) {
     const ws = client as WebSocket;
-    if (!runnerSockets.has(ws) && canUseRunner(ws, runnerId)) send(ws, { t: "execution_delta", runnerId, event });
+    if (!runnerSockets.has(ws) && canAccessExecutionRoot(ws, runnerId, event.rootExecutionId)) send(ws, { t: "execution_delta", runnerId, event });
   }
+}
+function canAccessCachedExecutionResult(ws: WebSocket, result: any): boolean {
+  const executionId = typeof result?.executionId === "string" ? result.executionId : typeof result?.rootExecutionId === "string" ? result.rootExecutionId : undefined;
+  const found = executionId ? executionLocation(executionId) : undefined;
+  return !!found && canAccessExecutionRoot(ws, found.runnerId, found.rootExecutionId);
 }
 function broadcastExecutionConnection(runnerId: string, state: "online" | "offline" | "reconciling" | "desynced"): void {
   const at = Date.now();
-  for (const client of wss.clients) { const ws = client as WebSocket; if (!runnerSockets.has(ws) && canUseRunner(ws, runnerId)) send(ws, { t: "execution_connection", runnerId, state, at }); }
+  for (const client of wss.clients) { const ws = client as WebSocket; if (!runnerSockets.has(ws) && canUseRunner(ws, runnerId) && executionOwnership.hasOnRunner(runnerId, socketPrincipalId(ws))) send(ws, { t: "execution_connection", runnerId, state, at }); }
 }
 
 const managedWorktrees = new ManagedWorktreeManager(executionCfg.worktreeRoot);
@@ -1444,10 +1952,12 @@ function boundedManagedPolicy(value: ManagedExecutionPolicyInput | undefined): M
     maxDepth: Math.min(executionCfg.maxDepth, value?.maxDepth ?? executionCfg.maxDepth) };
 }
 
-function startLocalManagedExecution(input: { requestId: string; title?: string; plan: ManagedExecutionPlan; policy?: ManagedExecutionPolicyInput }, respond: (result: any) => void): void {
+function startLocalManagedExecution(input: { requestId: string; title?: string; plan: ManagedExecutionPlan; policy?: ManagedExecutionPolicyInput; principalId: string }, respond: (result: any) => void): void {
   let responded = false;
   const finish = (result: any): void => { if (responded) return; responded = true; executionUiState.commands[input.requestId] = result; saveExecutionUiState(); respond(result); };
   const ctrl = new AbortController();
+  try { executionOwnership.claim(LOCAL_ID, input.plan.rootExecutionId, input.principalId); }
+  catch (error) { finish({ t: "execution_delegate_result", requestId: input.requestId, ok: false, error: String((error as Error)?.message || error) }); return; }
   localManagedRuns.add(input.plan.rootExecutionId); localExecutionAborts.set(input.plan.rootExecutionId, ctrl);
   void localManagedExecution.run(input.plan, {
     title: input.title, policy: boundedManagedPolicy(input.policy), signal: ctrl.signal,
@@ -1586,7 +2096,7 @@ function pollTail(sid: string): void {
     if (!line.trim()) continue;
     for (const e of parseNativeEvents(line, t.claude) as any[]) {
       if (e.kind === "message") broadcast(sid, { t: "message", message: { sessionId: sid, role: e.role, text: e.text, ts: e.ts, agent: t.claude ? "claude-code" : "codex" } });
-      else broadcast(sid, { t: "activity", sessionId: sid, name: e.name, summary: e.summary, detail: e.detail, path: e.path, adds: e.adds, dels: e.dels, rows: e.rows });
+      else broadcast(sid, { t: "activity", sessionId: sid, name: e.name, summary: e.summary, detail: e.detail, path: e.path, adds: e.adds, dels: e.dels, rows: e.rows, background: e.background });
     }
   }
 }
@@ -1610,8 +2120,18 @@ function syncTails(): void {
   for (const sid of viewed) startTail(sid);
 }
 /** Jarvis's own sessions merged with imported native Claude/Codex sessions (agent-tagged, newest first). */
+function nativeDisplayTitleForSession(s: any): string {
+  try {
+    const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+    const key = nid ? nativeIdForAgent(s.agent, nid) : null;
+    const h = key ? nativeHistory(key) : null;
+    return h?.title || s.title;
+  } catch {
+    return s.title;
+  }
+}
 function allSessions(): any[] {
-  const own = store.list();
+  const own = store.list().map((s) => ({ ...s, title: nativeDisplayTitleForSession(s) }));
   // Uma sessão gerenciada pode criar um transcript NATIVO vinculado com outro id
   // (ex.: id Jarvis + `claude:<uuid>`). A sessão gerenciada é a linha canônica.
   const native = filterUnboundNativeSessions(listNative(), own, (s) => {
@@ -1624,17 +2144,23 @@ function allSessions(): any[] {
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 /** The N most-recently-used distinct working folders (across all sessions) — for the folder picker + voice. */
-function recentDirsList(n = 10): string[] {
+function recentDirsList(n = 10, sessions = allSessions()): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const s of allSessions()) {
+  for (const s of sessions) {
     const d = (s.cwd || "").trim();
     if (d && !seen.has(d)) { seen.add(d); out.push(d); if (out.length >= n) break; }
   }
   return out;
 }
-function sessionsPayload(): unknown { return { t: "sessions", sessions: allSessions(), recentDirs: recentDirsList(), runnerId: LOCAL_ID }; }
-function pushSessions(): void { const p = sessionsPayload(); for (const c of clientsOn(LOCAL_ID)) send(c, p); }
+function visibleSessions(ws: WebSocket, runnerId: string, sessions: any[]): any[] {
+  return sessions.filter((session) => typeof session?.id !== "string" || canAccessSession(ws, runnerId, session.id));
+}
+function sessionsPayload(ws: WebSocket): unknown {
+  const sessions = visibleSessions(ws, LOCAL_ID, allSessions());
+  return { t: "sessions", sessions, recentDirs: recentDirsList(10, sessions), runnerId: LOCAL_ID };
+}
+function pushSessions(): void { for (const c of clientsOn(LOCAL_ID)) send(c, sessionsPayload(c)); }
 /** Unified "all machines" view: local sessions + every ONLINE runner's sessions, each tagged with
  *  its runnerId + machine label so the UI can badge them and route an open to the owning machine.
  *  Remote lists are fetched concurrently with a per-runner timeout — a silent machine just yields
@@ -1644,7 +2170,8 @@ async function aggregateAllSessions(ws?: WebSocket): Promise<{ sessions: any[]; 
   // from a runner a member wasn't granted. No ws (internal callers) => unfiltered.
   const canUse = (rid: string) => !ws || canUseRunner(ws, rid);
   const localLabel = runnerLabels[LOCAL_ID] || runners.get(LOCAL_ID)?.info.host || "Servidor";
-  const out: any[] = canUse(LOCAL_ID) ? allSessions().map((s) => ({ ...s, runnerId: LOCAL_ID, machine: localLabel })) : [];
+  const localSessions = ws ? visibleSessions(ws, LOCAL_ID, allSessions()) : allSessions();
+  const out: any[] = canUse(LOCAL_ID) ? localSessions.map((s) => ({ ...s, runnerId: LOCAL_ID, machine: localLabel })) : [];
   const machines: AggregateMachine[] = canUse(LOCAL_ID)
     ? [{ runnerId: LOCAL_ID, label: localLabel, online: true, contributed: true }]
     : [];
@@ -1660,11 +2187,11 @@ async function aggregateAllSessions(ws?: WebSocket): Promise<{ sessions: any[]; 
     const online = !!rc.ws && rc.ws.readyState === WebSocket.OPEN;
     const answer = answers.get(rc.id);
     machines.push({ runnerId: rc.id, label, online, contributed: !!answer?.answered });
-    for (const s of answer?.sessions || []) out.push({ ...s, runnerId: rc.id, machine: label });
+    for (const s of answer?.sessions || []) if (!ws || canAccessSession(ws, rc.id, s.id)) out.push({ ...s, runnerId: rc.id, machine: label });
   }
   return { sessions: out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)), machines };
 }
-function sendSessions(ws: WebSocket): void { send(ws, sessionsPayload()); }
+function sendSessions(ws: WebSocket): void { send(ws, sessionsPayload(ws)); }
 
 /** Per-machine outcome of one unified-view aggregation. `contributed` is false when the machine is
  *  offline OR was online but never answered the list within the timeout — the UI needs both cases to
@@ -1695,6 +2222,7 @@ const localSeenTurns = createSeenSet();
 // The automatic router runs before runManagedTurn/Runner dedupe. Guard the inbound frame as well,
 // otherwise a reconnect could spend a second routing call even though the main turn is at-most-once.
 const incomingTurns = createSeenSet(1000);
+const executionPrincipalContext = new AsyncLocalStorage<string>();
 const turnCtx: TurnCtx = {
   seen: (turnId) => localSeenTurns.add(turnId),
   afterStored: (sid) => { activityBuf.delete(scopedSessionKey(LOCAL_ID, sid)); },
@@ -1740,11 +2268,17 @@ const turnCtx: TurnCtx = {
     return { blocked: false };
   },
 };
+function runOwnedManagedTurn(sid: string, input: ManagedTurnInput): Promise<void> {
+  const principalId = input.actor?.userId || captureSessionOwnerGeneration(LOCAL_ID, sid).principalId || "local";
+  return executionPrincipalContext.run(principalId, () => runManagedTurn(turnCtx, sid, input));
+}
 
 /** One full turn against a session's agent: store+broadcast the user msg, get the reply, speak if asked. */
 async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; speak?: boolean; speaker?: string; speakAlso?: string[]; actor?: ContextActor }): Promise<void> {
-  await runManagedTurn(turnCtx, sid, {
-    showText: opts.showText, agentText: opts.agentText, model: opts.model, effort: opts.effort,
+  const manifestAgentText = opts.agentText || opts.showText;
+  const personal = opts.actor?.source === "user" ? await personalContextForChat(LOCAL_ID, sid, opts.showText, opts.actor) : undefined;
+  await runOwnedManagedTurn(sid, {
+    showText: opts.showText, agentText: personal ? `${personal.contextPrefix}\n\n${manifestAgentText}` : manifestAgentText, manifestAgentText, model: opts.model, effort: opts.effort,
     actor: opts.actor, speaker: opts.speaker, speak: opts.speak, speakAlso: opts.speakAlso,
     onError: (message, limit) => broadcast(sid, { t: "error", message, limit }),
   });
@@ -1754,15 +2288,21 @@ async function deliverTurn(sid: string, opts: { showText: string; agentText?: st
  *  turn lifecycle, so agentTurn's own "done" push notification fires — the user gets briefed even
  *  with the app closed. NOTE: the session's agent/cwd lock on first run; editing a routine's
  *  agent/folder later won't move an existing routine session (delete+recreate to change those). */
-async function runRoutine(r: Routine, approved = false): Promise<void> {
+async function runRoutine(r: Routine, approved = false, actorOverride?: ContextActor): Promise<void> {
+  if (auth.AUTH_ENABLED && !r.principalId) {
+    console.warn(`[hub] rotina legada sem principal não executada: ${r.id}`);
+    return;
+  }
   const sid = "routine-" + r.id;
+  const routineActor: ContextActor = actorOverride || { userId: r.principalId || "local", deviceId: r.deviceId || "local", source: "routine" };
+  const routineTarget = { principalId: routineActor.userId || "local" };
   const flags = autoFlags(r.auto);
   if (!approved) {
     const resolved = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: r.cwd || CWD, sessionId: sid });
     const decision = decideAdaptiveRun(resolved.policy, { background: true, risk: "medium" });
     if (decision.action === "reject") {
       recordAdaptiveDecision({ kind: "routine", action: "reject", reason: decision.reason, sessionId: sid, detail: r.name, policyId: resolved.policy.id });
-      notifyEvent("error", "⏰ " + r.name, "bloqueada pela política: " + decision.reason, sid);
+      notifyEvent("error", "⏰ " + r.name, "bloqueada pela política: " + decision.reason, sid, routineTarget);
       return;
     }
     if (decision.action === "ask") {
@@ -1773,33 +2313,38 @@ async function runRoutine(r: Routine, approved = false): Promise<void> {
   }
   if (r.runnerId && r.runnerId !== LOCAL_ID) {
     const rc = runners.get(r.runnerId);
-    if (!rc?.ws) { notifyEvent("error", "⏰ " + r.name, "máquina da rotina está offline", sid); return; }
-    const state = runnerSessionState.get(rc.id)?.get(sid), hist = needsAuto(flags) ? await runnerHistory(rc, sid) : null;
+    if (!rc?.ws) { notifyEvent("error", "⏰ " + r.name, "máquina da rotina está offline", sid, routineTarget); return; }
+    const state = runnerSessionState.get(rc.id)?.get(sid), hist = needsAuto(flags) ? await runnerHistory(rc, sid, { principalId: routineActor.userId || "local" }) : null;
     const configuredAgent = r.agent && rc.info.agents.includes(r.agent) ? r.agent : undefined;
     const agentName = hist?.agent || state?.agent || (flags.agent ? configuredAgent || rc.info.agents[0] : r.agent || rc.info.agents[0]);
-    if (!agentName || !rc.info.agents.includes(agentName)) { notifyEvent("error", "⏰ " + r.name, `agente '${agentName || "(nenhum)"}' indisponível nessa máquina`, sid); return; }
+    if (!agentName || !rc.info.agents.includes(agentName)) { notifyEvent("error", "⏰ " + r.name, `agente '${agentName || "(nenhum)"}' indisponível nessa máquina`, sid, routineTarget); return; }
     const decision = await decideAutomaticRoute({ runnerId: r.runnerId, sid, text: r.prompt, started: Number(hist?.total) > 0 || state?.started === true, currentAgent: agentName, currentModel: r.model, currentEffort: r.effort, flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens, contextWindowTokens: hist?.contextWindowTokens });
-    if (sendToRunner(rc, { t: "send", sessionId: sid, text: r.prompt, agent: decision.agent, cwd: r.cwd, opts: { model: decision.model, effort: decision.effort }, turnId: `routine:${r.id}:${r.lastRunAt || Date.now()}`, actor: { source: "routine" } })) markRunnerSessionActive(rc.id, sid);
+    const personal = await personalContextForChat(rc.id, sid, r.prompt, routineActor);
+    const turnId = `routine:${r.id}:${r.lastRunAt || Date.now()}`;
+    if (sendOwnedRunnerTurn(rc, sid, turnId, routineActor.userId || "local", { t: "send", text: r.prompt, contextPrefix: personal?.contextPrefix, agent: decision.agent, cwd: r.cwd, opts: { model: decision.model, effort: decision.effort }, actor: routineActor })) markRunnerSessionActive(rc.id, sid);
     return;
   }
   const localAgent = flags.agent ? (r.agent && localAgents.includes(r.agent) ? r.agent : localAgents[0]) : (r.agent || agents.default);
-  if (!localAgent || !localAgents.includes(localAgent)) { notifyEvent("error", "⏰ " + r.name, `agente '${localAgent || "(nenhum)"}' indisponível nessa máquina`, sid); return; }
+  if (!localAgent || !localAgents.includes(localAgent)) { notifyEvent("error", "⏰ " + r.name, `agente '${localAgent || "(nenhum)"}' indisponível nessa máquina`, sid, routineTarget); return; }
   store.ensure(sid, { agent: localAgent, cwd: r.cwd || CWD, title: "⏰ " + r.name });
   const decision = await routeLocalTurn(sid, r.prompt, r.model, r.effort, flags);
-  await runManagedTurn(turnCtx, sid, {
-    showText: r.prompt, model: decision.model, effort: decision.effort, speak: !!r.speak, actor: { source: "routine" },
-    onError: (message) => notifyEvent("error", "⏰ " + r.name, message, sid),
+  const personal = await personalContextForChat(LOCAL_ID, sid, r.prompt, routineActor);
+  await runOwnedManagedTurn(sid, {
+    showText: r.prompt, agentText: personal ? `${personal.contextPrefix}\n\n${r.prompt}` : r.prompt, manifestAgentText: r.prompt,
+    model: decision.model, effort: decision.effort, speak: !!r.speak, actor: routineActor,
+    onError: (message) => notifyEvent("error", "⏰ " + r.name, message, sid, routineTarget),
   });
 }
 /** Owner-only routine management (list / add / update / delete / run-now). */
 function handleRoutineMsg(ws: WebSocket, msg: any): boolean {
-  const listMsg = () => ({ t: "routines" as const, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "local do Hub", routines: routines.list().map((r) => ({ ...r, label: scheduleLabel(r) })) });
-  if (msg.t === "routines") { if (!requireOwner(ws)) return true; send(ws, listMsg()); return true; }
+  const manageable = (routine: Routine, principalId: string): boolean => routine.principalId ? routine.principalId === principalId : !auth.AUTH_ENABLED && principalId === "local";
+  const listMsg = (principalId: string) => ({ t: "routines" as const, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "local do Hub", routines: routines.list().filter((routine) => manageable(routine, principalId)).map(({ principalId: _principalId, deviceId: _deviceId, ...r }) => ({ ...r, label: scheduleLabel(r) })) });
+  if (msg.t === "routines") { const owner = requireOwner(ws); if (!owner) return true; send(ws, listMsg(owner.userId)); return true; }
   if (msg.t === "routine_validate") { if (!requireOwner(ws)) return true; const cron = String(msg.cron || ""); send(ws, { t: "cron_validation", cron, ...validateCron(cron) }); return true; }
-  if (msg.t === "routine_add") { if (!requireOwner(ws)) return true; try { routines.add(msg.routine || {}); send(ws, listMsg()); } catch (e: any) { send(ws, { t: "error", message: "Cron inválido: " + String(e?.message || e) }); } return true; }
-  if (msg.t === "routine_update" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; try { routines.update(msg.id, msg.patch || {}); send(ws, listMsg()); } catch (e: any) { send(ws, { t: "error", message: "Cron inválido: " + String(e?.message || e) }); } return true; }
-  if (msg.t === "routine_del" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; routines.remove(msg.id); send(ws, listMsg()); return true; }
-  if (msg.t === "routine_run" && typeof msg.id === "string") { if (!requireOwner(ws)) return true; const r = routines.get(msg.id); if (r) void runRoutine(r, true); send(ws, listMsg()); return true; }
+  if (msg.t === "routine_add") { const owner = requireOwner(ws); if (!owner) return true; try { routines.add(msg.routine || {}, { principalId: owner.userId, deviceId: owner.deviceId || undefined }); send(ws, listMsg(owner.userId)); } catch (e: any) { send(ws, { t: "error", message: "Cron inválido: " + String(e?.message || e) }); } return true; }
+  if (msg.t === "routine_update" && typeof msg.id === "string") { const owner = requireOwner(ws); if (!owner) return true; const current = routines.get(msg.id); if (!current || !manageable(current, owner.userId)) { send(ws, { t: "error", message: "rotina não encontrada" }); return true; } try { routines.update(msg.id, msg.patch || {}, { principalId: owner.userId, deviceId: owner.deviceId || undefined }); send(ws, listMsg(owner.userId)); } catch (e: any) { send(ws, { t: "error", message: "Cron inválido: " + String(e?.message || e) }); } return true; }
+  if (msg.t === "routine_del" && typeof msg.id === "string") { const owner = requireOwner(ws); if (!owner) return true; const current = routines.get(msg.id); if (current && manageable(current, owner.userId)) routines.remove(msg.id); send(ws, listMsg(owner.userId)); return true; }
+  if (msg.t === "routine_run" && typeof msg.id === "string") { const owner = requireOwner(ws); if (!owner) return true; const current = routines.get(msg.id); const binding = { principalId: owner.userId, deviceId: owner.deviceId || undefined }; const r = current && manageable(current, owner.userId) ? routines.update(msg.id, {}, binding) : undefined; if (r) void runRoutine(r, true, actorOf(ws, "routine")); send(ws, listMsg(owner.userId)); return true; }
   return false;
 }
 // Scheduler: every 30s, fire any routine whose local HH:MM matches now (markRun BEFORE running so a
@@ -1857,7 +2402,7 @@ async function stageContext(scope: StageScope): Promise<string> {
   if (scope.runnerId === LOCAL_ID) messages = store.history(scope.sessionId);
   else {
     const rc = runners.get(scope.runnerId);
-    messages = rc?.ws ? (await runnerHistory(rc, scope.sessionId))?.messages || [] : [];
+    messages = rc?.ws ? (await runnerHistory(rc, scope.sessionId, { principalId: scope.actor?.userId || "local" }))?.messages || [] : [];
   }
   return messages.slice(-6).map((m: any) => `${m.role === "user" ? "U" : "A"}: ${(m.text || "").slice(0, 200)}`).join("\n").slice(0, 1200);
 }
@@ -1942,7 +2487,10 @@ async function stageConfirm(scope: StageScope): Promise<void> {
   const agent = state?.agent || rc.info.agents[0];
   if (!agent) throw new Error("nenhuma IA disponível na máquina da sessão de voz");
   remoteSpeak.add(scope.runnerId + "\0" + scope.sessionId);
-  if (!sendToRunner(rc, { t: "send", sessionId: scope.sessionId, text: e.draft, agent, turnId: randomUUID(), actor: scope.actor || { source: "user" } })) {
+  const actor = scope.actor || { source: "user" as const };
+  const personal = await personalContextForChat(scope.runnerId, scope.sessionId, e.draft, actor);
+  const turnId = randomUUID();
+  if (!sendOwnedRunnerTurn(rc, scope.sessionId, turnId, actor.userId || "local", { t: "send", text: e.draft, contextPrefix: personal?.contextPrefix, agent, actor })) {
     remoteSpeak.delete(scope.runnerId + "\0" + scope.sessionId);
     throw new Error("não foi possível enviar o refino de voz para a máquina");
   }
@@ -2099,7 +2647,7 @@ const activityBuf = new Map<string, any[]>();
 // Fila POR MÁQUINA + SESSÃO, dona no HUB (não mais só no navegador): toda web vendo a sessão enxerga a MESMA
 // fila, e o flush roda no servidor quando o turno termina — sobrevive mesmo que o dispositivo que
 // enfileirou saia. Cada item guarda texto + anexos (+ model/effort do envio original).
-type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean }>; model?: string; effort?: string; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor };
+type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; model?: string; effort?: string; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor };
 const queues = new Map<string, QueueItem[]>();
 type PendingInboundTurn = QueueItem & { sessionId: string; ts: number };
 const PENDING_INBOUND_FILE = join(JARVIS_DIR, "pending-inbound-turns.json");
@@ -2353,6 +2901,11 @@ function councilFinalSummary(source: ExecutionStore, rootExecutionId: string, fi
   return source.findNode(rootExecutionId)?.node.summary;
 }
 
+function filterSolutionAgents<T extends { name?: string }>(items: T[], selected?: string[]): T[] {
+  const wanted = new Set((selected || []).filter(Boolean));
+  return wanted.size ? items.filter((item) => item.name && wanted.has(item.name)) : items;
+}
+
 async function startLocalCouncil(ws: WebSocket, input: {
   sessionId: string;
   topic: string;
@@ -2360,6 +2913,7 @@ async function startLocalCouncil(ws: WebSocket, input: {
   includeContext: boolean;
   model?: string;
   effort?: string;
+  agents?: string[];
 }): Promise<void> {
   if (!executionCfg.enabled) { send(ws, { t: "error", message: "Conselho exige Trabalhos habilitado" }); return; }
   if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Conselho ainda não grava resultado em sessão nativa" }); return; }
@@ -2371,7 +2925,7 @@ async function startLocalCouncil(ws: WebSocket, input: {
   const topic = councilTopic(input.topic, recent, input.includeContext);
   const built = buildCouncilPlan({
     runnerId: LOCAL_ID, sessionId: input.sessionId, topic, cwd: s.cwd || CWD, mode: route.mode,
-    agents: await agents.describe() as any, preferredAgent: s.agent, model: input.model, effort: input.effort,
+    agents: filterSolutionAgents(await agents.describe() as any, input.agents), preferredAgent: s.agent, model: input.model, effort: input.effort,
   });
   const requestText = formatCouncilRequestMessage(input.topic, route.mode);
   const ts = Date.now();
@@ -2379,6 +2933,7 @@ async function startLocalCouncil(ws: WebSocket, input: {
   broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "user", text: requestText, ts, agent: "jarvis" } });
   pushSessions();
   auth.audit("council_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${built.rootExecutionId}: ${route.mode}` });
+  executionOwnership.claim(LOCAL_ID, built.rootExecutionId, socketPrincipalId(ws));
 
   const ctrl = new AbortController();
   localManagedRuns.add(built.rootExecutionId); localExecutionAborts.set(built.rootExecutionId, ctrl); broadcastRuns();
@@ -2413,43 +2968,46 @@ function tournamentCandidateResults(source: ExecutionStore, rootExecutionId: str
     return { id: taskId, state: (node?.state as ManagedTaskState) ?? "queued", score: scores.get(taskId), costUsd: m?.costUsd, tokens: tokens || undefined };
   });
 }
-/** Torneio local: fan-out da MESMA tarefa para N candidatos + juiz + promoção do vencedor (Orca #3).
+/** Solution Workspace local: fan-out da MESMA tarefa para N candidatos + consolidador/juiz.
  *  Espelha startLocalCouncil (mesma malha ManagedExecution/store/broadcast). */
-async function startLocalTournament(ws: WebSocket, input: { sessionId: string; task: string; competitors: TournamentCompetitor[]; criteria?: string; write?: boolean }): Promise<void> {
-  if (!executionCfg.enabled) { send(ws, { t: "error", message: "Torneio exige Trabalhos habilitado" }); return; }
-  if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Torneio ainda não grava resultado em sessão nativa" }); return; }
-  if (store.isHidden(input.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita Torneio" }); return; }
+async function startLocalTournament(ws: WebSocket, input: { sessionId: string; task: string; competitors: TournamentCompetitor[]; criteria?: string; write?: boolean; mode?: SolutionWorkspaceMode }): Promise<void> {
+  const mode = input.mode || "benchmark";
+  const flowLabel = mode === "benchmark" ? "Benchmark" : mode === "audit" ? "Auditoria" : "Revisão paralela";
+  if (!executionCfg.enabled) { send(ws, { t: "error", message: `${flowLabel} exige Trabalhos habilitado` }); return; }
+  if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: `${flowLabel} ainda não grava resultado em sessão nativa` }); return; }
+  if (store.isHidden(input.sessionId)) { send(ws, { t: "error", message: `sessão interna não aceita ${flowLabel}` }); return; }
   const s = store.get(input.sessionId);
   if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
   let built;
-  try { built = buildTournamentPlan({ runnerId: LOCAL_ID, sessionId: input.sessionId, cwd: s.cwd || CWD, task: input.task, competitors: input.competitors, criteria: input.criteria, write: input.write }); }
-  catch (e: any) { send(ws, { t: "error", message: "Torneio: " + String(e?.message ?? e) }); return; }
-  const requestText = `🏆 Torneio (${input.competitors.length} candidatos): ${input.task.split(/\r?\n/)[0].slice(0, 200)}`;
+  try { built = buildTournamentPlan({ runnerId: LOCAL_ID, sessionId: input.sessionId, cwd: s.cwd || CWD, task: input.task, competitors: input.competitors, criteria: input.criteria, write: input.write, mode }); }
+  catch (e: any) { send(ws, { t: "error", message: `${flowLabel}: ` + String(e?.message ?? e) }); return; }
+  const requestText = `🧪 ${flowLabel} (${input.competitors.length} candidatos): ${input.task.split(/\r?\n/)[0].slice(0, 200)}`;
   const ts = Date.now();
   store.add(input.sessionId, { role: "user", text: requestText, ts, agent: "jarvis" });
   broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "user", text: requestText, ts, agent: "jarvis" } });
   pushSessions();
-  auth.audit("tournament_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${built.rootExecutionId}: ${input.competitors.length} cand.` });
+  auth.audit("tournament_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${built.rootExecutionId}: ${mode} · ${input.competitors.length} cand.` });
+  executionOwnership.claim(LOCAL_ID, built.rootExecutionId, socketPrincipalId(ws));
 
   const ctrl = new AbortController();
   localManagedRuns.add(built.rootExecutionId); localExecutionAborts.set(built.rootExecutionId, ctrl); broadcastRuns();
   void localManagedExecution.run(built.plan, {
     title: built.title, policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy(built.policy, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: s.cwd || CWD }).policy)),
     signal: ctrl.signal,
-    onAccepted: (rootExecutionId) => send(ws, { t: "tournament_started", runnerId: LOCAL_ID, sessionId: input.sessionId, rootExecutionId }),
+    onAccepted: (rootExecutionId) => send(ws, { t: "tournament_started", runnerId: LOCAL_ID, sessionId: input.sessionId, rootExecutionId, mode }),
   }).then((report) => {
     const judgeSummary = councilFinalSummary(localExecutionStore, built.rootExecutionId, built.judgeTaskId);
     const verdict = parseJudgeScores(judgeSummary);
     const scores = new Map(verdict.scores.map((sc) => [sc.id, sc.score]));
     const results = tournamentCandidateResults(localExecutionStore, built.rootExecutionId, built.candidateTaskIds, scores);
     const outcome = selectTournamentWinner(results, { declaredWinnerId: verdict.declaredWinnerId });
-    const text = formatTournamentFinalMessage({ rootExecutionId: built.rootExecutionId, outcome, summary: report.state === "succeeded" ? judgeSummary : undefined });
+    const text = formatTournamentFinalMessage({ rootExecutionId: built.rootExecutionId, outcome, summary: report.state === "succeeded" ? judgeSummary : undefined, mode });
     const at = Date.now();
     store.add(input.sessionId, { role: "assistant", text, ts: at, agent: "jarvis" });
     broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "assistant", text, ts: at, agent: "jarvis" } });
     pushSessions();
   }).catch((error) => {
-    send(ws, { t: "error", message: "Torneio: " + String((error as Error)?.message || error) });
+    send(ws, { t: "error", message: `${flowLabel}: ` + String((error as Error)?.message || error) });
   }).finally(() => {
     localManagedRuns.delete(built.rootExecutionId);
     if (localExecutionAborts.get(built.rootExecutionId) === ctrl) localExecutionAborts.delete(built.rootExecutionId);
@@ -2464,12 +3022,13 @@ async function startRemoteCouncil(ws: WebSocket, rc: RunnerConn, input: {
   includeContext: boolean;
   model?: string;
   effort?: string;
+  agents?: string[];
 }): Promise<void> {
   if (!executionCfg.enabled) { send(ws, { t: "error", message: "Conselho exige Trabalhos habilitado" }); return; }
   if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Conselho ainda não grava resultado em sessão nativa" }); return; }
   if (isInternalExecutionSession(rc.id, input.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita Conselho" }); return; }
   if (!rc.ws || rc.ws.readyState !== WebSocket.OPEN) { send(ws, { t: "error", message: "máquina offline" }); return; }
-  const hist = await runnerHistory(rc, input.sessionId);
+  const hist = await runnerHistory(rc, input.sessionId, { ws });
   const state = runnerSessionState.get(rc.id)?.get(input.sessionId);
   const recent = Array.isArray(hist?.messages)
     ? hist.messages.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role as "user" | "assistant", text: String(m.text || "") }))
@@ -2484,13 +3043,15 @@ async function startRemoteCouncil(ws: WebSocket, rc: RunnerConn, input: {
     : (rc.info.agents || []).map((name) => ({ name }));
   const built = buildCouncilPlan({
     runnerId: rc.id, sessionId: input.sessionId, topic, cwd, mode: route.mode,
-    agents: remoteAgents as any, preferredAgent, model: input.model, effort: input.effort,
+    agents: filterSolutionAgents(remoteAgents as any, input.agents), preferredAgent, model: input.model, effort: input.effort,
   });
   const requestId = `council-${randomUUID()}`;
   const requestText = formatCouncilRequestMessage(input.topic, route.mode);
   const policy = boundedManagedPolicy(mergeAdaptiveManagedPolicy(built.policy, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd }).policy));
   auth.audit("council_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: rc.id, detail: `${built.rootExecutionId}: ${route.mode}` });
+  executionOwnership.claim(rc.id, built.rootExecutionId, socketPrincipalId(ws));
   if (!sendToRunner(rc, { t: "council_start", requestId, sessionId: input.sessionId, requestText, mode: route.mode, finalTaskId: built.finalTaskId, title: built.title, plan: built.plan, policy })) {
+    executionOwnership.remove(rc.id, built.rootExecutionId);
     send(ws, { t: "error", message: "não foi possível iniciar Conselho na máquina" }); return;
   }
   send(ws, { t: "council_started", runnerId: rc.id, sessionId: input.sessionId, rootExecutionId: built.rootExecutionId, mode: route.mode, reason: route.reason });
@@ -2515,6 +3076,31 @@ function reconcileFromNative(s: ReturnType<typeof store.ensure>): void {
   const nativeReply = [...h.messages].reverse().find((m) => m.role === "assistant" && m.ts > last.ts);
   if (nativeReply?.text) store.add(s.id, { role: "assistant", text: nativeReply.text, ts: nativeReply.ts, agent: s.agent, activity: nativeReply.activity });
 }
+
+const LIVE_EXECUTION_STATES = new Set(["queued", "running", "waiting_input"]);
+const NATIVE_EXECUTION_STALE_MS = 10 * 60_000;
+function reconcileNativeExecutions(sid: string): number {
+  if (!isNativeId(sid) || activeRuns.has(sid)) return 0;
+  const h = nativeHistory(sid);
+  if (!h) return 0;
+  let changed = 0;
+  const assistants = h.messages.filter((m) => m.role === "assistant" && m.text);
+  for (const snapshot of localExecutionStore.rootsForSession(sid)) {
+    const root = snapshot.nodes.find((node) => node.executionId === snapshot.rootExecutionId);
+    if (!root || !LIVE_EXECUTION_STATES.has(root.state)) continue;
+    const started = root.startedAt || root.queuedAt || 0;
+    const reply = assistants.find((m) => m.ts >= started - 1000);
+    if (reply) {
+      localExecutionStore.append(root.rootExecutionId, root.executionId, { kind: "summary", text: reply.text.slice(0, 20_000) });
+      localExecutionStore.append(root.rootExecutionId, root.executionId, { kind: "state_changed", from: root.state, to: "succeeded", reason: "Resposta nativa reconciliada pelo transcript." });
+      changed++;
+    } else if (started && Date.now() - started > NATIVE_EXECUTION_STALE_MS) {
+      localExecutionStore.append(root.rootExecutionId, root.executionId, { kind: "state_changed", from: root.state, to: "orphaned", reason: "Terminal nativo não observado; nenhum processo ativo rastreável no Jarvis." });
+      changed++;
+    }
+  }
+  return changed;
+}
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply & { activity?: any[] }> {
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
@@ -2530,6 +3116,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   const profile = (EXECUTION_ADAPTER_PROFILES as Partial<Record<string, (typeof EXECUTION_ADAPTER_PROFILES)[ExecutionAdapterId]>>)[agent.name];
   const tracker = new ExecutionTracker(localExecutionStore, { runnerId: LOCAL_ID, sessionId: sid, turnId, agent: agent.name, cwd, model: opts.model, effort: opts.effort, profile },
     executionCfg.enabled ? (event) => broadcastExecutionEvent(LOCAL_ID, event) : undefined, (usage) => addUsage(sid, agent.name, usage));
+  executionOwnership.claim(LOCAL_ID, tracker.rootExecutionId, executionPrincipalContext.getStore() || captureSessionOwnerGeneration(LOCAL_ID, sid).principalId || "local");
   localExecutionAborts.set(tracker.rootExecutionId, ctrl);
   const emit = (event: AgentEvent, project = true): void => {
     if (buf.length < 600) buf.push(event);
@@ -2565,8 +3152,12 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     emit(bridge.completed(reply.text));
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
     const nativeId = agent.nativeSessionId?.(sid);
-    if (nativeId) broadcast(sid, { t: "session", sessionId: sid, nativeId });
-    notifyEvent("done", store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis"), reply.text, sid);
+    if (nativeId) {
+      try { synchronizePersonalSessionAliases(LOCAL_ID, sid); }
+      catch (error) { throw new Error(`native session alias ownership conflict: ${String((error as Error)?.message || error)}`); }
+      broadcast(sid, { t: "session", sessionId: sid, nativeId });
+    }
+    notifyEvent("done", store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis"), reply.text, sid, notificationTargetForSession(LOCAL_ID, sid));
     void runAsking(LOCAL_ID, sid, reply.text);
     // A subagent's internal tool calls only exist while the turn is live (Claude Code writes no
     // recoverable trace of them to disk once done — verified: Task's toolUseResult.outputFile is
@@ -2581,7 +3172,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     }
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: opts.model, ms: Date.now() - t0, ok: false, ts: Date.now() });
     if (!sequencer.terminal) emit(bridge.failed(String((e as any)?.message ?? e), "PROVIDER_ERROR"));
-    notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid);
+    notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid, notificationTargetForSession(LOCAL_ID, sid));
     throw e;
   } finally {
     if (localExecutionAborts.get(tracker.rootExecutionId) === ctrl) localExecutionAborts.delete(tracker.rootExecutionId);
@@ -2592,6 +3183,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
 }
 async function maybeFlushQueue(runnerId: string, sid: string, autoplay: boolean): Promise<void> {
   if (hubUpdateInProgress) return;
+  if (dispatchReservations.isHeld(runnerId, sid)) { pendingDispatchFlush.add(scopedSessionKey(runnerId, sid)); return; }
   if (autoplay) {
     const resolved = effectivePolicyFor(sid);
     const decision = decideAdaptiveRun(resolved.policy, { queueAutoplay: true });
@@ -2604,13 +3196,43 @@ async function maybeFlushQueue(runnerId: string, sid: string, autoplay: boolean)
  *  dispositivo que enfileirou já saiu, e nunca duplica (o guard activeRuns cobre corridas). Combina
  *  os itens (texto juntado, anexos concatenados) e roteia pelo mesmo caminho de um envio normal. */
 async function flushQueue(runnerId: string, sid: string): Promise<void> {
-  const items = queueOf(runnerId, sid);
-  if (!items.length) return;
+  const key = scopedSessionKey(runnerId, sid), queue = queueOf(runnerId, sid);
+  if (!queue.length) return;
   const rid = runnerId === LOCAL_ID ? undefined : runnerId;
+  let rc: RunnerConn | undefined;
   if (rid) {
     if ((runnerActive.get(rid) || new Set()).has(sid)) return;   // runner ainda ocupado
-    if (!runners.get(rid)?.ws) return;                            // runner OFFLINE → mantém a fila (não perde)
+    rc = runners.get(rid);
+    if (!rc?.ws) return;                                          // runner OFFLINE → mantém a fila (não perde)
   } else if (activeRuns.has(sid)) return;                         // local ainda ocupado
+  const initialOwner = captureSessionOwnerGeneration(runnerId, sid);
+  if (initialOwner.conflicted) { broadcastOn(runnerId, sid, { t: "error", message: "conflito de propriedade entre aliases da sessão" }); return; }
+  const principalId = initialOwner.principalId || queue[0]?.actor?.userId || "local";
+  const lease = reserveSessionDispatch(runnerId, sid, principalId, "flush");
+  if (!lease) { pendingDispatchFlush.add(key); return; }
+
+  let items: QueueItem[] = [];
+  if (initialOwner.principalId) {
+    items = queue.filter((item) => (item.actor?.userId || "local") === principalId);
+    queues.set(key, []); // entries from a different principal can never enter an owned transcript
+  } else {
+    let count = 0;
+    while (count < queue.length && (queue[count].actor?.userId || "local") === principalId) count++;
+    items = queue.splice(0, count);
+  }
+  broadcastQueue(runnerId, sid); saveQueues();
+  if (!items.length) { releaseSessionDispatch(lease); return; }
+
+  const personalSeed = effectivePolicyFor(sid).policy.memory.allowPersonalContext === true
+    ? items.find((item) => routePersonalIntent(item.text))
+    : undefined;
+  const restoreItems = (): void => { queues.set(key, [...items, ...queueOf(runnerId, sid)]); broadcastQueue(runnerId, sid); saveQueues(); };
+  if (personalSeed) {
+    try { bindPersonalSession(runnerId, sid, personalSeed.actor || { source: "queue" }); }
+    catch (error) { restoreItems(); releaseSessionDispatch(lease); broadcastOn(runnerId, sid, { t: "error", message: String((error as Error)?.message || error) }); return; }
+    if (!refreshSessionDispatchAuthorization(lease)) { restoreItems(); releaseSessionDispatch(lease); return; }
+  }
+  if (!sessionDispatchAuthorized(lease, undefined, rc)) { restoreItems(); releaseSessionDispatch(lease); return; }
   const text = items.map((q) => q.text).join("\n\n");
   const atts = items.flatMap((q) => q.atts || []);
   // Queued messages are deliberately combined into one turn; the newest queued preference wins,
@@ -2619,19 +3241,22 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
   const model = policy?.model;
   const effort = policy?.effort;
   const automatic = policy?.auto || { agent: false, model: false, effort: false };
-  queues.set(scopedSessionKey(runnerId, sid), []); broadcastQueue(runnerId, sid); saveQueues();   // limpa ANTES de rodar (evita re-flush do mesmo)
   const actor = policy?.actor ? { ...policy.actor, source: "queue" as const } : { source: "queue" as const };
   clearPendingAsk(rid || LOCAL_ID, sid);
   let dispatched = false;
   try {
     if (rid) {
-      const rc = runners.get(rid);
       if (rc?.ws) {
-        const state = runnerSessionState.get(rid)?.get(sid), hist = needsAuto(automatic) ? await runnerHistory(rc, sid) : null, su = sessionUsage(sid, rid);
+        const state = runnerSessionState.get(rid)?.get(sid), hist = needsAuto(automatic) ? await runnerHistory(rc, sid, { principalId: actor.userId || "local" }) : null, su = sessionUsage(sid, rid);
+        if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o envio");
         const currentAgent = hist?.agent || state?.agent || rc.info.agents[0];
         if (!currentAgent) throw new Error("nenhuma IA disponível nesta máquina");
-        const decision = await decideAutomaticRoute({ runnerId, sid, text, started: /^(claude:|codex:)/.test(sid) || Number(hist?.total) > 0 || state?.started === true, currentAgent, currentModel: model || (automatic.model ? su.model : undefined), currentEffort: effort, flags: automatic, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens, notify: (frame) => { for (const c of clientsOn(rid)) if (subs.get(c) === sid) send(c, frame); } });
-        const ok = sendToRunner(rc, { t: "send", sessionId: sid, text, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, turnId: (items.find((q) => q.msgId)?.msgId) || randomUUID(), actor });
+        const decision = await decideAutomaticRoute({ runnerId, sid, text, started: /^(claude:|codex:)/.test(sid) || Number(hist?.total) > 0 || state?.started === true, currentAgent, currentModel: model || (automatic.model ? su.model : undefined), currentEffort: effort, flags: automatic, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens, notify: (frame) => { for (const c of clientsOn(rid)) if (subs.get(c) === sid && canAccessSession(c, rid, sid)) send(c, frame); } });
+        if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o roteamento");
+        const personal = await personalContextForChat(rid, sid, text, actor, () => refreshSessionDispatchAuthorization(lease));
+        if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
+        const turnId = (items.find((q) => q.msgId)?.msgId) || randomUUID();
+        const ok = sendOwnedRunnerTurn(rc, sid, turnId, actor.userId || "local", { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, actor });
         if (!ok) throw new Error("não foi possível enviar a fila para a máquina");
         dispatched = true;
         markRunnerSessionActive(rid, sid);
@@ -2639,13 +3264,22 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
       return;
     } // runner: relaya como envio normal (turnId = idempotência)
     const decision = await routeLocalTurn(sid, text, model, effort, automatic);
-    dispatched = true;
-    if (isNativeId(sid)) { await deliverNativeTurn(null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts, actor }); return; }
+    if (!sessionDispatchAuthorized(lease)) throw new Error("a autorização da sessão mudou durante o roteamento");
+    const personal = await personalContextForChat(LOCAL_ID, sid, text, actor, () => refreshSessionDispatchAuthorization(lease));
+    if (!sessionDispatchAuthorized(lease)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
+    if (isNativeId(sid)) {
+      await deliverNativeTurn(null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts, actor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease), onDispatch: () => { dispatched = true; } });
+      return;
+    }
     const { agentText, showText, images, files } = buildAttachments(atts, text);
-    await runManagedTurn(turnCtx, sid, { showText, agentText, model: decision.model, effort: decision.effort, images, files, turnId: items.find((q) => q.msgId)?.msgId, actor, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
+    dispatched = true;
+    await runOwnedManagedTurn(sid, { showText, agentText: personal ? `${personal.contextPrefix}\n\n${agentText}` : agentText, manifestAgentText: agentText, model: decision.model, effort: decision.effort, images, files, turnId: items.find((q) => q.msgId)?.msgId, actor, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
   } catch (e: any) {
-    if (!dispatched && !queueOf(runnerId, sid).length) { queues.set(scopedSessionKey(runnerId, sid), items); broadcastQueue(runnerId, sid); saveQueues(); }
+    if (!dispatched) restoreItems();
     broadcastOn(runnerId, sid, { t: "error", message: String(e?.message ?? e) });
+  } finally {
+    if (queueOf(runnerId, sid).length) pendingDispatchFlush.add(key);
+    releaseSessionDispatch(lease);
   }
 }
 /** Replay the buffered live activity of an IN-PROGRESS local turn to a client that just (re)opened
@@ -2669,28 +3303,49 @@ function replayActivity(ws: WebSocket, runnerId: string, sid: string): void {
 }
 /** Abort a live turn. Local session → kill its agent process; remote → relay to the owning runner.
  *  Returns false only if nothing was running here to cancel. */
+function cancelLocalExecutionsForSession(sid: string): number {
+  let n = 0;
+  for (const snapshot of localExecutionStore.rootsForSession(sid)) {
+    const root = snapshot.nodes.find((node) => node.executionId === snapshot.rootExecutionId);
+    if (!root || !["queued", "running", "waiting_input"].includes(root.state)) continue;
+    const ctrl = localExecutionAborts.get(snapshot.rootExecutionId);
+    if (ctrl && !ctrl.signal.aborted) { ctrl.abort(); n++; }
+  }
+  return n;
+}
 function cancelTurn(sid: string, ws: WebSocket): boolean {
   const rid = activeRunner(ws);
   const routing = routeAborts.get(scopedSessionKey(rid, sid));
   if (routing) { routing.abort(); return true; }
-  if (rid !== LOCAL_ID) { const rc = runners.get(rid); if (rc?.ws) { sendToRunner(rc, { t: "cancel", sessionId: sid }); return true; } return false; }
+  if (rid !== LOCAL_ID) { const rc = runners.get(rid); if (rc?.ws) return sendToRunner(rc, { t: "cancel", sessionId: sid }); return false; }
   const ctrl = localAborts.get(sid);
+  const executionCancels = cancelLocalExecutionsForSession(sid);
   if (ctrl) { ctrl.abort(); return true; }
-  return false;
+  if (activeRuns.has(sid)) { activeRuns.delete(sid); broadcastRuns(); void maybeFlushQueue(LOCAL_ID, sid, false); }
+  return executionCancels > 0;
 }
 /** Turn attachments into (a) the text the AGENT sees — text files inlined, images decoded to
  *  ~/.jarvis/pasted and referenced by path for the Read tool — and (b) the text/images SHOWN in
  *  the chat (a 📎 chip for files, a served /pasted URL preview for images). Used by every turn. */
-const ATTACH_PERSIST_MAX = 256 * 1024; // 256KB — same order as the file viewer's own cap (files.ts MAX)
-function buildAttachments(attachments: Array<{ name: string; content: string; image?: boolean }>, text: string): { agentText: string; showText: string; images?: string[]; files?: Array<{ name: string; content?: string }> } {
+const ATTACH_PERSIST_MAX = 128 * 1024;
+const ATTACH_INLINE_MAX = 48 * 1024;
+function saveAttachmentFile(name: string, bytes: Buffer): string {
+  const dir = join(JARVIS_DIR, "attachments"); mkdirSync(dir, { recursive: true });
+  const p = join(dir, `${Date.now()}-${String(name || "file").replace(/[^\w.-]/g, "_")}`);
+  writeFileSync(p, bytes);
+  return p;
+}
+function buildAttachments(attachments: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>, text: string): { agentText: string; showText: string; images?: string[]; files?: Array<{ name: string; content?: string; path?: string; size?: number; binary?: boolean; mime?: string }> } {
   return buildTurnAttachments(attachments, text, {
     persistMax: ATTACH_PERSIST_MAX,
+    inlineMax: ATTACH_INLINE_MAX,
     saveImage: (name, bytes) => {
       mkdirSync(PASTED_DIR, { recursive: true });
       const p = join(PASTED_DIR, `${Date.now()}-${String(name || "img").replace(/[^\w.-]/g, "_")}`);
       writeFileSync(p, bytes);
       return p;
     },
+    saveFile: saveAttachmentFile,
     previewImage: (_name, _bytes, savedPath) => "/pasted/" + basename(savedPath),
   });
 }
@@ -2813,7 +3468,7 @@ async function interpretAskVoice(transcript: string, question: string, options: 
   }
 }
 
-async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean }>; actor?: ContextActor }): Promise<void> {
+async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; actor?: ContextActor; contextPrefix?: string; authorize?: () => boolean; onDispatch?: () => void }): Promise<void> {
   const info = nativeInfo(sid);
   if (!info) { if (ws) send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
   if (info.agent !== "claude-code" && info.agent !== "codex") { if (ws) send(ws, { t: "error", message: "este adapter não oferece retomada nativa importada" }); return; }
@@ -2823,16 +3478,19 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   // Power-triggers for the AGENT (echoed user message stays raw): "!cmd" runs + injects output;
   // otherwise "/cmd" expands to its prompt (scoped to this session's agent).
   const bang = await expandBang(text, info.cwd || CWD);
+  if (opts.authorize && !opts.authorize()) throw new Error("a autorização da sessão mudou durante a expansão do comando");
   const cmdExp = bang ? null : expandCommand(text, info.cwd || CWD, cmdAgentOf(info.agent), { preference: frameworkCfg.preference });
-  const agentSend = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
+  const manifestAgentText = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
+  const agentSend = opts.contextPrefix ? `${opts.contextPrefix}\n\n${manifestAgentText}` : manifestAgentText;
   const turnId = randomUUID();
   const manifest = buildContextManifest({
     turnId, sessionId: sid, runnerId: LOCAL_ID, agent: agent.name, cwd: info.cwd || CWD, actor: opts.actor,
     continuity: agent.sessionContinuity?.() || "none", nativeSessionId: sid.includes(":") ? sid.slice(sid.indexOf(":") + 1) : undefined,
     history: (nativeHistory(sid)?.messages || []).filter((message) => message.role === "user" || message.role === "assistant"),
-    showText, agentText: agentSend, images, files,
+    showText, agentText: manifestAgentText, images, files,
   });
   try { contextManifests.append(manifest); } catch (error) { console.warn("[hub] manifesto de contexto nativo não persistido:", String(error)); }
+  opts.onDispatch?.();
   broadcast(sid, { t: "context_manifest", sessionId: sid, manifest });
   // pause the live tail so it doesn't re-broadcast our own turn (already shown via streaming)
   const tail = nativeTails.get(sid);
@@ -2841,7 +3499,8 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   // now) but isn't persisted; a reload rebuilds from the claude transcript, which doesn't carry it.
   broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: info.agent, speaker: opts.speaker, images, files, contextManifest: manifest } });
   try {
-    const reply = await agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, turnId });
+    const principalId = opts.actor?.userId || captureSessionOwnerGeneration(LOCAL_ID, sid).principalId || "local";
+    const reply = await executionPrincipalContext.run(principalId, () => agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, turnId }));
     if (opts.speak) {
       const spoken = await speechForReply(reply.text);
       if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
@@ -2866,11 +3525,11 @@ async function ackSpeak(ws: WebSocket, text: string): Promise<void> {
 }
 /** Cross-session search: reason over recent sessions, reply only to the asker (optionally spoken). */
 async function runAndSendSearch(ws: WebSocket, query: string, speak: boolean): Promise<void> {
-  const extra = listNative(24).map((n) => ({ id: n.id, agent: n.agent, cwd: n.cwd, title: n.title, updatedAt: n.updatedAt, lastUser: "", lastAssistant: "" }));
+  const extra = listNative(24).filter((n) => canAccessSession(ws, LOCAL_ID, n.id)).map((n) => ({ id: n.id, agent: n.agent, cwd: n.cwd, title: n.title, updatedAt: n.updatedAt, lastUser: "", lastAssistant: "" }));
   const r = await ackThenWork(
     (t) => (speak ? ackSpeak(ws, t) : undefined),
     "Só um instante, deixa eu ver nas suas sessões.",
-    async () => runSessionSearch({ query, store, agents, extra: [...extra, ...(await runnerSessionExtras(ws, 8))] }),
+    async () => runSessionSearch({ query, store, agents, extra: [...extra, ...(await runnerSessionExtras(ws, 8))], includeSession: (entry) => canAccessSession(ws, entry.runnerId || LOCAL_ID, entry.id) }),
   );
   let audio: string | undefined;
   if (speak) {
@@ -2888,11 +3547,12 @@ function sortHits(hits: SessionHit[]): SessionHit[] {
   return hits.sort((a, b) => (a.where === b.where ? b.updatedAt - a.updatedAt : a.where === "title" ? -1 : 1));
 }
 /** Managed (Jarvis-owned) sessions whose title/conversation contains ALL query tokens — from memory. */
-function searchManaged(query: string): SessionHit[] {
+function searchManaged(query: string, ws?: WebSocket): SessionHit[] {
   const tokens = query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean);
   if (!tokens.length) return [];
   const own: SessionHit[] = [];
   for (const meta of store.list()) {
+    if (ws && !canAccessSession(ws, LOCAL_ID, meta.id)) continue;
     const msgs = store.history(meta.id);
     const hay = meta.title + "\n" + msgs.map((m) => m.text || "").join("\n");
     const hl = hay.toLowerCase();
@@ -2924,7 +3584,8 @@ async function searchRunnerSessions(ws: WebSocket, query: string, perRunner = 20
   await Promise.all(remotes.map(async (r) => {
     const sessions = (await runnerSessions(r)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, perRunner);
     for (const s of sessions) {
-      const h = await runnerHistory(r, s.id);
+      if (!canAccessSession(ws, r.id, s.id)) continue;
+      const h = await runnerHistory(r, s.id, { ws });
       const messages = Array.isArray(h?.messages) ? h.messages : [];
       const hit = searchHitFromMessages(query, { id: s.id, title: s.title || h?.title || s.id, agent: s.agent || h?.agent || "", cwd: s.cwd || h?.cwd || "", updatedAt: Number(s.updatedAt) || Date.now(), runnerId: r.id }, messages);
       if (hit) out.push(hit);
@@ -2939,7 +3600,8 @@ async function runnerSessionExtras(ws: WebSocket, perRunner = 8): Promise<Array<
     const label = runnerLabels[r.id] || r.info.host || r.id;
     const sessions = (await runnerSessions(r)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, perRunner);
     for (const s of sessions) {
-      const h = await runnerHistory(r, s.id);
+      if (!canAccessSession(ws, r.id, s.id)) continue;
+      const h = await runnerHistory(r, s.id, { ws });
       const messages = Array.isArray(h?.messages) ? h.messages : [];
       out.push({
         id: s.id, runnerId: r.id, agent: s.agent || h?.agent || "", cwd: s.cwd || h?.cwd || "",
@@ -2970,7 +3632,7 @@ async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Pr
   const rid = activeRunner(ws);
   const rc = rid !== LOCAL_ID ? runners.get(rid) : undefined;
   if (rc?.ws) {
-    const h = await runnerHistory(rc, sid);
+    const h = await runnerHistory(rc, sid, { ws });
     if (!h) { send(ws, { t: "error", message: `resumo: a máquina "${runnerLabels[rid] || rid}" não respondeu` }); return; }
     msgs = h.messages || []; title = h.title || "";
   } else if (isNativeId(sid)) { const h = nativeHistory(sid); if (h) { msgs = h.messages; title = h.title; } }
@@ -3010,8 +3672,8 @@ async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
   // A member only hears the machines they were granted: the local (Hub) sessions require local access,
   // and remote machines are filtered below — otherwise the digest leaked titles/state of every machine.
   const canLocal = canUseRunner(ws, LOCAL_ID);
-  const own = canLocal ? store.digest(10, 200) : [];
-  const nat = canLocal ? listNative(8).map((n) => ({ id: n.id, agent: n.agent, title: n.title, updatedAt: n.updatedAt, lastAssistant: "", lastUser: "" })) : [];
+  const own = canLocal ? store.digest(Math.max(10, store.list().length), 200).filter((s) => canAccessSession(ws, LOCAL_ID, s.id)).slice(0, 10) : [];
+  const nat = canLocal ? listNative(8).filter((n) => canAccessSession(ws, LOCAL_ID, n.id)).map((n) => ({ id: n.id, agent: n.agent, title: n.title, updatedAt: n.updatedAt, lastAssistant: "", lastUser: "" })) : [];
   const all = [...own, ...nat].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10);
   // "active now" = a Jarvis-driven turn in flight OR a native session whose jsonl was
   // just written (an EXTERNAL claude/codex working in a terminal shows up here too).
@@ -3028,7 +3690,7 @@ async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
   const remoteLines = (await Promise.all(remotes.map(async (r) => {
     const label = runnerLabels[r.id] || r.info.host || r.id;
     const running = runnerActive.get(r.id) || new Set<string>();
-    const ss = (await runnerSessions(r)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const ss = (await runnerSessions(r)).filter((s) => canAccessSession(ws, r.id, s.id)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     const top = ss.slice(0, 5).map((s) => `  - ${s.title}${running.has(s.id) ? " [ATIVA AGORA]" : ""}`).join("\n");
     return `- Máquina "${label}": ONLINE e conectada, ${running.size} em execução agora, ${ss.length} sessão(ões) no total.` + (top ? `\n${top}` : "");
   }))).join("\n");
@@ -3098,13 +3760,13 @@ async function sendInitialState(ws: WebSocket): Promise<void> {
   // The initial view is the local machine — only push its sessions/runs to a principal allowed to use
   // it, so a member granted only remote runners doesn't get the Hub's local session list unprompted
   // (mirrors the per-runner drive gate; the client then selects a machine it may access).
-  if (canUseRunner(ws, LOCAL_ID)) { sendSessions(ws); send(ws, { t: "runs", runnerId: LOCAL_ID, active: [...activeRuns] }); }
+  if (canUseRunner(ws, LOCAL_ID)) { sendSessions(ws); send(ws, { t: "runs", runnerId: LOCAL_ID, active: [...activeRuns].filter((sid) => canAccessSession(ws, LOCAL_ID, sid)) }); }
   else send(ws, { t: "sessions", sessions: [], recentDirs: [] });
   // Reidrata os runs ATIVOS dos runners REMOTOS no connect (o Hub já os rastreia em runnerActive).
   // Sem isto, um reload / abrir em outro computador vendo uma sessão remota perdia o selo "em execução"
   // na sidebar e o botão de parar — o stream do chat volta via turn-resume, mas o estado "ocupado" não.
   for (const [rid, set] of runnerActive) {
-    if (rid !== LOCAL_ID && set.size && canUseRunner(ws, rid)) send(ws, { t: "runs", runnerId: rid, active: [...set] });
+    if (rid !== LOCAL_ID && set.size && canUseRunner(ws, rid)) send(ws, { t: "runs", runnerId: rid, active: [...set].filter((sid) => canAccessSession(ws, rid, sid)) });
   }
   await sendVoiceState(ws);
 }
@@ -3138,6 +3800,7 @@ async function handleAuth(ws: WebSocket, msg: any, req: any): Promise<void> {
       const r = msg.t === "claim"
         ? auth.claim(msg.code, msg.label || "Dispositivo", { ip, ua })
         : auth.redeem(msg.code, msg.label || "Dispositivo", { ip, ua });
+      reconcilePushDevices();
       // a device that just paired via a code is inherently 2FA (had the code) -> verified
       await enterAuthed({ t: "authed", token: r.token, user: r.user }, { userId: r.user.id, role: r.user.role, name: r.user.name, deviceId: r.deviceId, verified: true });
       return;
@@ -3145,6 +3808,7 @@ async function handleAuth(ws: WebSocket, msg: any, req: any): Promise<void> {
     // msg.t === "auth"
     if (typeof msg.token !== "string" || !msg.token) return fail("sem token");
     const p = auth.authenticate(msg.token, { ip, ua });
+    reconcilePushDevices();
     if (!p) return fail("token inválido");
     // Successful token auth was the one lifecycle event NOT audited (only failures/claim/redeem were),
     // leaving a blind spot on who actually connected. claim/redeem log their own events, so only the
@@ -3196,7 +3860,8 @@ function handleSecurityMsg(ws: WebSocket, msg: any): boolean {
   }
   if (msg.t === "sec_revoke_device" && typeof msg.deviceId === "string") {
     if (!requireOwner(ws)) return true;
-    auth.revokeDevice(msg.deviceId);
+    const revoked = auth.listDevices().find((device) => device.id === msg.deviceId);
+    if (auth.revokeDevice(msg.deviceId) && revoked) push.purgeTarget({ principalId: revoked.userId, deviceId: revoked.id });
     dropRevoked();
     secState(ws);
     return true;
@@ -3210,7 +3875,9 @@ function handleSecurityMsg(ws: WebSocket, msg: any): boolean {
   }
   if (msg.t === "sec_revoke_all") {
     const p = requireOwner(ws); if (!p) return true;
+    const revoked = p.deviceId ? auth.listDevices().filter((device) => device.id !== p.deviceId) : [];
     if (p.deviceId) auth.revokeAllExcept(p.deviceId);
+    for (const device of revoked) push.purgeTarget({ principalId: device.userId, deviceId: device.id });
     dropRevoked();
     secState(ws);
     return true;
@@ -3310,16 +3977,17 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
     saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: { ...voiceCfg } }); return true; }
   // --- catálogo de vozes / timbre falado (Gap 6): listar, trocar e ouvir prévia. Trocar é do dono
   //     (é a voz GLOBAL do Hub); listar e a prévia são inofensivos e ficam liberados. ---
-  if (msg.t === "list_voices") { send(ws, { t: "voices", voices: listVoices(), current: VOICE }); return true; }
+  if (msg.t === "list_voices") { send(ws, { t: "voices", voices: listVoiceCatalog(), current: VOICE }); return true; }
   if (msg.t === "set_voice" && typeof msg.voice === "string") {
     if (!requireOwner(ws)) return true;
     if (!hasVoice(msg.voice)) { send(ws, { t: "error", message: `voz não encontrada: ${msg.voice}` }); return true; }
     VOICE = msg.voice; voiceCfg.voice = msg.voice; saveVoiceCfg();
-    send(ws, { t: "voices", voices: listVoices(), current: VOICE }); return true;
+    send(ws, { t: "voices", voices: listVoiceCatalog(), current: VOICE }); return true;
   }
   if (msg.t === "preview_voice" && typeof msg.voice === "string") {
     if (!hasVoice(msg.voice)) { send(ws, { t: "error", message: `voz não encontrada: ${msg.voice}` }); return true; }
-    const sample = (typeof msg.text === "string" && msg.text.trim()) ? msg.text.trim().slice(0, 200) : "Bom dia, senhor. Todos os sistemas estão operacionais.";
+    const voiceInfo = listVoiceCatalog().find((v) => v.id === msg.voice);
+    const sample = (typeof msg.text === "string" && msg.text.trim()) ? msg.text.trim().slice(0, 200) : (voiceInfo?.previewText || "Bom dia, senhor. Todos os sistemas estão operacionais.");
     try { const wav = await synthesize(sample, msg.voice); send(ws, { t: "voice_preview", voice: msg.voice, audio: wav.toString("base64") }); }
     catch (e) { send(ws, { t: "error", message: `falha ao gerar prévia da voz: ${(e as Error).message}` }); }
     return true;
@@ -3370,7 +4038,8 @@ async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
 /** Notifications message group, lifted from the router VERBATIM: web-push (VAPID) subscribe/prefs/
  *  unsubscribe + the native-app (FCM) token register/unregister. Returns true if it handled `msg`. */
 function handlePushMsg(ws: WebSocket, msg: any): boolean {
-  return push.handleMsg(msg, (obj) => send(ws, obj));
+  const principal = principalOf(ws);
+  return push.handleMsg(msg, (obj) => send(ws, obj), { principalId: principal?.userId || "local", deviceId: principal?.deviceId || "local" });
 }
 
 wss.on("connection", (ws: WebSocket, req: any) => {
@@ -3426,30 +4095,58 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // --- auth gate: until this connection is authenticated, ONLY the auth
     //     handshake is processed; every other message is dropped. ---
-    if (auth.AUTH_ENABLED && !principals.has(ws)) {
+    const localWakeMsg = isLocalWakeMsg(ip, msg);
+    if (auth.AUTH_ENABLED && !principals.has(ws) && !localWakeMsg) {
       await handleAuth(ws, msg, req);
       return;
     }
     // --- 2nd factor gate: token accepted but owner passphrase not yet verified. ---
-    if (auth.AUTH_ENABLED && !fullyAuthed(ws)) {
+    if (auth.AUTH_ENABLED && !fullyAuthed(ws) && !localWakeMsg) {
       if (msg.t === "verify") await handleVerify(ws, msg, req);
       else send(ws, { t: "need_pass" });
+      return;
+    }
+
+    // Personal context is bound to the authenticated principal, never to identity fields supplied
+    // by the client. It is independent from the selected code runner and therefore runs before the
+    // per-runner authorization gates below.
+    if (msg.t.startsWith("personal_")) {
+      if (!isPersonalClientMessage(msg)) { send(ws, { t: "personal_context_result", requestId: typeof msg.requestId === "string" ? msg.requestId : "invalid", ok: false, error: "mensagem de contexto pessoal inválida" }); return; }
+      const principal = principalOf(ws);
+      const frame = await personalAssistant.handle(msg, {
+        principalId: principal?.userId || "local",
+        deviceId: principal?.deviceId || "local",
+        owner: !auth.AUTH_ENABLED || principal?.role === "owner",
+      });
+      auth.audit(msg.t, { userId: principal?.userId, deviceId: principal?.deviceId, detail: msg.requestId });
+      send(ws, frame);
       return;
     }
 
     // --- per-runner authorization (drive gate) -------------------------------
     // A member may only act on machines granted in their invite; the owner has all. Checked BEFORE
     // routing and for both local + remote, so the default (unselected → LOCAL_ID) case is covered too.
-    if (RUNNER_OPS.has(msg.t) && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
+    if (RUNNER_OPS.has(msg.t) && !localWakeMsg && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
     // Local-only ops (execute/read the Hub's OWN store) → require access to the LOCAL machine. Active-
     // machine ops (queue/cancel/summarize) → require access to the selected runner. Owner passes both.
     if (LOCAL_OPS.has(msg.t) && !canUseRunner(ws, LOCAL_ID)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
     if (ACTIVE_OPS.has(msg.t) && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
+    const personalScope = messageSessionScope(ws, msg);
+    if (personalScope?.sessionIds.some((sessionId) => !canAccessSession(ws, personalScope.runnerId, sessionId))) {
+      send(ws, { t: "error", message: "esta sessão contém contexto pessoal de outro usuário" });
+      return;
+    }
     if (holdForHubUpdate(ws, msg)) return;
 
     // --- durable execution graph (global across sessions and authorized machines) ---
     if (msg.t === "execution_delegate" && typeof msg.requestId === "string") {
-      const cached = executionUiState.commands[msg.requestId]; if (cached) { send(ws, cached); return; }
+      const cached = executionUiState.commands[msg.requestId];
+      if (cached) {
+        const cachedRoot = typeof cached.rootExecutionId === "string" ? executionLocation(cached.rootExecutionId) : undefined;
+        if (cachedRoot && canAccessExecutionRoot(ws, cachedRoot.runnerId, cachedRoot.rootExecutionId)) send(ws, cached);
+        else send(ws, { t: "execution_error", code: "NOT_FOUND", message: "trabalho não encontrado" });
+        return;
+      }
       const requestedRunner = typeof msg.plan?.runnerId === "string" ? msg.plan.runnerId : "";
       const reject = (error: string): void => { const result = { t: "execution_delegate_result", requestId: msg.requestId, ok: false, error }; executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result); };
       if (!executionCfg.enabled) { reject("acompanhamento de trabalhos está desabilitado"); return; }
@@ -3461,12 +4158,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const adaptive = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: delegateCwd }).policy;
       const policy = boundedManagedPolicy(mergeAdaptiveManagedPolicy(msg.policy as ManagedExecutionPolicyInput | undefined, adaptive));
       auth.audit("execution_delegate", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: requestedRunner, detail: `${plan.rootExecutionId}: ${plan.tasks.length} tarefa(s)` });
-      if (requestedRunner === LOCAL_ID) { startLocalManagedExecution({ requestId: msg.requestId, title: typeof msg.title === "string" ? msg.title : undefined, plan, policy }, (result) => send(ws, result)); return; }
+      if (requestedRunner === LOCAL_ID) { startLocalManagedExecution({ requestId: msg.requestId, title: typeof msg.title === "string" ? msg.title : undefined, plan, policy, principalId: socketPrincipalId(ws) }, (result) => send(ws, result)); return; }
       const rc = runners.get(requestedRunner);
-      if (!rc || !sendToRunner(rc, { t: "execution_delegate", requestId: msg.requestId, title: typeof msg.title === "string" ? msg.title : undefined, plan, policy })) { reject("máquina offline"); return; }
-      pendingReq.set(msg.requestId, ws);
+      try { executionOwnership.claim(requestedRunner, plan.rootExecutionId, socketPrincipalId(ws)); }
+      catch (error) { reject(String((error as Error)?.message || error)); return; }
+      if (!rc || !sendToRunner(rc, { t: "execution_delegate", requestId: msg.requestId, title: typeof msg.title === "string" ? msg.title : undefined, plan, policy })) { executionOwnership.remove(requestedRunner, plan.rootExecutionId); reject("máquina offline"); return; }
+      registerPendingRequest({ requestId: msg.requestId, ws, runnerId: requestedRunner, operation: "execution_delegate", metadata: { rootExecutionId: plan.rootExecutionId } });
       setTimeout(() => {
-        if (pendingReq.get(msg.requestId) !== ws) return;
+        if (pendingReq.get(msg.requestId)?.socket !== ws) return;
         pendingReq.delete(msg.requestId); reject("tempo esgotado aguardando aceite da máquina");
       }, 30_000).unref?.();
       return;
@@ -3478,7 +4177,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const states = Array.isArray(msg.states) ? new Set<ExecutionState>(msg.states.filter(isExecutionState)) : undefined;
       const allowedSources = executionSources().filter((source) => canUseRunner(ws, source.runnerId) && (!requestedRunnerId || source.runnerId === requestedRunnerId));
       const all = allowedSources
-        .flatMap((source) => source.store.listNodes(sessionId).map(executionNodeForUi))
+        .flatMap((source) => source.store.listNodes(sessionId).filter((node) => canAccessExecutionRoot(ws, source.runnerId, node.rootExecutionId)).map(executionNodeForUi))
         .filter((node) => !rootExecutionId || node.rootExecutionId === rootExecutionId)
         .filter((node) => !states?.size || states.has(node.state))
         .sort((a, b) => (b.startedAt || b.queuedAt) - (a.startedAt || a.queuedAt));
@@ -3486,6 +4185,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, { t: "executions_snapshot", requestId: typeof msg.requestId === "string" ? msg.requestId : undefined,
         scope: sessionId ? "session" : "all", nodes: all.slice(offset, offset + limit), nextCursor: offset + limit < all.length ? String(offset + limit) : undefined, generatedAt: Date.now() });
       for (const source of allowedSources) {
+        if (!executionOwnership.hasOnRunner(source.runnerId, socketPrincipalId(ws))) continue;
         const rc = runners.get(source.runnerId), online = source.runnerId === LOCAL_ID || !!(rc?.ws && rc.ws.readyState === WebSocket.OPEN);
         send(ws, { t: "execution_connection", runnerId: source.runnerId, state: online ? "online" : "offline", at: Date.now() });
       }
@@ -3493,31 +4193,31 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (msg.t === "execution_open" && typeof msg.executionId === "string") {
       const found = executionLocation(msg.executionId);
-      if (!found || !canUseRunner(ws, found.runnerId)) { send(ws, { t: "execution_error", code: "NOT_FOUND", message: "trabalho não encontrado", executionId: msg.executionId }); return; }
+      if (!found || !canAccessExecutionRoot(ws, found.runnerId, found.rootExecutionId)) { send(ws, { t: "execution_error", code: "NOT_FOUND", message: "trabalho não encontrado", executionId: msg.executionId }); return; }
       const rootEvents = executionEventsForNode(found.store, found.rootExecutionId, msg.executionId);
       const offset = Math.max(0, Number.parseInt(String(msg.cursor || "0"), 10) || 0), limit = Math.max(1, Math.min(500, Number(msg.limit) || 200));
       send(ws, { t: "execution_transcript", executionId: msg.executionId, node: executionNodeForUi(found.node), events: rootEvents.slice(offset, offset + limit), nextCursor: offset + limit < rootEvents.length ? String(offset + limit) : undefined, truncated: found.store.snapshot(found.rootExecutionId)?.truncated || false });
       return;
     }
     if (msg.t === "execution_archive" && typeof msg.requestId === "string" && typeof msg.executionId === "string") {
-      const cached = executionUiState.commands[msg.requestId]; if (cached) { send(ws, cached); return; }
+      const cached = executionUiState.commands[msg.requestId]; if (cached) { if (canAccessCachedExecutionResult(ws, cached)) send(ws, cached); else send(ws, { t: "execution_error", code: "NOT_FOUND", message: "trabalho não encontrado" }); return; }
       const found = executionLocation(msg.executionId);
-      const result = !found || !canUseRunner(ws, found.runnerId)
+      const result = !found || !canAccessExecutionRoot(ws, found.runnerId, found.rootExecutionId)
         ? { t: "execution_archive_result", requestId: msg.requestId, executionId: msg.executionId, ok: false, error: "trabalho não encontrado ou sem acesso" }
         : (() => { if (msg.archived) executionUiState.archives[msg.executionId] = Date.now(); else delete executionUiState.archives[msg.executionId]; return { t: "execution_archive_result", requestId: msg.requestId, executionId: msg.executionId, ok: true }; })();
       executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result); return;
     }
     if (msg.t === "execution_input" && typeof msg.requestId === "string" && typeof msg.executionId === "string") {
-      const cached = executionUiState.commands[msg.requestId]; if (cached) { send(ws, cached); return; }
-      const found = executionLocation(msg.executionId), okAccess = !!found && canUseRunner(ws, found.runnerId);
+      const cached = executionUiState.commands[msg.requestId]; if (cached) { if (canAccessCachedExecutionResult(ws, cached)) send(ws, cached); else send(ws, { t: "execution_error", code: "NOT_FOUND", message: "trabalho não encontrado" }); return; }
+      const found = executionLocation(msg.executionId), okAccess = !!found && canAccessExecutionRoot(ws, found.runnerId, found.rootExecutionId);
       const result = { t: "execution_input_result", requestId: msg.requestId, executionId: msg.executionId, ok: false,
         error: okAccess ? "este adaptador não publicou um canal de resposta verificável" : "trabalho não encontrado ou sem acesso" };
       executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result); return;
     }
     if (msg.t === "execution_control" && typeof msg.requestId === "string" && typeof msg.executionId === "string") {
-      const cached = executionUiState.commands[msg.requestId]; if (cached) { send(ws, cached); return; }
+      const cached = executionUiState.commands[msg.requestId]; if (cached) { if (canAccessCachedExecutionResult(ws, cached)) send(ws, cached); else send(ws, { t: "execution_error", code: "NOT_FOUND", message: "trabalho não encontrado" }); return; }
       const found = executionLocation(msg.executionId);
-      if (!found || !canUseRunner(ws, found.runnerId)) {
+      if (!found || !canAccessExecutionRoot(ws, found.runnerId, found.rootExecutionId)) {
         const result = { t: "execution_control_result", requestId: msg.requestId, executionId: msg.executionId, ok: false, affectedIds: [], unsupportedIds: [msg.executionId], error: "trabalho não encontrado ou sem acesso" };
         executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result); return;
       }
@@ -3526,7 +4226,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!rc || !sendToRunner(rc, { t: "execution_control", requestId: msg.requestId, executionId: msg.executionId, action: msg.action, message: msg.message })) {
           const result = { t: "execution_control_result", requestId: msg.requestId, executionId: msg.executionId, ok: false, affectedIds: [], unsupportedIds: [msg.executionId], error: "máquina offline" };
           executionUiState.commands[msg.requestId] = result; saveExecutionUiState(); send(ws, result);
-        } else pendingReq.set(msg.requestId, ws);
+        } else registerPendingRequest({ requestId: msg.requestId, ws, runnerId: found.runnerId, operation: "execution_control", metadata: { rootExecutionId: found.rootExecutionId } });
         return;
       }
       const rootCancelable = found.node.executionId === found.rootExecutionId && (msg.action === "cancel" || msg.action === "cancel_subtree");
@@ -3567,7 +4267,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const reqId = typeof msg.reqId === "string" ? msg.reqId : "term-" + randomUUID();
         const cwd = typeof msg.cwd === "string" && msg.cwd ? msg.cwd : sessionCwdOn(rid, subs.get(ws));
         auth.audit("terminal_open", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: rid, detail: cwd || "(cwd padrão)" });
-        pendingReq.set(reqId, ws);
+        registerPendingRequest({ requestId: reqId, ws, runnerId: rid, operation: "terminal_open" });
         if (!sendToRunner(rc, { t: "terminal_open", reqId, cwd, shell: msg.shell, title: msg.title, cols: msg.cols, rows: msg.rows })) {
           pendingReq.delete(reqId);
           send(ws, { t: "terminal_error", runnerId: rid, reqId, message: "não foi possível abrir terminal na máquina" });
@@ -3576,7 +4276,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
       if (msg.t === "terminal_list") {
         const reqId = typeof msg.reqId === "string" ? msg.reqId : "term-" + randomUUID();
-        pendingReq.set(reqId, ws);
+        registerPendingRequest({ requestId: reqId, ws, runnerId: rid, operation: "terminal_list" });
         if (!sendToRunner(rc, { t: "terminal_list", reqId })) {
           pendingReq.delete(reqId);
           send(ws, { t: "terminal_list", runnerId: rid, reqId, terminals: [] });
@@ -3597,7 +4297,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (ar === LOCAL_ID) { const cwd = sessionCwd(sid); send(ws, { t: "command_list", runnerId: LOCAL_ID, cwd, commands: listCommandsPublic(cwd) }); return; }
       if (!canUseRunner(ws, ar)) { send(ws, { t: "command_list", runnerId: ar, commands: [] }); return; }
       const rc = runners.get(ar);
-      if (rc?.ws) { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "commands", reqId, sessionId: sid }); }
+      if (rc?.ws) { const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "commands", sessionIds: sid ? [sid] : [] }); sendToRunner(rc, { t: "commands", reqId, sessionId: sid }); }
       else send(ws, { t: "command_list", runnerId: ar, commands: [] });
       return;
     }
@@ -3610,7 +4310,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (ar === LOCAL_ID) { send(ws, { t: "mention_list", files: listMentionFiles(sessionCwd(subs.get(ws)), q) }); return; }
       if (!canUseRunner(ws, ar)) { send(ws, { t: "mention_list", files: [] }); return; }
       const rc = runners.get(ar);
-      if (rc?.ws) { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "mention", reqId, q, sessionId: subs.get(ws) }); }
+      if (rc?.ws) { const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "mention", sessionIds: sid ? [sid] : [] }); sendToRunner(rc, { t: "mention", reqId, q, sessionId: sid }); }
       else send(ws, { t: "mention_list", files: [] });
       return;
     }
@@ -3630,7 +4330,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (decision.action === "repo" && runnerId !== LOCAL_ID) {
         if (!rc?.ws) { send(ws, { t: "error", message: "máquina offline" }); return; }
         const reqId = "memory-" + randomUUID();
-        pendingReq.set(reqId, ws); pendingRemoteMemoryPreview.set(reqId, { ws, runnerId, sessionId, actor });
+        registerPendingRequest({ requestId: reqId, ws, runnerId, operation: "memory_preview", sessionIds: sessionId ? [sessionId] : [] }); pendingRemoteMemoryPreview.set(reqId, { ws, runnerId, sessionId, actor });
         if (!sendToRunner(rc, { t: "memory_preview", reqId, text: msg.text, sessionId, actor })) {
           pendingReq.delete(reqId); pendingRemoteMemoryPreview.delete(reqId); send(ws, { t: "error", message: "não foi possível solicitar a prévia na máquina" });
         }
@@ -3641,7 +4341,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!note) throw new Error("a nota de memória está vazia");
         if (note.length > 8000) throw new Error("a nota de memória excede 8000 caracteres");
         const token = randomUUID(), expiresAt = Date.now() + MEMORY_PREVIEW_TTL_MS;
-        const pending: PendingMemoryConfirmation = { runnerId, sessionId, actor, mode: decision.action === "repo" ? "repo-local" : "jarvis", expiresAt, text: note, cwd, agent };
+        const pending: PendingMemoryConfirmation = { runnerId, sessionId, actor, mode: decision.action === "repo" ? "repo-local" : "jarvis", expiresAt, text: note, cwd, agent, ownerGeneration: sessionId ? captureSessionOwnerGeneration(runnerId, sessionId) : undefined };
         let target = "Memória privada do Jarvis", beforeHash = createHash("sha256").update("").digest("hex"), exists = true;
         if (pending.mode === "repo-local") {
           pending.preview = previewMemoryAppend(note, cwd, cmdAgentOf(agent));
@@ -3658,11 +4358,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!pending) { send(ws, { t: "memory_applied", token: msg.token, ok: false, error: "prévia inexistente, expirada ou já aplicada" }); return; }
       if (pending.actor.userId && pending.actor.userId !== principalOf(ws)?.userId) { send(ws, { t: "memory_applied", token: msg.token, ok: false, error: "esta prévia pertence a outro usuário" }); return; }
       if (!canUseRunner(ws, pending.runnerId)) { send(ws, { t: "memory_applied", token: msg.token, ok: false, error: "sem acesso à máquina da prévia" }); return; }
+      if (pending.ownerGeneration && (!sessionOwnerGenerationCurrent(pending.ownerGeneration) || !canAccessSession(ws, pending.runnerId, pending.ownerGeneration.sessionId))) { pendingMemoryConfirmations.delete(msg.token); send(ws, { t: "memory_applied", token: msg.token, ok: false, error: "a sessão mudou ou foi excluída desde a prévia" }); return; }
       pendingMemoryConfirmations.delete(msg.token);
       if (pending.mode === "repo-remote") {
         const rc = runners.get(pending.runnerId), reqId = "memory-apply-" + randomUUID();
         if (!rc?.ws) { sendMemoryFrame(ws, pending, { t: "memory_applied", token: msg.token, ok: false, error: "máquina offline" }); return; }
-        pendingReq.set(reqId, ws); pendingRemoteMemoryApply.set(reqId, { ws, pending, token: msg.token });
+        registerPendingRequest({ requestId: reqId, ws, runnerId: pending.runnerId, operation: "memory_apply", sessionIds: pending.sessionId ? [pending.sessionId] : [] }); pendingRemoteMemoryApply.set(reqId, { ws, pending, token: msg.token });
         if (!sendToRunner(rc, { t: "memory_apply", reqId, token: msg.token })) {
           pendingReq.delete(reqId); pendingRemoteMemoryApply.delete(reqId); sendMemoryFrame(ws, pending, { t: "memory_applied", token: msg.token, ok: false, error: "não foi possível aplicar a memória na máquina" });
         }
@@ -3677,6 +4378,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         } else {
           const cls = classifyMemoryText({ text: note, cwd: pending.cwd });
           let vec: number[] = []; try { vec = await embedOne(note); } catch { vec = []; }
+          if (pending.ownerGeneration && !sessionOwnerGenerationCurrent(pending.ownerGeneration)) throw new Error("a sessão mudou ou foi excluída durante a indexação");
           memory.upsert({ id: `note:${pending.actor.userId || "local"}:${Date.now()}`, sessionId: pending.sessionId || "memory", runnerId: pending.runnerId, ownerId: pending.actor.userId, agent: pending.agent, cwd: pending.cwd, title: "Memória Jarvis", text: note.slice(0, 400), ts: Date.now(), vec, ...cls });
         }
         memoryProvenance.append({ at: Date.now(), sessionId: pending.sessionId, runnerId: pending.runnerId, userId: pending.actor.userId, deviceId: pending.actor.deviceId, agent: pending.agent, cwd: pending.cwd || "", target, beforeHash, afterHash, noteHash });
@@ -3723,7 +4425,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // unified "all machines" view: aggregate local + every online runner's sessions (tagged).
     if (msg.t === "listAll") {
-      aggregateAllSessions(ws).then(({ sessions, machines }) => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "sessions", runnerId: "all", sessions, machines, recentDirs: recentDirsList() }); }).catch(() => { /* ignore */ });
+      aggregateAllSessions(ws).then(({ sessions, machines }) => { if (ws.readyState === WebSocket.OPEN) send(ws, { t: "sessions", runnerId: "all", sessions, machines, recentDirs: recentDirsList(10, sessions) }); }).catch(() => { /* ignore */ });
       return;
     }
     // when viewing a REMOTE machine, session ops are forwarded to that runner
@@ -3731,21 +4433,31 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const explicitListRunner = msg.t === "listdir" && typeof msg.runnerId === "string" ? msg.runnerId : null;
       if (explicitListRunner && !canUseRunner(ws, explicitListRunner)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
       const ar = explicitListRunner || activeRunner(ws);
-      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete" || msg.t === "dropLast")) {
+      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete" || msg.t === "dropLast" || msg.t === "getWorktreePreview")) {
         const targeted = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((id: unknown): id is string => typeof id === "string") : (typeof msg.sessionId === "string" ? [msg.sessionId] : []);
         if (targeted.some((sid: string) => isInternalExecutionSession(ar, sid))) { send(ws, { t: "error", message: "sessão interna só pode ser acessada pelo painel Trabalhos" }); return; }
         const rc = runners.get(ar);
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
         if (msg.t === "list") { sendToRunner(rc, { t: "list" }); return; }
         if (msg.t === "dropLast" && typeof msg.sessionId === "string") { activityBuf.delete(scopedSessionKey(ar, msg.sessionId)); sendToRunner(rc, { t: "dropLast", sessionId: msg.sessionId }); return; }
-        if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) { const ids: string[] = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((id: unknown): id is string => typeof id === "string") : [msg.sessionId]; if (ids.some((sid) => runnerActive.get(ar)?.has(sid))) { send(ws, { t: "error", message: "pare o turno antes de excluir esta conversa" }); return; } const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); if (!sendToRunner(rc, { t: "delete", reqId, sessionId: msg.sessionId, sessionIds: msg.sessionIds, alsoNative: !!msg.alsoNative })) { pendingReq.delete(reqId); send(ws, { t: "error", message: "não foi possível solicitar a exclusão na máquina" }); } return; }
-        if (msg.t === "readdiff" && typeof msg.path === "string" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readdiff", reqId, sessionId: msg.sessionId, path: msg.path }); return; }
-        if (msg.t === "new") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "new", reqId, agent: msg.agent, cwd: msg.cwd }); return; }
-        if (msg.t === "readfile" && typeof msg.path === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "readfile", reqId, path: msg.path, cwd: msg.cwd }); return; }
-        if (msg.t === "listdir") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "listdir", reqId, path: msg.path, files: msg.files }); return; }
-        if (msg.t === "getWorktreePreview" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); if (!sendToRunner(rc, { t: "preview_query", reqId, sessionId: msg.sessionId })) { pendingReq.delete(reqId); send(ws, { t: "worktree_preview", sessionId: msg.sessionId, candidates: [] }); } return; }
-        if (msg.t === "configure" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); sendToRunner(rc, { t: "configure", reqId, sessionId: msg.sessionId, agent: msg.agent, cwd: msg.cwd }); return; }
-        if (msg.t === "open" && typeof msg.sessionId === "string") { const reqId = "r" + (++reqSeq); pendingReq.set(reqId, ws); subs.set(ws, msg.sessionId); sendToRunner(rc, { t: "open", reqId, sessionId: msg.sessionId }); return; }
+        if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) {
+          const requestedIds = Array.isArray(msg.sessionIds)
+            ? msg.sessionIds.filter((id: unknown): id is string => typeof id === "string")
+            : typeof msg.sessionId === "string" ? [msg.sessionId] : [];
+          const ids = [...new Set<string>(requestedIds)];
+          if (ids.some((sid) => sessionDispatchBusy(ar, sid))) { send(ws, { t: "error", message: "pare o turno antes de excluir esta conversa" }); return; }
+          const deleteTargets = preparePendingDeleteTargets(ar, ids, !!msg.alsoNative);
+          const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "delete", sessionIds: ids, metadata: { deleteTargets } });
+          if (!sendToRunner(rc, { t: "delete", reqId, sessionId: msg.sessionId, sessionIds: msg.sessionIds, alsoNative: !!msg.alsoNative })) { pendingReq.delete(reqId); send(ws, { t: "error", message: "não foi possível solicitar a exclusão na máquina" }); }
+          return;
+        }
+        if (msg.t === "readdiff" && typeof msg.path === "string" && typeof msg.sessionId === "string") { const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "filediff", sessionIds: [msg.sessionId] }); if (!sendToRunner(rc, { t: "readdiff", reqId, sessionId: msg.sessionId, path: msg.path })) pendingReq.delete(reqId); return; }
+        if (msg.t === "new") { const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "new" }); if (!sendToRunner(rc, { t: "new", reqId, agent: msg.agent, cwd: msg.cwd })) pendingReq.delete(reqId); return; }
+        if (msg.t === "readfile" && typeof msg.path === "string") { const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "readfile" }); if (!sendToRunner(rc, { t: "readfile", reqId, path: msg.path, cwd: msg.cwd })) pendingReq.delete(reqId); return; }
+        if (msg.t === "listdir") { const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "listdir" }); if (!sendToRunner(rc, { t: "listdir", reqId, path: msg.path, files: msg.files })) pendingReq.delete(reqId); return; }
+        if (msg.t === "getWorktreePreview" && typeof msg.sessionId === "string") { const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "preview", sessionIds: [msg.sessionId] }); if (!sendToRunner(rc, { t: "preview_query", reqId, sessionId: msg.sessionId })) { pendingReq.delete(reqId); send(ws, { t: "worktree_preview", sessionId: msg.sessionId, candidates: [] }); } return; }
+        if (msg.t === "configure" && typeof msg.sessionId === "string") { const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "configure", sessionIds: [msg.sessionId] }); if (!sendToRunner(rc, { t: "configure", reqId, sessionId: msg.sessionId, agent: msg.agent, cwd: msg.cwd })) pendingReq.delete(reqId); return; }
+        if (msg.t === "open" && typeof msg.sessionId === "string") { const reqId = registerPendingRequest({ ws, runnerId: ar, operation: "open", sessionIds: [msg.sessionId] }); subs.set(ws, msg.sessionId); if (!sendToRunner(rc, { t: "open", reqId, sessionId: msg.sessionId })) pendingReq.delete(reqId); return; }
         if (msg.t === "send" && typeof msg.text === "string") {
           let sid = (typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : (subs.get(ws) || "default");
           const canonicalSid = isNativeId(sid) ? managedRunnerSessionForNative(rc.id, sid) : undefined;
@@ -3757,15 +4469,24 @@ wss.on("connection", (ws: WebSocket, req: any) => {
             enqueueChatTurn(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
             send(ws, { t: "queued", runnerId: ar, sessionId: sid, text: msg.text, update: true, message: "Máquina drenando para atualização — mensagem ficou na fila." }); return;
           }
-          if (routeAborts.has(scopedSessionKey(ar, sid)) || (runnerActive.get(ar)?.has(sid) ?? false)) {
+          const turnActor = actorOf(ws);
+          if (sessionDispatchBusy(ar, sid)) {
             queueOf(ar, sid).push({ text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
             broadcastQueue(ar, sid); saveQueues(); void maybeFlushQueue(ar, sid, false); send(ws, { t: "queued", runnerId: ar, sessionId: sid, text: msg.text }); return;
           }
+          const lease = reserveSessionDispatch(ar, sid, turnActor.userId || "local", "send");
+          if (!lease) {
+            enqueueChatTurn(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: { ...turnActor, source: "queue" } });
+            send(ws, { t: "queued", runnerId: ar, sessionId: sid, text: msg.text }); return;
+          }
+          try {
+          if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou antes do envio");
           const flags = autoFlags(msg.auto);
           let state = runnerSessionState.get(rc.id)?.get(sid);
           let hist: any = null;
           if (needsAuto(flags)) {
-            hist = await runnerHistory(rc, sid);
+            hist = await runnerHistory(rc, sid, { ws });
+            if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante a leitura do histórico");
             if (hist) state = { ...(state || {}), agent: hist.agent, cwd: hist.cwd, started: Number(hist.total) > 0, source: /^(claude:|codex:)/.test(sid) ? "native" : "managed" };
           }
           const currentAgent = state?.agent || (typeof msg.agent === "string" ? msg.agent : undefined) || rc.info.agents[0];
@@ -3778,16 +4499,21 @@ wss.on("connection", (ws: WebSocket, req: any) => {
             flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [],
             recent: Array.isArray(hist?.messages) ? hist.messages.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role, text: String(m.text || "") })) : [],
             contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens,
-            notify: (frame) => { for (const c of clientsOn(rc.id)) if (subs.get(c) === sid) send(c, frame); },
+            notify: (frame) => { for (const c of clientsOn(rc.id)) if (subs.get(c) === sid && canAccessSession(c, rc.id, sid)) send(c, frame); },
           });
+          if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o roteamento");
           const states = runnerSessionState.get(rc.id) || new Map<string, any>(); states.set(sid, { ...(state || {}), id: sid, agent: decision.agent }); runnerSessionState.set(rc.id, states);
           if (msg.speak) remoteSpeak.add(ar + "\0" + sid);
-          if (!sendToRunner(rc, { t: "send", sessionId: sid, text: msg.text, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker: typeof msg.speaker === "string" ? msg.speaker : undefined, turnId: (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID(), actor: actorOf(ws) })) {
+          const personal = await personalContextForChat(ar, sid, msg.text, turnActor, () => refreshSessionDispatchAuthorization(lease));
+          if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
+          const turnId = (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID();
+          if (!sendOwnedRunnerTurn(rc, sid, turnId, turnActor.userId || "local", { t: "send", text: msg.text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker: typeof msg.speaker === "string" ? msg.speaker : undefined, actor: turnActor })) {
             remoteSpeak.delete(ar + "\0" + sid);
             send(ws, { t: "error", message: "não foi possível enviar para a máquina" }); return;
           }
           markRunnerSessionActive(ar, sid);
           return;
+          } finally { releaseSessionDispatch(lease); }
         }
       }
     }
@@ -3801,9 +4527,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // underlying native claude/codex session each maps to. Irreversible.
     if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) {
       const ids: string[] = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((x: any) => typeof x === "string") : [msg.sessionId];
-      if (ids.some((sid) => activeRuns.has(sid) || routeAborts.has(scopedSessionKey(LOCAL_ID, sid)))) { send(ws, { t: "error", message: "pare o turno antes de excluir esta conversa" }); return; }
+      if (ids.some((sid) => sessionDispatchBusy(LOCAL_ID, sid))) { send(ws, { t: "error", message: "pare o turno antes de excluir esta conversa" }); return; }
       const deleteOne = (sid: string): boolean => {
-        if (isNativeId(sid)) { stopTail(sid); const deleted = deleteNative(sid); if (deleted) localExecutionStore.deleteSession(sid); return deleted; }
+        if (isNativeId(sid)) { stopTail(sid); return deleteNative(sid); }
         if (store.isHidden(sid)) return false;
         const s = store.get(sid);
         if (s) {
@@ -3813,10 +4539,18 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           if (msg.alsoNative && ag.nativeSessionId) { const nid = ag.nativeSessionId(sid); const key = nid && nativeIdForAgent(s.agent, nid); if (key) deleteNative(key); }
           ag.forgetSession?.(sid);
         }
-        const deleted = store.delete(sid); if (deleted) localExecutionStore.deleteSession(sid); return deleted;
+        return store.delete(sid);
       };
       const deletedIds: string[] = [];
-      for (const sid of ids) { if (deleteOne(sid)) deletedIds.push(sid); if (subs.get(ws) === sid && deletedIds.includes(sid)) subs.delete(ws); }
+      for (const sid of ids) {
+        synchronizePersonalSessionAliases(LOCAL_ID, sid);
+        const invalidations = (msg.alsoNative && !isNativeId(sid) ? sessionAliases(LOCAL_ID, sid) : [sid]).map((alias) => personalSessionBindings.capture(LOCAL_ID, alias));
+        if (deleteOne(sid)) {
+          deletedIds.push(sid);
+          for (const snapshot of personalSessionBindings.invalidateManyIfCurrent(invalidations)) removeSessionExecutionAndMemory(LOCAL_ID, snapshot.sessionId);
+        }
+        if (subs.get(ws) === sid && deletedIds.includes(sid)) subs.delete(ws);
+      }
       const okCount = deletedIds.length;
       auth.audit("delete", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${okCount}/${ids.length} conversa(s)` });
       send(ws, { t: "deleted", sessionId: msg.sessionId, ids: deletedIds, ok: okCount === ids.length, okCount });
@@ -3878,6 +4612,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "open" && typeof msg.sessionId === "string" && isNativeId(msg.sessionId)) {
       subs.set(ws, msg.sessionId);
       syncTails();
+      reconcileNativeExecutions(msg.sessionId);
       const h = nativeHistory(msg.sessionId);
       if (!h) { send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
       send(ws, {
@@ -3899,13 +4634,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       subs.set(ws, msg.sessionId);
       syncTails();
       const s = store.ensure(msg.sessionId);
+      try { synchronizePersonalSessionAliases(LOCAL_ID, s.id); }
+      catch { send(ws, { t: "error", message: "conflito de propriedade entre a sessão e seu transcript nativo" }); return; }
       reconcileFromNative(s); // backfill a reply an orphaned turn (killed by a prior hub restart) already wrote natively
       const all = store.history(s.id);
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
       const su = sessionUsage(s.id), nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
       const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
       const files = [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))];
-      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
+      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: nh?.title || s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
       replayActivity(ws, LOCAL_ID, s.id);
       replayRoute(ws, LOCAL_ID, s.id);
       sendPendingAsk(ws, LOCAL_ID, s.id);
@@ -3950,14 +4687,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // "buscando mais…" until done. setImmediate lets each batch paint before the next disk scan.
       {
         const q = msg.query;
-        const managed = searchManaged(q);
+        const managed = searchManaged(q, ws);
         const exclude = nativeExcludeIds();
         const NAT = Number(process.env.JARVIS_NATIVE_LIMIT) || 40;
         send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done: false });
         const stage = async (limit: number, includeRemote: boolean, done: boolean): Promise<void> => {
           if (ws.readyState !== WebSocket.OPEN) return;
           try {
-            const nat = searchNative(q, limit).filter((h) => !exclude.has(h.id));
+            const nat = searchNative(q, limit).filter((h) => !exclude.has(h.id) && canAccessSession(ws, LOCAL_ID, h.id));
             const remote = includeRemote ? await searchRunnerSessions(ws, q) : [];
             send(ws, { t: "searchResult", query: q, hits: sortHits([...managed, ...nat, ...remote]), done });
           } catch { send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done }); }
@@ -3991,6 +4728,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         includeContext: msg.includeContext !== false,
         model: typeof msg.model === "string" ? msg.model : undefined,
         effort: typeof msg.effort === "string" ? msg.effort : undefined,
+        agents: Array.isArray(msg.agents) ? msg.agents.filter((x: any) => typeof x === "string").slice(0, 12) : undefined,
       };
       const runnerId = activeRunner(ws);
       if (runnerId === LOCAL_ID) await startLocalCouncil(ws, input);
@@ -4001,12 +4739,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
       return;
     }
-    // Torneio (Orca #3): fan-out da MESMA tarefa para N candidatos + juiz + promoção do vencedor.
+    // Espaço de Soluções: Benchmark/Revisão/Auditoria local com N candidatos + consolidador.
     // LOCAL-only por enquanto (o caminho remoto exigiria handler no runner, como o council).
     if (msg.t === "tournament_start" && typeof msg.sessionId === "string" && typeof msg.task === "string") {
-      if (activeRunner(ws) !== LOCAL_ID) { send(ws, { t: "error", message: "Torneio só roda na máquina local por enquanto" }); return; }
+      const mode = SOLUTION_WORKSPACE_MODES.includes(msg.mode) ? msg.mode as SolutionWorkspaceMode : "benchmark";
+      const flowLabel = mode === "benchmark" ? "Benchmark" : mode === "audit" ? "Auditoria" : "Revisão paralela";
+      if (activeRunner(ws) !== LOCAL_ID) { send(ws, { t: "error", message: `${flowLabel} só roda na máquina local por enquanto` }); return; }
       const task = msg.task.slice(0, 20_000).trim();
-      if (!task) { send(ws, { t: "error", message: "Torneio: tarefa vazia" }); return; }
+      if (!task) { send(ws, { t: "error", message: `${flowLabel}: tarefa vazia` }); return; }
       // competitors explícitos, ou N cópias do agente da sessão (default 3, clamp 2..6).
       const sAgent = store.get(msg.sessionId)?.agent || agents.default;
       let competitors: TournamentCompetitor[] = Array.isArray(msg.competitors)
@@ -4016,7 +4756,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const count = Math.min(6, Math.max(2, Number(msg.count) || 3));
         competitors = Array.from({ length: count }, (_v, i) => ({ agent: sAgent, model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, label: `${sAgent} #${i + 1}` }));
       }
-      await startLocalTournament(ws, { sessionId: msg.sessionId, task, competitors, criteria: typeof msg.criteria === "string" ? msg.criteria : undefined, write: msg.write !== false });
+      await startLocalTournament(ws, { sessionId: msg.sessionId, task, competitors, criteria: typeof msg.criteria === "string" ? msg.criteria : undefined, write: msg.write !== false, mode });
       return;
     }
     // summary/digest one-shot config (which agent/model/effort — cheap by default)
@@ -4138,6 +4878,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       try { const r = importFrameworkFromNative({}); send(ws, { t: "framework_imported", ok: true, imported: r.imported, skipped: r.skipped }); }
       catch (e: any) { send(ws, { t: "framework_imported", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    if (msg.t === "framework_seed") {
+      if (!requireOwner(ws)) return;
+      try { const r = installFrameworkStarterPack(); send(ws, { t: "framework_seeded", ok: true, imported: r.imported, skipped: r.skipped }); }
+      catch (e: any) { send(ws, { t: "framework_seeded", ok: false, error: String(e?.message ?? e) }); }
       return;
     }
     if (msg.t === "publish_framework") {
@@ -4325,26 +5071,69 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       return;
     }
     if (msg.t === "memory_reindex") {
-      if (!requireOwner(ws)) return;
+      const reindexOwner = requireOwner(ws); if (!reindexOwner) return;
       void (async () => {
         try {
-          const jobs = store.list().map((s) => { const full = store.get(s.id); if (!full || !full.messages.length) return null; const lu = [...full.messages].reverse().find((m) => m.role === "user")?.text || ""; const la = [...full.messages].reverse().find((m) => m.role === "assistant")?.text || ""; return { meta: s, text: `${s.title}\n${lu}\n${la}`.slice(0, 2000) }; }).filter(Boolean) as Array<{ meta: any; text: string }>;
+          type ReindexJob = {
+            id: string;
+            sessionId: string;
+            runnerId: string;
+            ownerGeneration: SessionOwnerGeneration;
+            sourceUpdatedAt?: number;
+            agent?: string;
+            cwd?: string;
+            title: string;
+            updatedAt: number;
+            text: string;
+          };
+          const stillAuthorized = (): boolean => ws.readyState === WebSocket.OPEN
+            && socketPrincipalId(ws) === reindexOwner.userId
+            && (!auth.AUTH_ENABLED || principalOf(ws)?.role === "owner");
+          const jobs: ReindexJob[] = [];
+          for (const summary of store.list()) {
+            const full = store.get(summary.id);
+            const ownerGeneration = captureSessionOwnerGeneration(LOCAL_ID, summary.id);
+            if (!full || !full.messages.length || ownerGeneration.conflicted) continue;
+            const lastUser = [...full.messages].reverse().find((message) => message.role === "user")?.text || "";
+            const lastAssistant = [...full.messages].reverse().find((message) => message.role === "assistant")?.text || "";
+            jobs.push({ id: summary.id, sessionId: summary.id, runnerId: LOCAL_ID, ownerGeneration, sourceUpdatedAt: full.updatedAt, agent: summary.agent, cwd: summary.cwd, title: summary.title, updatedAt: full.updatedAt, text: `${summary.title}\n${lastUser}\n${lastAssistant}`.slice(0, 2000) });
+          }
           const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUseRunner(ws, r.id));
           for (const r of remotes) {
             const label = runnerLabels[r.id] || r.info.host || r.id;
             for (const s of await runnerSessions(r)) {
-              const h = await runnerHistory(r, s.id);
+              if (!stillAuthorized() || !canUseRunner(ws, r.id)) throw new Error("a autorização mudou durante a reindexação");
+              const requestedGeneration = captureSessionOwnerGeneration(r.id, s.id);
+              if (requestedGeneration.conflicted) continue;
+              const h = await runnerHistory(r, s.id, { ws, generation: requestedGeneration });
+              if (!stillAuthorized() || !canUseRunner(ws, r.id)) throw new Error("a autorização mudou durante a reindexação");
               const messages = Array.isArray(h?.messages) ? h.messages : [];
               if (!messages.length) continue;
               const lu = [...messages].reverse().find((m: any) => m?.role === "user")?.text || "";
               const la = [...messages].reverse().find((m: any) => m?.role === "assistant")?.text || "";
               const title = `${label} · ${s.title || h?.title || s.id}`;
-              jobs.push({ meta: { id: `runner:${r.id}:${s.id}`, sessionId: s.id, runnerId: r.id, agent: s.agent || h?.agent, cwd: s.cwd || h?.cwd, title, updatedAt: s.updatedAt || Date.now() }, text: `${title}\n${lu}\n${la}`.slice(0, 2000) });
+              const ownerGeneration = captureSessionOwnerGeneration(r.id, s.id);
+              if (ownerGeneration.conflicted || !sessionOwnerGenerationCurrent(ownerGeneration)) continue;
+              const sourceUpdatedAt = typeof s.updatedAt === "number" && Number.isFinite(s.updatedAt) ? s.updatedAt : undefined;
+              jobs.push({ id: `runner:${r.id}:${s.id}`, sessionId: s.id, runnerId: r.id, ownerGeneration, sourceUpdatedAt, agent: s.agent || h?.agent, cwd: s.cwd || h?.cwd, title, updatedAt: sourceUpdatedAt || Date.now(), text: `${title}\n${lu}\n${la}`.slice(0, 2000) });
             }
           }
           const vecs = await embed(jobs.map((j) => j.text));
-          memory.upsertMany(jobs.map((j, i) => ({ id: j.meta.id, sessionId: j.meta.sessionId || j.meta.id, runnerId: j.meta.runnerId || LOCAL_ID, agent: j.meta.agent, cwd: j.meta.cwd, title: j.meta.title, text: j.text.slice(0, 400), ts: j.meta.updatedAt, vec: vecs[i] || [], ...classifyMemoryText({ text: j.text, cwd: j.meta.cwd }) })).filter((e) => e.vec.length));
-          send(ws, { t: "memory_reindexed", count: memory.size(), stats: memory.stats() });
+          if (!stillAuthorized()) throw new Error("a autorização mudou durante a reindexação");
+          const entries = jobs.flatMap((job, index) => {
+            const vec = vecs[index] || [];
+            if (!vec.length || !sessionOwnerGenerationCurrent(job.ownerGeneration)) return [];
+            if (job.runnerId === LOCAL_ID) {
+              const current = store.get(job.sessionId);
+              if (!current || current.updatedAt !== job.sourceUpdatedAt) return [];
+            } else {
+              const current = runnerSessionState.get(job.runnerId)?.get(job.sessionId);
+              if (!current || (job.sourceUpdatedAt !== undefined && current.updatedAt !== job.sourceUpdatedAt)) return [];
+            }
+            return [{ id: job.id, sessionId: job.sessionId, runnerId: job.runnerId, ownerId: job.ownerGeneration.principalId, agent: job.agent, cwd: job.cwd, title: job.title, text: job.text.slice(0, 400), ts: job.updatedAt, vec, ...classifyMemoryText({ text: job.text, cwd: job.cwd }) }];
+          });
+          memory.upsertMany(entries);
+          if (stillAuthorized()) send(ws, { t: "memory_reindexed", count: memory.size(), stats: memory.stats() });
         } catch (e: any) { send(ws, { t: "error", message: "reindex da memória falhou: " + String(e?.message ?? e) }); }
       })();
       return;
@@ -4363,11 +5152,31 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
       const s = store.get(msg.sessionId);
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
-      clearPendingAsk(LOCAL_ID, s.id);
-      // routes through the shared lifecycle — which (unlike the old inline copy) also persists the
-      // assistant's activity trace, so a reload of a session driven via sendTo keeps its tool blocks.
-      const decision = await routeLocalTurn(s.id, msg.text, msg.model, msg.effort, autoFlags(msg.auto));
-      await runManagedTurn(turnCtx, s.id, { showText: msg.text, model: decision.model, effort: decision.effort, actor: actorOf(ws), onError: (message) => send(ws, { t: "error", message }) });
+      const turnActor = actorOf(ws);
+      const queueTurn = (): void => {
+        enqueueChatTurn(LOCAL_ID, s.id, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: { ...turnActor, source: "queue" } });
+        void maybeFlushQueue(LOCAL_ID, s.id, false);
+        send(ws, { t: "queued", runnerId: LOCAL_ID, sessionId: s.id, text: msg.text });
+      };
+      if (sessionDispatchBusy(LOCAL_ID, s.id)) { queueTurn(); return; }
+      const lease = reserveSessionDispatch(LOCAL_ID, s.id, turnActor.userId || "local", "sendTo");
+      if (!lease) { send(ws, { t: "error", message: "a autorização da sessão mudou antes do envio" }); return; }
+      activeRuns.add(s.id); broadcastRuns();
+      try {
+        if (!sessionDispatchAuthorized(lease, ws) || !store.get(s.id)) throw new Error("a autorização da sessão mudou antes do envio");
+        clearPendingAsk(LOCAL_ID, s.id);
+        // routes through the shared lifecycle — which (unlike the old inline copy) also persists the
+        // assistant's activity trace, so a reload of a session driven via sendTo keeps its tool blocks.
+        const decision = await routeLocalTurn(s.id, msg.text, msg.model, msg.effort, autoFlags(msg.auto));
+        if (!sessionDispatchAuthorized(lease, ws) || !store.get(s.id)) throw new Error("a autorização da sessão mudou durante o roteamento");
+        const personal = await personalContextForChat(LOCAL_ID, s.id, msg.text, turnActor, () => refreshSessionDispatchAuthorization(lease));
+        if (!sessionDispatchAuthorized(lease, ws) || !store.get(s.id)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
+        await runOwnedManagedTurn(s.id, { showText: msg.text, agentText: personal ? `${personal.contextPrefix}\n\n${msg.text}` : msg.text, manifestAgentText: msg.text, model: decision.model, effort: decision.effort, actor: turnActor, onError: (message) => send(ws, { t: "error", message }) });
+      } finally {
+        activeRuns.delete(s.id); broadcastRuns();
+        if (queueOf(LOCAL_ID, s.id).length) pendingDispatchFlush.add(scopedSessionKey(LOCAL_ID, s.id));
+        releaseSessionDispatch(lease);
+      }
       return;
     }
 
@@ -4489,13 +5298,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       void looksLikeTopicShift(sid, text).then((shift) => { if (shift) send(ws, { t: "topic_shift", sessionId: sid, text }); }).catch(() => { /* sugestão é best-effort */ });
     }
     if (!text) return;
-    // Gap 8: se o DISPOSITIVO de origem compartilhou a localização (opt-in no cliente), anexa uma
-    // linha discreta ao pedido — para solicitações que dependem de "onde estou" (ex.: lugares por
-    // perto). A posição vem SEMPRE do device solicitante, nunca do Hub; ausente → nada muda.
-    if (msg.geo && typeof msg.geo === "object" && typeof msg.geo.lat === "number" && typeof msg.geo.lng === "number") {
-      const acc = typeof msg.geo.acc === "number" && msg.geo.acc > 0 ? `, precisão ~${Math.round(msg.geo.acc)} m` : "";
-      text = `[localização atual do dispositivo do usuário: latitude ${msg.geo.lat.toFixed(5)}, longitude ${msg.geo.lng.toFixed(5)}${acc}]\n${text}`;
-    }
+    // Location is handled by PersonalAssistantService as a short-lived, purpose-bound envelope.
+    // Legacy `geo` fields are intentionally ignored so raw coordinates never enter prompts,
+    // pending-turn files, transcripts, semantic memory or the audit log.
     if (msg.t === "send" && typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
     const inboundActor = actorOf(ws);
     const inboundKey = recordPendingInboundTurn(activeRunner(ws), sid, msg, text, inboundActor);
@@ -4546,17 +5351,26 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           send(ws, { t: "queued", runnerId: ar, sessionId: remoteSid, text, voice: true, update: true, message: "Máquina drenando para atualização — mensagem ficou na fila." });
           return;
         }
-        if (routeAborts.has(scopedSessionKey(ar, remoteSid)) || (runnerActive.get(ar)?.has(remoteSid) ?? false)) {
+        const turnActor = actorOf(ws);
+        if (sessionDispatchBusy(ar, remoteSid)) {
           queueOf(ar, remoteSid).push({ text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
           broadcastQueue(ar, remoteSid); saveQueues(); void maybeFlushQueue(ar, remoteSid, false);
           send(ws, { t: "queued", runnerId: ar, sessionId: remoteSid, text, voice: true });
           return;
         }
+        const lease = reserveSessionDispatch(ar, remoteSid, turnActor.userId || "local", "voice");
+        if (!lease) {
+          enqueueChatTurn(ar, remoteSid, { text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: { ...turnActor, source: "queue" } });
+          send(ws, { t: "queued", runnerId: ar, sessionId: remoteSid, text, voice: true }); return;
+        }
+        try {
+        if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou antes do envio");
         const flags = autoFlags(msg.auto);
         let state = runnerSessionState.get(rc.id)?.get(remoteSid);
         let hist: any = null;
         if (needsAuto(flags)) {
-          hist = await runnerHistory(rc, remoteSid);
+          hist = await runnerHistory(rc, remoteSid, { ws });
+          if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante a leitura do histórico");
           if (hist) state = { ...(state || {}), agent: hist.agent, cwd: hist.cwd, started: Number(hist.total) > 0, source: /^(claude:|codex:)/.test(remoteSid) ? "native" : "managed" };
         }
         const currentAgent = state?.agent || rc.info.agents[0];
@@ -4569,17 +5383,22 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [],
           recent: Array.isArray(hist?.messages) ? hist.messages.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role, text: String(m.text || "") })) : [],
           contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens,
-          notify: (frame) => { for (const c of clientsOn(rc.id)) if (subs.get(c) === remoteSid) send(c, frame); },
+          notify: (frame) => { for (const c of clientsOn(rc.id)) if (subs.get(c) === remoteSid && canAccessSession(c, rc.id, remoteSid)) send(c, frame); },
         });
+        if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o roteamento");
         const states = runnerSessionState.get(rc.id) || new Map<string, any>(); states.set(remoteSid, { ...(state || {}), id: remoteSid, agent: decision.agent }); runnerSessionState.set(rc.id, states);
         if (msg.speak) remoteSpeak.add(ar + "\0" + remoteSid);
-        if (!sendToRunner(rc, { t: "send", sessionId: remoteSid, text, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, turnId: (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID(), actor: actorOf(ws) })) {
+        const personal = await personalContextForChat(ar, remoteSid, text, turnActor, () => refreshSessionDispatchAuthorization(lease));
+        if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
+        const turnId = (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID();
+        if (!sendOwnedRunnerTurn(rc, remoteSid, turnId, turnActor.userId || "local", { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, actor: turnActor })) {
           remoteSpeak.delete(ar + "\0" + remoteSid);
           send(ws, { t: "error", message: "não foi possível enviar para a máquina" });
           return;
         }
         markRunnerSessionActive(ar, remoteSid);
         return;
+        } finally { releaseSessionDispatch(lease); }
       }
     }
     // One turn per session. A second send while one is still running would spawn a CONCURRENT agent
@@ -4589,9 +5408,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // just-recorded audio (a long one is real work lost). A typed send only reaches here in a race
     // (the client sends {t:enqueue} once it knows the session is busy), so there's no double-queue.
     // Search and the wake router returned above, so this only covers real native/normal turns.
-    if (activeRuns.has(sid) || routeAborts.has(scopedSessionKey(LOCAL_ID, sid))) {
+    const turnActor = actorOf(ws);
+    const queueLocalTurn = (): void => {
       const rid = activeRunner(ws);
-      queueOf(LOCAL_ID, sid).push({
+      enqueueChatTurn(LOCAL_ID, sid, {
         text,
         atts: Array.isArray(msg.attachments) ? msg.attachments : [],
         model: typeof msg.model === "string" ? msg.model : undefined,
@@ -4599,13 +5419,16 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         auto: autoFlags(msg.auto),
         runnerId: rid !== LOCAL_ID ? rid : undefined,
         msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
-        actor: actorOf(ws, "queue"),
+        actor: { ...turnActor, source: "queue" },
       });
-      broadcastQueue(LOCAL_ID, sid); saveQueues(); void maybeFlushQueue(LOCAL_ID, sid, false);
+      void maybeFlushQueue(LOCAL_ID, sid, false);
       clearPendingInboundTurn(inboundKey);
       // ack so the client stops its "processando" spinner and confirms the utterance landed (the
       // queue list itself already updated via broadcastQueue above).
       send(ws, { t: "queued", runnerId: LOCAL_ID, sessionId: sid, text, voice: msg.t === "voice" });
+    };
+    if (sessionDispatchBusy(LOCAL_ID, sid)) {
+      queueLocalTurn();
       return;
     }
 
@@ -4615,12 +5438,18 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // a turn concurrently on the same session (interleaved agent_event streams, garbled replies).
     // agentTurn()'s own activeRuns.add()/delete() become idempotent no-ops once this fires first;
     // the release in `finally` below covers paths (like isNativeId) that never reach agentTurn.
+    const lease = reserveSessionDispatch(LOCAL_ID, sid, turnActor.userId || "local", msg.t);
+    if (!lease) { send(ws, { t: "error", message: "a autorização da sessão mudou antes do envio" }); return; }
     activeRuns.add(sid); broadcastRuns();
     try {
+      if (!sessionDispatchAuthorized(lease, ws)) throw new Error("a autorização da sessão mudou antes do envio");
       // Continue an imported native CLI session (resumes the real claude session; persists in its jsonl).
       if (isNativeId(sid)) {
         const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
-        await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], actor: actorOf(ws) });
+        if (!sessionDispatchAuthorized(lease, ws)) throw new Error("a autorização da sessão mudou durante o roteamento");
+        const personal = await personalContextForChat(LOCAL_ID, sid, text, turnActor, () => refreshSessionDispatchAuthorization(lease));
+        if (!sessionDispatchAuthorized(lease, ws)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
+        await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], actor: turnActor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease, ws) });
         clearPendingInboundTurn(inboundKey);
         return;
       }
@@ -4628,24 +5457,31 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // --- normal Jarvis session (agent + cwd locked at creation) ---
       // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
       const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
+      if (!sessionDispatchAuthorized(lease, ws) || !store.get(sid)) throw new Error("a autorização da sessão mudou durante o roteamento");
       const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
       // Power-triggers, resolved for the AGENT only (chat keeps showing the raw text): "!cmd" runs and
       // injects its output; otherwise a "/cmd" expands to its prompt (scoped to this session's agent).
       const scwd = store.get(sid)?.cwd || CWD;
       const bang = await expandBang(text, scwd);
+      if (!sessionDispatchAuthorized(lease, ws) || !store.get(sid)) throw new Error("a autorização da sessão mudou durante a expansão do comando");
       const cmdExp = bang ? null : expandCommand(text, scwd, cmdAgentOf(store.get(sid)?.agent), { preference: frameworkCfg.preference });
-      await runManagedTurn(turnCtx, sid, {
-        showText, agentText: bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText),
+      const manifestAgentText = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
+      const personal = await personalContextForChat(LOCAL_ID, sid, text, turnActor, () => refreshSessionDispatchAuthorization(lease));
+      if (!sessionDispatchAuthorized(lease, ws) || !store.get(sid)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
+      await runOwnedManagedTurn(sid, {
+        showText, agentText: personal ? `${personal.contextPrefix}\n\n${manifestAgentText}` : manifestAgentText, manifestAgentText,
         model: decision.model,
         effort: decision.effort,
         speaker, images, files, speak: !!msg.speak,
         turnId: typeof msg.msgId === "string" ? msg.msgId : undefined,
-        actor: actorOf(ws),
+        actor: turnActor,
         onError: (message, limit) => send(ws, { t: "error", message, limit }),
       });
       clearPendingInboundTurn(inboundKey);
     } finally {
       activeRuns.delete(sid); broadcastRuns();
+      if (queueOf(LOCAL_ID, sid).length) pendingDispatchFlush.add(scopedSessionKey(LOCAL_ID, sid));
+      releaseSessionDispatch(lease);
     }
     } catch (e) {
       console.error("[hub] erro ao processar", msg.t, "-", String((e as any)?.message ?? e));
@@ -4677,25 +5513,31 @@ try { loadQueues(); loadPendingInboundTurns(); recoverPendingInboundTurns(); con
 // A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
 // — fix them all proactively at boot, not just when the user happens to reopen one.
 try { let n = 0; for (const meta of store.list()) { const s = store.ensure(meta.id); const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) n++; } if (n) console.log(`[hub] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`); } catch { /* ignore */ }
+try { let n = 0; for (const meta of listNative()) n += reconcileNativeExecutions(meta.id); if (n) console.log(`[hub] reconciliei ${n} execução(ões) nativas sem terminal observado`); } catch { /* ignore */ }
 // Graceful shutdown: the Hub is also a runner (it spawns local agent CLIs under the configured permission mode).
 // A service stop / SIGTERM would orphan them — abort every live local turn (killTree fires via the
 // AbortSignal) before exiting, mirroring the runner.
 let hubShuttingDown = false;
-function hubShutdown(sig: string): void {
+async function hubShutdown(sig: string): Promise<void> {
   if (hubShuttingDown) return; hubShuttingDown = true;
+  const forceExit = setTimeout(() => process.exit(0), 3_000);
+  personalProactiveScheduler.stop();
   if (localAborts.size) console.log(`[hub] ${sig} — abortando ${localAborts.size} turno(s) local(is) em andamento`);
   for (const [, ctrl] of localAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
   for (const [, ctrl] of routeAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
   try { localTerminals.closeAll(); } catch { /* ignore */ }
+  await Promise.race([personalAssistant.disposeAll(), new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
+  clearTimeout(forceExit);
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
 }
-process.on("SIGTERM", () => hubShutdown("SIGTERM"));
-process.on("SIGINT", () => hubShutdown("SIGINT"));
+process.on("SIGTERM", () => { void hubShutdown("SIGTERM"); });
+process.on("SIGINT", () => { void hubShutdown("SIGINT"); });
 
 server.listen(PORT, () => {
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
   console.log(`[hub] guard: rate-limit + conn caps + ${Math.round(guard.MAX_PAYLOAD / 1024 / 1024)}MB payload cap active${/^(on|1|true)$/i.test(process.env.JARVIS_TRUST_PROXY || "") ? " (trust-proxy on)" : ""}`);
+  if (process.env.JARVIS_PERSONAL_PROACTIVE !== "0") personalProactiveScheduler.start();
   if (!auth.AUTH_ENABLED) {
     console.log(`[hub] AUTH DISABLED (JARVIS_AUTH=off) — every connection is trusted. Use ONLY on a private network (never a public server).`);
   } else if (!auth.isClaimed()) {

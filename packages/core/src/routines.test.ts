@@ -63,6 +63,13 @@ test("cron validation returns normalized descriptions and actionable field error
   assert.match(badStep.ok ? "" : badStep.error, /passo inválido/);
 });
 
+test("cron validation accepts natural interval schedules and shows concrete values", () => {
+  assert.deepEqual(validateCron("a cada 3 horas"), { ok: true, expression: "0 */3 * * *", description: "A cada 3 horas" });
+  assert.deepEqual(validateCron("a casa 4 horas"), { ok: true, expression: "0 */4 * * *", description: "A cada 4 horas" });
+  assert.deepEqual(validateCron("cada 2 dias às 08:30"), { ok: true, expression: "30 8 */2 * *", description: "A cada 2 dias às 08:30" });
+  assert.deepEqual(validateCron("a cada 2 dias a cada 6 horas"), { ok: true, expression: "0 */6 */2 * *", description: "A cada 2 dias, a cada 6 horas" });
+});
+
 test("cron keeps the at-most-once guard and has readable labels", () => {
   const now = new Date(2026, 6, 15, 8, 0);
   assert.equal(isDue(routine({ cron: "0 8 * * *", lastRunAt: now.getTime() }), now), false);
@@ -101,6 +108,23 @@ test("RoutineStore.due + markRun: fires once, then not again in the same minute"
     assert.deepEqual(s.due(now).map((x) => x.id), [r.id], "due at 08:00");
     s.markRun(r.id, now.getTime());
     assert.deepEqual(s.due(now).map((x) => x.id), [], "not due again in the same minute");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("RoutineStore persists server-owned context identity and migrates legacy routines", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-routines-binding-"));
+  try {
+    const store = new RoutineStore(dir);
+    const bound = store.add({ name: "Contexto", prompt: "eventos amanhã", hour: 8, minute: 0, principalId: "mallory" } as never, { principalId: "alice", deviceId: "phone" });
+    assert.equal(bound.principalId, "alice");
+    assert.equal(bound.deviceId, "phone");
+    store.update(bound.id, {}, { principalId: "mallory", deviceId: "other" });
+    assert.equal(store.get(bound.id)?.principalId, "alice", "a later client/device cannot rebind an existing routine");
+    assert.equal(new RoutineStore(dir).get(bound.id)?.deviceId, "phone");
+
+    const legacy = store.add({ name: "Legada", prompt: "agenda", hour: 9, minute: 0 });
+    assert.equal(legacy.principalId, undefined);
+    assert.equal(store.update(legacy.id, {}, { principalId: "alice", deviceId: "tablet" })?.principalId, "alice");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

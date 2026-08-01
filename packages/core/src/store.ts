@@ -15,7 +15,7 @@ export interface StoredMessage {
   agent?: string;
   speaker?: string; // identified enrolled speaker (voice messages only)
   images?: string[]; // served URLs (/pasted/<file>) of pasted/attached images, shown inline
-  files?: Array<{ name: string; content?: string }>; // non-image attachments — content omitted if too large to persist
+  files?: Array<{ name: string; content?: string; path?: string; size?: number; binary?: boolean; mime?: string }>; // non-image attachments; large/binary content is path-only
   activity?: unknown[]; // assistant only: the buffered live stream events (tool/text/thinking, incl. sub-agent parentId) for that turn — lets a reload rebuild the SAME activity blocks (incl. finished sub-agents) instead of just the final text
   usage?: {
     costUsd?: number;
@@ -53,6 +53,10 @@ interface SessionData {
   hidden?: boolean;
   rootExecutionId?: string;
   executionId?: string;
+}
+
+function titleFromMessage(text: string, cap = 240): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, cap);
 }
 
 /** Honors JARVIS_HOME (matches auth.ts) so a sandboxed runner / test run can relocate all state. */
@@ -150,7 +154,7 @@ export class Store {
     const s = this.ensure(id);
     s.messages.push(msg);
     s.updatedAt = msg.ts;
-    if ((s.title === "Nova conversa" || !s.title) && msg.role === "user") s.title = msg.text.slice(0, 48);
+    if ((s.title === "Nova conversa" || !s.title) && msg.role === "user") s.title = titleFromMessage(msg.text);
     this.flush();
   }
 

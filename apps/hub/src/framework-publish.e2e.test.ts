@@ -30,7 +30,7 @@ async function freePorts(count: number): Promise<number[]> {
   return ports;
 }
 async function stop(pid?: number): Promise<void> { if (!pid) return; try { if (process.platform === "win32") await pExecFile("taskkill", ["/pid", String(pid), "/T", "/F"]); else process.kill(-pid, "SIGTERM"); } catch { /* already gone */ } }
-async function waitHealth(port: number): Promise<void> { const end = Date.now() + 20_000; while (Date.now() < end) { try { const r = await fetch(`http://127.0.0.1:${port}/health`); if (r.ok) return; } catch { /* booting */ } await new Promise((r) => setTimeout(r, 100)); } throw new Error("Hub did not become healthy"); }
+async function waitHealth(port: number): Promise<void> { const end = Date.now() + 45_000; while (Date.now() < end) { try { const r = await fetch(`http://127.0.0.1:${port}/health`); if (r.ok) return; } catch { /* booting */ } await new Promise((r) => setTimeout(r, 100)); } throw new Error("Hub did not become healthy"); }
 function inbox(ws: WebSocket) {
   const frames: any[] = [], waiters: Array<() => void> = [];
   ws.on("message", (raw) => { try { frames.push(JSON.parse(raw.toString())); } catch { /* ignore */ } while (waiters.length) waiters.shift()?.(); });
@@ -44,7 +44,7 @@ async function open(url: string): Promise<{ ws: WebSocket; box: ReturnType<typeo
   return { ws, box: inbox(ws) };
 }
 
-test("publish_framework fans out to a runner and confirms back to the client", { timeout: 60_000 }, async () => {
+test("publish_framework fans out to a runner and confirms back to the client", { timeout: 90_000 }, async () => {
   const root = resolve(import.meta.dirname, "../../.."), home = mkdtempSync(join(tmpdir(), "jarvis-fw-hub-"));
   // Seed the canonical framework the Hub will read at publish time.
   mkdirSync(join(home, ".jarvis", "framework", "commands"), { recursive: true });

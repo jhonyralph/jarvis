@@ -3,13 +3,14 @@ import type { ManagedExecutionPlan, ManagedExecutionTask, ManagedTaskState } fro
 import type { ManagedExecutionPolicyInput } from "./execution-policy.js";
 
 /**
- * Torneio: fan-out da MESMA tarefa para N candidatos, cada um na sua worktree isolada, seguido de
- * um juiz que pontua os resultados. A promoção automática do vencedor (`selectTournamentWinner`) é
- * a parte que o Jarvis adiciona sobre o padrão coordinator/worker do Orca, que deixa o merge do
- * vencedor para humano+git. Aqui a seleção é determinística e testável, sem efeitos colaterais.
+ * Solution Workspace: fan-out da MESMA tarefa para N candidatos, cada um na sua worktree isolada ou
+ * em leitura, seguido de um consolidador/juiz. No modo benchmark há promoção determinística de um
+ * vencedor; em revisão/auditoria o objetivo é cobertura de achados, sem vencedor.
  */
 
 const JUDGE_TASK_ID = "juiz";
+export const SOLUTION_WORKSPACE_MODES = ["benchmark", "review", "audit"] as const;
+export type SolutionWorkspaceMode = typeof SOLUTION_WORKSPACE_MODES[number];
 
 export interface TournamentCompetitor {
   agent: string;
@@ -30,6 +31,8 @@ export interface TournamentBuildInput {
   judge?: TournamentCompetitor;
   /** Critérios de julgamento adicionais expostos ao juiz. */
   criteria?: string;
+  /** Tipo de rodada dentro do Espaço de Soluções. */
+  mode?: SolutionWorkspaceMode;
   /** Se true (default), cada candidato recebe worktree isolada para produzir um diff real. */
   write?: boolean;
   rootExecutionId?: string;
@@ -53,11 +56,23 @@ function candidateLabel(competitor: TournamentCompetitor, index: number): string
 }
 
 function candidatePrompt(input: TournamentBuildInput): string {
+  const mode = input.mode || "benchmark";
+  if (mode === "review" || mode === "audit") return [
+    `${mode === "audit" ? "Auditoria" : "Revisao paralela"}:\n${input.task}`,
+    "",
+    "Voce e um dos revisores independentes desta rodada.",
+    "Regras:",
+    "- Trabalhe de forma independente; procure achados que outros revisores podem perder.",
+    "- Nao edite arquivos. Esta tarefa e somente leitura.",
+    "- Classifique achados por severidade quando fizer sentido.",
+    "- Inclua evidencias concretas: arquivo, linha, trecho, comando ou comportamento observado.",
+    "- Termine com um resumo curto em Markdown com achados, riscos e recomendacoes.",
+  ].join("\n");
   const access = input.write === false
     ? "- Esta tarefa e somente leitura; nao edite arquivos, apenas proponha a solucao."
     : "- Trabalhe apenas na worktree isolada fornecida; nao faca merge/rebase/push.";
   return [
-    `Tarefa do torneio:\n${input.task}`,
+    `Tarefa do benchmark:\n${input.task}`,
     "",
     "Voce e um dos candidatos competindo para resolver a mesma tarefa.",
     "Regras:",
@@ -69,10 +84,25 @@ function candidatePrompt(input: TournamentBuildInput): string {
 
 function judgePrompt(input: TournamentBuildInput, candidates: Array<{ id: string; label: string }>): string {
   const roster = candidates.map((candidate) => `- ${candidate.id}: ${candidate.label}`).join("\n");
+  const mode = input.mode || "benchmark";
+  if (mode === "review" || mode === "audit") return [
+    `Tarefa consolidada:\n${input.task}`,
+    "",
+    `Voce consolida uma ${mode === "audit" ? "auditoria" : "revisao paralela"}. Os resultados dos revisores estao nas dependencias acima.`,
+    "Revisores:",
+    roster,
+    "",
+    input.criteria ? `Criterios prioritarios:\n${input.criteria}\n` : "",
+    "Regras:",
+    "- Nao escolha vencedor; consolide cobertura.",
+    "- Remova duplicados e preserve dissensos relevantes.",
+    "- Separe achados por severidade e cite evidencias.",
+    "- Termine com plano de acao recomendado.",
+  ].filter(Boolean).join("\n");
   return [
     `Tarefa avaliada:\n${input.task}`,
     "",
-    "Voce e o juiz do torneio. Os resultados dos candidatos estao nas dependencias acima.",
+    "Voce e o juiz do benchmark. Os resultados dos candidatos estao nas dependencias acima.",
     "Candidatos:",
     roster,
     "",
@@ -86,18 +116,20 @@ function judgePrompt(input: TournamentBuildInput, candidates: Array<{ id: string
   ].filter(Boolean).join("\n");
 }
 
-/** Monta o plano de torneio: N candidatos independentes + 1 juiz dependente de todos. */
+/** Monta o plano do Espaço de Soluções: N candidatos independentes + 1 consolidador/juiz. */
 export function buildTournamentPlan(input: TournamentBuildInput): TournamentBuildResult {
   const task = input.task.trim();
-  if (!task) throw new Error("tarefa do torneio vazia");
-  if (!input.runnerId.trim()) throw new Error("runnerId do torneio vazio");
-  if (!input.cwd.trim()) throw new Error("cwd do torneio vazio");
-  if (input.competitors.length < 2) throw new Error("torneio exige ao menos 2 candidatos");
+  if (!task) throw new Error("tarefa do benchmark vazia");
+  if (!input.runnerId.trim()) throw new Error("runnerId do Espaço de Soluções vazio");
+  if (!input.cwd.trim()) throw new Error("cwd do Espaço de Soluções vazio");
+  if (input.competitors.length < 2) throw new Error("benchmark exige ao menos 2 candidatos");
 
-  const write = input.write !== false;
+  const mode = input.mode || "benchmark";
+  const write = mode === "benchmark" && input.write !== false;
   const rootExecutionId = input.rootExecutionId
     || `tournament:${hash(`${input.runnerId}\0${input.sessionId}\0${task}\0${Date.now()}`)}`;
-  const title = `Torneio: ${task.split(/\r?\n/)[0].slice(0, 120)}`;
+  const prefix = mode === "benchmark" ? "Benchmark" : mode === "audit" ? "Auditoria" : "Revisao paralela";
+  const title = `${prefix}: ${task.split(/\r?\n/)[0].slice(0, 120)}`;
 
   const candidates = input.competitors.map((competitor, index) => ({
     id: `candidato-${index + 1}`,
@@ -113,7 +145,7 @@ export function buildTournamentPlan(input: TournamentBuildInput): TournamentBuil
 
   const judge = input.judge || input.competitors[0];
   const judgeTask: ManagedExecutionTask = {
-    id: JUDGE_TASK_ID, title: "Juiz do torneio",
+    id: JUDGE_TASK_ID, title: "Juiz do benchmark",
     prompt: judgePrompt(input, candidates.map(({ id, label }) => ({ id, label }))),
     agent: judge.agent, cwd: input.cwd, depth: 1, write: false,
     model: judge.model, effort: judge.effort,
@@ -230,11 +262,25 @@ export function formatTournamentFinalMessage(input: {
   rootExecutionId: string;
   outcome: TournamentOutcome;
   summary?: string;
+  mode?: SolutionWorkspaceMode;
 }): string {
+  if (input.mode === "review" || input.mode === "audit") {
+    const title = input.mode === "audit" ? "**Auditoria**" : "**Revisao paralela**";
+    const statusLines = input.outcome.ranked
+      .map((entry) => `- \`${entry.id}\`: ${entry.state}${entry.score !== undefined ? ` · ${entry.score}` : ""}`)
+      .join("\n");
+    return [
+      title,
+      `Trabalho: \`${input.rootExecutionId}\``,
+      "",
+      statusLines,
+      input.summary?.trim() ? `\n${input.summary.trim()}` : "",
+    ].filter(Boolean).join("\n");
+  }
   const { outcome } = input;
   const header = outcome.winnerId
-    ? `**Torneio** — vencedor: \`${outcome.winnerId}\``
-    : "**Torneio** — sem vencedor";
+    ? `**Benchmark** — vencedor: \`${outcome.winnerId}\``
+    : "**Benchmark** — sem vencedor";
   const rankLines = outcome.ranked
     .map((entry) => `- \`${entry.id}\`${entry.id === outcome.winnerId ? " (vencedor)" : ""}: ${entry.state}${entry.score !== undefined ? ` · ${entry.score}` : ""}`)
     .join("\n");

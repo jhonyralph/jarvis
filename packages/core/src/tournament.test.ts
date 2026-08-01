@@ -41,6 +41,22 @@ test("tournament honors read-only mode and defaults the judge to the first compe
   assert.match(out.plan.tasks[0].prompt, /somente leitura/);
 });
 
+test("review mode is read-only and formats a coverage summary without a winner", () => {
+  const out = buildTournamentPlan({
+    runnerId: "r1", sessionId: "s1", cwd: "/repo", task: "Revisar PR", competitors, mode: "review", write: true,
+  });
+  assert.equal(out.plan.tasks[0].write, false);
+  assert.match(out.title, /Revisao paralela/);
+  const text = formatTournamentFinalMessage({
+    rootExecutionId: "tournament:review",
+    mode: "review",
+    outcome: { winnerId: "candidato-1", reason: "ignored", ranked: [{ id: "candidato-1", eligible: true, state: "succeeded" }] },
+    summary: "Achados consolidados",
+  });
+  assert.match(text, /Revisao paralela/);
+  assert.doesNotMatch(text, /vencedor/);
+});
+
 test("tournament rejects empty tasks and fewer than two candidates", () => {
   assert.throws(() => buildTournamentPlan({ runnerId: "r", sessionId: "s", cwd: "/r", task: " ", competitors }), /tarefa/);
   assert.throws(() => buildTournamentPlan({ runnerId: "r", sessionId: "s", cwd: "/r", task: "x", competitors: [{ agent: "codex" }] }), /2 candidatos/);

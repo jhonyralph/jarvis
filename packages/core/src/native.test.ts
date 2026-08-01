@@ -17,6 +17,13 @@ test("parseNativeEvents: claude assistant text → one message event", () => {
   assert.deepEqual({ kind: ev[0].kind, role: (ev[0] as any).role, text: (ev[0] as any).text }, { kind: "message", role: "assistant", text: "Olá, mundo" });
 });
 
+test("parseNativeEvents: native no-op assistant continuations are dropped", () => {
+  const claude = parseNativeEvents(claudeLine({ type: "assistant", message: { content: [{ type: "text", text: "No response requested." }] } }), true);
+  const codex = parseNativeEvents(JSON.stringify({ type: "response_item", timestamp: TS, payload: { type: "message", role: "assistant", content: "No response requested." } }), false);
+  assert.deepEqual(claude, []);
+  assert.deepEqual(codex, []);
+});
+
 test("parseNativeEvents: claude user text → one user message event", () => {
   const ev = parseNativeEvents(claudeLine({ type: "user", message: { content: "faça o deploy" } }), true);
   assert.equal(ev.length, 1);
@@ -42,6 +49,18 @@ test("parseNativeEvents: claude tool_use Edit → tool event with path + line co
   assert.equal(t.summary, "Editando a.ts");
   assert.equal(t.adds, 1);
   assert.equal(t.dels, 1);
+});
+
+test("parseNativeEvents: claude background Bash is marked as background", () => {
+  const ev = parseNativeEvents(claudeLine({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", name: "Bash", input: { command: "sleep 60 && gh pr checks", run_in_background: true } }] },
+  }), true);
+  assert.equal(ev.length, 1);
+  const t = ev[0] as any;
+  assert.equal(t.kind, "tool");
+  assert.equal(t.background, true);
+  assert.match(t.summary, /background/i);
 });
 
 test("parseNativeEvents: codex response_item message → message event", () => {

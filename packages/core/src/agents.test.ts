@@ -359,6 +359,35 @@ test("resolveClosestModel leaves 'auto' (no pinned model) and empty catalogs unt
   assert.equal(empty.model, "gpt-5.6-sol", "never invents a replacement when there is no catalog to match against");
 });
 
+test("resolveClosestModel ignores non-selectable stale catalog entries", () => {
+  const caps = {
+    models: [
+      { id: "gpt-5.6-sol", efforts: ["low", "high"], defaultEffort: "high", selectable: false },
+      { id: "gpt-5.7-sol", efforts: ["low", "high"], defaultEffort: "high", selectable: true },
+    ],
+    defaultModel: "gpt-5.7-sol",
+  };
+  const r = resolveClosestModel("gpt-5.6-sol", "high", caps);
+  assert.equal(r.changed, true);
+  assert.equal(r.model, "gpt-5.7-sol");
+  assert.equal(r.effort, "high");
+});
+
+test("resolveClosestModel follows provider migration targets before family heuristics", () => {
+  const caps = {
+    models: [
+      { id: "gpt-5.6-sol", efforts: ["low", "medium", "high"], defaultEffort: "low" },
+      { id: "gpt-5.6-terra", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+    ],
+    defaultModel: "gpt-5.6-sol",
+    modelMigrations: { "gpt-5.4": "gpt-5.6-terra" },
+  };
+  const r = resolveClosestModel("gpt-5.4", "high", caps);
+  assert.equal(r.changed, true);
+  assert.equal(r.model, "gpt-5.6-terra", "provider migration beats the generic newest-family fallback");
+  assert.equal(r.effort, "high");
+});
+
 test("resolveClosestModel: when the variant is gone it stays within the provider (never invents an id)", () => {
   const noSol = { models: NEW_CODEX.models.filter((m) => !m.id.includes("sol")), defaultModel: "gpt-5.7-terra" };
   const r = resolveClosestModel("gpt-5.6-sol", "high", noSol);

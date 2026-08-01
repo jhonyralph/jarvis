@@ -20,7 +20,7 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
  *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
  *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
  *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
-export const RUNNER_PROTOCOL_VERSION = 8;
+export const RUNNER_PROTOCOL_VERSION = 9;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
@@ -132,6 +132,18 @@ export interface PreviewCandidate {
   detectedAt: number;
 }
 
+/** Provider-neutral browser observation emitted by any future Browser Runtime/MCP/Runner adapter.
+ *  Payloads are deliberately small and reference blobs/artifacts by id when needed. */
+export type BrowserSessionEvent =
+  | { kind: "opened"; pageId: string; url: string; title?: string; at: number }
+  | { kind: "navigated"; pageId: string; url: string; title?: string; at: number }
+  | { kind: "selection"; pageId: string; url: string; selector?: string; sourceRef?: { file: string; line?: number; column?: number; framework?: string }; screenshotName?: string; at: number }
+  | { kind: "screenshot"; pageId: string; url: string; screenshotName?: string; at: number }
+  | { kind: "console"; pageId: string; level: "log" | "info" | "warn" | "error"; text: string; at: number }
+  | { kind: "network"; pageId: string; method?: string; url: string; status?: number; at: number }
+  | { kind: "coverage"; pageId: string; url: string; jsFiles?: number; cssRules?: number; usedCssRules?: number; at: number }
+  | { kind: "closed"; pageId: string; at: number };
+
 /** Interactive terminal session hosted by one Runner/Hub machine. */
 export interface TerminalInfo {
   id: string;
@@ -189,7 +201,7 @@ export type RunnerToHub =
   /** @deprecated v1 compatibility during rolling upgrades. */
   | { t: "stream"; sessionId: string; agent?: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
-  | { t: "activity"; sessionId: string; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[] }
+  | { t: "activity"; sessionId: string; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[]; background?: boolean }
   | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; mtimeMs?: number; truncated?: boolean; error?: string; image?: boolean; mime?: string }
   /** directory listing for the folder browser (reply to Hub->Runner "listdir").
    *  `files` is present only when the request set `files:true` (the file-tree panel); the legacy
@@ -198,6 +210,8 @@ export type RunnerToHub =
   /** Correlated result of a remote delete. `ids` contains only sessions actually removed. */
   | { t: "deleted"; reqId: string; sessionId?: string; ids: string[]; ok: boolean; okCount: number }
   | { t: "runs"; active: string[] }
+  /** Acknowledges Hub->Runner cancel; active=false lets the Hub clear stale busy state. */
+  | { t: "cancel_result"; sessionId: string; active: boolean }
   /** available slash-commands / skills on this machine (reply to Hub->Runner "commands") */
   | { t: "command_list"; reqId?: string; commands: unknown[]; cwd?: string }
   /** "@" file-mention matches under a session's cwd (reply to Hub->Runner "mention") */
@@ -210,6 +224,8 @@ export type RunnerToHub =
   | { t: "framework_published"; requestId: string; ok: boolean; version?: number; hash?: string; written?: number; removed?: number; skipped?: boolean; error?: string }
   /** Preview URL candidates for a session's cwd (reply to Hub->Runner "preview_query"). */
   | { t: "preview_list"; reqId: string; sessionId: string; candidates: PreviewCandidate[] }
+  /** Provider-neutral browser/runtime observation for a session. */
+  | { t: "browser_event"; sessionId: string; event: BrowserSessionEvent }
   /** Interactive terminal lifecycle/output (reply to terminal_* Hub commands). */
   | { t: "terminal_opened"; reqId?: string; terminal: TerminalInfo }
   | { t: "terminal_output"; terminalId: string; data: string }
@@ -229,6 +245,9 @@ export type HubToRunner =
       t: "send";
       sessionId: string;
       text: string;
+      /** Bounded, short-lived Hub context prepended only to the agent input. The Runner must not
+       * persist this field in chat history or context manifests. */
+      contextPrefix?: string;
       agent?: string;
       cwd?: string;
       opts?: { model?: string; effort?: string };
@@ -236,7 +255,7 @@ export type HubToRunner =
        *  client resend on reconnect, queue re-flush, WS redelivery). See @jarvis/core createSeenSet. */
       turnId?: string;
       /** attachments carried by a queue flush (top-level model/effort accompany them) */
-      attachments?: Array<{ name: string; content: string; image?: boolean }>;
+      attachments?: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>;
       speaker?: string;
       model?: string;
       effort?: string;

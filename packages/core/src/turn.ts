@@ -105,6 +105,9 @@ export interface TurnCtx {
 export interface ManagedTurnInput {
   showText: string;
   agentText?: string;
+  /** Optional privacy-safe text for the durable context manifest. The agent still receives
+   * `agentText`; short-lived personal context can therefore remain outside Jarvis history. */
+  manifestAgentText?: string;
   model?: string;
   effort?: string;
   speaker?: string;
@@ -130,7 +133,7 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
   const turnId = o.turnId || randomUUID();
   const agentText = o.agentText ?? o.showText;
   const contextManifest = ctx.buildContextManifest?.({
-    turnId, sid, agentName, cwd: session.cwd, showText: o.showText, agentText,
+    turnId, sid, agentName, cwd: session.cwd, showText: o.showText, agentText: o.manifestAgentText ?? agentText,
     actor: o.actor, images: o.images, files: o.files,
   });
   if (contextManifest) ctx.recordContextManifest?.(contextManifest);

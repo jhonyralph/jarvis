@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 const {
   readCanonicalFramework, materializeFramework, readReceipt,
-  normalizeFrameworkPreference, FRAMEWORK_PREFERENCES,
+  normalizeFrameworkPreference, FRAMEWORK_PREFERENCES, installFrameworkStarterPack,
 } = await import("./framework.js");
 
 function seedCanonical(root: string): void {
@@ -79,4 +79,21 @@ test("normalizeFrameworkPreference coerces junk to 'ask'", () => {
   assert.equal(normalizeFrameworkPreference("nonsense"), "ask");
   assert.equal(normalizeFrameworkPreference(undefined), "ask");
   assert.deepEqual([...FRAMEWORK_PREFERENCES], ["native", "jarvis", "ask"]);
+});
+
+test("installFrameworkStarterPack seeds universal skills/commands without overwriting user files", () => {
+  const root = mkdtempSync(join(tmpdir(), "jf-starter-"));
+  try {
+    mkdirSync(join(root, "commands"), { recursive: true });
+    writeFileSync(join(root, "commands", "code-review.md"), "custom review");
+    const r1 = installFrameworkStarterPack(root);
+    assert.ok(r1.imported.includes("commands/benchmark.md"), "benchmark command seeded");
+    assert.ok(r1.imported.includes("skills/security-scan/SKILL.md"), "security skill seeded");
+    assert.ok(r1.skipped.includes("commands/code-review.md (já existe)"), "custom command skipped");
+    assert.equal(readFileSync(join(root, "commands", "code-review.md"), "utf8"), "custom review", "custom file preserved");
+
+    const r2 = installFrameworkStarterPack(root);
+    assert.equal(r2.imported.length, 0, "second install is idempotent");
+    assert.ok(r2.skipped.length >= r1.imported.length, "existing starter files are skipped");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

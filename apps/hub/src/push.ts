@@ -8,19 +8,62 @@
  * router hands push-protocol frames to `push.handleMsg(...)`. Nothing else escapes this module.
  */
 import webpush from "web-push";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeJsonAtomic } from "@jarvis/core";
-import { MobilePush } from "./mobilePush.js";
+import { MobilePush, type MobilePushTarget } from "./mobilePush.js";
+import { cleanNotifyText, formatGroupedPushPayload, formatPushPayload, type NotifyKind } from "./notifyFormat.js";
 
-export type NotifyKind = "done" | "error" | "machine";
 export interface PushPrefs { events: NotifyKind[]; mode: "each" | "grouped"; everyMin: number }
+export interface PushActor extends MobilePushTarget {}
 const DEFAULT_PREFS: PushPrefs = { events: ["done", "error"], mode: "each", everyMin: 15 };
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+
+function secureDirectory(dir: string): void {
+  try { mkdirSync(dir, { recursive: true, mode: PRIVATE_DIRECTORY_MODE }); } catch { /* persistence remains best-effort */ }
+  try { chmodSync(dir, PRIVATE_DIRECTORY_MODE); } catch { /* chmod is unavailable or unsupported */ }
+}
+
+function securePersistedFile(file: string): void {
+  for (const candidate of [file, `${file}.bak`, `${file}.tmp`]) {
+    try { chmodSync(candidate, PRIVATE_FILE_MODE); } catch { /* missing or unsupported */ }
+  }
+}
+
+function writePrivateJson(file: string, value: unknown): void {
+  try { writeJsonAtomic(file, value); }
+  finally { securePersistedFile(file); }
+}
+
+function deviceKey(principalId: unknown, deviceId: unknown): string | null {
+  if (typeof principalId !== "string" || !principalId.trim() || typeof deviceId !== "string" || !deviceId.trim()) return null;
+  return JSON.stringify([principalId, deviceId]);
+}
+
+function authenticatedDeviceSnapshot(devices: Iterable<Required<PushActor>> | null | undefined): { keys: Set<string>; devices: Array<Required<PushActor>> } | null {
+  try {
+    if (!devices || typeof (devices as any)[Symbol.iterator] !== "function") return null;
+    const keys = new Set<string>();
+    const snapshot: Array<Required<PushActor>> = [];
+    for (const device of devices) {
+      const principalId = device?.principalId;
+      const deviceId = device?.deviceId;
+      const key = deviceKey(principalId, deviceId);
+      if (!key) return null;
+      keys.add(key);
+      snapshot.push({ principalId, deviceId });
+    }
+    return { keys, devices: snapshot };
+  } catch {
+    return null;
+  }
+}
 
 /** Normalize whatever prefs a client sent into a valid PushPrefs — applied at BOTH read and write. */
 export function normalizePrefs(sub: any): PushPrefs {
   const p = sub?.prefs || {};
-  const events = Array.isArray(p.events) ? p.events.filter((e: string) => ["done", "error", "machine"].includes(e)) : DEFAULT_PREFS.events;
+  const events = Array.isArray(p.events) ? p.events.filter((e: string) => ["done", "error", "machine", "personal"].includes(e)) : DEFAULT_PREFS.events;
   const everyMin = Math.min(240, Math.max(1, Number(p.everyMin) || DEFAULT_PREFS.everyMin));
   return { events, mode: p.mode === "grouped" ? "grouped" : "each", everyMin };
 }
@@ -36,7 +79,7 @@ export function sanitizeSub(sub: any): { endpoint: string; keys: { p256dh: strin
   return { endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth }, expirationTime: typeof sub.expirationTime === "number" ? sub.expirationTime : null };
 }
 /** Strip markdown so a spoken/short notification body reads cleanly. */
-export const cleanText = (s: string): string => (s || "").replace(/[#*`>_~]/g, "").replace(/\s+/g, " ").trim();
+export const cleanText = cleanNotifyText;
 
 export class PushCenter {
   private readonly vapidFile: string;
@@ -48,12 +91,18 @@ export class PushCenter {
   private readonly mobile: MobilePush;
 
   constructor(jarvisDir: string) {
+    secureDirectory(jarvisDir);
     this.vapidFile = join(jarvisDir, "vapid.json");
     this.subsFile = join(jarvisDir, "push-subs.json");
+    securePersistedFile(this.vapidFile);
+    securePersistedFile(this.subsFile);
     try { this.vapid = JSON.parse(readFileSync(this.vapidFile, "utf8")); }
-    catch { this.vapid = webpush.generateVAPIDKeys(); try { writeJsonAtomic(this.vapidFile, this.vapid); } catch { /* ignore */ } }
+    catch { this.vapid = webpush.generateVAPIDKeys(); try { writePrivateJson(this.vapidFile, this.vapid); } catch { /* ignore */ } }
     webpush.setVapidDetails("mailto:jarvis@localhost", this.vapid.publicKey, this.vapid.privateKey);
-    try { this.subs = JSON.parse(readFileSync(this.subsFile, "utf8")); } catch { this.subs = []; }
+    try {
+      const saved = JSON.parse(readFileSync(this.subsFile, "utf8"));
+      this.subs = Array.isArray(saved) ? saved : [];
+    } catch { this.subs = []; }
     // Native push for the Capacitor app (FCM), ALONGSIDE the browser web-push. No-op unless
     // JARVIS_FCM_SA points at a Firebase service account — additive, opt-in (see mobilePush.ts).
     this.mobile = new MobilePush(jarvisDir);
@@ -61,45 +110,107 @@ export class PushCenter {
   }
 
   publicKey(): string { return this.vapid.publicKey; }
-  private save(): void { try { writeJsonAtomic(this.subsFile, this.subs); } catch { /* ignore */ } }
+  status(target?: PushActor): object {
+    const mobile = this.mobile.status(target);
+    const webSubs = target?.principalId ? this.subs.filter((row) => row.principalId === target.principalId && (!target.deviceId || row.deviceId === target.deviceId)).length : this.subs.length;
+    return { webSubs, mobileTokens: mobile.tokens, fcmEnvSet: mobile.fcmEnvSet, fcmConfigured: mobile.fcmConfigured, fcmProjectId: mobile.projectId || "" };
+  }
+  private save(): void { try { writePrivateJson(this.subsFile, this.subs); } catch { /* ignore */ } }
 
-  addSub(sub: any, prefs?: unknown): void {
+  addSub(sub: any, prefs?: unknown, actor: PushActor = {}): void {
     const clean = sanitizeSub(sub);
     if (!clean) return;
     const existing = this.subs.find((s) => s.endpoint === clean.endpoint);
-    if (existing) { if (prefs !== undefined) existing.prefs = normalizePrefs({ prefs }); this.save(); return; }
-    this.subs.push({ ...clean, prefs: normalizePrefs({ prefs }) }); this.save();
+    if (existing) { if (prefs !== undefined) existing.prefs = normalizePrefs({ prefs }); existing.principalId = actor.principalId; existing.deviceId = actor.deviceId; this.save(); return; }
+    this.subs.push({ ...clean, prefs: normalizePrefs({ prefs }), principalId: actor.principalId, deviceId: actor.deviceId }); this.save();
   }
-  setSubPrefs(endpoint: string, prefs: unknown): void {
-    const s = this.subs.find((x) => x.endpoint === endpoint);
+  setSubPrefs(endpoint: string, prefs: unknown, actor?: PushActor): void {
+    const s = this.subs.find((x) => x.endpoint === endpoint && (!actor?.principalId || x.principalId === actor.principalId));
     if (s) { s.prefs = normalizePrefs({ prefs }); this.save(); }
   }
-  removeSub(endpoint: string): void {
+  removeSub(endpoint: string, actor?: PushActor): void {
     const n = this.subs.length;
-    this.subs = this.subs.filter((s) => s.endpoint !== endpoint);
+    this.subs = this.subs.filter((s) => s.endpoint !== endpoint || (actor?.principalId !== undefined && s.principalId !== actor.principalId));
     if (this.subs.length !== n) { this.pending.delete(endpoint); this.save(); }
   }
-  private async sendPush(sub: any, payload: object): Promise<void> {
-    await webpush.sendNotification(sub, JSON.stringify(payload)).catch((err: any) => {
+  purgeTarget(target: Required<PushActor>): { webSubs: number; mobileTokens: number } {
+    if (!target.principalId || !target.deviceId) return { webSubs: 0, mobileTokens: 0 };
+    const removedEndpoints = this.subs
+      .filter((sub) => sub.principalId === target.principalId && sub.deviceId === target.deviceId)
+      .map((sub) => sub.endpoint);
+    if (removedEndpoints.length) {
+      const removed = new Set(removedEndpoints);
+      this.subs = this.subs.filter((sub) => !removed.has(sub.endpoint));
+      for (const endpoint of removed) this.pending.delete(endpoint);
+      this.save();
+    }
+    return { webSubs: removedEndpoints.length, mobileTokens: this.mobile.purgeTarget(target) };
+  }
+  /** Reconcile persisted registrations against one complete auth snapshot. Auth-off has no
+   * authoritative device registry, so it is deliberately a no-op. Missing, malformed, or throwing
+   * snapshots also leave storage untouched; an explicitly supplied empty iterable is authoritative. */
+  purgeUnknownDevices(authenticatedDevices: Iterable<Required<PushActor>> | null | undefined, authEnabled = true): { webSubs: number; mobileTokens: number } {
+    if (!authEnabled) return { webSubs: 0, mobileTokens: 0 };
+    const authenticated = authenticatedDeviceSnapshot(authenticatedDevices);
+    if (!authenticated) return { webSubs: 0, mobileTokens: 0 };
+    const before = this.subs.length;
+    const removedEndpoints: string[] = [];
+    this.subs = this.subs.filter((sub) => {
+      const key = deviceKey(sub?.principalId, sub?.deviceId);
+      const keep = key !== null && authenticated.keys.has(key);
+      if (!keep && typeof sub?.endpoint === "string") removedEndpoints.push(sub.endpoint);
+      return keep;
+    });
+    if (this.subs.length !== before) {
+      for (const endpoint of removedEndpoints) this.pending.delete(endpoint);
+      this.save();
+    }
+    return {
+      webSubs: before - this.subs.length,
+      mobileTokens: this.mobile.purgeUnknownDevices(authenticated.devices, true),
+    };
+  }
+  private async sendPush(sub: any, payload: object): Promise<boolean> {
+    try {
+      await webpush.sendNotification(sub, JSON.stringify(payload));
+      return true;
+    } catch (err: any) {
       // 404/410 = the browser dropped this subscription for good; anything else may be transient.
       if (err?.statusCode === 404 || err?.statusCode === 410) this.removeSub(sub.endpoint);
-    });
+      return false;
+    }
   }
 
   /** One event, fanned out to every device that asked for this kind — now or at its next flush. Bound
    *  (arrow field) so the Hub can keep a plain `notifyEvent` reference and call it from anywhere. */
-  notifyEvent = (kind: NotifyKind, title: string, body: string, tag?: string): void => {
+  notifyEvent = (kind: NotifyKind, title: string, body: string, tag?: string, target?: PushActor): void => {
+    // Content-bearing notifications must always have an authenticated destination. The Hub expands
+    // owner-wide operational alerts into one principal target at the call boundary.
+    if (!target?.principalId) return;
     for (const sub of [...this.subs]) {
+      if (target?.principalId && sub.principalId !== target.principalId) continue;
+      if (target?.deviceId && sub.deviceId !== target.deviceId) continue;
       const p = normalizePrefs(sub);
       if (!p.events.includes(kind)) continue;
-      if (p.mode === "each") { void this.sendPush(sub, { title: "Jarvis · " + cleanText(title).slice(0, 60), body: cleanText(body).slice(0, 140), tag: tag || kind }); continue; }
+      if (p.mode === "each") { void this.sendPush(sub, formatPushPayload(kind, title, body, tag)); continue; }
       const q = this.pending.get(sub.endpoint) || { at: Date.now(), items: [] };
-      q.items.push({ kind, title: cleanText(title).slice(0, 60), body: cleanText(body).slice(0, 90) });
+      q.items.push({ kind, title: cleanText(title), body: cleanText(body) });
       if (q.items.length > 50) q.items.shift(); // a stuck flusher must not grow without bound
       this.pending.set(sub.endpoint, q);
     }
-    void this.mobile.notify(kind, cleanText(title), cleanText(body), tag);
+    void this.mobile.notify(kind, title, body, tag, target);
   };
+
+  /** Deliver a proactive suggestion only to its opted-in device. This intentionally bypasses the
+   * completion/error preference list because proactive consent is stored separately per device. */
+  async notifyPersonal(title: string, body: string, tag: string, url: string, target: Required<PushActor>): Promise<boolean> {
+    if (!target.principalId || !target.deviceId) return false;
+    const payload = formatPushPayload("personal", title, body, tag, url);
+    const webTargets = this.subs.filter((sub) => sub.principalId === target.principalId && (sub.deviceId === target.deviceId || (target.deviceId === "local" && !sub.deviceId)));
+    const webResults = await Promise.all(webTargets.map((sub) => this.sendPush(sub, payload)));
+    const mobileDelivered = await this.mobile.notifyPayload(payload, target);
+    return mobileDelivered || webResults.some(Boolean);
+  }
 
   /** Flush grouped queues whose interval elapsed. One tick for everyone; each device has its own. */
   private flushGrouped(): void {
@@ -110,22 +221,28 @@ export class PushCenter {
       const p = normalizePrefs(sub);
       if (p.mode !== "grouped" || !q.items.length || now - q.at < p.everyMin * 60_000) continue;
       this.pending.delete(endpoint);
-      const n = q.items.length;
-      const head = n === 1 ? q.items[0].title : `${n} eventos`;
-      const body = q.items.slice(-4).map((i) => `${i.kind === "error" ? "⚠" : i.kind === "machine" ? "🖥" : "✓"} ${i.title}`).join(" · ");
-      void this.sendPush(sub, { title: "Jarvis · " + head, body: body.slice(0, 200), tag: "jarvis-grouped" });
+      void this.sendPush(sub, formatGroupedPushPayload(q.items));
     }
   }
 
   /** Handle a push-protocol frame from a client. Returns true if it consumed `msg`. `reply` sends a
    *  frame back to that client (injected, so this module never touches the WebSocket directly). */
-  handleMsg(msg: any, reply: (obj: unknown) => void): boolean {
+  handleMsg(msg: any, reply: (obj: unknown) => void, actor: PushActor = {}): boolean {
     if (msg.t === "pushkey") { reply({ t: "pushkey", key: this.publicKey() }); return true; }
-    if (msg.t === "subscribe" && msg.sub) { this.addSub(msg.sub, msg.prefs); reply({ t: "pushok" }); return true; }
-    if (msg.t === "push_prefs" && typeof msg.endpoint === "string") { this.setSubPrefs(msg.endpoint, msg.prefs); reply({ t: "pushok" }); return true; }
-    if (msg.t === "unsubscribe" && typeof msg.endpoint === "string") { this.removeSub(msg.endpoint); return true; }
-    if (msg.t === "mobile_push_register" && typeof msg.token === "string") { this.mobile.register(msg.token, msg.platform === "ios" ? "ios" : "android", msg.events); reply({ t: "pushok" }); return true; }
-    if (msg.t === "mobile_push_unregister" && typeof msg.token === "string") { this.mobile.remove(msg.token); return true; }
+    if (msg.t === "push_status") { reply({ t: "push_status", status: this.status(actor) }); return true; }
+    if (msg.t === "push_test") {
+      const st = this.status(actor);
+      const canTry = Boolean((st as any).webSubs) || (Boolean((st as any).mobileTokens) && Boolean((st as any).fcmConfigured));
+      if (!canTry) { reply({ t: "push_test", ok: false, status: st, message: "Nenhum canal de push entregável: verifique token do app e FCM do Hub." }); return true; }
+      this.notifyEvent("done", "Teste de notificação", "Se você recebeu isto com o app fechado, o push está funcionando.", "jarvis-push-test", actor);
+      reply({ t: "push_test", ok: true, status: st, message: "Notificação de teste disparada." });
+      return true;
+    }
+    if (msg.t === "subscribe" && msg.sub) { this.addSub(msg.sub, msg.prefs, actor); reply({ t: "pushok" }); return true; }
+    if (msg.t === "push_prefs" && typeof msg.endpoint === "string") { this.setSubPrefs(msg.endpoint, msg.prefs, actor); reply({ t: "pushok" }); return true; }
+    if (msg.t === "unsubscribe" && typeof msg.endpoint === "string") { this.removeSub(msg.endpoint, actor); return true; }
+    if (msg.t === "mobile_push_register" && typeof msg.token === "string") { this.mobile.register(msg.token, msg.platform === "ios" ? "ios" : "android", msg.events, actor); reply({ t: "pushok" }); return true; }
+    if (msg.t === "mobile_push_unregister" && typeof msg.token === "string") { this.mobile.remove(msg.token, actor); return true; }
     return false;
   }
 }

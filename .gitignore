@@ -29,6 +29,7 @@ data/
 # env / secrets
 .env
 .env.*
+!.env.example
 !.env.runner.example
 *.keystore
 *.jks

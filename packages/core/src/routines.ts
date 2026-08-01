@@ -31,9 +31,14 @@ export interface Routine {
   speak?: boolean;
   enabled: boolean;
   createdAt: number;
+  /** Server-owned binding used for personal context during background execution. */
+  principalId?: string;
+  deviceId?: string;
   /** epoch ms of the last run — used to guarantee at-most-once per scheduled minute */
   lastRunAt?: number;
 }
+
+export interface RoutineBinding { principalId: string; deviceId?: string }
 
 /** Whether `r` should fire at local time `now`. At-most-once per minute (guards a sub-minute tick). */
 export function isDue(r: Routine, now: Date): boolean {
@@ -74,6 +79,7 @@ export type CronValidation = { ok: true; expression: string; description: string
 
 function parseCron(raw: string): ({ ok: true; expression: string; fields: CronFields } | { ok: false; error: string }) {
   let expression = String(raw || "").trim().replace(/\s+/g, " ");
+  expression = naturalScheduleToCron(expression) || expression;
   expression = MACROS[expression.toLowerCase()] || expression;
   const parts = expression.split(" ");
   if (parts.length !== 5) return { ok: false, error: "Use 5 campos: minuto hora dia-do-mês mês dia-da-semana." };
@@ -88,6 +94,35 @@ function parseCron(raw: string): ({ ok: true; expression: string; fields: CronFi
     values.push(parsed);
   }
   return { ok: true, expression, fields: { minute: values[0], hour: values[1], dom: values[2], month: values[3], dow: values[4], domAny: parts[2] === "*", dowAny: parts[4] === "*" } };
+}
+
+function naturalScheduleToCron(raw: string): string | undefined {
+  const text = String(raw || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+  if (!text) return undefined;
+  const each = "(?:a\\s+cada|a\\s+casa|cada|every)";
+  const at = "(?:as|at)";
+  const time = "(\\d{1,2})(?::(\\d{2}))?";
+  const fmtTime = (h: string, m?: string): [number, number] | undefined => {
+    const hour = Number(h), minute = m == null ? 0 : Number(m);
+    return Number.isInteger(hour) && Number.isInteger(minute) && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 ? [hour, minute] : undefined;
+  };
+  let m = new RegExp(`^${each}\\s+(\\d+)\\s*(?:min|mins|minuto|minutos|minute|minutes)$`).exec(text);
+  if (m) return `*/${Number(m[1])} * * * *`;
+  m = new RegExp(`^${each}\\s+(\\d+)\\s*(?:h|hora|horas|hour|hours)$`).exec(text);
+  if (m) return `0 */${Number(m[1])} * * *`;
+  m = new RegExp(`^${each}\\s+(\\d+)\\s*(?:dia|dias|day|days)\\s+${each}\\s+(\\d+)\\s*(?:h|hora|horas|hour|hours)$`).exec(text);
+  if (m) return `0 */${Number(m[2])} */${Number(m[1])} * *`;
+  m = new RegExp(`^${each}\\s+(\\d+)\\s*(?:dia|dias|day|days)(?:\\s+${at}\\s+${time})?$`).exec(text);
+  if (m) {
+    const t = fmtTime(m[2] || "8", m[3]);
+    if (t) return `${t[1]} ${t[0]} */${Number(m[1])} * *`;
+  }
+  m = new RegExp(`^(?:todo dia|diario|daily|every day)(?:\\s+${at}\\s+${time})$`).exec(text);
+  if (m) {
+    const t = fmtTime(m[1], m[2]);
+    if (t) return `${t[1]} ${t[0]} * * *`;
+  }
+  return undefined;
 }
 
 function parseCronField(raw: string, min: number, max: number, aliases: Record<string, number> = {}, sunday = false): Set<number> | string {
@@ -125,7 +160,12 @@ export function cronDescription(raw: string): string {
 }
 function describeExpression(e: string): string {
   const p = e.split(" "), hh = /^\d+$/.test(p[1]) ? String(Number(p[1])).padStart(2, "0") : "", mm = /^\d+$/.test(p[0]) ? String(Number(p[0])).padStart(2, "0") : "";
+  const step = (s: string) => /^\*\/\d+$/.test(s) ? Number(s.slice(2)) : 0;
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   if (/^\*\/\d+$/.test(p[0]) && p.slice(1).every((x) => x === "*")) return `A cada ${p[0].slice(2)} minutos`;
+  if (mm && step(p[1]) && p[2] === "*" && p[3] === "*" && p[4] === "*") return `A cada ${plural(step(p[1]), "hora", "horas")}${mm === "00" ? "" : `, no minuto ${mm}`}`;
+  if (mm && step(p[1]) && step(p[2]) && p[3] === "*" && p[4] === "*") return `A cada ${plural(step(p[2]), "dia", "dias")}, a cada ${plural(step(p[1]), "hora", "horas")}${mm === "00" ? "" : `, no minuto ${mm}`}`;
+  if (mm && hh && step(p[2]) && p[3] === "*" && p[4] === "*") return `A cada ${plural(step(p[2]), "dia", "dias")} às ${hh}:${mm}`;
   if (mm && hh && p[2] === "*" && p[3] === "*" && p[4] === "1-5") return `Seg–sex às ${hh}:${mm}`;
   if (mm && hh && p.slice(2).every((x) => x === "*")) return `Todo dia às ${hh}:${mm}`;
   if (mm && hh && p[2] === "*" && p[3] === "*" && /^\d$/.test(p[4])) return `${["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][Number(p[4])]} às ${hh}:${mm}`;
@@ -143,7 +183,7 @@ export class RoutineStore {
   list(): Routine[] { return this.data.map((r) => ({ ...r })); }
   get(id: string): Routine | undefined { const r = this.data.find((x) => x.id === id); return r ? { ...r } : undefined; }
 
-  add(n: NewRoutine): Routine {
+  add(n: NewRoutine, binding?: RoutineBinding): Routine {
     const cron = n.cron ? validateCron(n.cron) : undefined;
     if (cron && !cron.ok) throw new Error(cron.error);
     const r: Routine = {
@@ -153,11 +193,13 @@ export class RoutineStore {
       days: Array.isArray(n.days) ? n.days.filter((d) => d >= 0 && d <= 6) : undefined,
       runnerId: n.runnerId, agent: n.agent, model: n.model, effort: n.effort, auto: n.auto ? { ...n.auto } : undefined, cwd: n.cwd, speak: !!n.speak,
       enabled: n.enabled !== false, createdAt: Date.now(),
+      principalId: binding?.principalId,
+      deviceId: binding?.deviceId,
     };
     this.data.push(r); this.flush();
     return { ...r };
   }
-  update(id: string, patch: Partial<NewRoutine>): Routine | undefined {
+  update(id: string, patch: Partial<NewRoutine>, binding?: RoutineBinding): Routine | undefined {
     const r = this.data.find((x) => x.id === id);
     if (!r) return undefined;
     const cron = patch.cron !== undefined && patch.cron ? validateCron(patch.cron) : undefined;
@@ -172,6 +214,8 @@ export class RoutineStore {
     if (patch.auto !== undefined) r.auto = { ...patch.auto };
     if (patch.speak !== undefined) r.speak = !!patch.speak;
     if (patch.enabled !== undefined) r.enabled = !!patch.enabled;
+    if (!r.principalId && binding?.principalId) r.principalId = binding.principalId;
+    if (!r.deviceId && binding?.deviceId) r.deviceId = binding.deviceId;
     this.flush();
     return { ...r };
   }

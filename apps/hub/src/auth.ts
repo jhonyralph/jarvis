@@ -14,7 +14,7 @@
  * Storage: ~/.jarvis/auth.json (hashes only). Escape hatch: JARVIS_AUTH=off.
  */
 import { randomBytes, createHash, timingSafeEqual, scryptSync } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, appendFileSync, statSync, renameSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, appendFileSync, statSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeJsonAtomic } from "@jarvis/core";
@@ -30,6 +30,9 @@ const AUDIT_FILE = join(DIR, "audit.log");
 // can't grow it unbounded: at the cap the current file becomes audit.log.1 (exactly one previous
 // generation kept) and a fresh audit.log starts. Size is checked every N appends, not per line.
 const AUDIT_MAX = Math.max(0, Number(process.env.JARVIS_AUDIT_MAX_MB || 5)) * 1024 * 1024;
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+function secureFile(path: string): void { try { if (existsSync(path)) chmodSync(path, PRIVATE_FILE_MODE); } catch { /* best effort */ } }
 let auditSinceCheck = 0;
 function rotateAuditIfBig(): void {
   if (!AUDIT_MAX || ++auditSinceCheck < 64) return;
@@ -41,7 +44,7 @@ function rotateAuditIfBig(): void {
   } catch { /* missing/busy — ignore */ }
 }
 export function audit(event: string, info: { userId?: string | null; deviceId?: string | null; runnerId?: string | null; ip?: string; detail?: string } = {}): void {
-  try { rotateAuditIfBig(); appendFileSync(AUDIT_FILE, JSON.stringify({ ts: Date.now(), event, ...info }) + "\n"); } catch { /* never block on audit */ }
+  try { rotateAuditIfBig(); appendFileSync(AUDIT_FILE, JSON.stringify({ ts: Date.now(), event, ...info }) + "\n", { mode: PRIVATE_FILE_MODE }); secureFile(AUDIT_FILE); } catch { /* never block on audit */ }
 }
 export function readAudit(limit = 100): any[] {
   const read = (f: string) => { try { return readFileSync(f, "utf8").trim().split("\n").filter(Boolean); } catch { return []; } };
@@ -49,7 +52,7 @@ export function readAudit(limit = 100): any[] {
   const lines = [...read(AUDIT_FILE + ".1"), ...read(AUDIT_FILE)];
   return lines.slice(-Math.max(1, Math.min(limit, 1000))).map((l) => { try { return JSON.parse(l); } catch { return { raw: l }; } });
 }
-try { mkdirSync(DIR, { recursive: true }); } catch { /* ignore */ }
+try { mkdirSync(DIR, { recursive: true, mode: PRIVATE_DIRECTORY_MODE }); chmodSync(DIR, PRIVATE_DIRECTORY_MODE); } catch { /* ignore */ }
 
 export const AUTH_ENABLED = (process.env.JARVIS_AUTH || "on").toLowerCase() !== "off";
 // Opt-in: auto-revoke a device token unused for this many days (0 = never expire).
@@ -83,7 +86,7 @@ function load(): AuthData {
     return { ...fresh(), ...d, grants: d.grants || {} };
   } catch { return fresh(); }
 }
-function save(d: AuthData): void { writeJsonAtomic(AUTH_FILE, d, { pretty: true }); }
+function save(d: AuthData): void { writeJsonAtomic(AUTH_FILE, d, { pretty: true }); secureFile(AUTH_FILE); secureFile(`${AUTH_FILE}.bak`); }
 
 let data = load();
 
@@ -108,7 +111,7 @@ export function ensureClaimCode(): string | null {
   const code = newCode();
   data.pendingClaimHash = sha(code);
   save(data);
-  try { writeFileSync(CLAIM_FILE, code + "\n"); } catch { /* ignore */ }
+  try { writeFileSync(CLAIM_FILE, code + "\n", { mode: PRIVATE_FILE_MODE }); secureFile(CLAIM_FILE); } catch { /* ignore */ }
   return code;
 }
 
@@ -224,6 +227,16 @@ export function listDevices(): Array<Omit<Device, "tokenHash"> & { role: Role; u
     const { tokenHash, ...pub } = d;
     return { ...pub, role: u?.role || "member", userName: u?.name || "?" };
   });
+}
+export function pruneExpiredDevices(now = Date.now()): Array<{ id: string; userId: string }> {
+  const expired = data.devices.filter((device) => (device.expiresAt !== undefined && now > device.expiresAt)
+    || (DEVICE_TTL_MS > 0 && now - device.lastSeen > DEVICE_TTL_MS));
+  if (!expired.length) return [];
+  const ids = new Set(expired.map((device) => device.id));
+  data.devices = data.devices.filter((device) => !ids.has(device.id));
+  save(data);
+  for (const device of expired) audit("device_expired", { deviceId: device.id, detail: device.expiresAt !== undefined && now > device.expiresAt ? "validade do acesso expirou" : `ocioso > ${process.env.JARVIS_DEVICE_TTL_DAYS}d` });
+  return expired.map(({ id, userId }) => ({ id, userId }));
 }
 /** Change a device's role (owner/member). Refuses to demote the last owner. */
 export function setDeviceRole(deviceId: string, role: Role): boolean {

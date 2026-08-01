@@ -203,6 +203,178 @@ export function deleteFrameworkFile(relPath: string, root = frameworkRoot()): bo
 
 export interface FrameworkImportResult { imported: string[]; skipped: string[] }
 
+const STARTER_FRAMEWORK_FILES: FrameworkFile[] = [
+  {
+    path: "commands/code-review.md",
+    content: `---
+description: Revisao tecnica profunda do codigo ou PR informado.
+argument-hint: <diff, PR, branch, pasta ou objetivo>
+---
+Faca um code review rigoroso e agnostico de IA para: $ARGUMENTS
+
+Priorize achados por severidade. Procure bugs, regressao comportamental, risco de seguranca, concorrencia, estado inconsistente, acessibilidade quando houver UI, e lacunas de teste. Cite arquivos e linhas quando existirem. Se nao houver achados relevantes, diga isso claramente e liste riscos residuais ou testes nao executados.
+`,
+  },
+  {
+    path: "commands/research.md",
+    content: `---
+description: Pesquisa tecnica estruturada com fontes, trade-offs e decisao.
+argument-hint: <tema ou pergunta>
+---
+Pesquise e sintetize: $ARGUMENTS
+
+Use fontes primarias quando o tema for tecnico, verifique informacoes temporais instaveis antes de concluir, separe fatos de inferencias e termine com opcoes praticas, trade-offs e uma recomendacao defensavel.
+`,
+  },
+  {
+    path: "commands/benchmark.md",
+    content: `---
+description: Comparativo profissional entre solucoes, modelos, abordagens ou implementacoes.
+argument-hint: <cenario, concorrentes e criterios>
+---
+Monte um benchmark/comparativo para: $ARGUMENTS
+
+Defina criterios, pesos, riscos, custo de execucao, tempo esperado, qualidade esperada e limites de cada alternativa. Quando houver codigo ou produto, proponha como validar com testes ou evidencias objetivas. Termine com ranking e decisao recomendada.
+`,
+  },
+  {
+    path: "commands/daily-digest.md",
+    content: `---
+description: Gera um digest operacional de repositorios, tarefas ou contexto informado.
+argument-hint: <repos, pastas, sistemas ou periodo>
+---
+Gere um digest operacional para: $ARGUMENTS
+
+Inclua mudancas importantes, riscos, bloqueios, proximas acoes, itens aguardando decisao e qualquer trabalho em background que precise acompanhamento. Mantenha formato escaneavel.
+`,
+  },
+  {
+    path: "commands/create-routine.md",
+    content: `---
+description: Transforma um objetivo recorrente em uma rotina agendada do Jarvis.
+argument-hint: <objetivo recorrente e frequencia desejada>
+---
+Planeje uma rotina agendada do Jarvis para: $ARGUMENTS
+
+Defina nome, prompt exato, maquina ideal, IA/modelo/esforco quando fizer sentido, pasta de trabalho, agenda cron de cinco campos, condicoes de parada, notificacoes e riscos. Se a automacao puder gerar custo ou alteracao de arquivos, destaque a politica de aprovacao.
+`,
+  },
+  {
+    path: "commands/solution-workspace.md",
+    content: `---
+description: Estrutura uma execucao no Espaco de Solucoes / Solution Workspace.
+argument-hint: <objetivo, modo e IAs desejadas>
+---
+Estruture um trabalho para o Espaco de Solucoes (Solution Workspace): $ARGUMENTS
+
+Escolha entre conselho, benchmark, revisao paralela ou auditoria. Defina participantes, modelo/esforco quando relevante, paralelismo, criterio de julgamento, artefatos esperados e como o resultado deve virar execucao ou ser direcionado para uma IA especifica.
+`,
+  },
+  {
+    path: "skills/code-review/SKILL.md",
+    content: `---
+name: code-review
+description: Revisao tecnica rigorosa de diff, PR, branch ou implementacao.
+---
+Atue como revisor senior. Foque em problemas concretos, nao em elogios. Priorize bugs, regressao, seguranca, dados, concorrencia, compatibilidade, UX e testes. Use este formato: Achados, Perguntas abertas, Testes faltantes, Resumo. Cite arquivo/linha sempre que possivel. Contexto: $ARGUMENTS
+`,
+  },
+  {
+    path: "skills/security-scan/SKILL.md",
+    content: `---
+name: security-scan
+description: Auditoria de seguranca para codigo, configuracao, dependencias e fluxos.
+---
+Procure exposicao de segredo, autenticacao fraca, autorizacao incorreta, injecao, traversal, SSRF, XSS, CSRF, vazamento em logs, configuracao insegura e riscos de supply chain. Classifique severidade e proponha mitigacao pequena e verificavel. Contexto: $ARGUMENTS
+`,
+  },
+  {
+    path: "skills/dependency-audit/SKILL.md",
+    content: `---
+name: dependency-audit
+description: Analisa dependencias, versoes, risco de pacote e caminho de atualizacao.
+---
+Mapeie dependencias diretas e criticas. Verifique versoes, alternativas mantidas, risco de licenca quando aplicavel, impacto de upgrade e plano de migracao. Nao invente vulnerabilidades: confirme em fonte confiavel quando precisar. Contexto: $ARGUMENTS
+`,
+  },
+  {
+    path: "skills/deep-research/SKILL.md",
+    content: `---
+name: deep-research
+description: Pesquisa profunda com fontes, lacunas, opcoes e recomendacao.
+---
+Investigue de forma estruturada. Comece pela pergunta real, separe fatos de inferencias, use fontes primarias sempre que possivel, compare alternativas e feche com decisao recomendada, riscos e proximos passos. Contexto: $ARGUMENTS
+`,
+  },
+  {
+    path: "skills/daily-digest/SKILL.md",
+    content: `---
+name: daily-digest
+description: Resume mudancas, filas, bloqueios, riscos e proximas acoes.
+---
+Crie um resumo operacional curto. Agrupe por andamento, bloqueios, falhas, decisoes pendentes e proximas acoes. Destaque trabalhos em background e qualquer item que exija intervencao humana. Contexto: $ARGUMENTS
+`,
+  },
+  {
+    path: "skills/compare-docs/SKILL.md",
+    content: `---
+name: compare-docs
+description: Compara documentos, requisitos, PRDs, specs ou propostas.
+---
+Compare os documentos informados por objetivo, escopo, divergencias, lacunas, conflitos, decisoes implicitas e riscos de implementacao. Gere uma tabela curta quando ajudar e termine com recomendacao. Contexto: $ARGUMENTS
+`,
+  },
+  {
+    path: "skills/data-analyze/SKILL.md",
+    content: `---
+name: data-analyze
+description: Analise de dados com validacao, hipoteses e conclusoes praticas.
+---
+Analise os dados com postura critica. Verifique qualidade, schema, outliers, vieses, metrica principal, metricas auxiliares e conclusoes que os dados realmente suportam. Deixe claro o que nao pode ser concluido. Contexto: $ARGUMENTS
+`,
+  },
+  {
+    path: "skills/meeting-notes/SKILL.md",
+    content: `---
+name: meeting-notes
+description: Transforma conversa ou notas em decisoes, tarefas e follow-ups.
+---
+Extraia decisoes, tarefas, donos, prazos, riscos e perguntas abertas. Separe fatos de interpretacoes e preserve nomes/projetos importantes. Contexto: $ARGUMENTS
+`,
+  },
+  {
+    path: "skills/todo-from-notes/SKILL.md",
+    content: `---
+name: todo-from-notes
+description: Converte notas soltas em plano executavel e checklist.
+---
+Transforme as notas em um plano com tarefas atomicas, dependencias, criterios de aceite e ordem sugerida. Sinalize ambiguidades que bloqueiam execucao. Contexto: $ARGUMENTS
+`,
+  },
+  {
+    path: "skills/browser-flow-review/SKILL.md",
+    content: `---
+name: browser-flow-review
+description: Revisa fluxo navegado/renderizado e conecta observacoes visuais a codigo quando houver source map.
+---
+Revise o fluxo de browser informado. Considere estado renderizado, selecoes visuais, console, network, acessibilidade, responsividade e source maps quando disponiveis. Envie para a IA tanto o que foi renderizado quanto os mapeamentos de origem relevantes. Contexto: $ARGUMENTS
+`,
+  },
+];
+
+/** Seed a useful universal skill/command pack inspired by local-first assistants such as OpenJarvis.
+ *  It is intentionally additive: existing files are never overwritten. */
+export function installFrameworkStarterPack(root = frameworkRoot()): FrameworkImportResult {
+  const imported: string[] = [], skipped: string[] = [];
+  for (const f of STARTER_FRAMEWORK_FILES) {
+    const safe = assertSafeRelPath(f.path);
+    if (existsSync(toAbs(root, safe))) { skipped.push(`${safe} (já existe)`); continue; }
+    writeTextAtomic(toAbs(root, safe), f.content);
+    imported.push(safe);
+  }
+  return { imported, skipped };
+}
+
 /** Minimal, safe importer: seed instructions.md from this machine's existing global instruction files
  *  (CLAUDE.md / AGENTS.md / GEMINI.md), so a user's current behavior becomes the framework's starting
  *  point. Never overwrites an existing instructions.md. Commands/skills are added via the editor. */

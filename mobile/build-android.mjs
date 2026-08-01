@@ -83,8 +83,10 @@ try {
   run(node, ["sync-web.mjs"]);
   run(node, ["generate-android-icons.mjs"]);
   run(npx, ["cap", "sync", "android"]);
+  run(node, ["apply-android-native.mjs"]);
+  run(node, ["apply-context-native.mjs", "android"]);
   patchSendIntentSdk();
-  run(gradlew, gradleArgs.length ? gradleArgs : ["assembleDebug"], { cwd: androidDir });
+  run(gradlew, gradleArgs.length ? gradleArgs : ["assembleSideloadDebug"], { cwd: androidDir });
 } catch (error) {
   console.error(`[android-build] ${error.message || error}`);
   process.exit(1);
