@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jarvis.chat/schemas/context-region-v1.json",
+  "title": "Jarvis Context Engine region",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "label", "timeZone", "bbox", "center", "pbf", "pmtiles", "attribution"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+    "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "timeZone": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "bbox": {
+      "description": "West, south, east, north in WGS84.",
+      "type": "array",
+      "prefixItems": [
+        { "type": "number", "minimum": -180, "maximum": 180 },
+        { "type": "number", "minimum": -90, "maximum": 90 },
+        { "type": "number", "minimum": -180, "maximum": 180 },
+        { "type": "number", "minimum": -90, "maximum": 90 }
+      ],
+      "items": false
+    },
+    "center": {
+      "description": "Longitude, latitude in WGS84.",
+      "type": "array",
+      "prefixItems": [
+        { "type": "number", "minimum": -180, "maximum": 180 },
+        { "type": "number", "minimum": -90, "maximum": 90 }
+      ],
+      "items": false
+    },
+    "pbf": { "$ref": "#/$defs/artifact" },
+    "pmtiles": { "$ref": "#/$defs/artifact" },
+    "attribution": { "type": "string", "minLength": 1, "maxLength": 300 }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fileName", "catalogUrl", "downloadUrl", "sizeClass", "note"],
+      "properties": {
+        "fileName": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "catalogUrl": { "type": "string", "format": "uri" },
+        "downloadUrl": { "type": ["string", "null"], "format": "uri" },
+        "sizeClass": { "enum": ["small", "medium", "large", "unknown"] },
+        "note": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    }
+  }
+}
+

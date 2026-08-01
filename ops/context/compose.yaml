@@ -1,0 +1,105 @@
+name: ${COMPOSE_PROJECT_NAME:-jarvis-context}
+
+services:
+  nominatim:
+    image: ${CONTEXT_NOMINATIM_IMAGE:-mediagis/nominatim:5.3.2}
+    profiles: ["nominatim", "all"]
+    restart: unless-stopped
+    shm_size: ${CONTEXT_NOMINATIM_SHM_SIZE:-1gb}
+    ports:
+      - "${CONTEXT_BIND_HOST:-127.0.0.1}:${CONTEXT_NOMINATIM_PORT:-8080}:8080"
+    environment:
+      PBF_PATH: /nominatim/data/region.osm.pbf
+      NOMINATIM_PASSWORD: ${CONTEXT_NOMINATIM_PASSWORD:-}
+      UPDATE_MODE: none
+      FREEZE: "false"
+      IMPORT_STYLE: ${CONTEXT_NOMINATIM_IMPORT_STYLE:-full}
+      IMPORT_WIKIPEDIA: "false"
+      IMPORT_SECONDARY_WIKIPEDIA: "false"
+      IMPORT_US_POSTCODES: "false"
+      IMPORT_GB_POSTCODES: "false"
+      IMPORT_TIGER_ADDRESSES: "false"
+      THREADS: ${CONTEXT_NOMINATIM_THREADS:-4}
+      GUNICORN_WORKERS: ${CONTEXT_NOMINATIM_WORKERS:-2}
+    volumes:
+      - type: bind
+        source: ${CONTEXT_PBF_FILE:-./runtime/imports/region.osm.pbf}
+        target: /nominatim/data/region.osm.pbf
+        read_only: true
+      - nominatim-database:/var/lib/postgresql/16/main
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8080/status >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 24h
+    networks: [context-private]
+
+  valhalla:
+    image: ${CONTEXT_VALHALLA_IMAGE:-ghcr.io/valhalla/valhalla-scripted:3.8.3}
+    profiles: ["valhalla", "all"]
+    restart: unless-stopped
+    ports:
+      - "${CONTEXT_BIND_HOST:-127.0.0.1}:${CONTEXT_VALHALLA_PORT:-8002}:8002"
+    environment:
+      serve_tiles: "True"
+      use_tiles_ignore_pbf: "True"
+      force_rebuild: "False"
+      build_tar: "True"
+      build_admins: "True"
+      build_time_zones: "True"
+      build_elevation: "False"
+      build_transit: "False"
+      use_default_speeds_config: "False"
+      update_existing_config: "True"
+      traffic_name: ""
+      server_threads: ${CONTEXT_VALHALLA_THREADS:-2}
+      tileset_name: jarvis_context
+    volumes:
+      - type: bind
+        source: ${CONTEXT_VALHALLA_DIR:-./runtime/valhalla}
+        target: /custom_files
+      - type: bind
+        source: ${CONTEXT_PBF_FILE:-./runtime/imports/region.osm.pbf}
+        target: /custom_files/region.osm.pbf
+        read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8002/status >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 24h
+    networks: [context-private]
+
+  pmtiles:
+    image: ${CONTEXT_PMTILES_IMAGE:-protomaps/go-pmtiles:v1.31.2}
+    profiles: ["pmtiles", "all"]
+    restart: unless-stopped
+    read_only: true
+    ports:
+      - "${CONTEXT_BIND_HOST:-127.0.0.1}:${CONTEXT_PMTILES_PORT:-8081}:8080"
+    command:
+      - serve
+      - /data
+      - --port=8080
+      - --public-url=${CONTEXT_PMTILES_PUBLIC_URL:-http://127.0.0.1:8081}
+      - --cors=${CONTEXT_PMTILES_CORS:-http://127.0.0.1:4577}
+    volumes:
+      - type: bind
+        source: ${CONTEXT_PMTILES_DIR:-./runtime/pmtiles}
+        target: /data
+        read_only: true
+    healthcheck:
+      test: ["CMD", "/go-pmtiles", "show", "/data/${CONTEXT_PMTILES_ARCHIVE:-region.pmtiles}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks: [context-private]
+
+networks:
+  context-private:
+    internal: true
+
+volumes:
+  nominatim-database:

@@ -1,0 +1,32 @@
+{
+  "name": "@jarvis/context",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Capacitor bridge for minimized Jarvis device context.",
+  "main": "index.ts",
+  "types": "definitions.ts",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "android/consumer-rules.pro",
+    "ios/Sources/",
+    "ios/Tests/",
+    "definitions.ts",
+    "index.ts",
+    "web.ts",
+    "Package.swift",
+    "JarvisContext.podspec"
+  ],
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "capacitor": {
+    "android": {
+      "src": "android"
+    },
+    "ios": {
+      "src": "ios"
+    }
+  }
+}

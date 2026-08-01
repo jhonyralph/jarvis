@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "monaco",
+  "label": "Monaco (smoke test)",
+  "timeZone": "Europe/Monaco",
+  "bbox": [7.4092, 43.7247, 7.4487, 43.7517],
+  "center": [7.4246, 43.7384],
+  "pbf": {
+    "fileName": "monaco-latest.osm.pbf",
+    "catalogUrl": "https://download.geofabrik.de/europe/monaco.html",
+    "downloadUrl": "https://download.geofabrik.de/europe/monaco-latest.osm.pbf",
+    "sizeClass": "small",
+    "note": "Extrato pequeno destinado a validar importacao. Mesmo este arquivo so e baixado por comando explicito do operador."
+  },
+  "pmtiles": {
+    "fileName": "monaco.pmtiles",
+    "catalogUrl": "https://maps.protomaps.com/builds/",
+    "downloadUrl": null,
+    "sizeClass": "small",
+    "note": "Extraia o bbox de um build PMTiles datado e registre a data do dado usado."
+  },
+  "attribution": "Map data (c) OpenStreetMap contributors, ODbL 1.0"
+}
+

@@ -1,0 +1,53 @@
+{
+  "fixtureVersion": 1,
+  "parserVersion": 1,
+  "capturedAt": "2026-08-01T16:03:32Z",
+  "source": {
+    "endpoint": "https://mapaculturalbh.pbh.gov.br/api/event/find",
+    "format": "Mapas Culturais public API"
+  },
+  "sanitization": {
+    "freeTextReplaced": true,
+    "publicSchemaPreserved": true
+  },
+  "payload": [
+    {
+      "id": 1,
+      "name": "Evento cultural sanitizado",
+      "shortDescription": "Texto livre removido da fixture.",
+      "status": 1,
+      "updateTimestamp": {
+        "date": "2025-05-19 15:30:45.000000",
+        "timezone_type": 3,
+        "timezone": "America/Sao_Paulo"
+      },
+      "occurrences": [
+        {
+          "id": 11,
+          "rule": {
+            "spaceId": "2",
+            "startsAt": "19:00",
+            "duration": 90,
+            "endsAt": "20:30",
+            "frequency": "once",
+            "startsOn": "2016-04-09",
+            "until": "",
+            "description": "Texto livre removido da fixture.",
+            "price": ""
+          },
+          "status": 1,
+          "space": null,
+          "@entityType": "eventoccurrence"
+        }
+      ],
+      "terms": {
+        "tag": [],
+        "linguagem": [
+          "Palestra, Debate ou Encontro"
+        ]
+      },
+      "singleUrl": "https://mapaculturalbh.pbh.gov.br/evento/1/",
+      "@entityType": "event"
+    }
+  ]
+}
