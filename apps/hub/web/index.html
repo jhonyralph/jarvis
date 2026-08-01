@@ -538,6 +538,48 @@
     #settings.searching .spanel { display:flex!important; }
     #settings.searching .spanel.nomatch { display:none!important; }
     #settings .sec { border-top:1px solid var(--line); margin:10px 0 0; padding-top:18px; color:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.75px; }
+    #settings .sec.sec-help { display:flex; align-items:center; gap:8px; }
+    #settings .sec-help > span { flex:1 1 auto; min-width:0; }
+    #settings .sec-help-btn { flex:none; width:20px; height:20px; min-width:20px; padding:0; border-radius:50%; border:1px solid var(--line); background:transparent; color:#aeb9c8; font-size:12px; line-height:1; font-weight:700; letter-spacing:0; cursor:pointer; }
+    #settings .sec-help-btn:hover { background:#ffffff14; color:var(--text); border-color:#ffffff40; }
+    #helpSheet { z-index:45; }
+    .help-card { width:min(560px,100%); max-height:min(80vh,calc(var(--safe-height) - 40px)); display:flex; flex-direction:column; padding:0; gap:0; overflow:hidden; }
+    .help-head { display:flex; align-items:center; min-height:52px; padding:0 12px 0 20px; border-bottom:1px solid var(--line); }
+    .help-head .settings-title { font-size:16px; letter-spacing:-.2px; }
+    .help-head #helpSheetClose { margin-left:auto; flex:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:9px; }
+    .help-title-ic { margin-right:9px; font-size:17px; }
+    .help-body { --acc:#4f83ff; overflow:auto; padding:15px 18px 20px; display:flex; flex-direction:column; gap:12px; scrollbar-gutter:stable; }
+    .help-hero { display:flex; gap:12px; align-items:flex-start; margin:0 0 3px; padding:14px 15px; border-radius:14px; color:#eaf1f8; font-size:14px; line-height:1.55;
+      background:linear-gradient(135deg,color-mix(in srgb,var(--acc) 24%,transparent),color-mix(in srgb,var(--acc) 7%,transparent));
+      border:1px solid color-mix(in srgb,var(--acc) 42%,var(--line)); }
+    .help-hero-ic { font-size:22px; line-height:1.15; flex:none; }
+    .help-hero p { margin:0; }
+    .help-field { display:flex; flex-direction:column; gap:11px; padding:14px 15px; border-radius:14px; background:#ffffff07; border:1px solid var(--line); border-left:3px solid var(--acc); transition:background .12s,border-color .12s; }
+    .help-field:hover { background:#ffffff0d; border-color:color-mix(in srgb,var(--acc) 35%,var(--line)); }
+    .help-field-h { display:flex; align-items:center; gap:10px; }
+    .help-field-ic { width:28px; height:28px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; font-size:15px; flex:none; background:color-mix(in srgb,var(--acc) 22%,transparent); }
+    .help-field h4 { margin:0; font-size:14.5px; color:var(--text); font-weight:640; letter-spacing:-.1px; }
+    .help-facets { display:flex; flex-direction:column; gap:9px; }
+    .hfacet { display:flex; gap:10px; align-items:flex-start; }
+    .hfacet-ic { width:23px; height:23px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; font-size:12px; flex:none; margin-top:1px; }
+    .hfacet.what .hfacet-ic { background:#4f83ff28; }
+    .hfacet.use .hfacet-ic { background:#34d39928; }
+    .hfacet.data .hfacet-ic { background:#f5b54428; }
+    .hfacet.ex .hfacet-ic { background:#c084fc28; }
+    .hfacet-c { display:flex; flex-direction:column; gap:2px; min-width:0; }
+    .hfacet-l { font-size:10px; font-weight:750; text-transform:uppercase; letter-spacing:.6px; }
+    .hfacet.what .hfacet-l { color:#82a8ff; }
+    .hfacet.use .hfacet-l { color:#4fca9a; }
+    .hfacet.data .hfacet-l { color:#e8b65f; }
+    .hfacet.ex .hfacet-l { color:#c69bf5; }
+    .hfacet-t { font-size:13px; color:#c4cfda; line-height:1.5; }
+    .hfacet.data { background:#f5b5440e; border-radius:9px; padding:8px 10px; margin-left:-4px; }
+    .hfacet.ex { background:#c084fc0f; border-radius:9px; padding:8px 10px; margin-left:-4px; }
+    .hfacet.ex .hfacet-t { font-style:italic; color:#d6c7ea; }
+    .help-group { display:flex; flex-direction:column; gap:12px; }
+    .help-group-h { display:flex; align-items:center; gap:9px; font-size:12px; font-weight:750; letter-spacing:.6px; text-transform:uppercase; color:var(--acc); padding-top:2px; }
+    .help-group-ic { font-size:15px; }
+    .personal-form-h { display:flex; align-items:center; gap:8px; }
     #settings .spanel > .sec:first-child { border-top:0; margin-top:0; padding-top:0; }
     #settings label { gap:7px; color:#aeb9c8; font-size:13px; }
     #settings label.searchhide, #settings .sec.searchhide { display:none!important; }
@@ -707,6 +749,10 @@
       #settings.searchopen .settings-search-toggle { display:none; }
       #settings.searching .settings-nav { display:flex; }
       #settings .settings-panels { padding:14px 18px 16px; }
+      /* Help sheet docks to the bottom as a sheet on mobile. */
+      #helpSheet { align-items:flex-end; justify-content:stretch; padding:0; }
+      #helpSheet .help-card { width:100%; max-width:100%; max-height:88dvh; border-radius:16px 16px 0 0; border-left:0; border-right:0; border-bottom:0; }
+      #helpSheet .help-body { padding-bottom:calc(20px + var(--safe-bottom)); }
       .personal-grid, .personal-query-controls, .personal-query-reference, .personal-env-editor { grid-template-columns:1fr; }
       .personal-query-controls button { width:100%; }
       .personal-query-reference button, .personal-env-editor button { width:100%; }
@@ -1394,6 +1440,10 @@
     </div>
   </div>
 
+  <div id="helpSheet" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="helpSheetTitle"><div class="card help-card">
+    <div class="help-head"><b class="settings-title" id="helpSheetTitle">Ajuda</b><button type="button" id="helpSheetClose" class="ghost settings-x" data-i18n-title="helpSheetClose" title="Fechar" aria-label="Fechar">✕</button></div>
+    <div class="help-body" id="helpSheetBody"></div>
+  </div></div>
   <div id="settings" class="modal hidden"><div class="card settings-card">
     <div class="settings-head"><b class="settings-title">Configurações</b><button type="button" id="settingsHelpBtn" class="ghost helpicon settings-help" title="Ajuda desta seção" aria-label="Ajuda desta seção">?</button><button type="button" id="setX" class="ghost settings-x" title="Fechar" aria-label="Fechar">✕</button></div>
     <div class="settings-body">
@@ -1430,11 +1480,11 @@
         </section>
 
         <section class="spanel hidden" data-panel="assistente">
-          <div class="sec" data-i18n="personalAssistant">Assistente pessoal</div>
+          <div class="sec sec-help"><span data-i18n="personalAssistant">Assistente pessoal</span><button type="button" class="sec-help-btn" data-help="assistant" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div class="personal-note" data-i18n="personalAssistantDesc">Cruza apenas dados autorizados para responder, sugerir e executar ações com confirmação proporcional ao risco.</div>
           <label class="row"><input type="checkbox" id="personalEnabled"> <span data-i18n="personalEnabled">Ativar assistente pessoal</span></label>
           <label class="row"><input type="checkbox" id="personalPaused"> <span data-i18n="personalPaused">Pausar consultas e sugestões proativas</span></label>
-          <div class="sec" data-i18n="location">Localização</div>
+          <div class="sec sec-help"><span data-i18n="location">Localização</span><button type="button" class="sec-help-btn" data-help="location" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div class="personal-grid">
             <label><span data-i18n="locationMode">Uso da localização</span><select id="personalLocationMode"><option value="off" data-i18n="locationOff">Desativado</option><option value="foreground" data-i18n="locationForeground">Somente com o app aberto</option><option value="background" data-i18n="locationBackground">Em segundo plano quando a plataforma permitir</option></select></label>
             <label><span data-i18n="locationPrecision">Precisão compartilhada</span><select id="personalPrecision"><option value="approximate" data-i18n="approximate">Aproximada</option><option value="precise" data-i18n="precise">Precisa</option></select></label>
@@ -1442,7 +1492,7 @@
           <div class="personal-inline-actions"><button id="personalSettingsLocate" class="ghost" type="button" data-i18n="authorizeLocation">Autorizar este aparelho</button><span id="personalLocationStatus" class="personal-note" role="status" aria-live="polite"></span></div>
           <div id="personalNativeStatus" class="personal-note personal-device-status" role="status" aria-live="polite"></div>
           <div class="personal-note" data-i18n="locationPrivacy">A posição exata permanece temporária no Hub. O histórico usa localização reduzida, salvo se a retenção bruta for ativada explicitamente.</div>
-          <div class="sec" data-i18n="proactiveSuggestions">Sugestões proativas</div>
+          <div class="sec sec-help"><span data-i18n="proactiveSuggestions">Sugestões proativas</span><button type="button" class="sec-help-btn" data-help="proactive" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <label class="row"><input type="checkbox" id="personalProactiveEnabled"> <span data-i18n="proactiveThisDevice">Receber sugestões proativas neste aparelho</span></label>
           <div id="personalProactiveStatus" class="personal-note" role="status" aria-live="polite" data-i18n="proactiveDeviceOff">Desativadas neste aparelho.</div>
           <div id="personalDisabledKinds" class="personal-disabled-kinds" aria-live="polite"></div>
@@ -1454,19 +1504,19 @@
             <label><span data-i18n="cooldownMinutes">Intervalo mínimo (minutos)</span><input id="personalCooldown" type="number" min="0" max="10080" required></label>
             <label><span data-i18n="minRelevance">Relevância mínima</span><input id="personalMinScore" type="number" min="0" max="1" step="0.05" required></label>
           </div>
-          <div class="sec" data-i18n="actionPolicy">Política de ações</div>
+          <div class="sec sec-help"><span data-i18n="actionPolicy">Política de ações</span><button type="button" class="sec-help-btn" data-help="actionPolicy" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div class="personal-policy"><b data-i18n="readActions">Leitura</b><span data-i18n="readActionsPolicy">Executa automaticamente dentro dos consentimentos.</span><b data-i18n="externalActions">Ação externa reversível</b><span data-i18n="externalActionsPolicy">Mostra a prévia e pede confirmação.</span><b data-i18n="consequentialActions">Ação consequente</b><span data-i18n="consequentialActionsPolicy">Sempre exige confirmação vinculada à prévia.</span></div>
           <div class="personal-inline-actions"><button id="personalSave" type="button" data-i18n="saveAssistant">Salvar assistente</button><button id="personalOpenQuery" class="ghost" type="button" data-i18n="openAssistant">Abrir assistente</button></div>
         </section>
 
         <section class="spanel hidden" data-panel="fontes">
-          <div class="sec" data-i18n="contextSources">Fontes de contexto</div>
+          <div class="sec sec-help"><span data-i18n="contextSources">Fontes de contexto</span><button type="button" class="sec-help-btn" data-help="sources" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div class="personal-note" data-i18n="sourcesDesc">Cada consulta usa somente fontes com consentimento para a finalidade escolhida. Segredos ficam em variáveis do Hub e nunca retornam ao navegador.</div>
           <div id="personalSourceList" class="personal-list"><span class="personal-note" data-i18n="loading">Carregando...</span></div>
-          <div class="sec" data-i18n="consents">Consentimentos</div>
+          <div class="sec sec-help"><span data-i18n="consents">Consentimentos</span><button type="button" class="sec-help-btn" data-help="consents" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div id="personalConsentList" class="personal-list"></div>
           <div id="personalSourceForm" class="personal-form snav-owner">
-            <b data-i18n="configureSource">Configurar fonte</b>
+            <div class="personal-form-h"><b data-i18n="configureSource">Configurar fonte</b><button type="button" class="sec-help-btn" data-help="configureSource" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
             <div class="personal-grid">
               <label><span data-i18n="sourceType">Tipo</span><select id="personalSourceType"><option value="caldav">CalDAV</option><option value="mapas_culturais">Mapas Culturais</option><option value="open_events" data-i18n="sourceOpenEvents">Eventos abertos</option><option value="mcp_http">MCP HTTP</option><option value="mcp_stdio" data-i18n="sourceLocalMcp">MCP local</option><option value="home_assistant">Home Assistant</option><option value="open_charge_map">Open Charge Map</option><option value="valhalla">Valhalla</option><option value="nominatim">Nominatim</option><option value="osm">OpenStreetMap</option><option value="open_meteo">Open-Meteo</option><option value="weather_alerts" data-i18n="sourceWeatherAlerts">Alertas meteorológicos CAP</option></select></label>
               <label><span data-i18n="sourceLabel">Nome</span><input id="personalSourceLabel" type="text" maxlength="100" autocomplete="off"></label>
@@ -1510,10 +1560,10 @@
         </section>
 
         <section class="spanel hidden" data-panel="dados">
-          <div class="sec" data-i18n="personalData">Dados pessoais</div>
+          <div class="sec sec-help"><span data-i18n="personalData">Dados pessoais</span><button type="button" class="sec-help-btn" data-help="personalData" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div id="personalDataSummary" class="personal-note"></div>
           <div id="personalDataCategories" class="personal-data-categories hidden" role="list" data-i18n-aria="dataCategorySummary"></div>
-          <div class="sec" data-i18n="favoritePlaces">Locais favoritos</div>
+          <div class="sec sec-help"><span data-i18n="favoritePlaces">Locais favoritos</span><button type="button" class="sec-help-btn" data-help="favorites" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div id="personalFavoriteList" class="personal-list"></div>
           <div class="personal-form">
             <div class="personal-grid"><label><span data-i18n="label">Nome</span><input id="personalFavoriteLabel" type="text" maxlength="100" autocomplete="off"></label><label><span data-i18n="address">Endereço</span><input id="personalFavoriteAddress" type="search" maxlength="500" autocomplete="street-address"></label><label><span data-i18n="favoriteAliases">Aliases</span><input id="personalFavoriteAliases" type="text" maxlength="500" autocomplete="off" data-i18n-ph="favoriteAliasesPh" placeholder="casa, lar"></label><label><span data-i18n="favoritePurposes">Finalidades</span><select id="personalFavoritePurposes" multiple size="3"><option value="nearby" data-i18n="purposeNearby">Locais próximos</option><option value="mobility" data-i18n="purposeMobility">Mobilidade</option><option value="calendar" data-i18n="purposeCalendar">Agenda</option><option value="events" data-i18n="purposeEvents">Eventos</option><option value="weather" data-i18n="purposeWeather">Clima</option><option value="automation" data-i18n="purposeAutomation">Casa e automações</option></select></label></div>
@@ -1535,7 +1585,7 @@
             </details>
             <div class="personal-inline-actions"><button id="personalFavoriteReset" class="ghost hidden" type="button" data-i18n="cancelEdit">Cancelar edição</button><button id="personalFavoriteSave" type="button" data-i18n="saveFavorite">Salvar local</button></div>
           </div>
-          <div class="sec" data-i18n="electricVehicles">Veículos elétricos</div>
+          <div class="sec sec-help"><span data-i18n="electricVehicles">Veículos elétricos</span><button type="button" class="sec-help-btn" data-help="vehicles" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div class="personal-note" data-i18n="vehicleProfileNote">Perfis filtram compatibilidade e potência. Eles não confirmam disponibilidade ao vivo de carregadores.</div>
           <div id="personalVehicleList" class="personal-list"></div>
           <details id="personalVehicleForm" class="personal-advanced">
@@ -1552,14 +1602,14 @@
             </div>
             <div class="personal-inline-actions"><button id="personalVehicleReset" class="ghost" type="button" data-i18n="clear">Limpar</button><button id="personalVehicleSave" type="button" data-i18n="saveVehicle">Salvar veículo</button></div>
           </details>
-          <div class="sec" data-i18n="preferences">Preferências explícitas</div>
+          <div class="sec sec-help"><span data-i18n="preferences">Preferências explícitas</span><button type="button" class="sec-help-btn" data-help="preferences" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div id="personalPreferenceList" class="personal-list"></div>
           <div class="personal-form">
             <div id="personalPreferenceEditorNote" class="personal-note hidden" role="status" aria-live="polite"></div>
             <div class="personal-grid"><label><span data-i18n="preferenceKey">Categoria</span><input id="personalPreferenceKey" type="text" maxlength="100" autocomplete="off" data-i18n-ph="preferenceKeyPh" placeholder="restaurante.cozinha"></label><label><span data-i18n="preferenceValue">Preferência</span><input id="personalPreferenceValue" type="text" maxlength="500" autocomplete="off" data-i18n-ph="preferenceValuePh" placeholder="comida mineira"></label><label><span data-i18n="polarity">Relação</span><select id="personalPreferencePolarity"><option value="prefer" data-i18n="prefer">Prefiro</option><option value="avoid" data-i18n="avoid">Evito</option><option value="require" data-i18n="require">Exijo</option></select></label><label><span data-i18n="purposes">Finalidades</span><select id="personalPreferencePurpose" multiple size="3"><option value="nearby" data-i18n="purposeNearby">Locais próximos</option><option value="mobility" data-i18n="purposeMobility">Mobilidade</option><option value="calendar" data-i18n="purposeCalendar">Agenda</option><option value="events" data-i18n="purposeEvents">Eventos</option><option value="weather" data-i18n="purposeWeather">Clima</option><option value="automation" data-i18n="purposeAutomation">Casa e automações</option></select></label><label><span data-i18n="memoryValidUntil">Válida até (opcional)</span><input id="personalPreferenceExpires" type="datetime-local" step="60"></label></div>
             <div class="personal-inline-actions"><button id="personalPreferenceReset" class="ghost hidden" type="button" data-i18n="cancelEdit">Cancelar edição</button><button id="personalPreferenceSave" type="button" data-i18n="savePreference">Salvar preferência</button></div>
           </div>
-          <div class="sec" data-i18n="retention">Retenção e privacidade</div>
+          <div class="sec sec-help"><span data-i18n="retention">Retenção e privacidade</span><button type="button" class="sec-help-btn" data-help="retention" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
           <div class="personal-grid"><label><span data-i18n="observationsDays">Observações (dias)</span><input id="personalObservationsDays" type="number" min="0" max="365"></label><label><span data-i18n="decisionsDays">Decisões (dias)</span><input id="personalDecisionsDays" type="number" min="1" max="3650"></label><label><span data-i18n="inferencesDays">Inferências (dias)</span><input id="personalInferencesDays" type="number" min="1" max="3650"></label></div>
           <label class="row"><input id="personalKeepRawLocation" type="checkbox"> <span data-i18n="keepRawLocation">Manter localização bruta no histórico</span></label>
           <div class="personal-inline-actions"><button id="personalRetentionSave" type="button" data-i18n="saveRetention">Salvar retenção</button><button id="personalExport" class="ghost" type="button" data-i18n="exportData">Exportar JSON</button><button id="personalPrune" class="ghost" type="button" data-i18n="pruneData">Limpar dados expirados</button><button id="personalErase" class="ghost personal-danger" type="button" data-i18n="eraseData">Apagar todos os dados</button></div>

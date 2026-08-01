@@ -231,13 +231,14 @@ test("modal focus, Escape restoration, and contextual help", async ({ page }) =>
 
   await openAssistantSettings(page);
   await page.locator("#settingsHelpBtn").click();
-  await expect(page.locator("#dlg")).toBeVisible();
-  await expect(page.locator("#dlgTitle")).toContainText("Assistente pessoal");
-  await expect(page.locator("#dlgTitle")).toContainText("Ativa contexto pessoal");
-  await expectNoOverflowOrControlOverlap(page, "#dlg");
+  await expect(page.locator("#helpSheet")).toBeVisible();
+  await expect(page.locator("#helpSheetTitle")).toContainText("Assistente pessoal");
+  await expect(page.locator("#helpSheetBody")).toContainText("Ativar assistente pessoal");
+  await expect(page.locator("#helpSheetBody")).toContainText("O que acontece com esse dado");
+  await expectNoOverflowOrControlOverlap(page, "#helpSheet");
   await expect(page).toHaveScreenshot("assistant-help.png");
-  await page.locator("#dlgOk").click();
-  await expect(page.locator("#dlg")).toBeHidden();
+  await page.locator("#helpSheetClose").click();
+  await expect(page.locator("#helpSheet")).toBeHidden();
 });
 
 test("empty and source-error states remain readable", async ({ page }) => {
