@@ -115,8 +115,20 @@ async function expectNoOverflowOrControlOverlap(page: Page, modalSelector: strin
         return Boolean(hit && (hit === element || element.contains(hit)));
       });
 
+    const insideHorizontalScroller = (element: HTMLElement) => {
+      let node: HTMLElement | null = element.parentElement;
+      while (node && node !== card && node !== modal) {
+        const overflowX = getComputedStyle(node).overflowX;
+        if (overflowX === "auto" || overflowX === "scroll") return true;
+        node = node.parentElement;
+      }
+      return false;
+    };
+
     for (const { element, rect } of controls) {
-      if (rect.left < cardRect.left - 1 || rect.right > cardRect.right + 1) {
+      // Controls inside an intentional horizontal scroller (e.g. the settings tab strip) are
+      // expected to extend past the card edge and be clipped/scrolled, not "escape".
+      if (!insideHorizontalScroller(element) && (rect.left < cardRect.left - 1 || rect.right > cardRect.right + 1)) {
         problems.push(`${element.id || element.tagName} escapes card horizontally`);
       }
       if (element.scrollWidth > element.clientWidth + 2 && !["SELECT", "INPUT", "TEXTAREA"].includes(element.tagName)) {

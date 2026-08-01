@@ -523,6 +523,7 @@
     #settings .settings-search { margin-bottom:8px; }
     #settings .settings-search input { width:100%; box-sizing:border-box; min-height:38px; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:9px; padding:8px 11px; font:inherit; font-size:13.5px; }
     #settings .settings-section-select { display:none; }
+    #settings .settings-search-toggle { display:none; }
     #settings .snav { display:flex; align-items:center; gap:8px; text-align:left; background:transparent; border:0; color:#aeb9c8; font-size:13.5px; padding:9px 11px; border-radius:9px; cursor:pointer; width:100%; }
     #settings .snav:hover { background:#ffffff0d; color:var(--text); }
     #settings .snav.on { background:#ffffff14; color:var(--text); font-weight:600; }
@@ -692,13 +693,19 @@
       #settings { align-items:stretch; justify-content:stretch; padding:0; }
       #settings .settings-card { width:100%; max-height:100%; height:100%; border:0; border-radius:0; }
       #settings .settings-head { min-height:56px; padding:0 18px; }
-      /* Mobile: search + category selector use one compact row; the active panel gets the width. */
+      /* Mobile: horizontal scrollable tab strip (old approach). Search is a tab-like item that
+         expands into the input on tap; nothing is pinned. */
       #settings .settings-body { flex-direction:column; }
-      #settings .settings-nav { width:auto; flex:none; border-right:0; border-bottom:1px solid var(--line); padding:8px 10px; display:grid; grid-template-columns:minmax(0,1fr) minmax(138px,.8fr); gap:8px; overflow:visible; }
-      #settings .settings-search { margin:0; min-width:0; }
-      #settings .settings-section-select { display:block; min-width:0; min-height:38px; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:9px; padding:7px 28px 7px 9px; }
-      #settings .snav { display:none; }
-      #settings.searching .settings-nav { display:grid; }
+      #settings .settings-nav { width:auto; flex:none; border-right:0; border-bottom:1px solid var(--line); padding:8px 10px; display:flex; flex-direction:row; align-items:center; overflow-x:auto; overflow-y:hidden; gap:6px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+      #settings .settings-nav::-webkit-scrollbar { display:none; }
+      #settings .settings-section-select { display:none; }
+      #settings .snav { display:flex; width:auto; white-space:nowrap; flex:none; }
+      #settings .settings-search-toggle { display:inline-flex; align-items:center; gap:8px; white-space:nowrap; flex:none; background:transparent; border:0; color:#aeb9c8; font-size:13.5px; padding:9px 11px; border-radius:9px; cursor:pointer; }
+      #settings .settings-search-toggle:hover { background:#ffffff0d; color:var(--text); }
+      #settings .settings-search { display:none; margin:0; flex:1 1 auto; min-width:150px; }
+      #settings.searchopen .settings-search { display:block; }
+      #settings.searchopen .settings-search-toggle { display:none; }
+      #settings.searching .settings-nav { display:flex; }
       #settings .settings-panels { padding:14px 18px 16px; }
       .personal-grid, .personal-query-controls, .personal-query-reference, .personal-env-editor { grid-template-columns:1fr; }
       .personal-query-controls button { width:100%; }
@@ -1391,6 +1398,7 @@
     <div class="settings-head"><b class="settings-title">Configurações</b><button type="button" id="settingsHelpBtn" class="ghost helpicon settings-help" title="Ajuda desta seção" aria-label="Ajuda desta seção">?</button><button type="button" id="setX" class="ghost settings-x" title="Fechar" aria-label="Fechar">✕</button></div>
     <div class="settings-body">
       <nav class="settings-nav" id="setNav">
+        <button type="button" id="setSearchToggle" class="settings-search-toggle" aria-label="Procurar"><span aria-hidden="true">🔍</span> <span>Procurar</span></button>
         <div class="settings-search"><input id="setSearch" type="search" placeholder="Procurar" autocomplete="off" spellcheck="false"></div>
         <select id="setSection" class="settings-section-select" aria-label="Seção de configurações">
           <option value="geral">Geral</option><option value="assistente">Assistente</option><option value="fontes">Fontes</option><option value="dados">Dados</option><option value="voz">Voz</option><option value="notif">Notificações</option><option value="automacao">Automação</option><option value="framework">Framework</option><option value="rota">Roteamento</option><option value="uso">Uso &amp; custo</option><option value="celular">Abrir no celular</option><option value="dispositivos">Dispositivos</option><option value="update">Atualização</option>
