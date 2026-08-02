@@ -55,6 +55,16 @@ test("buildInventory splits token cost into always-on / on-demand / metadata", (
   assert.equal(onlyCmd.totals.metadataTokens, 0);
 });
 
+test("buildInventory can suppress removed rows for additive (import) views", () => {
+  const published: FrameworkFile[] = [{ path: "commands/a.md", content: "a" }, { path: "commands/b.md", content: "b" }];
+  const current: FrameworkFile[] = [{ path: "commands/a.md", content: "a2" }]; // b absent from the incoming set
+  const withRemoved = buildInventory(current, published);
+  assert.ok(withRemoved.files.some((f) => f.path === "commands/b.md" && f.status === "removed"), "default view flags removals");
+  const additive = buildInventory(current, published, { includeRemoved: false });
+  assert.ok(!additive.files.some((f) => f.status === "removed"), "additive view has no removed rows");
+  assert.equal(additive.files.find((f) => f.path === "commands/a.md")?.status, "modified", "still diffs modified");
+});
+
 test("buildInventory warns when the always-on bucket blows the budget", () => {
   const big = "a".repeat((ALWAYS_ON_TOKEN_BUDGET + 200) * 4);
   const inv = buildInventory([{ path: "instructions.md", content: big }]);

@@ -25,19 +25,35 @@ export interface ImportPreview {
   conflicts: string[];
   /** content hash of the incoming set — stored as source provenance for later update checks. */
   hash: string;
+  /** per-status counts of the incoming files vs. the current framework (additive diff, no removals). */
+  counts: { new: number; modified: number; unchanged: number };
+  /** true when every incoming file already exists with identical content — a re-import that changes nothing. */
+  identical: boolean;
 }
 
 export function buildImportPreview(imported: FrameworkFile[], skipped: string[], current: FrameworkFile[]): ImportPreview {
   const curPaths = new Set(current.map((f) => f.path));
   const conflicts = imported.filter((f) => curPaths.has(f.path)).map((f) => f.path).sort();
+  // Diff the incoming set against the CURRENT framework so a re-import ("atualização manual") shows
+  // exactly what changes. `includeRemoved:false` keeps it additive — current files absent from the
+  // pack are not reported as removals.
+  const inventory = buildInventory(imported, current, { includeRemoved: false });
+  const counts = { new: 0, modified: 0, unchanged: 0 };
+  for (const f of inventory.files) {
+    if (f.status === "new") counts.new++;
+    else if (f.status === "modified") counts.modified++;
+    else if (f.status === "unchanged") counts.unchanged++;
+  }
   return {
     files: imported,
     skipped,
     scan: scanFramework(imported),
     validation: validateFramework(imported),
-    inventory: buildInventory(imported),
+    inventory,
     conflicts,
     hash: hashFrameworkFiles(imported),
+    counts,
+    identical: imported.length > 0 && counts.new === 0 && counts.modified === 0,
   };
 }
 

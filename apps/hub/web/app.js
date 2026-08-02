@@ -3172,21 +3172,31 @@
         return '<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin-top:4px"><span class="mut">'+label+' · '+((s.files||[]).length)+' arq.</span><span>'+upd+'<button class="ghost fw-src-del" data-id="'+esc(s.id)+'" type="button" style="font-size:11px;padding:2px 8px">Remover</button></span></div>';
       }).join('');
     }
-    function renderFwPreview(token,source,p){
+    function renderFwPreview(token,source,p,isUpdate){
       fwPreviewToken=token; fwPreviewBlocked=!!(p.scan&&p.scan.blocked); source=source||{}; p=p||{};
       const srcLabel=source.type==='github'?('GitHub: '+esc(source.repo||'')+(source.ref?(' @'+esc(source.ref)):'')):('Zip: '+esc(source.name||''));
-      if(E.fwPreviewTitle)E.fwPreviewTitle.textContent='Prévia — '+(source.type==='github'?'GitHub':'Zip');
+      if(E.fwPreviewTitle)E.fwPreviewTitle.textContent=(isUpdate?'Atualização':'Prévia')+' — '+(source.type==='github'?'GitHub':'Zip');
       const sc=(p.scan&&p.scan.counts)||{high:0,medium:0,low:0};
+      const c=(p.counts)||{new:0,modified:0,unchanged:0};
+      const diffTxt=(isUpdate||c.modified||c.unchanged)
+        ? ('<span style="color:#4ade80">'+c.new+' novo(s)</span>, <span style="color:#f5b544">'+c.modified+' alterado(s)</span>, '+c.unchanged+' igual(is)')
+        : (c.new+' novo(s)');
+      const changed=((p.inventory&&p.inventory.files)||[]).filter(f=>f.status==='new'||f.status==='modified').slice(0,30)
+        .map(f=>'<div style="margin:1px 0">'+(f.status==='modified'?'<span style="color:#f5b544">alterado</span>':'<span style="color:#4ade80">novo</span>')+' '+esc(f.path)+'</div>').join('');
       const findings=((p.scan&&p.scan.findings)||[]).slice(0,40).map(f=>'<div style="margin:2px 0"><span style="color:'+fwSevColor(f.severity)+'">●</span> <b>'+esc(f.rule)+'</b> '+esc(f.path)+(f.line?(':'+f.line):'')+' — '+esc(f.message)+(f.snippet?('<br><code class="mut" style="font-size:11px">'+esc(f.snippet)+'</code>'):'')+'</div>').join('');
       const issues=((p.validation&&p.validation.issues)||[]).slice(0,30).map(i=>'<div class="mut" style="margin:1px 0">'+(i.level==='error'?'<span style="color:#f87171">erro</span>':'aviso')+': '+esc(i.path)+' — '+esc(i.message)+'</div>').join('');
-      const t=(p.inventory&&p.inventory.totals)||{}, conflicts=(p.conflicts||[]), skipped=(p.skipped||[]);
+      const t=(p.inventory&&p.inventory.totals)||{}, skipped=(p.skipped||[]);
       if(E.fwPreviewBody)E.fwPreviewBody.innerHTML=
-        '<div>'+srcLabel+' · <b>'+(p.fileCount||0)+'</b> arquivo(s) · ~'+(t.tokens||0)+' tk'+(conflicts.length?(' · <span style="color:#f5b544">'+conflicts.length+' conflito(s)</span>'):'')+'</div>'
+        '<div>'+srcLabel+' · <b>'+(p.fileCount||0)+'</b> arquivo(s) · ~'+(t.tokens||0)+' tk</div>'
+        +'<div style="margin-top:4px">Mudanças: '+diffTxt+'</div>'
+        +(p.identical?'<div style="margin-top:4px;color:#4ade80">✓ Idêntico ao atual — nada a aplicar.</div>':'')
         +'<div style="margin-top:4px">Segurança: '+(sc.high?('<b style="color:#f87171">'+sc.high+' alto(s) — bloqueado</b>'):'<span style="color:#4ade80">0 alto</span>')+', '+sc.medium+' médio(s), '+sc.low+' baixo(s)</div>'
+        +(changed?('<div style="margin-top:4px">'+changed+'</div>'):'')
         +(findings?('<div style="margin-top:4px">'+findings+'</div>'):'')
         +(issues?('<div style="margin-top:4px">'+issues+'</div>'):'')
-        +(conflicts.length?('<div class="mut" style="margin-top:4px">Conflitos: '+conflicts.map(esc).join(', ')+'</div>'):'')
         +(skipped.length?('<div class="mut" style="margin-top:4px">Ignorados: '+skipped.slice(0,20).map(esc).join(', ')+'</div>'):'');
+      // Fontes já importadas (ou "buscar atualização") default para Sobrescrever — é o caso de update manual.
+      if(E.fwPreviewMode)E.fwPreviewMode.value=isUpdate?'overwrite':'keep';
       if(E.fwPreviewForceRow)E.fwPreviewForceRow.style.display=fwPreviewBlocked?'':'none';
       if(E.fwPreviewForce)E.fwPreviewForce.checked=false;
       if(E.fwPreviewApply)E.fwPreviewApply.disabled=fwPreviewBlocked;
@@ -3749,8 +3759,8 @@
         else if(m.t==='framework_imported'){ if(m.ok){ tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); toast('Importado: '+((m.imported||[]).join(', ')||'nada novo')+((m.skipped&&m.skipped.length)?' · pulado: '+m.skipped.join(', '):'')); } else toast('Erro: '+(m.error||'falha')); }
         else if(m.t==='framework_seeded'){ if(m.ok){ tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); toast(`Pacote base: ${(m.imported||[]).length} instalado(s), ${(m.skipped||[]).length} preservado(s).`); } else toast('Erro: '+(m.error||'falha')); }
         else if(m.t==='framework_inventory'){ renderFwInventory(m.inventory,m.scan,m.validation); renderFwSources(m.sources); if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version; }
-        else if(m.t==='framework_import_preview'){ if(m.ok){ renderFwPreview(m.token,m.source||{},m.preview||{}); } else toast('Importar: '+(m.error||'falha')); }
-        else if(m.t==='framework_update'){ if(m.ok){ if(m.hasUpdate){ renderFwPreview(m.token,m.source||{},m.preview||{}); toast('Atualização disponível'); } else toast('Já está atualizado'); } else toast('Atualização: '+(m.error||'falha')); }
+        else if(m.t==='framework_import_preview'){ if(m.ok){ renderFwPreview(m.token,m.source||{},m.preview||{},!!m.isUpdate); } else toast('Importar: '+(m.error||'falha')); }
+        else if(m.t==='framework_update'){ if(m.ok){ if(m.hasUpdate){ renderFwPreview(m.token,m.source||{},m.preview||{},true); toast('Atualização disponível'); } else toast('Já está atualizado'); } else toast('Atualização: '+(m.error||'falha')); }
         else if(m.t==='framework_import_applied'){ if(m.ok){ closeFwPreview(); tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); toast('Aplicado: '+((m.written||[]).length)+' arquivo(s)'+((m.skippedExisting&&m.skippedExisting.length)?' · '+m.skippedExisting.length+' mantido(s)':'')+(m.forced?' (override)':'')); } else { if(E.fwPreviewApply)E.fwPreviewApply.disabled=false; toast('Aplicar: '+(m.error||'falha')); } }
         else if(m.t==='framework_source_removed'){ tx({t:'framework_inventory'}); toast(m.ok?'Fonte removida':'Fonte não encontrada'); }
         else if(m.t==='framework_status'){ if(m.error){ E.fwStatus.textContent=''; toast('Publicar: '+m.error); return; }

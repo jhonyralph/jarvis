@@ -106,6 +106,14 @@ test("zip import: HIGH scan blocks apply, override forces it, clean pack lands i
     assert.ok(planRow.tokens > 0, "token cost is estimated");
     assert.ok(inv.scan.counts.high >= 1, "inventory carries the working-tree scan health");
 
+    // Re-importing the SAME pack is a manual update: flagged as an update, and identical (nothing changed).
+    client.box.send({ t: "framework_import_zip", name: "bad.zip", dataB64: badZip.toString("base64") });
+    const reimport = await client.box.take((m) => m.t === "framework_import_preview");
+    assert.equal(reimport.isUpdate, true, "a previously-imported source is flagged as an update");
+    assert.equal(reimport.preview.identical, true, "identical re-import reports nothing to change");
+    assert.equal(reimport.preview.counts.modified, 0);
+    assert.ok(reimport.preview.counts.unchanged >= 2);
+
     client.ws.close();
   } finally {
     await stop(hubPid);

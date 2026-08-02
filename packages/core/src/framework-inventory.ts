@@ -81,8 +81,13 @@ function metadataTokensOf(kind: FrameworkFileKind, content: string): number {
  * Build the inventory for `current`, diffed against `published` (the last snapshot the owner
  * published to the fleet). Files only in `published` appear as `removed` so the UI can show
  * pending deletions. When `published` is omitted every file is reported `new`.
+ *
+ * `opts.includeRemoved` (default true) controls the pending-deletions rows: an ADDITIVE view — an
+ * import diffed against the current framework — passes `false`, because incoming files that don't
+ * cover a current file don't mean that file is being removed. There the diff is only new/modified/
+ * unchanged relative to `published` (= the current tree).
  */
-export function buildInventory(current: FrameworkFile[], published?: FrameworkFile[]): Inventory {
+export function buildInventory(current: FrameworkFile[], published?: FrameworkFile[], opts: { includeRemoved?: boolean } = {}): Inventory {
   const prev = new Map((published ?? []).map((f) => [f.path, f.content]));
   const curPaths = new Set(current.map((f) => f.path));
   const files: InventoryFile[] = [];
@@ -102,8 +107,8 @@ export function buildInventory(current: FrameworkFile[], published?: FrameworkFi
       status,
     });
   }
-  // Pending deletions: in the last publish but no longer present.
-  for (const f of published ?? []) {
+  // Pending deletions: in the last publish but no longer present. Suppressed for additive (import) views.
+  for (const f of opts.includeRemoved === false ? [] : published ?? []) {
     if (curPaths.has(f.path)) continue;
     const kind = classifyFramework(f.path);
     files.push({

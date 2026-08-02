@@ -1318,6 +1318,8 @@ function previewPayload(p: ReturnType<typeof buildImportPreview>) {
     inventory: p.inventory,
     conflicts: p.conflicts,
     hash: p.hash,
+    counts: p.counts,
+    identical: p.identical,
   };
 }
 /** Deliver a queued Framework publish to a connected, protocol-compatible runner. Reads the CURRENT
@@ -5004,8 +5006,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const preview = buildImportPreview(files, skipped, current);
         sweepPendingImports();
         const token = randomUUID();
-        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "zip", name: String(msg.name || "pacote.zip") }, createdAt: Date.now() });
-        send(ws, { t: "framework_import_preview", ok: true, token, source: { type: "zip", name: String(msg.name || "pacote.zip") }, preview: previewPayload(preview) });
+        const name = String(msg.name || "pacote.zip");
+        const isUpdate = !!frameworkSources.get(zipSourceId(name));
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "zip", name }, createdAt: Date.now() });
+        send(ws, { t: "framework_import_preview", ok: true, token, isUpdate, source: { type: "zip", name }, preview: previewPayload(preview) });
       } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
       return;
     }
@@ -5021,8 +5025,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         sweepPendingImports();
         const token = randomUUID();
         const src = { type: "github" as const, spec, ref: fetched.ref, commit: fetched.commit, id: githubSourceId(spec.owner, spec.repo, spec.subdir) };
+        const isUpdate = !!frameworkSources.get(src.id);
         pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: src, createdAt: Date.now() });
-        send(ws, { t: "framework_import_preview", ok: true, token, source: { type: "github", repo: `${spec.owner}/${spec.repo}${spec.subdir ? "/" + spec.subdir : ""}`, ref: fetched.ref, commit: fetched.commit }, preview: previewPayload(preview) });
+        send(ws, { t: "framework_import_preview", ok: true, token, isUpdate, source: { type: "github", repo: `${spec.owner}/${spec.repo}${spec.subdir ? "/" + spec.subdir : ""}`, ref: fetched.ref, commit: fetched.commit }, preview: previewPayload(preview) });
       } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
       return;
     }
