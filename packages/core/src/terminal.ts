@@ -76,6 +76,13 @@ export class TerminalManager {
       rows,
       cwd,
       env: process.env as Record<string, string>,
+      // Windows: força winpty em vez do ConPTY. O Hub roda HEADLESS (o supervisor start-hub.ps1
+      // redireciona toda a saída pro hub.log, sem console anexado). Ao criar/matar um PTY, o ConPTY
+      // do node-pty spawna o helper conpty_console_list_agent, que chama a API Win32 AttachConsole —
+      // ela FALHA sem console e derrubava esse helper com "Error: AttachConsole failed", poluindo o
+      // log e quebrando o terminal do Solution Workspace. O winpty não usa esse agente e funciona
+      // headless. Em não-Windows a opção é ignorada pelo node-pty. Ver docs/environment.md.
+      ...(platform() === "win32" ? { useConpty: false } : {}),
     });
     const managed: ManagedTerminal = { info, proc };
     this.terminals.set(info.id, managed);

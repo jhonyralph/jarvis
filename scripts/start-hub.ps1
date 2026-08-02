@@ -23,18 +23,24 @@ if (Get-NetTCPConnection -LocalPort 4577 -State Listen -ErrorAction SilentlyCont
 
 # Config LOCAL opcional (gitignored) — valores pessoais/da máquina vão aqui, ex.:
 #   JARVIS_PUBLIC_URL=https://<seu-host>   (para links de convite completos)
-$hubEnv = Join-Path $env:USERPROFILE '.jarvis\hub.env'
-if (Test-Path $hubEnv) {
-  Get-Content $hubEnv | ForEach-Object { if ($_ -match '^\s*([A-Z_]+)\s*=\s*(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim().Trim('"'), 'Process') } }
+#   OPENAI_API_KEY=sk-...                  (habilita as vozes na nuvem)
+# RELIDO A CADA (re)subida do node (ver o loop abaixo): assim uma mudança no hub.env passa a
+# valer no próximo restart do Hub — sem precisar matar este supervisor. Antes era lido só aqui,
+# então uma chave adicionada depois do supervisor subir nunca chegava ao processo.
+function Import-HubEnv {
+  $hubEnv = Join-Path $env:USERPROFILE '.jarvis\hub.env'
+  if (Test-Path $hubEnv) {
+    Get-Content $hubEnv | ForEach-Object { if ($_ -match '^\s*([A-Z_]+)\s*=\s*(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim().Trim('"'), 'Process') } }
+  }
+  # padrões do Hub (não sobrescreve o que veio do hub.env)
+  if (-not $env:JARVIS_AGENT)        { $env:JARVIS_AGENT = 'claude-code' }
+  if (-not $env:JARVIS_VOICE)        { $env:JARVIS_VOICE = 'pt_BR-faber-medium' }
+  if (-not $env:JARVIS_SEARCH_MODEL) { $env:JARVIS_SEARCH_MODEL = 'haiku' }
+  # Auth por pareamento LIGADA (padrão). 1º dispositivo reivindica com o claim-code
+  # (log + ~/.jarvis/claim-code.txt). Emergência (rede privada): defina JARVIS_AUTH=off no hub.env.
+  if (-not $env:JARVIS_AUTH)         { $env:JARVIS_AUTH = 'on' }
+  $env:JARVIS_CWD = $root
 }
-# padrões do Hub (não sobrescreve o que veio do hub.env)
-if (-not $env:JARVIS_AGENT)        { $env:JARVIS_AGENT = 'claude-code' }
-if (-not $env:JARVIS_VOICE)        { $env:JARVIS_VOICE = 'pt_BR-faber-medium' }
-if (-not $env:JARVIS_SEARCH_MODEL) { $env:JARVIS_SEARCH_MODEL = 'haiku' }
-# Auth por pareamento LIGADA (padrão). 1º dispositivo reivindica com o claim-code
-# (log + ~/.jarvis/claim-code.txt). Emergência (rede privada): defina JARVIS_AUTH=off no hub.env.
-if (-not $env:JARVIS_AUTH)         { $env:JARVIS_AUTH = 'on' }
-$env:JARVIS_CWD = $root
 
 Set-Location $hub
 # Chama o tsx direto pelo node em vez de `npm.cmd start`: npm no Windows é batch, e batch faz
@@ -44,6 +50,7 @@ $tsx = Join-Path $root 'node_modules\tsx\dist\cli.mjs'
 # Loop de supervisão: NUNCA sai. Cada iteração (re)sobe o Hub em foreground. Quando o node encerra,
 # registra e reinicia após um pequeno backoff.
 while ($true) {
+  Import-HubEnv   # relê hub.env a cada subida → mudanças de env valem no próximo restart
   # Limpa STT órfão da instância anterior: o node é morto com -Force (no restart) e o Windows NÃO
   # mata o filho Python (whisper_service), que fica segurando ~1.5GB do modelo. Sem isso, cada
   # restart deixa um órfão e a RAM enche. Rodar aqui garante um único STT por subida.

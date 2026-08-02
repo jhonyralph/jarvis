@@ -446,11 +446,15 @@ function ensureProc(): Promise<void> {
   return ready;
 }
 
-export async function synthesize(text: string, voice = "en_GB-alan-medium"): Promise<Buffer> {
+export async function synthesize(text: string, voice = "en_GB-alan-medium", opts: { fallback?: boolean } = {}): Promise<Buffer> {
   if (isOpenAiVoice(voice)) {
     try {
       return await synthesizeOpenAi(text, voice);
     } catch (error) {
+      // Falar uma RESPOSTA prefere dizer ALGO (cai numa voz local). Mas uma PRÉVIA (fallback:false)
+      // não pode fingir: o usuário pediu para ouvir ESTA voz — se a OpenAI falha (ex.: sem quota),
+      // propaga o erro em vez de tocar a voz local por baixo (o que fazia todas soarem iguais).
+      if (opts.fallback === false) throw error;
       const fallback = fallbackPiperVoice();
       if (fallback) return await synthesizePiper(text, fallback);
       throw error;

@@ -142,6 +142,11 @@ export interface SendOpts {
   /** Fail-closed execution boundary used only by Jarvis-managed child workflows. Adapters must
    * reject this option unless they can enforce the requested workspace policy for this invocation. */
   managed?: { workspaceAccess: "read_only" | "isolated_write"; preventCommits: true };
+  /** Skip loading MCP servers for this call. Set by Jarvis's internal analysis oneShots (routing,
+   * summary, decision-detection…): they are pure text-in/text-out and never invoke MCP tools, so
+   * paying the MCP server startup/handshake on every one is wasted latency + cost. Adapters that
+   * can't honor it ignore it (best-effort). */
+  noMcp?: boolean;
 }
 
 type ManagedInvocation = NonNullable<SendOpts["managed"]>;
@@ -820,6 +825,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     validateModelSelection(await this.capabilities(), opts);
     const args = ["-p", "--output-format", "json"]; // prompt via stdin — see send()
     if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
+    if (opts?.noMcp) args.push("--strict-mcp-config"); // no --mcp-config ⇒ load zero MCP servers
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
     const raw = await run(this.bin, args, ONESHOT_CWD, text); // stateless + isolated cwd (excluded from native list)

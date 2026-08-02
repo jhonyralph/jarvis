@@ -31,6 +31,7 @@ import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./s
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, type FrameworkFile, type GithubSpec } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -80,6 +81,23 @@ const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });
 const routines = new RoutineStore();
 const memory = new MemoryStore();
+// Semantic-memory GATE (cost/perf). Auto-indexing pays a LOCAL embedding after EVERY turn — wasted
+// work if nobody ever searches by meaning. We only auto-index once semantic memory is actually IN
+// USE: it already holds entries (durable across restarts via memory.json) or the user has run a
+// semantic search / reindex this session. Until then indexSession/indexRunnerSession no-op, so the
+// warm embedding daemon (embed.ts) never even starts for users who don't touch the feature. History
+// stays reachable via the "Reindexar" action, which flips this on and backfills.
+let semanticMemoryActive = memory.size() > 0;
+function markSemanticMemoryUsed(): void { semanticMemoryActive = true; }
+// When semantic memory flips ON via a search (not from existing data), backfill EXISTING local
+// sessions once so the feature isn't empty on first use. Remote sessions + a full rebuild stay the
+// explicit "Reindexar" action. Best-effort and self-healing: results populate within a few seconds.
+let semanticBackfilled = false;
+function backfillLocalSemanticIndex(): void {
+  if (semanticBackfilled) return;
+  semanticBackfilled = true;
+  for (const s of store.list()) void indexSession(s.id);
+}
 const staging = new StagingStore();
 // Live turn telemetry (latency + error rate per machine) for the fleet dashboard. In-memory rolling
 // window — resets on restart (it's a "how are turns doing now" signal, not an audit trail).
@@ -91,6 +109,7 @@ const remoteSpeak = new Set<string>();
 /** Best-effort: embed a session's digest and upsert it into semantic memory (no-op if the local
  *  embedding model isn't installed). Called after each managed turn via turnCtx.afterTurn. */
 async function indexSession(sid: string): Promise<void> {
+  if (!semanticMemoryActive) return;
   try {
     const s = store.get(sid);
     if (!s || !s.messages.length) return;
@@ -107,6 +126,7 @@ async function indexSession(sid: string): Promise<void> {
   } catch { /* embedding unavailable — memory is opt-in */ }
 }
 async function indexRunnerSession(rc: RunnerConn, sid: string): Promise<void> {
+  if (!semanticMemoryActive) return;
   try {
     const ownerGeneration = captureSessionOwnerGeneration(rc.id, sid);
     if (ownerGeneration.conflicted) return;
@@ -304,6 +324,20 @@ const frameworkCfg: { preference: FrameworkPreference; version: number } = (() =
 })();
 function saveFrameworkCfg(): void { try { writeJsonAtomic(FRAMEWORK_CFG_FILE, frameworkCfg, { pretty: true }); } catch { /* ignore */ } }
 const frameworkProvenance = new FrameworkProvenanceStore(JARVIS_DIR);
+const frameworkSources = new FrameworkSourceStore(JARVIS_DIR);
+// Snapshot of the file set at the LAST publish, so the inventory can flag new/modified/removed files
+// in the working tree since then. Content-addressed diffs live in framework-inventory.
+const FRAMEWORK_PUBLISHED_FILE = join(JARVIS_DIR, "framework-published.json");
+function readPublishedSnapshot(): FrameworkFile[] { return readJson<FrameworkFile[]>(FRAMEWORK_PUBLISHED_FILE, []); }
+function savePublishedSnapshot(files: FrameworkFile[]): void { try { writeJsonAtomic(FRAMEWORK_PUBLISHED_FILE, files, { pretty: false }); } catch { /* best effort */ } }
+// Server-held import previews: an import (zip/GitHub) is staged here after the security scan, and only
+// written to disk when the owner confirms `framework_import_apply` with the matching token. This keeps
+// the (possibly large, possibly hostile) payload off the client round-trip and gates apply on review.
+interface PendingFrameworkImport { files: FrameworkFile[]; hash: string; scanBlocked: boolean; source: { type: "zip" | "github"; name?: string; spec?: GithubSpec; ref?: string; commit?: string; id?: string }; createdAt: number }
+const pendingFrameworkImports = new Map<string, PendingFrameworkImport>();
+const IMPORT_TTL_MS = 15 * 60 * 1000;
+const MAX_IMPORT_B64 = 25 * 1024 * 1024; // ~18 MB decoded — a framework pack is far smaller
+function sweepPendingImports(): void { const now = Date.now(); for (const [k, v] of pendingFrameworkImports) if (now - v.createdAt > IMPORT_TTL_MS) pendingFrameworkImports.delete(k); }
 const push = new PushCenter(JARVIS_DIR);
 function reconcilePushDevices(): void {
   if (!auth.AUTH_ENABLED) return;
@@ -494,7 +528,10 @@ async function compatibleAgentOpts(agent: AgentAdapter, requestedModel?: string,
   const model = requestedModel && caps.models.some((m) => m.id === requestedModel) ? requestedModel : undefined;
   const selected = model ? caps.models.find((m) => m.id === model) : undefined;
   const effort = requestedEffort && selected?.efforts.includes(requestedEffort) ? requestedEffort : undefined;
-  return { model, effort };
+  // Every caller of this helper is an internal analysis oneShot (routing, summary, decision-detection,
+  // relevance, preflight, digest) — pure text-in/text-out that never calls MCP tools. Disable MCP so
+  // we don't pay server startup/handshake latency + cost on each one. See SendOpts.noMcp.
+  return { model, effort, noMcp: true };
 }
 const summaryAgent = (): AgentAdapter => agents.has(summaryCfg.agent) ? agents.get(summaryCfg.agent) : agents.searchAgent();
 
@@ -1268,6 +1305,20 @@ function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
 
 function currentFrameworkManifest(): FrameworkManifest {
   return readCanonicalFramework(frameworkRoot(), frameworkCfg.version);
+}
+/** Trim an import preview for the wire: the client needs the scan/validation/inventory/conflicts to
+ *  decide, but NOT the full file contents (those stay server-side in the pending-import map). */
+function previewPayload(p: ReturnType<typeof buildImportPreview>) {
+  return {
+    files: p.files.map((f) => ({ path: f.path })),
+    fileCount: p.files.length,
+    skipped: p.skipped,
+    scan: { counts: p.scan.counts, blocked: p.scan.blocked, findings: p.scan.findings },
+    validation: { ok: p.validation.ok, errors: p.validation.errors, warnings: p.validation.warnings, issues: p.validation.issues },
+    inventory: p.inventory,
+    conflicts: p.conflicts,
+    hash: p.hash,
+  };
 }
 /** Deliver a queued Framework publish to a connected, protocol-compatible runner. Reads the CURRENT
  *  canonical tree so a machine that was offline gets the latest version, not a stale snapshot. */
@@ -3994,8 +4045,11 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
     if (!hasVoice(msg.voice)) { send(ws, { t: "error", message: `voz não encontrada: ${msg.voice}` }); return true; }
     const voiceInfo = listVoiceCatalog().find((v) => v.id === msg.voice);
     const sample = (typeof msg.text === "string" && msg.text.trim()) ? msg.text.trim().slice(0, 200) : (voiceInfo?.previewText || "Bom dia, senhor. Todos os sistemas estão operacionais.");
-    try { const wav = await synthesize(sample, msg.voice); send(ws, { t: "voice_preview", voice: msg.voice, audio: wav.toString("base64") }); }
-    catch (e) { send(ws, { t: "error", message: `falha ao gerar prévia da voz: ${(e as Error).message}` }); }
+    // fallback:false → a prévia de uma voz na nuvem NÃO cai na voz local por baixo; se a OpenAI falhar,
+    // o usuário vê o motivo real em vez de ouvir a faber achando que é a voz escolhida.
+    try { const wav = await synthesize(sample, msg.voice, { fallback: false }); send(ws, { t: "voice_preview", voice: msg.voice, audio: wav.toString("base64") }); }
+    catch (e) { const raw = (e as Error).message || ""; const quota = /quota|insufficient_quota|HTTP 429/i.test(raw);
+      send(ws, { t: "error", message: quota ? "Voz na nuvem indisponível: conta OpenAI sem crédito/quota. Adicione billing em platform.openai.com ou use uma voz local." : `falha ao gerar prévia da voz: ${raw}` }); }
     return true;
   }
   return false;
@@ -4897,6 +4951,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const base = readCanonicalFramework(frameworkRoot(), frameworkCfg.version);
       if (!base.files.length) { send(ws, { t: "framework_status", published: false, error: "o framework está vazio — adicione comandos, skills ou instruções antes de publicar" }); return; }
       frameworkCfg.version = base.version + 1; saveFrameworkCfg();
+      savePublishedSnapshot(base.files); // baseline for the inventory diff ("alterações desde a última publicação")
       const manifest: FrameworkManifest = { version: frameworkCfg.version, hash: base.hash, files: base.files };
       const results: Array<Record<string, unknown>> = [];
       for (const rid of allowedRunnerIds(ws)) {
@@ -4919,6 +4974,103 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
       savePendingFrameworkPublish();
       send(ws, { t: "framework_status", published: true, version: manifest.version, hash: manifest.hash, results });
+      return;
+    }
+    // Inventory + health of the working tree: per-file kind/tokens/status vs. last publish, the token
+    // budget, the security scan and the structural validation — the "ver o que tem e o que mudou" view.
+    if (msg.t === "framework_inventory") {
+      if (!requireOwner(ws)) return;
+      const files = readCanonicalFramework(frameworkRoot(), frameworkCfg.version).files;
+      const inventory = buildInventory(files, readPublishedSnapshot());
+      const scan = scanFramework(files);
+      const validation = validateFramework(files);
+      send(ws, { t: "framework_inventory", version: frameworkCfg.version, inventory,
+        scan: { counts: scan.counts, blocked: scan.blocked, findings: scan.findings },
+        validation: { ok: validation.ok, errors: validation.errors, warnings: validation.warnings, issues: validation.issues },
+        sources: frameworkSources.list() });
+      return;
+    }
+    // Stage a zip upload (base64) → extract → scan → preview. Nothing is written yet.
+    if (msg.t === "framework_import_zip") {
+      if (!requireOwner(ws)) return;
+      try {
+        const b64 = String(msg.dataB64 || "");
+        if (!b64) throw new Error("arquivo vazio");
+        if (b64.length > MAX_IMPORT_B64) throw new Error("arquivo excede o limite permitido");
+        const buf = Buffer.from(b64, "base64");
+        const { files, skipped } = extractFrameworkFiles(unzip(buf));
+        if (!files.length) throw new Error("nenhum arquivo de framework encontrado (esperado commands/…, skills/… ou instructions.md)");
+        const current = readCanonicalFramework(frameworkRoot()).files;
+        const preview = buildImportPreview(files, skipped, current);
+        sweepPendingImports();
+        const token = randomUUID();
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "zip", name: String(msg.name || "pacote.zip") }, createdAt: Date.now() });
+        send(ws, { t: "framework_import_preview", ok: true, token, source: { type: "zip", name: String(msg.name || "pacote.zip") }, preview: previewPayload(preview) });
+      } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // Stage a GitHub import: fetch tarball (read-only) → extract → scan → preview. Public repos.
+    if (msg.t === "framework_import_github") {
+      if (!requireOwner(ws)) return;
+      try {
+        const spec = parseGithubSpec(String(msg.source || ""));
+        const fetched = await fetchGithubFramework(spec);
+        if (!fetched.files.length) throw new Error("nenhum arquivo de framework encontrado no repositório (esperado commands/…, skills/… ou instructions.md)");
+        const current = readCanonicalFramework(frameworkRoot()).files;
+        const preview = buildImportPreview(fetched.files, fetched.skipped, current);
+        sweepPendingImports();
+        const token = randomUUID();
+        const src = { type: "github" as const, spec, ref: fetched.ref, commit: fetched.commit, id: githubSourceId(spec.owner, spec.repo, spec.subdir) };
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: src, createdAt: Date.now() });
+        send(ws, { t: "framework_import_preview", ok: true, token, source: { type: "github", repo: `${spec.owner}/${spec.repo}${spec.subdir ? "/" + spec.subdir : ""}`, ref: fetched.ref, commit: fetched.commit }, preview: previewPayload(preview) });
+      } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // Re-fetch a previously imported GitHub source and preview the drift ("buscar atualização").
+    if (msg.t === "framework_update_check") {
+      if (!requireOwner(ws)) return;
+      try {
+        const rec = frameworkSources.get(String(msg.id || ""));
+        if (!rec || rec.type !== "github" || !rec.owner || !rec.repo) throw new Error("fonte não encontrada");
+        const spec: GithubSpec = { owner: rec.owner, repo: rec.repo, ref: rec.ref, subdir: rec.subdir };
+        const fetched = await fetchGithubFramework(spec);
+        const current = readCanonicalFramework(frameworkRoot()).files;
+        const preview = buildImportPreview(fetched.files, fetched.skipped, current);
+        const hasUpdate = preview.hash !== rec.hash;
+        sweepPendingImports();
+        const token = randomUUID();
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "github", spec, ref: fetched.ref, commit: fetched.commit, id: rec.id }, createdAt: Date.now() });
+        send(ws, { t: "framework_update", ok: true, id: rec.id, hasUpdate, token, source: { type: "github", repo: `${rec.owner}/${rec.repo}${rec.subdir ? "/" + rec.subdir : ""}`, ref: fetched.ref, commit: fetched.commit, previousCommit: rec.commit }, preview: previewPayload(preview) });
+      } catch (e: any) { send(ws, { t: "framework_update", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // Apply a staged import. Refuses when the scan flagged HIGH unless `force` overrides. Additive
+    // by default (`keep`); `overwrite` replaces conflicting files (used by updates).
+    if (msg.t === "framework_import_apply") {
+      if (!requireOwner(ws)) return;
+      try {
+        const pending = pendingFrameworkImports.get(String(msg.token || ""));
+        if (!pending) throw new Error("prévia expirada — refaça a importação");
+        if (pending.scanBlocked && !msg.force) throw new Error("bloqueado por achados de segurança de severidade alta — revise e confirme o override para prosseguir");
+        const mode = msg.mode === "overwrite" ? "overwrite" : "keep";
+        const r = applyFrameworkImport(pending.files, { mode });
+        if (pending.source.type === "github" && pending.source.spec) {
+          const s = pending.source.spec; const id = pending.source.id || githubSourceId(s.owner, s.repo, s.subdir);
+          const prior = frameworkSources.get(id);
+          frameworkSources.upsert({ id, type: "github", owner: s.owner, repo: s.repo, ref: s.ref, subdir: s.subdir, commit: pending.source.commit, hash: pending.hash, files: pending.files.map((f) => f.path), importedAt: prior?.importedAt || Date.now(), updatedAt: Date.now() });
+        } else if (pending.source.type === "zip") {
+          const id = zipSourceId(pending.source.name || "pacote.zip");
+          frameworkSources.upsert({ id, type: "zip", hash: pending.hash, files: pending.files.map((f) => f.path), importedAt: Date.now(), updatedAt: Date.now() });
+        }
+        pendingFrameworkImports.delete(String(msg.token || ""));
+        send(ws, { t: "framework_import_applied", ok: true, written: r.written, skippedExisting: r.skippedExisting, forced: !!msg.force && pending.scanBlocked });
+      } catch (e: any) { send(ws, { t: "framework_import_applied", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    if (msg.t === "framework_source_remove") {
+      if (!requireOwner(ws)) return;
+      const removed = frameworkSources.remove(String(msg.id || ""));
+      send(ws, { t: "framework_source_removed", ok: removed, id: String(msg.id || "") });
       return;
     }
     if (msg.t === "policy_state") {
@@ -5051,6 +5203,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // --- semantic memory: search by MEANING (local embeddings) + owner reindex ---
     if (msg.t === "memory_search" && typeof msg.query === "string") {
       const q = msg.query;
+      if (!semanticMemoryActive) { markSemanticMemoryUsed(); backfillLocalSemanticIndex(); }
       try {
         const vec = await embedOne(q);
         const runnerId = activeRunner(ws), sid = typeof msg.sessionId === "string" ? msg.sessionId : subs.get(ws), cwd = sessionCwdOn(runnerId, sid);
@@ -5078,6 +5231,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (msg.t === "memory_reindex") {
       const reindexOwner = requireOwner(ws); if (!reindexOwner) return;
+      markSemanticMemoryUsed();
       void (async () => {
         try {
           type ReindexJob = {

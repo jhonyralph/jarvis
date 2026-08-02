@@ -67,10 +67,14 @@ function hashFiles(files: FrameworkFile[]): string {
   for (const f of [...files].sort((a, b) => a.path.localeCompare(b.path))) h.update(f.path).update("\0").update(f.content).update("\0");
   return h.digest("hex");
 }
+/** Content-addressed hash of a file set (same primitive the manifest uses). Exported so the importer
+ *  can detect whether a re-fetched source drifted from what was last imported. */
+export function hashFrameworkFiles(files: FrameworkFile[]): string { return hashFiles(files); }
 
 /** Reject anything that could escape the framework root. Manifest paths arrive over the wire, so this
- *  is a security boundary: only POSIX, no absolute, no `..`, and only the three known top-levels. */
-function assertSafeRelPath(rel: string): string {
+ *  is a security boundary: only POSIX, no absolute, no `..`, and only the three known top-levels.
+ *  Exported so the archive importer enforces the SAME boundary on untrusted zip/tar entries. */
+export function assertSafeRelPath(rel: string): string {
   const posix = String(rel || "").replace(/\\/g, "/");
   const segs = posix.split("/");
   if (!posix || posix.startsWith("/") || /^[A-Za-z]:/.test(posix) || segs.some((s) => s === ".." || s === "." || s === "")) {

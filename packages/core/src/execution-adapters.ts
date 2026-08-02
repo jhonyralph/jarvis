@@ -234,7 +234,7 @@ const canonicalState = (value: unknown): ExecutionState | undefined => {
 
 function spawn(value: Json, context?: ProviderFixtureContext, overrides: Partial<Extract<ProviderExecutionEvent, { kind: "execution_spawn" }>["node"]> = {}): ProviderExecutionEvent[] {
   const id = providerId(value, context); if (!id) return [];
-  const title = text(overrides.title, value.title, value.description, value.nickname, value.role, value.agent, "Subagente")!;
+  const title = text(overrides.title, value.title, value.description, value.role, value.agent, value.nickname, "Subagente")!;
   return [{ kind: "execution_spawn", providerId: id, parentProviderId: parentProviderId(value, context), node: {
     title, kind: "agent", depth: finite(value.depth, context?.depth), role: text(overrides.role, value.role, value.agent_type, value.agentType),
     prompt: text(overrides.prompt, value.prompt, value.task), startedAt: finite(overrides.startedAt, value.startedAt, value.started_at), ...overrides,
@@ -331,7 +331,7 @@ export const mapCodexExecutionFixture: ProviderExecutionFixtureMapper = (value, 
     const source = object(payload.source), subagent = object(source?.subagent), threadSpawn = object(subagent?.thread_spawn) || {};
     const agentPath = text(payload.agent_path);
     return spawn({ ...threadSpawn, id: payload.id, parentProviderId: payload.parent_thread_id,
-      title: agentPath?.split(/[\\/]/).filter(Boolean).at(-1) || text(payload.agent_nickname, threadSpawn.agent_role, "Subagente Codex") }, context);
+      title: agentPath?.split(/[\\/]/).filter(Boolean).at(-1) || text(threadSpawn.agent_role, payload.agent_nickname, "Subagente Codex") }, context);
   }
   const id = text(payload.thread_id, payload.agent_id, context?.providerId); if (!id) return [];
   if (payload.type === "task_started") return state({ ...payload, id }, context, "running");
