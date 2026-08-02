@@ -31,7 +31,7 @@ import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./s
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
-import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, type FrameworkFile, type GithubSpec } from "@jarvis/core";
+import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -325,6 +325,50 @@ const frameworkCfg: { preference: FrameworkPreference; version: number } = (() =
 function saveFrameworkCfg(): void { try { writeJsonAtomic(FRAMEWORK_CFG_FILE, frameworkCfg, { pretty: true }); } catch { /* ignore */ } }
 const frameworkProvenance = new FrameworkProvenanceStore(JARVIS_DIR);
 const frameworkSources = new FrameworkSourceStore(JARVIS_DIR);
+// Credit/limit fallback — when the primary AI runs out of quota, retry the turn on a configured
+// secondary AI and remember the primary is exhausted (until next local midnight, or a manual clear)
+// so subsequent turns skip straight to the secondary instead of paying a failing round-trip each time.
+const agentAvailability = new AgentAvailabilityStore(JARVIS_DIR);
+const FALLBACK_CFG_FILE = join(JARVIS_DIR, "fallback-config.json");
+const fallbackCfg: { enabled: boolean; agent: string; model: string; effort: string } = (() => {
+  try { const raw = JSON.parse(readFileSync(FALLBACK_CFG_FILE, "utf8")); return { enabled: !!raw?.enabled, agent: String(raw?.agent || ""), model: String(raw?.model || ""), effort: String(raw?.effort || "") }; }
+  catch { return { enabled: false, agent: "", model: "", effort: "" }; }
+})();
+function saveFallbackCfg(): void { try { writeJsonAtomic(FALLBACK_CFG_FILE, fallbackCfg, { pretty: true }); } catch { /* best effort */ } }
+function fmtReset(ms: number): string { try { return new Date(ms).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }); } catch { return ""; } }
+/** The configured secondary AI IF it is usable right now (enabled, registered, not the primary, not itself exhausted). */
+function usableFallback(primary: string, now: number): { agent: string; model?: string; effort?: string } | null {
+  if (!fallbackCfg.enabled || !fallbackCfg.agent || fallbackCfg.agent === primary) return null;
+  if (!agents.has(fallbackCfg.agent) || agentAvailability.isBlocked(fallbackCfg.agent, now)) return null;
+  return { agent: fallbackCfg.agent, model: fallbackCfg.model || undefined, effort: fallbackCfg.effort || undefined };
+}
+// Suppress the preemptive "using the secondary" notice after the first turn of a given block period
+// (keyed by the reset deadline), so a blocked primary doesn't toast on every message.
+const noticedBlock: Record<string, number> = {};
+/** Preemptive pick for a turn: the primary unless it is known-exhausted and a usable secondary exists. */
+function resolveTurnAgent(primary: string): { agent: string; model?: string; effort?: string; switched: boolean; note?: string } {
+  const now = Date.now();
+  agentAvailability.sweep(now);
+  if (!agentAvailability.isBlocked(primary, now)) return { agent: primary, switched: false };
+  const fb = usableFallback(primary, now);
+  if (!fb) return { agent: primary, switched: false }; // no usable secondary — let it try and warn on failure
+  const until = agentAvailability.blockedUntil(primary, now) || now;
+  const firstThisBlock = noticedBlock[primary] !== until;
+  noticedBlock[primary] = until;
+  return { agent: fb.agent, model: fb.model, effort: fb.effort, switched: true, note: firstThisBlock ? `IA primária (${primary}) sem crédito até ${fmtReset(until)} — usando ${fb.agent}.` : undefined };
+}
+/** A limit error just hit `agent`: record exhaustion (retry after next local midnight) and return a usable secondary to retry with. */
+function onLimitHit(agent: string, message: string): { agent: string; model?: string; effort?: string; note?: string } | null {
+  const now = Date.now();
+  const until = nextLocalMidnight(now);
+  agentAvailability.markExhausted(agent, until, message, now);
+  const fb = usableFallback(agent, now);
+  return fb ? { agent: fb.agent, model: fb.model, effort: fb.effort, note: `IA ${agent} sem crédito (limite atingido) — refazendo com ${fb.agent}; a primária volta a ser tentada após ${fmtReset(until)}.` } : null;
+}
+function sendFallbackCfg(ws: WebSocket, saved = false): void {
+  const now = Date.now(); agentAvailability.sweep(now);
+  send(ws, { t: "fallback_cfg", saved, cfg: fallbackCfg, blocks: agentAvailability.list(now).map((b) => ({ agent: b.agent, blockedUntil: b.blockedUntil, reason: b.reason })) });
+}
 // Snapshot of the file set at the LAST publish, so the inventory can flag new/modified/removed files
 // in the working tree since then. Content-addressed diffs live in framework-inventory.
 const FRAMEWORK_PUBLISHED_FILE = join(JARVIS_DIR, "framework-published.json");
@@ -2320,6 +2364,9 @@ const turnCtx: TurnCtx = {
     if (cap > 0 && spent >= cap) return { blocked: true, message: `Esta sessão já custou $${spent.toFixed(2)} (limite $${cap.toFixed(2)}). Ajuste JARVIS_SESSION_COST_CAP ou continue em outra sessão.` };
     return { blocked: false };
   },
+  resolveAgent: (primary) => resolveTurnAgent(primary),
+  onLimit: (agent, message) => onLimitHit(agent, message),
+  notice: (sid, message) => broadcast(sid, { t: "notice", message }),
 };
 function runOwnedManagedTurn(sid: string, input: ManagedTurnInput): Promise<void> {
   const principalId = input.actor?.userId || captureSessionOwnerGeneration(LOCAL_ID, sid).principalId || "local";
@@ -5076,6 +5123,24 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       const removed = frameworkSources.remove(String(msg.id || ""));
       send(ws, { t: "framework_source_removed", ok: removed, id: String(msg.id || "") });
+      return;
+    }
+    // Credit/limit fallback config + current exhaustion state (owner-only).
+    if (msg.t === "fallback_cfg") { if (!requireOwner(ws)) return; sendFallbackCfg(ws); return; }
+    if (msg.t === "set_fallback_cfg") {
+      if (!requireOwner(ws)) return;
+      fallbackCfg.enabled = !!msg.enabled;
+      fallbackCfg.agent = agents.has(String(msg.agent || "")) ? String(msg.agent) : "";
+      fallbackCfg.model = String(msg.model || "");
+      fallbackCfg.effort = String(msg.effort || "");
+      saveFallbackCfg();
+      sendFallbackCfg(ws, true);
+      return;
+    }
+    if (msg.t === "fallback_clear") { // "tentar a primária agora" — lift a block manually
+      if (!requireOwner(ws)) return;
+      agentAvailability.clear(String(msg.agent || ""));
+      sendFallbackCfg(ws);
       return;
     }
     if (msg.t === "policy_state") {

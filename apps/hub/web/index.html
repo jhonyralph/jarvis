@@ -1511,6 +1511,16 @@
           <label><span data-i18n="lblModel">Modelo padrão</span> <select id="setModel"></select></label>
           <label><span data-i18n="lblEffort">Esforço padrão</span> <select id="setEffort"></select></label>
           <label class="row"><input type="checkbox" id="setSlash" checked> <span data-i18n="lblSlash">Autocomplete e sugestões ao digitar “/”, “@”, “#” e “!”</span></label>
+          <div id="fallbackSettings" class="hidden">
+            <div class="sec" style="margin-top:10px">IA secundária (limite/crédito)</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Se a IA de uma ação ficar <b>sem crédito</b> (limite atingido), o Jarvis avisa e <b>refaz a ação</b> nesta IA secundária. Ele lembra que a primária estourou e vai direto na secundária até o <b>próximo dia</b> — ou até você mandar “tentar agora”.</div>
+            <label class="row"><input type="checkbox" id="fallbackEnabled"> <span>Usar IA secundária quando a primária ficar sem crédito</span></label>
+            <label>IA secundária <select id="fallbackAgent"></select></label>
+            <label>Modelo <select id="fallbackModel"></select></label>
+            <label>Esforço <select id="fallbackEffort"></select></label>
+            <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="fallbackSave" type="button">Salvar</button></div>
+            <div id="fallbackBlocks" class="mut" style="font-size:12px;margin-top:6px"></div>
+          </div>
         </section>
 
         <section class="spanel hidden" data-panel="assistente">

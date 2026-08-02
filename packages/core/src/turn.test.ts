@@ -66,6 +66,49 @@ test("managed lifecycle can keep short-lived context out of the durable manifest
   assert.equal(providerText, "PRIVATE-CONTEXT\nraw");
 });
 
+test("runManagedTurn preempts to the secondary AI when the primary is exhausted", async () => {
+  const stored: TurnStoredMessage[] = [], ran: string[] = [], notices: string[] = [];
+  await runManagedTurn({
+    ensure: () => ({ agent: "claude-code", cwd: "/repo" }), resolveAgentName: (x) => x,
+    add: (_sid, m) => stored.push(m), broadcast: () => {}, pushSessions: () => {}, now: () => 1, speak: async () => {},
+    runAgentTurn: async (_sid, agent) => { ran.push(agent); return { text: "ok from " + agent }; },
+    resolveAgent: () => ({ agent: "codex", switched: true, note: "primária sem crédito — usando codex" }),
+    notice: (_sid, msg) => notices.push(msg),
+  }, "s1", { showText: "oi", onError: assert.fail });
+  assert.deepEqual(ran, ["codex"], "ran the secondary, not the exhausted primary");
+  assert.equal(stored.at(-1)?.agent, "codex");
+  assert.ok(notices.some((n) => /codex/.test(n)), "user is told about the switch");
+});
+
+test("runManagedTurn retries the same turn on a limit error via the secondary", async () => {
+  const stored: TurnStoredMessage[] = [], ran: string[] = [], notices: string[] = [];
+  const cap: { limitAgent?: string } = {};
+  await runManagedTurn({
+    ensure: () => ({ agent: "claude-code", cwd: "/repo" }), resolveAgentName: (x) => x,
+    add: (_sid, m) => stored.push(m), broadcast: () => {}, pushSessions: () => {}, now: () => 1, speak: async () => {},
+    runAgentTurn: async (_sid, agent) => { ran.push(agent); if (agent === "claude-code") throw new Error("rate limit exceeded"); return { text: "ok from " + agent }; },
+    onLimit: (agent) => { cap.limitAgent = agent; return { agent: "codex", note: "refazendo com codex" }; },
+    notice: (_sid, msg) => notices.push(msg),
+  }, "s1", { showText: "oi", onError: assert.fail });
+  assert.deepEqual(ran, ["claude-code", "codex"], "primary failed, secondary retried the same turn");
+  assert.equal(stored.filter((m) => m.role === "assistant").length, 1, "exactly one assistant reply persisted");
+  assert.equal(stored.at(-1)?.agent, "codex");
+  assert.equal(cap.limitAgent, "claude-code");
+  assert.ok(notices.some((n) => /codex/.test(n)));
+});
+
+test("runManagedTurn reports a limit error when no secondary is available", async () => {
+  const cap: { err?: { m: string; limit: boolean } } = {};
+  await runManagedTurn({
+    ensure: () => ({ agent: "claude-code", cwd: "/repo" }), resolveAgentName: (x) => x,
+    add: () => {}, broadcast: () => {}, pushSessions: () => {}, now: () => 1, speak: async () => {},
+    runAgentTurn: async () => { throw new Error("usage limit reached"); },
+    onLimit: () => null,
+  }, "s1", { showText: "oi", onError: (m, limit) => { cap.err = { m, limit }; } });
+  assert.equal(cap.err?.limit, true);
+  assert.match(cap.err?.m || "", /usage limit/);
+});
+
 test("attachment builder preserves text files and turns images into readable paths/previews", () => {
   const built = buildTurnAttachments([{ name: "a.txt", content: "abc" }, { name: "pic.png", content: Buffer.from("x").toString("base64"), image: true }], "pergunta", {
     saveImage: () => "/tmp/pic.png", previewImage: (name, bytes) => imageDataUrl(name, bytes),
