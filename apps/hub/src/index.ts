@@ -3263,12 +3263,18 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
       }
       return;
     } // runner: relaya como envio normal (turnId = idempotência)
+    // [timing] diagnóstico de latência pré-disparo: mede cada estágio até a mensagem SAIR para o CLI.
+    const _t0 = Date.now();
     const decision = await routeLocalTurn(sid, text, model, effort, automatic);
+    const _tRoute = Date.now();
     if (!sessionDispatchAuthorized(lease)) throw new Error("a autorização da sessão mudou durante o roteamento");
     const personal = await personalContextForChat(LOCAL_ID, sid, text, actor, () => refreshSessionDispatchAuthorization(lease));
+    const _tPersonal = Date.now();
     if (!sessionDispatchAuthorized(lease)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
     if (isNativeId(sid)) {
-      await deliverNativeTurn(null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts, actor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease), onDispatch: () => { dispatched = true; } });
+      let _tDispatch = 0;
+      await deliverNativeTurn(null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts, actor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease), onDispatch: () => { dispatched = true; _tDispatch = Date.now(); } });
+      console.log(`[timing] native sid=${sid.slice(0, 14)} auto=${needsAuto(automatic)} route=${_tRoute - _t0}ms personal=${_tPersonal - _tRoute}ms toDispatch=${(_tDispatch || Date.now()) - _tPersonal}ms total=${Date.now() - _t0}ms`);
       return;
     }
     const { agentText, showText, images, files } = buildAttachments(atts, text);
