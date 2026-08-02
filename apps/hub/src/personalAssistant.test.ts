@@ -948,3 +948,45 @@ test("concurrent source edits serialize disposal and allow only one optimistic r
   assert.deepEqual(createdLabels, ["Initial", "A"]);
   await service.disposeAll();
 });
+
+test("an events query with no configured source surfaces a matched region suggestion via reverse geocoding", async () => {
+  const { service, actor } = fixture();
+  service.store.updateSettings("alice", { enabled: true });
+  service.registerSource({ descriptor: { id: "nominatim", label: "Nominatim", purposes: ["nearby", "mobility"], costClass: "free", transport: "http", certification: "first_party" }, query: async () => [{ id: "addr", kind: "place", title: "Belo Horizonte", data: { address: { country_code: "br", city: "Belo Horizonte" } }, sources: [{ sourceId: "nominatim", observedAt: 1, freshness: "fresh" }] }] });
+  const response = await service.handle({ t: "personal_context_query", requestId: "q", query: { purpose: "events", point: { lat: -19.92, lng: -43.94 } } }, actor);
+  assert.equal(response.t, "personal_context_suggestions");
+  assert.deepEqual(response.t === "personal_context_suggestions" ? response.regionSuggestion : undefined, {
+    sourceId: "region:mapas-culturais-bh", label: "Mapas Culturais BH", type: "mapas_culturais",
+    endpoint: "https://mapaculturalbh.pbh.gov.br/api/event/find", attribution: "Mapas Culturais BH", timeZone: "America/Sao_Paulo",
+    countryCode: "br", city: "belo horizonte",
+  });
+  await service.disposeAll();
+});
+
+test("no region suggestion once an events source is already configured and consented", async () => {
+  const { service, actor } = fixture();
+  service.store.updateSettings("alice", { enabled: true });
+  service.registerSource({ descriptor: { id: "nominatim", label: "Nominatim", purposes: ["nearby", "mobility"], costClass: "free", transport: "http", certification: "first_party" }, query: async () => [{ id: "addr", kind: "place", title: "BH", data: { address: { country_code: "br", city: "Belo Horizonte" } }, sources: [{ sourceId: "nominatim", observedAt: 1, freshness: "fresh" }] }] });
+  service.registerSource({ descriptor: { id: "events", label: "Events", purposes: ["events"], costClass: "free", transport: "http", certification: "first_party" }, query: async () => [] });
+  service.store.putConsent("alice", { id: "events", principalId: "alice", sourceId: "events", purposes: ["events"], fields: ["*"], grantedAt: 1 });
+  const response = await service.handle({ t: "personal_context_query", requestId: "q", query: { purpose: "events", point: { lat: -19.92, lng: -43.94 } } }, actor);
+  assert.equal(response.t === "personal_context_suggestions" ? response.regionSuggestion : "missing", undefined);
+  await service.disposeAll();
+});
+
+test("no region suggestion for an unmatched region, and reverse-geocode failures never break the events query", async () => {
+  const { service, actor } = fixture();
+  service.store.updateSettings("alice", { enabled: true });
+  let fail = false;
+  service.registerSource({ descriptor: { id: "nominatim", label: "Nominatim", purposes: ["nearby", "mobility"], costClass: "free", transport: "http", certification: "first_party" }, query: async () => { if (fail) throw new Error("reverse geocode down"); return [{ id: "addr", kind: "place", title: "Somewhere", data: { address: { country_code: "us", city: "Springfield" } }, sources: [{ sourceId: "nominatim", observedAt: 1, freshness: "fresh" }] }]; } });
+  const unmatched = await service.handle({ t: "personal_context_query", requestId: "q1", query: { purpose: "events", point: { lat: 1, lng: 1 } } }, actor);
+  assert.equal(unmatched.t === "personal_context_suggestions" ? unmatched.regionSuggestion : "missing", undefined);
+
+  fail = true;
+  service.sources.invalidate("alice", "nominatim");
+  const failed = await service.handle({ t: "personal_context_query", requestId: "q2", query: { purpose: "events", point: { lat: 1, lng: 1 } } }, actor);
+  assert.equal(failed.t, "personal_context_suggestions");
+  assert.equal(failed.t === "personal_context_suggestions" ? failed.regionSuggestion : "missing", undefined);
+  assert.equal(failed.t === "personal_context_suggestions" ? failed.errors.length : -1, 0);
+  await service.disposeAll();
+});

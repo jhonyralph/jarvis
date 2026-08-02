@@ -15,6 +15,7 @@ import type {
   PersonalConsent,
   PersonalContextQuery,
   PersonalContextState,
+  PersonalContextSuggestionsResponse,
   PersonalContextView,
   PersonalHubToClient,
   PersonalActionView,
@@ -42,6 +43,7 @@ import {
   applyVehicleProfileToCandidates,
   applyRouteMatrixToCandidates,
   applyExplicitCandidateFilters,
+  matchRegionEventSource,
   type ContextSource,
   type PersonalActionAuthorizationGrant,
   type PersonalActionExecutor,
@@ -1217,7 +1219,38 @@ export class PersonalAssistantService {
       ...suggestion,
       actions: this.suggestionActions(suggestion, query, actor, state, deviceTimeZone),
     }));
-    return { t: "personal_context_suggestions", requestId, revision: this.store.get(actor.principalId).revision, results, errors, suggestions, diagnostics: ranking.diagnostics };
+    const regionSuggestion = await this.regionEventSourceSuggestion(query, actor, state, allowed, signal);
+    return { t: "personal_context_suggestions", requestId, revision: this.store.get(actor.principalId).revision, results, errors, suggestions, diagnostics: ranking.diagnostics, ...(regionSuggestion ? { regionSuggestion } : {}) };
+  }
+
+  /** Zero-config regional discovery: when an "events" query has no configured/consented event source
+   *  at all AND a location point, best-effort reverse-geocode it (via the already-registered, already
+   *  free/default-consented Nominatim source) and check the region registry for a known open feed. This
+   *  is intentionally ON-DEMAND (only when the conversation actually asks about a place), not eager at
+   *  boot — it never guesses or auto-registers a source; it only surfaces what to enable, respecting the
+   *  owner-only source configuration flow. A failed or inconclusive lookup is silent (best-effort). */
+  private async regionEventSourceSuggestion(
+    query: PersonalContextQuery,
+    actor: PersonalAssistantActor,
+    state: PersonalContextState,
+    allowedForPurpose: ContextSourceDescriptor[],
+    signal?: AbortSignal,
+  ): Promise<PersonalContextSuggestionsResponse["regionSuggestion"]> {
+    if (query.purpose !== "events" || !query.point || allowedForPurpose.length > 0) return undefined;
+    if (state.sources.some((row) => row.id.startsWith("region:"))) return undefined;
+    try {
+      const nominatim = this.sources.descriptors("nearby", actor.principalId).find((row) => row.id === "nominatim");
+      if (!nominatim) return undefined;
+      const reverseQuery: PersonalContextQuery = { principalId: actor.principalId, deviceId: actor.deviceId, purpose: "nearby", point: query.point, limit: 1 };
+      if (!this.sourceConsent(state, nominatim, reverseQuery, actor)) return undefined;
+      const reverse = await this.sources.query("nominatim", reverseQuery, { signal });
+      const address = reverse.items[0]?.data?.address as Record<string, string> | undefined;
+      if (!address) return undefined;
+      const match = matchRegionEventSource({ countryCode: address.country_code, city: address.city, town: address.town, municipality: address.municipality });
+      return match ? { sourceId: match.id, label: match.label, type: match.type, endpoint: match.endpoint, attribution: match.attribution, timeZone: match.timeZone, countryCode: match.countryCode, city: match.city } : undefined;
+    } catch {
+      return undefined; // best-effort: a failed reverse geocode must never break the events query itself
+    }
   }
 
   async contextForTurn(input: Omit<PersonalContextQuery, "principalId" | "deviceId">, actor: PersonalAssistantActor, signal?: AbortSignal): Promise<PersonalTurnContext> {

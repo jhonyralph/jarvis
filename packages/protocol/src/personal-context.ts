@@ -556,6 +556,10 @@ export interface PersonalContextSuggestionsResponse {
   errors: Array<{ sourceId: string; error: string }>;
   suggestions: ContextSuggestion[];
   diagnostics?: ContextRankingDiagnostic[];
+  /** Best-effort, on-demand: a known open event source for the queried region that is not yet
+   *  configured. Purely informational and PUBLIC data (open endpoint, no secret) — the owner still
+   *  must opt in (one click, via personal_source_put with these exact fields); nothing is auto-enabled. */
+  regionSuggestion?: { sourceId: string; label: string; type: "mapas_culturais" | "ics" | "rss" | "jsonld"; endpoint: string; attribution: string; timeZone: string; countryCode: string; city?: string };
 }
 
 export interface ContextRankingDiagnostic {

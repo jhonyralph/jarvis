@@ -53,3 +53,4 @@ export * from "./open-event-sources.js";
 export * from "./weather-alert-sources.js";
 export * from "./personal-mcp-client.js";
 export * from "./home-assistant-context.js";
+export * from "./region-sources.js";
