@@ -1783,7 +1783,9 @@
           <div id="frameworkSettings" class="hidden">
             <div class="sec">Meu Framework (universal)</div>
             <div class="mut" style="font-size:12px;margin-bottom:6px">Comandos, skills e instruções que valem para <b>todas as IAs</b> e são publicados em <b>todas as suas máquinas</b>. O Jarvis é a fonte da verdade; os arquivos nativos de cada IA são adapters. Aparecem no menu “/” marcados como <b>universal</b>.</div>
-            <label>Quando um “/nome” existe nativo e universal
+            <div class="sec" style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">O que foi feito<button id="fwLogClear" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Limpar</button></div>
+            <div id="fwLog" style="font-size:12px;max-height:150px;overflow:auto;background:#0f141b;border:1px solid #ffffff14;border-radius:8px;padding:6px 8px">Cada ação registra o resultado aqui. Se você clicar e nada aparecer, o Hub está desatualizado — reinicie-o para ativar estas ações.</div>
+            <label style="margin-top:10px">Quando um “/nome” existe nativo e universal
               <select id="setFwPref">
                 <option value="ask">Perguntar (mostra os dois; prefere o nativo)</option>
                 <option value="native">Sempre o nativo da IA</option>
@@ -1793,12 +1795,13 @@
             <div class="sec" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">Configurado hoje<button id="fwRefresh" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Atualizar</button></div>
             <div id="fwHealth" class="mut" style="font-size:12px;margin-bottom:6px">—</div>
             <div id="fwInventory" style="font-size:12px"></div>
-            <div class="mut" style="font-size:12px;margin:4px 0 6px">Clique num arquivo para abrir e editar em uma janela.</div>
+            <div class="mut" style="font-size:12px;margin:4px 0 6px">Clique num arquivo acima para abrir e editar em uma janela.</div>
             <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:2px">
               <button id="fwNewFile" type="button">Novo arquivo</button>
-              <button id="fwSeed" class="ghost" type="button" title="Instala comandos e skills universais de review, pesquisa, benchmark, digest, segurança e automação sem sobrescrever arquivos existentes">Instalar pacote base</button>
-              <button id="fwImport" class="ghost" type="button" title="Semear instructions.md a partir do CLAUDE.md/AGENTS.md/GEMINI.md desta máquina">Importar desta máquina</button>
+              <button id="fwSeed" class="ghost" type="button">Instalar pacote base</button>
+              <button id="fwImport" class="ghost" type="button">Importar desta máquina</button>
             </div>
+            <div class="mut" style="font-size:11.5px;margin-top:4px"><b>Novo arquivo</b>: cria um comando, skill ou instrução do zero. <b>Instalar pacote base</b>: adiciona um conjunto pronto (review, pesquisa, segurança, digest…) sem sobrescrever o que você já tem. <b>Importar desta máquina</b>: copia o CLAUDE.md/AGENTS.md/GEMINI.md desta máquina para as instruções universais.</div>
             <div class="sec" style="margin-top:10px">Importar pacote</div>
             <div class="mut" style="font-size:12px;margin-bottom:6px">Suba um <b>.zip</b> ou baixe de um repositório <b>GitHub público</b>. Todo pacote é <b>verificado</b> (scan de segurança + validação + custo de token) antes de aplicar — nada é escrito sem a sua confirmação. A verificação reduz risco, mas não substitui a sua revisão.</div>
             <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
