@@ -14,14 +14,16 @@ test("cleanNotifyText strips markdown, control chars, and collapses whitespace",
   assert.equal(cleanNotifyText(undefined as any), "");
 });
 
-test("done notifications do not leak the full assistant reply into the phone notification", () => {
+test("done notification body is an objective summary (first sentence), never the session id nor the full reply", () => {
   const longReply = "Resumo detalhado com muitas linhas. ".repeat(40) + "TOKEN-CARO-QUE-NAO-DEVE-APARECER";
   const p = formatPushPayload("done", "claude · sessão concluída", longReply, "claude:1c0fac7e-f9dd-4f2c-81e1-6e348bc05e17");
 
   assert.equal(p.title, "Jarvis · concluído");
-  assert.equal(p.sid, "claude:1c0fac7e-f9dd-4f2c-81e1-6e348bc05e17");
-  assert.match(p.body, /claude: resultado pronto/i);
-  assert.doesNotMatch(p.body, /TOKEN-CARO/);
+  assert.equal(p.sid, "claude:1c0fac7e-f9dd-4f2c-81e1-6e348bc05e17"); // sid stays in the payload for deep-link, not in the text
+  assert.match(p.body, /^Resumo detalhado com muitas linhas\./); // objective: what was worked on
+  assert.doesNotMatch(p.body, /resultado pronto|Toque para abrir/i); // no generic filler
+  assert.doesNotMatch(p.body, /1c0fac7e|claude:/); // no session id in the visible text
+  assert.doesNotMatch(p.body, /TOKEN-CARO/); // still never the full reply
   assert.ok(payloadBytes(p) <= NOTIFICATION_LIMITS.jarvisSoftPayloadBytes);
 });
 

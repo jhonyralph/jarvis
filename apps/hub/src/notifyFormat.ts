@@ -83,10 +83,17 @@ function compactMachine(title: string, body: string): string {
 }
 
 function doneBody(title: string, body: string): string {
-  const subject = subjectFromTitle(title);
   if (/teste de notific/i.test(title)) return body || "Push funcionando.";
   if (/aprova/i.test(title)) return compactMachine(title, body);
-  return `${subject || "Sessão"}: resultado pronto. Toque para abrir.`;
+  // Objective summary of what was worked on = the FIRST sentence of the assistant's final reply.
+  // We deliberately do NOT dump the full reply (cost/leak) nor the session id (useless to a human
+  // and a waste of the tiny notification budget) nor a generic "open the session" filler. The OS
+  // notification still clips this to the body limit; taking the first sentence keeps it short and
+  // meaningful. Tapping opens the right session via the payload sid, so identity is not lost.
+  const clean = cleanNotifyText(body);
+  const firstSentence = clean.split(/(?<=[.!?])\s+/)[0] || clean;
+  if (firstSentence) return firstSentence;
+  return "Concluído.";
 }
 
 function fitPayload(payload: PushNotificationPayload, maxBytes = NOTIFICATION_LIMITS.jarvisSoftPayloadBytes): PushNotificationPayload {
