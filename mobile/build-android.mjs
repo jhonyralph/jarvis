@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,100 @@ function run(cmd, args, opts = {}) {
   const result = spawnSync(cmd, args, { stdio: "inherit", cwd: opts.cwd || here, shell });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status || 1);
+}
+
+// Gradle/AGP exige um toolchain JDK 21. Em vez de depender do JAVA_HOME do ambiente do usuário
+// (que costuma faltar ou apontar pra outra versão), localizamos um JDK 21 — de preferência o JBR
+// que vem com o Android Studio — e o usamos para o Gradle. Cobre debug, release e AAB.
+const JAVA_TARGET = 21;
+
+function javaMajorOf(home) {
+  try {
+    const release = join(home, "release");
+    if (existsSync(release)) {
+      const m = readFileSync(release, "utf8").match(/JAVA_VERSION="?(\d+)/);
+      if (m) return Number(m[1]);
+    }
+  } catch {}
+  try {
+    const javaBin = join(home, "bin", process.platform === "win32" ? "java.exe" : "java");
+    if (existsSync(javaBin)) {
+      const probe = spawnSync(javaBin, ["-version"], { encoding: "utf8" });
+      const out = `${probe.stderr || ""}${probe.stdout || ""}`;
+      const m = out.match(/version "?(\d+)/) || out.match(/openjdk\s+(\d+)/i);
+      if (m) return Number(m[1]);
+    }
+  } catch {}
+  return 0;
+}
+
+function listSubdirs(parent) {
+  try {
+    return readdirSync(parent, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(parent, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function* javaHomeCandidates() {
+  if (process.env.JAVA_HOME) yield process.env.JAVA_HOME;
+  const home = process.env.USERPROFILE || process.env.HOME || "";
+  if (process.platform === "win32") {
+    const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const localAppData = process.env.LOCALAPPDATA || "";
+    yield join(programFiles, "Android", "Android Studio", "jbr");
+    if (localAppData) yield join(localAppData, "Programs", "Android Studio", "jbr");
+    for (const parent of [
+      join(programFiles, "Java"),
+      join(programFiles, "Eclipse Adoptium"),
+      join(programFiles, "Microsoft"),
+      join(programFiles, "Zulu"),
+      join(programFiles, "Amazon Corretto"),
+    ]) {
+      yield* listSubdirs(parent);
+    }
+  } else if (process.platform === "darwin") {
+    yield "/Applications/Android Studio.app/Contents/jbr/Contents/Home";
+    for (const parent of ["/Library/Java/JavaVirtualMachines", join(home, "Library/Java/JavaVirtualMachines")]) {
+      for (const dir of listSubdirs(parent)) yield join(dir, "Contents", "Home");
+    }
+  } else {
+    yield join(home, "android-studio", "jbr");
+    yield "/opt/android-studio/jbr";
+    yield "/usr/local/android-studio/jbr";
+    yield* listSubdirs("/usr/lib/jvm");
+  }
+}
+
+function resolveJavaHome() {
+  const seen = new Set();
+  for (const candidate of javaHomeCandidates()) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (existsSync(candidate) && javaMajorOf(candidate) === JAVA_TARGET) return candidate;
+  }
+  return "";
+}
+
+function ensureJavaToolchain() {
+  if (process.env.JAVA_HOME && javaMajorOf(process.env.JAVA_HOME) === JAVA_TARGET) {
+    console.log(`[android-build] JAVA_HOME: ${process.env.JAVA_HOME} (JDK ${JAVA_TARGET})`);
+    return;
+  }
+  const javaHome = resolveJavaHome();
+  if (javaHome) {
+    process.env.JAVA_HOME = javaHome;
+    const sep = process.platform === "win32" ? ";" : ":";
+    process.env.PATH = `${join(javaHome, "bin")}${sep}${process.env.PATH || ""}`;
+    console.log(`[android-build] JAVA_HOME resolved to JDK ${JAVA_TARGET}: ${javaHome}`);
+  } else {
+    console.warn(
+      `[android-build] No JDK ${JAVA_TARGET} found. Gradle needs JDK ${JAVA_TARGET} (the Android Studio JBR works). ` +
+        `Install it or set JAVA_HOME to a JDK ${JAVA_TARGET} and retry.`
+    );
+  }
 }
 
 function patchSendIntentSdk() {
@@ -86,6 +180,7 @@ try {
   run(node, ["apply-android-native.mjs"]);
   run(node, ["apply-context-native.mjs", "android"]);
   patchSendIntentSdk();
+  ensureJavaToolchain();
   run(gradlew, gradleArgs.length ? gradleArgs : ["assembleSideloadDebug"], { cwd: androidDir });
 } catch (error) {
   console.error(`[android-build] ${error.message || error}`);

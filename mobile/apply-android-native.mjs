@@ -431,13 +431,37 @@ public class JarvisWakePlugin extends Plugin {
 write(join(javaDir, "MainActivity.java"), `package chat.jarvis.app;
 
 import android.os.Bundle;
+import android.webkit.PermissionRequest;
+import java.util.ArrayList;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.BridgeWebChromeClient;
 
 public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(JarvisWakePlugin.class);
         super.onCreate(savedInstanceState);
+        // The UI is loaded from a remote origin (server.url = Hub). A remote page calling
+        // navigator.mediaDevices.getUserMedia({audio}) triggers WebChromeClient.onPermissionRequest;
+        // Capacitor's default client does not grant it for remote origins, so voice/audio capture is
+        // denied even with RECORD_AUDIO held at the OS level. We extend Capacitor's client and grant
+        // only audio/video capture, keeping every other Capacitor behavior intact.
+        getBridge().getWebView().setWebChromeClient(new BridgeWebChromeClient(getBridge()) {
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(() -> {
+                    ArrayList<String> grant = new ArrayList<>();
+                    for (String resource : request.getResources()) {
+                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)
+                                || PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
+                            grant.add(resource);
+                        }
+                    }
+                    if (grant.isEmpty()) request.deny();
+                    else request.grant(grant.toArray(new String[0]));
+                });
+            }
+        });
     }
 }
 `);
