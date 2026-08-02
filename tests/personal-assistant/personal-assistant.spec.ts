@@ -310,7 +310,6 @@ test("CalDAV discovery keeps the editor open and supports multiple calendar sele
   await expect(page.locator("#personalSourceResources")).toHaveValue("https://calendar.invalid/personal/");
   await expect(discovery).toBeVisible();
   await expect(page.locator("#settings .settings-head")).toBeInViewport();
-  await expect(page.locator("#settings .settings-actions")).toBeInViewport();
   await expectNoOverflowOrControlOverlap(page, "#settings");
   await expect(page).toHaveScreenshot("assistant-source-discovery.png");
 });

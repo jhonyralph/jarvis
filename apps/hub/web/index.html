@@ -186,7 +186,12 @@
     .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; overflow-wrap:anywhere; }
     .msg.bot pre { position:relative; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; max-width:100%; min-width:0; }
     .msg.bot pre code { overflow-wrap:normal; white-space:pre; }
-    .msg.bot pre code { background:none; padding:0; display:block; } .msg.bot pre .copy { position:sticky; top:6px; right:6px; z-index:2; float:right; margin:-6px -6px 4px 8px; padding:3px 8px; font-size:11px; }
+    .msg.bot pre code { background:none; padding:0; display:block; }
+    /* Copy button pinned to the visible top-right corner via a NON-scrolling wrapper, so horizontal
+       code scroll never drags it over the text (it used to float+sticky inside the scrolling <pre>). */
+    .msg.bot .codewrap { position:relative; }
+    .msg.bot .codewrap .copy { position:absolute; top:8px; right:8px; z-index:2; padding:3px 8px; font-size:11px; line-height:1.2; background:#0d1117f2; border:1px solid var(--line); border-radius:7px; }
+    .msg.bot .codewrap .copy:hover { background:#161b22; border-color:#ffffff33; }
     .msg.bot .mdtable-wrap { max-width:100%; margin:.6em 0; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#151b21; scrollbar-gutter:stable; -webkit-overflow-scrolling:touch; }
     .msg.bot .mdtable-actions { position:sticky; left:0; top:0; z-index:1; display:flex; justify-content:flex-end; gap:6px; padding:6px; border-bottom:1px solid var(--line); background:#151b21f2; }
     .msg.bot .mdtable-actions button { min-height:28px; padding:3px 8px; font-size:11.5px; border-radius:6px; }
@@ -717,6 +722,9 @@
     .personal-notification-actions button { flex:1 1 auto; min-height:32px; padding:5px 8px; font-size:11.5px; }
     #settings .settings-actions { flex:none; z-index:2; margin:0; padding:12px 20px calc(12px + var(--safe-bottom)); border-top:1px solid var(--line); background:var(--panel); }
     #settings .settings-actions button { min-width:112px; min-height:44px; }
+    /* Opção A: cada aba salvável tem o seu Salvar no fim do conteúdo (sem rodapé global). */
+    #settings .settings-panel-actions { display:flex; justify-content:flex-end; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+    #settings .set-save { min-width:120px; min-height:44px; }
     #routinesSection { background:#ffffff05; border:1px solid var(--line); border-radius:14px; padding:0 14px 14px; margin-top:4px; }
     #routinesSection .sec { border-top:0; margin-top:0; }
     .routine-builder { display:flex; flex-direction:column; gap:12px; }
@@ -898,6 +906,8 @@
       .strtool.act { max-width:92%; }
       /* composer: bigger targets; pills in one scrollable row; send full width */
       #composer { width:100%; min-width:0; overflow:visible; padding:10px 12px calc(10px + var(--safe-bottom)); gap:10px; flex:none; }
+      html.kb-open #composer { padding-bottom:10px; }
+      html.kb-open #composer.has-draft { padding-bottom:8px; }
       /* O mic tem que ter a MESMA altura do input (media: input 52px, mic 47.5px = 4.5px de
          desalinho visível). As duas caixas passam a derivar das mesmas medidas, para não
          voltarem a divergir se o padding do input mudar. Altura = lh + 2*pad + 2*borda. */
@@ -1292,7 +1302,7 @@
   </div></div>
 
   <div id="councilModal" class="modal hidden"><div class="card councilcard">
-    <div class="ctop"><div><b id="solutionTitle">Espaço de Soluções</b><span>Solution Workspace</span></div><div class="row" style="gap:6px"><button id="solutionHelpBtn" class="ghost helpicon" type="button" title="Ajuda">?</button><button id="councilClose" class="ghost" type="button" title="Fechar">✕</button></div></div>
+    <div class="ctop"><div><b id="solutionTitle">Espaço de Soluções</b><span>Solution Workspace</span></div><div class="row" style="gap:6px;align-items:center;flex:none"><button id="solutionHelpBtn" class="ghost helpicon" type="button" title="Ajuda">?</button><button id="councilClose" class="ghost helpicon" type="button" title="Fechar" aria-label="Fechar">✕</button></div></div>
     <div class="modegrid" role="tablist" aria-label="Tipo de rodada">
       <button type="button" class="sworkmode on" data-mode="council" data-i18n="swModeCouncil" title="Delibera, confronta perspectivas e gera uma síntese com plano.">Conselho</button>
       <button type="button" class="sworkmode" data-mode="benchmark" data-i18n="swModeBenchmark" title="Compara soluções concorrentes e escolhe a melhor.">Benchmark</button>
@@ -1836,7 +1846,6 @@
         </section>
       </div>
     </div>
-    <div class="row settings-actions" style="justify-content:flex-end"><button id="setCancel" class="ghost" type="button">Fechar</button><button id="setClose" type="button">Salvar</button></div>
   </div></div>
 
   <script src="/vendor/xterm/xterm.js"></script>

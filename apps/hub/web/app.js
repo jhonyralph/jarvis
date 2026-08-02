@@ -43,6 +43,11 @@
       try{
         const vv=window.visualViewport, h=Math.ceil((vv&&vv.height)||window.innerHeight||0);
         if(h>0) document.documentElement.style.setProperty('--app-height', h+'px');
+        // Com o teclado aberto o visualViewport encolhe abaixo do layout viewport. Nesse estado a
+        // reserva de safe-area inferior (botões de navegação) é desnecessária — o teclado cobre a
+        // barra — e só cria um vão extra acima do teclado. Sinalizamos para o CSS zerar essa reserva.
+        const kbOpen=!!vv && (window.innerHeight - h) > 120;
+        document.documentElement.classList.toggle('kb-open', kbOpen);
       }catch(e){}
       syncComposerMetrics();
     }
@@ -351,6 +356,165 @@
         {name:'Borrar una categoría',what:'Quitar solo un tipo de dato, como solo preferencias.',use:'Úsalo para una limpieza puntual sin perder el resto.',data:'Es irreversible para la categoría elegida. La configuración de fuentes solo la borra el owner.'},
       ]},
     });
+    Object.assign(PERSONAL_HELP.pt,{
+      geral:{title:'Configurações gerais',how:'Preferências básicas do Jarvis aplicadas às conversas novas.',fields:[
+        {name:'Idioma',what:'Idioma da interface (Português, English, Español).',use:'Escolha o idioma; a interface muda na hora.',data:'Fica salvo neste navegador/aparelho; não afeta outros dispositivos.'},
+        {name:'Agente, modelo e esforço padrão',what:'A IA, o modelo e o nível de esforço usados por padrão em conversas novas.',use:'Defina o que prefere; cada conversa pode sobrescrever no seletor do compositor.',data:'Salvo localmente; não muda conversas já abertas.'},
+        {name:'Autocomplete (/ @ # !)',what:'Liga o menu de sugestões ao digitar barra, arroba, cerquilha ou exclamação.',use:'Desligue se preferir digitar sem o popup.',data:'Preferência local; não envia nada.'},
+      ]},
+      voz:{title:'Voz',how:'Fala do Jarvis, microfone, wake word e identificação por voz. Cada aparelho tem as suas preferências.',fields:[
+        {name:'Falar respostas',what:'Se o Jarvis lê as respostas em voz alta.',use:'Ative para ouvir; escolha o timbre no catálogo abaixo.',data:'Preferência do aparelho; o áudio é gerado sob demanda, não fica salvo.'},
+        {name:'Catálogo de vozes (timbre)',what:'A voz usada na fala (homem/mulher, PT/EN/ES).',use:'Toque para ouvir uma prévia e escolher.',data:'Apenas seleção; nada é gravado.'},
+        {name:'Escuta contínua e silêncio',what:'Continua ouvindo após responder e corta a gravação por pausa.',use:'Ajuste o tempo de silêncio (segundos) que encerra a fala.',data:'Controla a captura; nada é enviado sem você falar.'},
+        {name:'Wake word (hey jarvis)',what:'Ativa a detecção da frase de ativação.',use:'Ligue para acordar por voz; no Android exige o app nativo e permissão de microfone.',data:'A detecção roda no aparelho; o áudio não sai antes do wake.'},
+        {name:'Supressão de ruído',what:'Reduz ruído de fundo na captura.',use:'Ligue em ambientes barulhentos.',data:'Processamento local do áudio.'},
+        {name:'Exigir voz cadastrada',what:'Bloqueia vozes desconhecidas no modo voz (multiusuário).',use:'Cadastre a sua voz antes de exigir, senão o modo voz trava.',data:'A impressão de voz fica no Hub, por usuário, e pode ser removida.'},
+      ]},
+      notif:{title:'Notificações',how:'Como e quando este aparelho recebe push. Cada aparelho decide o seu.',fields:[
+        {name:'Receber push',what:'Liga as notificações neste aparelho.',use:'Ative e conceda a permissão do sistema.',data:'Cria uma inscrição push por aparelho; pode desativar quando quiser.'},
+        {name:'Eventos (concluído, falha, máquina)',what:'Quais eventos geram notificação.',use:'Marque só o que te interessa.',data:'Preferência por aparelho; não muda o que acontece no Hub.'},
+        {name:'Modo e intervalo',what:'Uma notificação por evento ou um resumo a cada X minutos.',use:'Use agrupado para reduzir o barulho.',data:'Só controla a entrega; nada é coletado.'},
+        {name:'Bloqueio biométrico',what:'Exige biometria para abrir a partir da notificação.',use:'Ligue para mais segurança neste aparelho.',data:'A biometria é do sistema; o Jarvis não a armazena.'},
+      ]},
+      automacao:{title:'Automação',how:'Rotinas agendadas, política adaptativa e limites de execução de subagentes (área do dono).',fields:[
+        {name:'Agenda de rotinas',what:'Tarefas que rodam sozinhas num horário.',use:'Aceita cron de 5 campos ou frases como “a cada 3 horas”; o resultado mostra o horário real.',data:'As rotinas ficam no Hub e rodam na máquina escolhida.'},
+        {name:'Política adaptativa',what:'Regras de quando pedir a sua aprovação (custo, tokens, escrita no repo, etc.).',use:'Ajuste os limites; a política vale por projeto e por sessão.',data:'Guardada no Hub; define o que roda sozinho vs. o que espera você.'},
+        {name:'Execução de subagentes',what:'Limites de concorrência, profundidade, retenção e escrita padrão.',use:'Aumente com cuidado — mais concorrência consome mais recursos.',data:'Configuração do Hub; vale para trabalhos em segundo plano.'},
+      ]},
+      framework:{title:'Framework',how:'Comandos, skills e instruções universais compartilhados entre as IAs e publicáveis nas máquinas (área do dono).',fields:[
+        {name:'Preferência do framework',what:'Se os comandos “/x” expandem sempre, sob pedido, ou nunca.',use:'Escolha conforme o seu fluxo.',data:'Preferência do Hub.'},
+        {name:'Editor e arquivos',what:'Onde você cria e edita os comandos, skills e instruções.',use:'Edite e salve; depois publique.',data:'Guardado no Hub e versionado.'},
+        {name:'Publicar nas máquinas',what:'Distribui a versão atual para os runners.',use:'Publique após editar; o status por máquina aparece abaixo.',data:'Envia aos runners conectados; quem está offline recebe ao voltar.'},
+      ]},
+      rota:{title:'Roteamento',how:'A IA que roda no servidor (Hub) para o modo Automático, resumos e consultas de status.',fields:[
+        {name:'IA, modelo e esforço do roteamento',what:'Qual IA analisa mensagens em Automático e faz resumos e status.',use:'Prefira um modelo econômico — roda com frequência.',data:'Salvo no Hub; auto-salva ao mudar (não tem botão Salvar).'},
+      ]},
+      uso:{title:'Uso e custo',how:'Consumo e custo por sessão e por máquina. É só leitura.',fields:[
+        {name:'Uso e custo',what:'Tokens e custo estimado acumulados.',use:'Acompanhe o gasto por sessão e por máquina.',data:'Somente leitura; nada é alterado aqui.'},
+      ]},
+      celular:{title:'Abrir no celular',how:'Abra esta instância do Jarvis no seu telefone.',fields:[
+        {name:'Link e QR',what:'Endereço (Tailscale) e QR para abrir no celular.',use:'Aponte a câmera com o Tailscale ligado, ou copie o link.',data:'O link aponta para o seu Hub; use só em rede confiável.'},
+      ]},
+      dispositivos:{title:'Dispositivos e convites',how:'Aparelhos autorizados, convites e credenciais de acesso (área do dono).',fields:[
+        {name:'Aparelhos autorizados',what:'Dispositivos que podem acessar o Jarvis.',use:'Revise e revogue o que não reconhecer.',data:'Guardado no Hub; revogar bloqueia o acesso na hora.'},
+        {name:'Convites',what:'Códigos para dar acesso a novos aparelhos.',use:'Gere um convite e compartilhe com segurança.',data:'Convites expiram; trate como senha.'},
+      ]},
+      update:{title:'Atualização',how:'Verificação e aplicação de atualizações do Hub e dos runners.',fields:[
+        {name:'Atualização do Hub e runners',what:'Checa e aplica novas versões.',use:'Verifique e aplique; máquinas offline recebem ao voltar.',data:'Aplicar reinicia o serviço; o estado é preservado.'},
+      ]},
+      solutions:{title:'Espaço de Soluções',how:'Roda um problema por várias IAs em paralelo e combina os resultados. Escolha o modo conforme o objetivo.',fields:[
+        {name:'Conselho',what:'Várias IAs deliberam e sintetizam uma resposta única.',use:'Use para decisões e planos onde perspectivas diferentes ajudam.',data:'Cada IA vê o mesmo enunciado; o resultado é uma síntese.'},
+        {name:'Torneio / Benchmark',what:'Compara execuções (IAs ou modelos diferentes) lado a lado.',use:'Use para escolher a melhor abordagem ou modelo.',data:'Roda N execuções e mostra o comparativo.'},
+        {name:'Revisão',what:'Cada IA acha problemas complementares no mesmo alvo.',use:'Use para um code review multi-lente.',data:'Combina os achados; você decide o que aplicar.'},
+        {name:'Auditoria',what:'Foca em severidade e evidência dos achados.',use:'Use quando precisar priorizar por risco.',data:'Classifica por severidade com justificativa.'},
+      ]},
+    });
+    Object.assign(PERSONAL_HELP.en,{
+      geral:{title:'General settings',how:'Basic Jarvis preferences applied to new conversations.',fields:[
+        {name:'Language',what:'Interface language (Português, English, Español).',use:'Pick the language; the UI switches instantly.',data:'Stored on this browser/device; does not affect others.'},
+        {name:'Default agent, model and effort',what:'The AI, model and effort level used by default in new conversations.',use:'Set your preference; each conversation can override it in the composer selector.',data:'Stored locally; it does not change already-open conversations.'},
+        {name:'Autocomplete (/ @ # !)',what:'Turns on the suggestion menu when typing slash, at, hash or bang.',use:'Turn it off if you prefer typing without the popup.',data:'Local preference; it sends nothing.'},
+      ]},
+      voz:{title:'Voice',how:'Jarvis speech, microphone, wake word and voice identification. Each device has its own preferences.',fields:[
+        {name:'Speak replies',what:'Whether Jarvis reads replies out loud.',use:'Enable it to listen; pick the timbre in the catalog below.',data:'Device preference; audio is generated on demand, not stored.'},
+        {name:'Voice catalog (timbre)',what:'The voice used for speech (male/female, PT/EN/ES).',use:'Tap to hear a preview and choose.',data:'Selection only; nothing is recorded.'},
+        {name:'Continuous listening and silence',what:'Keeps listening after replying and trims the recording on a pause.',use:'Adjust the silence time (seconds) that ends the utterance.',data:'Controls capture; nothing is sent unless you speak.'},
+        {name:'Wake word (hey jarvis)',what:'Turns on detection of the activation phrase.',use:'Enable to wake by voice; on Android it needs the native app and microphone permission.',data:'Detection runs on the device; audio does not leave before the wake.'},
+        {name:'Noise suppression',what:'Reduces background noise in the capture.',use:'Turn it on in noisy places.',data:'Local audio processing.'},
+        {name:'Require enrolled voice',what:'Blocks unknown voices in voice mode (multi-user).',use:'Enroll your voice before requiring it, or voice mode locks.',data:'The voiceprint stays in the Hub, per user, and can be removed.'},
+      ]},
+      notif:{title:'Notifications',how:'How and when this device receives push. Each device decides its own.',fields:[
+        {name:'Receive push',what:'Turns notifications on for this device.',use:'Enable it and grant the system permission.',data:'Creates a push subscription per device; you can disable it anytime.'},
+        {name:'Events (done, failure, machine)',what:'Which events trigger a notification.',use:'Check only what matters to you.',data:'Per-device preference; it does not change what happens in the Hub.'},
+        {name:'Mode and interval',what:'One notification per event or a summary every X minutes.',use:'Use grouped to reduce noise.',data:'Delivery control only; nothing is collected.'},
+        {name:'Biometric lock',what:'Requires biometrics to open from the notification.',use:'Enable it for more security on this device.',data:'Biometrics belong to the OS; Jarvis does not store them.'},
+      ]},
+      automacao:{title:'Automation',how:'Scheduled routines, adaptive policy and subagent execution limits (owner area).',fields:[
+        {name:'Routine schedule',what:'Tasks that run on their own at a schedule.',use:'Accepts 5-field cron or phrases like "every 3 hours"; the result shows the real time.',data:'Routines live in the Hub and run on the chosen machine.'},
+        {name:'Adaptive policy',what:'Rules for when to ask for your approval (cost, tokens, repo writes, etc.).',use:'Adjust the limits; the policy applies per project and per session.',data:'Stored in the Hub; it defines what runs on its own vs. what waits for you.'},
+        {name:'Subagent execution',what:'Limits for concurrency, depth, retention and default write.',use:'Raise carefully — more concurrency uses more resources.',data:'Hub configuration; applies to background work.'},
+      ]},
+      framework:{title:'Framework',how:'Universal commands, skills and instructions shared across AIs and publishable to machines (owner area).',fields:[
+        {name:'Framework preference',what:'Whether "/x" commands expand always, on request, or never.',use:'Choose per your workflow.',data:'Hub preference.'},
+        {name:'Editor and files',what:'Where you create and edit commands, skills and instructions.',use:'Edit and save; then publish.',data:'Stored in the Hub and versioned.'},
+        {name:'Publish to machines',what:'Distributes the current version to the runners.',use:'Publish after editing; per-machine status appears below.',data:'Sent to connected runners; offline ones receive it when back.'},
+      ]},
+      rota:{title:'Routing',how:'The AI that runs on the server (Hub) for Automatic mode, summaries and status queries.',fields:[
+        {name:'Routing AI, model and effort',what:'Which AI analyzes messages in Automatic and does summaries and status.',use:'Prefer an economical model — it runs often.',data:'Stored in the Hub; auto-saves on change (no Save button).'},
+      ]},
+      uso:{title:'Usage and cost',how:'Consumption and cost per session and per machine. Read-only.',fields:[
+        {name:'Usage and cost',what:'Accumulated tokens and estimated cost.',use:'Track spend per session and per machine.',data:'Read-only; nothing is changed here.'},
+      ]},
+      celular:{title:'Open on phone',how:'Open this Jarvis instance on your phone.',fields:[
+        {name:'Link and QR',what:'Address (Tailscale) and QR to open on the phone.',use:'Point the camera with Tailscale on, or copy the link.',data:'The link points to your Hub; use it only on a trusted network.'},
+      ]},
+      dispositivos:{title:'Devices and invites',how:'Authorized devices, invites and access credentials (owner area).',fields:[
+        {name:'Authorized devices',what:'Devices allowed to access Jarvis.',use:'Review and revoke anything you do not recognize.',data:'Stored in the Hub; revoking blocks access immediately.'},
+        {name:'Invites',what:'Codes to grant access to new devices.',use:'Generate an invite and share it securely.',data:'Invites expire; treat them like a password.'},
+      ]},
+      update:{title:'Update',how:'Checking and applying Hub and runner updates.',fields:[
+        {name:'Hub and runner update',what:'Checks and applies new versions.',use:'Check and apply; offline machines receive it when back.',data:'Applying restarts the service; state is preserved.'},
+      ]},
+      solutions:{title:'Solution Workspace',how:'Run one problem across several AIs in parallel and combine the results. Pick the mode by goal.',fields:[
+        {name:'Council',what:'Several AIs deliberate and synthesize one answer.',use:'Use it for decisions and plans where different perspectives help.',data:'Each AI sees the same prompt; the result is a synthesis.'},
+        {name:'Tournament / Benchmark',what:'Compares executions (different AIs or models) side by side.',use:'Use it to pick the best approach or model.',data:'Runs N executions and shows the comparison.'},
+        {name:'Review',what:'Each AI finds complementary issues on the same target.',use:'Use it for a multi-lens code review.',data:'Combines findings; you decide what to apply.'},
+        {name:'Audit',what:'Focuses on severity and evidence of findings.',use:'Use it when you need to prioritize by risk.',data:'Ranks by severity with justification.'},
+      ]},
+    });
+    Object.assign(PERSONAL_HELP.es,{
+      geral:{title:'Configuración general',how:'Preferencias básicas de Jarvis aplicadas a las conversaciones nuevas.',fields:[
+        {name:'Idioma',what:'Idioma de la interfaz (Português, English, Español).',use:'Elige el idioma; la interfaz cambia al instante.',data:'Se guarda en este navegador/dispositivo; no afecta a otros.'},
+        {name:'Agente, modelo y esfuerzo por defecto',what:'La IA, el modelo y el nivel de esfuerzo usados por defecto en conversaciones nuevas.',use:'Define tu preferencia; cada conversación puede sobrescribirla en el selector del compositor.',data:'Guardado localmente; no cambia las conversaciones ya abiertas.'},
+        {name:'Autocompletado (/ @ # !)',what:'Activa el menú de sugerencias al escribir barra, arroba, almohadilla o exclamación.',use:'Desactívalo si prefieres escribir sin el popup.',data:'Preferencia local; no envía nada.'},
+      ]},
+      voz:{title:'Voz',how:'Habla de Jarvis, micrófono, wake word e identificación por voz. Cada dispositivo tiene sus preferencias.',fields:[
+        {name:'Leer respuestas',what:'Si Jarvis lee las respuestas en voz alta.',use:'Actívalo para escuchar; elige el timbre en el catálogo.',data:'Preferencia del dispositivo; el audio se genera bajo demanda, no se guarda.'},
+        {name:'Catálogo de voces (timbre)',what:'La voz usada para hablar (hombre/mujer, PT/EN/ES).',use:'Toca para oír una vista previa y elegir.',data:'Solo selección; no se graba nada.'},
+        {name:'Escucha continua y silencio',what:'Sigue escuchando tras responder y corta la grabación por pausa.',use:'Ajusta el tiempo de silencio (segundos) que termina el habla.',data:'Controla la captura; no se envía nada sin que hables.'},
+        {name:'Wake word (hey jarvis)',what:'Activa la detección de la frase de activación.',use:'Actívalo para despertar por voz; en Android exige la app nativa y permiso de micrófono.',data:'La detección corre en el dispositivo; el audio no sale antes del wake.'},
+        {name:'Supresión de ruido',what:'Reduce el ruido de fondo en la captura.',use:'Actívalo en lugares ruidosos.',data:'Procesamiento local del audio.'},
+        {name:'Exigir voz registrada',what:'Bloquea voces desconocidas en modo voz (multiusuario).',use:'Registra tu voz antes de exigirla, o el modo voz se bloquea.',data:'La huella de voz queda en el Hub, por usuario, y se puede eliminar.'},
+      ]},
+      notif:{title:'Notificaciones',how:'Cómo y cuándo este dispositivo recibe push. Cada uno decide el suyo.',fields:[
+        {name:'Recibir push',what:'Activa las notificaciones en este dispositivo.',use:'Actívalo y concede el permiso del sistema.',data:'Crea una suscripción push por dispositivo; puedes desactivarla cuando quieras.'},
+        {name:'Eventos (finalizado, fallo, máquina)',what:'Qué eventos generan notificación.',use:'Marca solo lo que te interesa.',data:'Preferencia por dispositivo; no cambia lo que ocurre en el Hub.'},
+        {name:'Modo e intervalo',what:'Una notificación por evento o un resumen cada X minutos.',use:'Usa agrupado para reducir el ruido.',data:'Solo controla la entrega; no se recopila nada.'},
+        {name:'Bloqueo biométrico',what:'Exige biometría para abrir desde la notificación.',use:'Actívalo para más seguridad en este dispositivo.',data:'La biometría es del sistema; Jarvis no la almacena.'},
+      ]},
+      automacao:{title:'Automatización',how:'Rutinas programadas, política adaptativa y límites de ejecución de subagentes (área del dueño).',fields:[
+        {name:'Agenda de rutinas',what:'Tareas que se ejecutan solas en un horario.',use:'Acepta cron de 5 campos o frases como "cada 3 horas"; el resultado muestra la hora real.',data:'Las rutinas viven en el Hub y corren en la máquina elegida.'},
+        {name:'Política adaptativa',what:'Reglas de cuándo pedir tu aprobación (costo, tokens, escritura en el repo, etc.).',use:'Ajusta los límites; la política aplica por proyecto y por sesión.',data:'Guardada en el Hub; define qué corre solo vs. qué te espera.'},
+        {name:'Ejecución de subagentes',what:'Límites de concurrencia, profundidad, retención y escritura por defecto.',use:'Sube con cuidado — más concurrencia consume más recursos.',data:'Configuración del Hub; aplica al trabajo en segundo plano.'},
+      ]},
+      framework:{title:'Framework',how:'Comandos, skills e instrucciones universales compartidos entre las IAs y publicables en las máquinas (área del dueño).',fields:[
+        {name:'Preferencia del framework',what:'Si los comandos "/x" se expanden siempre, a petición, o nunca.',use:'Elige según tu flujo.',data:'Preferencia del Hub.'},
+        {name:'Editor y archivos',what:'Donde creas y editas comandos, skills e instrucciones.',use:'Edita y guarda; luego publica.',data:'Guardado en el Hub y versionado.'},
+        {name:'Publicar en las máquinas',what:'Distribuye la versión actual a los runners.',use:'Publica tras editar; el estado por máquina aparece abajo.',data:'Se envía a los runners conectados; los offline lo reciben al volver.'},
+      ]},
+      rota:{title:'Ruteo',how:'La IA que corre en el servidor (Hub) para el modo Automático, resúmenes y consultas de estado.',fields:[
+        {name:'IA, modelo y esfuerzo del ruteo',what:'Qué IA analiza mensajes en Automático y hace resúmenes y estado.',use:'Prefiere un modelo económico — corre a menudo.',data:'Guardado en el Hub; se autoguarda al cambiar (sin botón Guardar).'},
+      ]},
+      uso:{title:'Uso y costo',how:'Consumo y costo por sesión y por máquina. Solo lectura.',fields:[
+        {name:'Uso y costo',what:'Tokens y costo estimado acumulados.',use:'Sigue el gasto por sesión y por máquina.',data:'Solo lectura; aquí no se cambia nada.'},
+      ]},
+      celular:{title:'Abrir en el móvil',how:'Abre esta instancia de Jarvis en tu teléfono.',fields:[
+        {name:'Enlace y QR',what:'Dirección (Tailscale) y QR para abrir en el móvil.',use:'Apunta la cámara con Tailscale encendido, o copia el enlace.',data:'El enlace apunta a tu Hub; úsalo solo en una red de confianza.'},
+      ]},
+      dispositivos:{title:'Dispositivos e invitaciones',how:'Dispositivos autorizados, invitaciones y credenciales de acceso (área del dueño).',fields:[
+        {name:'Dispositivos autorizados',what:'Dispositivos que pueden acceder a Jarvis.',use:'Revisa y revoca lo que no reconozcas.',data:'Guardado en el Hub; revocar bloquea el acceso al instante.'},
+        {name:'Invitaciones',what:'Códigos para dar acceso a nuevos dispositivos.',use:'Genera una invitación y compártela con seguridad.',data:'Las invitaciones expiran; trátalas como una contraseña.'},
+      ]},
+      update:{title:'Actualización',how:'Verificación y aplicación de actualizaciones del Hub y de los runners.',fields:[
+        {name:'Actualización del Hub y runners',what:'Comprueba y aplica nuevas versiones.',use:'Verifica y aplica; las máquinas offline la reciben al volver.',data:'Aplicar reinicia el servicio; el estado se preserva.'},
+      ]},
+      solutions:{title:'Espacio de Soluciones',how:'Ejecuta un problema en varias IAs en paralelo y combina los resultados. Elige el modo según el objetivo.',fields:[
+        {name:'Consejo',what:'Varias IAs deliberan y sintetizan una respuesta única.',use:'Úsalo para decisiones y planes donde ayudan perspectivas distintas.',data:'Cada IA ve el mismo enunciado; el resultado es una síntesis.'},
+        {name:'Torneo / Benchmark',what:'Compara ejecuciones (IAs o modelos distintos) lado a lado.',use:'Úsalo para elegir el mejor enfoque o modelo.',data:'Corre N ejecuciones y muestra la comparación.'},
+        {name:'Revisión',what:'Cada IA encuentra problemas complementarios en el mismo objetivo.',use:'Úsalo para un code review multi-lente.',data:'Combina los hallazgos; tú decides qué aplicar.'},
+        {name:'Auditoría',what:'Se centra en severidad y evidencia de los hallazgos.',use:'Úsalo cuando necesites priorizar por riesgo.',data:'Clasifica por severidad con justificación.'},
+      ]},
+    });
     Object.assign(I18N.pt,{close:'Fechar',listView:'Lista',mapView:'Mapa',resultsMap:'Mapa dos resultados',confirmAction:'Confirmar ação',proactiveThisDevice:'Receber sugestões proativas neste aparelho',proactiveDeviceOn:'Ativadas neste aparelho.',proactiveDeviceOff:'Desativadas neste aparelho.',proactiveSaved:'Preferência deste aparelho salva.',favoriteAliases:'Aliases',favoriteAliasesPh:'casa, lar',favoritePurposes:'Finalidades',latitude:'Latitude',longitude:'Longitude',cancelEdit:'Cancelar edição',editFavorite:'Editar local',detectFormat:'Detectar',busyFreeOnly:'Somente ocupado/livre',authorizedDetails:'Detalhes autorizados',personalTurnTitle:'Sugestões do assistente pessoal',personalSuggestionsAvailable:'Sugestões pessoais disponíveis',openSuggestions:'Ver no assistente',proactiveOpen:'Abrir sugestão',nativeContextUnavailable:'Contexto nativo indisponível neste aparelho.',nativeContextWeb:'Contexto via recursos do navegador.',nativeForeground:'localização foreground',nativeCalendar:'agenda ocupado/livre',nativeGeofences:'geofences',nativeBackground:'background',nativeTransitions:'transições drenadas',sourceTesting:'Testando fonte...',arrivalMonitoring:'Monitorar chegada e saída',monitorFavorite:'Monitorar este local em background',geofenceRadius:'Raio (metros)',geofenceTransitions:'Transições',arrival:'Chegada',departure:'Saída',geofenceOptInNote:'Exige opt-in de background e suporte nativo; não executa ações externas automaticamente.',geofenceSavedWaiting:'Monitoramento salvo; autorize background neste aparelho para ativá-lo.',geofenceActive:'Monitoramento nativo sincronizado.',geofenceUnsupported:'Este aparelho não oferece monitoramento por geofence.',policyPersonalContext:'Permitir contexto pessoal automático no chat',hPolicyPersonalContext:'Quando ativado, o chat pode consultar somente o contexto pessoal consentido. Ligar o assistente não ativa esta opção automaticamente.'});
     Object.assign(I18N.en,{close:'Close',listView:'List',mapView:'Map',resultsMap:'Results map',confirmAction:'Confirm action',proactiveThisDevice:'Receive proactive suggestions on this device',proactiveDeviceOn:'Enabled on this device.',proactiveDeviceOff:'Disabled on this device.',proactiveSaved:'This device preference was saved.',favoriteAliases:'Aliases',favoriteAliasesPh:'home, my place',favoritePurposes:'Purposes',latitude:'Latitude',longitude:'Longitude',cancelEdit:'Cancel edit',editFavorite:'Edit place',detectFormat:'Detect',busyFreeOnly:'Busy/free only',authorizedDetails:'Authorized details',personalTurnTitle:'Personal assistant suggestions',personalSuggestionsAvailable:'Personal suggestions available',openSuggestions:'View in assistant',proactiveOpen:'Open suggestion',nativeContextUnavailable:'Native context is unavailable on this device.',nativeContextWeb:'Context through browser capabilities.',nativeForeground:'foreground location',nativeCalendar:'busy/free calendar',nativeGeofences:'geofences',nativeBackground:'background',nativeTransitions:'transitions drained',sourceTesting:'Testing source...',arrivalMonitoring:'Monitor arrivals and departures',monitorFavorite:'Monitor this place in the background',geofenceRadius:'Radius (meters)',geofenceTransitions:'Transitions',arrival:'Arrival',departure:'Departure',geofenceOptInNote:'Requires background opt-in and native support; it never runs external actions automatically.',geofenceSavedWaiting:'Monitoring saved; authorize background on this device to activate it.',geofenceActive:'Native monitoring synchronized.',geofenceUnsupported:'This device does not support geofence monitoring.',policyPersonalContext:'Allow automatic personal context in chat',hPolicyPersonalContext:'When enabled, chat may query only consented personal context. Enabling the assistant does not enable this option automatically.'});
     Object.assign(I18N.es,{close:'Cerrar',listView:'Lista',mapView:'Mapa',resultsMap:'Mapa de resultados',confirmAction:'Confirmar acción',proactiveThisDevice:'Recibir sugerencias proactivas en este dispositivo',proactiveDeviceOn:'Activadas en este dispositivo.',proactiveDeviceOff:'Desactivadas en este dispositivo.',proactiveSaved:'Se guardó la preferencia de este dispositivo.',favoriteAliases:'Alias',favoriteAliasesPh:'casa, hogar',favoritePurposes:'Finalidades',latitude:'Latitud',longitude:'Longitud',cancelEdit:'Cancelar edición',editFavorite:'Editar lugar',detectFormat:'Detectar',busyFreeOnly:'Solo ocupado/libre',authorizedDetails:'Detalles autorizados',personalTurnTitle:'Sugerencias del asistente personal',personalSuggestionsAvailable:'Sugerencias personales disponibles',openSuggestions:'Ver en el asistente',proactiveOpen:'Abrir sugerencia',nativeContextUnavailable:'El contexto nativo no está disponible en este dispositivo.',nativeContextWeb:'Contexto mediante capacidades del navegador.',nativeForeground:'ubicación foreground',nativeCalendar:'agenda ocupado/libre',nativeGeofences:'geofences',nativeBackground:'background',nativeTransitions:'transiciones drenadas',sourceTesting:'Probando fuente...',arrivalMonitoring:'Monitorear llegadas y salidas',monitorFavorite:'Monitorear este lugar en segundo plano',geofenceRadius:'Radio (metros)',geofenceTransitions:'Transiciones',arrival:'Llegada',departure:'Salida',geofenceOptInNote:'Requiere opt-in de segundo plano y soporte nativo; nunca ejecuta acciones externas automáticamente.',geofenceSavedWaiting:'Monitoreo guardado; autoriza segundo plano en este dispositivo para activarlo.',geofenceActive:'Monitoreo nativo sincronizado.',geofenceUnsupported:'Este dispositivo no soporta monitoreo por geofence.',policyPersonalContext:'Permitir contexto personal automático en el chat',hPolicyPersonalContext:'Cuando está activo, el chat puede consultar solo contexto personal consentido. Activar el asistente no activa esta opción automáticamente.'});
@@ -439,9 +603,11 @@
     function helpEsc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
     const HELP_SECTION_META={assistant:{icon:'🤖',accent:'#2dd4bf'},location:{icon:'📍',accent:'#4f83ff'},proactive:{icon:'🔔',accent:'#a78bfa'},actionPolicy:{icon:'⚡',accent:'#f5b544'},
       sources:{icon:'🧩',accent:'#38bdf8'},consents:{icon:'✅',accent:'#34d399'},configureSource:{icon:'🛠️',accent:'#94a3b8'},
-      personalData:{icon:'🗂️',accent:'#4f83ff'},favorites:{icon:'⭐',accent:'#f5b544'},vehicles:{icon:'🚗',accent:'#2dd4bf'},preferences:{icon:'🎛️',accent:'#a78bfa'},retention:{icon:'🛡️',accent:'#f87171'}};
-    const PANEL_HELP_SECTIONS={assistente:['assistant','location','proactive','actionPolicy'],fontes:['sources','consents','configureSource'],dados:['personalData','favorites','vehicles','preferences','retention']};
-    const PANEL_HELP_ICON={assistente:'🤖',fontes:'🧩',dados:'🗂️'};
+      personalData:{icon:'🗂️',accent:'#4f83ff'},favorites:{icon:'⭐',accent:'#f5b544'},vehicles:{icon:'🚗',accent:'#2dd4bf'},preferences:{icon:'🎛️',accent:'#a78bfa'},retention:{icon:'🛡️',accent:'#f87171'},
+      geral:{icon:'⚙️',accent:'#94a3b8'},voz:{icon:'🎙️',accent:'#f472b6'},notif:{icon:'🔔',accent:'#f5b544'},automacao:{icon:'⏱️',accent:'#a78bfa'},framework:{icon:'🧱',accent:'#38bdf8'},rota:{icon:'🧭',accent:'#4f83ff'},uso:{icon:'📊',accent:'#34d399'},celular:{icon:'📱',accent:'#2dd4bf'},dispositivos:{icon:'🔐',accent:'#f87171'},update:{icon:'⬆️',accent:'#4f83ff'},solutions:{icon:'🧠',accent:'#a78bfa'}};
+    const PANEL_HELP_SECTIONS={assistente:['assistant','location','proactive','actionPolicy'],fontes:['sources','consents','configureSource'],dados:['personalData','favorites','vehicles','preferences','retention'],
+      geral:['geral'],voz:['voz'],notif:['notif'],automacao:['automacao'],framework:['framework'],rota:['rota'],uso:['uso'],celular:['celular'],dispositivos:['dispositivos'],update:['update']};
+    const PANEL_HELP_ICON={assistente:'🤖',fontes:'🧩',dados:'🗂️',geral:'⚙️',voz:'🎙️',notif:'🔔',automacao:'⏱️',framework:'🧱',rota:'🧭',uso:'📊',celular:'📱',dispositivos:'🔐',update:'⬆️'};
     function helpFacet(cls,icon,label,text){ if(!text) return ''; return `<div class="hfacet ${cls}"><span class="hfacet-ic">${icon}</span><div class="hfacet-c"><span class="hfacet-l">${helpEsc(label)}</span><span class="hfacet-t">${helpEsc(text)}</span></div></div>`; }
     function renderHelpSheet(keys,headerTitle,headerIcon){ const pack=PERSONAL_HELP[lang]||PERSONAL_HELP.pt;
       const list=(Array.isArray(keys)?keys:[keys]).map(k=>({k,info:pack&&pack[k]})).filter(x=>x.info);
@@ -464,6 +630,7 @@
     function openHelpSheet(keys,title,icon){ if(!E.helpSheet||!renderHelpSheet(keys,title,icon)) return false; E.helpSheet.classList.remove('hidden'); if(E.helpSheetClose) setTimeout(()=>E.helpSheetClose.focus(),20); return true; }
     function closeHelpSheet(){ if(E.helpSheet) E.helpSheet.classList.add('hidden'); }
     function openSolutionHelp(){
+      if(openHelpSheet(['solutions'], t('helpSolutionsTitle'), '🧠')) return;
       helpDialog('helpSolutionsTitle',SOLUTION_HELP[solutionMode]||'hSolutionsUse',['hSolutionsUse']);
     }
     function installHelp(){ Object.entries(HELP_TARGETS).forEach(([id,key])=>{ const el=helpElement(id); if(!el)return; el.classList.toggle('helpable',HELP_ICON_IDS.has(id)); el.title=t(key); if(id==='sendBtn'){ el.setAttribute('aria-label',t('sendTitle')); el.title=t('sendTitle'); } });
@@ -511,7 +678,7 @@
     }
     function md(text){ const codes=[]; text=text.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>{codes.push(c);return ` C${codes.length-1} `;});
       const L=text.split(/\r?\n/); let h='',i=0,m; while(i<L.length){ const line=L[i];
-        if(m=line.match(/^ C(\d+) $/)){ h+=`<pre><button type="button" class="copy ghost">copiar</button><code>${esc(codes[+m[1]])}</code></pre>`; i++; continue; }
+        if(m=line.match(/^ C(\d+) $/)){ h+=`<div class="codewrap"><button type="button" class="copy ghost">copiar</button><pre><code>${esc(codes[+m[1]])}</code></pre></div>`; i++; continue; }
         if(/\|/.test(line)&&i+1<L.length&&/^\s*\|?[\s:|-]+\|/.test(L[i+1])){ const r=[]; while(i<L.length&&/\|/.test(L[i])){r.push(L[i]);i++;} h+=tableHtml(r); continue; }
         if(m=line.match(/^\s*(#{1,6})\s+(.*)/)){ h+=`<h4>${inl(esc(m[2]))}</h4>`; i++; continue; }
         if(/^\s*>\s?/.test(line)){ h+=`<blockquote>${inl(esc(line.replace(/^\s*>\s?/,'')))}</blockquote>`; i++; continue; }
@@ -2873,16 +3040,12 @@
     function settingsPanelOpen(name){ const root=E.settings; if(!root||root.classList.contains('hidden')) return false;
       const p=root.querySelector(`.spanel[data-panel="${name}"]`); return !!p&&!p.classList.contains('hidden'); }
     function isNativeShell(){ return document.documentElement.classList.contains('native-shell')||document.documentElement.classList.contains('native'); }
-    // Painéis com persistência própria (cada um tem o seu Salvar/ações). Nesses, o "Salvar" global do
-    // rodapé não se aplica e só gerava confusão ("dois salvar"), então ele some e fica só "Fechar".
-    const PANEL_SELF_SAVE=new Set(['assistente','fontes','dados']);
     function settingsGoto(name){ const root=E.settings; if(!root) return;
       if(name==='celular'&&isNativeShell()) name='geral';
       root.querySelectorAll('.snav').forEach(b=>b.classList.toggle('on',b.dataset.goto===name));
       if(E.setSection)E.setSection.value=name;
       root.querySelectorAll('.spanel').forEach(p=>p.classList.toggle('hidden',p.dataset.panel!==name));
       updateSettingsHelpButton(name);
-      if(E.setClose) E.setClose.classList.toggle('hidden',PANEL_SELF_SAVE.has(name));
       const panels=document.getElementById('setPanels'); if(panels) panels.scrollTop=0;
       settingsLoadPanel(name);
     }
@@ -3118,7 +3281,7 @@
     E.updApply.onclick=()=>{ const now=Date.now(); if(now-updArmed<4000){ updArmed=0; E.updApply.textContent='Atualizar'; E.updStatus.textContent='Atualizando… (o Hub vai reiniciar)'; E.updActions.classList.add('hidden'); tx({t:'update_apply',allMachines:E.updAll.checked}); }
       else { updArmed=now; E.updApply.textContent='Confirmar?'; setTimeout(()=>{ if(Date.now()-updArmed>=4000) E.updApply.textContent='Atualizar'; },4200); } };
     E.setEnroll.onclick=()=>enrollFlow();
-    E.setClose.onclick=async()=>{
+    async function settingsSaveGeneral(btn){
       const isOwner=authUser&&authUser.role==='owner';
       if(isOwner){ const numeric=[E.setExecRetention,E.setExecMaxEvents,E.setExecConcurrency,E.setExecDepth]; if(adaptivePolicyDoc) numeric.push(E.setPolicyCost,E.setPolicyTokens); const invalid=numeric.find(x=>!x.checkValidity()); if(invalid){ invalid.reportValidity(); return; }
         tx({t:'set_execution_cfg',enabled:E.setExecEnabled.checked,retentionDays:+E.setExecRetention.value,maxEvents:+E.setExecMaxEvents.value,maxConcurrency:+E.setExecConcurrency.value,maxDepth:+E.setExecDepth.value,defaultWrite:E.setExecDefaultWrite.checked,worktreeRoot:(E.setExecWorktree.value||'').trim()}); }
@@ -3140,9 +3303,13 @@
       saveCfg(); renderPushCfg();
       // Salvar NÃO fecha: mexer em várias abas de configuração exigia reabrir tudo a cada ajuste.
       // O feedback vira o próprio botão (e o toast), então continua claro que gravou.
-      E.setClose.textContent='Salvo ✓'; setTimeout(()=>{ E.setClose.textContent='Salvar'; },1600); toast('Configurações salvas.'); };
-    E.setCancel.onclick=()=>E.settings.classList.add('hidden'); // fecha sem salvar
-    if(E.setX) E.setX.onclick=()=>E.settings.classList.add('hidden'); // mesmo fechar, no canto do card
+      const label=btn&&btn.textContent; if(btn){ btn.textContent='Salvo ✓'; setTimeout(()=>{ if(btn.isConnected) btn.textContent=label||'Salvar'; },1600); } toast('Configurações salvas.'); }
+    // Cada aba salvável tem o SEU botão Salvar (Opção A): sem rodapé duplicando Salvar/Fechar. O save
+    // é o mesmo (persiste os campos gerais de uma vez); fechar é só o X do cabeçalho. Painéis pessoais,
+    // framework, rota, dispositivos e atualização têm as próprias ações/auto-save.
+    function settingsInstallPanelSaves(){ ['geral','voz','notif','automacao'].forEach(name=>{ const panel=E.settings&&E.settings.querySelector('.spanel[data-panel="'+name+'"]'); if(!panel||panel.querySelector('.settings-panel-actions'))return; const wrap=document.createElement('div'); wrap.className='settings-panel-actions'; const btn=document.createElement('button'); btn.type='button'; btn.className='set-save'; btn.textContent='Salvar'; btn.onclick=()=>settingsSaveGeneral(btn); wrap.appendChild(btn); panel.appendChild(wrap); }); }
+    settingsInstallPanelSaves();
+    if(E.setX) E.setX.onclick=()=>E.settings.classList.add('hidden'); // fechar (único), no canto do card
 
     // ---------- generic dialog (substitui alert/confirm/prompt nativos) ----------
     let dlgResolve=null;
@@ -3750,8 +3917,11 @@
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
           // barge-in: falar POR CIMA do agente (ou já em refino) → vai para o staging (refino), não pro chat
           if(ttsPlaying || stagingActive){ stopTTS(); stagingActive=true; showStage({say:'refinando…'}); status('speaking',t('spRefining')); tx({t:'stage_voice',audio:b64,ext:'webm',sessionId:currentSession}); return; }
-          if(busy(currentSession)){ toast('⏳ Sessão ocupada — envie o áudio quando terminar.'); return; }   // voz não entra na fila (a fila envia texto)
-          status('busy','🎧 transcrevendo…');   // Gap 5: feedback claro durante o STT (antes só ficava mudo)
+          // Sessão ocupada NÃO bloqueia mais a voz. O Hub transcreve e ENFILEIRA o texto resultante
+          // (queueLocalTurn → responde {t:'queued', voice:true} e faz broadcastQueue), igual ao texto.
+          // O usuário grava, vê "transcrevendo…" e a mensagem entra na fila para rodar no próximo turno.
+          const sessionBusy=busy(currentSession);
+          status('busy', sessionBusy ? '🎧 transcrevendo para a fila…' : '🎧 transcrevendo…');   // Gap 5: feedback claro durante o STT
           lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; syncComposerActions(); if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?t('spListeningAns'):t('spListening')); if(auto)tx({t:'wake_event',phase:'capturing',sessionId:currentSession});
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
