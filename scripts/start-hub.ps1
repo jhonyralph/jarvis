@@ -11,6 +11,19 @@ $log  = Join-Path $env:USERPROFILE '.jarvis\hub.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
 function Log($m) { Add-Content -Path $log -Value ("[launcher] {0} {1}" -f (Get-Date -Format o), $m) }
 
+# Instancia unica DURA: um mutex nomeado garante UM supervisor mesmo que a task JarvisHub e um
+# restart-hub disparem start-hub.ps1 quase juntos. A guarda por porta (abaixo) tem uma janela de
+# corrida de ~3s durante o restart (a porta 4577 fica livre) pela qual um 2o supervisor passava e
+# entrava no loop, criando dois supervisores brigando pela porta. O mutex fecha essa janela.
+# Local (sem prefixo Global) porque os dois lancadores rodam na sessao interativa do mesmo usuario;
+# Global exigiria SeCreateGlobalPrivilege e poderia falhar. Fail-open: se o mutex nao puder ser
+# criado por qualquer motivo, seguimos SEM trava (a porta ainda protege) e NUNCA bloqueamos o Hub.
+try {
+  $script:HubMutexCreated = $false
+  $script:HubMutex = New-Object System.Threading.Mutex($true, 'JarvisHubSupervisor', [ref]$script:HubMutexCreated)
+  if (-not $script:HubMutexCreated) { Log 'outro supervisor ja ativo (mutex) - este encerra'; return }
+} catch { Log "mutex indisponivel ($($_.Exception.Message)) - seguindo apenas com a guarda de porta" }
+
 # garante que node/npm/CLIs resolvem, independente do PATH da tarefa
 $env:PATH = "C:\Program Files\nodejs;$env:USERPROFILE\.local\bin;$env:PATH"
 
