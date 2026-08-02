@@ -10,10 +10,15 @@ import type { PersonalSourceConnection } from "@jarvis/protocol";
 
 const connection = (patch: Partial<PersonalSourceConnection>): PersonalSourceConnection => ({ id: "source-1", principalId: "alice", type: "open_meteo", label: "Weather", enabled: true, config: {}, allowedResources: [], allowedActions: [], createdAt: 1, updatedAt: 1, ...patch });
 
-test("built-in personal sources require no paid service and keep optional adapters opt-in", () => {
+test("built-in personal sources are the free global set by default; routing stays opt-in", () => {
   const sources = createBuiltInPersonalSources({});
-  assert.deepEqual(sources.map((source) => source.descriptor.id).sort(), ["open-meteo", "overpass-osm"]);
+  // Zero-config, worldwide: nearby (OSM), geocoding (Nominatim), weather (Open-Meteo) and chargers
+  // (Open Charge Map) are ON by default with public endpoints — no env vars required.
+  assert.deepEqual(sources.map((source) => source.descriptor.id).sort(), ["nominatim", "open-charge-map", "open-meteo", "overpass-osm"]);
   assert.ok(sources.every((source) => ["free", "local"].includes(source.descriptor.costClass)));
+  // Valhalla routing has no free public instance — only added when a (self-hosted) endpoint is set.
+  assert.ok(!sources.some((source) => source.descriptor.id === "valhalla"));
+  assert.ok(createBuiltInPersonalSources({ JARVIS_VALHALLA_URL: "http://127.0.0.1:8002/" }).some((source) => source.descriptor.id === "valhalla"));
   assert.ok(createBuiltInPersonalSources({ JARVIS_NOMINATIM_URL: "http://127.0.0.1:8080/" }).some((source) => source.descriptor.id === "nominatim"));
 });
 

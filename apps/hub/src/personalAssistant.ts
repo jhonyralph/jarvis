@@ -75,6 +75,9 @@ export interface PersonalTurnContext {
   agentText: string;
 }
 
+// Global PUBLIC built-in sources that are consented by DEFAULT (zero-config, worldwide) until the
+// user makes an explicit grant/revoke choice or pauses them. IDs must match the source descriptors.
+const DEFAULT_CONSENTED_SOURCE_IDS = new Set<string>(["nominatim", "overpass-osm", "open-meteo", "open-charge-map"]);
 const SERIALIZED_PERSONAL_MUTATIONS = new Set<PersonalClientToHub["t"]>([
   "personal_context_update", "personal_device_update", "personal_notification_feedback",
   "personal_vehicle_put", "personal_vehicle_delete", "personal_consent_put", "personal_consent_revoke",
@@ -980,7 +983,7 @@ export class PersonalAssistantService {
       if (query.startAt !== undefined || query.endAt !== undefined) fields.add("time");
       if (query.filters && Object.keys(query.filters).length) fields.add("filters");
     }
-    return activeConsent(state, {
+    const consent = activeConsent(state, {
       principalId: actor.principalId,
       sourceId: descriptor.id,
       purpose: query.purpose,
@@ -988,6 +991,19 @@ export class PersonalAssistantService {
       exactFields: [...exactFields],
       deviceId: actor.deviceId,
     }, this.now());
+    if (consent) return consent;
+    // Zero-config: the global PUBLIC built-ins (nearby/geocoding/weather/chargers) are consented by
+    // DEFAULT for their own purposes, so the assistant works out of the box worldwide without the
+    // user configuring or granting anything. This holds only until the user makes an EXPLICIT choice
+    // (grant or revoke) for that source, and never overrides a paused source. The enabled/paused
+    // switches and the separate device-location sharing still gate whether anything actually flows.
+    if (DEFAULT_CONSENTED_SOURCE_IDS.has(descriptor.id)
+      && descriptor.purposes.includes(query.purpose)
+      && !state.consents.some((row) => row.sourceId === descriptor.id)
+      && !(state.settings.pausedSourceIds || []).includes(descriptor.id)) {
+      return { id: `default:${descriptor.id}`, principalId: actor.principalId, sourceId: descriptor.id, purposes: [query.purpose], fields: [...fields], policyVersion: 1, grantedAt: this.now(), ...(actor.deviceId ? { deviceId: actor.deviceId } : {}) };
+    }
+    return undefined;
   }
 
   private suggestionActions(

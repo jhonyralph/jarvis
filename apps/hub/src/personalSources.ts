@@ -338,14 +338,25 @@ export function createPersonalSourceFactory(env: Env = process.env): (connection
   };
 }
 
+/** Public, worldwide, zero-config endpoints for the global built-in sources. The env vars only
+ *  OVERRIDE them (e.g. to point at a self-hosted stack). Nominatim/Valhalla default to localhost in
+ *  the core (self-host, per their usage policy), so we pass explicit PUBLIC fallbacks here for the
+ *  built-ins that make the assistant usable out of the box anywhere. Nominatim already sends a
+ *  compliant User-Agent; personal (single-user) volume respects the public policy. */
+const PUBLIC_NOMINATIM_URL = "https://nominatim.openstreetmap.org/";
+
 export function createBuiltInPersonalSources(env: Env = process.env): ContextSource<unknown>[] {
+  // Global, free, worldwide sources: ON by default with public endpoints — no setup, Brazil or abroad.
+  // Nearby places (Overpass/OSM), geocoding (Nominatim), weather (Open-Meteo) and chargers (Open
+  // Charge Map) all work with zero configuration; env vars only override the endpoints.
   const sources: ContextSource<unknown>[] = [
+    createNominatimSource({ endpoint: env.JARVIS_NOMINATIM_URL || PUBLIC_NOMINATIM_URL, email: env.JARVIS_NOMINATIM_EMAIL || undefined }),
     createOverpassNearbySource({ endpoint: env.JARVIS_OVERPASS_URL }),
     createOpenMeteoSource({ endpoint: env.JARVIS_OPEN_METEO_URL }),
+    createOpenChargeMapSource({ endpoint: env.JARVIS_OCM_URL, apiKey: env.JARVIS_OCM_API_KEY || undefined }),
   ];
-  if (env.JARVIS_NOMINATIM_URL) sources.push(createNominatimSource({ endpoint: env.JARVIS_NOMINATIM_URL, email: env.JARVIS_NOMINATIM_EMAIL }));
+  // Routing (Valhalla) has no free public instance — only self-hosted. Stays opt-in via env.
   if (env.JARVIS_VALHALLA_URL) sources.push(createValhallaSource({ endpoint: env.JARVIS_VALHALLA_URL }), createValhallaMatrixSource({ endpoint: env.JARVIS_VALHALLA_URL }));
-  if (env.JARVIS_OCM_API_KEY) sources.push(createOpenChargeMapSource({ endpoint: env.JARVIS_OCM_URL, apiKey: env.JARVIS_OCM_API_KEY }));
   if (env.JARVIS_MAPAS_CULTURAIS_URL) sources.push(createMapasCulturaisSource({ endpoint: env.JARVIS_MAPAS_CULTURAIS_URL, sourceId: "mapas-culturais", label: "Mapas Culturais", attribution: "Mapas Culturais", defaultTimeZone: env.JARVIS_CONTEXT_TIMEZONE || "America/Sao_Paulo" }));
   if (env.JARVIS_EVENTS_FEED_URL) { const common = { url: env.JARVIS_EVENTS_FEED_URL, sourceId: "open-events", label: "Open events", attribution: env.JARVIS_EVENTS_ATTRIBUTION || "Configured open event feed", defaultTimeZone: env.JARVIS_CONTEXT_TIMEZONE || "UTC" }; sources.push(env.JARVIS_EVENTS_FEED_FORMAT === "ics" ? createIcsEventSource(common) : env.JARVIS_EVENTS_FEED_FORMAT === "rss" ? createRssAtomEventSource(common) : createJsonLdEventSource(common)); }
   return sources;
