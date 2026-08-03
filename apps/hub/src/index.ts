@@ -2750,6 +2750,17 @@ const activityBuf = new Map<string, any[]>();
 // enfileirou saia. Cada item guarda texto + anexos (+ model/effort do envio original).
 type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; model?: string; effort?: string; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor };
 const queues = new Map<string, QueueItem[]>();
+// msgIds of queue items the user removed. A dequeue can land WHILE a flush is already mid-air: the
+// flush captures the items and clears the queue, then spends SECONDS in async routing (a CLI spawn)
+// before dispatching. During that window the item is no longer in the live queue, so index/msgId
+// removal there is a no-op — the captured copy would still be sent. Recording the cancellation here
+// lets the in-flight flush drop it right before dispatch. Bounded FIFO so it can't grow unbounded.
+const cancelledFlushMsgIds = new Set<string>();
+function markQueueItemCancelled(msgId?: string): void {
+  if (!msgId) return;
+  cancelledFlushMsgIds.add(msgId);
+  while (cancelledFlushMsgIds.size > 1000) { const first = cancelledFlushMsgIds.values().next().value; if (first === undefined) break; cancelledFlushMsgIds.delete(first); }
+}
 type PendingInboundTurn = QueueItem & { sessionId: string; ts: number };
 const PENDING_INBOUND_FILE = join(JARVIS_DIR, "pending-inbound-turns.json");
 const PENDING_INBOUND_TTL_MS = 6 * 60 * 60 * 1000;
@@ -2798,7 +2809,8 @@ function queueOf(runnerId: string, sid: string): QueueItem[] {
   return q;
 }
 function broadcastQueue(runnerId: string, sid: string): void {
-  broadcastOn(runnerId, sid, { t: "queue", runnerId, sessionId: sid, items: queueOf(runnerId, sid).map((q) => ({ text: q.text, atts: q.atts })) });
+  // msgId travels so the client can remove by STABLE id (index drifts if the queue changed).
+  broadcastOn(runnerId, sid, { t: "queue", runnerId, sessionId: sid, items: queueOf(runnerId, sid).map((q) => ({ text: q.text, atts: q.atts, msgId: q.msgId })) });
 }
 function enqueueChatTurn(runnerId: string, sid: string, item: QueueItem): void {
   queueOf(runnerId, sid).push(item);
@@ -3356,6 +3368,15 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
   const actor = policy?.actor ? { ...policy.actor, source: "queue" as const } : { source: "queue" as const };
   clearPendingAsk(rid || LOCAL_ID, sid);
   let dispatched = false;
+  // If a dequeue cancelled captured item(s) DURING the async preflight below (routing/personal context
+  // take seconds), we must NOT send what the user removed: abort this dispatch and re-queue only the
+  // survivors so they flush fresh (re-routed on the correct set). Cancelled items are simply dropped.
+  const abortIfCancelled = (): boolean => {
+    if (!items.some((it) => it.msgId && cancelledFlushMsgIds.has(it.msgId))) return false;
+    const survivors = items.filter((it) => !it.msgId || !cancelledFlushMsgIds.has(it.msgId));
+    if (survivors.length) { queues.set(key, [...survivors, ...queueOf(runnerId, sid)]); broadcastQueue(runnerId, sid); saveQueues(); pendingDispatchFlush.add(key); }
+    return true;
+  };
   try {
     if (rid) {
       if (rc?.ws) {
@@ -3367,6 +3388,7 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
         if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o roteamento");
         const personal = await personalContextForChat(rid, sid, text, actor, () => refreshSessionDispatchAuthorization(lease));
         if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
+        if (abortIfCancelled()) return; // usuário removeu o item durante o preflight — não despacha
         const turnId = (items.find((q) => q.msgId)?.msgId) || randomUUID();
         const ok = sendOwnedRunnerTurn(rc, sid, turnId, actor.userId || "local", { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, actor });
         if (!ok) throw new Error("não foi possível enviar a fila para a máquina");
@@ -3383,6 +3405,7 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
     const personal = await personalContextForChat(LOCAL_ID, sid, text, actor, () => refreshSessionDispatchAuthorization(lease));
     const _tPersonal = Date.now();
     if (!sessionDispatchAuthorized(lease)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
+    if (abortIfCancelled()) return; // usuário removeu o item durante o preflight — não despacha
     if (isNativeId(sid)) {
       let _tDispatch = 0;
       await deliverNativeTurn(null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts, actor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease), onDispatch: () => { dispatched = true; _tDispatch = Date.now(); } });
@@ -3396,6 +3419,7 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
     if (!dispatched) restoreItems();
     broadcastOn(runnerId, sid, { t: "error", message: String(e?.message ?? e) });
   } finally {
+    for (const it of items) if (it.msgId) cancelledFlushMsgIds.delete(it.msgId); // these ids did their job — keep the set bounded
     if (queueOf(runnerId, sid).length) pendingDispatchFlush.add(key);
     releaseSessionDispatch(lease);
   }
@@ -4747,7 +4771,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       replayActivity(ws, LOCAL_ID, msg.sessionId);
       replayRoute(ws, LOCAL_ID, msg.sessionId);
       sendPendingAsk(ws, LOCAL_ID, msg.sessionId);
-      send(ws, { t: "queue", runnerId: LOCAL_ID, sessionId: msg.sessionId, items: queueOf(LOCAL_ID, msg.sessionId).map((q) => ({ text: q.text, atts: q.atts })) });
+      send(ws, { t: "queue", runnerId: LOCAL_ID, sessionId: msg.sessionId, items: queueOf(LOCAL_ID, msg.sessionId).map((q) => ({ text: q.text, atts: q.atts, msgId: q.msgId })) });
       return;
     }
     if (msg.t === "open" && typeof msg.sessionId === "string") {
@@ -4767,7 +4791,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       replayActivity(ws, LOCAL_ID, s.id);
       replayRoute(ws, LOCAL_ID, s.id);
       sendPendingAsk(ws, LOCAL_ID, s.id);
-      send(ws, { t: "queue", runnerId: LOCAL_ID, sessionId: s.id, items: queueOf(LOCAL_ID, s.id).map((q) => ({ text: q.text, atts: q.atts })) });
+      send(ws, { t: "queue", runnerId: LOCAL_ID, sessionId: s.id, items: queueOf(LOCAL_ID, s.id).map((q) => ({ text: q.text, atts: q.atts, msgId: q.msgId })) });
       return;
     }
     if (msg.t === "new") {
@@ -5430,10 +5454,18 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       queueOf(rid, msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
       broadcastQueue(rid, msg.sessionId); saveQueues(); void maybeFlushQueue(rid, msg.sessionId, false); return;
     }
-    if (msg.t === "dequeue" && typeof msg.sessionId === "string" && typeof msg.index === "number") {
+    if (msg.t === "dequeue" && typeof msg.sessionId === "string" && (typeof msg.msgId === "string" || typeof msg.index === "number")) {
       const rid = activeRunner(ws);
       if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
-      const q = queueOf(rid, msg.sessionId); if (msg.index >= 0 && msg.index < q.length) q.splice(msg.index, 1);
+      const q = queueOf(rid, msg.sessionId);
+      // Prefer removal by STABLE msgId; index is a fallback (drifts if the queue changed since render).
+      if (typeof msg.msgId === "string" && msg.msgId) {
+        const i = q.findIndex((it) => it.msgId === msg.msgId);
+        if (i >= 0) q.splice(i, 1);
+        markQueueItemCancelled(msg.msgId); // even if not in the live queue — a flush may already hold it
+      } else if (typeof msg.index === "number" && msg.index >= 0 && msg.index < q.length) {
+        markQueueItemCancelled(q.splice(msg.index, 1)[0]?.msgId);
+      }
       broadcastQueue(rid, msg.sessionId); saveQueues(); return;
     }
     if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { const rid = activeRunner(ws); if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(scopedSessionKey(rid, msg.sessionId), []); broadcastQueue(rid, msg.sessionId); saveQueues(); return; }
@@ -5660,7 +5692,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         effort: typeof msg.effort === "string" ? msg.effort : undefined,
         auto: autoFlags(msg.auto),
         runnerId: rid !== LOCAL_ID ? rid : undefined,
-        msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
+        // Every queued item needs a stable id so it's removable by msgId + cancellable mid-flush.
+        // Voice sends carry no client msgId, so mint one here.
+        msgId: typeof msg.msgId === "string" && msg.msgId ? msg.msgId : randomUUID(),
         actor: { ...turnActor, source: "queue" },
       });
       void maybeFlushQueue(LOCAL_ID, sid, false);

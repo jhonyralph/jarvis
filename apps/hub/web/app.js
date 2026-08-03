@@ -3867,7 +3867,7 @@
           pendingNewSession=null;
         }
         else if(m.t==='message'){ const runner=frameRunner(m), msg=m.message||{}, sid=msg.sessionId||m.sessionId; if(msg.role==='assistant') clearRestorable(sid,runner); if(currentFrame(m,sid)){ if(msg.role==='assistant'){ clearNativeActivity(); clearPending(); if(strEl){ streamDone(msg.text||'',turnUsage,{sessionId:sid,runner}); onTurnEnd(sid,runner); return; } if(recentlyStreamedAssistant(msg.text||'',sid,runner))return; if(msg.activity&&msg.activity.length)clearLooseActivity(); } if(!(msg.role==='user'&&consumeOptimisticUser(sid,msg))) addMsg(msg); if(msg.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
-        else if(m.t==='queue'){ const runner=m.runnerId||selectedRunner(); queueBySession[sessionStateKey(m.sessionId,runner)]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[]})); if(m.sessionId===currentSession&&runner===currentSessionRunner) renderQueue(); }
+        else if(m.t==='queue'){ const runner=m.runnerId||selectedRunner(); queueBySession[sessionStateKey(m.sessionId,runner)]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[],msgId:x.msgId})); if(m.sessionId===currentSession&&runner===currentSessionRunner) renderQueue(); }
         else if(m.t==='auto_route'&&currentFrame(m)){ if(m.state==='started'){ status('busy','Escolhendo IA, modelo e esforço…'); }
           else if(m.state==='cancelled'){ status(''); clearPending(); onTurnEnd(m.sessionId,frameRunner(m)); }
           else { const d=m.decision||{}; status(''); if(d.agent)currentAgent=d.agent; sessDeclModel=d.model||null; sessDeclEffort=d.effort||null; lastRouteReason=d.reason||''; syncModelEffort(); if(d.fallback)toast('⚠ Automático: '+(d.reason||'usado o padrão compatível')); } }
@@ -4230,7 +4230,7 @@
         const tog=document.createElement('button'); tog.type='button'; tog.className='qtog'; tog.textContent=long?'▸':''; tog.title='Expandir'; if(!long)tog.style.visibility='hidden'; head.appendChild(tog);
         const t=document.createElement('span'); t.className='qtext'; t.textContent=it0.text||'(anexo)'; head.appendChild(t);
         if(atts.length){ const a=document.createElement('span'); a.className='qatt'; a.textContent=((imgs?'🖼️ '+imgs+' ':'')+(files?'📎 '+files:'')).trim(); head.appendChild(a); }
-        const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=(e)=>{ e.stopPropagation(); q.splice(i,1); renderQueue(); tx({t:'dequeue',sessionId:currentSession,index:i}); }; head.appendChild(x);
+        const x=document.createElement('button'); x.type='button'; x.className='qx'; x.title='Remover'; x.textContent='✕'; x.onclick=(e)=>{ e.stopPropagation(); const it=q[i]; q.splice(i,1); renderQueue(); tx({t:'dequeue',sessionId:currentSession,msgId:it&&it.msgId,index:i}); }; head.appendChild(x);
         it.appendChild(head);
         // corpo expansível: texto completo + os anexos que vão junto (imagem com miniatura)
         const body=document.createElement('div'); body.className='qbody hidden';
@@ -4252,7 +4252,7 @@
       if(text.startsWith('!')) pushBang(text.slice(1).split('\n')[0].trim());   // guarda no histórico do "!"
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; if(currentSession) delete attachmentsBySession[sessionStateKey(currentSession,currentSessionRunner)]; renderAttach();
       if(currentSession){ delete draftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
-      if(busy(currentSession)){ queueOf(currentSession).push({text:text||'(anexo)',atts}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),msgId:uid()}); return; }
+      if(busy(currentSession)){ const mid=uid(); queueOf(currentSession).push({text:text||'(anexo)',atts,msgId:mid}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),msgId:mid}); return; }
       setRestorable(currentSession,text,atts); sendMsgTo(currentSession,text||'(anexo)',atts); };
     E.stopBtn.onclick=()=>{
       stopTTS();   // parar o turno também silencia qualquer áudio em reprodução
