@@ -25,8 +25,9 @@ test("add auto-titles from the first user message and bumps count", () => {
   const d = dir();
   try {
     const s = new Store(DEF, d);
-    s.add("x", { role: "user", text: "Consertar o login quebrado no mobile", ts: 1 });
-    assert.equal(s.get("x")?.title, "Consertar o login quebrado no mobile".slice(0, 48));
+    const title = "Consertar o login quebrado no mobile com um titulo longo o suficiente para nao ser cortado no cabecalho\nmantendo o restante legivel";
+    s.add("x", { role: "user", text: title, ts: 1 });
+    assert.equal(s.get("x")?.title, title.replace(/\s+/g, " ").trim());
     s.add("x", { role: "assistant", text: "feito", ts: 2 });
     assert.equal(s.list()[0].count, 2);
   } finally { rmSync(d, { recursive: true, force: true }); }

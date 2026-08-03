@@ -34,6 +34,8 @@ const bridge = {
     captureSelectionScreenshot: (webContentsId, rect) =>
       ipcRenderer.invoke("jarvis:browser:captureSelectionScreenshot", webContentsId, rect),
     cancelGrab: (webContentsId) => ipcRenderer.invoke("jarvis:browser:cancelGrab", webContentsId),
+    startCoverage: (webContentsId) => ipcRenderer.invoke("jarvis:browser:startCoverage", webContentsId),
+    stopCoverage: (webContentsId) => ipcRenderer.invoke("jarvis:browser:stopCoverage", webContentsId),
   },
   // Auto-update surfaced IN the web UI: check on demand, listen to progress, install when the user
   // says so. Every method resolves to {state:"unsupported"} in a dev run / plain browser, so the UI

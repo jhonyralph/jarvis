@@ -8,6 +8,11 @@
   "description": "Agent + native-session core shared by the Hub and Runners",
   "dependencies": {
     "@jarvis/protocol": "*",
-    "node-pty": "^1.1.0"
+    "@modelcontextprotocol/client": "2.0.0",
+    "fast-xml-parser": "^5.10.1",
+    "ical.js": "^2.2.1",
+    "node-pty": "^1.1.0",
+    "opening_hours": "^3.14.0",
+    "undici": "^7.29.0"
   }
 }

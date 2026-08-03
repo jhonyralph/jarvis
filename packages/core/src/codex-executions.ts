@@ -129,7 +129,10 @@ export function parseCodexChildRollout(lines: string[], file = "rollout.jsonl", 
   const role = String(spawn?.agent_role || "") || undefined;
   return {
     id, parentId, depth: Math.max(1, Number(spawn?.depth) || 1), path: agentPath, nickname, role,
-    title: agentPath.split("/").filter(Boolean).at(-1) || nickname || role || "Subagente Codex",
+    // Rótulo do subagente: preferir o que ele FAZ (folha do agent_path, ex. "performance_diag", ou o
+    // papel "explorer"/"worker") ao apelido de pessoa que o Codex atribui ("Nietzsche", "Kant"…). O
+    // apelido só entra como último recurso, quando não há nenhum descritor de tarefa.
+    title: agentPath.split("/").filter(Boolean).at(-1) || role || nickname || "Subagente Codex",
     state,
     startedAt: Number(started?.started_at) > 0 ? Number(started.started_at) * 1000 : undefined,
     endedAt, summary, usage, activities, file, mtimeMs,

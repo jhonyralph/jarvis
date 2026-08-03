@@ -423,7 +423,7 @@ function pollTail(sid: string): void {
     if (!line.trim()) continue;
     for (const e of parseNativeEvents(line, t.claude)) {
       if (e.kind === "message") send({ t: "message", sessionId: sid, message: { role: e.role, text: e.text, ts: e.ts } });
-      else send({ t: "activity", sessionId: sid, name: e.name, summary: e.summary, path: e.path, adds: e.adds, dels: e.dels, rows: e.rows });
+      else send({ t: "activity", sessionId: sid, name: e.name, summary: e.summary, detail: e.detail, path: e.path, adds: e.adds, dels: e.dels, rows: e.rows, background: e.background });
     }
   }
 }
@@ -467,8 +467,18 @@ async function publishAgentCatalog(): Promise<void> {
   send({ t: "caps", agent: DEFAULT_AGENT, caps: descriptors, agents: available, agentUsage });
 }
 
+function nativeDisplayTitleForSession(s: any): string {
+  try {
+    const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+    const key = nid ? nativeIdForAgent(s.agent, nid) : null;
+    const h = key ? nativeHistory(key) : null;
+    return h?.title || s.title;
+  } catch {
+    return s.title;
+  }
+}
 function allSessions(): RunnerSession[] {
-  const own = store.list().map((s: any) => ({ id: s.id, title: s.title, agent: s.agent, cwd: s.cwd, updatedAt: s.updatedAt, source: "managed" as const, writable: true, started: s.count > 0 }));
+  const own = store.list().map((s: any) => ({ id: s.id, title: nativeDisplayTitleForSession(s), agent: s.agent, cwd: s.cwd, updatedAt: s.updatedAt, source: "managed" as const, writable: true, started: s.count > 0 }));
   const native = filterUnboundNativeSessions(listNative(), own, (s) => {
     try {
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
@@ -508,8 +518,34 @@ function pushExecutionEvents(reqId: string, rootExecutionId: string, afterSeq: n
     events: page.events, nextSeq: page.nextSeq });
 }
 
+const LIVE_EXECUTION_STATES = new Set(["queued", "running", "waiting_input"]);
+const NATIVE_EXECUTION_STALE_MS = 10 * 60_000;
+function reconcileNativeExecutions(sessionId: string): number {
+  if (!isNativeId(sessionId) || activeRuns.has(sessionId)) return 0;
+  const h = nativeHistory(sessionId);
+  if (!h) return 0;
+  let changed = 0;
+  const assistants = h.messages.filter((m) => m.role === "assistant" && m.text);
+  for (const snapshot of executionStore.rootsForSession(sessionId)) {
+    const root = snapshot.nodes.find((node) => node.executionId === snapshot.rootExecutionId);
+    if (!root || !LIVE_EXECUTION_STATES.has(root.state)) continue;
+    const started = root.startedAt || root.queuedAt || 0;
+    const reply = assistants.find((m) => m.ts >= started - 1000);
+    if (reply) {
+      executionStore.append(root.rootExecutionId, root.executionId, { kind: "summary", text: reply.text.slice(0, 20_000) });
+      executionStore.append(root.rootExecutionId, root.executionId, { kind: "state_changed", from: root.state, to: "succeeded", reason: "Resposta nativa reconciliada pelo transcript." });
+      changed++;
+    } else if (started && Date.now() - started > NATIVE_EXECUTION_STALE_MS) {
+      executionStore.append(root.rootExecutionId, root.executionId, { kind: "state_changed", from: root.state, to: "orphaned", reason: "Terminal nativo não observado; nenhum processo ativo rastreável no Jarvis." });
+      changed++;
+    }
+  }
+  return changed;
+}
+
 async function doHistory(reqId: string, sessionId: string): Promise<void> {
   if (isNativeId(sessionId)) {
+    reconcileNativeExecutions(sessionId);
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
     const live = pendingActivityReplay(executionStore, sessionId, h.messages);
@@ -525,7 +561,7 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
     const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
     const live = pendingActivityReplay(executionStore, s.id, all);
     send({
-      t: "history", reqId, sessionId: s.id, title: s.title, agent: s.agent, cwd: s.cwd,
+      t: "history", reqId, sessionId: s.id, title: nh?.title || s.title, agent: s.agent, cwd: s.cwd,
       writable: true, total: all.length, nativeId: nid, inputTokens: nh?.inputTokens, contextWindowTokens: nh?.contextWindowTokens, model: nh?.model || lastUsage?.model, effort: nh?.effort || lastUsage?.effort,
       messages: all.map((m: any) => ({
         role: m.role, text: m.text, ts: m.ts, agent: m.agent, speaker: m.speaker,
@@ -829,10 +865,11 @@ async function doSend(
   agentName?: string,
   cwd?: string,
   opts?: SendOpts,
-  attachments: Array<{ name: string; content: string; image?: boolean }> = [],
+  attachments: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }> = [],
   turnId?: string,
   speaker?: string,
   actor?: ContextActor,
+  contextPrefix?: string,
 ): Promise<void> {
   if (store.isHidden(sessionId)) { send({ t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
   if (turnId && !seenTurns.add(turnId)) { console.log(`[runner] turno duplicado ignorado (turnId=${turnId})`); return; }
@@ -853,22 +890,30 @@ async function doSend(
       if (!info) throw new Error("sessão nativa não encontrada");
       agent = agents.get(info.agent); streamAgent = agent.name; useCwd = info.cwd || CWD;
       const built = buildTurnAttachments(attachments, text, {
+        inlineMax: 48 * 1024,
+        persistMax: 128 * 1024,
         saveImage: (name, bytes) => {
           const dir = join(JDIR, "pasted"); mkdirSync(dir, { recursive: true });
           const p = join(dir, `${Date.now()}-${String(name || "img").replace(/[^\w.-]/g, "_")}`);
+          writeFileSync(p, bytes); return p;
+        },
+        saveFile: (name, bytes) => {
+          const dir = join(JDIR, "attachments"); mkdirSync(dir, { recursive: true });
+          const p = join(dir, `${Date.now()}-${String(name || "file").replace(/[^\w.-]/g, "_")}`);
           writeFileSync(p, bytes); return p;
         },
         previewImage: (name, bytes) => imageDataUrl(name, bytes),
       });
       const bang = await expandBang(built.agentText, useCwd);
       const cmdExp = bang ? null : expandCommand(built.agentText, useCwd, cmdAgentOf(agent.name));
-      const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : built.agentText);
+      const manifestAgentText = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : built.agentText);
+      const agentInput = contextPrefix ? `${contextPrefix}\n\n${manifestAgentText}` : manifestAgentText;
       const prior = (nativeHistory(sessionId)?.messages || []).filter((message) => message.role === "user" || message.role === "assistant");
       const manifest = buildContextManifest({
         turnId: effectiveTurnId, sessionId, runnerId: RUNNER_ID, agent: agent.name, cwd: useCwd, actor,
         continuity: agent.sessionContinuity?.() || "none",
         nativeSessionId: sessionId.includes(":") ? sessionId.slice(sessionId.indexOf(":") + 1) : undefined,
-        history: prior, showText: built.showText, agentText: agentInput, images: built.images, files: built.files,
+        history: prior, showText: built.showText, agentText: manifestAgentText, images: built.images, files: built.files,
       });
       try { contextManifests.append(manifest); } catch (error) { console.warn("[runner] manifesto de contexto não persistido:", String(error)); }
       send({ t: "context_manifest", sessionId, manifest });
@@ -882,16 +927,24 @@ async function doSend(
       const s = store.ensure(sessionId, agentName ? { agent: agentName, cwd: cwd || CWD } : undefined);
       agent = agents.get(s.agent); streamAgent = agent.name; useCwd = s.cwd || CWD;
       const built = buildTurnAttachments(attachments, text, {
+        inlineMax: 48 * 1024,
+        persistMax: 128 * 1024,
         saveImage: (name, bytes) => {
           const dir = join(JDIR, "pasted"); mkdirSync(dir, { recursive: true });
           const p = join(dir, `${Date.now()}-${String(name || "img").replace(/[^\w.-]/g, "_")}`);
+          writeFileSync(p, bytes); return p;
+        },
+        saveFile: (name, bytes) => {
+          const dir = join(JDIR, "attachments"); mkdirSync(dir, { recursive: true });
+          const p = join(dir, `${Date.now()}-${String(name || "file").replace(/[^\w.-]/g, "_")}`);
           writeFileSync(p, bytes); return p;
         },
         previewImage: (name, bytes) => imageDataUrl(name, bytes),
       });
       const bang = await expandBang(built.agentText, useCwd);
       const cmdExp = bang ? null : expandCommand(built.agentText, useCwd, cmdAgentOf(agent.name));
-      const agentInput = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : built.agentText);
+      const manifestAgentText = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : built.agentText);
+      const agentInput = contextPrefix ? `${contextPrefix}\n\n${manifestAgentText}` : manifestAgentText;
       const ctx: TurnCtx = {
         ensure: (sid) => store.ensure(sid),
         resolveAgentName: (name) => agents.get(name).name,
@@ -919,7 +972,7 @@ async function doSend(
         afterStored: (sid, storedTurnId) => send({ t: "activity_committed", sessionId: sid, turnId: storedTurnId }),
       };
       await runManagedTurn(ctx, sessionId, {
-        showText: built.showText, agentText: agentInput, model: opts?.model, effort: opts?.effort, turnId: effectiveTurnId,
+        showText: built.showText, agentText: agentInput, manifestAgentText, model: opts?.model, effort: opts?.effort, turnId: effectiveTurnId,
         actor, speaker, images: built.images, files: built.files,
         onError: (message) => {
           if (!(ctrl.signal.aborted || message === ABORTED)) send({ t: "error", message });
@@ -1111,6 +1164,10 @@ function connect(): void {
         return;
       }
       if (m.t === "send" && typeof m.sessionId === "string") {
+        if (m.contextPrefix !== undefined && (typeof m.contextPrefix !== "string" || m.contextPrefix.length > 32_768)) {
+          send({ t: "error", message: "contexto pessoal inválido ou acima do limite" });
+          return;
+        }
         await doSend(
           m.sessionId, String(m.text ?? ""), m.agent, m.cwd,
           { model: m.model ?? m.opts?.model, effort: m.effort ?? m.opts?.effort },
@@ -1118,6 +1175,7 @@ function connect(): void {
           typeof m.turnId === "string" ? m.turnId : undefined,
           typeof m.speaker === "string" ? m.speaker : undefined,
           m.actor,
+          m.contextPrefix,
         );
         return;
       }
@@ -1225,7 +1283,20 @@ function connect(): void {
         else updateInProgress = false;
         return;
       }
-      if ((m.t === "cancel" || m.t === "stop") && typeof m.sessionId === "string") { runAborts.get(m.sessionId)?.abort(); return; }
+      if ((m.t === "cancel" || m.t === "stop") && typeof m.sessionId === "string") {
+        const ctrl = runAborts.get(m.sessionId);
+        const active = activeRuns.has(m.sessionId);
+        let executionCancels = 0;
+        for (const snapshot of executionStore.rootsForSession(m.sessionId)) {
+          const root = snapshot.nodes.find((node) => node.executionId === snapshot.rootExecutionId);
+          if (!root || !["queued", "running", "waiting_input"].includes(root.state)) continue;
+          const executionCtrl = executionAborts.get(snapshot.rootExecutionId);
+          if (executionCtrl && !executionCtrl.signal.aborted) { executionCtrl.abort(); executionCancels++; }
+        }
+        if (ctrl) ctrl.abort();
+        send({ t: "cancel_result", sessionId: m.sessionId, active: !!ctrl || active || executionCancels > 0 });
+        return;
+      }
     } catch (e: any) { send({ t: "error", reqId: m?.reqId, message: String(e?.message ?? e) }); }
   });
   sock.on("close", () => {
@@ -1286,6 +1357,7 @@ try {
   }
   if (n) console.log(`[runner] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`);
 } catch { /* ignore */ }
+try { let n = 0; for (const meta of listNative()) n += reconcileNativeExecutions(meta.id); if (n) console.log(`[runner] reconciliei ${n} execução(ões) nativas sem terminal observado`); } catch { /* ignore */ }
 connect();
 // keep native/managed session list fresh (native sessions can change out-of-band)
 setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) pushSessions(); }, 6000);

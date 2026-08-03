@@ -52,6 +52,15 @@ test("invites: owner mints, a device redeems as member with a per-runner grant",
   assert.throws(() => auth.redeem(code, "reuse"), /inválido|expirado/, "an invite is single-use");
 });
 
+test("startup pruning returns and removes expired device identities", () => {
+  const expiring = auth.listDevices().find((device) => device.role === "member")!;
+  assert.ok(expiring.expiresAt);
+  const removed = auth.pruneExpiredDevices(expiring.expiresAt! + 1);
+  assert.deepEqual(removed, [{ id: expiring.id, userId: expiring.userId }]);
+  assert.equal(auth.listDevices().some((device) => device.id === expiring.id), false);
+  assert.equal(auth.listDevices().some((device) => device.role === "owner"), true);
+});
+
 test("owner sees all runners via the '*' wildcard", () => {
   const owner = auth.listDevices().find((d) => d.role === "owner")!;
   assert.equal(auth.allowedRunners(owner.userId), "*");

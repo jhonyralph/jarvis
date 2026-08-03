@@ -42,6 +42,20 @@ test("upsert replaces by id; removeSession drops entries", () => {
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test("removeSession can delete one runner without erasing the same session id on another", () => {
+  const d = mkdtempSync(join(tmpdir(), "jarvis-mem-"));
+  try {
+    const m = new MemoryStore(d);
+    m.upsert(entry("local-a", [1, 0], { sessionId: "shared", runnerId: "local" }));
+    m.upsert(entry("remote-a", [1, 0], { sessionId: "shared", runnerId: "runner-a" }));
+    m.removeSession("shared", "runner-a");
+
+    assert.deepEqual(m.search([1, 0], { runnerIds: ["local"] }).map((hit) => hit.id), ["local-a"]);
+    assert.deepEqual(m.search([1, 0], { runnerIds: ["runner-a"] }), []);
+    assert.equal(new MemoryStore(d).size(), 1, "the scoped removal is durable");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 test("filters by cwd and agent", () => {
   const d = mkdtempSync(join(tmpdir(), "jarvis-mem-"));
   try {

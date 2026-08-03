@@ -2,7 +2,7 @@
 
 Self-hosted, **agent-agnostic**, voice-first control plane for coding-agent CLIs.
 Drive them from **your phone or any desktop**, with
-a **local voice** — and keep every byte on your own machines.
+a **local voice by default** — and keep control-plane data on your own machines.
 
 > Codename `jarvis` = the whole control plane, not just the voice.
 
@@ -14,7 +14,7 @@ else's servers. This is the opposite:
 - **Control-plane data stays local.** Sessions, transcripts and audio stay on your
   machines, as plain files under `~/.jarvis`. The network is **Tailscale only**
   by default — a private WireGuard mesh, nothing exposed publicly.
-- **Voice is local** (Piper TTS on your hardware). No ElevenLabs.
+- **Voice is local by default** (Piper TTS on your hardware). OpenAI TTS is optional for richer voice profiles when you configure your own API key. No ElevenLabs.
 - The only application traffic leaving your machine is the **chosen provider
   CLI's own inference/integrations** — subject to that provider's terms and config.
 - **It reads supported native sessions.** Claude Code (`~/.claude`) and Codex
@@ -53,7 +53,7 @@ Everything external enters through a swappable adapter (`AgentAdapter`,
 
 | | |
 |---|---|
-| **Talk to it** | Push-to-talk or wake word; replies spoken back with a local voice. Long replies are summarised aloud instead of read out in full. |
+| **Talk to it** | Push-to-talk or wake word; replies spoken back with Piper local voices or optional OpenAI TTS voice profiles. Long replies are summarised aloud instead of read out in full. |
 | **Your real sessions** | Reads and continues native Claude Code and Codex sessions. Other adapters expose resume only when their CLI provides a verified session id. |
 | **Many machines** | Switch machines in the UI; each runs on its own hardware and agent login. |
 | **See the work** | Live tool activity (editing/creating/reading), sub-agents, `+3 −5` line counts, inline diffs, and a file viewer when the provider publishes those events. Native/managed child nodes also get a live inline card linked to the durable **Trabalhos** tree. |
@@ -76,8 +76,9 @@ Everything external enters through a swappable adapter (`AgentAdapter`,
   [docs/agent-parity-matrix.md](docs/agent-parity-matrix.md).
 - **[Tailscale](https://tailscale.com)** (recommended) so your devices reach the
   Hub privately.
-- Voice (optional): Python + [Piper](https://github.com/rhasspy/piper) — see
-  [`services/voice`](services/voice).
+- Voice (optional): Python + [Piper](https://github.com/rhasspy/piper) for local/offline TTS — see
+  [`services/voice`](services/voice). Optional OpenAI TTS profiles require `OPENAI_API_KEY` or
+  `JARVIS_OPENAI_API_KEY`.
 
 ## Install
 
@@ -335,7 +336,9 @@ the repo. Owner-editable execution settings are additionally persisted in
 | `JARVIS_CODEX_PRICE_IN` / `_CACHED` / `_OUT` | estimativa Jarvis v1 | USD por 1M tokens para o equivalente estimado do Codex; defina `JARVIS_CODEX_PRICING_VERSION` para identificar a tabela usada |
 | `JARVIS_AUTH` | `on` | Device auth. **Only** turn this off on a trusted private network |
 | `JARVIS_CWD` | process cwd | Default working directory for agents |
-| `JARVIS_VOICE` | — | Piper voice model |
+| `JARVIS_VOICE` | — | Voice id. Piper models use ids like `en_GB-alan-medium`; optional OpenAI profiles use ids like `openai:jarvis-br` |
+| `OPENAI_API_KEY` / `JARVIS_OPENAI_API_KEY` | — | Enables optional OpenAI TTS voices in the voice catalog |
+| `JARVIS_OPENAI_TTS_MODEL` | `gpt-4o-mini-tts` | OpenAI TTS model used for optional cloud voices |
 | `JARVIS_SUMMARY_MODEL` | `haiku` | Model for automatic routing, spoken summaries and digest/status (cheap on purpose) |
 | `JARVIS_HISTORY_CAP` | `120` | Messages sent when opening a session |
 | `JARVIS_SESSION_COST_CAP` | `0` | Per-session **billed USD** cap (`0` = off). Estimates and subscription usage stay visible but do not masquerade as invoice spend or trigger this cap |
@@ -367,8 +370,10 @@ The Hub also answers an unauthenticated `GET /health` (`/healthz`) on the UI por
 returning `{ok,uptime,runners}` — for a monitor, `tailscale serve` health, or a load
 balancer. It leaks only coarse status (no hostnames/ids).
 
-More knobs (rate limits, TTS tuning, wake word, voice gate) are read straight
-from the environment — `grep -r JARVIS_ apps packages` for the full list.
+The complete generated catalog is in [docs/environment.md](docs/environment.md),
+with requirement, scope, default, format, secrecy, provider, cost and every
+detected use. Start from [.env.example](.env.example) and validate repository
+drift with `node scripts/environment-catalog.mjs --check`.
 
 ## Troubleshooting
 

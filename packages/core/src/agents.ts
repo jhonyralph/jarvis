@@ -1,13 +1,12 @@
 /**
  * Agnostic agent layer. Adding an agent = one adapter + register it; routing never
- * changes. capabilities() is DISCOVERED AT RUNTIME (no hardcoded lists):
- *   - claude-code: GET https://api.anthropic.com/v1/models (OAuth token from
- *     ~/.claude/.credentials.json). Efforts = the --effort ladder (low..max) plus
- *     "ultracode" (a Claude-Code menu mode = xhigh + orchestration; mapped to
- *     --effort xhigh when sent). Models are PER-family; efforts shared.
+ * changes. capabilities() is discovered from the provider/CLI surface that actually runs:
+ *   - claude-code: the picker exposes Claude Code aliases only; Anthropic's Models API is used only
+ *     to annotate context windows, not to dump every API model into the CLI picker.
  *   - codex: `codex debug models` (JSON catalog); efforts are PER-MODEL
- *     (supported_reasoning_levels); falls back to ~/.codex/models_cache.json.
- * Results cache ~1h; on any failure we fall back to a small pinned list.
+ *     (supported_reasoning_levels). If live discovery fails, the picker is empty/config-only; stale
+ *     ~/.codex/models_cache.json and pinned mirrors are deliberately ignored.
+ * Results cache ~1h; an explicit sync busts the cache.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { platform, homedir, tmpdir } from "node:os";
@@ -47,6 +46,22 @@ const claudeInputContext = (u: any): number | undefined => {
   const n = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
   return n || undefined;
 };
+function cliErrorMessage(value: unknown, fallback: string): string {
+  const raw = String(value || fallback).trim();
+  if (!raw) return fallback;
+  if (!raw.includes("\n") && raw.length <= 2_000) return raw;
+  for (const line of raw.split(/\r?\n/).reverse()) {
+    if (!line.trim().startsWith("{")) continue;
+    try {
+      const o = JSON.parse(line);
+      if (o?.type === "result" && o.result) return String(o.result).slice(0, 2_000);
+      const text = o?.message?.content?.find?.((b: any) => b?.type === "text" && b.text)?.text;
+      if (text) return String(text).slice(0, 2_000);
+    } catch { /* keep scanning */ }
+  }
+  const api = raw.match(/API Error:[^\r\n]+/i)?.[0];
+  return (api || raw).slice(0, 2_000);
+}
 
 /** For a file tool_use, extract the real path, +/- counts and this edit's diff rows, live. */
 function fileToolStat(name: string, input: any): { path?: string; adds?: number; dels?: number; rows?: unknown[] } {
@@ -110,6 +125,7 @@ export interface AgentCaps {
   models: ModelInfo[];
   defaultModel?: string;
   autoModel?: boolean;
+  modelMigrations?: Record<string, string>;
 }
 
 export interface SendOpts {
@@ -126,6 +142,11 @@ export interface SendOpts {
   /** Fail-closed execution boundary used only by Jarvis-managed child workflows. Adapters must
    * reject this option unless they can enforce the requested workspace policy for this invocation. */
   managed?: { workspaceAccess: "read_only" | "isolated_write"; preventCommits: true };
+  /** Skip loading MCP servers for this call. Set by Jarvis's internal analysis oneShots (routing,
+   * summary, decision-detection…): they are pure text-in/text-out and never invoke MCP tools, so
+   * paying the MCP server startup/handshake on every one is wasted latency + cost. Adapters that
+   * can't honor it ignore it (best-effort). */
+  noMcp?: boolean;
 }
 
 type ManagedInvocation = NonNullable<SendOpts["managed"]>;
@@ -219,9 +240,17 @@ export interface ModelRemap { model?: string; effort?: string; changed: boolean;
 /** Keep a pinned (model, effort) if it still exists in the fresh catalog, otherwise return the
  *  closest surviving replacement by family. Leaves "auto" (no model) and an empty catalog untouched. */
 export function resolveClosestModel(oldModel: string | undefined, oldEffort: string | undefined, caps: AgentCaps): ModelRemap {
-  const models = caps.models || [];
+  const models = (caps.models || []).filter((m) => m.selectable !== false);
   if (!oldModel) return { model: oldModel, effort: oldEffort, changed: false };
   if (!models.length) return { model: oldModel, effort: oldEffort, changed: false, reason: "catálogo vazio — mantido" };
+  const migrated = caps.modelMigrations?.[oldModel];
+  if (migrated) {
+    const target = models.find((m) => m.id === migrated);
+    if (target) {
+      const effort = closestEffort(oldEffort, target);
+      return { model: target.id, effort, changed: target.id !== oldModel || effort !== oldEffort, reason: `migração do catálogo: ${oldModel} → ${target.id}` };
+    }
+  }
   const exact = models.find((m) => m.id === oldModel);
   if (exact) {
     const effort = closestEffort(oldEffort, exact);
@@ -625,7 +654,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (this.capsCache && Date.now() - this.capsCache.at < 3_600_000) return this.capsCache.caps;
     // --effort ladder (low..max) + Claude-Code "ultracode" pseudo-level.
     const efforts = ["low", "medium", "high", "xhigh", "max", "ultracode"];
-    let models: ModelInfo[];
+    const aliases = ["fable", "opus", "sonnet", "haiku"];
+    const aliasModels = (contextByAlias: Record<string, number | undefined> = {}): ModelInfo[] =>
+      aliases.map((id) => ({
+        id,
+        label: id,
+        efforts,
+        defaultEffort: "high",
+        context: contextByAlias[id],
+        effortsVerified: false,
+        contextVerified: Number.isFinite(contextByAlias[id]),
+        source: "cli" as const,
+      }));
+    let models: ModelInfo[] = aliasModels();
     try {
       const token = JSON.parse(readFileSync(join(homedir(), ".claude", ".credentials.json"), "utf8"))?.claudeAiOauth?.accessToken;
       if (!token) throw new Error("no token");
@@ -633,19 +674,18 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         headers: { authorization: `Bearer ${token}`, "anthropic-version": "2023-06-01", "anthropic-beta": "oauth-2025-04-20" },
       });
       const json: any = await res.json();
-      models = (json?.data || []).map((m: any) => ({ id: m.id, label: m.display_name, efforts, defaultEffort: "high", context: m.max_input_tokens, effortsVerified: false, contextVerified: Number.isFinite(m.max_input_tokens) }));
-      // family aliases up front (opus/sonnet/haiku/fable resolve to the newest of each);
-      // give each alias the largest context window seen in its family.
-      const famCtx = (fam: string) => { const c = models.filter((m) => m.id.includes(fam)).map((m) => m.context || 0); return c.length ? Math.max(...c) : undefined; };
-      models = [
-        ...["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high", context: famCtx(id), effortsVerified: false, contextVerified: !!famCtx(id) })),
-        ...models,
-      ];
-      if (models.length <= 4) throw new Error("empty models");
-    } catch {
-      models = ["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, label: id, efforts, defaultEffort: "high", effortsVerified: false, contextVerified: false }));
+      const apiModels: ModelInfo[] = (json?.data || []).map((m: any) => ({ id: m.id, label: m.display_name, efforts, defaultEffort: "high", context: m.max_input_tokens, effortsVerified: false, contextVerified: Number.isFinite(m.max_input_tokens), source: "api" as const }));
+      const famCtx = (fam: string) => {
+        const c = apiModels.filter((m) => m.id.includes(fam)).map((m) => m.context || 0);
+        return c.length ? Math.max(...c) : undefined;
+      };
+      models = aliasModels(Object.fromEntries(aliases.map((id) => [id, famCtx(id)])));
+    } catch { /* keep the CLI alias catalog without API annotations */ }
+    const configured = safeIdent(process.env.ANTHROPIC_MODEL);
+    if (configured && !models.some((m) => m.id === configured)) {
+      models.unshift({ id: configured, label: configured, efforts, defaultEffort: "high", effortsVerified: false, contextVerified: false, source: "config" });
     }
-    const caps: AgentCaps = { models, defaultModel: process.env.ANTHROPIC_MODEL || "opus" };
+    const caps: AgentCaps = { models, defaultModel: configured || "opus" };
     this.capsCache = { at: Date.now(), caps };
     return caps;
   }
@@ -678,7 +718,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         commands: true, skills: true, mcp: true, oneShot: true, remote: true,
         modelCatalog: "runtime", modelControl: "per_turn", sessionContinuity: "native_id", toolLifecycle: "start_only",
       },
-      caps, source: "api",
+      caps, source: "cli",
     });
   }
 
@@ -722,7 +762,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       let usage: AgentReply["usage"];
       let lastMsgUsage: any;
       const taskIds = new Set<string>();
+      // Timing: the "result" NDJSON line carries the FINAL text/cost — everything a caller needs.
+      // Whatever happens between that line and the OS process actually closing (runStream() only
+      // resolves on close) is pure CLI-shutdown tail (MCP client teardown, telemetry flush, etc.)
+      // with zero information value to the turn. We still await the real close below (unchanged
+      // behavior — see the note before shipping an early-resolve optimization), but log the split
+      // so a slow "termina rápido mas ainda demora para fechar" report can be diagnosed with numbers
+      // instead of guesses.
+      const tSpawn = Date.now();
+      let tFirstLine = 0, tResult = 0;
       await runStream(this.bin, args, cwd, text, (line) => {
+        if (!tFirstLine) tFirstLine = Date.now();
         let o: any;
         try { o = JSON.parse(line); } catch { return; }
         if (o.type === "system" && o.subtype === "init" && o.session_id) {
@@ -762,10 +812,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             }
           }
           if (o.result && !finalText) finalText = o.result;
-          if (o.is_error) streamError = o.result || "claude error";
+          if (o.is_error) streamError = cliErrorMessage(o.result, "claude error");
           usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model };
+          tResult = Date.now();
         }
       }, opts?.signal);
+      const tClose = Date.now();
+      if (tResult) {
+        const tail = tClose - tResult;
+        // A resposta (texto+custo) já estava pronta em tResult; result->fechou é só o encerramento
+        // do processo do CLI. Um valor alto aqui é o sinal exato de "terminou rápido mas ainda ficou
+        // rodando" — o marcador ⚠ facilita achar essas linhas em hub.log com um grep.
+        console.warn(`[claude-cli]${tail > 2000 ? " ⚠" : ""} spawn->1a-linha=${tFirstLine ? tFirstLine - tSpawn : -1}ms spawn->result=${tResult - tSpawn}ms result->fechou=${tail}ms total=${tClose - tSpawn}ms (sessão ${sessionId})`);
+      }
       if (streamError) throw new Error(streamError);
       if (sessionOut) this.bindSession(sessionId, sessionOut);
       return { text: finalText, usage };
@@ -773,7 +832,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     const raw = await run(this.bin, args, cwd, text, opts?.signal);
     const json = JSON.parse(raw);
-    if (json.is_error) throw new Error(json.result || "claude error");
+    if (json.is_error) throw new Error(cliErrorMessage(json.result, "claude error"));
     if (json.session_id) this.bindSession(sessionId, json.session_id);
     return {
       text: json.result ?? "",
@@ -785,11 +844,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     validateModelSelection(await this.capabilities(), opts);
     const args = ["-p", "--output-format", "json"]; // prompt via stdin — see send()
     if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
+    if (opts?.noMcp) args.push("--strict-mcp-config"); // no --mcp-config ⇒ load zero MCP servers
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
     const raw = await run(this.bin, args, ONESHOT_CWD, text); // stateless + isolated cwd (excluded from native list)
     const json = JSON.parse(raw);
-    if (json.is_error) throw new Error(json.result || "claude error");
+    if (json.is_error) throw new Error(cliErrorMessage(json.result, "claude error"));
     return { text: json.result ?? "", usage: { costUsd: json.total_cost_usd, inputTokens: claudeInputContext(json.usage), contextTokens: claudeInputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model } };
   }
 }
@@ -1019,37 +1079,31 @@ export class CodexAdapter implements AgentAdapter {
 
   async capabilities(): Promise<AgentCaps> {
     if (this.capsCache && Date.now() - this.capsCache.at < 3_600_000) return this.capsCache.caps;
-    const mapModels = (arr: any[]): ModelInfo[] =>
-      (arr || [])
-        .filter((m) => m.visibility === "list")
-        .map((m) => ({ id: m.slug, label: m.display_name, efforts: (m.supported_reasoning_levels || []).map((e: any) => e.effort), defaultEffort: m.default_reasoning_level, context: m.context_window || m.max_context_window, effortsVerified: true, contextVerified: !!(m.context_window || m.max_context_window) }));
+    const mapCatalog = (arr: any[]): { models: ModelInfo[]; modelMigrations: Record<string, string> } => {
+      const items = arr || [];
+      const modelMigrations = Object.fromEntries(items
+        .filter((m) => m?.slug && m?.upgrade?.model)
+        .map((m) => [m.slug, m.upgrade.model]));
+      const models = items
+        .filter((m) => m.visibility === "list" && !m.upgrade)
+        .map((m) => ({ id: m.slug, label: m.display_name, efforts: (m.supported_reasoning_levels || []).map((e: any) => e.effort), defaultEffort: m.default_reasoning_level, context: m.context_window || m.max_context_window, effortsVerified: true, contextVerified: !!(m.context_window || m.max_context_window), source: "cli" as const }))
+        .filter((m) => !!m.id);
+      return { models, modelMigrations };
+    };
+    const cfgModel = codexConfigModel();
     let models: ModelInfo[] = [];
+    let modelMigrations: Record<string, string> = {};
     try {
       const out = await run("codex", ["debug", "models"], homedir(), "");
-      models = mapModels(JSON.parse(out.slice(out.indexOf("{"))).models);
+      ({ models, modelMigrations } = mapCatalog(JSON.parse(out.slice(out.indexOf("{"))).models));
     } catch {
-      try {
-        const cache = JSON.parse(readFileSync(join(homedir(), ".codex", "models_cache.json"), "utf8"));
-        models = mapModels(cache.models);
-      } catch {
-        // Pinned mirror of the live catalog (verified via `codex debug models`, jul/2026): the 5
-        // visibility:list models, with their real per-model efforts, default efforts and context.
-        const eff = ["low", "medium", "high", "xhigh"];
-        models = [
-          { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: [...eff, "max", "ultra"], defaultEffort: "low", context: 272000, effortsVerified: true, contextVerified: true },
-          { id: "gpt-5.6-terra", label: "GPT-5.6-Terra", efforts: [...eff, "max", "ultra"], defaultEffort: "medium", context: 272000, effortsVerified: true, contextVerified: true },
-          { id: "gpt-5.6-luna", label: "GPT-5.6-Luna", efforts: [...eff, "max"], defaultEffort: "medium", context: 272000, effortsVerified: true, contextVerified: true },
-          { id: "gpt-5.5", label: "GPT-5.5", efforts: eff, defaultEffort: "medium", context: 272000, effortsVerified: true, contextVerified: true },
-          { id: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark", efforts: eff, defaultEffort: "high", context: 128000, effortsVerified: true, contextVerified: true },
-        ];
-      }
+      if (cfgModel) models = [{ id: cfgModel, label: cfgModel, efforts: [], effortsVerified: false, contextVerified: false, source: "config" }];
     }
     // The UI always resolves a concrete model and passes `-m` — so THIS default is what actually
-    // runs. Honor the user's own `model = "…"` in ~/.codex/config.toml when it names a known model
-    // (same choice codex itself would make); otherwise the catalog's priority order (models[0]).
-    const cfgModel = codexConfigModel();
+    // runs. Honor the user's own `model = "…"` in ~/.codex/config.toml when it names a live or
+    // explicitly configured model; otherwise leave the picker on auto instead of inventing a fallback.
     const defaultModel = (cfgModel && models.find((m) => m.id === cfgModel)) ? cfgModel : undefined;
-    const caps: AgentCaps = { models, defaultModel, autoModel: !defaultModel };
+    const caps: AgentCaps = { models, defaultModel, autoModel: !defaultModel, modelMigrations };
     this.capsCache = { at: Date.now(), caps };
     return caps;
   }

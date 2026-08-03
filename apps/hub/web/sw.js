@@ -8,8 +8,8 @@
 // Everything else (POST, /pasted/ images, cross-origin) is passed straight through, untouched.
 // Bumped v1 → v2 when the app JS moved out of index.html into /app.js: the shell now MUST cache the
 // external script or an offline open would render an empty page.
-const CACHE = "jarvis-shell-v3";
-const SHELL = ["/", "/app.js", "/manifest.webmanifest", "/icon.svg", "/vendor/xterm/xterm.css", "/vendor/xterm/xterm.js", "/vendor/xterm/addon-fit.js"];
+const CACHE = "jarvis-shell-v5";
+const SHELL = ["/", "/app.js", "/manifest.webmanifest", "/icon.svg", "/vendor/xterm/xterm.css", "/vendor/xterm/xterm.js", "/vendor/xterm/addon-fit.js", "/vendor/context/maplibre-gl.css", "/vendor/context/maplibre-gl.mjs", "/vendor/context/maplibre-gl-shared.mjs", "/vendor/context/maplibre-gl-worker.mjs", "/vendor/context/pmtiles.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
@@ -90,7 +90,7 @@ self.addEventListener("push", (event) => {
       body: d.body || "",
       tag: d.tag || "jarvis",
       renotify: true,
-      data: { sid: d.sid || "" },
+      data: { sid: d.sid || "", url: d.url || "" },
     });
   })());
 });
@@ -98,7 +98,12 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const sid = event.notification.data && event.notification.data.sid;
-  const url = self.registration.scope + (sid ? "#" + encodeURIComponent(sid) : "");
+  const requested = event.notification.data && event.notification.data.url;
+  let url = self.registration.scope + (sid ? "#" + encodeURIComponent(sid) : "");
+  try {
+    const candidate = new URL(requested || url, self.registration.scope);
+    if (candidate.origin === new URL(self.registration.scope).origin) url = candidate.href;
+  } catch (e) { /* keep the scoped fallback */ }
   event.waitUntil((async () => {
     const cls = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const c of cls) {

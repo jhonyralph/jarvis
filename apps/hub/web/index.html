@@ -13,14 +13,18 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Jarvis" />
   <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
+  <link rel="stylesheet" href="/vendor/context/maplibre-gl.css" />
+  <script src="/vendor/context/pmtiles.js" defer></script>
   <style>
-    :root { color-scheme: light dark; --bg:#0b0d10; --side:#0e1216; --panel:#161b21; --me:#2563eb; --bot:#1b2127; --text:#e6e9ec; --mut:#8b98a5; --line:#ffffff14; --code:#0d1117; --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px); --safe-left:env(safe-area-inset-left,0px); --safe-right:env(safe-area-inset-right,0px); --safe-height:calc(100dvh - var(--safe-top) - var(--safe-bottom)); }
-    html.native-shell { --safe-top:max(env(safe-area-inset-top,0px),28px); --safe-bottom:max(env(safe-area-inset-bottom,0px),12px); }
+    :root { color-scheme: light dark; --bg:#0b0d10; --side:#0e1216; --panel:#161b21; --me:#2563eb; --bot:#1b2127; --text:#e6e9ec; --mut:#8b98a5; --line:#ffffff14; --code:#0d1117; --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px); --safe-left:env(safe-area-inset-left,0px); --safe-right:env(safe-area-inset-right,0px); --app-height:100dvh; --composer-height:84px; --safe-height:calc(var(--app-height) - var(--safe-top) - var(--safe-bottom)); }
+    html.native-shell { --safe-top:max(env(safe-area-inset-top,0px),28px); --safe-bottom:max(env(safe-area-inset-bottom,0px),16px); }
+    html.native-android { --safe-bottom:max(env(safe-area-inset-bottom,0px),56px); }
     html.native-shell .snav[data-goto="celular"], html.native .snav[data-goto="celular"],
     html.native-shell .spanel[data-panel="celular"], html.native .spanel[data-panel="celular"] { display:none !important; }
     * { box-sizing: border-box; }
-    body { margin:0; padding-top:var(--safe-top); font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); height:100dvh; overflow:hidden; }
-    #app { display:flex; height:100%; }
+    html { width:100%; height:100%; overflow:hidden; }
+    body { margin:0; padding-top:var(--safe-top); font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); height:var(--app-height); overflow:hidden; }
+    #app { display:flex; width:100%; height:100%; min-width:0; overflow:hidden; }
     /* A lateral era UMA coluna rolável: com 25 recentes + 60 arquivos dava 3328px num viewport de
        800 — pra ver Arquivos você rolava por cima dos Recentes, e o ⚙ ficava a 2500px de scroll.
        Agora a lateral não rola: cada lista rola dentro de si, e as duas ficam visíveis juntas. */
@@ -45,9 +49,10 @@
     .link .qic { margin-right:5px; }
     .spacer { flex:1; }
     main { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
-    header { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); }
-    header #title { font-weight:600; overflow:hidden; white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; line-height:1.25; min-width:0; flex:1 1 auto; cursor:pointer; }
-    #dlgTitle { white-space:pre-line; }
+    header { display:flex; align-items:center; gap:8px; padding:8px 14px; min-height:48px; border-bottom:1px solid var(--line); overflow:hidden; }
+    header #title { height:32px; line-height:32px; font-weight:600; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; min-width:0; flex:1 1 auto; cursor:pointer; }
+    header > .spacer { flex:1 1 8px; min-width:8px; }
+    #dlgTitle { white-space:pre-line; overflow-wrap:anywhere; max-height:min(58dvh,520px); overflow:auto; }
     .dot { width:9px;height:9px;border-radius:50%;background:#f43f5e; flex:none; }
     .dot.on { background:#22c55e; }
     select, button.ghost, .chip { background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:9px; padding:6px 8px; font:inherit; font-size:12.5px; }
@@ -103,7 +108,7 @@
     .strflow .strtext { background:none; padding:0; min-width:0; max-width:100%; overflow-wrap:anywhere; }
     .strtool { display:flex; flex-direction:column; font-size:12.5px; color:#cbd5e1; background:#ffffff0d; border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow-wrap:anywhere; min-width:0; max-width:100%; overflow:hidden; }
     .strtool .strtoolhead { display:flex; align-items:center; gap:7px; min-width:0; }
-    .strtool.act { align-self:flex-start; max-width:min(88%,760px); }
+    .strtool.act { align-self:flex-start; width:fit-content; max-width:min(88%,760px); }
     /* comando/ação muito grande: recolhe em 2 linhas e oferece expandir */
     .strtool.clamp .ttl { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
     .strtool.clamp.expanded .ttl { -webkit-line-clamp:unset; overflow:visible; white-space:pre-wrap; }
@@ -111,6 +116,8 @@
     .strtool .xpand:hover { color:#a9c4ff; }
     .strtool .ttl { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .strtool .ttl.clk { cursor:pointer; } .strtool .ttl.clk:hover { color:#fff; text-decoration:underline; }
+    .strtool.tbg { border-color:#f59e0b66; background:#f59e0b12; }
+    .strtool .tbadge { flex:none; font-size:10.5px; color:#fcd9a0; border:1px solid #f59e0b66; background:#f59e0b18; border-radius:999px; padding:1px 6px; white-space:nowrap; }
     .strtool .tcnt { flex:none; font-family:ui-monospace,Menlo,Consolas,monospace; border-radius:5px; padding:1px 4px; }
     .strtool .tcnt.clk { cursor:pointer; } .strtool .tcnt.clk:hover { background:#ffffff1f; }
     .strtool .fadd { color:#3fb950; flex:none; } .strtool .fdel { color:#f85149; flex:none; }
@@ -125,6 +132,9 @@
     .strtool .tdiff .dline.del { background:#f8514926; } .strtool .tdiff .dline.del::before { content:'- '; color:#f85149; }
     .strtool .tdiff .dline.ctx { color:var(--mut); } .strtool .tdiff .dline.ctx::before { content:'\00a0\00a0'; }
     .strtool .tdiff .dline.sec { color:#93c5fd; background:#1e293b; margin:4px 0; }
+    .strtool.thinkbox { align-self:flex-start; width:fit-content; max-width:min(88%,760px); min-height:30px; }
+    .strtool.thinkbox .strtoolhead { min-height:18px; }
+    .strtool.thinkbox .tdetail { margin-top:6px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:320px; overflow:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.45; color:#cbd5e1; }
     .subagent { border:1px solid var(--line); border-radius:8px; background:#ffffff08; overflow:hidden; }
     .subagent .sahead { display:flex; align-items:center; gap:7px; font-size:12.5px; color:#e2e8f0; padding:6px 9px; cursor:pointer; user-select:none; }
     .subagent .sahead:hover { background:#ffffff0d; }
@@ -147,6 +157,8 @@
     .msg.bot .strdone { align-self:flex-start; display:inline-flex; align-items:center; gap:6px; margin-top:7px; font-size:12px; color:#3fb950; background:#2ea04314; border:1px solid #2ea04340; border-radius:8px; padding:3px 10px; }
     .msg.bot .strdone .dchk { font-weight:700; }
     .msg.bot .strdone .dcost { color:var(--mut); }
+    .followupnotice { margin-top:9px; padding:7px 9px; border:1px solid #f59e0b66; border-radius:8px; background:#f59e0b12; color:#fcd9a0; font-size:12px; line-height:1.35; }
+    .followupnotice b { color:#ffe3af; }
     /* cards de decisão (stepper) — perguntas geradas a partir da resposta do agente */
     .askcard { display:flex; flex-direction:column; gap:9px; border:1px solid var(--line); background:#ffffff08; }
     .askcard .askhd { font-size:11.5px; color:var(--mut); display:flex; align-items:center; justify-content:space-between; gap:8px; }
@@ -174,20 +186,34 @@
     .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; overflow-wrap:anywhere; }
     .msg.bot pre { position:relative; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; max-width:100%; min-width:0; }
     .msg.bot pre code { overflow-wrap:normal; white-space:pre; }
-    .msg.bot pre code { background:none; padding:0; display:block; } .msg.bot pre .copy { position:absolute; top:6px; right:6px; padding:3px 8px; font-size:11px; }
-    .msg.bot table { border-collapse:collapse; margin:.5em 0; display:block; overflow-x:auto; }
-    .msg.bot th,.msg.bot td { border:1px solid var(--line); padding:5px 10px; text-align:left; font-size:13.5px; } .msg.bot th { background:#ffffff0d; }
+    .msg.bot pre code { background:none; padding:0; display:block; }
+    /* Copy button pinned to the visible top-right corner via a NON-scrolling wrapper, so horizontal
+       code scroll never drags it over the text (it used to float+sticky inside the scrolling <pre>). */
+    .msg.bot .codewrap { position:relative; }
+    .msg.bot .codewrap .copy { position:absolute; top:8px; right:8px; z-index:2; padding:3px 8px; font-size:11px; line-height:1.2; background:#0d1117f2; border:1px solid var(--line); border-radius:7px; }
+    .msg.bot .codewrap .copy:hover { background:#161b22; border-color:#ffffff33; }
+    .msg.bot .mdtable-wrap { max-width:100%; margin:.6em 0; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#151b21; scrollbar-gutter:stable; -webkit-overflow-scrolling:touch; }
+    .msg.bot .mdtable-actions { position:sticky; left:0; top:0; z-index:1; display:flex; justify-content:flex-end; gap:6px; padding:6px; border-bottom:1px solid var(--line); background:#151b21f2; }
+    .msg.bot .mdtable-actions button { min-height:28px; padding:3px 8px; font-size:11.5px; border-radius:6px; }
+    .msg.bot table { border-collapse:collapse; margin:.5em 0; }
+    .msg.bot .mdtable-wrap table { display:table; width:max-content; min-width:max-content; margin:0; }
+    .msg.bot th,.msg.bot td { border:1px solid var(--line); padding:5px 10px; text-align:left; font-size:13.5px; vertical-align:top; } .msg.bot th { background:#ffffff0d; }
+    .msg.bot .mdtable-wrap th,.msg.bot .mdtable-wrap td { min-width:120px; max-width:380px; word-break:normal; overflow-wrap:normal; }
+    .msg.bot .mdtable-wrap code { white-space:nowrap; overflow-wrap:normal; }
     .msg.bot img { max-width:100%; border-radius:8px; margin:.4em 0; display:block; } .msg.bot a { color:#7cc0ff; }
     .msg.bot blockquote { border-left:3px solid #ffffff2f; margin:.5em 0; padding:.1em .8em; color:var(--mut); }
     .msg.bot .match { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:.4em 0; cursor:pointer; }
     .msg.bot .match:hover { background:#ffffff0d; } .msg.bot .exec { padding:3px 8px; font-size:11px; margin-top:5px; }
     /* composer: input on top, controls BELOW it */
-    #composer { border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
+    #composer { flex:0 0 auto; border-top:1px solid var(--line); padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
     #attachRow { display:flex; gap:6px; flex-wrap:wrap; }
     #attachRow .chip { font-size:12px; padding:4px 8px; cursor:pointer; }
     #attachRow .imgchip { padding:3px; max-width:none; position:relative; cursor:default; } #attachRow .imgchip img { height:40px; width:auto; max-width:120px; border-radius:6px; display:block; object-fit:cover; cursor:zoom-in; }
     #attachRow .imgchip .rmx { position:absolute; top:1px; right:1px; background:#000c; border-radius:50%; width:17px; height:17px; display:flex; align-items:center; justify-content:center; font-size:11px; cursor:pointer; } #attachRow .imgchip .rmx:hover { background:#ef4444; }
     #input { width:100%; resize:none; background:var(--panel); color:var(--text); border:1px solid #ffffff1f; border-radius:12px; padding:10px 12px; font:inherit; max-height:160px; }
+    /* placeholder em UMA linha: o texto longo do "turno em andamento" cortava com … no desktop mas
+       QUEBRAVA linha no textarea estreito do mobile (inchava o composer). nowrap+ellipsis força corte. */
+    #input::placeholder { white-space:nowrap; text-overflow:ellipsis; overflow:hidden; }
     /* mic à direita do input (padrão de app de mensagem). align-items:flex-end mantém ele colado
        na base quando o textarea cresce em várias linhas, em vez de flutuar no meio. */
     .inputrow { display:flex; align-items:flex-end; gap:8px; }
@@ -195,6 +221,12 @@
     .micbtn { flex:none; }
     .controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .controls .spacer { flex:1; min-width:8px; }
+    #sendBtn { min-width:44px; padding:8px 12px; line-height:1; }
+    #sendBtn svg, .micbtn svg { width:20px; height:20px; display:block; }
+    #usageBtn { flex:none; }
+    #usageBtn .cap { max-width:78px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #optsBtn { display:none; }
+    #aiBtn { display:none; }
     #status { font-size:12.5px; color:var(--mut); display:inline-flex; align-items:center; gap:6px; }
     #status.speaking { color:#22c55e; } #status.listening { color:#f59e0b; } #status.busy { color:#94a3b8; }
     #status .pulse { width:8px; height:8px; border-radius:50%; background:currentColor; animation:p 1s infinite; }
@@ -209,6 +241,8 @@
     .usage { color:var(--mut); font-size:11.5px; }
     .modal { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); background:#000a; display:flex; align-items:center; justify-content:center; padding:16px; z-index:30; }
     .modal .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; width:min(480px,100%); display:flex; flex-direction:column; gap:11px; max-height:min(90dvh,calc(var(--safe-height) - 32px)); overflow:auto; }
+    #dlg { z-index:90; }
+    #dlg .card { width:min(520px,100%); }
     #imgModal .imgwrap { position:relative; max-width:96vw; max-height:min(92dvh,var(--safe-height)); }
     #imgModal img { max-width:96vw; max-height:min(92dvh,var(--safe-height)); width:auto; height:auto; border-radius:10px; object-fit:contain; display:block; }
     #imgModal .imgx { position:absolute; top:-12px; right:-12px; width:34px; height:34px; border-radius:50%; background:#000c; color:#fff; border:1px solid var(--line); cursor:pointer; font-size:15px; display:flex; align-items:center; justify-content:center; }
@@ -274,19 +308,29 @@
     #treePanel .fphead { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
     #treePanel .fpname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     @media (max-width:820px){ #treePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:46; flex:none; border-left:0; } }
-    /* Design Mode (Electron only) — full-window overlay hosting the preview <webview> + grab compose. */
-    #designPanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:60; display:flex; flex-direction:column; background:var(--panel); }
+    /* Design Mode (Electron only) — side panel hosting the preview <webview> + selection notes. */
+    #designPanel { flex:0 0 var(--design-w,clamp(440px,48%,860px)); min-width:0; min-height:0; border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; order:4; }
     #designPanel.hidden { display:none; }
     #designPanel .fphead { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
     #designUrl { flex:1; min-width:0; background:transparent; color:inherit; border:1px solid var(--line); border-radius:8px; padding:5px 9px; font-size:12.5px; font-family:ui-monospace,Menlo,Consolas,monospace; }
-    #designHost { flex:1; min-height:0; background:#fff; }
+    #designBody { flex:1; min-height:0; display:flex; flex-direction:column; }
+    #designHost { flex:1 1 auto; min-height:240px; background:#fff; }
     #designHost webview { width:100%; height:100%; border:0; }
-    #designCompose { border-top:1px solid var(--line); padding:8px 12px calc(8px + var(--safe-bottom)); display:flex; flex-direction:column; gap:6px; }
-    #designCompose.hidden { display:none; }
-    #designSel { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; color:var(--mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #designCompose { flex:0 0 min(42%,320px); min-height:190px; border-top:1px solid var(--line); padding:8px 12px calc(8px + var(--safe-bottom)); display:flex; flex-direction:column; gap:7px; overflow:auto; }
+    #designSel { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11.5px; color:var(--mut); }
+    #designSelList { display:flex; flex-direction:column; gap:7px; }
+    .designpick { border:1px solid var(--line); border-radius:8px; background:#ffffff08; padding:7px; display:grid; grid-template-columns:64px minmax(0,1fr) auto; gap:8px; align-items:start; }
+    .designpick img { width:64px; height:48px; object-fit:cover; border-radius:5px; border:1px solid var(--line); background:#fff; }
+    .designpick .dmeta { min-width:0; display:flex; flex-direction:column; gap:3px; }
+    .designpick .dsel { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; color:var(--text); }
+    .designpick .dsrc { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:var(--mut); }
+    .designpick textarea { width:100%; min-height:42px; background:#0d1117; color:var(--text); border:1px solid var(--line); border-radius:7px; padding:5px 7px; resize:vertical; font:inherit; font-size:12px; }
+    .designpick .dx { align-self:start; padding:2px 6px; }
     #designNote { background:transparent; color:inherit; border:1px solid var(--line); border-radius:8px; padding:6px 9px; font:inherit; resize:vertical; }
     .designactions { display:flex; gap:8px; justify-content:flex-end; }
+    #designCoverage { font-size:11.5px; color:var(--mut); border-top:1px dashed var(--line); padding-top:6px; }
     #designStatus { padding:5px 12px; font-size:11.5px; color:var(--mut); border-top:1px solid var(--line); }
+    @media (max-width:980px){ #designPanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:60; flex:none; border-left:0; } }
     #app.work-file-split { --work-split-w:clamp(380px,42vw,760px); }
     #app.work-file-split main, #app.work-file-split #center > header { margin-right:var(--work-split-w); }
     #app.work-file-split #workPanel,
@@ -400,6 +444,12 @@
     .pop .opt:hover { background:#ffffff0d; } .pop .opt.sel { background:#ffffff17; }
     .pop .opt.disabled { opacity:.4; cursor:not-allowed; } .pop .opt.disabled:hover { background:none; }
     .pop .opt .r { margin-left:auto; color:var(--mut); font-size:11px; }
+    .pop.ai-pop { width:min(320px,calc(100vw - 16px)); }
+    .pop.ai-pop .opt { min-height:44px; }
+    .pop.ai-pop .aiico { flex:none; width:22px; text-align:center; }
+    .pop.ai-pop .ailbl { min-width:0; display:flex; flex-direction:column; line-height:1.25; }
+    .pop.ai-pop .ailbl b { font-size:13px; font-weight:650; }
+    .pop.ai-pop .ailbl span { color:var(--mut); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:220px; }
     .pop .effort-manual { border-top:1px solid var(--line); margin-top:8px; padding:10px 4px 2px; }
     .pop .effort-manual > .ph { margin-bottom:5px; }
     .pop .slbl { display:flex; justify-content:space-between; font-size:11px; color:var(--mut); margin:2px 2px 10px; }
@@ -417,17 +467,40 @@
     .modal label > input:not([type=checkbox]), .modal label > select, #gate .gatebox input { width:100%; background:var(--bg); color:var(--text); border:1px solid #ffffff26; border-radius:10px; padding:11px 13px; font:inherit; font-size:14px; box-sizing:border-box; transition:border-color .15s, box-shadow .15s; }
     .modal label > select { appearance:none; -webkit-appearance:none; cursor:pointer; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2394a3b8' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>"); background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; }
     .modal label > input:not([type=checkbox]):focus, .modal label > select:focus, #gate .gatebox input:focus { outline:none; border-color:var(--me); box-shadow:0 0 0 3px #2563eb33; }
-    .councilcard { width:min(560px,100%); border-radius:8px; }
+    .councilcard { width:min(680px,100%); border-radius:8px; }
     .councilcard .ctop { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .councilcard .ctop > div { display:flex; flex-direction:column; gap:2px; min-width:0; }
     .councilcard .ctop b { font-size:16px; }
-    .councilcard textarea { min-height:132px; font-family:inherit; font-size:14px; line-height:1.4; }
+    .councilcard .ctop span { color:var(--mut); font-size:12px; }
+    .councilcard textarea { min-height:112px; font-family:inherit; font-size:14px; line-height:1.4; }
     .councilcard .cgrid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; align-items:end; }
     .councilcard .cfield { min-width:0; }
     .councilcard .clabel { display:block; color:var(--mut); font-size:13px; }
     .councilcard .cswitchfield { display:flex; flex-direction:column; gap:5px; min-width:0; }
     .councilcard label.row.cswitchrow { min-height:43px; box-sizing:border-box; margin:0; padding:9px 11px; border:1px solid #ffffff26; border-radius:10px; background:var(--bg); align-items:center; justify-content:flex-start; }
     .councilcard .cactions { justify-content:flex-end; align-items:center; }
-    @media (max-width:560px){ .councilcard .cgrid { grid-template-columns:1fr; } }
+    .modegrid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
+    .modegrid button { min-height:40px; padding:7px 8px; border-radius:8px; background:#ffffff08; border:1px solid var(--line); color:var(--text); font-size:12.5px; }
+    .modegrid button.on { background:#2563eb26; border-color:#2563eb88; color:#dbeafe; }
+    .solutionhelp { border:1px solid var(--line); background:#ffffff07; border-radius:8px; padding:8px 10px; color:#aeb9c8; font-size:12.5px; line-height:1.4; }
+    .helpicon { width:32px; height:32px; min-height:32px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; font-weight:800; }
+    .agentlist { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; max-height:170px; overflow:auto; border:1px solid var(--line); border-radius:9px; padding:8px; background:#0f141b; }
+    .agentlist label.row { min-height:38px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:#ffffff06; }
+    .agentlist .adesc { display:flex; flex-direction:column; min-width:0; }
+    .agentlist .adesc b, .agentlist .adesc span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .agentlist .adesc span { color:var(--mut); font-size:11.5px; }
+    #solutionCriteria { min-height:72px; }
+    .helpable::after { content:'?'; display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; margin-left:6px; border-radius:50%; border:1px solid #ffffff35; color:#aeb9c8; font-size:10px; font-weight:700; flex:none; }
+    .helpable:hover::after { color:#fff; border-color:#7aa2f7aa; background:#7aa2f71a; }
+    button.helpable::after, .link.helpable::after, .snav.helpable::after { display:none; }
+    .modal label.helpable::after { margin:3px 0 0; }
+    .modal label.row.helpable::after { margin:0 0 0 auto; align-self:center; }
+    .helpsearch input { width:100%; box-sizing:border-box; min-height:42px; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:9px; padding:9px 12px; font:inherit; }
+    .helplist { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+    .hitem { border:1px solid var(--line); background:#ffffff05; border-radius:8px; padding:10px 12px; }
+    .hitem b { display:block; font-size:13px; margin-bottom:3px; }
+    .hitem span { color:var(--mut); font-size:12.5px; line-height:1.45; }
+    @media (max-width:560px){ .councilcard .cgrid, .modegrid, .agentlist { grid-template-columns:1fr; } }
     .machinepick { width:min(420px,calc(100vw - 28px)); padding:16px; border-radius:8px; }
     .machinepick .mph { display:flex; flex-direction:column; gap:3px; margin-bottom:12px; }
     .machinepick .mph b { font-size:15px; }
@@ -451,10 +524,14 @@
     /* Fechar no canto: o botão do rodapé some sob o teclado no celular e exige rolar até o fim
        nos painéis longos — o ✕ fica sempre visível, na posição que todo mundo procura. */
     #settings .settings-x { margin-left:auto; flex:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:9px; font-size:15px; line-height:1; }
+    #settings .settings-help { margin-left:auto; flex:none; }
+    #settings .settings-help + .settings-x { margin-left:6px; }
     #settings .settings-body { display:flex; flex:1; min-height:0; }
     #settings .settings-nav { flex:none; width:212px; border-right:1px solid var(--line); padding:12px 10px; overflow:auto; display:flex; flex-direction:column; gap:2px; }
     #settings .settings-search { margin-bottom:8px; }
     #settings .settings-search input { width:100%; box-sizing:border-box; min-height:38px; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:9px; padding:8px 11px; font:inherit; font-size:13.5px; }
+    #settings .settings-section-select { display:none; }
+    #settings .settings-search-toggle { display:none; }
     #settings .snav { display:flex; align-items:center; gap:8px; text-align:left; background:transparent; border:0; color:#aeb9c8; font-size:13.5px; padding:9px 11px; border-radius:9px; cursor:pointer; width:100%; }
     #settings .snav:hover { background:#ffffff0d; color:var(--text); }
     #settings .snav.on { background:#ffffff14; color:var(--text); font-weight:600; }
@@ -469,15 +546,196 @@
     #settings.searching .spanel { display:flex!important; }
     #settings.searching .spanel.nomatch { display:none!important; }
     #settings .sec { border-top:1px solid var(--line); margin:10px 0 0; padding-top:18px; color:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.75px; }
+    #settings .sec.sec-help { display:flex; align-items:center; gap:8px; }
+    #settings .sec-help > span { flex:1 1 auto; min-width:0; }
+    #settings .sec-help-btn { flex:none; width:20px; height:20px; min-width:20px; padding:0; border-radius:50%; border:1px solid var(--line); background:transparent; color:#aeb9c8; font-size:12px; line-height:1; font-weight:700; letter-spacing:0; cursor:pointer; }
+    #settings .sec-help-btn:hover { background:#ffffff14; color:var(--text); border-color:#ffffff40; }
+    #helpSheet { z-index:45; }
+    .help-card { width:min(560px,100%); max-height:min(80vh,calc(var(--safe-height) - 40px)); display:flex; flex-direction:column; padding:0; gap:0; overflow:hidden; }
+    .help-head { display:flex; align-items:center; min-height:52px; padding:0 12px 0 20px; border-bottom:1px solid var(--line); }
+    .help-head .settings-title { font-size:16px; letter-spacing:-.2px; }
+    .help-head #helpSheetClose { margin-left:auto; flex:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:9px; }
+    .help-title-ic { margin-right:9px; font-size:17px; }
+    .help-body { --acc:#4f83ff; overflow:auto; padding:15px 18px 20px; display:flex; flex-direction:column; gap:12px; scrollbar-gutter:stable; }
+    .help-hero { display:flex; gap:12px; align-items:flex-start; margin:0 0 3px; padding:14px 15px; border-radius:14px; color:#eaf1f8; font-size:14px; line-height:1.55;
+      background:linear-gradient(135deg,color-mix(in srgb,var(--acc) 24%,transparent),color-mix(in srgb,var(--acc) 7%,transparent));
+      border:1px solid color-mix(in srgb,var(--acc) 42%,var(--line)); }
+    .help-hero-ic { font-size:22px; line-height:1.15; flex:none; }
+    .help-hero p { margin:0; }
+    .help-field { display:flex; flex-direction:column; gap:11px; padding:14px 15px; border-radius:14px; background:#ffffff07; border:1px solid var(--line); border-left:3px solid var(--acc); transition:background .12s,border-color .12s; }
+    .help-field:hover { background:#ffffff0d; border-color:color-mix(in srgb,var(--acc) 35%,var(--line)); }
+    .help-field-h { display:flex; align-items:center; gap:10px; }
+    .help-field-ic { width:28px; height:28px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; font-size:15px; flex:none; background:color-mix(in srgb,var(--acc) 22%,transparent); }
+    .help-field h4 { margin:0; font-size:14.5px; color:var(--text); font-weight:640; letter-spacing:-.1px; }
+    .help-facets { display:flex; flex-direction:column; gap:9px; }
+    .hfacet { display:flex; gap:10px; align-items:flex-start; }
+    .hfacet-ic { width:23px; height:23px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; font-size:12px; flex:none; margin-top:1px; }
+    .hfacet.what .hfacet-ic { background:#4f83ff28; }
+    .hfacet.use .hfacet-ic { background:#34d39928; }
+    .hfacet.data .hfacet-ic { background:#f5b54428; }
+    .hfacet.ex .hfacet-ic { background:#c084fc28; }
+    .hfacet-c { display:flex; flex-direction:column; gap:2px; min-width:0; }
+    .hfacet-l { font-size:10px; font-weight:750; text-transform:uppercase; letter-spacing:.6px; }
+    .hfacet.what .hfacet-l { color:#82a8ff; }
+    .hfacet.use .hfacet-l { color:#4fca9a; }
+    .hfacet.data .hfacet-l { color:#e8b65f; }
+    .hfacet.ex .hfacet-l { color:#c69bf5; }
+    .hfacet-t { font-size:13px; color:#c4cfda; line-height:1.5; }
+    .hfacet.data { background:#f5b5440e; border-radius:9px; padding:8px 10px; margin-left:-4px; }
+    .hfacet.ex { background:#c084fc0f; border-radius:9px; padding:8px 10px; margin-left:-4px; }
+    .hfacet.ex .hfacet-t { font-style:italic; color:#d6c7ea; }
+    .help-group { display:flex; flex-direction:column; gap:12px; }
+    .help-group-h { display:flex; align-items:center; gap:9px; font-size:12px; font-weight:750; letter-spacing:.6px; text-transform:uppercase; color:var(--acc); padding-top:2px; }
+    .help-group-ic { font-size:15px; }
+    .personal-form-h { display:flex; align-items:center; gap:8px; }
     #settings .spanel > .sec:first-child { border-top:0; margin-top:0; padding-top:0; }
     #settings label { gap:7px; color:#aeb9c8; font-size:13px; }
     #settings label.searchhide, #settings .sec.searchhide { display:none!important; }
-    #settings input:not([type=checkbox]), #settings select { width:100%; min-width:0; min-height:46px; box-sizing:border-box; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:10px; padding:10px 13px; font:inherit; font-size:14px; }
+    #settings input:not([type=checkbox]), #settings select, #settings textarea { width:100%; min-width:0; min-height:46px; box-sizing:border-box; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:10px; padding:10px 13px; font:inherit; font-size:14px; }
     #settings select { appearance:none; -webkit-appearance:none; padding-right:34px; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2394a3b8' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>"); background-repeat:no-repeat; background-position:right 12px center; }
-    #settings input:not([type=checkbox]):focus, #settings select:focus { outline:none; border-color:#4f83ff; box-shadow:0 0 0 3px #2563eb30; }
-    #settings input::placeholder { color:#788494; opacity:1; }
-    #settings .settings-actions { flex:none; z-index:2; margin:0; padding:12px 20px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:var(--panel); }
+    #settings select[multiple] { appearance:auto; -webkit-appearance:auto; min-height:112px; padding:4px; background-image:none; }
+    #settings select[multiple] option { padding:5px 7px; border-radius:5px; }
+    #settings select[multiple] option:checked { color:#fff; background:#2563eb linear-gradient(0deg,#2563eb,#2563eb); }
+    #settings input:not([type=checkbox]):focus, #settings select:focus, #settings textarea:focus { outline:none; border-color:#4f83ff; box-shadow:0 0 0 3px #2563eb30; }
+    #settings input::placeholder, #settings textarea::placeholder { color:#788494; opacity:1; }
+    .personal-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .personal-stack { display:flex; flex-direction:column; gap:9px; }
+    .personal-note { color:var(--mut); font-size:12px; line-height:1.45; }
+    .personal-context-alert { display:flex; align-items:center; gap:9px; background:#f5b5441a; border:1px solid #f5b54455; border-radius:10px; padding:9px 12px; color:#e8b65f; font-size:12.5px; line-height:1.4; cursor:pointer; }
+    .personal-context-alert:hover { background:#f5b54426; }
+    .personal-context-alert .pca-ic { flex:none; font-size:15px; }
+    #fwInventory .fw-node { font-size:12px; margin-top:3px; color:var(--mut); }
+    #fwInventory .fw-file { padding:3px 6px; margin-top:1px; border-radius:6px; cursor:pointer; }
+    #fwInventory .fw-file:hover, #fwInventory .fw-file:focus-visible { background:#ffffff12; outline:none; }
+    .personal-region-suggestion { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#ffffff0a; border:1px solid var(--line); border-radius:10px; padding:9px 12px; margin-bottom:8px; }
+    .personal-region-suggestion button { flex:none; }
+    .personal-policy { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 10px; padding:10px 0; font-size:12px; }
+    .personal-policy b { color:#d8e1ec; font-weight:600; }
+    .personal-list { display:flex; flex-direction:column; gap:7px; min-height:32px; }
+    .personal-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; border:1px solid var(--line); border-radius:8px; padding:9px 10px; background:#ffffff04; }
+    .personal-row-main { min-width:0; display:flex; flex-direction:column; gap:3px; }
+    .personal-row-main b, .personal-row-main span { overflow-wrap:anywhere; }
+    .personal-meta { color:var(--mut); font-size:11.5px; line-height:1.35; }
+    .personal-row-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; }
+    .personal-row-actions button { min-height:32px; padding:5px 8px; font-size:12px; }
+    .personal-device-status { display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; }
+    .personal-disabled-kinds { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .personal-disabled-kind { display:inline-flex; align-items:center; gap:6px; max-width:100%; border:1px solid var(--line); border-radius:8px; padding:4px 5px 4px 8px; color:var(--mut); font-size:11.5px; }
+    .personal-disabled-kind span { overflow-wrap:anywhere; }
+    .personal-disabled-kind button { min-height:28px; padding:3px 7px; font-size:11px; }
+    .personal-capability { display:inline-flex; align-items:center; gap:5px; }
+    .personal-capability::before { content:''; width:7px; height:7px; border-radius:50%; background:#64748b; flex:none; }
+    .personal-capability.ready::before { background:#35c978; }
+    .personal-capability.limited::before { background:#e7ad3c; }
+    .personal-status { display:inline-flex; align-items:center; gap:5px; font-size:11px; color:var(--mut); }
+    .personal-status::before { content:''; width:7px; height:7px; border-radius:50%; background:#64748b; }
+    .personal-status.ready::before { background:#35c978; }
+    .personal-status.degraded::before, .personal-status.uncertified::before { background:#e7ad3c; }
+    .personal-status.offline::before { background:#ef6a6a; }
+    .personal-form { border-top:1px solid var(--line); padding-top:14px; display:flex; flex-direction:column; gap:10px; }
+    .personal-advanced { border:1px solid var(--line); border-radius:8px; padding:9px 10px; }
+    .personal-advanced summary { cursor:pointer; color:#cbd5e1; font-weight:600; }
+    .personal-advanced[open] summary { margin-bottom:10px; }
+    .personal-inline-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .personal-inline-actions button { min-height:38px; }
+    .personal-inline-actions .personal-calendar-target { flex:1 1 180px; min-width:0; max-width:340px; min-height:38px; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:8px; padding:6px 9px; }
+    .personal-danger { border-color:#ff6b6b66!important; color:#ffb4b4!important; }
+    .personal-query-card { width:min(760px,100%)!important; }
+    .personal-query-head, .personal-action-head { display:flex; align-items:flex-start; gap:10px; }
+    .personal-query-head > div, .personal-action-head > div { flex:1; min-width:0; }
+    .personal-query-controls { display:grid; grid-template-columns:minmax(130px,.35fr) minmax(0,1fr) auto; gap:8px; align-items:end; }
+    .personal-query-controls button { min-height:46px; }
+    .personal-query-reference { display:grid; grid-template-columns:minmax(170px,.45fr) minmax(0,1fr) auto; gap:8px; align-items:end; padding:9px 0; border-bottom:1px solid var(--line); }
+    .personal-query-reference select, .personal-query-reference input { width:100%; min-width:0; min-height:42px; box-sizing:border-box; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:8px; padding:8px 10px; font:inherit; }
+    .personal-query-reference button { min-height:42px; }
+    .personal-choice-list { display:flex; flex-direction:column; gap:5px; padding:7px 0; }
+    .personal-choice { width:100%; min-height:40px; display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:7px 9px; text-align:left; }
+    .personal-choice b, .personal-choice span { max-width:100%; overflow-wrap:anywhere; }
+    .personal-choice span { color:var(--mut); font-size:11px; }
+    .personal-view-switch { display:flex; gap:4px; align-self:flex-start; }
+    .personal-view-switch button.on { background:#ffffff18; color:var(--text); }
+    #personalResults { max-height:46dvh; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+    .personal-result { border-bottom:1px solid var(--line); padding:8px 2px 10px; display:flex; flex-direction:column; gap:5px; }
+    .personal-result:last-child { border-bottom:0; }
+    .personal-result-top { display:flex; gap:8px; align-items:flex-start; }
+    .personal-result-top b { flex:1; min-width:0; overflow-wrap:anywhere; }
+    .personal-score { flex:none; color:#9cc3ff; font-size:11px; }
+    .personal-reasons, .personal-sources { color:var(--mut); font-size:11.5px; line-height:1.4; overflow-wrap:anywhere; }
+    .personal-sources a { color:#9cc3ff; overflow-wrap:anywhere; }
+    .personal-memory-facts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px 10px; margin-top:4px; }
+    .personal-memory-fact { min-width:0; display:flex; flex-direction:column; gap:1px; }
+    .personal-memory-fact span { color:var(--mut); font-size:10.5px; }
+    .personal-memory-fact b { color:#d8e1ec; font-size:11.5px; font-weight:500; overflow-wrap:anywhere; }
+    .personal-memory-evidence { margin-top:3px; }
+    .personal-memory-evidence summary { cursor:pointer; color:#aeb9c8; font-size:11.5px; }
+    .personal-memory-evidence ul { margin:6px 0 0; padding-left:18px; color:var(--mut); font-size:11px; line-height:1.45; }
+    .msg.bot.personal-chat-card { width:min(92%,760px); max-width:min(92%,760px); padding:12px 14px!important; display:flex; flex-direction:column; gap:9px; border:1px solid #4f83ff45; }
+    .personal-chat-head { display:flex; align-items:flex-start; gap:10px; }
+    .personal-chat-head > div { min-width:0; flex:1; }
+    .personal-chat-title { font-weight:650; }
+    .personal-chat-results { display:flex; flex-direction:column; gap:4px; min-width:0; }
+    .personal-chat-card .personal-result { padding:7px 0 9px; }
+    .personal-chat-card .personal-inline-actions button { min-height:32px; padding:5px 8px; font-size:12px; }
+    #recents .rpersonal { flex:none; display:inline-grid; place-items:center; width:20px; height:20px; border:1px solid #4f83ff55; border-radius:50%; color:#9cc3ff; background:#2563eb1f; font-size:12px; }
+    #personalMap { height:min(46dvh,390px); min-height:260px; border:1px solid var(--line); background:#10151d; }
+    .personal-map-empty { height:100%; display:grid; place-items:center; padding:22px; color:var(--mut); text-align:center; }
+    .personal-action-preview { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 10px; padding:10px; border:1px solid var(--line); background:var(--code); font-size:12px; overflow-wrap:anywhere; }
+    .personal-action-preview dt { color:var(--mut); }
+    .personal-action-preview dd { margin:0; }
+    .personal-action-state { border-left:3px solid #e7ad3c; background:#e7ad3c12; padding:9px 10px; color:#f0c36b; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
+    .personal-action-state.reconciliation_required, .personal-action-state.failed, .personal-action-state.client-failed { border-left-color:#ef6a6a; background:#ef6a6a10; color:#ffb4b4; }
+    .personal-data-categories { display:flex; flex-direction:column; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+    .personal-data-category { display:flex; flex-direction:column; gap:6px; padding:9px 0; border-bottom:1px solid var(--line); min-width:0; }
+    .personal-data-category:last-child { border-bottom:0; }
+    .personal-data-category > b { font-size:12.5px; overflow-wrap:anywhere; }
+    .personal-data-category-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+    .personal-data-metric { display:flex; flex-direction:column; gap:2px; min-width:0; }
+    .personal-data-metric span { color:var(--mut); font-size:10.5px; }
+    .personal-data-metric b { color:#d8e1ec; font-size:11.5px; font-weight:500; overflow-wrap:anywhere; }
+    .personal-diagnostics { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+    .personal-diagnostic { display:flex; flex-direction:column; gap:2px; padding:7px 0; border-bottom:1px solid var(--line); min-width:0; }
+    .personal-diagnostic:last-child { border-bottom:0; }
+    .personal-diagnostic b, .personal-diagnostic span { overflow-wrap:anywhere; }
+    .personal-diagnostic span { color:var(--mut); font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    .personal-category-erase { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:end; }
+    .personal-category-erase button { min-height:46px; white-space:nowrap; }
+    .personal-source-code { min-height:150px!important; resize:vertical; font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace!important; tab-size:2; }
+    .personal-source-discovery { border-top:1px solid var(--line); padding-top:10px; display:flex; flex-direction:column; gap:8px; }
+    .personal-source-discovery-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; }
+    .personal-source-discovery-group { display:flex; flex-direction:column; gap:5px; }
+    .modal .personal-source-discovery-item { display:grid; grid-template-columns:auto minmax(0,1fr) auto; flex-direction:initial; gap:8px; align-items:start; min-height:38px; padding:7px 0; border-top:1px solid #ffffff0d; }
+    .personal-source-discovery-item:first-of-type { border-top:0; }
+    .personal-source-discovery-item input { margin-top:3px; }
+    .personal-source-discovery-copy { min-width:0; display:flex; flex-direction:column; gap:2px; overflow-wrap:anywhere; }
+    .personal-source-discovery-state { color:var(--mut); font-size:11px; white-space:nowrap; }
+    .personal-env-editor { display:grid; grid-template-columns:minmax(120px,.45fr) minmax(0,1fr) auto; gap:8px; align-items:end; }
+    .personal-env-editor button { min-height:46px; }
+    .personal-env-list { display:flex; flex-wrap:wrap; gap:6px; min-height:30px; align-items:center; }
+    .personal-env-item { display:inline-flex; align-items:center; gap:6px; max-width:100%; border:1px solid var(--line); border-radius:8px; padding:4px 5px 4px 8px; color:#cbd5e1; font:11.5px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    .personal-env-item span { overflow-wrap:anywhere; }
+    .personal-env-item small { color:var(--mut); font:11px/1.3 system-ui,sans-serif; }
+    .personal-env-item button { min-height:28px; padding:3px 7px; font:11px/1.2 system-ui,sans-serif; }
+    .risk-read { color:#7dd3a6; } .risk-local_reversible { color:#9cc3ff; } .risk-external_reversible { color:#f0c36b; } .risk-consequential { color:#ff9292; }
+    #personalModal { z-index:42; }
+    #personalCalendarEditModal { z-index:43; }
+    #personalActionModal { z-index:44; }
+    #personalModal .card, #personalCalendarEditModal .card, #personalActionModal .card { overflow-x:hidden; }
+    .personal-calendar-card { width:min(560px,100%)!important; }
+    .personal-calendar-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .personal-calendar-card label { min-width:0; }
+    .personal-calendar-card input, .personal-calendar-card textarea { width:100%; box-sizing:border-box; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:8px; padding:9px 10px; font:inherit; }
+    .personal-calendar-card textarea { min-height:78px; }
+    .toast.personal-notification-toast { width:min(520px,92vw); cursor:default; display:flex; flex-direction:column; gap:7px; }
+    .personal-notification-copy { min-width:0; }
+    .personal-notification-copy b, .personal-notification-copy span { display:block; overflow-wrap:anywhere; }
+    .personal-notification-copy span { margin-top:2px; color:var(--mut); font-size:12.5px; }
+    .personal-notification-actions { display:flex; flex-wrap:wrap; gap:6px; }
+    .personal-notification-actions button { flex:1 1 auto; min-height:32px; padding:5px 8px; font-size:11.5px; }
+    #settings .settings-actions { flex:none; z-index:2; margin:0; padding:12px 20px calc(12px + var(--safe-bottom)); border-top:1px solid var(--line); background:var(--panel); }
     #settings .settings-actions button { min-width:112px; min-height:44px; }
+    /* Opção A: cada aba salvável tem o seu Salvar no fim do conteúdo (sem rodapé global). */
+    #settings .settings-panel-actions { display:flex; justify-content:flex-end; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+    #settings .set-save { min-width:120px; min-height:44px; }
     #routinesSection { background:#ffffff05; border:1px solid var(--line); border-radius:14px; padding:0 14px 14px; margin-top:4px; }
     #routinesSection .sec { border-top:0; margin-top:0; }
     .routine-builder { display:flex; flex-direction:column; gap:12px; }
@@ -496,13 +754,42 @@
       #settings { align-items:stretch; justify-content:stretch; padding:0; }
       #settings .settings-card { width:100%; max-height:100%; height:100%; border:0; border-radius:0; }
       #settings .settings-head { min-height:56px; padding:0 18px; }
-      /* Mobile: nav vira uma faixa horizontal rolável em cima; o painel ativo ocupa a largura toda. */
+      /* Mobile: horizontal scrollable tab strip (old approach). Search is a tab-like item that
+         expands into the input on tap; nothing is pinned. */
       #settings .settings-body { flex-direction:column; }
-      #settings .settings-nav { width:auto; flex:none; border-right:0; border-bottom:1px solid var(--line); padding:8px 10px; flex-direction:row; overflow-x:auto; gap:6px; }
-      #settings .settings-search { margin:0 4px 0 0; flex:none; min-width:150px; }
-      #settings .snav { width:auto; white-space:nowrap; flex:none; }
+      #settings .settings-nav { width:auto; flex:none; border-right:0; border-bottom:1px solid var(--line); padding:8px 10px; display:flex; flex-direction:row; align-items:center; overflow-x:auto; overflow-y:hidden; gap:6px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+      #settings .settings-nav::-webkit-scrollbar { display:none; }
+      #settings .settings-section-select { display:none; }
+      #settings .snav { display:flex; width:auto; white-space:nowrap; flex:none; }
+      #settings .settings-search-toggle { display:inline-flex; align-items:center; gap:8px; white-space:nowrap; flex:none; background:transparent; border:0; color:#aeb9c8; font-size:13.5px; padding:9px 11px; border-radius:9px; cursor:pointer; }
+      #settings .settings-search-toggle:hover { background:#ffffff0d; color:var(--text); }
+      #settings .settings-search { display:none; margin:0; flex:1 1 auto; min-width:150px; }
+      #settings.searchopen .settings-search { display:block; }
+      #settings.searchopen .settings-search-toggle { display:none; }
       #settings.searching .settings-nav { display:flex; }
       #settings .settings-panels { padding:14px 18px 16px; }
+      /* Help sheet docks to the bottom as a sheet on mobile. */
+      #helpSheet { align-items:flex-end; justify-content:stretch; padding:0; }
+      #helpSheet .help-card { width:100%; max-width:100%; max-height:88dvh; border-radius:16px 16px 0 0; border-left:0; border-right:0; border-bottom:0; }
+      #helpSheet .help-body { padding-bottom:calc(20px + var(--safe-bottom)); }
+      .personal-grid, .personal-query-controls, .personal-query-reference, .personal-env-editor { grid-template-columns:1fr; }
+      .personal-query-controls button { width:100%; }
+      .personal-query-reference button, .personal-env-editor button { width:100%; }
+      .personal-row { grid-template-columns:1fr; }
+      .personal-row-actions { justify-content:flex-start; }
+      .personal-row-actions button, .personal-result .personal-inline-actions button { flex:1 1 132px; }
+      .personal-query-card { height:100%; max-height:100%!important; border:0!important; border-radius:0!important; }
+      .personal-calendar-grid { grid-template-columns:1fr; }
+      .personal-calendar-card { max-height:calc(var(--safe-height) - 20px)!important; }
+      #personalResults { max-height:none; flex:1; }
+      #personalMap { height:48dvh; }
+      .msg.bot.personal-chat-card { width:100%; max-width:100%; }
+      .personal-category-erase { grid-template-columns:minmax(0,1fr) auto; }
+      .personal-category-erase button { min-width:88px; padding-inline:10px; }
+      .personal-data-category-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .personal-memory-facts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .toast.personal-notification-toast { width:calc(100vw - 20px); max-width:none; }
+      .personal-notification-actions button { flex:1 1 92px; }
       .routine-grid { grid-template-columns:1fr; }
       .routine-path { grid-template-columns:1fr; }
       .routine-actions { grid-template-columns:1fr auto; }
@@ -578,7 +865,7 @@
     #machineBar .mtag.warn { opacity:1; color:#e3b341; border-color:#e3b34155; background:#e3b3411a; }
     #machineBar .mpen { flex:none; background:none; border:0; color:inherit; opacity:.5; cursor:pointer; font-size:13px; padding:2px 4px; }
     #machineBar .mpen:hover { opacity:1; }
-    .toast { position:fixed; bottom:calc(84px + var(--safe-bottom)); left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; cursor:pointer; }
+    .toast { position:fixed; bottom:calc(84px + var(--safe-bottom)); left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid #ffffff26; border-radius:12px; padding:12px 16px; max-width:min(520px,92vw); box-shadow:0 14px 44px #000b; z-index:50; font-size:14px; line-height:1.45; white-space:pre-line; overflow-wrap:anywhere; cursor:pointer; }
     #roBanner { padding:8px 14px; background:#1e293b; color:#cbd5e1; font-size:12.5px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px; }
     #offlineBar { padding:8px 14px; background:#7c2d12; color:#fed7aa; font-size:12.5px; border-bottom:1px solid var(--line); }
     #appUpdBar { display:flex; align-items:center; gap:10px; padding:7px 14px; background:#14324d; color:#cfe6ff; font-size:12.5px; border-bottom:1px solid var(--line); }
@@ -599,12 +886,13 @@
     .busychip { flex:none; display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:#e3b341; background:#e3b3411a; border:1px solid #e3b34140; border-radius:999px; padding:2px 10px; white-space:nowrap; }
     .busychip .pulse { width:7px; height:7px; }
     .ctlpills { display:contents; } /* desktop: children flow into .controls flex */
+    #termMenuBtn { display:none; }
     #sideClose, #backdrop { display:none; }
     .hidden { display:none !important; } #menuBtn { display:none; }
     /* ---------------- mobile ---------------- */
     @media (max-width:760px) {
       body { font-size:16px; }
-      header { padding:12px 14px; gap:10px; } header #title { font-size:16px; }
+      header { padding:8px 14px; gap:10px; } header #title { height:42px; line-height:42px; font-size:16px; }
       #menuBtn { display:inline-flex; align-items:center; justify-content:center; min-width:42px; min-height:42px; font-size:19px; }
       /* off-canvas sidebar with backdrop + close button */
       #side { position:fixed; z-index:30; top:var(--safe-top); bottom:var(--safe-bottom); left:var(--safe-left); height:auto; width:86vw; max-width:340px; transform:translateX(-100%); transition:transform .22s ease; padding:14px; gap:8px; box-shadow:2px 0 28px #0008; }
@@ -620,34 +908,66 @@
       #quickRow { flex-direction:row; gap:6px; justify-content:space-between; margin:2px 0; }
       #quickRow .link { flex:1; display:flex; align-items:center; justify-content:center; min-height:44px; border:1px solid var(--line); border-radius:10px; padding:0; }
       #quickRow .link.hidden { display:none; }
+      #quickRow #termMenuBtn { display:flex; }
       #quickRow .qic { margin:0; font-size:19px; }
       #quickRow .qtx { display:none; }   /* só o ícone no mobile; o title mostra o rótulo ao toque longo */
+      #quickRow .helpable::after { display:none; }
       #log { padding:14px; gap:12px; } .msg.me, .msg.bot { max-width:92%; }
       .msg.me { font-size:15.5px; } .msg.bot { font-size:15.5px; }
+      .strtool.act { max-width:92%; }
       /* composer: bigger targets; pills in one scrollable row; send full width */
-      #composer { width:100%; min-width:0; overflow:hidden; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); gap:10px; }
+      #composer { width:100%; min-width:0; overflow:visible; padding:10px 12px calc(10px + var(--safe-bottom)); gap:10px; flex:none; }
+      html.kb-open #composer { padding-bottom:10px; }
+      html.kb-open #composer.has-draft { padding-bottom:8px; }
       /* O mic tem que ter a MESMA altura do input (media: input 52px, mic 47.5px = 4.5px de
          desalinho visível). As duas caixas passam a derivar das mesmas medidas, para não
          voltarem a divergir se o padding do input mudar. Altura = lh + 2*pad + 2*borda. */
       .inputrow { width:100%; min-width:0; --ipad:13px; --ilh:24px; }
       #input { width:auto; max-width:100%; font-size:16px; padding:var(--ipad) 14px; line-height:var(--ilh); } /* 16px avoids iOS focus-zoom */
-      .controls { width:100%; min-width:0; flex-wrap:wrap; gap:8px; }
-      .ctlpills { display:flex; width:100%; min-width:0; max-width:100%; gap:8px; overflow-x:auto; flex:1 1 100%; padding-bottom:3px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
-      .ctlpills::-webkit-scrollbar { display:none; } .ctlpills .spacer { display:none; }
-      /* no celular os mais usados vêm primeiro: ＋ anexar, modelo, esforço, consumo, escutar — depois o resto */
-      #attach { order:0; } #modelBtn { order:1; } #effortBtn { order:2; } #usageBtn { order:3; } #speak { order:4; }
-      #agentBtn { order:5; } #cwdBtn { order:6; } #status { order:8; }
+      .inputrow #sendBtn { display:none; flex:0 0 48px; width:48px; min-width:48px; min-height:calc(var(--ilh) + var(--ipad) + var(--ipad) + 2px); height:calc(var(--ilh) + var(--ipad) + var(--ipad) + 2px); padding:0; line-height:var(--ilh); font-size:17px; border-radius:10px; }
+      #composer.has-draft .inputrow #sendBtn { display:inline-flex; align-items:center; justify-content:center; }
+      .controls > #sendBtn { display:none !important; }
+      .controls { width:100%; min-width:0; flex-wrap:wrap; gap:6px; align-items:center; }
+      #optsBtn { display:none; }
+      .ctlpills { display:contents; }
+      .ctlpills .spacer, #status { display:none; }
+      #agentBtn, #modelBtn, #effortBtn { display:none; }
+      #aiBtn { display:inline-flex; }
+      #cwdBtn .cap { display:none; }
+      #designBtn, #councilBtn, #tourneyBtn, #aiBtn, #cwdBtn, #speak {
+        flex:1 1 44px; width:auto; min-width:44px; max-width:none; min-height:46px; padding:0; justify-content:center;
+      }
+      #councilBtn { font-size:0; }
+      #councilBtn::before { content:'◇'; font-size:18px; line-height:1; }
+      #tourneyBtn { font-size:0; }
+      #tourneyBtn::before { content:'▣'; font-size:17px; line-height:1; }
+      /* no celular todos os controles ficam fora do menu, em ordem fixa e compacta */
+      #aiBtn { order:1; } #cwdBtn { order:2; }
+      #designBtn { order:5; } #councilBtn { order:6; } #tourneyBtn { order:7; } #speak { order:8; } #usageBtn { order:9; }
+      #stopBtn { order:10; } #sendBtn { order:11; }
       /* alvo de toque: vale pro mic (agora fora de .controls, ao lado do input) e pros botoes de
          voz do header — sem isso eles ficariam com o tamanho de desktop justo no mobile. */
-      .pill, .controls button.ghost, header button.ghost { min-height:42px; font-size:13.5px; padding:10px 13px; flex:none; }
+      .pill, .controls button.ghost, header button.ghost { min-height:42px; font-size:13.5px; padding:10px 13px; }
+      header button.ghost { flex:none; }
       header #sumHdr { min-width:44px; font-size:17px; }
       header #sumHdr .blbl { display:none; }   /* no celular so o ícone: o título precisa do espaço */
+      header #termBtn { display:none; }
       /* por ultimo: mesma altura do input (mesma especificidade que as regras acima). */
-      .inputrow .micbtn { flex:none; min-height:0; min-width:44px; padding:var(--ipad) 14px; line-height:var(--ilh); font-size:17px; }
+      .inputrow .micbtn, .inputrow #attach { flex:0 0 48px; width:48px; min-width:48px; min-height:calc(var(--ilh) + var(--ipad) + var(--ipad) + 2px); height:calc(var(--ilh) + var(--ipad) + var(--ipad) + 2px); padding:0; line-height:var(--ilh); font-size:17px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; }
       .pill { max-width:none; }
-      #sendBtn { flex:1 1 auto; min-height:48px; font-size:16px; }
-      #stopBtn { flex:0 0 auto; min-width:56px; min-height:48px; font-size:20px; }  /* só ícone, ao lado do Enviar */
+      #usageBtn { flex:1 1 44px; min-width:44px; max-width:none; min-height:46px; justify-content:center; padding:9px 9px; }
+      #sendBtn { flex:0 0 48px; width:48px; min-width:48px; min-height:calc(var(--ilh,24px) + var(--ipad,13px) + var(--ipad,13px) + 2px); height:calc(var(--ilh,24px) + var(--ipad,13px) + var(--ipad,13px) + 2px); font-size:18px; padding:0; }
+      #stopBtn { flex:1 1 44px; min-width:44px; min-height:46px; font-size:20px; padding:0; }  /* só ícone, ao lado do Enviar */
+      #composer.has-draft { gap:6px; padding-top:8px; padding-bottom:calc(8px + var(--safe-bottom)); }
+      #composer.has-draft .controls { flex-wrap:nowrap; gap:5px; max-height:42px; overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+      #composer.has-draft .controls::-webkit-scrollbar { display:none; }
+      #composer.has-draft #agentBtn, #composer.has-draft #modelBtn, #composer.has-draft #effortBtn { display:none; }
+      #composer.has-draft #aiBtn, #composer.has-draft #cwdBtn, #composer.has-draft #designBtn, #composer.has-draft #councilBtn, #composer.has-draft #tourneyBtn, #composer.has-draft #speak { flex:1 0 42px; width:auto; min-width:42px; max-width:none; min-height:40px; padding:0; justify-content:center; }
+      #composer.has-draft #usageBtn { flex:1 0 42px; width:auto; min-width:42px; max-width:none; min-height:40px; padding:0; }
+      #composer.has-draft #usageBtn .cap { display:none; }
+      #composer.has-draft #stopBtn { flex:1 0 42px; min-width:42px; min-height:40px; }
       #status { flex:none; white-space:nowrap; }
+      .toast { bottom:calc(var(--composer-height,120px) + 10px); }
       .modal .card { width:100%; } .pop { max-width:92vw; }
     }
     /* "/" command autocomplete popover, floating above the composer */
@@ -735,7 +1055,7 @@
     .worktabs { display:flex; gap:3px; padding:7px 10px 0; overflow:auto; scrollbar-width:none; border-bottom:1px solid var(--line); }
     .worktabs button { flex:none; min-height:40px; padding:7px 10px; border-radius:8px 8px 0 0; background:none; color:var(--mut); font-size:11.5px; font-weight:600; border-bottom:2px solid transparent; }
     .worktabs button[aria-selected="true"] { color:var(--text); border-bottom-color:#4f83ff; }
-    #workDetailBody { flex:1; overflow:auto; padding:12px 14px calc(16px + env(safe-area-inset-bottom)); }
+    #workDetailBody { flex:1; overflow:auto; padding:12px 14px calc(16px + var(--safe-bottom)); }
     .workempty { display:flex; min-height:150px; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:20px; color:var(--mut); text-align:center; }
     .workempty .weicon { font-size:27px; }
     .worknotice { margin-bottom:10px; padding:8px 10px; border:1px solid #f59e0b55; border-radius:9px; background:#f59e0b12; color:#fcd9a0; font-size:11.5px; }
@@ -787,6 +1107,9 @@
     .context-manifest .context-grid b { font-weight:600; }
     .context-manifest .context-grid span { overflow-wrap:anywhere; }
     .semantic-scope { display:flex; gap:6px; align-items:center; margin-top:2px; }
+    .pushdiag { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:-2px 0 8px 14px; }
+    .pushdiag #pushStatus { flex:1 1 220px; min-width:180px; }
+    .pushdiag button { min-height:30px; padding:4px 8px; font-size:11.5px; }
     .memory-preview-note { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--code); border:1px solid var(--line); padding:10px; max-height:30vh; overflow:auto; }
     .memory-preview-target { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; overflow-wrap:anywhere; }
   </style>
@@ -800,9 +1123,11 @@
       <div id="machineBar" style="display:none"></div>
       <button id="newSess" data-i18n="newSession">＋ Nova sessão</button>
       <div id="quickRow">
-        <div class="link" id="searchBtn" title="Buscar entre sessões"><span class="qic">🔎</span><span class="qtx" data-i18n="searchSessions">buscar entre sessões</span></div>
-        <div class="link" id="digestBtn" title="O que está rolando entre as sessões"><span class="qic">🎧</span><span class="qtx" data-i18n="whatsUp">o que está rolando</span></div>
-        <button type="button" class="link" id="workBtn" title="Acompanhar trabalhos, subagentes e processos"><span class="qic">🧩</span><span class="qtx" data-i18n="works">Trabalhos</span><span id="workBadge" class="wbadge hidden" aria-hidden="true"></span></button>
+        <div class="link" id="searchBtn" title="Buscar texto e contexto entre sessões"><span class="qic">🔎</span><span class="qtx" data-i18n="searchSessions">buscar entre sessões</span></div>
+        <div class="link" id="digestBtn" title="Gerar panorama falado do que está acontecendo nas sessões"><span class="qic">🎧</span><span class="qtx" data-i18n="whatsUp">o que está rolando</span></div>
+        <button type="button" class="link" id="workBtn" title="Acompanhar trabalhos, subagentes, filas e processos em background"><span class="qic">🧩</span><span class="qtx" data-i18n="works">Trabalhos</span><span id="workBadge" class="wbadge hidden" aria-hidden="true"></span></button>
+        <button type="button" class="link" id="termMenuBtn" title="Abrir terminal nesta máquina e pasta"><span class="qic">⌘</span><span class="qtx">Terminal</span></button>
+        <button type="button" class="link" id="personalBtn" title="Consultar contexto pessoal consentido"><span class="qic">⌖</span><span class="qtx" data-i18n="personalAssistant">Assistente pessoal</span></button>
       </div>
       <div id="listTabs">
         <button type="button" class="ltab active" id="tabRec">🕘 Histórico<span class="tcnt" id="recCnt"></span></button>
@@ -834,7 +1159,7 @@
       <div id="cbody">
       <main>
       <div id="limit" class="hidden"></div>
-      <div id="roBanner" class="hidden">👁 Sessão nativa (somente leitura no Jarvis)</div>
+      <div id="roBanner" class="hidden">Sessão nativa da máquina</div>
       <div id="offlineBar" class="hidden"></div>
       <div id="appUpdBar" class="hidden"></div>
       <div id="log"></div>
@@ -846,25 +1171,27 @@
         <div class="inputrow">
           <textarea id="input" rows="1" placeholder="Fale ou digite…" autocomplete="off"></textarea>
           <button type="button" id="micCancel" class="ghost micbtn hidden danger" title="Descartar áudio (não envia)">✕</button>
-          <button type="button" id="mic" class="ghost micbtn" title="Falar">🎤</button>
+          <button type="button" id="mic" class="ghost micbtn" title="Falar" aria-label="Falar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M19 11a7 7 0 0 1-14 0"></path><path d="M12 18v3"></path><path d="M8 21h8"></path></svg></button>
+          <button type="submit" id="sendBtn" title="Enviar" aria-label="Enviar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg></button>
         </div>
         <div class="controls">
+          <button type="button" id="optsBtn" class="ghost" title="Opções" aria-label="Opções" aria-expanded="false">⋯</button>
           <div class="ctlpills">
             <button type="button" id="attach" class="ghost" title="Anexar">＋</button>
             <button type="button" id="designBtn" class="ghost hidden" title="Design Mode — apontar num elemento do preview">🎯</button>
-            <button type="button" id="councilBtn" class="ghost" title="Convocar Conselho">Conselho</button>
-            <button type="button" id="tourneyBtn" class="ghost" title="Torneio: N candidatos resolvem a mesma tarefa e o melhor é promovido">Torneio</button>
+            <button type="button" id="councilBtn" class="ghost" data-i18n="swShort" title="Espaço de Soluções: conselho, benchmark, revisão paralela e auditoria">Soluções</button>
+            <button type="button" id="tourneyBtn" class="ghost hidden" title="Benchmark">Benchmark</button>
             <span id="status"></span>
             <span class="spacer"></span>
+            <button type="button" id="aiBtn" class="pill" title="IA: agente, modelo e esforço" aria-label="IA: agente, modelo e esforço">🤖</button>
             <button type="button" id="agentBtn" class="pill" title="Agente / IA">🤖 <span class="cap" id="agentName">—</span></button>
             <button type="button" id="cwdBtn" class="pill" title="Pasta de trabalho">📁 <span class="cap" id="cwdName">—</span></button>
-            <button type="button" id="modelBtn" class="pill" title="Modelo"><span class="cap" id="modelName">—</span></button>
+            <button type="button" id="modelBtn" class="pill" title="Modelo"><span class="mi" aria-hidden="true">◈</span><span class="cap" id="modelName">—</span></button>
             <button type="button" id="effortBtn" class="pill" title="Esforço / capacidade">⚡ <span class="cap" id="effortName">—</span></button>
-            <button type="button" id="usageBtn" class="pill" title="Uso: contexto + limites do plano">◔ <span class="cap" id="usageName">—</span></button>
             <button type="button" id="speak" class="ghost" title="Falar respostas (voz)">🔇</button>
           </div>
+          <button type="button" id="usageBtn" class="pill" title="Uso: contexto + limites do plano">◔ <span class="cap" id="usageName">—</span></button>
           <button type="button" id="stopBtn" class="hidden danger" title="Parar o que está em andamento">⏹</button>
-          <button type="submit" id="sendBtn">Enviar</button>
         </div>
         <span class="usage" id="usage"></span>
       </form>
@@ -912,16 +1239,21 @@
         <b title="Design Mode">🎯</b>
         <input id="designUrl" placeholder="http://127.0.0.1:5173" autocomplete="off" spellcheck="false" />
         <button id="designDetect" class="ghost" type="button" title="Detectar o preview no runner">Detectar</button>
+        <button id="designOpen" class="ghost" type="button" title="Abrir página no navegador">Abrir</button>
         <button id="designGrab" class="ghost" type="button" title="Selecionar um elemento">Selecionar</button>
         <button id="designClose" class="ghost" type="button" title="Fechar">✕</button>
       </div>
-      <div id="designHost"></div>
-      <div id="designCompose" class="hidden">
-        <div id="designSel"></div>
-        <textarea id="designNote" rows="2" placeholder="O que ajustar neste elemento…"></textarea>
+      <div id="designBody">
+        <div id="designHost"></div>
+        <div id="designCompose">
+        <div id="designSel"><span>Seleções <b id="designCount">0</b></span><button id="designClear" class="ghost" type="button">Limpar</button></div>
+        <div id="designSelList"></div>
+        <textarea id="designNote" rows="2" placeholder="Comentário geral para o pacote de feedback…"></textarea>
+        <div id="designCoverage">Coverage/source map: aguardando preview.</div>
         <div class="designactions">
-          <button id="designCancel" class="ghost" type="button">Descartar</button>
-          <button id="designSend" class="pill" type="button">Enviar pro agente</button>
+          <button id="designCancel" class="ghost" type="button">Cancelar seleção</button>
+          <button id="designSend" class="pill" type="button">Enviar pacote</button>
+        </div>
         </div>
       </div>
       <div id="designStatus"></div>
@@ -938,6 +1270,7 @@
         <button type="button" data-filter="running" aria-pressed="false">Em execução</button>
         <button type="button" data-filter="queued" aria-pressed="false">Na fila</button>
         <button type="button" data-filter="completed" aria-pressed="false">Concluídos</button>
+        <button type="button" data-filter="failed" aria-pressed="false">Falhas</button>
         <button type="button" data-filter="all" aria-pressed="true">Todos</button>
       </div>
       <div class="workscope">
@@ -980,8 +1313,15 @@
   </div></div>
 
   <div id="councilModal" class="modal hidden"><div class="card councilcard">
-    <div class="ctop"><b>Conselho</b><button id="councilClose" class="ghost" type="button" title="Fechar">✕</button></div>
-    <label>Tema<textarea id="councilTopic" placeholder="O que o Conselho deve discutir?"></textarea></label>
+    <div class="ctop"><div><b id="solutionTitle">Espaço de Soluções</b><span>Solution Workspace</span></div><div class="row" style="gap:6px;align-items:center;flex:none"><button id="solutionHelpBtn" class="ghost helpicon" type="button" title="Ajuda">?</button><button id="councilClose" class="ghost helpicon" type="button" title="Fechar" aria-label="Fechar">✕</button></div></div>
+    <div class="modegrid" role="tablist" aria-label="Tipo de rodada">
+      <button type="button" class="sworkmode on" data-mode="council" data-i18n="swModeCouncil" title="Delibera, confronta perspectivas e gera uma síntese com plano.">Conselho</button>
+      <button type="button" class="sworkmode" data-mode="benchmark" data-i18n="swModeBenchmark" title="Compara soluções concorrentes e escolhe a melhor.">Benchmark</button>
+      <button type="button" class="sworkmode" data-mode="review" data-i18n="swModeReview" title="Roda várias revisões independentes para achar problemas complementares.">Revisão</button>
+      <button type="button" class="sworkmode" data-mode="audit" data-i18n="swModeAudit" title="Revisão formal com severidade, evidências e plano de ação.">Auditoria</button>
+    </div>
+    <div id="solutionHelp" class="solutionhelp"></div>
+    <label>Objetivo<textarea id="councilTopic" placeholder="O que o Espaço de Soluções deve analisar, comparar, revisar ou auditar?"></textarea></label>
     <div class="cgrid">
       <label class="cfield">Modo<select id="councilMode">
         <option value="auto">Auto</option>
@@ -991,6 +1331,24 @@
         <option value="deep">Profundo</option>
       </select></label>
       <div class="cswitchfield"><span class="clabel">Contexto</span><label class="row cswitchrow"><input id="councilContext" type="checkbox" checked>Usar contexto recente</label></div>
+    </div>
+    <div class="cgrid">
+      <label class="cfield">IAs<select id="solutionAgentsMode">
+        <option value="auto">Automático</option>
+        <option value="all">Todas disponíveis</option>
+        <option value="manual">Selecionar manualmente</option>
+      </select></label>
+      <label class="cfield solutionParallel">Execuções paralelas<input id="solutionCount" type="number" min="2" max="6" value="3"></label>
+    </div>
+    <div id="solutionAgentList" class="agentlist hidden"></div>
+    <label id="solutionCriteriaWrap">Critérios<textarea id="solutionCriteria" placeholder="Opcional: critérios de julgamento, foco da revisão ou severidade esperada."></textarea></label>
+    <div class="cgrid">
+      <div class="cswitchfield solutionWrite"><span class="clabel">Escrita</span><label class="row cswitchrow"><input id="solutionWrite" type="checkbox" checked>Permitir worktrees isoladas no Benchmark</label></div>
+      <label class="cfield">Depois do resultado<select id="solutionPostAction">
+        <option value="none">Só publicar na sessão</option>
+        <option value="plan">Gerar plano de execução na síntese</option>
+        <option value="handoff">Preparar encaminhamento para uma IA executar</option>
+      </select></label>
     </div>
     <div class="row cactions"><span id="councilNote" class="mut" style="font-size:12px;flex:1"></span><button id="councilCancel" class="ghost" type="button">Cancelar</button><button id="councilGo" type="button">Convocar</button></div>
   </div></div>
@@ -1002,6 +1360,19 @@
   </div></div>
 
   <div id="imgModal" class="modal hidden"><div class="imgwrap"><button type="button" id="imgClose" class="imgx" title="Fechar">✕</button><img id="imgModalPic" alt=""></div></div>
+
+  <div id="fwEditModal" class="modal hidden"><div class="card" style="width:min(780px,96vw);max-width:min(780px,96vw)">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <b id="fwEditTitle">Arquivo</b>
+      <span id="fwEditDirty" style="font-size:12px;color:#f5b544;display:none">• não salvo</span>
+    </div>
+    <label id="fwEditPathRow" style="display:none">Caminho<input id="fwEditPath" type="text" placeholder="commands/plan.md · skills/review/SKILL.md · instructions.md" autocomplete="off"></label>
+    <textarea id="fwEditBody" placeholder="Conteúdo do arquivo (markdown). Em comandos, use $ARGUMENTS onde entram os argumentos." style="min-height:min(56dvh,460px);font:12.5px ui-monospace,Menlo,Consolas,monospace"></textarea>
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <button id="fwEditDelete" class="ghost" type="button">Excluir</button>
+      <span class="row" style="gap:8px"><button id="fwEditCancel" class="ghost" type="button">Fechar</button><button id="fwEditSave" type="button">Salvar</button></span>
+    </div>
+  </div></div>
 
   <div id="fileModal" class="modal hidden"><div class="card filemodalcard">
     <div class="row" style="justify-content:space-between;align-items:center">
@@ -1039,12 +1410,87 @@
     <div class="row" style="justify-content:flex-end"><button id="memoryCancel" class="ghost" type="button">Cancelar</button><button id="memoryApply" type="button">Gravar</button></div>
   </div></div>
 
+  <div id="personalModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="personalModalTitle">
+    <div class="card personal-query-card">
+      <div class="personal-query-head">
+        <div><b id="personalModalTitle" data-i18n="personalAssistant">Assistente pessoal</b><div class="personal-note" data-i18n="personalQueryNote">Consulta somente fontes autorizadas e mostra a procedência de cada resultado.</div></div>
+        <button id="personalClose" class="ghost" type="button" data-i18n-title="close" data-i18n-aria="close" title="Fechar" aria-label="Fechar">✕</button>
+      </div>
+      <div class="personal-query-controls">
+        <label><span data-i18n="personalPurpose">Finalidade</span><select id="personalPurpose">
+          <option value="nearby" data-i18n="purposeNearby">Locais próximos</option>
+          <option value="mobility" data-i18n="purposeMobility">Mobilidade</option>
+          <option value="calendar" data-i18n="purposeCalendar">Agenda</option>
+          <option value="events" data-i18n="purposeEvents">Eventos</option>
+          <option value="weather" data-i18n="purposeWeather">Clima</option>
+          <option value="automation" data-i18n="purposeAutomation">Casa e automações</option>
+        </select></label>
+        <label><span data-i18n="personalQuestion">O que você procura?</span><input id="personalQuery" type="text" maxlength="500" autocomplete="off" data-i18n-ph="personalQueryPh" placeholder="Ex.: carregador disponível perto de um restaurante"></label>
+        <button id="personalRun" type="button" data-i18n="search">Buscar</button>
+      </div>
+      <div class="personal-query-reference">
+        <label><span data-i18n="referencePoint">Ponto de referência</span><select id="personalReference"><option value="auto" data-i18n="referenceAutomatic">Usar localização disponível</option><option value="region" data-i18n="referenceRegion">Informar região</option></select></label>
+        <label id="personalRegionRow" class="hidden"><span data-i18n="regionOrAddress">Região ou endereço</span><input id="personalRegion" type="search" maxlength="256" autocomplete="street-address" data-i18n-ph="regionOrAddressPh" placeholder="Ex.: Savassi, Belo Horizonte"></label>
+        <button id="personalRegionResolve" class="ghost hidden" type="button" data-i18n="findRegion">Localizar região</button>
+      </div>
+      <div id="personalReferenceHint" class="personal-note" role="status" aria-live="polite" data-i18n="referenceFallback">Se a localização atual não estiver disponível, escolha um favorito ou informe uma região.</div>
+      <div id="personalRegionResults" class="personal-choice-list hidden" role="group" data-i18n-aria="regionResults" aria-label="Regiões encontradas"></div>
+      <div class="personal-inline-actions">
+        <button id="personalLocate" class="ghost" type="button" data-i18n="useCurrentLocation">Usar localização atual</button>
+        <span id="personalQueryStatus" class="personal-note" role="status" aria-live="polite"></span>
+        <span class="spacer"></span>
+        <div class="personal-view-switch" role="group" data-i18n-aria="resultViewControls" aria-label="Visualização dos resultados">
+          <button id="personalViewList" class="ghost on" type="button" data-i18n-title="listView" data-i18n-aria="listView" title="Lista" aria-label="Lista">☷</button>
+          <button id="personalViewMap" class="ghost" type="button" data-i18n-title="mapView" data-i18n-aria="mapView" title="Mapa" aria-label="Mapa">⌖</button>
+        </div>
+      </div>
+      <div id="personalResults" aria-live="polite"></div>
+      <div id="personalMap" class="hidden" data-i18n-aria="resultsMap" aria-label="Mapa dos resultados"></div>
+      <details id="personalDiagnostics" class="personal-advanced hidden">
+        <summary><span data-i18n="rankingDiagnostics">Detalhes técnicos da seleção</span> <span id="personalDiagnosticsCount" class="personal-note"></span></summary>
+        <div id="personalDiagnosticsBody" class="personal-diagnostics" role="list"></div>
+      </details>
+    </div>
+  </div>
+
+  <div id="personalCalendarEditModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="personalCalendarEditHeading">
+    <div class="card personal-calendar-card">
+      <div class="personal-action-head"><div><b id="personalCalendarEditHeading" data-i18n="editCalendarEvent">Editar evento</b><div class="personal-note" data-i18n="editCalendarEventNote">Revise os dados antes de gerar a prévia CalDAV.</div></div><button id="personalCalendarEditClose" class="ghost" type="button" data-i18n-title="close" data-i18n-aria="close" title="Fechar" aria-label="Fechar">✕</button></div>
+      <label><span data-i18n="calendarEventTitle">Título</span><input id="personalCalendarEditTitle" type="text" maxlength="512" autocomplete="off"></label>
+      <div class="personal-calendar-grid"><label><span data-i18n="calendarEventStart">Início</span><input id="personalCalendarEditStart" type="datetime-local" step="60"></label><label><span data-i18n="calendarEventEnd">Fim</span><input id="personalCalendarEditEnd" type="datetime-local" step="60"></label></div>
+      <label><span data-i18n="calendarEventLocation">Local</span><input id="personalCalendarEditLocation" type="text" maxlength="1024" autocomplete="off"></label>
+      <label><span data-i18n="calendarEventDescription">Descrição</span><textarea id="personalCalendarEditDescription" maxlength="16384"></textarea></label>
+      <div class="row" style="justify-content:flex-end;flex-wrap:wrap"><button id="personalCalendarEditCancel" class="ghost" type="button" data-i18n="cancel">Cancelar</button><button id="personalCalendarEditPreview" type="button" data-i18n="previewCalendarUpdate">Revisar alteração</button></div>
+    </div>
+  </div>
+
+  <div id="personalActionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="personalActionTitle">
+    <div class="card">
+      <div class="personal-action-head"><div><b id="personalActionTitle" data-i18n="confirmAction">Confirmar ação</b><div id="personalActionRisk" class="personal-note"></div></div><button id="personalActionClose" class="ghost" type="button" data-i18n-title="close" data-i18n-aria="close" title="Fechar" aria-label="Fechar">✕</button></div>
+      <div id="personalActionState" class="personal-action-state hidden" role="status" aria-live="polite"></div>
+      <div id="personalActionPreview" class="personal-action-preview"></div>
+      <div id="personalActionExpiry" class="personal-note"></div>
+      <div class="row" style="justify-content:flex-end;flex-wrap:wrap"><button id="personalActionCancel" class="ghost" type="button" data-i18n="cancel">Cancelar</button><button id="personalActionApprove" type="button" data-i18n="approve">Aprovar</button><button id="personalActionExecute" class="hidden" type="button" data-i18n="execute">Executar</button></div>
+    </div>
+  </div>
+
+  <div id="helpSheet" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="helpSheetTitle"><div class="card help-card">
+    <div class="help-head"><b class="settings-title" id="helpSheetTitle">Ajuda</b><button type="button" id="helpSheetClose" class="ghost settings-x" data-i18n-title="helpSheetClose" title="Fechar" aria-label="Fechar">✕</button></div>
+    <div class="help-body" id="helpSheetBody"></div>
+  </div></div>
   <div id="settings" class="modal hidden"><div class="card settings-card">
-    <div class="settings-head"><b class="settings-title">Configurações</b><button type="button" id="setX" class="ghost settings-x" title="Fechar" aria-label="Fechar">✕</button></div>
+    <div class="settings-head"><b class="settings-title">Configurações</b><button type="button" id="settingsHelpBtn" class="ghost helpicon settings-help" title="Ajuda desta seção" aria-label="Ajuda desta seção">?</button><button type="button" id="setX" class="ghost settings-x" title="Fechar" aria-label="Fechar">✕</button></div>
     <div class="settings-body">
       <nav class="settings-nav" id="setNav">
+        <button type="button" id="setSearchToggle" class="settings-search-toggle" aria-label="Procurar"><span aria-hidden="true">🔍</span> <span>Procurar</span></button>
         <div class="settings-search"><input id="setSearch" type="search" placeholder="Procurar" autocomplete="off" spellcheck="false"></div>
+        <select id="setSection" class="settings-section-select" aria-label="Seção de configurações">
+          <option value="geral">Geral</option><option value="assistente">Assistente</option><option value="fontes">Fontes</option><option value="dados">Dados</option><option value="voz">Voz</option><option value="notif">Notificações</option><option value="automacao">Automação</option><option value="framework">Framework</option><option value="rota">Roteamento</option><option value="uso">Uso &amp; custo</option><option value="celular">Abrir no celular</option><option value="dispositivos">Dispositivos</option><option value="update">Atualização</option>
+        </select>
         <button type="button" class="snav on" data-goto="geral">⚙ Geral</button>
+        <button type="button" class="snav" data-goto="assistente">⌖ Assistente</button>
+        <button type="button" class="snav" data-goto="fontes">⇄ Fontes</button>
+        <button type="button" class="snav" data-goto="dados">▤ Dados</button>
         <button type="button" class="snav" data-goto="voz">🎙 Voz</button>
         <button type="button" class="snav" data-goto="notif">🔔 Notificações</button>
         <button type="button" class="snav snav-owner" data-goto="automacao">🤖 Automação</button>
@@ -1065,6 +1511,169 @@
           <label><span data-i18n="lblModel">Modelo padrão</span> <select id="setModel"></select></label>
           <label><span data-i18n="lblEffort">Esforço padrão</span> <select id="setEffort"></select></label>
           <label class="row"><input type="checkbox" id="setSlash" checked> <span data-i18n="lblSlash">Autocomplete e sugestões ao digitar “/”, “@”, “#” e “!”</span></label>
+          <div id="fallbackSettings" class="hidden">
+            <div class="sec" style="margin-top:10px">IA secundária (limite/crédito)</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Se a IA de uma ação ficar <b>sem crédito</b> (limite atingido), o Jarvis avisa e <b>refaz a ação</b> nesta IA secundária. Ele lembra que a primária estourou e vai direto na secundária até o <b>próximo dia</b> — ou até você mandar “tentar agora”.</div>
+            <label class="row"><input type="checkbox" id="fallbackEnabled"> <span>Usar IA secundária quando a primária ficar sem crédito</span></label>
+            <label>IA secundária <select id="fallbackAgent"></select></label>
+            <label>Modelo <select id="fallbackModel"></select></label>
+            <label>Esforço <select id="fallbackEffort"></select></label>
+            <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="fallbackSave" type="button">Salvar</button></div>
+            <div id="fallbackBlocks" class="mut" style="font-size:12px;margin-top:6px"></div>
+          </div>
+          <div id="logSettings" class="hidden">
+            <div class="sec" style="margin-top:10px">Logs de observabilidade</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Log estruturado (JSON) por turno em <code>~/.jarvis/logs/</code> — tempo, tokens, custo e sessão, para análise. Logs incham; ajuste o nível e a retenção. <b>debug/trace</b> incluem o detalhe por estágio (roteamento, STT/TTS) para diagnosticar lentidão.</div>
+            <label class="row"><input type="checkbox" id="logEnabled"> <span>Gerar logs de observabilidade</span></label>
+            <label>Nível<select id="logLevel"><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option><option value="trace">trace</option></select></label>
+            <div class="routine-grid">
+              <label>Retenção (dias)<input id="logRetention" type="number" min="0" max="3650" step="1"></label>
+              <label>Tamanho máx. por arquivo (MB)<input id="logMaxMb" type="number" min="1" max="1000" step="1"></label>
+            </div>
+            <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="logSave" type="button">Salvar</button></div>
+          </div>
+        </section>
+
+        <section class="spanel hidden" data-panel="assistente">
+          <div class="sec sec-help"><span data-i18n="personalAssistant">Assistente pessoal</span><button type="button" class="sec-help-btn" data-help="assistant" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div class="personal-note" data-i18n="personalAssistantDesc">Cruza apenas dados autorizados para responder, sugerir e executar ações com confirmação proporcional ao risco.</div>
+          <label class="row"><input type="checkbox" id="personalEnabled"> <span data-i18n="personalEnabled">Ativar assistente pessoal</span></label>
+          <label class="row"><input type="checkbox" id="personalPaused"> <span data-i18n="personalPaused">Pausar consultas e sugestões proativas</span></label>
+          <div id="personalContextPolicyAlert" class="personal-context-alert hidden" role="button" tabindex="0"><span class="pca-ic" aria-hidden="true">⚠️</span><span data-i18n="personalContextBlockedShort">O contexto pessoal no chat está desativado pela política — toque para permitir.</span></div>
+          <div class="sec sec-help"><span data-i18n="location">Localização</span><button type="button" class="sec-help-btn" data-help="location" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div class="personal-grid">
+            <label><span data-i18n="locationMode">Uso da localização</span><select id="personalLocationMode"><option value="off" data-i18n="locationOff">Desativado</option><option value="foreground" data-i18n="locationForeground">Somente com o app aberto</option><option value="background" data-i18n="locationBackground">Em segundo plano quando a plataforma permitir</option></select></label>
+            <label><span data-i18n="locationPrecision">Precisão compartilhada</span><select id="personalPrecision"><option value="approximate" data-i18n="approximate">Aproximada</option><option value="precise" data-i18n="precise">Precisa</option></select></label>
+          </div>
+          <div class="personal-inline-actions"><button id="personalSettingsLocate" class="ghost" type="button" data-i18n="authorizeLocation">Autorizar este aparelho</button><span id="personalLocationStatus" class="personal-note" role="status" aria-live="polite"></span></div>
+          <div id="personalNativeStatus" class="personal-note personal-device-status" role="status" aria-live="polite"></div>
+          <div class="personal-note" data-i18n="locationPrivacy">A posição exata permanece temporária no Hub. O histórico usa localização reduzida, salvo se a retenção bruta for ativada explicitamente.</div>
+          <div class="sec sec-help"><span data-i18n="proactiveSuggestions">Sugestões proativas</span><button type="button" class="sec-help-btn" data-help="proactive" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <label class="row"><input type="checkbox" id="personalProactiveEnabled"> <span data-i18n="proactiveThisDevice">Receber sugestões proativas neste aparelho</span></label>
+          <div id="personalProactiveStatus" class="personal-note" role="status" aria-live="polite" data-i18n="proactiveDeviceOff">Desativadas neste aparelho.</div>
+          <div id="personalDisabledKinds" class="personal-disabled-kinds" aria-live="polite"></div>
+          <div id="personalProactivePolicyStatus" class="personal-note" data-i18n="proactiveDevicePolicy">Estes limites pertencem somente a este aparelho; na ausência de override, o perfil usa a política geral.</div>
+          <div class="personal-grid">
+            <label><span data-i18n="quietStart">Silêncio a partir de</span><input id="personalQuietStart" type="time" required></label>
+            <label><span data-i18n="quietEnd">Silêncio até</span><input id="personalQuietEnd" type="time" required></label>
+            <label><span data-i18n="maxPerDay">Máximo por dia</span><input id="personalMaxPerDay" type="number" min="0" max="50" required></label>
+            <label><span data-i18n="cooldownMinutes">Intervalo mínimo (minutos)</span><input id="personalCooldown" type="number" min="0" max="10080" required></label>
+            <label><span data-i18n="minRelevance">Relevância mínima</span><input id="personalMinScore" type="number" min="0" max="1" step="0.05" required></label>
+          </div>
+          <div class="sec sec-help"><span data-i18n="actionPolicy">Política de ações</span><button type="button" class="sec-help-btn" data-help="actionPolicy" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div class="personal-policy"><b data-i18n="readActions">Leitura</b><span data-i18n="readActionsPolicy">Executa automaticamente dentro dos consentimentos.</span><b data-i18n="externalActions">Ação externa reversível</b><span data-i18n="externalActionsPolicy">Mostra a prévia e pede confirmação.</span><b data-i18n="consequentialActions">Ação consequente</b><span data-i18n="consequentialActionsPolicy">Sempre exige confirmação vinculada à prévia.</span></div>
+          <div class="personal-inline-actions"><button id="personalSave" type="button" data-i18n="saveAssistant">Salvar assistente</button><button id="personalOpenQuery" class="ghost" type="button" data-i18n="openAssistant">Abrir assistente</button></div>
+        </section>
+
+        <section class="spanel hidden" data-panel="fontes">
+          <div class="sec sec-help"><span data-i18n="contextSources">Fontes de contexto</span><button type="button" class="sec-help-btn" data-help="sources" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div class="personal-note" data-i18n="sourcesDesc">Cada consulta usa somente fontes com consentimento para a finalidade escolhida. Segredos ficam em variáveis do Hub e nunca retornam ao navegador.</div>
+          <div id="personalSourceList" class="personal-list"><span class="personal-note" data-i18n="loading">Carregando...</span></div>
+          <div class="sec sec-help"><span data-i18n="consents">Consentimentos</span><button type="button" class="sec-help-btn" data-help="consents" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div id="personalConsentList" class="personal-list"></div>
+          <div id="personalSourceForm" class="personal-form snav-owner">
+            <div class="personal-form-h"><b data-i18n="configureSource">Configurar fonte</b><button type="button" class="sec-help-btn" data-help="configureSource" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+            <div class="personal-grid">
+              <label><span data-i18n="sourceType">Tipo</span><select id="personalSourceType"><option value="caldav">CalDAV</option><option value="mapas_culturais">Mapas Culturais</option><option value="open_events" data-i18n="sourceOpenEvents">Eventos abertos</option><option value="mcp_http">MCP HTTP</option><option value="mcp_stdio" data-i18n="sourceLocalMcp">MCP local</option><option value="home_assistant">Home Assistant</option><option value="open_charge_map">Open Charge Map</option><option value="valhalla">Valhalla</option><option value="nominatim">Nominatim</option><option value="osm">OpenStreetMap</option><option value="open_meteo">Open-Meteo</option><option value="weather_alerts" data-i18n="sourceWeatherAlerts">Alertas meteorológicos CAP</option></select></label>
+              <label><span data-i18n="sourceLabel">Nome</span><input id="personalSourceLabel" type="text" maxlength="100" autocomplete="off"></label>
+              <label><span data-i18n="sourceEndpoint">Endpoint</span><input id="personalSourceEndpoint" type="url" maxlength="2000" autocomplete="off" placeholder="https://..."></label>
+              <label><span data-i18n="sourceSecret">Variável do segredo</span><input id="personalSourceSecret" type="text" maxlength="100" autocomplete="off" placeholder="JARVIS_..."></label>
+              <label><span data-i18n="allowedResources">Recursos permitidos</span><input id="personalSourceResources" type="text" autocomplete="off" data-i18n-ph="allowedResourcesPh" placeholder="agenda, eventos"></label>
+              <label><span data-i18n="allowedActions">Ações permitidas</span><input id="personalSourceActions" type="text" autocomplete="off" data-i18n-ph="allowedActionsPh" placeholder="read, navigate"></label>
+            </div>
+            <div id="personalSourceHint" class="personal-note"></div>
+            <div id="personalSourceDiscovery" class="personal-source-discovery hidden" aria-live="polite"></div>
+            <details id="personalSourceAdvanced" class="personal-advanced">
+              <summary data-i18n="advancedSource">Opções avançadas da fonte</summary>
+              <div class="personal-grid">
+                <label><span data-i18n="sourceCertification">Certificação MCP</span><select id="personalSourceCertification"><option value="uncertified" data-i18n="uncertified">Não certificada</option><option value="first_party" data-i18n="firstParty">Primeira parte</option><option value="audited" data-i18n="audited">Auditada</option></select></label>
+                <label><span data-i18n="sourceFormat">Formato do feed</span><select id="personalSourceFormat"><option value="" data-i18n="detectFormat">Detectar</option><option value="ics">ICS</option><option value="rss">RSS/Atom</option><option value="jsonld">JSON-LD</option></select></label>
+                <label id="personalSourceAccessRow"><span data-i18n="calendarAccess">Acesso à agenda</span><select id="personalSourceAccess"><option value="busy_free" data-i18n="busyFreeOnly">Somente ocupado/livre</option><option value="details" data-i18n="authorizedDetails">Detalhes (autorização separada)</option></select><span class="personal-note" data-i18n="calendarDetailsConsentNote">Detalhes exigem uma autorização explícita separada; ocupado/livre continua sendo o padrão.</span></label>
+                <label><span data-i18n="timeZone">Fuso horário</span><input id="personalSourceTimeZone" type="text" maxlength="100" autocomplete="off" placeholder="America/Sao_Paulo"></label>
+                <label><span data-i18n="attribution">Atribuição</span><input id="personalSourceAttribution" type="text" maxlength="300" autocomplete="off"></label>
+                <label><span data-i18n="sourcePurposes">Finalidades desta fonte</span><input id="personalSourcePurposes" type="text" autocomplete="off" data-i18n-ph="sourcePurposesPh" placeholder="eventos, clima"></label>
+                <label><span data-i18n="commandArgs">Argumentos do comando</span><input id="personalSourceArgs" type="text" autocomplete="off" data-i18n-ph="commandArgsPh" placeholder="--config, caminho"></label>
+                <label><span data-i18n="workingDirectory">Pasta de execução</span><input id="personalSourceCwd" type="text" autocomplete="off"></label>
+                <label><span data-i18n="allowedAttributes">Atributos permitidos</span><input id="personalSourceAttributes" type="text" autocomplete="off" data-i18n-ph="allowedAttributesPh" placeholder="friendly_name, unit_of_measurement"></label>
+                <label><span data-i18n="serviceFields">Campos de serviço permitidos</span><input id="personalSourceServiceFields" type="text" autocomplete="off" data-i18n-ph="serviceFieldsPh" placeholder="brightness, temperature"></label>
+              </div>
+              <label id="personalSourceOutputSchemaRow" class="personal-stack hidden"><span data-i18n="mcpOutputSchema">Schema de saída MCP (JSON)</span><textarea id="personalSourceOutputSchema" class="personal-source-code" maxlength="2000" spellcheck="false" autocomplete="off" aria-describedby="personalSourceOutputSchemaNote" data-i18n-ph="mcpOutputSchemaPh" placeholder="{&quot;type&quot;:&quot;object&quot;,&quot;properties&quot;:{...},&quot;additionalProperties&quot;:false}"></textarea><span id="personalSourceOutputSchemaNote" class="personal-note" data-i18n="mcpOutputSchemaNote">Objeto JSON fechado usado para validar o resultado de cada tool permitida.</span></label>
+              <div id="personalSourceEnvGroup" class="personal-stack hidden" aria-describedby="personalSourceEnvNote">
+                <span data-i18n="stdioEnvironment">Ambiente do processo stdio</span>
+                <div class="personal-env-editor">
+                  <label><span data-i18n="environmentName">Variável</span><input id="personalSourceEnvName" type="text" maxlength="100" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="LOG_LEVEL"></label>
+                  <label><span data-i18n="environmentValue">Novo valor</span><input id="personalSourceEnvValue" type="password" maxlength="2000" autocomplete="new-password"></label>
+                  <button id="personalSourceEnvAdd" class="ghost" type="button" data-i18n="addEnvironment">Adicionar</button>
+                </div>
+                <div id="personalSourceEnvList" class="personal-env-list" aria-live="polite"></div>
+                <span id="personalSourceEnvNote" class="personal-note" data-i18n="stdioEnvironmentNote">Valores salvos não são exibidos. Variáveis sensíveis devem usar a variável de segredo acima.</span>
+              </div>
+              <label class="row"><input id="personalSourceRemoteHttps" type="checkbox"> <span data-i18n="allowRemoteHttps">Permitir HTTPS remoto para este host</span></label>
+            </details>
+            <label class="row"><input id="personalSourceEnabled" type="checkbox" checked> <span data-i18n="sourceEnabled">Fonte ativa</span></label>
+            <div class="personal-inline-actions"><button id="personalSourceSave" type="button" data-i18n="saveSource">Salvar fonte</button><button id="personalSourceReset" class="ghost" type="button" data-i18n="clear">Limpar</button></div>
+          </div>
+        </section>
+
+        <section class="spanel hidden" data-panel="dados">
+          <div class="sec sec-help"><span data-i18n="personalData">Dados pessoais</span><button type="button" class="sec-help-btn" data-help="personalData" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div id="personalDataSummary" class="personal-note"></div>
+          <div id="personalDataCategories" class="personal-data-categories hidden" role="list" data-i18n-aria="dataCategorySummary"></div>
+          <div class="sec sec-help"><span data-i18n="favoritePlaces">Locais favoritos</span><button type="button" class="sec-help-btn" data-help="favorites" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div id="personalFavoriteList" class="personal-list"></div>
+          <div class="personal-form">
+            <div class="personal-grid"><label><span data-i18n="label">Nome</span><input id="personalFavoriteLabel" type="text" maxlength="100" autocomplete="off"></label><label><span data-i18n="address">Endereço</span><input id="personalFavoriteAddress" type="search" maxlength="500" autocomplete="street-address"></label><label><span data-i18n="favoriteAliases">Aliases</span><input id="personalFavoriteAliases" type="text" maxlength="500" autocomplete="off" data-i18n-ph="favoriteAliasesPh" placeholder="casa, lar"></label><label><span data-i18n="favoritePurposes">Finalidades</span><select id="personalFavoritePurposes" multiple size="3"><option value="nearby" data-i18n="purposeNearby">Locais próximos</option><option value="mobility" data-i18n="purposeMobility">Mobilidade</option><option value="calendar" data-i18n="purposeCalendar">Agenda</option><option value="events" data-i18n="purposeEvents">Eventos</option><option value="weather" data-i18n="purposeWeather">Clima</option><option value="automation" data-i18n="purposeAutomation">Casa e automações</option></select></label></div>
+            <div class="personal-inline-actions"><button id="personalFavoriteFindAddress" class="ghost" type="button" data-i18n="findAddress">Buscar endereço</button><button id="personalFavoriteLocate" class="ghost" type="button" data-i18n="useCurrentLocation">Usar localização atual</button><span id="personalFavoriteLocationStatus" class="personal-note" role="status" aria-live="polite"></span></div>
+            <div id="personalFavoriteAddressResults" class="personal-choice-list hidden" role="group" data-i18n-aria="addressResults" aria-label="Endereços encontrados"></div>
+            <details class="personal-advanced">
+              <summary data-i18n="resolvedCoordinates">Coordenadas resolvidas</summary>
+              <div class="personal-grid"><label><span data-i18n="latitude">Latitude</span><input id="personalFavoriteLat" type="number" min="-90" max="90" step="any" inputmode="decimal"></label><label><span data-i18n="longitude">Longitude</span><input id="personalFavoriteLng" type="number" min="-180" max="180" step="any" inputmode="decimal"></label></div>
+              <div class="personal-note" data-i18n="coordinatesFallback">Use somente quando a busca de endereço ou a localização do aparelho não estiver disponível.</div>
+            </details>
+            <details class="personal-advanced">
+              <summary data-i18n="arrivalMonitoring">Monitorar chegada e saída</summary>
+              <label class="row"><input id="personalFavoriteGeofence" type="checkbox"> <span data-i18n="monitorFavorite">Monitorar este local em background</span></label>
+              <div class="personal-grid">
+                <label><span data-i18n="geofenceRadius">Raio (metros)</span><input id="personalFavoriteGeofenceRadius" type="number" min="50" max="10000" step="10" value="200" disabled></label>
+                <div><span class="personal-note" data-i18n="geofenceTransitions">Transições</span><div class="personal-inline-actions"><label class="row"><input id="personalFavoriteEnter" type="checkbox" checked disabled> <span data-i18n="arrival">Chegada</span></label><label class="row"><input id="personalFavoriteExit" type="checkbox" checked disabled> <span data-i18n="departure">Saída</span></label></div></div>
+              </div>
+              <div id="personalGeofenceStatus" class="personal-note" role="status" aria-live="polite" data-i18n="geofenceOptInNote">Exige opt-in de background e suporte nativo; não executa ações externas automaticamente.</div>
+            </details>
+            <div class="personal-inline-actions"><button id="personalFavoriteReset" class="ghost hidden" type="button" data-i18n="cancelEdit">Cancelar edição</button><button id="personalFavoriteSave" type="button" data-i18n="saveFavorite">Salvar local</button></div>
+          </div>
+          <div class="sec sec-help"><span data-i18n="electricVehicles">Veículos elétricos</span><button type="button" class="sec-help-btn" data-help="vehicles" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div class="personal-note" data-i18n="vehicleProfileNote">Perfis filtram compatibilidade e potência. Eles não confirmam disponibilidade ao vivo de carregadores.</div>
+          <div id="personalVehicleList" class="personal-list"></div>
+          <details id="personalVehicleForm" class="personal-advanced">
+            <summary data-i18n="configureVehicle">Configurar veículo</summary>
+            <div class="personal-grid">
+              <label><span data-i18n="vehicleId">ID</span><input id="personalVehicleId" type="text" maxlength="100" autocomplete="off" data-i18n-ph="vehicleIdPh" placeholder="meu-carro"></label>
+              <label><span data-i18n="vehicleLabel">Nome</span><input id="personalVehicleLabel" type="text" maxlength="100" autocomplete="off"></label>
+              <label><span data-i18n="connectorTypeIds">Conectores OCM</span><input id="personalVehicleConnectors" type="text" maxlength="300" inputmode="numeric" autocomplete="off" data-i18n-ph="connectorTypeIdsPh" placeholder="25, 33"></label>
+              <label><span data-i18n="maxAcceptedPower">Potência máxima aceita (kW)</span><input id="personalVehicleMaxPower" type="number" min="0.1" max="1000" step="0.1"></label>
+              <label><span data-i18n="vehicleRange">Autonomia estimada (km)</span><input id="personalVehicleRange" type="number" min="0.1" max="5000" step="0.1"></label>
+              <label><span data-i18n="minimumPreferredPower">Potência mínima preferida (kW)</span><input id="personalVehicleMinPower" type="number" min="0.1" max="1000" step="0.1"></label>
+              <label><span data-i18n="preferredOperators">Operadores preferidos</span><input id="personalVehicleOperators" type="text" maxlength="2100" autocomplete="off" data-i18n-ph="preferredOperatorsPh" placeholder="Operador A, Operador B"></label>
+              <label class="row"><input id="personalVehicleDefault" type="checkbox"> <span data-i18n="defaultVehicle">Veículo padrão</span></label>
+            </div>
+            <div class="personal-inline-actions"><button id="personalVehicleReset" class="ghost" type="button" data-i18n="clear">Limpar</button><button id="personalVehicleSave" type="button" data-i18n="saveVehicle">Salvar veículo</button></div>
+          </details>
+          <div class="sec sec-help"><span data-i18n="preferences">Preferências explícitas</span><button type="button" class="sec-help-btn" data-help="preferences" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div id="personalPreferenceList" class="personal-list"></div>
+          <div class="personal-form">
+            <div id="personalPreferenceEditorNote" class="personal-note hidden" role="status" aria-live="polite"></div>
+            <div class="personal-grid"><label><span data-i18n="preferenceKey">Categoria</span><input id="personalPreferenceKey" type="text" maxlength="100" autocomplete="off" data-i18n-ph="preferenceKeyPh" placeholder="restaurante.cozinha"></label><label><span data-i18n="preferenceValue">Preferência</span><input id="personalPreferenceValue" type="text" maxlength="500" autocomplete="off" data-i18n-ph="preferenceValuePh" placeholder="comida mineira"></label><label><span data-i18n="polarity">Relação</span><select id="personalPreferencePolarity"><option value="prefer" data-i18n="prefer">Prefiro</option><option value="avoid" data-i18n="avoid">Evito</option><option value="require" data-i18n="require">Exijo</option></select></label><label><span data-i18n="purposes">Finalidades</span><select id="personalPreferencePurpose" multiple size="3"><option value="nearby" data-i18n="purposeNearby">Locais próximos</option><option value="mobility" data-i18n="purposeMobility">Mobilidade</option><option value="calendar" data-i18n="purposeCalendar">Agenda</option><option value="events" data-i18n="purposeEvents">Eventos</option><option value="weather" data-i18n="purposeWeather">Clima</option><option value="automation" data-i18n="purposeAutomation">Casa e automações</option></select></label><label><span data-i18n="memoryValidUntil">Válida até (opcional)</span><input id="personalPreferenceExpires" type="datetime-local" step="60"></label></div>
+            <div class="personal-inline-actions"><button id="personalPreferenceReset" class="ghost hidden" type="button" data-i18n="cancelEdit">Cancelar edição</button><button id="personalPreferenceSave" type="button" data-i18n="savePreference">Salvar preferência</button></div>
+          </div>
+          <div class="sec sec-help"><span data-i18n="retention">Retenção e privacidade</span><button type="button" class="sec-help-btn" data-help="retention" data-i18n-title="helpMoreLabel" data-i18n-aria="helpMoreLabel" title="Ajuda detalhada" aria-label="Ajuda detalhada">?</button></div>
+          <div class="personal-grid"><label><span data-i18n="observationsDays">Observações (dias)</span><input id="personalObservationsDays" type="number" min="0" max="365"></label><label><span data-i18n="decisionsDays">Decisões (dias)</span><input id="personalDecisionsDays" type="number" min="1" max="3650"></label><label><span data-i18n="inferencesDays">Inferências (dias)</span><input id="personalInferencesDays" type="number" min="1" max="3650"></label></div>
+          <label class="row"><input id="personalKeepRawLocation" type="checkbox"> <span data-i18n="keepRawLocation">Manter localização bruta no histórico</span></label>
+          <div class="personal-inline-actions"><button id="personalRetentionSave" type="button" data-i18n="saveRetention">Salvar retenção</button><button id="personalExport" class="ghost" type="button" data-i18n="exportData">Exportar JSON</button><button id="personalPrune" class="ghost" type="button" data-i18n="pruneData">Limpar dados expirados</button><button id="personalErase" class="ghost personal-danger" type="button" data-i18n="eraseData">Apagar todos os dados</button></div>
+          <div class="personal-category-erase">
+            <label><span data-i18n="eraseCategory">Apagar uma categoria</span><select id="personalEraseCategory"><option value="observations" data-i18n="categoryObservations">Observações</option><option value="preferences" data-i18n="categoryPreferences">Preferências</option><option value="favorites" data-i18n="categoryFavorites">Locais favoritos</option><option value="vehicle_profiles" data-i18n="categoryVehicleProfiles">Perfis de veículos</option><option value="actions" data-i18n="categoryActions">Ações</option><option value="notifications" data-i18n="categoryNotifications">Notificações</option><option value="sources" data-i18n="categorySources">Configurações de fontes</option><option value="consents" data-i18n="categoryConsents">Consentimentos</option><option value="device_profiles" data-i18n="categoryDeviceProfiles">Preferências de aparelhos</option></select></label>
+            <button id="personalEraseCategoryButton" class="ghost personal-danger" type="button" data-i18n="eraseSelected">Apagar</button>
+          </div>
+          <div class="personal-note" data-i18n="categoryEraseNote">A configuração de fontes só pode ser apagada pelo owner.</div>
         </section>
 
         <section class="spanel hidden" data-panel="voz">
@@ -1084,7 +1693,8 @@
           <label><span data-i18n="lblVoiceEscalate">Refino por voz — modelo em análises difíceis</span> <select id="setVoiceEscalate"></select></label>
           <label class="row"><input type="checkbox" id="setVoiceRelevance"> <span data-i18n="lblVoiceRelevance">Só despachar falas que são comando (filtro anti-ruído)</span></label>
           <div class="sec"><span data-i18n="secAdvListen">Escuta avançada</span> <span class="soon">em desenvolvimento</span></div>
-          <label class="row"><input type="checkbox" id="setWake"> <span data-i18n="lblWake">Wake word "Hey Jarvis" (na máquina)</span> <span class="soon">requer wake_listener.py</span></label>
+          <label class="row"><input type="checkbox" id="setWake"> <span data-i18n="lblWake">Wake word "Hey Jarvis" (máquina/APK)</span> <span class="soon">requer listener</span></label>
+          <div class="mut nativeonly" style="font-size:12px;margin:-4px 0 6px">No APK Android, usa o serviço nativo JarvisWake com openWakeWord; requer permissão de microfone e mantém uma notificação de serviço ativo.</div>
           <label class="row"><input type="checkbox" id="setNoise"> <span data-i18n="lblNoise">Filtro anti-ruído / detecção de fala (VAD)</span></label>
           <div class="sec">Identificação de voz (multiusuário)</div>
           <label class="row"><input type="checkbox" id="setGate"> Exigir voz cadastrada (bloquear vozes desconhecidas)</label>
@@ -1096,8 +1706,12 @@
           <div class="sec" data-i18n="secNotif">Notificações</div>
           <label class="row"><input type="checkbox" id="setPush"> <span data-i18n="lblPushDevice">Notificar neste aparelho (Web Push)</span></label>
           <div class="mut nativepushnote" style="font-size:12px;margin:-4px 0 6px">No APK Android, o app pode salvar a permissão e as preferências. A entrega remota exige FCM configurado no build.</div>
+          <div class="pushdiag">
+            <span id="pushStatus" class="mut">Status de push não verificado.</span>
+            <button type="button" id="pushRefresh" class="ghost">Atualizar</button>
+            <button type="button" id="pushTest" class="ghost">Enviar teste</button>
+          </div>
           <label class="row biolockrow"><input type="checkbox" id="setBioLock"> <span data-i18n="lblBioLock">Bloquear com biometria (Face ID / digital)</span></label>
-          <label class="row"><input type="checkbox" id="setShareGeo"> <span data-i18n="lblShareGeo">Compartilhar a localização deste aparelho (para pedidos como “por perto”)</span></label>
           <div id="pushCfg" class="hidden" style="margin:2px 0 6px 14px">
             <div class="mut" data-i18n="lblNotifyAbout" style="font-size:11.5px;margin-bottom:4px">Avisar sobre — vale só para este aparelho:</div>
             <label class="row"><input type="checkbox" id="pushDone"> <span data-i18n="lblPushDone">Sessão concluída (qualquer máquina)</span></label>
@@ -1131,6 +1745,7 @@
             <label class="row"><input type="checkbox" id="setPolicyDiff" checked> Exigir preview/diff antes de escrever no repo</label>
             <label class="row"><input type="checkbox" id="setPolicyAutoplay"> Permitir automações em cadeia sem confirmação</label>
             <label class="row"><input type="checkbox" id="setPolicyBackground"> Permitir turnos em background</label>
+            <label class="row"><input type="checkbox" id="setPolicyPersonalContext"> <span data-i18n="policyPersonalContext">Permitir contexto pessoal automático no chat</span></label>
             <div class="row" style="gap:6px;flex-wrap:wrap">
               <button id="setPolicyProject" class="ghost" type="button">Salvar para pasta atual</button>
               <button id="setPolicySession" class="ghost" type="button">Salvar para sessão atual</button>
@@ -1150,9 +1765,10 @@
                 <label>Esforço<select id="rtEffort"></select></label>
               </div>
               <div class="routine-path"><label>Pasta de trabalho <span class="mut">opcional</span><input id="rtCwd" placeholder="Ex.: C:\Workspace\projeto" autocomplete="off"></label><button id="rtBrowse" class="ghost" type="button">📁 Escolher pasta</button></div>
-              <div class="cron-box"><label>Agenda cron<input id="rtCron" value="0 8 * * 1-5" placeholder="minuto hora dia mês semana" spellcheck="false" autocomplete="off"></label><div id="rtCronHelp" class="cron-help mut">Cinco campos: minuto, hora, dia do mês, mês e dia da semana (0=domingo, 1=segunda).</div><div id="rtCronExamples" class="cron-examples"><button type="button" class="ghost" data-cron="0 8 * * *">Todo dia, 08:00</button><button type="button" class="ghost" data-cron="0 8 * * 1-5">Dias úteis, 08:00</button><button type="button" class="ghost" data-cron="*/15 * * * *">A cada 15 min</button><button type="button" class="ghost" data-cron="0 9 1 * *">Todo dia 1, 09:00</button><button type="button" class="ghost" data-cron="@weekly">Semanal</button></div></div>
+              <div class="cron-box"><label>Agenda<input id="rtCron" value="0 8 * * 1-5" placeholder="ex.: a cada 3 horas, cada 2 dias às 08:30, ou cron" spellcheck="false" autocomplete="off"></label><div id="rtCronHelp" class="cron-help mut">Aceita cron de 5 campos ou frases como “a cada 3 horas” e “cada 2 dias às 08:30”.</div><div id="rtCronExamples" class="cron-examples"><button type="button" class="ghost" data-cron="0 8 * * *">Todo dia, 08:00</button><button type="button" class="ghost" data-cron="0 8 * * 1-5">Dias úteis, 08:00</button><button type="button" class="ghost" data-cron="*/15 * * * *">A cada 15 min</button><button type="button" class="ghost" data-cron="a cada 1 hora">A cada 1h</button><button type="button" class="ghost" data-cron="a cada 3 horas">A cada 3h</button><button type="button" class="ghost" data-cron="a cada 6 horas">A cada 6h</button><button type="button" class="ghost" data-cron="cada 2 dias às 08:00">A cada 2 dias</button><button type="button" class="ghost" data-cron="a cada 2 dias a cada 6 horas">2 dias + 6h</button><button type="button" class="ghost" data-cron="0 9 1 * *">Todo dia 1, 09:00</button><button type="button" class="ghost" data-cron="@weekly">Semanal</button></div></div>
               <div class="routine-actions">
                 <label class="row routine-toggle"><input type="checkbox" id="rtSpeak"> Falar resultado</label>
+                <button id="rtCancel" class="ghost hidden" type="button">Cancelar edição</button>
                 <button id="rtAdd" type="button" disabled>Adicionar rotina</button>
               </div>
             </div>
@@ -1178,22 +1794,45 @@
           <div id="frameworkSettings" class="hidden">
             <div class="sec">Meu Framework (universal)</div>
             <div class="mut" style="font-size:12px;margin-bottom:6px">Comandos, skills e instruções que valem para <b>todas as IAs</b> e são publicados em <b>todas as suas máquinas</b>. O Jarvis é a fonte da verdade; os arquivos nativos de cada IA são adapters. Aparecem no menu “/” marcados como <b>universal</b>.</div>
-            <label>Quando um “/nome” existe nativo e universal
+            <div class="sec" style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">O que foi feito<button id="fwLogClear" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Limpar</button></div>
+            <div id="fwLog" style="font-size:12px;max-height:150px;overflow:auto;background:#0f141b;border:1px solid #ffffff14;border-radius:8px;padding:6px 8px">Cada ação registra o resultado aqui. Se você clicar e nada aparecer, o Hub está desatualizado — reinicie-o para ativar estas ações.</div>
+            <label style="margin-top:10px">Quando um “/nome” existe nativo e universal
               <select id="setFwPref">
                 <option value="ask">Perguntar (mostra os dois; prefere o nativo)</option>
                 <option value="native">Sempre o nativo da IA</option>
                 <option value="jarvis">Sempre o universal do Framework</option>
               </select>
             </label>
-            <div class="routine-grid" style="margin-top:6px">
-              <label>Arquivo<select id="fwFileList"><option value="">— novo arquivo —</option></select></label>
-              <label>Caminho<input id="fwPath" placeholder="commands/plan.md · skills/review/SKILL.md · instructions.md" autocomplete="off"></label>
+            <div class="sec" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">Configurado hoje<button id="fwRefresh" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Atualizar</button></div>
+            <div id="fwHealth" class="mut" style="font-size:12px;margin-bottom:6px">—</div>
+            <div id="fwInventory" style="font-size:12px"></div>
+            <div class="mut" style="font-size:12px;margin:4px 0 6px">Clique num arquivo acima para abrir e editar em uma janela.</div>
+            <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:2px">
+              <button id="fwNewFile" type="button">Novo arquivo</button>
+              <button id="fwSeed" class="ghost" type="button">Instalar pacote base</button>
+              <button id="fwImport" class="ghost" type="button">Importar desta máquina</button>
             </div>
-            <textarea id="fwEditor" rows="8" placeholder="Conteúdo do arquivo (markdown). Em comandos, use $ARGUMENTS onde entram os argumentos." style="width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:12px"></textarea>
-            <div class="row" style="gap:8px;justify-content:flex-end;margin-top:6px">
-              <button id="fwImport" class="ghost" type="button" title="Semear instructions.md a partir do CLAUDE.md/AGENTS.md/GEMINI.md desta máquina">Importar desta máquina</button>
-              <button id="fwDelete" class="ghost" type="button">Excluir</button>
-              <button id="fwSave" type="button">Salvar arquivo</button>
+            <div class="mut" style="font-size:11.5px;margin-top:4px"><b>Novo arquivo</b>: cria um comando, skill ou instrução do zero. <b>Instalar pacote base</b>: adiciona um conjunto pronto (review, pesquisa, segurança, digest…) sem sobrescrever o que você já tem. <b>Importar desta máquina</b>: copia o CLAUDE.md/AGENTS.md/GEMINI.md desta máquina para as instruções universais.</div>
+            <div class="sec" style="margin-top:10px">Importar pacote</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Suba um <b>.zip</b> ou baixe de um repositório <b>GitHub público</b>. Todo pacote é <b>verificado</b> (scan de segurança + validação + custo de token) antes de aplicar — nada é escrito sem a sua confirmação. A verificação reduz risco, mas não substitui a sua revisão.</div>
+            <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+              <input type="file" id="fwZip" accept=".zip,application/zip" style="display:none">
+              <button id="fwZipBtn" class="ghost" type="button">Subir .zip…</button>
+              <input id="fwGh" placeholder="owner/repo[/subpasta][@ref] ou URL do GitHub" autocomplete="off" style="flex:1;min-width:180px">
+              <button id="fwGhBtn" class="ghost" type="button">Baixar do GitHub</button>
+            </div>
+            <div id="fwSources" style="font-size:12px;margin-top:8px"></div>
+            <div id="fwPreview" class="hidden" style="margin-top:8px;border:1px solid #2b3550;border-radius:8px;padding:10px">
+              <div class="sec" id="fwPreviewTitle" style="margin-top:0">Prévia da importação</div>
+              <div id="fwPreviewBody" style="font-size:12px"></div>
+              <div class="row" id="fwPreviewForceRow" style="gap:6px;align-items:center;margin-top:8px">
+                <label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" id="fwPreviewForce"> Aplicar mesmo com achados de segurança <b>altos</b> (override)</label>
+              </div>
+              <div class="row" style="gap:8px;justify-content:flex-end;align-items:center;margin-top:8px">
+                <label style="font-size:12px">Modo<select id="fwPreviewMode"><option value="keep">Manter existentes (mesclar)</option><option value="overwrite">Sobrescrever conflitos</option></select></label>
+                <button id="fwPreviewCancel" class="ghost" type="button">Cancelar</button>
+                <button id="fwPreviewApply" type="button">Aplicar</button>
+              </div>
             </div>
             <div class="sec" style="margin-top:10px">Publicar</div>
             <div class="mut" style="font-size:12px;margin-bottom:6px">Envia o framework para cada máquina. As que estiverem offline recebem ao reconectar.</div>
@@ -1275,7 +1914,6 @@
         </section>
       </div>
     </div>
-    <div class="row settings-actions" style="justify-content:flex-end"><button id="setCancel" class="ghost" type="button">Fechar</button><button id="setClose" type="button">Salvar</button></div>
   </div></div>
 
   <script src="/vendor/xterm/xterm.js"></script>

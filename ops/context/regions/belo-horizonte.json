@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "belo-horizonte",
+  "label": "Belo Horizonte e entorno",
+  "timeZone": "America/Sao_Paulo",
+  "bbox": [-44.0639, -20.059, -43.856, -19.7763],
+  "center": [-43.9378, -19.9208],
+  "pbf": {
+    "fileName": "belo-horizonte.osm.pbf",
+    "catalogUrl": "https://download.geofabrik.de/south-america/brazil.html",
+    "downloadUrl": null,
+    "sizeClass": "large",
+    "note": "Nao existe extrato oficial pequeno da cidade no catalogo indicado. Gere um recorte local da regiao; o setup nunca baixa o PBF do Brasil automaticamente."
+  },
+  "pmtiles": {
+    "fileName": "belo-horizonte.pmtiles",
+    "catalogUrl": "https://maps.protomaps.com/builds/",
+    "downloadUrl": null,
+    "sizeClass": "medium",
+    "note": "Escolha conscientemente um build datado e extraia apenas o bbox desta configuracao. O build global nao e baixado pelo setup."
+  },
+  "attribution": "Map data (c) OpenStreetMap contributors, ODbL 1.0"
+}
+

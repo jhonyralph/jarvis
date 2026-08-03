@@ -14,15 +14,22 @@ import { join } from "node:path";
 
 const HOME = mkdtempSync(join(tmpdir(), "jarvis-nat-"));
 const CLAUDE = join(HOME, "claude-projects");
+const CODEX = join(HOME, "codex-sessions");
 mkdirSync(join(CLAUDE, "proj"), { recursive: true });
+mkdirSync(join(CODEX, "2026", "07", "19"), { recursive: true });
 process.env.JARVIS_CLAUDE_DIR = CLAUDE;
+process.env.JARVIS_CODEX_DIR = CODEX;
 process.env.JARVIS_HOME = HOME;
 
 const UUID = "11111111-2222-3333-4444-555555555555";
+const CODEX_UUID = "22222222-3333-4444-5555-666666666666";
+const LATEST_TITLE = "Titulo completo vindo do Claude com detalhes suficientes para ultrapassar sessenta caracteres sem ser cortado";
+const CODEX_TITLE = "Titulo completo vindo do Codex com detalhes suficientes para ultrapassar sessenta caracteres sem ser cortado";
 // One logical turn = user prompt → assistant(text + tool_use) → injected tool_result → assistant(final
 // text). The two assistant text blocks belong to the SAME turn (the tool_result user is mid-turn, not
 // a boundary). Then a SECOND real user prompt opens a new turn.
 const lines = [
+  { type: "ai-title", aiTitle: "Titulo antigo do Claude" },
   { type: "user", uuid: "u1", timestamp: "2026-07-19T12:00:00Z", cwd: "/repo", message: { role: "user", content: "edite o foo" } },
   { type: "assistant", uuid: "a1", parentUuid: "u1", isSidechain: false, timestamp: "2026-07-19T12:00:01Z", message: { role: "assistant", model: "claude-opus-4-8", usage: { input_tokens: 10 }, content: [
     { type: "text", text: "Vou editar. " },
@@ -34,8 +41,14 @@ const lines = [
   { type: "assistant", uuid: "a3", parentUuid: "u3", isSidechain: false, timestamp: "2026-07-19T12:00:05Z", message: { role: "assistant", content: [
     { type: "tool_use", id: "t2", name: "Bash", input: { command: "npm test" } },
   ] } },
+  { type: "ai-title", aiTitle: LATEST_TITLE },
 ];
 writeFileSync(join(CLAUDE, "proj", `${UUID}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+writeFileSync(join(CODEX, "2026", "07", "19", `rollout-2026-07-19T12-00-00-${CODEX_UUID}.jsonl`), [
+  { type: "session_meta", payload: { session_id: CODEX_UUID, cwd: "/repo", title: CODEX_TITLE } },
+  { type: "response_item", timestamp: "2026-07-19T12:00:00Z", payload: { type: "message", role: "user", content: "pedido inicial do codex" } },
+  { type: "response_item", timestamp: "2026-07-19T12:00:01Z", payload: { type: "message", role: "assistant", content: "resposta" } },
+].map((l) => JSON.stringify(l)).join("\n") + "\n");
 
 const { nativeHistory } = await import("./native.js");
 
@@ -62,6 +75,13 @@ test("native history groups each turn's tools into the assistant message's activ
   assert.ok(turn2.activity && turn2.activity.length === 1 && turn2.activity[0].name === "Bash", "turn 2 groups its Bash tool");
   // real model is surfaced (last non-synthetic assistant model)
   assert.equal(h.model, "claude-opus-4-8");
+  assert.equal(h.title, LATEST_TITLE);
+});
+
+test("codex native history preserves provider title without the old 60 char cut", () => {
+  const h = nativeHistory(`codex:${CODEX_UUID}`);
+  assert.ok(h, "codex history reconstructed");
+  assert.equal(h.title, CODEX_TITLE);
 });
 
 test.after(() => rmSync(HOME, { recursive: true, force: true }));

@@ -100,11 +100,22 @@ export interface TurnCtx {
   /** Called only after the assistant message has been durably added to the session store. */
   afterStored?(sid: string, turnId: string): void;
   afterTurn?(sid: string): void;
+  /** Resolve which AI actually runs this turn. Returns a secondary (`switched:true`) when the primary
+   *  is known to be out of credit and a usable fallback exists; otherwise the primary unchanged. */
+  resolveAgent?(primaryAgent: string): { agent: string; model?: string; effort?: string; switched: boolean; note?: string };
+  /** A credit/limit error just hit `agent`. Record the exhaustion and return a secondary AI to retry
+   *  this same turn with, or null when none is usable. */
+  onLimit?(agent: string, message: string): { agent: string; model?: string; effort?: string; note?: string } | null;
+  /** Ephemeral, user-facing notice (NOT an error): e.g. "primary out of credit — using the secondary". */
+  notice?(sid: string, message: string): void;
 }
 
 export interface ManagedTurnInput {
   showText: string;
   agentText?: string;
+  /** Optional privacy-safe text for the durable context manifest. The agent still receives
+   * `agentText`; short-lived personal context can therefore remain outside Jarvis history. */
+  manifestAgentText?: string;
   model?: string;
   effort?: string;
   speaker?: string;
@@ -126,11 +137,17 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
   const budget = ctx.checkBudget?.(sid);
   if (budget?.blocked) { o.onError(budget.message || "limite de custo desta sessão atingido", true); return; }
   const session = ctx.ensure(sid);
-  const agentName = ctx.resolveAgentName(session.agent);
+  // Decide who runs this turn: the primary unless it is known out of credit and a secondary exists.
+  // A switched run uses the fallback's OWN model/effort (the requested ones targeted the primary).
+  const pick = ctx.resolveAgent?.(session.agent);
+  const runAgent = pick?.switched ? pick.agent : session.agent;
+  const runModel = pick?.switched ? pick.model : o.model;
+  const runEffort = pick?.switched ? pick.effort : o.effort;
+  const agentName = ctx.resolveAgentName(runAgent);
   const turnId = o.turnId || randomUUID();
   const agentText = o.agentText ?? o.showText;
   const contextManifest = ctx.buildContextManifest?.({
-    turnId, sid, agentName, cwd: session.cwd, showText: o.showText, agentText,
+    turnId, sid, agentName, cwd: session.cwd, showText: o.showText, agentText: o.manifestAgentText ?? agentText,
     actor: o.actor, images: o.images, files: o.files,
   });
   if (contextManifest) ctx.recordContextManifest?.(contextManifest);
@@ -141,18 +158,41 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
   ctx.add(sid, userMsg);
   ctx.broadcast(sid, { t: "message", message: { sessionId: sid, ...userMsg } });
   ctx.pushSessions();
-  try {
-    const reply = await ctx.runAgentTurn(sid, session.agent, agentText, session.cwd, { model: o.model, effort: o.effort, turnId });
+  if (pick?.switched && pick.note) ctx.notice?.(sid, pick.note);
+
+  // One attempt against a given AI, persisting the assistant message + speaking on success.
+  const attempt = async (agent: string, model?: string, effort?: string): Promise<void> => {
+    const reply = await ctx.runAgentTurn(sid, agent, agentText, session.cwd, { model, effort, turnId });
     ctx.add(sid, {
-      role: "assistant", text: reply.text, ts: ctx.now(), agent: agentName,
+      role: "assistant", text: reply.text, ts: ctx.now(), agent: ctx.resolveAgentName(agent),
       activity: reply.activity, usage: reply.usage,
     });
     ctx.pushSessions();
     ctx.afterStored?.(sid, turnId);
     ctx.afterTurn?.(sid);
     if (o.speak) await ctx.speak(sid, reply.text, o.speakAlso);
+  };
+
+  try {
+    await attempt(runAgent, runModel, runEffort);
   } catch (e: unknown) {
     const message = String((e as { message?: unknown } | null)?.message ?? e);
-    o.onError(message, isLimitError(message));
+    const limit = isLimitError(message);
+    // On a credit/limit error, record the exhaustion and retry ONCE with the configured secondary AI.
+    if (limit && ctx.onLimit) {
+      const fb = ctx.onLimit(runAgent, message);
+      if (fb && fb.agent !== runAgent) {
+        ctx.notice?.(sid, fb.note || `IA ${runAgent} sem crédito — refazendo com ${fb.agent}.`);
+        try {
+          await attempt(fb.agent, fb.model, fb.effort);
+          return;
+        } catch (e2: unknown) {
+          const m2 = String((e2 as { message?: unknown } | null)?.message ?? e2);
+          o.onError(m2, isLimitError(m2));
+          return;
+        }
+      }
+    }
+    o.onError(message, limit);
   }
 }

@@ -1,16 +1,17 @@
 import type { PluginListenerHandle } from "@capacitor/core";
 
 /**
- * Custom Capacitor plugin contract: an on-device, always-on "Jey Jarvis" wake-word detector that runs
+ * Custom Capacitor plugin contract: an on-device, always-on "Hey Jarvis" wake-word detector that runs
  * in the BACKGROUND (screen locked / app minimized) — something a browser PWA fundamentally cannot do.
  *
- * This file is the TS CONTRACT + (see web.ts) a browser no-op. The real detector is native
- * (Android/iOS) and is NOT included — writing it blind would be dishonest. See README.md for the
- * native implementation spec (engine choice, background-audio/foreground-service, entitlements).
+ * This file is the TS CONTRACT + (see web.ts) a browser no-op. Android has a native implementation
+ * in the app shell; iOS still needs a native audio-background implementation.
  */
 export interface JarvisWakePlugin {
-  /** True only where a native wake engine is actually built for this platform. The web stub returns false. */
-  isSupported(): Promise<{ supported: boolean }>;
+  /** True only where a native wake engine is built and configured for this platform. */
+  isSupported(): Promise<{ supported: boolean; running?: boolean; reason?: string; error?: string }>;
+  /** Runtime diagnostics for settings screens / support. */
+  status(): Promise<{ supported: boolean; running: boolean; keyword?: string; phrase?: string; engine?: string; reason?: string; error?: string }>;
   /** Start always-on background listening. Requires mic permission + the platform background-audio /
    *  foreground-service setup (README). Safe to call repeatedly. */
   start(options?: { keyword?: string }): Promise<void>;

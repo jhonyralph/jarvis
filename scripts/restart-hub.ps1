@@ -53,12 +53,30 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyC
   Where-Object { $_.CommandLine -match 'whisper_service' } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
-# O supervisor relança o node sozinho com o source novo. Start-ScheduledTask é só fallback caso
-# o próprio supervisor tenha morrido (com -MultipleInstances IgnoreNew a chamada é inócua se já roda).
+# Garante que HÁ um supervisor de pé para religar o node. Ordem de preferência:
+#   1) um supervisor start-hub.ps1 já vivo → ele relança sozinho, nada a fazer;
+#   2) a task agendada JarvisHub existe → dispara ela;
+#   3) nenhum dos dois → sobe o supervisor start-hub.ps1 DIRETO (destacado).
+# Antes, task ausente => 'FALHOU' + exit SEM religar: o restart MATAVA o Hub e ninguém o trazia de
+# volta (foi exatamente o que derrubou a aplicação — a task JarvisHub não está registrada nesta
+# máquina, só a JarvisWake). Agora o restart nunca deixa o Hub caído.
 Start-Sleep -Seconds 3
+$supAlive = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -match 'start-hub\.ps1' } | Select-Object -First 1
 $task = Get-ScheduledTask -TaskName 'JarvisHub' -ErrorAction SilentlyContinue
-if (-not $task) { Set-Status 'FALHOU: task JarvisHub nao registrada — rode scripts\install-autostart.ps1'; exit 1 }
-if ($task.State -ne 'Running') { Start-ScheduledTask -TaskName 'JarvisHub' -ErrorAction SilentlyContinue }
+if ($supAlive) {
+  Set-Status "supervisor start-hub.ps1 vivo (pid $($supAlive.ProcessId)) — ele relança o Hub"
+} elseif ($task) {
+  if ($task.State -ne 'Running') { Start-ScheduledTask -TaskName 'JarvisHub' -ErrorAction SilentlyContinue }
+} else {
+  $startHub = Join-Path $PSScriptRoot 'start-hub.ps1'
+  if (Test-Path $startHub) {
+    Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$startHub) | Out-Null
+    Set-Status 'task JarvisHub ausente — supervisor start-hub.ps1 iniciado direto (destacado)'
+  } else {
+    Set-Status 'FALHOU: nem task JarvisHub nem scripts\start-hub.ps1 encontrados'; exit 1
+  }
+}
 
 Set-Status 'aguardando o Hub voltar a escutar na 4577...'
 $ok = $false

@@ -46,6 +46,69 @@ test("managed lifecycle uses one stable turn id for the manifest and provider in
   assert.equal(committedTurnId, providerTurnId);
 });
 
+test("managed lifecycle can keep short-lived context out of the durable manifest", async () => {
+  let manifestText = "", providerText = "";
+  await runManagedTurn({
+    ensure: () => ({ agent: "mock", cwd: "/repo" }), resolveAgentName: (name) => name,
+    add: () => {}, broadcast: () => {}, pushSessions: () => {}, now: () => 10, speak: async () => {},
+    buildContextManifest: (input) => {
+      manifestText = input.agentText;
+      return {
+        schemaVersion: 1, turnId: input.turnId, sessionId: input.sid, runnerId: "local", agent: input.agentName, cwd: input.cwd, createdAt: 10,
+        continuity: { kind: "jarvis_history", historyMessages: 0, historyChars: 0 },
+        prompt: { userChars: input.showText.length, agentChars: input.agentText.length, agentSha256: "hash", transformed: true, attachments: [] },
+        semanticMemory: { injected: false, entryIds: [] }, instructionFiles: [],
+      };
+    },
+    runAgentTurn: async (_sid, _agent, text) => { providerText = text; return { text: "ok" }; },
+  }, "s1", { showText: "raw", agentText: "PRIVATE-CONTEXT\nraw", manifestAgentText: "raw", onError: assert.fail });
+  assert.equal(manifestText, "raw");
+  assert.equal(providerText, "PRIVATE-CONTEXT\nraw");
+});
+
+test("runManagedTurn preempts to the secondary AI when the primary is exhausted", async () => {
+  const stored: TurnStoredMessage[] = [], ran: string[] = [], notices: string[] = [];
+  await runManagedTurn({
+    ensure: () => ({ agent: "claude-code", cwd: "/repo" }), resolveAgentName: (x) => x,
+    add: (_sid, m) => stored.push(m), broadcast: () => {}, pushSessions: () => {}, now: () => 1, speak: async () => {},
+    runAgentTurn: async (_sid, agent) => { ran.push(agent); return { text: "ok from " + agent }; },
+    resolveAgent: () => ({ agent: "codex", switched: true, note: "primária sem crédito — usando codex" }),
+    notice: (_sid, msg) => notices.push(msg),
+  }, "s1", { showText: "oi", onError: assert.fail });
+  assert.deepEqual(ran, ["codex"], "ran the secondary, not the exhausted primary");
+  assert.equal(stored.at(-1)?.agent, "codex");
+  assert.ok(notices.some((n) => /codex/.test(n)), "user is told about the switch");
+});
+
+test("runManagedTurn retries the same turn on a limit error via the secondary", async () => {
+  const stored: TurnStoredMessage[] = [], ran: string[] = [], notices: string[] = [];
+  const cap: { limitAgent?: string } = {};
+  await runManagedTurn({
+    ensure: () => ({ agent: "claude-code", cwd: "/repo" }), resolveAgentName: (x) => x,
+    add: (_sid, m) => stored.push(m), broadcast: () => {}, pushSessions: () => {}, now: () => 1, speak: async () => {},
+    runAgentTurn: async (_sid, agent) => { ran.push(agent); if (agent === "claude-code") throw new Error("rate limit exceeded"); return { text: "ok from " + agent }; },
+    onLimit: (agent) => { cap.limitAgent = agent; return { agent: "codex", note: "refazendo com codex" }; },
+    notice: (_sid, msg) => notices.push(msg),
+  }, "s1", { showText: "oi", onError: assert.fail });
+  assert.deepEqual(ran, ["claude-code", "codex"], "primary failed, secondary retried the same turn");
+  assert.equal(stored.filter((m) => m.role === "assistant").length, 1, "exactly one assistant reply persisted");
+  assert.equal(stored.at(-1)?.agent, "codex");
+  assert.equal(cap.limitAgent, "claude-code");
+  assert.ok(notices.some((n) => /codex/.test(n)));
+});
+
+test("runManagedTurn reports a limit error when no secondary is available", async () => {
+  const cap: { err?: { m: string; limit: boolean } } = {};
+  await runManagedTurn({
+    ensure: () => ({ agent: "claude-code", cwd: "/repo" }), resolveAgentName: (x) => x,
+    add: () => {}, broadcast: () => {}, pushSessions: () => {}, now: () => 1, speak: async () => {},
+    runAgentTurn: async () => { throw new Error("usage limit reached"); },
+    onLimit: () => null,
+  }, "s1", { showText: "oi", onError: (m, limit) => { cap.err = { m, limit }; } });
+  assert.equal(cap.err?.limit, true);
+  assert.match(cap.err?.m || "", /usage limit/);
+});
+
 test("attachment builder preserves text files and turns images into readable paths/previews", () => {
   const built = buildTurnAttachments([{ name: "a.txt", content: "abc" }, { name: "pic.png", content: Buffer.from("x").toString("base64"), image: true }], "pergunta", {
     saveImage: () => "/tmp/pic.png", previewImage: (name, bytes) => imageDataUrl(name, bytes),
@@ -55,6 +118,32 @@ test("attachment builder preserves text files and turns images into readable pat
   assert.equal(built.showText, "pergunta");
   assert.match(built.images?.[0] || "", /^data:image\/png;base64,/);
   assert.equal(built.files?.[0].content, "abc");
+});
+
+test("attachment builder persists binary files instead of inlining base64", () => {
+  const raw = Buffer.from("PK\x03\x04docx-ish-binary");
+  const built = buildTurnAttachments([{ name: "brief.docx", content: raw.toString("base64"), binary: true, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }], "analise", {
+    saveImage: assert.fail,
+    saveFile: () => "/tmp/brief.docx",
+  });
+  assert.match(built.agentText, /Salvo em: \/tmp\/brief\.docx/);
+  assert.doesNotMatch(built.agentText, new RegExp(raw.toString("base64")));
+  assert.equal(built.files?.[0].path, "/tmp/brief.docx");
+  assert.equal(built.files?.[0].binary, true);
+});
+
+test("attachment builder persists large text instead of inlining it", () => {
+  const big = "x".repeat(80 * 1024);
+  const built = buildTurnAttachments([{ name: "large.md", content: big }], "resuma", {
+    inlineMax: 1024,
+    persistMax: 2048,
+    saveImage: assert.fail,
+    saveFile: () => "/tmp/large.md",
+  });
+  assert.match(built.agentText, /Texto grande/);
+  assert.doesNotMatch(built.agentText, /xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/);
+  assert.equal(built.files?.[0].path, "/tmp/large.md");
+  assert.equal(built.files?.[0].content, undefined);
 });
 
 test("Files menu is rebuilt provider-neutrally and does not double-count tool lifecycle events", () => {

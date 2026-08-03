@@ -1,0 +1,7 @@
+!android/
+!android/**
+!ios/
+!ios/**
+/android/build/
+/.build/
+/.swiftpm/

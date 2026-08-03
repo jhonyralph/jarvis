@@ -135,6 +135,7 @@ function codexFiles(): Array<{ path: string; mtime: number }> {
 
 // ------------------------------- parsing -------------------------------
 const isInjected = (t: string) => !t || t.startsWith("<") || t.startsWith("#") || /^\s*\[[^\]]+\]\s*$/.test(t);
+const isNoopAssistantText = (t: string) => /^No response requested\.?$/i.test((t || "").trim());
 /** Strip tooling/system blocks that leak into message text (subagent notifications, usage, reminders). */
 function cleanText(t: string): string {
   return (t || "")
@@ -143,6 +144,10 @@ function cleanText(t: string): string {
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
     .replace(/<local-command-[\s\S]*?<\/local-command-[a-z]*>/g, "")
     .trim();
+}
+
+function titleText(t: string, cap = 240): string {
+  return cleanText(t).replace(/\s+/g, " ").trim().slice(0, cap);
 }
 
 function contentText(c: any): string {
@@ -167,10 +172,8 @@ export function isCodexSubagentMeta(payload: any): boolean {
     || !!payload?.source?.subagent?.thread_spawn;
 }
 
-// Nome ESTÁVEL de uma sessão nativa. O Claude Code reescreve o ai-title a cada turno; se o menu
-// seguisse o mais recente, o nome ficaria mudando "no meio da corrida". Então CONGELAMOS: na
-// primeira vez que vemos um ai-title de verdade, gravamos e nunca mais mudamos. Guardado em
-// ~/.jarvis (NÃO toca o store do .claude). Apagar essa sessão limpa a entrada (deleteNative).
+// Cache local do título nativo. O provider continua sendo a fonte de verdade: quando o Claude
+// publica um ai-title mais novo, atualizamos o cache e a UI passa a mostrar o mesmo nome.
 const TITLES_FILE = join(process.env.JARVIS_HOME || homedir(), ".jarvis", "native-titles.json");
 let titleStore: Record<string, string> | null = null;
 function loadTitles(): Record<string, string> {
@@ -178,13 +181,11 @@ function loadTitles(): Record<string, string> {
   return titleStore ?? {};
 }
 function saveTitles(): void { try { writeJsonAtomic(TITLES_FILE, titleStore ?? {}); } catch { /* ignore */ } }
-/** Congela o 1º ai-title real visto; depois disso, sempre o mesmo (estável). `fallback` (custom-title
- *  ou 1ª mensagem) é usado só enquanto ainda não há ai-title — e NÃO é congelado. */
 function stableTitle(id: string, latestAi: string, fallback: string): string {
   const store = loadTitles();
-  if (store[id]) return store[id];
-  if (latestAi) { store[id] = latestAi; saveTitles(); return latestAi; }
-  return fallback || "Sessão Claude";
+  const next = titleText(latestAi) || titleText(store[id] || "") || titleText(fallback) || "Sessão";
+  if (latestAi && store[id] !== next) { store[id] = next; saveTitles(); }
+  return next;
 }
 
 function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
@@ -210,7 +211,7 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
     if (o.type === "ai-title" && o.aiTitle) aiTitle = o.aiTitle;
     else if (o.type === "custom-title" && o.customTitle) customTitle = o.customTitle;
   });
-  const title = stableTitle("claude:" + id, aiTitle, customTitle || firstUser.slice(0, 60));
+  const title = stableTitle("claude:" + id, aiTitle, customTitle || firstUser);
   return { id: "claude:" + id, title, agent: "claude-code", cwd, count: 0, source: "native" };
 }
 
@@ -224,9 +225,10 @@ function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
       if (isCodexSubagentMeta(o.payload)) { internalSubagent = true; return; }
       id = o.payload.session_id || o.payload.id || id;
       cwd = o.payload.cwd || cwd;
+      title = title || titleText(o.payload.title || o.payload.name || "");
     } else if (!title && o.type === "response_item" && o.payload?.type === "message" && o.payload.role === "user") {
       const t = contentText(o.payload.content);
-      if (t && !isInjected(t)) title = t;
+      if (t && !isInjected(t)) title = titleText(t);
     }
   });
   if (internalSubagent) return null;
@@ -235,7 +237,7 @@ function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
     const m = basename(path).match(/([0-9a-f]{8}-[0-9a-f-]+)\.jsonl$/i);
     id = m ? m[1] : basename(path);
   }
-  return { id: "codex:" + id, title: (title || "Sessão Codex").slice(0, 60), agent: "codex", cwd, count: 0, source: "native" };
+  return { id: "codex:" + id, title: title || "Sessão Codex", agent: "codex", cwd, count: 0, source: "native" };
 }
 
 // ------------------------------- caching + public API -------------------------------
@@ -310,7 +312,7 @@ function searchDoc(path: string, mtime: number, claude: boolean, title: string):
       if (o.payload.role === "user" && isInjected(t)) return;
     }
     t = cleanText(t);
-    if (t) { parts.push(t); total += t.length + 1; }
+    if (t && !(o.type === "assistant" && isNoopAssistantText(t)) && !(o.payload?.role === "assistant" && isNoopAssistantText(t))) { parts.push(t); total += t.length + 1; }
   });
   const doc = { key, title, hay: parts.join("\n").slice(0, SEARCH_CAP) };
   if (searchDocCache.size > 60) searchDocCache.clear();
@@ -412,13 +414,13 @@ export type NativeEvent =
   | { kind: "message"; role: MsgRole; text: string; ts: number }
   // path/adds/dels/rows so a LIVE-mirrored tool block matches what a page refresh shows:
   // clickable file, +/- counts, expandable diff. Without them the tail rendered a bare "Editando".
-  | { kind: "tool"; name: string; summary: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[] };
+  | { kind: "tool"; name: string; summary: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; background?: boolean };
 
 function toolSummary(name: string, input: any): string {
   const base = (p: string) => (p || "").split(/[\\/]/).pop() || p;
   try {
     switch (name) {
-      case "Bash": return "Bash: " + String(input?.command || "").replace(/\s+/g, " ").slice(0, 90);
+      case "Bash": return (input?.run_in_background ? "Bash em background: " : "Bash: ") + String(input?.command || "").replace(/\s+/g, " ").slice(0, 90);
       case "Read": return "Lendo " + base(input?.file_path);
       case "Write": return "Criando " + base(input?.file_path);
       case "Edit": case "NotebookEdit": case "MultiEdit": return "Editando " + base(input?.file_path);
@@ -430,6 +432,10 @@ function toolSummary(name: string, input: any): string {
       default: { const s = JSON.stringify(input || {}); return name + (s && s !== "{}" ? " " + s.slice(0, 60) : ""); }
     }
   } catch { return name; }
+}
+
+function isBackgroundTool(name: string, input: any): boolean {
+  return name === "Bash" && !!input?.run_in_background;
 }
 
 /** Full command/args behind a tool row (untruncated, newlines kept) — shown when the row is
@@ -473,8 +479,8 @@ export function parseNativeEvents(line: string, claude: boolean): NativeEvent[] 
   if (claude) {
     if (o.type === "assistant") {
       for (const b of o.message?.content || []) {
-        if (b.type === "text" && b.text?.trim()) { const t = cleanText(b.text); if (t) out.push({ kind: "message", role: "assistant", text: t, ts: Date.parse(o.timestamp) || 0 }); }
-        else if (b.type === "tool_use") { const st = toolFileStat(b.name, b.input); out.push({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), path: st.path, adds: st.adds, dels: st.dels, rows: st.rows }); }
+        if (b.type === "text" && b.text?.trim()) { const t = cleanText(b.text); if (t && !isNoopAssistantText(t)) out.push({ kind: "message", role: "assistant", text: t, ts: Date.parse(o.timestamp) || 0 }); }
+        else if (b.type === "tool_use") { const st = toolFileStat(b.name, b.input); out.push({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), path: st.path, adds: st.adds, dels: st.dels, rows: st.rows, background: isBackgroundTool(b.name, b.input) }); }
       }
     } else if (o.type === "user") {
       const t = cleanText(contentText(o.message?.content));
@@ -485,8 +491,8 @@ export function parseNativeEvents(line: string, claude: boolean): NativeEvent[] 
   if (o.type === "response_item" && o.payload?.type === "message") {
     const role = o.payload.role;
     if (role === "user" || role === "assistant") {
-      const t = contentText(o.payload.content);
-      if (t && !(role === "user" && isInjected(t))) out.push({ kind: "message", role, text: t, ts: Date.parse(o.timestamp) || 0 });
+      const t = cleanText(contentText(o.payload.content));
+      if (t && !(role === "user" && isInjected(t)) && !(role === "assistant" && isNoopAssistantText(t))) out.push({ kind: "message", role, text: t, ts: Date.parse(o.timestamp) || 0 });
     }
   } else if (o.type === "response_item" && o.payload?.type === "reasoning") {
     out.push({ kind: "tool", name: "Thinking", summary: "Pensando" });
@@ -681,7 +687,7 @@ function findFileById(id: string): { path: string; claude: boolean } | null {
 /** One activity event grouped under an assistant turn (same shape the live stream / a managed
  *  session's `activity` uses), so the client renders native history with the identical grouped +
  *  sub-agent-nested flow it shows live. `toolId`/`parentId` drive the sub-agent (Task) nesting. */
-export interface HistEvent { kind: "tool" | "text" | "thinking"; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; toolId?: string; parentId?: string; text?: string; }
+export interface HistEvent { kind: "tool" | "text" | "thinking"; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; toolId?: string; parentId?: string; text?: string; background?: boolean; }
 export interface HistMsg { role: MsgRole; text: string; ts: number; name?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; activity?: HistEvent[]; }
 /** Full read-only history of one native session — text turns AND tool activity (role:"tool"),
  *  interleaved in order, so the "editando/criando arquivo" blocks survive a page refresh. */
@@ -745,7 +751,7 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   }
   const messages: HistMsg[] = [];
   const toolRefs: Array<{ ev: HistEvent; name: string; input: unknown }> = [];
-  let cwd = "", lastAi = "", lastCustom = "";
+  let cwd = "", lastAi = "", lastCustom = "", codexTitle = "";
   let lastUsage: any;
   // Modelo/esforço REAIS da sessão nativa, pra web refletir o que a máquina está usando (e não o
   // default global). O último vence (a sessão pode ter trocado de modelo no meio). Claude grava o
@@ -760,7 +766,8 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   const flushPend = (): void => {
     if (!pend) return;
     const t = cleanText(pend.text);
-    if (t || pend.activity.length) messages.push({ role: "assistant", text: t, ts: pend.ts, activity: pend.activity.length ? pend.activity : undefined });
+    const text = isNoopAssistantText(t) ? "" : t;
+    if (text || pend.activity.length) messages.push({ role: "assistant", text, ts: pend.ts, activity: pend.activity.length ? pend.activity : undefined });
     pend = null;
   };
   // Sub-agent nesting: a main-thread Task/Agent tool_use spawns a sidechain; map the sidechain back to
@@ -798,10 +805,12 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
         if (Array.isArray(content)) {
           for (const b of content) {
             if (b.type === "text" && b.text) {
-              if (isSide) pend.activity.push({ kind: "text", text: b.text, parentId });   // sub-agent reasoning → nested preview
-              else pend.text += b.text;                                                    // main answer (accumulated across the turn, like a managed reply)
+              const text = cleanText(b.text);
+              if (!text || isNoopAssistantText(text)) continue;
+              if (isSide) pend.activity.push({ kind: "text", text, parentId });             // sub-agent reasoning → nested preview
+              else pend.text += text;                                                       // main answer (accumulated across the turn, like a managed reply)
             } else if (b.type === "tool_use") {
-              const ev: HistEvent = { kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), toolId: b.id, parentId };
+              const ev: HistEvent = { kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), toolId: b.id, parentId, background: isBackgroundTool(b.name, b.input) };
               pend.activity.push(ev);
               toolRefs.push({ ev, name: b.name, input: b.input });
               if (!isSide && b.id && (b.name === "Task" || b.name === "Agent") && typeof o.uuid === "string") taskOfEntry.set(o.uuid, b.id); // this entry spawned a sub-agent
@@ -810,19 +819,19 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
             }
           }
         } else {
-          const t = contentText(content);
-          if (t) { if (isSide) pend.activity.push({ kind: "text", text: t, parentId }); else pend.text += t; }
+          const t = cleanText(contentText(content));
+          if (t && !isNoopAssistantText(t)) { if (isSide) pend.activity.push({ kind: "text", text: t, parentId }); else pend.text += t; }
         }
       }
     } else {
-      if (o.type === "session_meta" && o.payload) cwd = o.payload.cwd || cwd;
+      if (o.type === "session_meta" && o.payload) { cwd = o.payload.cwd || cwd; codexTitle = codexTitle || titleText(o.payload.title || o.payload.name || ""); }
       else if (o.type === "turn_context" && o.payload) { if (typeof o.payload.model === "string" && o.payload.model) lastModel = o.payload.model; if (typeof o.payload.effort === "string" && o.payload.effort) lastEffort = o.payload.effort; }
       else if (o.type === "event_msg" && o.payload?.type === "token_count" && o.payload.info) {
         lastUsage = { ...o.payload.info.last_token_usage, model_context_window: o.payload.info.model_context_window };
       }
       else if (o.type === "response_item" && o.payload?.type === "message" && (o.payload.role === "user" || o.payload.role === "assistant")) {
-        const t = contentText(o.payload.content);
-        if (!t || (o.payload.role === "user" && isInjected(t))) return;
+        const t = cleanText(contentText(o.payload.content));
+        if (!t || (o.payload.role === "user" && isInjected(t)) || (o.payload.role === "assistant" && isNoopAssistantText(t))) return;
         const ts = Date.parse(o.timestamp) || 0;
         if (o.payload.role === "user") { flushPend(); messages.push({ role: "user", text: t, ts }); }
         else { if (!pend) pend = { text: "", activity: [], ts }; pend.text += t; }
@@ -854,7 +863,10 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   }
   noteParse(f.path, raw.length, messages.length); // format-drift telemetry (non-empty file, 0 msgs)
   const codexInput = !f.claude && lastUsage ? Number(lastUsage.input_tokens || 0) || undefined : undefined;
-  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title: stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text.slice(0, 60) || "Sessão"), messages, inputTokens: f.claude ? inputContextOf(lastUsage) : codexInput, contextWindowTokens: !f.claude ? Number(lastUsage?.model_context_window) || undefined : undefined, model: lastModel || undefined, effort: lastEffort || undefined };
+  const title = f.claude
+    ? stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text || "Sessão Claude")
+    : (codexTitle || titleText(messages.find((m) => m.role === "user")?.text || "") || "Sessão Codex");
+  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title, messages, inputTokens: f.claude ? inputContextOf(lastUsage) : codexInput, contextWindowTokens: !f.claude ? Number(lastUsage?.model_context_window) || undefined : undefined, model: lastModel || undefined, effort: lastEffort || undefined };
   if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
   return data;
 }

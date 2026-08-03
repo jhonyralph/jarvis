@@ -18,11 +18,8 @@ See [`../docs/mobile.md`](../docs/mobile.md) for the architecture and the OTA mo
 ```sh
 cd mobile
 
-# 1) Capacitor + the plugins for the three capabilities. @latest so versions resolve to the current
-#    Capacitor major on your machine (this scaffold deliberately pins nothing it can't verify).
-npm install @capacitor/core@latest @capacitor/cli@latest @capacitor/android@latest @capacitor/ios@latest \
-            @capacitor/push-notifications@latest @capacitor/app@latest @capacitor/share@latest \
-            capacitor-native-biometric send-intent
+# 1) Install the compatible versions declared by this mobile package.
+npm install
 # The client bridge looks these plugins up by their runtime names — NativeBiometric (biometric
 # unlock), Share (share out), SendIntent (share INTO Jarvis), App (resume/lock hooks),
 # PushNotifications (push). Verify each package's current name/version with `npm run doctor`.
@@ -32,10 +29,10 @@ npm run sync-web
 
 # 3) Generate the native projects (creates android/ and ios/ — gitignored)
 npx cap add android
-npx cap add ios        # macOS only
+npx cap add ios --packagemanager CocoaPods  # macOS only; use SPM only if every plugin supports it
 
-# 4) Sync web + native config into them
-npx cap sync
+# 4) Sync web/native config and apply the idempotent transforms
+npm run sync
 
 # 5) Open in the platform IDE to run on a device/emulator
 npm run open:android   # or: npm run open:ios
@@ -49,14 +46,41 @@ For Android debug builds, use the repo helper instead of running Gradle directly
 npm run build:android
 ```
 
-It stages the web UI, runs `cap sync android`, discovers the Android SDK from
+It stages the web UI, runs `cap sync android`, applies the Android shell and JarvisContext
+transforms, discovers the Android SDK from
 `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or the standard OS install paths, writes
 `android/local.properties`, points the APK at your Hub from `JARVIS_APP_HUB_URL`,
-`JARVIS_PUBLIC_URL`, or `~/.jarvis/hub.env`, then runs `gradlew assembleDebug`.
+`JARVIS_PUBLIC_URL`, or `~/.jarvis/hub.env`, then runs `gradlew assembleSideloadDebug`.
 
 Other root-level build commands follow the same dispatcher pattern as install/setup:
 `npm run build:android:release`, `npm run build:aab`, and `npm run build:apple`. Apple/iOS builds
 must run on macOS with Xcode.
+
+## JarvisContext hardening
+
+`@jarvis/context` is discovered automatically by Capacitor 8. Its protected state never enters app
+backup: Android uses `noBackupFilesDir`; iOS uses protected Application Support storage excluded from
+backup. Legacy Android SharedPreferences and iOS UserDefaults keys are migrated and cleared.
+
+Android builds have separate policies: `store` has no background-location or boot rearm, while
+`sideload` enables both. iOS geofence replacement waits for CoreLocation confirmation and rolls back
+on failure. Significant-location monitoring defaults off and is enabled only per configuration. See
+[`plugins/jarvis-context/README.md`](plugins/jarvis-context/README.md) for error codes, the iOS
+20-region limit, storage guarantees, and validation commands.
+
+The Apple dispatcher detects CocoaPods versus SPM and selects the matching archive entrypoint:
+
+```sh
+npm run build:apple -- --archive
+npm run build:apple -- --spm
+npm run build:apple -- --cocoapods
+npm run build:apple -- --ios-background-mode
+```
+
+On CocoaPods projects both `npm run sync` and the Apple dispatcher rerun `pod install` after the
+native transform; that finalization requires macOS. A generated tree containing both CocoaPods and
+SPM entrypoints is rejected instead of choosing one implicitly. Archives are accepted only after the
+bundled JarvisContext `PrivacyInfo.xcprivacy` is found and its required-reason declaration is verified.
 
 ## OTA web updates ("update without a new store version")
 
@@ -79,10 +103,9 @@ browser, active only inside the Capacitor shell), so the PWA keeps working uncha
 1. **Push (APNs/FCM).** Plugin: `@capacitor/push-notifications`. The app registers and sends its token
    to the Hub; the Hub delivers via APNs/FCM. Needs Firebase (Android) + an Apple Push key (iOS) — a
    server-side integration distinct from the browser's web-push/VAPID. **Status: to wire + test.**
-2. **Background wake-word ("Jey Jarvis" always-on).** No reliable off-the-shelf plugin — iOS
-   background-audio is restricted. Plan: a **custom Capacitor plugin** (`npm init @capacitor/plugin`)
-   using a native background-audio/foreground-service to run the wake listener, bridging to the
-   existing voice pipeline. **Status: needs a custom plugin + heavy device testing.**
+2. **Background wake-word ("Hey Jarvis" always-on).** Android is implemented with a custom Capacitor
+   plugin, openWakeWord, bundled ONNX assets, and a foreground microphone service. It does not need a
+   paid access key. iOS still needs a native background-audio implementation and review-specific testing.
 3. **Share + biometric unlock.** Share INTO Jarvis (share-sheet target) needs a native share extension
    (iOS) / intent filter (Android); sharing OUT uses `@capacitor/share`. Biometric app-unlock (Face
    ID / fingerprint instead of the passphrase) via a maintained biometric plugin (verify the current

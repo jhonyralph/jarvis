@@ -75,6 +75,26 @@ function armProgram() {
     for (const k of STYLE_KEYS) { const v = cs.getPropertyValue(k); if (v) out[k] = v; }
     return out;
   }
+  function matchedCssRulesFor(el) {
+    const out = [];
+    for (const sheet of Array.from(document.styleSheets || [])) {
+      let rules;
+      try { rules = sheet.cssRules; } catch { continue; }
+      for (const rule of Array.from(rules || [])) {
+        if (out.length >= 16) return out;
+        if (!rule || !rule.selectorText || !rule.style) continue;
+        let ok = false;
+        try { ok = el.matches(rule.selectorText); } catch { ok = false; }
+        if (!ok) continue;
+        out.push({
+          selector: clip(rule.selectorText, 180),
+          href: sheet.href || "inline",
+          cssText: redact(clip(rule.cssText || "", 700)),
+        });
+      }
+    }
+    return out;
+  }
   function htmlFor(el) {
     let html = el.outerHTML || "";
     html = html.replace(/<script[\\s\\S]*?<\\/script>/gi, "");
@@ -115,6 +135,7 @@ function armProgram() {
       rect: { x: r.x, y: r.y, width: r.width, height: r.height },
       htmlSnippet: htmlFor(el),
       computedStyles: stylesFor(el),
+      matchedCssRules: matchedCssRulesFor(el),
       selector: selectorFor(el),
       domPath: domPathFor(el),
       sourceRef,

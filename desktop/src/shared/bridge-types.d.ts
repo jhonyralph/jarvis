@@ -43,6 +43,15 @@ export interface BrowserBridge {
     rect: Rect,
   ): Promise<{ pngDataUrl: string } | { unavailable: true }>
   cancelGrab(webContentsId: number): Promise<void>
+  /** Best-effort Chrome DevTools Protocol JS/CSS coverage for the current preview page. */
+  startCoverage?(webContentsId: number): Promise<{ ok: boolean; error?: string }>
+  stopCoverage?(webContentsId: number): Promise<{
+    js?: Array<{ url?: string; ranges?: unknown[]; functions?: unknown[] }>
+    css?: Array<{ styleSheetId?: string; startOffset?: number; endOffset?: number; used?: boolean }>
+    scripts?: Array<{ url?: string; sourceMapURL?: string; startLine?: number; endLine?: number }>
+    unsupported?: boolean
+    error?: string
+  }>
 }
 
 export interface GrabSelection {
@@ -52,6 +61,7 @@ export interface GrabSelection {
   /** outerHTML sanitized (script-stripped), budgeted (<=4KB). */
   htmlSnippet: string
   computedStyles: Record<string, string>
+  matchedCssRules?: Array<{ selector: string; href: string; cssText: string }>
   selector: string
   domPath: string
   sourceRef?: { file: string; line: number; column: number; framework: string }

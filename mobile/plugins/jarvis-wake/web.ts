@@ -11,6 +11,9 @@ export class JarvisWakeWeb extends WebPlugin implements JarvisWakePlugin {
   async isSupported(): Promise<{ supported: boolean }> {
     return { supported: false };
   }
+  async status(): Promise<{ supported: boolean; running: boolean; reason: string }> {
+    return { supported: false, running: false, reason: "web_no_background_mic" };
+  }
   async start(): Promise<void> {
     /* no-op on web */
   }

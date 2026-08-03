@@ -38,13 +38,14 @@ export interface SearchResult {
   action: string | null;
 }
 
-export type DigestEntry = { id: string; agent: string; cwd: string; title: string; updatedAt: number; lastUser: string; lastAssistant: string };
+export type DigestEntry = { id: string; agent: string; cwd: string; title: string; updatedAt: number; lastUser: string; lastAssistant: string; runnerId?: string };
 
-export async function runSessionSearch(opts: { query: string; store: Store; agents: AgentRegistry; model?: string; extra?: DigestEntry[] }): Promise<SearchResult> {
+export async function runSessionSearch(opts: { query: string; store: Store; agents: AgentRegistry; model?: string; extra?: DigestEntry[]; includeSession?: (entry: DigestEntry) => boolean }): Promise<SearchResult> {
   const N = Number(process.env.JARVIS_DIGEST_N) || 10;
   // combine Jarvis-managed sessions with native claude/codex ones (the bulk of the user's
   // history), newest first — otherwise the search only ever sees a handful of managed sessions.
-  const digest = [...opts.store.digest(N, 220), ...(opts.extra || [])]
+  const include = opts.includeSession || (() => true);
+  const digest = [...opts.store.digest(Math.max(N, opts.store.list().length), 220).filter(include), ...(opts.extra || []).filter(include)]
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, N + 20);
   const agent = opts.agents.searchAgent();

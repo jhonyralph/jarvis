@@ -10,16 +10,58 @@
  * VERIFY end-to-end on a device with a real service account before relying on it. iOS delivery needs
  * the APNs key uploaded to the Firebase project (standard FCM-on-iOS setup) — see docs/mobile.md.
  */
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { createSign } from "node:crypto";
 import { join } from "node:path";
 import { writeJsonAtomic } from "@jarvis/core";
+import { formatPushPayload, type NotifyKind, type PushNotificationPayload } from "./notifyFormat.js";
 
 export type MobilePlatform = "android" | "ios";
-export type MobileNotifyKind = "done" | "error" | "machine";
-interface MobileToken { token: string; platform: MobilePlatform; events: MobileNotifyKind[]; at: number }
+export type MobileNotifyKind = NotifyKind;
+export interface MobilePushTarget { principalId?: string; deviceId?: string }
+interface MobileToken extends MobilePushTarget { token: string; platform: MobilePlatform; events: MobileNotifyKind[]; at: number }
+export interface MobilePushStatus { tokens: number; fcmEnvSet: boolean; fcmConfigured: boolean; projectId?: string }
 
-const KINDS: MobileNotifyKind[] = ["done", "error", "machine"];
+const KINDS: MobileNotifyKind[] = ["done", "error", "machine", "personal"];
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+
+function secureDirectory(dir: string): void {
+  try { mkdirSync(dir, { recursive: true, mode: PRIVATE_DIRECTORY_MODE }); } catch { /* persistence remains best-effort */ }
+  try { chmodSync(dir, PRIVATE_DIRECTORY_MODE); } catch { /* chmod is unavailable or unsupported */ }
+}
+
+function securePersistedFile(file: string): void {
+  for (const candidate of [file, `${file}.bak`, `${file}.tmp`]) {
+    try { chmodSync(candidate, PRIVATE_FILE_MODE); } catch { /* missing or unsupported */ }
+  }
+}
+
+function writePrivateJson(file: string, value: unknown): void {
+  try { writeJsonAtomic(file, value); }
+  finally { securePersistedFile(file); }
+}
+
+function deviceKey(principalId: unknown, deviceId: unknown): string | null {
+  if (typeof principalId !== "string" || !principalId.trim() || typeof deviceId !== "string" || !deviceId.trim()) return null;
+  return JSON.stringify([principalId, deviceId]);
+}
+
+function authenticatedDeviceKeys(devices: Iterable<Required<MobilePushTarget>> | null | undefined): Set<string> | null {
+  try {
+    if (!devices || typeof (devices as any)[Symbol.iterator] !== "function") return null;
+    const keys = new Set<string>();
+    for (const device of devices) {
+      const key = deviceKey(device?.principalId, device?.deviceId);
+      if (!key) return null;
+      keys.add(key);
+    }
+    return keys;
+  } catch {
+    return null;
+  }
+}
+
 function b64url(x: string | Buffer): string {
   return Buffer.from(x).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -32,26 +74,59 @@ export class MobilePush {
   private access?: { token: string; exp: number };
 
   constructor(dir: string) {
+    secureDirectory(dir);
     this.file = join(dir, "mobile-push.json");
-    try { this.tokens = JSON.parse(readFileSync(this.file, "utf8")); } catch { this.tokens = []; }
+    securePersistedFile(this.file);
+    try {
+      const saved = JSON.parse(readFileSync(this.file, "utf8"));
+      this.tokens = Array.isArray(saved) ? saved : [];
+    } catch { this.tokens = []; }
   }
 
   /** Upsert a device's FCM token + which event kinds it wants. */
-  register(token: string, platform: MobilePlatform, events?: unknown): void {
+  register(token: string, platform: MobilePlatform, events?: unknown, target: MobilePushTarget = {}): void {
     if (!token) return;
     const ev = Array.isArray(events) ? (events.filter((e) => KINDS.includes(e as MobileNotifyKind)) as MobileNotifyKind[]) : (["done", "error"] as MobileNotifyKind[]);
     const ex = this.tokens.find((t) => t.token === token);
-    if (ex) { ex.platform = platform; ex.events = ev.length ? ev : ex.events; ex.at = Date.now(); }
-    else this.tokens.push({ token, platform, events: ev, at: Date.now() });
+    if (ex) { ex.platform = platform; ex.events = ev.length ? ev : ex.events; ex.at = Date.now(); ex.principalId = target.principalId; ex.deviceId = target.deviceId; }
+    else this.tokens.push({ token, platform, events: ev, at: Date.now(), principalId: target.principalId, deviceId: target.deviceId });
     this.save();
   }
-  remove(token: string): void {
+  remove(token: string, target?: MobilePushTarget): void {
     const n = this.tokens.length;
-    this.tokens = this.tokens.filter((t) => t.token !== token);
+    this.tokens = this.tokens.filter((t) => t.token !== token || (target?.principalId !== undefined && t.principalId !== target.principalId));
     if (this.tokens.length !== n) this.save();
   }
+  purgeTarget(target: Required<MobilePushTarget>): number {
+    if (!target.principalId || !target.deviceId) return 0;
+    const before = this.tokens.length;
+    this.tokens = this.tokens.filter((token) => token.principalId !== target.principalId || token.deviceId !== target.deviceId);
+    if (this.tokens.length !== before) this.save();
+    return before - this.tokens.length;
+  }
+  /** Reconcile persisted tokens against one complete auth snapshot. Auth-off has no authoritative
+   * device registry, so it is deliberately a no-op. Missing, malformed, or throwing snapshots also
+   * leave storage untouched; an explicitly supplied empty iterable is valid and removes everything. */
+  purgeUnknownDevices(authenticatedDevices: Iterable<Required<MobilePushTarget>> | null | undefined, authEnabled = true): number {
+    if (!authEnabled) return 0;
+    const known = authenticatedDeviceKeys(authenticatedDevices);
+    if (!known) return 0;
+    const before = this.tokens.length;
+    this.tokens = this.tokens.filter((token) => {
+      const key = deviceKey(token?.principalId, token?.deviceId);
+      return key !== null && known.has(key);
+    });
+    if (this.tokens.length !== before) this.save();
+    return before - this.tokens.length;
+  }
   count(): number { return this.tokens.length; }
-  private save(): void { try { writeJsonAtomic(this.file, this.tokens); } catch { /* ignore */ } }
+  status(target?: MobilePushTarget): MobilePushStatus {
+    const env = !!process.env.JARVIS_FCM_SA;
+    const ok = this.loadSa();
+    const tokens = target?.principalId ? this.tokens.filter((row) => row.principalId === target.principalId && (!target.deviceId || row.deviceId === target.deviceId)).length : this.tokens.length;
+    return { tokens, fcmEnvSet: env, fcmConfigured: ok, projectId: this.sa?.project_id };
+  }
+  private save(): void { try { writePrivateJson(this.file, this.tokens); } catch { /* ignore */ } }
 
   private loadSa(): boolean {
     if (this.saTried) return !!this.sa;
@@ -91,22 +166,41 @@ export class MobilePush {
 
   /** Fan an event out to every registered device that asked for this kind (v1: "each" only — no
    *  grouped batching yet; the web-push path still has grouped). No-op if FCM isn't configured. */
-  async notify(kind: MobileNotifyKind, title: string, body: string, tag?: string): Promise<void> {
-    const targets = this.tokens.filter((t) => t.events.includes(kind));
-    if (!targets.length) return;
+  private async deliver(payload: PushNotificationPayload, target?: MobilePushTarget, respectPreferences = true): Promise<boolean> {
+    const targets = this.tokens.filter((t) => (!respectPreferences || t.events.includes(payload.kind))
+      && (!target?.principalId || t.principalId === target.principalId)
+      && (!target?.deviceId || t.deviceId === target.deviceId || (target.deviceId === "local" && !t.deviceId)));
+    if (!targets.length) return false;
     const at = await this.accessToken();
-    if (!at || !this.sa) return;
+    if (!at || !this.sa) return false;
     const url = `https://fcm.googleapis.com/v1/projects/${this.sa.project_id}/messages:send`;
+    let delivered = false;
     for (const t of targets) {
-      const message = { message: { token: t.token, notification: { title: "Jarvis · " + title.slice(0, 60), body: body.slice(0, 140) }, data: { tag: tag || kind, kind } } };
+      const message = {
+        message: {
+          token: t.token,
+          notification: { title: payload.title, body: payload.body },
+          data: { tag: payload.tag, kind: payload.kind, sid: payload.sid || "", url: payload.url || "" },
+          android: { notification: { tag: payload.tag } },
+        },
+      };
       try {
         const res = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${at}`, "content-type": "application/json" }, body: JSON.stringify(message) });
         if (!res.ok) {
           const txt = await res.text().catch(() => "");
           // A permanently-invalid token (app uninstalled / token rotated) is dropped; other errors are transient.
           if (/UNREGISTERED|registration-token-not-registered|invalid.?argument/i.test(txt)) this.remove(t.token);
-        }
+        } else delivered = true;
       } catch { /* transient network error — try again on the next event */ }
     }
+    return delivered;
+  }
+
+  async notify(kind: MobileNotifyKind, title: string, body: string, tag?: string, target?: MobilePushTarget): Promise<void> {
+    await this.deliver(formatPushPayload(kind, title, body, tag), target, true);
+  }
+
+  async notifyPayload(payload: PushNotificationPayload, target: MobilePushTarget): Promise<boolean> {
+    return this.deliver(payload, target, false);
   }
 }

@@ -1,7 +1,7 @@
 /**
  * Semantic memory — a tiny local vector store over your sessions, so "onde mexi no refresh de token
  * mês passado?" finds the session by MEANING, not just keywords. Fully local (embeddings come from a
- * local model in services/voice/embed.py). This module is the PURE store + cosine search + atomic
+ * local warm model daemon, services/voice/embed_service.py). This module is the PURE store + cosine search + atomic
  * persistence; the embedding vectors are supplied by the caller (the Hub), so it's fully unit-testable
  * with no model.
  */
@@ -168,9 +168,10 @@ export class MemoryStore {
     for (const raw of entries) { const e = normalizeEntry(raw); const i = this.data.findIndex((x) => x.id === e.id); if (i >= 0) this.data[i] = e; else this.data.push(e); }
     this.flush();
   }
-  removeSession(sessionId: string): void {
+  removeSession(sessionId: string, runnerId?: string): void {
     const before = this.data.length;
-    this.data = this.data.filter((e) => e.sessionId !== sessionId);
+    const normalizedRunner = runnerId ? normalizeMemoryNamespace(runnerId) : undefined;
+    this.data = this.data.filter((e) => e.sessionId !== sessionId || (normalizedRunner !== undefined && normalizeMemoryNamespace(e.runnerId || "local") !== normalizedRunner));
     if (this.data.length !== before) this.flush();
   }
   has(id: string): boolean { return this.data.some((e) => e.id === id); }

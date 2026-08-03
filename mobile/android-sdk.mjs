@@ -31,7 +31,7 @@ function looksLikeAndroidSdk(path) {
 }
 
 function localPropertiesValue(path) {
-  return path.replace(/\\/g, "/");
+  return path.replace(/\\/g, "/").replace(/:/g, "\\:");
 }
 
 function upsertSdkDir(path) {
