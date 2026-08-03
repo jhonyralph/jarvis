@@ -27,6 +27,7 @@ import { synthesize, listVoices, listVoiceCatalog, hasVoice, warmUp as warmUpTts
 import { transcribe, warmUp as warmUpStt } from "./stt.js";
 import { warmUp as warmUpEmbed } from "./embed.js";
 import { log, isLogLevel } from "./logger.js";
+import { updateStalled } from "./update-watchdog.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
@@ -825,8 +826,13 @@ const runnerLabels: Record<string, string> = (() => { try { return JSON.parse(re
 for (const runnerId of Object.keys(runnerLabels)) if (runnerId !== "local") mirrorExecutionStore(runnerId);
 function saveRunnerLabels(): void { try { writeJsonAtomic(RUNNERS_FILE, runnerLabels, { pretty: true }); } catch { /* ignore */ } }
 interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastSeen: number; local: boolean; }
-interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; }
+interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; awaitingSince?: number; stalled?: boolean; stalledNotifiedAt?: number; }
 const UPDATE_RETRY_MS = Math.max(30_000, Number(process.env.JARVIS_UPDATE_RETRY_SEC || 300) * 1000);
+// A machine that applied an update and reported ok goes to "awaiting_restart" and should reconnect on
+// the new commit within a normal restart window. Offline PAST this = the restart/updater hung (an
+// incident that took a machine offline ~30 min before); the watchdog flags it stalled and alerts the
+// owner — closing the "não vejo a máquina" blind spot the reconnect-driven recovery leaves.
+const UPDATE_STALL_MS = Math.max(120_000, Number(process.env.JARVIS_UPDATE_STALL_SEC || 300) * 1000);
 const pendingRunnerUpdates: Record<string, PendingRunnerUpdate> = (() => {
   try {
     const raw = JSON.parse(readFileSync(RUNNER_UPDATES_FILE, "utf8"));
@@ -837,7 +843,8 @@ const pendingRunnerUpdates: Record<string, PendingRunnerUpdate> = (() => {
       if (!id || !value || typeof value.requestId !== "string" || typeof value.targetCommit !== "string") continue;
       const state: PendingRunnerUpdate["state"] = ["queued", "sent", "awaiting_restart", "blocked"].includes(value.state) ? value.state : "queued";
       out[id] = { requestId: value.requestId, targetCommit: value.targetCommit, requestedAt: Number(value.requestedAt) || Date.now(), state, force: value.force === true,
-        fromCommit: typeof value.fromCommit === "string" ? value.fromCommit : undefined, lastAttemptAt: Number.isFinite(value.lastAttemptAt) ? Number(value.lastAttemptAt) : undefined, lastError: typeof value.lastError === "string" ? value.lastError : undefined };
+        fromCommit: typeof value.fromCommit === "string" ? value.fromCommit : undefined, lastAttemptAt: Number.isFinite(value.lastAttemptAt) ? Number(value.lastAttemptAt) : undefined, lastError: typeof value.lastError === "string" ? value.lastError : undefined,
+        awaitingSince: Number.isFinite(value.awaitingSince) ? Number(value.awaitingSince) : undefined, stalled: value.stalled === true, stalledNotifiedAt: Number.isFinite(value.stalledNotifiedAt) ? Number(value.stalledNotifiedAt) : undefined };
     }
     return out;
   } catch { return {}; }
@@ -1314,7 +1321,7 @@ function deliverPendingRunnerUpdate(rc: RunnerConn, opts?: { force?: boolean; al
   if (pending.lastAttemptAt && Date.now() - pending.lastAttemptAt < 30_000 && !opts?.retryNow) return false;
   if (opts?.force && !pending.force) { pending.force = true; savePendingRunnerUpdates(); }
   const sent = sendToRunner(rc, { t: "update", requestId: pending.requestId, targetCommit: pending.targetCommit, force: !!(opts?.force || pending.force) });
-  if (sent) { if (!pending.fromCommit && rc.info.commit) pending.fromCommit = rc.info.commit; pending.state = "sent"; pending.lastAttemptAt = Date.now(); pending.lastError = undefined; savePendingRunnerUpdates(); updateMachineNotice(rc.id, { state: "sent", queued: true, ok: false, log: "solicitação entregue; máquina drenando" }); }
+  if (sent) { if (!pending.fromCommit && rc.info.commit) pending.fromCommit = rc.info.commit; pending.state = "sent"; pending.lastAttemptAt = Date.now(); pending.lastError = undefined; pending.stalled = false; pending.stalledNotifiedAt = undefined; pending.awaitingSince = undefined; savePendingRunnerUpdates(); updateMachineNotice(rc.id, { state: "sent", queued: true, ok: false, log: "solicitação entregue; máquina drenando" }); }
   return sent;
 }
 function runnerUpdateDraining(runnerId: string): boolean {
@@ -1328,7 +1335,7 @@ function completePendingRunnerUpdate(rc: RunnerConn, m: any): void {
   console.log(`[hub] update ${label}: ${m.ok ? "preparada" : "falhou"} — ${String(m.log || "").split("\n")[0]}`);
   if (pending && (!m.requestId || m.requestId === pending.requestId)) {
     const blocked = !!m.dirty || m.retryable === false;
-    if (m.ok) { pending.state = "awaiting_restart"; pending.lastError = undefined; }
+    if (m.ok) { pending.state = "awaiting_restart"; pending.lastError = undefined; pending.awaitingSince = Date.now(); pending.stalled = false; pending.stalledNotifiedAt = undefined; }
     else { pending.state = blocked ? "blocked" : "queued"; pending.lastError = String(m.log || "falha sem detalhe").slice(0, 3000); }
     savePendingRunnerUpdates();
     if (!m.ok && !blocked) setTimeout(() => { const current = pendingRunnerUpdates[rc.id]; if (current?.requestId === pending.requestId && current.state === "queued") deliverPendingRunnerUpdate(rc, { retryNow: true }); }, UPDATE_RETRY_MS).unref?.();
@@ -1438,7 +1445,21 @@ async function queueAllRemoteRunnerUpdates(): Promise<{ ok: boolean; queued: num
 setInterval(() => {
   const now = Date.now();
   for (const [id, pending] of Object.entries(pendingRunnerUpdates)) {
-    if (pending.state === "blocked" || pending.state === "awaiting_restart") continue;
+    if (pending.state === "blocked") continue;
+    if (pending.state === "awaiting_restart") {
+      // Watchdog: it applied the update and should have restarted+reconnected fast. Offline past the
+      // stall window means the restart/updater hung and it won't come back on its own — alert ONCE.
+      const rc0 = runners.get(id), online = id === LOCAL_ID || !!rc0?.ws;
+      if (updateStalled(pending, { online, now, stallMs: UPDATE_STALL_MS })) {
+        pending.stalled = true; pending.stalledNotifiedAt = now; savePendingRunnerUpdates();
+        const label = runnerLabels[id] || rc0?.info.host || id;
+        const mins = Math.round((now - (pending.awaitingSince || pending.lastAttemptAt || pending.requestedAt || now)) / 60000);
+        log.warn("update_stalled", { runnerId: id, label, offlineMin: mins, targetCommit: pending.targetCommit });
+        notifyEvent("machine", `${label} travou na atualização`, "Aplicou a atualização mas o reinício não concluiu — a máquina não voltou. Verifique o updater/serviço dela.");
+        updateMachineNotice(id, { ok: false, stalled: true, state: "stalled", log: `reinício não concluiu — offline há ${mins} min após aplicar a atualização` });
+      }
+      continue;
+    }
     if (pending.lastAttemptAt && now - pending.lastAttemptAt < UPDATE_RETRY_MS) continue;
     const rc = runners.get(id); if (rc) deliverPendingRunnerUpdate(rc, { retryNow: true });
   }
