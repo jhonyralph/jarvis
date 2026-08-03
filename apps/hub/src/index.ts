@@ -23,8 +23,9 @@ import { RunnerListWaiters } from "./runnerListWaiters.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, resolveClosestModel, createAgentEventBridge, createEventSequencer, ackThenWork, routePersonalIntent, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
-import { synthesize, listVoices, listVoiceCatalog, hasVoice } from "./tts.js";
-import { transcribe } from "./stt.js";
+import { synthesize, listVoices, listVoiceCatalog, hasVoice, warmUp as warmUpTts } from "./tts.js";
+import { transcribe, warmUp as warmUpStt } from "./stt.js";
+import { warmUp as warmUpEmbed } from "./embed.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
@@ -5776,4 +5777,13 @@ server.listen(PORT, () => {
   } else {
     console.log(`[hub] auth on — ${auth.listDevices().length} device(s) paired.`);
   }
+  // Warm the voice daemons at boot instead of on the first live voice message: this product is
+  // voice-first, and paying the cold-start (spawn + model load — the dominant cost, per stt.ts/
+  // tts.ts's own comments) during a controlled boot is much better than silently eating it inside a
+  // user-facing turn's latency budget. Fire-and-forget; a failure just means the old on-demand path
+  // kicks in on first use (see warmUp()'s own .catch), so this can never make voice LESS available.
+  if (process.env.JARVIS_VOICE_WARMUP !== "0") { warmUpStt(); warmUpTts(); }
+  // Embedding stays opt-in (mirrors semanticMemoryActive's own gate) — only warm it when semantic
+  // memory is already in use, so a user who never touches the feature never pays for it at all.
+  if (semanticMemoryActive) warmUpEmbed();
 });

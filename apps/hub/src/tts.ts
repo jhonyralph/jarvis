@@ -425,6 +425,7 @@ function killProc(err: Error): void {
 
 function ensureProc(): Promise<void> {
   if (proc && ready) return ready;
+  const tSpawn = Date.now();
   const child = spawn(PY, [SERVICE], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
   proc = child;
   let readyResolve!: () => void, readyReject!: (e: Error) => void;
@@ -434,7 +435,12 @@ function ensureProc(): Promise<void> {
   rl.on("line", (line) => {
     line = line.trim(); if (!line) return;
     let o: any; try { o = JSON.parse(line); } catch { return; }
-    if (!started && ("ready" in o)) { started = true; if (o.ready) readyResolve(); else killProc(new Error("TTS: " + (o.error || "serviço não iniciou"))); return; }
+    if (!started && ("ready" in o)) {
+      started = true;
+      if (o.ready) { console.warn(`[tts] cold start (spawn+load do piper) levou ${Date.now() - tSpawn}ms`); readyResolve(); }
+      else killProc(new Error("TTS: " + (o.error || "serviço não iniciou")));
+      return;
+    }
     const id = o.id; if (id == null) return;
     const p = pending.get(id); if (!p) return;
     pending.delete(id); clearTimeout(p.timer);
@@ -444,6 +450,13 @@ function ensureProc(): Promise<void> {
   child.on("error", (e) => { if (!started) readyReject(e); killProc(e instanceof Error ? e : new Error(String(e))); });
   child.on("close", () => { if (!started) readyReject(new Error("TTS: serviço encerrou antes de ficar pronto")); killProc(new Error("TTS: serviço encerrou")); });
   return ready;
+}
+
+/** Pay the cold-start (spawn + model load) at Hub boot instead of on the first live spoken reply.
+ *  Fire-and-forget: failure just means the first real synthesize() call pays the cost inline, same
+ *  as before this existed — voice stays fully functional either way. */
+export function warmUp(): void {
+  ensureProc().catch((e) => console.warn("[tts] pré-aquecimento falhou (seguirá sob demanda no 1º uso):", String((e as Error)?.message || e)));
 }
 
 export async function synthesize(text: string, voice = "en_GB-alan-medium", opts: { fallback?: boolean } = {}): Promise<Buffer> {
@@ -465,12 +478,18 @@ export async function synthesize(text: string, voice = "en_GB-alan-medium", opts
 
 async function synthesizePiper(text: string, voice = "en_GB-alan-medium"): Promise<Buffer> {
   if (!hasVoice(voice)) throw new Error(`voice model not found: ${join(VOICES, `${voice}.onnx`)}`);
+  const tEnsure = Date.now();
   await ensureProc();
+  const ensureMs = Date.now() - tEnsure; // ~0 when already warm; the ensureProc() cold-start log fires only on a real spawn
+  const tSynth = Date.now();
   const id = ++seq;
   const req = JSON.stringify({ id, text, voice, length_scale: LENGTH, sentence_silence: SILENCE, noise_w_scale: NOISEW }) + "\n";
   return await new Promise<Buffer>((resolve, reject) => {
     const timer = setTimeout(() => { killProc(new Error("TTS: tempo esgotado")); }, 60000);
-    pending.set(id, { resolve, reject, timer });
+    pending.set(id, {
+      resolve: (wav) => { console.warn(`[tts] synthesize: ensureProc=${ensureMs}ms synth=${Date.now() - tSynth}ms`); resolve(wav); },
+      reject, timer,
+    });
     try { proc!.stdin.write(req); } catch (e) { pending.delete(id); clearTimeout(timer); reject(e instanceof Error ? e : new Error(String(e))); }
   });
 }

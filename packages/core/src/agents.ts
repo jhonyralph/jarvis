@@ -762,7 +762,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       let usage: AgentReply["usage"];
       let lastMsgUsage: any;
       const taskIds = new Set<string>();
+      // Timing: the "result" NDJSON line carries the FINAL text/cost — everything a caller needs.
+      // Whatever happens between that line and the OS process actually closing (runStream() only
+      // resolves on close) is pure CLI-shutdown tail (MCP client teardown, telemetry flush, etc.)
+      // with zero information value to the turn. We still await the real close below (unchanged
+      // behavior — see the note before shipping an early-resolve optimization), but log the split
+      // so a slow "termina rápido mas ainda demora para fechar" report can be diagnosed with numbers
+      // instead of guesses.
+      const tSpawn = Date.now();
+      let tFirstLine = 0, tResult = 0;
       await runStream(this.bin, args, cwd, text, (line) => {
+        if (!tFirstLine) tFirstLine = Date.now();
         let o: any;
         try { o = JSON.parse(line); } catch { return; }
         if (o.type === "system" && o.subtype === "init" && o.session_id) {
@@ -804,8 +814,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           if (o.result && !finalText) finalText = o.result;
           if (o.is_error) streamError = cliErrorMessage(o.result, "claude error");
           usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model };
+          tResult = Date.now();
         }
       }, opts?.signal);
+      const tClose = Date.now();
+      if (tResult) {
+        const tail = tClose - tResult;
+        // A resposta (texto+custo) já estava pronta em tResult; result->fechou é só o encerramento
+        // do processo do CLI. Um valor alto aqui é o sinal exato de "terminou rápido mas ainda ficou
+        // rodando" — o marcador ⚠ facilita achar essas linhas em hub.log com um grep.
+        console.warn(`[claude-cli]${tail > 2000 ? " ⚠" : ""} spawn->1a-linha=${tFirstLine ? tFirstLine - tSpawn : -1}ms spawn->result=${tResult - tSpawn}ms result->fechou=${tail}ms total=${tClose - tSpawn}ms (sessão ${sessionId})`);
+      }
       if (streamError) throw new Error(streamError);
       if (sessionOut) this.bindSession(sessionId, sessionOut);
       return { text: finalText, usage };

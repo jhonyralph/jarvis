@@ -50,6 +50,9 @@ function killProc(err: Error): void {
 
 function ensureProc(): Promise<void> {
   if (proc && ready) return ready;
+  // Timing: separates "cold spawn + model load" (this fn) from "decode of one clip" (transcribe's
+  // own timer), so a slow voice reply can be diagnosed as one or the other instead of one lump sum.
+  const tSpawn = Date.now();
   const child = spawn(PY, [SERVICE], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
   proc = child;
   let readyResolve!: () => void, readyReject!: (e: Error) => void;
@@ -59,7 +62,12 @@ function ensureProc(): Promise<void> {
   rl.on("line", (line) => {
     line = line.trim(); if (!line) return;
     let o: any; try { o = JSON.parse(line); } catch { return; }
-    if (!started && ("ready" in o)) { started = true; if (o.ready) readyResolve(); else killProc(new Error("STT: " + (o.error || "modelo não carregou"))); return; }
+    if (!started && ("ready" in o)) {
+      started = true;
+      if (o.ready) { console.warn(`[stt] cold start (spawn+load do modelo) levou ${Date.now() - tSpawn}ms`); readyResolve(); }
+      else killProc(new Error("STT: " + (o.error || "modelo não carregou")));
+      return;
+    }
     const id = o.id; if (id == null) return;
     const p = pending.get(id); if (!p) return;
     pending.delete(id); clearTimeout(p.timer);
@@ -71,6 +79,13 @@ function ensureProc(): Promise<void> {
   return ready;
 }
 
+/** Pay the cold-start (spawn + model load) at Hub boot instead of on the first live voice message.
+ *  Fire-and-forget: failure just means the first real transcribe() call pays the cost inline, same
+ *  as before this existed — voice stays fully functional either way. */
+export function warmUp(): void {
+  ensureProc().catch((e) => console.warn("[stt] pré-aquecimento falhou (seguirá sob demanda no 1º uso):", String((e as Error)?.message || e)));
+}
+
 export async function transcribe(audio: Buffer, lang?: string, ext = "webm"): Promise<string> {
   // `ext` comes straight from the client — a value like "../../evil.cmd" would write outside tmp.
   // Allow only a short alphanumeric extension; anything else falls back to a safe default.
@@ -78,7 +93,10 @@ export async function transcribe(audio: Buffer, lang?: string, ext = "webm"): Pr
   const path = join(tmpdir(), `jarvis_stt_${Date.now()}_${++seq}.${safeExt}`);
   writeFileSync(path, audio);
   try {
+    const tEnsure = Date.now();
     await ensureProc();
+    const ensureMs = Date.now() - tEnsure; // ~0 when already warm; the cold-start log above fires only on a real spawn
+    const tDecode = Date.now();
     const id = ++seq;
     const req = JSON.stringify({ id, path, lang: lang || null, hotwords: hotwords() }) + "\n";
     return await new Promise<string>((resolve, reject) => {
@@ -87,7 +105,10 @@ export async function transcribe(audio: Buffer, lang?: string, ext = "webm"): Pr
       // um, indefinidamente. Tratamos o timeout como sinal de processo travado: mata + respawna
       // limpo (killProc rejeita todos os pendentes de uma vez, incluindo este).
       const timer = setTimeout(() => { killProc(new Error("STT: tempo esgotado")); }, 60000);
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, {
+        resolve: (text) => { console.warn(`[stt] transcribe: ensureProc=${ensureMs}ms decode=${Date.now() - tDecode}ms`); resolve(text); },
+        reject, timer,
+      });
       try { proc!.stdin.write(req); } catch (e) { pending.delete(id); clearTimeout(timer); reject(e instanceof Error ? e : new Error(String(e))); }
     });
   } finally {

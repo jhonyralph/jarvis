@@ -47,6 +47,7 @@ function killProc(err: Error): void {
 /** Spawn (once) the warm embedding service and resolve when it reports {"ready":true}. */
 function ensureProc(): Promise<void> {
   if (proc && ready) return ready;
+  const tSpawn = Date.now();
   const child = spawn(PY, [SERVICE], {
     windowsHide: true,
     env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
@@ -65,7 +66,7 @@ function ensureProc(): Promise<void> {
     try { o = JSON.parse(line); } catch { return; }
     if (!started && "ready" in o) {
       started = true;
-      if (o.ready) { readyResolve(); return; }
+      if (o.ready) { console.warn(`[embed] cold start (spawn+load do sentence-transformers) levou ${Date.now() - tSpawn}ms`); readyResolve(); return; }
       // Service reported it can't start (e.g. sentence-transformers missing). Reject the awaiter —
       // killProc alone would leave `ready` pending forever and hang every caller. embedOne's caller
       // (indexSession) catches and no-ops, so semantic memory stays gracefully opt-in.
@@ -95,6 +96,13 @@ function ensureProc(): Promise<void> {
     killProc(err);
   });
   return ready;
+}
+
+/** Pay the cold-start (spawn + model load) at Hub boot instead of on the first post-turn index.
+ *  Fire-and-forget: failure just means semantic memory stays gracefully opt-in, same as before this
+ *  existed. Callers should only invoke this when semantic memory is actually in use — see index.ts. */
+export function warmUp(): void {
+  ensureProc().catch((e) => console.warn("[embed] pré-aquecimento falhou (memória semântica segue opcional):", String((e as Error)?.message || e)));
 }
 
 /** Embed a batch of texts → one vector each. Empty input short-circuits (no spawn). */
