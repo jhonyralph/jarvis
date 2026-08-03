@@ -2922,6 +2922,14 @@ async function decideAutomaticRoute(input: {
   const ctrl = new AbortController();
   const routeKey = scopedSessionKey(input.runnerId, input.sid);
   routeAborts.set(routeKey, ctrl);
+  // The router is a CLI spawn that runs BEFORE the real turn (auto mode = 2 sequential spawns). It's
+  // a latency optimization that must never BECOME the latency: bound it, and on timeout fall back to
+  // the deterministic router (keeps the current agent) instead of making the whole turn wait. A
+  // user-initiated cancel (routeAborts) is still honored — we distinguish it from a timeout abort.
+  let timedOut = false;
+  const routeTimeoutMs = Math.max(1000, Number(process.env.JARVIS_AUTOROUTE_TIMEOUT_MS) || 8000);
+  const routeTimer = setTimeout(() => { timedOut = true; ctrl.abort(); }, routeTimeoutMs);
+  const tRoute = Date.now();
   try {
     const router = summaryAgent();
     if (!router.oneShot) throw new Error("agente de roteamento sem suporte one-shot");
@@ -2931,11 +2939,14 @@ async function decideAutomaticRoute(input: {
     addUsage("__auto_route__", router.name, reply.usage);
     decision = parseAutoRouteDecision(reply.text, req);
   } catch {
-    if (ctrl.signal.aborted) { input.notify?.({ t: "auto_route", runnerId: input.runnerId, sessionId: input.sid, state: "cancelled" }); throw new Error(ABORTED); }
-    // deterministic fallback below
+    // Only a genuine user cancel aborts the turn; a timeout (or any router error) is non-fatal and
+    // falls through to the deterministic fallback below.
+    if (ctrl.signal.aborted && !timedOut) { input.notify?.({ t: "auto_route", runnerId: input.runnerId, sessionId: input.sid, state: "cancelled" }); throw new Error(ABORTED); }
   } finally {
+    clearTimeout(routeTimer);
     if (routeAborts.get(routeKey) === ctrl) routeAborts.delete(routeKey);
   }
+  console.warn(`[autoroute] ${Date.now() - tRoute}ms ${timedOut ? "⚠ timeout→fallback" : decision ? "llm" : "erro→fallback"} (sessão ${input.sid})`);
   if (!decision) decision = autoRouteFallback(req);
   input.notify?.({ t: "auto_route", runnerId: input.runnerId, sessionId: input.sid, state: "completed", decision });
   return decision;
