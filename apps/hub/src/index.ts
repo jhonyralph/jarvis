@@ -26,7 +26,7 @@ import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, Aider
 import { synthesize, listVoices, listVoiceCatalog, hasVoice, warmUp as warmUpTts } from "./tts.js";
 import { transcribe, warmUp as warmUpStt } from "./stt.js";
 import { warmUp as warmUpEmbed } from "./embed.js";
-import { log } from "./logger.js";
+import { log, isLogLevel } from "./logger.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
@@ -5182,6 +5182,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       agentAvailability.clear(String(msg.agent || ""));
       sendFallbackCfg(ws);
+      return;
+    }
+    // Observability log config (owner): enable/disable, level, retention.
+    if (msg.t === "log_cfg") { if (!requireOwner(ws)) return; send(ws, { t: "log_cfg", cfg: log.getConfig() }); return; }
+    if (msg.t === "set_log_cfg") {
+      if (!requireOwner(ws)) return;
+      const cfg = log.configure({ enabled: !!msg.enabled, level: isLogLevel(msg.level) ? msg.level : undefined, retentionDays: Number(msg.retentionDays), maxFileMb: Number(msg.maxFileMb) });
+      send(ws, { t: "log_cfg", cfg, saved: true });
       return;
     }
     if (msg.t === "policy_state") {

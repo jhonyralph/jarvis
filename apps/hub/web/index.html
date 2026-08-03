@@ -1521,6 +1521,17 @@
             <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="fallbackSave" type="button">Salvar</button></div>
             <div id="fallbackBlocks" class="mut" style="font-size:12px;margin-top:6px"></div>
           </div>
+          <div id="logSettings" class="hidden">
+            <div class="sec" style="margin-top:10px">Logs de observabilidade</div>
+            <div class="mut" style="font-size:12px;margin-bottom:6px">Log estruturado (JSON) por turno em <code>~/.jarvis/logs/</code> — tempo, tokens, custo e sessão, para análise. Logs incham; ajuste o nível e a retenção. <b>debug/trace</b> incluem o detalhe por estágio (roteamento, STT/TTS) para diagnosticar lentidão.</div>
+            <label class="row"><input type="checkbox" id="logEnabled"> <span>Gerar logs de observabilidade</span></label>
+            <label>Nível<select id="logLevel"><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option><option value="trace">trace</option></select></label>
+            <div class="routine-grid">
+              <label>Retenção (dias)<input id="logRetention" type="number" min="0" max="3650" step="1"></label>
+              <label>Tamanho máx. por arquivo (MB)<input id="logMaxMb" type="number" min="1" max="1000" step="1"></label>
+            </div>
+            <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="logSave" type="button">Salvar</button></div>
+          </div>
         </section>
 
         <section class="spanel hidden" data-panel="assistente">
