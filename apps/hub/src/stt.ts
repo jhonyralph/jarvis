@@ -13,6 +13,7 @@ import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface, Interface } from "node:readline";
+import { log } from "./logger.js";
 
 const SERVICE = fileURLToPath(new URL("../../../services/voice/whisper_service.py", import.meta.url));
 const PY = process.env.JARVIS_PYTHON || "python";
@@ -64,7 +65,7 @@ function ensureProc(): Promise<void> {
     let o: any; try { o = JSON.parse(line); } catch { return; }
     if (!started && ("ready" in o)) {
       started = true;
-      if (o.ready) { console.warn(`[stt] cold start (spawn+load do modelo) levou ${Date.now() - tSpawn}ms`); readyResolve(); }
+      if (o.ready) { log.debug("stt_cold_start", { ms: Date.now() - tSpawn }); readyResolve(); }
       else killProc(new Error("STT: " + (o.error || "modelo não carregou")));
       return;
     }
@@ -106,7 +107,7 @@ export async function transcribe(audio: Buffer, lang?: string, ext = "webm"): Pr
       // limpo (killProc rejeita todos os pendentes de uma vez, incluindo este).
       const timer = setTimeout(() => { killProc(new Error("STT: tempo esgotado")); }, 60000);
       pending.set(id, {
-        resolve: (text) => { console.warn(`[stt] transcribe: ensureProc=${ensureMs}ms decode=${Date.now() - tDecode}ms`); resolve(text); },
+        resolve: (text) => { log.debug("stt_transcribe", { ensureMs, decodeMs: Date.now() - tDecode }); resolve(text); },
         reject, timer,
       });
       try { proc!.stdin.write(req); } catch (e) { pending.delete(id); clearTimeout(timer); reject(e instanceof Error ? e : new Error(String(e))); }

@@ -26,6 +26,7 @@ import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, Aider
 import { synthesize, listVoices, listVoiceCatalog, hasVoice, warmUp as warmUpTts } from "./tts.js";
 import { transcribe, warmUp as warmUpStt } from "./stt.js";
 import { warmUp as warmUpEmbed } from "./embed.js";
+import { log } from "./logger.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
@@ -2958,7 +2959,7 @@ async function decideAutomaticRoute(input: {
     clearTimeout(routeTimer);
     if (routeAborts.get(routeKey) === ctrl) routeAborts.delete(routeKey);
   }
-  console.warn(`[autoroute] ${Date.now() - tRoute}ms ${timedOut ? "⚠ timeout→fallback" : decision ? "llm" : "erro→fallback"} (sessão ${input.sid})`);
+  log.debug("autoroute", { sessionId: input.sid, runnerId: input.runnerId, ms: Date.now() - tRoute, outcome: timedOut ? "timeout_fallback" : decision ? "llm" : "error_fallback" });
   if (!decision) decision = autoRouteFallback(req);
   input.notify?.({ t: "auto_route", runnerId: input.runnerId, sessionId: input.sid, state: "completed", decision });
   return decision;
@@ -3272,6 +3273,9 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     if (reply.usage || opts.model || opts.effort) reply.usage = { costKind: "unavailable", source: "Jarvis turn selection", ...reply.usage, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort };
     addUsage(sid, agent.name, reply.usage);
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: reply.usage?.model || opts.model, ms: Date.now() - t0, ok: true, ts: Date.now() });
+    // Structured observability: one line per turn — trace it by turnId, with duration/tokens/cost so a
+    // slow or expensive turn is diagnosable and prompt/cost trends are analyzable. Metadata only (no text).
+    log.info("turn", { traceId: turnId, sessionId: sid, agent: agent.name, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort, ms: Date.now() - t0, inputTokens: reply.usage?.inputTokens, outputTokens: reply.usage?.outputTokens, contextTokens: reply.usage?.contextTokens, costUsd: reply.usage?.costUsd, replyChars: (reply.text || "").length, ok: true });
     if (reply.usage) emit(bridge.usage(reply.usage));
     emit(bridge.completed(reply.text));
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
@@ -3295,6 +3299,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
       throw e;
     }
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: opts.model, ms: Date.now() - t0, ok: false, ts: Date.now() });
+    log.warn("turn", { traceId: turnId, sessionId: sid, agent: agent.name, model: opts.model, effort: opts.effort, ms: Date.now() - t0, ok: false, error: String((e as any)?.message ?? e).slice(0, 300) });
     if (!sequencer.terminal) emit(bridge.failed(String((e as any)?.message ?? e), "PROVIDER_ERROR"));
     notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid, notificationTargetForSession(LOCAL_ID, sid));
     throw e;
@@ -3409,7 +3414,7 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
     if (isNativeId(sid)) {
       let _tDispatch = 0;
       await deliverNativeTurn(null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts, actor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease), onDispatch: () => { dispatched = true; _tDispatch = Date.now(); } });
-      console.log(`[timing] native sid=${sid.slice(0, 14)} auto=${needsAuto(automatic)} route=${_tRoute - _t0}ms personal=${_tPersonal - _tRoute}ms toDispatch=${(_tDispatch || Date.now()) - _tPersonal}ms total=${Date.now() - _t0}ms`);
+      log.debug("flush_timing", { sessionId: sid, native: true, auto: needsAuto(automatic), routeMs: _tRoute - _t0, personalMs: _tPersonal - _tRoute, toDispatchMs: (_tDispatch || Date.now()) - _tPersonal, totalMs: Date.now() - _t0 });
       return;
     }
     const { agentText, showText, images, files } = buildAttachments(atts, text);
@@ -5822,6 +5827,10 @@ server.listen(PORT, () => {
   } else {
     console.log(`[hub] auth on — ${auth.listDevices().length} device(s) paired.`);
   }
+  // Structured log: boot marker + retention housekeeping (purge old daily files now and once a day).
+  log.info("hub_boot", { version: VERSION, port: PORT, agents: agents.names(), voice: VOICE });
+  try { const purged = log.purgeOld(); if (purged) console.log(`[hub] logs: ${purged} arquivo(s) diário(s) removido(s) por retenção`); } catch { /* best effort */ }
+  setInterval(() => { try { log.purgeOld(); } catch { /* best effort */ } }, 24 * 60 * 60 * 1000).unref?.();
   // Warm the voice daemons at boot instead of on the first live voice message: this product is
   // voice-first, and paying the cold-start (spawn + model load — the dominant cost, per stt.ts/
   // tts.ts's own comments) during a controlled boot is much better than silently eating it inside a

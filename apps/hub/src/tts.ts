@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface, Interface } from "node:readline";
+import { log } from "./logger.js";
 
 const SERVICE = fileURLToPath(new URL("../../../services/voice/piper_service.py", import.meta.url));
 const PY = process.env.JARVIS_PYTHON || "python";
@@ -437,7 +438,7 @@ function ensureProc(): Promise<void> {
     let o: any; try { o = JSON.parse(line); } catch { return; }
     if (!started && ("ready" in o)) {
       started = true;
-      if (o.ready) { console.warn(`[tts] cold start (spawn+load do piper) levou ${Date.now() - tSpawn}ms`); readyResolve(); }
+      if (o.ready) { log.debug("tts_cold_start", { ms: Date.now() - tSpawn }); readyResolve(); }
       else killProc(new Error("TTS: " + (o.error || "serviço não iniciou")));
       return;
     }
@@ -487,7 +488,7 @@ async function synthesizePiper(text: string, voice = "en_GB-alan-medium"): Promi
   return await new Promise<Buffer>((resolve, reject) => {
     const timer = setTimeout(() => { killProc(new Error("TTS: tempo esgotado")); }, 60000);
     pending.set(id, {
-      resolve: (wav) => { console.warn(`[tts] synthesize: ensureProc=${ensureMs}ms synth=${Date.now() - tSynth}ms`); resolve(wav); },
+      resolve: (wav) => { log.debug("tts_synthesize", { ensureMs, synthMs: Date.now() - tSynth }); resolve(wav); },
       reject, timer,
     });
     try { proc!.stdin.write(req); } catch (e) { pending.delete(id); clearTimeout(timer); reject(e instanceof Error ? e : new Error(String(e))); }
