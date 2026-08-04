@@ -14,6 +14,14 @@
 
 set -e
 
+# NÃO rodar no CI. O release.yml já executa typecheck+testes como STEP explícito ANTES do
+# semantic-release; quando o @semantic-release/git faz o push do commit de release, este hook
+# re-rodava a suíte INTEIRA (e2e/portas/timing) e um único flake BLOQUEAVA a release ("[pre-push]
+# BLOQUEADO: testes falharam") — foi o que travou o corte de versões. GitHub Actions define CI e
+# GITHUB_ACTIONS; nesses casos o gate do CI é a fonte da verdade e este hook sai limpo. Localmente
+# (push do dev) o gate continua valendo normalmente.
+if [ -n "$CI" ] || [ -n "$GITHUB_ACTIONS" ]; then exit 0; fi
+
 # Nada a validar quando o push só apaga refs remotas.
 only_deletes=1
 while read -r _local_ref local_sha _remote_ref _remote_sha; do
