@@ -1,3 +1,48 @@
+# [0.6.0](https://github.com/jhonyralph/jarvis/compare/v0.5.1...v0.6.0) (2026-08-04)
+
+
+### Bug Fixes
+
+* **agents:** cancela o turno NA HORA no abort em vez de esperar o 'close' ([47c7834](https://github.com/jhonyralph/jarvis/commit/47c783489b34c672176ffd7513c63b519dfbdc6e))
+* **core:** tira histórico do sessions.json do flush síncrono — fim dos stalls do event loop ([22e76de](https://github.com/jhonyralph/jarvis/commit/22e76ded5a2d89ef9f62d7df8da1c0fb4c8c3ad7))
+* **hub:** notificação de conclusão objetiva, sem id de sessão nem filler ([7b6237b](https://github.com/jhonyralph/jarvis/commit/7b6237bebf149820381b16af04baeb90463e5289))
+* **hub:** trava de instância única (mutex) no supervisor start-hub.ps1 ([d81039c](https://github.com/jhonyralph/jarvis/commit/d81039c53bc708b98a0257cb7619d4dcbb32ba26))
+* **hub:** watchdog de atualização travada — detecta awaiting_restart offline e alerta o dono ([9850349](https://github.com/jhonyralph/jarvis/commit/985034925ecc0d5fe85d3ca40466bbe01cd3df93))
+* **mobile:** auto-detecta JDK 21 no build e libera microfone no WebView ([6cf36cb](https://github.com/jhonyralph/jarvis/commit/6cf36cbb899bcca23990becabcadebabd1beddc3))
+* **queue:** remoção por msgId estável + cancelamento honrado no flush ([3cd9034](https://github.com/jhonyralph/jarvis/commit/3cd90341ae757751fb9696ad547ff80dc4b837ed))
+* **runner:** corrige recursão infinita do updater (função Git sombreava git.exe) ([7b75ff7](https://github.com/jhonyralph/jarvis/commit/7b75ff7ddf849049843b0874c70a8438691729a6))
+* **runner:** corta crédito à toa de turnos órfãos — abort por queda sustentada + reaper de pai-morto ([7650819](https://github.com/jhonyralph/jarvis/commit/76508199a570455070028f7b5804e19ffa81bc20))
+* **scripts:** BOM UTF-8 nos launchers .ps1 (parse correto no Windows PowerShell 5.1) ([c72f1aa](https://github.com/jhonyralph/jarvis/commit/c72f1aa4ae2ed052d81b393659b8948b1eaa37bb))
+* **scripts:** log dos launchers em UTF-16LE para casar com o `*>>` do node ([fcc6e60](https://github.com/jhonyralph/jarvis/commit/fcc6e601eb4f2b8d0564c869963b2799f03a3e76))
+* **ui:** feedback visível no painel de framework + detecção de Hub desatualizado ([9ca33e9](https://github.com/jhonyralph/jarvis/commit/9ca33e94e4b583f95abb9510a9473db58e776ffc))
+* **ui:** settings mobile como abas roláveis com busca expansível ([408dabd](https://github.com/jhonyralph/jarvis/commit/408dabd14963ccd4bdb0c517aceae207da1fd27a))
+* **worktree:** reconcilia drive-letter minúsculo do git no Windows ([1dbb2b9](https://github.com/jhonyralph/jarvis/commit/1dbb2b9d7c6e0e1b78c7b1bf59b8342b0b2da80a)), closes [#443-451](https://github.com/jhonyralph/jarvis/issues/443-451)
+
+
+### Features
+
+* **agents:** fallback de IA por limite/crédito com cache de exaustão ([ac2fd69](https://github.com/jhonyralph/jarvis/commit/ac2fd697964c98979854ae6dbbc2540f0ecdb68c))
+* **framework:** gestão do framework universal — inventário, scan de segurança, import zip/GitHub e atualização ([2dedbe1](https://github.com/jhonyralph/jarvis/commit/2dedbe18bcf486368477fa3edfdf3f14a9afed0e))
+* **framework:** prévia de import com diff e default sobrescrever para fontes já importadas ([7b8ed15](https://github.com/jhonyralph/jarvis/commit/7b8ed151b3f52286718799c34b6511022c086b2d))
+* **hub:** observabilidade ampla + updater resiliente (phone-home, retarget, rollback de crash-loop) ([862e9d3](https://github.com/jhonyralph/jarvis/commit/862e9d3753f8641e03163e23a3cc6c61372f7fbc))
+* mobile UX, voice/wake, Solution Workspace, automation + assistant integration ([4e8ba9e](https://github.com/jhonyralph/jarvis/commit/4e8ba9e033cf0c05ecd12dd3f3c604bdb2295952))
+* **observability:** log estruturado com nível, on/off e retenção + evento de turno (custo/tokens/tempo) ([abf4bb1](https://github.com/jhonyralph/jarvis/commit/abf4bb1c252779b38c01a957b3215658387826a0)), closes [#3](https://github.com/jhonyralph/jarvis/issues/3)
+* **observability:** painel de Ajustes do log — ligar/desligar, nível e retenção ([ca204a7](https://github.com/jhonyralph/jarvis/commit/ca204a78768d4110ab76cd17d5322c9d71f7b7ca))
+* **observability:** versão legível por máquina (tag + distância) + trava de instância no runner ([d29f70e](https://github.com/jhonyralph/jarvis/commit/d29f70e7a8f4535c4052c3aebc344d3c52e8ed1b))
+* **personal-assistant:** PAC-01..25 personal context engine ([c4a4aa9](https://github.com/jhonyralph/jarvis/commit/c4a4aa9c3abca6857316adc8efda621b04752cfe))
+* **personal:** descoberta de fontes de eventos por região, sob demanda ([aa92621](https://github.com/jhonyralph/jarvis/commit/aa926213cd3bb33e77b4a98f237fee63c9e02625))
+* **personal:** fontes globais gratuitas ligadas e consentidas por padrão ([23ade5d](https://github.com/jhonyralph/jarvis/commit/23ade5d14c8922274a541b49eefcf9bd8c6da70b))
+* **ui:** ajuda rica em todas as seções, saves por aba e ajustes mobile ([b90cf77](https://github.com/jhonyralph/jarvis/commit/b90cf77923da7be60a2a9a0ec74d09a3d3ad8223))
+* **ui:** editor de arquivos do framework em modal com árvore e guard de não-salvo ([1136ee4](https://github.com/jhonyralph/jarvis/commit/1136ee46d7f7b9d1994c4b8fdebf1fb8414664df))
+* **ui:** painel de ajuda rico por seção e rodapé de settings contextual ([22ad8e4](https://github.com/jhonyralph/jarvis/commit/22ad8e42c797a50b75074d6bd746118444c9eecb))
+* **voice:** STT na GPU (P1000) + idioma fixo pt + instrumentação de latência ([c3c335e](https://github.com/jhonyralph/jarvis/commit/c3c335e6c85497aedcd56c8274c4169e38f8da14))
+
+
+### Performance Improvements
+
+* **routing:** timeout no roteamento automático com fallback determinístico + log de duração ([b760e20](https://github.com/jhonyralph/jarvis/commit/b760e20a72225b5256d014424d10768c7b0ec384))
+* **voice:** pré-aquece STT/TTS no boot + instrumenta timing de voz e do turno do Claude Code ([8b7e7db](https://github.com/jhonyralph/jarvis/commit/8b7e7db3a672a478164067c847f3d01a4a779a64))
+
 ## [0.5.1](https://github.com/jhonyralph/jarvis/compare/v0.5.0...v0.5.1) (2026-07-28)
 
 
