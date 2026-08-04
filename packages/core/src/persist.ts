@@ -30,6 +30,30 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 
+/**
+ * Windows-hardened atomic rename. `rename(tmp -> path)` maps to MoveFileEx-with-replace, which on
+ * Windows fails with a TRANSIENT EPERM/EACCES/EBUSY when antivirus (Defender), Search indexer, a
+ * backup agent, or a file watcher is holding a momentary handle on `path` — exactly what was seen
+ * corrupting the Hub's session persistence ("erro ao processar send - EPERM ... rename"). A bare
+ * `renameSync` throws on the first collision and loses the write. We retry with a short synchronous
+ * backoff (Atomics.wait — real sleep, no CPU spin); the handle is virtually always released within a
+ * few ms. Non-transient errors (e.g. ENOENT, cross-device) rethrow immediately.
+ */
+function renameSyncWithRetry(tmp: string, path: string, tries = 12, delayMs = 15): void {
+  const TRANSIENT = new Set(["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"]);
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(tmp, path);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (attempt >= tries || !code || !TRANSIENT.has(code)) throw err;
+      Atomics.wait(sleeper, 0, 0, delayMs); // synchronous, interrupt-free backoff
+    }
+  }
+}
+
 export interface WriteJsonOpts {
   /** pretty-print with 2-space indent (matches the old `JSON.stringify(x, null, 2)` calls) */
   pretty?: boolean;
@@ -57,7 +81,7 @@ export function writeTextAtomic(path: string, text: string, opts?: WriteTextOpts
   if (opts?.backup !== false && existsSync(path)) {
     try { copyFileSync(path, path + ".bak"); } catch { /* best-effort backup */ }
   }
-  renameSync(tmp, path);
+  renameSyncWithRetry(tmp, path);
 }
 
 /**
@@ -85,7 +109,7 @@ export function writeJsonAtomic(path: string, data: unknown, opts?: WriteJsonOpt
   if (opts?.backup !== false && existsSync(path)) {
     try { copyFileSync(path, path + ".bak"); } catch { /* best-effort backup */ }
   }
-  renameSync(tmp, path); // atomic replace (Node maps this to MoveFileEx replace on Windows)
+  renameSyncWithRetry(tmp, path); // atomic replace (Node maps this to MoveFileEx replace on Windows), retried on transient Windows locks
 }
 
 /**

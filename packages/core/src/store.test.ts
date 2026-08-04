@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "./store.js";
@@ -106,5 +106,55 @@ test("a corrupt sessions.json recovers from the .bak snapshot instead of wiping 
     writeFileSync(join(d, "sessions.json"), '{ "keep": { "id": "keep", ');
     const recovered = new Store(DEF, d);
     assert.ok(recovered.get("keep"), "must recover the session from .bak, not fall to empty");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("messages persist to a per-session JSONL, NOT inlined into sessions.json", () => {
+  const d = dir();
+  try {
+    const s = new Store(DEF, d);
+    s.add("s1", { role: "user", text: "oi", ts: 1 });
+    s.add("s1", { role: "assistant", text: "olá", ts: 2 });
+    // sessions.json holds metadata only — no message bodies
+    const meta = JSON.parse(readFileSync(join(d, "sessions.json"), "utf8"));
+    assert.equal(meta.s1.messages, undefined, "sessions.json must not carry inline messages anymore");
+    assert.ok(existsSync(join(d, "sessions", "s1.jsonl")), "history goes to sessions/<id>.jsonl");
+    // and a reload rebuilds the full history from the JSONL
+    const reopened = new Store(DEF, d);
+    assert.equal(reopened.history("s1").length, 2);
+    assert.equal(reopened.history("s1")[1].text, "olá");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("migrates a legacy sessions.json (inline messages) into per-session JSONL on load", () => {
+  const d = dir();
+  try {
+    // hand-write the OLD format: messages inlined in sessions.json
+    const legacy = {
+      old: { id: "old", title: "Antiga", agent: "mock", cwd: "/w", createdAt: 1, updatedAt: 3,
+        messages: [ { role: "user", text: "pergunta", ts: 1 }, { role: "assistant", text: "resposta", ts: 3 } ] },
+    };
+    writeFileSync(join(d, "sessions.json"), JSON.stringify(legacy));
+    const s = new Store(DEF, d);
+    assert.equal(s.history("old").length, 2, "legacy history must load");
+    assert.equal(s.list()[0].count, 2);
+    // migration stripped the inline messages and wrote the JSONL
+    const meta = JSON.parse(readFileSync(join(d, "sessions.json"), "utf8"));
+    assert.equal(meta.old.messages, undefined, "inline messages must be stripped after migration");
+    assert.ok(existsSync(join(d, "sessions", "old.jsonl")), "migrated history file must exist");
+    // idempotent: a second load (now new format) keeps exactly the same history, no duplication
+    const again = new Store(DEF, d);
+    assert.equal(again.history("old").length, 2, "re-load must not duplicate migrated messages");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("deleting a session removes its history file too", () => {
+  const d = dir();
+  try {
+    const s = new Store(DEF, d);
+    s.add("gone", { role: "user", text: "x", ts: 1 });
+    assert.ok(existsSync(join(d, "sessions", "gone.jsonl")));
+    s.delete("gone");
+    assert.equal(existsSync(join(d, "sessions", "gone.jsonl")), false, "history file must be removed on delete");
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

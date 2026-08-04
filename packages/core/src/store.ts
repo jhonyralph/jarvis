@@ -3,10 +3,11 @@
  * an **agent** and a **working folder**, both **locked** once it exists (only the
  * model/effort change per message). All data lives on the Hub machine.
  */
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ContextManifest } from "@jarvis/protocol";
-import { writeJsonAtomic, readJson } from "./persist.js";
+import { writeJsonAtomic, writeTextAtomic, readJson } from "./persist.js";
 
 export interface StoredMessage {
   role: "user" | "assistant" | "system";
@@ -65,16 +66,30 @@ const JARVIS_HOME = process.env.JARVIS_HOME || homedir();
 export class Store {
   private data: Record<string, SessionData> = {};
   private readonly file: string;
+  private readonly msgDir: string;
 
   /** `dir` overrides the storage directory (tests / sandbox); defaults to ~/.jarvis/hub. */
   constructor(private defaults: { agent: string; cwd: string }, dir?: string) {
-    this.file = join(dir || join(JARVIS_HOME, ".jarvis", "hub"), "sessions.json");
+    const base = dir || join(JARVIS_HOME, ".jarvis", "hub");
+    this.file = join(base, "sessions.json");
+    // Message history lives OUT of sessions.json: one append-only JSONL per session under this dir.
+    // Why: sessions.json used to inline every message, so a single ~50MB file was re-serialized,
+    // fsync'd and `.bak`-copied SYNCHRONOUSLY on EVERY mutation (incl. each streamed chunk), freezing
+    // the Hub event loop for tens of seconds — slow session creation, dropped runner pongs, EPERM on
+    // the rename. Now sessions.json holds only metadata (tiny, cheap) and a message append is O(1).
+    this.msgDir = join(base, "sessions");
     // readJson recovers from `.bak` if the primary is torn/corrupt, so a bad file degrades to the
     // last good snapshot instead of wiping every session (the old bare read fell straight to {}).
     const raw = readJson<Record<string, unknown>>(this.file, {});
+    let migrated = false;
     for (const [id, v] of Object.entries(raw)) {
       if (Array.isArray(v)) continue; // drop v0 test data
       const s = v as Partial<SessionData>;
+      // Old format inlined `messages`. If present, adopt them and rewrite to the per-session JSONL
+      // ONCE (idempotent: a full overwrite, so a re-run after a crash can't duplicate lines). New
+      // format has no inline messages → load them from the JSONL.
+      const inline = Array.isArray(s.messages) ? (s.messages as StoredMessage[]) : null;
+      const messages = inline && inline.length ? inline : this.readMessages(id);
       this.data[id] = {
         id,
         title: s.title || "Conversa",
@@ -82,12 +97,51 @@ export class Store {
         cwd: s.cwd || defaults.cwd,
         createdAt: s.createdAt ?? Date.now(),
         updatedAt: s.updatedAt ?? Date.now(),
-        messages: s.messages ?? [],
+        messages,
         hidden: s.hidden === true,
         rootExecutionId: typeof s.rootExecutionId === "string" ? s.rootExecutionId : undefined,
         executionId: typeof s.executionId === "string" ? s.executionId : undefined,
       };
+      if (inline && inline.length) { this.rewriteMessages(id, messages); migrated = true; }
     }
+    // Persist the stripped, metadata-only sessions.json once. writeJsonAtomic copies the previous
+    // (possibly ~50MB) file to sessions.json.bak first, so the pre-migration data is preserved.
+    if (migrated) this.flush();
+  }
+
+  private msgFile(id: string): string {
+    // ids are UUIDs or fixed constants; sanitize defensively so nothing escapes msgDir.
+    return join(this.msgDir, `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.jsonl`);
+  }
+
+  /** Load a session's messages from its append-only JSONL, tolerating a torn trailing line. */
+  private readMessages(id: string): StoredMessage[] {
+    const f = this.msgFile(id);
+    if (!existsSync(f)) return [];
+    const out: StoredMessage[] = [];
+    let raw = "";
+    try { raw = readFileSync(f, "utf8"); } catch { return []; }
+    for (const line of raw.split("\n")) {
+      if (!line) continue;
+      try { out.push(JSON.parse(line) as StoredMessage); } catch { /* skip a partial/torn line */ }
+    }
+    return out;
+  }
+
+  /** Append one message with an O(1) write — no full-store rewrite. */
+  private appendMessage(id: string, msg: StoredMessage): void {
+    try {
+      mkdirSync(this.msgDir, { recursive: true });
+      appendFileSync(this.msgFile(id), JSON.stringify(msg) + "\n");
+    } catch { /* best-effort: the in-memory copy still serves this run */ }
+  }
+
+  /** Rewrite a session's whole JSONL (used by migration, reset, dropLastUser). Crash-safe. */
+  private rewriteMessages(id: string, messages: StoredMessage[]): void {
+    try {
+      mkdirSync(this.msgDir, { recursive: true });
+      writeTextAtomic(this.msgFile(id), messages.map((m) => JSON.stringify(m)).join("\n") + (messages.length ? "\n" : ""), { backup: false });
+    } catch { /* best-effort */ }
   }
 
   /** Create if missing. agent + cwd are set here and never change afterwards. */
@@ -122,6 +176,7 @@ export class Store {
   reset(id: string, opts?: { agent?: string; cwd?: string; title?: string }): SessionData {
     const s = this.ensure(id);
     s.messages = [];
+    this.rewriteMessages(id, []);
     if (opts?.agent) s.agent = opts.agent;
     if (opts?.cwd) s.cwd = opts.cwd;
     s.title = opts?.title || s.title;
@@ -146,6 +201,7 @@ export class Store {
   delete(id: string): boolean {
     if (!this.data[id]) return false;
     delete this.data[id];
+    try { rmSync(this.msgFile(id), { force: true }); } catch { /* history file may not exist */ }
     this.flush();
     return true;
   }
@@ -155,6 +211,7 @@ export class Store {
     s.messages.push(msg);
     s.updatedAt = msg.ts;
     if ((s.title === "Nova conversa" || !s.title) && msg.role === "user") s.title = titleFromMessage(msg.text);
+    this.appendMessage(id, msg); // O(1) append — the message does NOT go through the metadata flush
     this.flush();
   }
 
@@ -169,6 +226,7 @@ export class Store {
     if (!s || !s.messages.length || s.messages[s.messages.length - 1].role !== "user") return false;
     s.messages.pop();
     s.updatedAt = s.messages.at(-1)?.ts ?? s.updatedAt;
+    this.rewriteMessages(id, s.messages);
     this.flush();
     return true;
   }
@@ -207,7 +265,15 @@ export class Store {
 
   private flush(): void {
     // Atomic write (temp + fsync + rename) with a `.bak` of the previous good file — a crash
-    // mid-write can no longer truncate sessions.json and take all history with it.
-    writeJsonAtomic(this.file, this.data, { pretty: true });
+    // mid-write can no longer truncate sessions.json and take all history with it. Now writes
+    // ONLY metadata (no messages), so this is a tiny, fast write regardless of history size —
+    // that is what removed the multi-second event-loop stalls on every message.
+    const meta: Record<string, Omit<SessionData, "messages">> = {};
+    for (const [id, s] of Object.entries(this.data)) {
+      const { messages: _messages, ...rest } = s;
+      void _messages;
+      meta[id] = rest;
+    }
+    writeJsonAtomic(this.file, meta, { pretty: true });
   }
 }
