@@ -5593,6 +5593,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const preMs = Date.now() - tPre;
       // Timing to a file (hub.log doesn't capture stdout post-boot) so we can see WHERE the latency is.
       try { appendFileSync(join(JARVIS_DIR, "voice-timing.log"), `${new Date().toISOString()} stt=${sttMs}ms speaker=${spkMs}ms correção+gate=${preMs}ms relevante=${pre.relevant} "${String(raw).slice(0, 50)}"\n`); } catch { /* ignore */ }
+      // Structured twin of the file line above, with the audio SIZE — so a slow STT can be told apart
+      // from a big/long clip, and the whole voice pipeline is diagnosable from the one JSONL log.
+      log.debug("voice_stt", { bytes: audio.length, sttMs, spkMs, preMs, relevant: pre.relevant });
       send(ws, { t: "voice_timing", stt: sttMs, speaker: spkMs, preflight: preMs });
       if (needGate && !pre.relevant) { send(ws, { t: "voice_ignored", sessionId: sid, text: pre.text }); return; }
       text = pre.text;
@@ -5766,17 +5769,27 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
       // --- normal Jarvis session (agent + cwd locked at creation) ---
       // Attachments: agent sees file contents / image paths; chat shows text + 📎 chip / image preview.
+      // Per-seam timing: the turn event already covers the agent send; these three cover the gap
+      // BEFORE it (route/expand/personal), which was an un-instrumented blind spot where voice latency
+      // could hide. One debug line per turn correlates with the turn event by session.
+      const _tRoute = Date.now();
       const decision = await routeLocalTurn(sid, text, msg.model, msg.effort, autoFlags(msg.auto));
+      const _routeMs = Date.now() - _tRoute;
       if (!sessionDispatchAuthorized(lease, ws) || !store.get(sid)) throw new Error("a autorização da sessão mudou durante o roteamento");
       const { agentText, showText, images, files } = buildAttachments(Array.isArray(msg.attachments) ? msg.attachments : [], text);
       // Power-triggers, resolved for the AGENT only (chat keeps showing the raw text): "!cmd" runs and
       // injects its output; otherwise a "/cmd" expands to its prompt (scoped to this session's agent).
       const scwd = store.get(sid)?.cwd || CWD;
+      const _tExpand = Date.now();
       const bang = await expandBang(text, scwd);
       if (!sessionDispatchAuthorized(lease, ws) || !store.get(sid)) throw new Error("a autorização da sessão mudou durante a expansão do comando");
       const cmdExp = bang ? null : expandCommand(text, scwd, cmdAgentOf(store.get(sid)?.agent), { preference: frameworkCfg.preference });
       const manifestAgentText = bang ? bang.expanded : (cmdExp ? cmdExp.expanded : agentText);
+      const _expandMs = Date.now() - _tExpand;
+      const _tPersonal = Date.now();
       const personal = await personalContextForChat(LOCAL_ID, sid, text, turnActor, () => refreshSessionDispatchAuthorization(lease));
+      const _personalMs = Date.now() - _tPersonal;
+      log.debug("local_dispatch", { sid, kind: msg.t, routeMs: _routeMs, expandMs: _expandMs, personalMs: _personalMs });
       if (!sessionDispatchAuthorized(lease, ws) || !store.get(sid)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
       await runOwnedManagedTurn(sid, {
         showText, agentText: personal ? `${personal.contextPrefix}\n\n${manifestAgentText}` : manifestAgentText, manifestAgentText,

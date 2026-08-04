@@ -6,3 +6,12 @@ sounddevice>=0.4.6      # machine mic + speaker for the wake listener
 websocket-client>=1.7.0 # wake listener's WS client to the Hub
 resemblyzer>=0.1.4      # speaker embedding for voice identification (voice_cli.py; pulls torch CPU)
 setuptools<81           # webrtcvad (a resemblyzer dep) imports pkg_resources, removed in setuptools 81+
+
+# --- OPTIONAL: NVIDIA GPU decode for STT (big speedup vs CPU) -------------------------------------
+# Install ONLY on a machine with an NVIDIA GPU, then set JARVIS_STT_DEVICE=cuda (JARVIS_STT_COMPUTE=int8).
+# whisper_service.py adds these wheels' bin dirs to the Windows DLL path automatically and falls back
+# to CPU if the GPU can't run — so CPU-only machines never need these.
+#   pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cuda-runtime-cu12 nvidia-cuda-nvrtc-cu12
+# Measured on a Quadro P1000 (4GB, int8): ~2s decode vs ~9s on CPU for large-v3-turbo. Pascal GPUs
+# have no fast float16, so use compute int8. VRAM is tight at 4GB (model ~1.5GB) — the per-request
+# handler tolerates a transient OOM without crashing the service.

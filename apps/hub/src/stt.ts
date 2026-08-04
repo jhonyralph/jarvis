@@ -65,7 +65,7 @@ function ensureProc(): Promise<void> {
     let o: any; try { o = JSON.parse(line); } catch { return; }
     if (!started && ("ready" in o)) {
       started = true;
-      if (o.ready) { log.debug("stt_cold_start", { ms: Date.now() - tSpawn }); readyResolve(); }
+      if (o.ready) { log.debug("stt_cold_start", { ms: Date.now() - tSpawn, device: o.device, compute: o.compute, model: o.model }); readyResolve(); }
       else killProc(new Error("STT: " + (o.error || "modelo não carregou")));
       return;
     }
