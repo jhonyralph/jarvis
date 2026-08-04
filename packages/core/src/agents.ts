@@ -1901,6 +1901,12 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, signal?: A
   return new Promise((resolve, reject) => {
     const p = spawnCli(cmd, args, cwd);
     const wasAborted = wireAbort(p, signal);
+    // Abort encerra a Promise NA HORA — não espera o 'close' do processo. killTree (via wireAbort) mata
+    // a árvore, mas se um subprocesso do CLI (ex.: codex) re-parenta ou segura o pipe de stdout, o
+    // 'close' demora — ou nunca vem — e o turno ficava "travado pra sempre" ao cancelar (clicar parar de
+    // novo é inócuo: o signal já está abortado). Rejeitando já, o turno termina na hora; o processo é
+    // morto em best-effort e o reaper de pai-morto limpa qualquer resto.
+    if (signal) { if (signal.aborted) reject(new Error(ABORTED)); else signal.addEventListener("abort", () => reject(new Error(ABORTED)), { once: true }); }
     let out = "";
     let err = "";
     p.stdout!.on("data", (d) => (out += d.toString()));
@@ -1921,6 +1927,9 @@ function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLi
   return new Promise((resolve, reject) => {
     const p = spawnCli(cmd, args, cwd);
     const wasAborted = wireAbort(p, signal);
+    // Rejeita NA HORA no abort (ver run()): sem isso, o cancelamento de um turno com stream (codex/claude)
+    // dependia do 'close', que trava se um subprocesso segura o pipe — o "não para / demora uma era".
+    if (signal) { if (signal.aborted) reject(new Error(ABORTED)); else signal.addEventListener("abort", () => reject(new Error(ABORTED)), { once: true }); }
     let out = "";
     let buf = "";
     let err = "";
