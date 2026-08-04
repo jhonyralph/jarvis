@@ -104,11 +104,23 @@ function safeExecutionId(value: string): boolean {
   return typeof value === "string" && value.length >= 1 && value.length <= 200 && !/[\x00-\x1f\x7f]/.test(value);
 }
 
+/**
+ * Windows: `git rev-parse --show-toplevel` frequently returns the drive letter in LOWERCASE
+ * (`c:/repo`) while Node's resolve/realpathSync yield UPPERCASE (`C:\repo`). `path.relative()` and the
+ * `startsWith` root checks below compare case-SENSITIVELY, so a cwd that genuinely lives inside the
+ * repo looked "outside" and prepare() threw INVALID_PATH — the CI-only failure of the managed-worktree
+ * tests. Uppercasing the drive letter makes every downstream comparison consistent. No-op off Windows
+ * and on non-drive paths (UNC, POSIX).
+ */
+function normalizeRoot(p: string): string {
+  return process.platform === "win32" ? p.replace(/^([a-z]):/, (_, d) => `${d.toUpperCase()}:`) : p;
+}
+
 function canonicalDirectory(path: string): string {
   const absolute = resolve(path);
   if (!existsSync(absolute)) throw new ManagedWorkspaceError("INVALID_PATH", `diretório não existe: ${absolute}`);
   if (!statSync(absolute).isDirectory()) throw new ManagedWorkspaceError("NOT_A_DIRECTORY", `não é diretório: ${absolute}`);
-  return realpathSync(absolute);
+  return normalizeRoot(realpathSync(absolute));
 }
 
 export function pathIsStrictlyInside(parent: string, target: string): boolean {
@@ -152,7 +164,7 @@ export class ManagedWorktreeManager {
   private readonly git: ManagedGitRunner;
 
   constructor(worktreeRoot: string, git: ManagedGitRunner = new NodeGitRunner()) {
-    const root = resolve(worktreeRoot);
+    const root = normalizeRoot(resolve(worktreeRoot));
     if (dirname(root) === root) throw new ManagedWorkspaceError("UNSAFE_WORKTREE_ROOT", "a raiz do filesystem não pode ser usada para worktrees");
     this.configuredRoot = root;
     this.git = git;

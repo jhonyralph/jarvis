@@ -33,6 +33,25 @@ function repository(): { base: string; repo: string; worktrees: string; cleanup:
   return { base, repo: resolve(repo), worktrees: resolve(worktrees), cleanup: () => rmSync(base, { recursive: true, force: true }) };
 }
 
+test("Windows: a lowercase drive letter from git still resolves cwd inside the repo root", () => {
+  if (process.platform !== "win32") return; // drive-letter case is a Windows-only concern (skips on Linux CI)
+  const fixture = repository();
+  try {
+    // Reproduce the CI failure: `git rev-parse --show-toplevel` hands back a LOWERCASE drive (`c:/…`)
+    // while Node yields uppercase. Before normalizeRoot(), path.relative() compared these case-
+    // sensitively and prepare() threw INVALID_PATH for a cwd that IS the repo root.
+    const lyingGit: ManagedGitRunner = {
+      run: (args) =>
+        args.includes("rev-parse") && args.includes("--show-toplevel")
+          ? realpathSync(fixture.repo).replace(/^([A-Za-z]):/, (_, d) => `${d.toLowerCase()}:`)
+          : git([...args]),
+    };
+    const workspace = new ManagedWorktreeManager(fixture.worktrees, lyingGit).prepare({ executionId: "drive-case-1", cwd: fixture.repo });
+    assert.equal(workspace.access, "read_only");
+    assert.equal(workspace.gitRepository, true, "cwd must be recognized as inside the repo despite the drive-case mismatch");
+  } finally { fixture.cleanup(); }
+});
+
 test("read-only is the default and a launch fails closed without a real sandbox", () => {
   const fixture = repository();
   try {
