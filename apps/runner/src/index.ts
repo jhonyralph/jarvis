@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
-  updateCheck, updateApply, restartService, runnerSelfUpdateDecision, readProjectFile, repoCommit, createSeenSet, VERSION, Outbox,
+  updateCheck, updateApply, restartService, runnerSelfUpdateDecision, readProjectFile, repoCommit, repoVersion, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, detectPreviewCandidates,
   previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest,
   materializeFramework, FrameworkProvenanceStore,
@@ -1045,7 +1045,7 @@ function connect(): void {
     const info: RunnerInfo = {
       runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: availableAgentsSnapshot(),
       agentDescriptors: agents.describeSnapshot(), agentUsage: {}, protocolVersion: RUNNER_PROTOCOL_VERSION,
-      version: VERSION, commit: await repoCommit(RUNNER_ROOT), updateReceipt: updateReceipt(), updateResult: readUpdateResult(), label: process.env.JARVIS_LABEL || undefined,
+      version: VERSION, build: await repoVersion(RUNNER_ROOT), commit: await repoCommit(RUNNER_ROOT), updateReceipt: updateReceipt(), updateResult: readUpdateResult(), label: process.env.JARVIS_LABEL || undefined,
     };
     send({ t: "register", token: TOKEN, info });
     void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));

@@ -34,6 +34,10 @@ export interface RunnerInfo {
   agentUsage?: Record<string, unknown | null>;
   protocolVersion?: number;
   version?: string;
+  /** Human-readable build id from `git describe` (tag + commits-ahead + sha), e.g. "v0.5.1-27-g862e9d3".
+   *  Optional/additive: an old runner that doesn't send it just falls back to `commit` in the UI, so no
+   *  protocol bump is needed. Shown per machine so its version and distance-from-tag are legible. */
+  build?: string;
   /** short git HEAD sha of the runner's checkout ("+dirty" suffix if uncommitted) — lets the Hub
    *  spot a runner drifting behind (or ahead of) the Hub's own build. */
   commit?: string;

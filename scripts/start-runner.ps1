@@ -10,6 +10,18 @@ $log  = Join-Path $env:USERPROFILE '.jarvis\runner.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
 function Log($m) { Add-Content -Path $log -Value ("[launcher] {0} {1}" -f (Get-Date -Format o), $m) }
 
+# Instância única (paridade com o mutex JarvisHubSupervisor do Hub). Diferente do Hub, o runner NÃO
+# abre porta, então NÃO há guarda de porta de reserva — o mutex é a ÚNICA trava. Sem ele, um 2º
+# supervisor (2º logon, política de restart da task, ou handoff de update) roda em paralelo e cada um
+# spawna seu runner, acumulando processos node (foi a causa dos ~13 processos / 48% de CPU na Luby).
+# Local (sem Global): os lançadores rodam na sessão interativa do mesmo usuário. Fail-open: se o mutex
+# não puder ser criado, seguimos SEM trava — um runner de pé, mesmo duplicado, é melhor que nenhum.
+try {
+  $script:RunnerMutexCreated = $false
+  $script:RunnerMutex = New-Object System.Threading.Mutex($true, 'JarvisRunnerSupervisor', [ref]$script:RunnerMutexCreated)
+  if (-not $script:RunnerMutexCreated) { Log 'outro supervisor de runner ja ativo (mutex) - este encerra'; return }
+} catch { Log "mutex indisponivel ($($_.Exception.Message)) - seguindo sem trava de instancia" }
+
 # garante que node/npm/CLIs resolvem, independente do PATH da tarefa
 $env:PATH = "C:\Program Files\nodejs;$env:USERPROFILE\.local\bin;$env:PATH"
 

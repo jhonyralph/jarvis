@@ -96,6 +96,16 @@ export async function repoCommit(root: string): Promise<string> {
   } catch { return ""; }
 }
 
+/** Human-readable BUILD id from `git describe`: nearest tag + commits-ahead + short sha —
+ *  e.g. "v0.5.1-27-g862e9d3" (27 commits past v0.5.1), "v0.5.1" exactly on the tag, "862e9d3" when no
+ *  tag is reachable (--always), plus a "-dirty" suffix for an uncommitted tree. Unlike a bare sha this
+ *  tells you AT A GLANCE how far past the last release a machine is — what the UI shows per machine.
+ *  "" if not a git repo. */
+export async function repoVersion(root: string): Promise<string> {
+  try { return await git(root, ["describe", "--tags", "--always", "--dirty"]); }
+  catch { return ""; }
+}
+
 export interface UpdateStatus {
   supported: boolean;      // git clone with a remote?
   current: string;         // short sha of HEAD

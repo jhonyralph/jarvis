@@ -110,6 +110,15 @@
     // aparecer na lista, e sem este aviso a visão parecia simplesmente "perder sessões" sozinha.
     let allViewMachines=[];
     function machineHue(s){ let h=0; s=String(s||''); for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return h%360; }
+    // Versão legível de uma máquina: `git describe` ("v0.5.1-27-g862e9d3") vira "v0.5.1 · +27" (tag +
+    // commits à frente) — mostra num relance quão à frente da última release está, o que o sha puro não
+    // diz. Exatamente na tag → só "v0.5.1"; sem tag → o sha; "-dirty" vira " *". Runner velho sem build → sha.
+    function fmtBuild(build,commit){
+      const b=String(build||'').trim(); if(!b) return commit?esc(commit):'';
+      const dirty=/-dirty$/.test(b), core=b.replace(/-dirty$/,'');
+      const m=core.match(/^(.+)-(\d+)-g[0-9a-f]+$/);
+      return esc((m?(m[1]+' · +'+m[2]):core)+(dirty?' *':''));
+    }
     let allRefreshT=null; function scheduleAllRefresh(){ if(currentMachine!=='all')return; clearTimeout(allRefreshT); allRefreshT=setTimeout(()=>{ if(currentMachine==='all') tx({t:'listAll'}); }, 1500); }
     const isNative = id => typeof id==='string' && (id.startsWith('claude:')||id.startsWith('codex:'));
     const agentIcon = a => ({'claude-code':'🟣',codex:'🟢',gemini:'🔵',cursor:'⚫',copilot:'🟪',opencode:'🟠',cline:'🔴',qwen:'🔷',continue:'🟡',kiro:'🟤',antigravity:'🛸',aider:'🔹',mock:'⚪'})[a]||'🔹';
@@ -1774,7 +1783,8 @@
         // online mas sem nenhuma IA utilizável (ex.: claude sem login / token expirado → 401)
         const noAI = m.online && Array.isArray(m.agents) && !m.agents.length;
         // versão (commit git) da máquina + aviso de disparidade com o servidor
-        const ver = m.commit ? '<span class="mver" title="Build desta máquina'+(m.hubCommit?' · servidor: '+esc(m.hubCommit):'')+'">'+esc(m.commit)+'</span>' : '';
+        const bTitle = 'Build: '+(m.build||m.commit||'?')+((m.hubBuild||m.hubCommit)?' · servidor: '+(m.hubBuild||m.hubCommit):'');
+        const ver = (m.build||m.commit) ? '<span class="mver" title="'+esc(bTitle)+'">'+fmtBuild(m.build,m.commit)+'</span>' : '';
         const drift = m.stale ? '<span class="mtag warn" title="Versão diferente do servidor ('+esc(m.hubCommit||'?')+') — atualize esta máquina">⚠ desatualizada</span>' : '';
         it.innerHTML='<span class="mdot '+(m.online?'on':'off')+'"></span><span class="mname">'+esc(m.label)+'</span>'+ver+(m.local?'<span class="mtag">servidor</span>':(m.online?'':'<span class="mtag">offline</span>'))+drift+(noAI?'<span class="mtag warn" title="Nenhuma CLI suportada e autenticada foi detectada nesta máquina">⚠ sem IA</span>':'');
         it.onclick=(e)=>{ e.stopPropagation(); selectMachine(m.id); };
@@ -2037,7 +2047,7 @@
         const rows=configured.length?configured.map(d=>{ const models=(d.models||[]).filter(model=>model.selectable!==false), dm=(models.find(model=>model.id===d.defaultModel)||models[0]||{}), effort=dm.defaultEffort||(dm.efforts&&dm.efforts[0])||'', control=d.modelControl||(d.capabilities&&d.capabilities.modelControl)||((models||[]).length?'per_turn':'none');
           const modelTxt=dm.id?esc(dm.label||dm.id):'automático'; const effortTxt=effort?` · esforço ${esc(effLabel(effort))}`:''; const support=d.support&&d.support!=='complete'?` · ${esc(d.support)}`:'';
           return `<div style="display:flex;gap:6px;align-items:center;font-size:11.5px;padding:1px 0"><span class="mtag">${esc(agLabel(d.name))}</span><span class="mut" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${control==='per_turn'?modelTxt:'configuração da IA'}${effortTxt}${support}</span></div>`; }).join(''):'<div class="mut" style="font-size:11.5px">nenhuma IA executável anunciada</div>';
-        h+=`<div style="padding:6px 0;border-bottom:1px solid var(--line)"><div style="display:flex;align-items:center;gap:7px;margin-bottom:3px"><span class="mdot ${x.online?'on':'off'}"></span><span style="color:var(--text);font-weight:600">${esc(x.label||x.id)}</span><span class="mut" style="font-size:10.5px">${x.online?'online':'offline'}${x.commit?' · '+esc(x.commit):''}</span></div>${rows}</div>`; });
+        h+=`<div style="padding:6px 0;border-bottom:1px solid var(--line)"><div style="display:flex;align-items:center;gap:7px;margin-bottom:3px"><span class="mdot ${x.online?'on':'off'}"></span><span style="color:var(--text);font-weight:600">${esc(x.label||x.id)}</span><span class="mut" style="font-size:10.5px">${x.online?'online':'offline'}${(x.build||x.commit)?' · '+fmtBuild(x.build,x.commit):''}</span></div>${rows}</div>`; });
       h+=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:10px 0">
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">${mm.filter(x=>x.online).length}/${mm.length}</div><div class="mut" style="font-size:11px">máquinas online</div></div>
         <div><div style="font-size:20px;font-weight:700;color:var(--text)">${T.active||0}</div><div class="mut" style="font-size:11px">rodando agora</div></div>
@@ -2066,7 +2076,7 @@
         if(x.online&&Array.isArray(x.agents)&&!x.agents.length)badges.push('<span class="mtag warn">⚠ sem IA</span>'); if(x.compatible===false)badges.push('<span class="mtag warn">⚠ protocolo incompatível</span>'); if(x.stale)badges.push('<span class="mtag warn">⚠ desatualizada</span>');
         if(x.active>0)badges.push(`<span class="mtag" style="color:#22c55e">▶ ${x.active}</span>`);
         h+=`<div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid var(--line)">
-          <span class="mdot ${x.online?'on':'off'}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.label||x.id)}${x.commit?` <span class="mut" style="font-size:10.5px">${esc(x.commit)}</span>`:''}</span>${badges.join(' ')}</div>`; });
+          <span class="mdot ${x.online?'on':'off'}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.label||x.id)}${(x.build||x.commit)?` <span class="mut" style="font-size:10.5px">${fmtBuild(x.build,x.commit)}</span>`:''}</span>${badges.join(' ')}</div>`; });
       const M=m.metrics||{}, ov=M.overall, byR=M.runners||[];
       if(ov&&ov.turns){ const labelOf=id=>{ if(id==='*')return'Total'; const f=mm.find(x=>x.id===id); return f?(f.label||f.id):id; };
         const fmtMs=v=>v>=1000?`${(v/1000).toFixed(1)}s`:`${v||0}ms`; const erColor=r=>r>=0.2?'#ef4444':r>0?'#f59e0b':'#22c55e';

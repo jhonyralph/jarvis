@@ -34,7 +34,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -464,7 +464,7 @@ const server = createServer((req, res) => {
   if (urlPath === "/health" || urlPath === "/healthz") {
     let online = 0; for (const r of runners.values()) if (r.ws) online++;
     res.writeHead(200, { ...secHeaders(), "content-type": "application/json", "cache-control": "no-store" });
-    res.end(JSON.stringify({ ok: true, version: VERSION, uptime: Math.round(process.uptime()), runners: online }));
+    res.end(JSON.stringify({ ok: true, version: VERSION, build: hubBuild || undefined, commit: hubCommit || undefined, uptime: Math.round(process.uptime()), runners: online }));
     return;
   }
   // UPD-01 Fase 2 — out-of-band updater failure report. A runner's detached updater POSTs here even
@@ -1058,7 +1058,9 @@ void repoRemoteUrl(UPDATE_ROOT).then((u) => { repoUrl = u; });
 // The Hub's own build, so machineList can flag runners that drifted from it. Re-read after an
 // update restart is automatic (the process restarts). Refresh periodically for a live commit.
 let hubCommit = "";
+let hubBuild = ""; // human-readable `git describe` (tag + distance), shown per machine in the UI
 void repoCommit(UPDATE_ROOT).then((c) => { hubCommit = c; });
+void repoVersion(UPDATE_ROOT).then((v) => { hubBuild = v; });
 setInterval(() => { void repoCommit(UPDATE_ROOT).then((c) => {
   // When the Hub's own HEAD advances (it self-updated to a newer commit), re-aim every in-flight
   // runner update at it — so a fix that landed AFTER a stuck update actually reaches the runner,
@@ -1066,7 +1068,7 @@ setInterval(() => { void repoCommit(UPDATE_ROOT).then((c) => {
   const moved = !!c && c.replace("+dirty", "") !== (hubCommit || "").replace("+dirty", "");
   hubCommit = c;
   if (moved) sweepRetargetPendingUpdates();
-}); }, 60_000).unref?.();
+}); void repoVersion(UPDATE_ROOT).then((v) => { if (v) hubBuild = v; }); }, 60_000).unref?.();
 const sameBuild = (a: string, b: string) => !!a && !!b && a.replace("+dirty", "") === b.replace("+dirty", "");
 const commitMatches = (actual: string, target: string) => { const a = (actual || "").replace("+dirty", ""), t = (target || "").replace("+dirty", ""); return !!a && !!t && (a === t || a.startsWith(t) || t.startsWith(a)); };
 let updateStatus: any = { supported: true, behind: 0 };
@@ -1235,6 +1237,8 @@ function clientsOn(runnerId: string): WebSocket[] {
 function machineList(ws?: WebSocket): any[] {
   return [...runners.values()].filter((r) => !ws || canUseRunner(ws, r.id)).map((r) => {
     const commit = r.local ? hubCommit : (r.info.commit || "");
+    // Human-readable build (git describe). Falls back to the sha for a runner too old to report it.
+    const build = r.local ? hubBuild : (r.info.build || "");
     // "stale" = an online remote runner whose build differs from the Hub's (drift you can act on).
     const online = r.local || (!!r.ws && r.ws.readyState === WebSocket.OPEN);
     const stale = !r.local && online && !!commit && !!hubCommit && !sameBuild(commit, hubCommit);
@@ -1244,7 +1248,7 @@ function machineList(ws?: WebSocket): any[] {
       id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os,
       agents: r.local ? (localAgentsReady ? localAgents : agents.names()) : (r.info.agents || []), agentDescriptors: r.info.agentDescriptors || [],
       protocolVersion: r.info.protocolVersion || 1, compatible: (r.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION,
-      online, local: !!r.local, commit, hubCommit, stale, offlineMs, updatePending: pendingRunnerUpdates[r.id] || null,
+      online, local: !!r.local, commit, hubCommit, build, hubBuild, stale, offlineMs, updatePending: pendingRunnerUpdates[r.id] || null,
     };
   });
 }
