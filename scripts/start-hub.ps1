@@ -1,4 +1,4 @@
-# Jarvis Hub launcher — tarefa agendada "JarvisHub" (roda no logon).
+﻿# Jarvis Hub launcher — tarefa agendada "JarvisHub" (roda no logon).
 #
 # SUPERVISOR: mantém o Hub SEMPRE de pé. Se o node cair — crash, ou o auto-update
 # matando a porta 4577 pra aplicar código novo — o loop ressuscita em segundos.

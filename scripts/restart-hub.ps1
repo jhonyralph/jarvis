@@ -1,4 +1,4 @@
-<#
+﻿<#
   restart-hub.ps1 — reinicia o Jarvis Hub de forma À PROVA DE "morrer na praia".
 
   O problema: rodar o restart de forma síncrona trava a chamada ~30s (derruba + espera + confirma).
