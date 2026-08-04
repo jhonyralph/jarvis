@@ -1026,6 +1026,28 @@ async function doSend(
 }
 
 let reconnectDelay = 1000;
+// Turnos em andamento seguem rodando (e CUSTANDO crédito) durante uma queda — por design, pra
+// sobreviver a blip transiente e dar replay no reconnect. Mas numa queda SUSTENTADA (Hub fora por
+// minutos) o turno abandonado vira crédito à toa: ninguém vai consumir o resultado. Passado este
+// limite CONTÍNUO offline, abortamos os turnos ativos — o abort do adaptador dispara killTree
+// (taskkill /T) e mata a árvore do agente, encerrando o custo. Limiar generoso de propósito, pra NÃO
+// matar um turno legítimo durante um restart normal do Hub (~15s) ou um flap (que reseta o timer no
+// reconnect). Configurável via JARVIS_RUNNER_OUTAGE_ABORT_SEC; 0 desliga.
+const OUTAGE_ABORT_MS = Math.max(0, Number(process.env.JARVIS_RUNNER_OUTAGE_ABORT_SEC || 180) * 1000);
+let outageAbortTimer: ReturnType<typeof setTimeout> | null = null;
+function armOutageAbort(): void {
+  if (!OUTAGE_ABORT_MS || outageAbortTimer) return;
+  if (!runAborts.size && !executionAborts.size) return; // nada rodando → nada a abortar
+  outageAbortTimer = setTimeout(() => {
+    outageAbortTimer = null;
+    const n = runAborts.size + executionAborts.size;
+    if (!n) return;
+    console.warn(`[runner] Hub offline há ${OUTAGE_ABORT_MS / 1000}s — abortando ${n} turno(s) abandonado(s) para não custar crédito à toa`);
+    for (const [, ctrl] of [...runAborts, ...executionAborts]) { try { ctrl.abort(); } catch { /* ignore */ } }
+  }, OUTAGE_ABORT_MS);
+  outageAbortTimer.unref?.();
+}
+function clearOutageAbort(): void { if (outageAbortTimer) { clearTimeout(outageAbortTimer); outageAbortTimer = null; } }
 function connect(): void {
   const sock = new WebSocket(HUB_URL);
   ws = sock;
@@ -1042,6 +1064,7 @@ function connect(): void {
   hb.unref?.();
   sock.on("open", async () => {
     reconnectDelay = 1000;
+    clearOutageAbort(); // reconectou → cancela o abort armado; turnos preservados seguem via replay
     const info: RunnerInfo = {
       runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: availableAgentsSnapshot(),
       agentDescriptors: agents.describeSnapshot(), agentUsage: {}, protocolVersion: RUNNER_PROTOCOL_VERSION,
@@ -1333,6 +1356,7 @@ function connect(): void {
   });
   sock.on("close", () => {
     clearInterval(hb); ws = null;
+    armOutageAbort(); // arma o corte de turnos abandonados se a queda persistir (flap reseta no reconnect)
     // #4: NÃO dispare auto-update numa queda transiente (ex.: 502 do túnel) — era o gatilho que criava
     // corrida com o update do Hub. Só considera após desconexão SUSTENTADA (backoff já cresceu); a
     // checagem periódica ("checagem periódica desconectada") cobre o caso realmente longo.

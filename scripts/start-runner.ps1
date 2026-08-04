@@ -125,6 +125,15 @@ while ($true) {
     }
   }
   $startedAt = [DateTimeOffset]::Now
+  # Reaper de agentes órfãos: um turno cujo PAI (este runner) morreu segue rodando e CUSTANDO crédito —
+  # nada mais o mata. Encerramos CLIs de agente cujo PAI não existe mais. Direção SEGURA: pai vivo →
+  # nunca mata; o app Claude Desktop e o próprio hub/runner ficam de fora. Backstop pro caso de crash
+  # duro (onde o abort por queda sustentada, no index.ts, não roda porque o processo inteiro morreu).
+  Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='claude.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and ($_.CommandLine -match '@openai[\\/]codex|codex[\\/]bin|[\\/]\.local[\\/]bin[\\/]claude|cursor-agent|[\\/]opencode|[\\/]cline|kiro-cli') -and
+      ($_.CommandLine -notmatch 'AnthropicClaude') -and ($_.CommandLine -notmatch 'apps[\\/](hub|runner)[\\/]src') -and
+      -not (Get-Process -Id $_.ParentProcessId -ErrorAction SilentlyContinue) } |
+    ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Log "agente orfao encerrado (pid $($_.ProcessId), pai $($_.ParentProcessId) morto)" } catch {} }
   Log 'iniciando runner...'
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\runner\src\index.ts" *>> $log }
   else {

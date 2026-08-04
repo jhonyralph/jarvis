@@ -70,6 +70,15 @@ while ($true) {
   Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match 'whisper_service' } |
     ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Log "STT orfao encerrado (pid $($_.ProcessId))" } catch {} }
+  # Reaper de agentes órfãos: um turno cujo processo PAI (o Hub) morreu segue rodando e CUSTANDO crédito
+  # — o abort só dispara com o pai vivo, e nada mais o mata (foi o codex de 3 dias achado na análise).
+  # Encerramos CLIs de agente (codex/claude/etc.) cujo PAI não existe mais. Direção SEGURA: pai vivo →
+  # nunca mata; o app Claude Desktop (AnthropicClaude) e o próprio hub/runner ficam de fora.
+  Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='claude.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and ($_.CommandLine -match '@openai[\\/]codex|codex[\\/]bin|[\\/]\.local[\\/]bin[\\/]claude|cursor-agent|[\\/]opencode|[\\/]cline|kiro-cli') -and
+      ($_.CommandLine -notmatch 'AnthropicClaude') -and ($_.CommandLine -notmatch 'apps[\\/](hub|runner)[\\/]src') -and
+      -not (Get-Process -Id $_.ParentProcessId -ErrorAction SilentlyContinue) } |
+    ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Log "agente orfao encerrado (pid $($_.ProcessId), pai $($_.ParentProcessId) morto)" } catch {} }
   Log 'iniciando hub...'
   # NÃO usar `2>&1 | Out-File`: piparo stdout do node por um pipeline do PowerShell TRAVA o Hub no
   # boot — o Out-File não drena o pipe a tempo, o buffer (~64KB) enche e o node bloqueia numa escrita
