@@ -8,7 +8,7 @@ import {
   statSync,
   unlinkSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { readJson, writeJsonAtomic } from "./persist.js";
 import type { ManagedWorkspaceAccess } from "./execution-policy.js";
 
@@ -105,22 +105,47 @@ function safeExecutionId(value: string): boolean {
 }
 
 /**
- * Windows: `git rev-parse --show-toplevel` frequently returns the drive letter in LOWERCASE
- * (`c:/repo`) while Node's resolve/realpathSync yield UPPERCASE (`C:\repo`). `path.relative()` and the
- * `startsWith` root checks below compare case-SENSITIVELY, so a cwd that genuinely lives inside the
- * repo looked "outside" and prepare() threw INVALID_PATH — the CI-only failure of the managed-worktree
- * tests. Uppercasing the drive letter makes every downstream comparison consistent. No-op off Windows
- * and on non-drive paths (UNC, POSIX).
+ * On Windows the SAME directory has several string spellings that the later `path.relative()` /
+ * `startsWith` root checks (case- and separator-sensitive) treat as different, so a cwd that genuinely
+ * lives inside the repo looked "outside" and prepare() threw INVALID_PATH — the CI-only failure of the
+ * managed-worktree tests. Two spellings bite:
+ *   • 8.3 SHORT names: os.tmpdir() on the runner is `C:\Users\RUNNER~1\…` while git and the OS expand it
+ *     to `…\runneradmin\…`. Plain realpathSync does NOT expand 8.3 — only realpathSync.native does.
+ *   • drive-letter CASE: git's `rev-parse --show-toplevel` lowercases it (`c:/…`) vs Node's `C:\…`.
+ * realpathSync.native (GetFinalPathNameByHandle) resolves symlinks AND expands 8.3 AND canonicalizes
+ * casing, so passing BOTH operands through it makes the same directory byte-identical. normalizeRoot
+ * then uppercases the drive and strips any `\\?\` extended-length prefix as belt-and-suspenders. All
+ * no-ops off Windows.
  */
 function normalizeRoot(p: string): string {
-  return process.platform === "win32" ? p.replace(/^([a-z]):/, (_, d) => `${d.toUpperCase()}:`) : p;
+  if (process.platform !== "win32") return p;
+  return p.replace(/^\\\\\?\\UNC\\/, "\\\\").replace(/^\\\\\?\\/, "").replace(/^([a-z]):/, (_, d) => `${d.toUpperCase()}:`);
+}
+
+/** Canonical long-form path for an EXISTING directory (see normalizeRoot). */
+function canonicalExisting(absolute: string): string {
+  return normalizeRoot(realpathSync.native(absolute));
+}
+
+/**
+ * Canonicalize a path whose leaf may NOT exist yet (the configured worktree root is created lazily):
+ * canonicalize the nearest existing ancestor — so 8.3/case are reconciled with everything else — and
+ * re-append the missing tail. Without this the "unsafe root inside the repo" containment check compared
+ * a short-name configured root against a long-name repo root and missed the containment.
+ */
+function canonicalAllowingMissing(path: string): string {
+  let cur = resolve(path);
+  const tail: string[] = [];
+  while (!existsSync(cur) && dirname(cur) !== cur) { tail.unshift(basename(cur)); cur = dirname(cur); }
+  const base = existsSync(cur) ? canonicalExisting(cur) : normalizeRoot(cur);
+  return tail.length ? join(base, ...tail) : base;
 }
 
 function canonicalDirectory(path: string): string {
   const absolute = resolve(path);
   if (!existsSync(absolute)) throw new ManagedWorkspaceError("INVALID_PATH", `diretório não existe: ${absolute}`);
   if (!statSync(absolute).isDirectory()) throw new ManagedWorkspaceError("NOT_A_DIRECTORY", `não é diretório: ${absolute}`);
-  return normalizeRoot(realpathSync(absolute));
+  return canonicalExisting(absolute);
 }
 
 export function pathIsStrictlyInside(parent: string, target: string): boolean {
@@ -164,7 +189,7 @@ export class ManagedWorktreeManager {
   private readonly git: ManagedGitRunner;
 
   constructor(worktreeRoot: string, git: ManagedGitRunner = new NodeGitRunner()) {
-    const root = normalizeRoot(resolve(worktreeRoot));
+    const root = canonicalAllowingMissing(worktreeRoot);
     if (dirname(root) === root) throw new ManagedWorkspaceError("UNSAFE_WORKTREE_ROOT", "a raiz do filesystem não pode ser usada para worktrees");
     this.configuredRoot = root;
     this.git = git;
