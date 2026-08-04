@@ -1,4 +1,4 @@
-# Jarvis Runner launcher — tarefa agendada "JarvisRunner".
+﻿# Jarvis Runner launcher — tarefa agendada "JarvisRunner".
 #
 # SUPERVISOR: mantém o runner SEMPRE de pé. Se o node cair (crash, queda de conexão, ou
 # o auto-update reiniciando pra aplicar código novo), o loop ressuscita em ~3s. Como tsx
@@ -34,6 +34,24 @@ Set-Location "$root\apps\runner"
 $lastUpdateWaitLog = [DateTimeOffset]::MinValue
 $lastRepairAt = [DateTimeOffset]::MinValue
 $quickCrashCount = 0
+# UPD-01 Fase 1: boot-state.json (escrito pelo runner ao alcancar o Hub) guarda o ultimo commit que
+# confirmou boot saudavel. $rolledBackFrom vive so na memoria deste supervisor: evita rollback-loop
+# no mesmo commit ruim.
+$bootStateFile = Join-Path $stateRoot '.jarvis\boot-state.json'
+$rolledBackFrom = ''
+function Get-LastGood() {
+  try { return (Get-Content -Raw -LiteralPath $bootStateFile -ErrorAction Stop | ConvertFrom-Json).lastGood } catch { return $null }
+}
+function Rollback-To([string]$Target) {
+  Log ("crash loop de codigo novo — revertendo checkout para o ultimo bom conhecido: " + $Target)
+  Push-Location $root
+  try {
+    & git reset --hard $Target *>> $log; Log ('git reset --hard concluido (codigo ' + $LASTEXITCODE + ')')
+    & git clean -fd *>> $log
+    & npm.cmd ci *>> $log; Log ('npm ci pos-rollback concluido (codigo ' + $LASTEXITCODE + ')')
+    & npm.cmd run update:verify --if-present *>> $log
+  } catch { Log ('rollback falhou: ' + $_) } finally { Pop-Location }
+}
 function Repair-Dependencies([string]$Reason) {
   $script:lastRepairAt = [DateTimeOffset]::Now
   Log ("reparando dependencias: " + $Reason)
@@ -113,9 +131,20 @@ while ($true) {
   $runtimeSec = ([DateTimeOffset]::Now - $startedAt).TotalSeconds
   if ($runtimeSec -lt 15) { $quickCrashCount += 1 } else { $quickCrashCount = 0 }
   if ($quickCrashCount -ge 3) {
-    $sinceRepair = ([DateTimeOffset]::Now - $lastRepairAt).TotalMinutes
-    if ($sinceRepair -ge 5) { Repair-Dependencies ("runner encerrou rapido " + $quickCrashCount + " vezes") }
-    else { Log ('runner em crash loop, mas reparo foi tentado ha ' + [Math]::Round($sinceRepair,1) + 'min') }
+    # Decisao (espelha bootRollbackDecision em apps/runner/src/boot-health.ts): um commit que NUNCA
+    # confirmou boot e esta em crash loop = update ruim → reverte pro ultimo bom. Se o commit que
+    # crasha JA e o ultimo bom, e corrupcao de dependencia → repara (npm ci), nao reverte.
+    $cur = ''
+    try { $cur = (& git -C $root rev-parse --short HEAD 2>$null) } catch {}
+    $lastGood = Get-LastGood
+    if ($cur -and $lastGood -and ($cur -ne $lastGood) -and ($rolledBackFrom -ne $cur)) {
+      Rollback-To $lastGood
+      $rolledBackFrom = $cur
+    } else {
+      $sinceRepair = ([DateTimeOffset]::Now - $lastRepairAt).TotalMinutes
+      if ($sinceRepair -ge 5) { Repair-Dependencies ("runner encerrou rapido " + $quickCrashCount + " vezes") }
+      else { Log ('runner em crash loop, mas reparo foi tentado ha ' + [Math]::Round($sinceRepair,1) + 'min') }
+    }
     $quickCrashCount = 0
   }
   Log ('runner encerrou apos ' + [Math]::Round($runtimeSec,1) + 's - reiniciando em 3s')

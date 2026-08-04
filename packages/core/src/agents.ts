@@ -87,6 +87,11 @@ export interface AgentReply {
     source?: string;
     model?: string;
     effort?: string;
+    /** CLI process timing (ms), when the adapter streams: spawn->first output line ("slow to
+     *  START" — CLI/MCP cold start) vs. first line->final result ("slow to WORK" — real generation/
+     *  tool-loop time). Splits the turn's opaque total into a diagnosable pair. */
+    spawnMs?: number;
+    workMs?: number;
   };
 }
 
@@ -813,8 +818,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           }
           if (o.result && !finalText) finalText = o.result;
           if (o.is_error) streamError = cliErrorMessage(o.result, "claude error");
-          usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model };
           tResult = Date.now();
+          usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? tResult - tFirstLine : undefined };
         }
       }, opts?.signal);
       const tClose = Date.now();
@@ -1225,7 +1230,12 @@ export class CodexAdapter implements AgentAdapter {
       }
     };
 
+    // Same spawn->first-line->result split as ClaudeCodeAdapter (see AgentReply.usage.spawnMs/workMs)
+    // — codex's NDJSON lifecycle mirrors Claude's closely enough to reuse the exact same timestamps.
+    const tSpawn = Date.now();
+    let tFirstLine = 0, tResult = 0;
     const handleLine = (line: string): void => {
+      if (!tFirstLine) tFirstLine = Date.now();
       let o: any; try { o = JSON.parse(line); } catch { return; }
       switch (o.type) {
         case "thread.started":
@@ -1238,7 +1248,7 @@ export class CodexAdapter implements AgentAdapter {
             startActivityPolling();
           }
           break;
-        case "turn.completed": if (o.usage) rawUsage = o.usage; break;
+        case "turn.completed": if (o.usage) rawUsage = o.usage; tResult = Date.now(); break;
         case "turn.failed": case "error": streamError = o.error?.message || o.message || streamError; break;
         case "item.started": emitItem(o.item, false); break;
         case "item.completed": emitItem(o.item, true); break;
@@ -1263,6 +1273,7 @@ export class CodexAdapter implements AgentAdapter {
 
     const afterTelemetry = codexThreadTelemetry(threadId || prev);
     if (rawUsage) usage = codexUsage(rawUsage, beforeTelemetry?.total, afterTelemetry);
+    if (usage) usage = { ...usage, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? (tResult || Date.now()) - tFirstLine : undefined };
     this.started.add(sessionId);
     if (streamError && !finalParts.length) throw new Error(streamError);
     if (threadId && threadId !== prev) this.bindSession(sessionId, threadId);

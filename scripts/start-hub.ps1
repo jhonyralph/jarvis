@@ -71,6 +71,12 @@ while ($true) {
     Where-Object { $_.CommandLine -match 'whisper_service' } |
     ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Log "STT orfao encerrado (pid $($_.ProcessId))" } catch {} }
   Log 'iniciando hub...'
+  # NÃO usar `2>&1 | Out-File`: piparo stdout do node por um pipeline do PowerShell TRAVA o Hub no
+  # boot — o Out-File não drena o pipe a tempo, o buffer (~64KB) enche e o node bloqueia numa escrita
+  # síncrona ANTES de bindar a 4577 (o processo sobe, mas nunca escuta; foi o que derrubou o restart).
+  # `*>>` redireciona DIRETO pro arquivo, sem pipeline: o Hub sobe. O log sai em UTF-16LE (feio, mas
+  # funcional — para ler, decodifique). UTF-8 no log precisa de uma via que NÃO passe por pipeline do
+  # PS (ex.: um logger próprio do app gravando UTF-8), sem reintroduzir esse travamento.
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\hub\src\index.ts" *>> $log }
   else { Log 'tsx nao encontrado na raiz — caindo pro npm'; & npm.cmd start *>> $log }
   Log 'hub encerrou — reiniciando em 3s'

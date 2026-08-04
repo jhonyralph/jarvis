@@ -37,9 +37,13 @@ import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/
 
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
 import { RUNNER_PROTOCOL_VERSION, type ContextActor, type HubToRunner, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
+import { confirmBoot, writeBootState } from "./boot-health.js";
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/+$/, "");
 const HUB_URL = HUB + "/runner";
+// HTTP twin of the WS hub URL (ws→http, wss→https) for the detached updater's out-of-band failure
+// report — see detachedWindowsRunnerUpdateScript / UPD-01 Fase 2. The report survives the runner dying.
+const UPDATE_REPORT_URL = HUB.replace(/^ws(s?):\/\//i, "http$1://") + "/runner-update-report";
 const TOKEN = process.env.JARVIS_TOKEN || "";
 const DEFAULT_AGENT = process.env.JARVIS_AGENT || "claude-code";
 const CWD = process.env.JARVIS_CWD || homedir();
@@ -218,7 +222,7 @@ function psQuote(value: string): string {
   return "'" + value.replace(/'/g, "''") + "'";
 }
 
-function detachedWindowsRunnerUpdateScript(input: { requestId: string; targetCommit: string; root: string; resultFile: string; receiptFile: string; logFile: string; pid: number; force: boolean }): string {
+function detachedWindowsRunnerUpdateScript(input: { requestId: string; targetCommit: string; root: string; resultFile: string; receiptFile: string; logFile: string; pid: number; force: boolean; reportUrl: string; runnerId: string; token: string }): string {
   return `
 $ErrorActionPreference = 'Stop'
 $Root = ${psQuote(input.root)}
@@ -230,6 +234,9 @@ $RunnerLogFile = ${psQuote(input.logFile)}
 $LockFile = ${psQuote(UPDATE_LOCK_FILE)}
 $RunnerPid = ${input.pid}
 $Force = ${input.force ? "$true" : "$false"}
+$ReportUrl = ${psQuote(input.reportUrl)}
+$RunnerId = ${psQuote(input.runnerId)}
+$Token = ${psQuote(input.token)}
 $TaskName = 'JarvisRunner'
 $Log = New-Object System.Collections.Generic.List[string]
 
@@ -237,6 +244,18 @@ function Add-Log([string]$Text) { $script:Log.Add($Text) }
 function Add-Progress([string]$Text) {
   Add-Log $Text
   try { Add-Content -Path $RunnerLogFile -Value ("[updater] {0} {1}" -f (Get-Date -Format o), $Text) } catch {}
+}
+# UPD-01 Fase 2: dispara o desfecho de cada fase para o Hub por HTTP, FORA do WebSocket do runner —
+# assim, mesmo que este updater derrube o runner e ele nunca reconecte para mandar update_done, o
+# dono fica sabendo ONDE e POR QUE falhou. Best-effort e com timeout curto: NUNCA trava o update
+# (se o Hub estiver inalcançável, o próprio update é a prioridade).
+function Report([string]$Phase, [bool]$Ok, [string]$ErrText) {
+  if (-not $ReportUrl) { return }
+  try {
+    $tail = (@($Log.ToArray() | Select-Object -Last 25) -join "\`n")
+    $payload = @{ runnerId = $RunnerId; requestId = $RequestId; token = $Token; targetCommit = $Target; phase = $Phase; ok = $Ok; error = $ErrText; logTail = $tail } | ConvertTo-Json -Depth 3 -Compress
+    Invoke-RestMethod -Uri $ReportUrl -Method Post -Body $payload -ContentType 'application/json' -TimeoutSec 4 | Out-Null
+  } catch {}
 }
 function Run-Step([string]$Exe, [string[]]$Args) {
   $cmd = $Exe + " " + ($Args -join " ")
@@ -319,6 +338,7 @@ try {
   # deixando o launcher achar o updater morto e destravar o lock com o update ainda rodando).
   # Best-effort: se falhar, o Node já escreveu um pid provisório antes de spawnar.
   try { [ordered]@{ requestId = $RequestId; targetCommit = $Target; pid = $PID; provisional = $false; phase = "running"; at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } | ConvertTo-Json | Set-Content -Path $LockFile -Encoding UTF8 } catch {}
+  Report "applying" $true ""
   Add-Progress "parando runner antes do upgrade"
   # The launcher is the scheduled task. Keep it alive: the update lock makes it wait while this
   # detached updater owns the checkout. Stopping the task here can also terminate this script and
@@ -348,8 +368,11 @@ try {
   $receipt = [ordered]@{ requestId = $RequestId; targetCommit = $Target; current = $current; preparedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
   $receipt | ConvertTo-Json -Depth 5 | Set-Content -Path $ReceiptFile -Encoding UTF8
   Write-Result $true $false $current
+  Report "prepared" $true ""
 } catch {
-  Add-Progress ("ERRO na preparação: " + $_)
+  $errText = "$_"
+  Add-Progress ("ERRO na preparação: " + $errText)
+  Report "error" $false $errText
   if ($previous) {
     try {
       Set-Location $Root
@@ -359,14 +382,17 @@ try {
       Npm @("run", "update:verify", "--if-present")
       $rolledBack = $true
       Add-Progress "rollback automático concluído"
+      Report "rolled_back" $false $errText
     } catch {
       Add-Progress ("ERRO também no rollback: " + $_)
+      Report "rollback_failed" $false ("prep: " + $errText + " | rollback: " + $_)
     }
   }
   try { $current = Git-Out @("rev-parse", "--short", "HEAD") } catch { $current = "" }
   Write-Result $false $rolledBack $current
 } finally {
   try { Remove-Item -LiteralPath $LockFile -Force -ErrorAction SilentlyContinue } catch {}
+  Report "restarting" $true ""
   Start-Runner
   try { if ($PSCommandPath) { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } } catch {}
 }
@@ -383,7 +409,10 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
     writeFileSync(UPDATE_LOCK_FILE, JSON.stringify({ requestId, targetCommit, pid: process.pid, provisional: true, phase: "handoff", at: Date.now() }), "utf8");
     // #3: o updater loga num arquivo PRÓPRIO (runner-update.log). Antes escrevia no runner.log, que o
     // launcher mantém aberto (*>>): uma sharing violation engolia todo o rastro do updater ao morrer.
-    writeFileSync(scriptPath, detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), pid: process.pid, force: !!m.force }), "utf8");
+    // BOM UTF-8 (﻿): o script tem comentários acentuados e é rodado por `powershell.exe` (PS 5.1),
+    // que, sem BOM, decodifica como CP1252 e transforma chars de 3 bytes (— …) em aspas fantasma que
+    // quebram o parser — o updater morreria "antes da 1ª linha". Mesmo motivo do fix dos launchers.
+    writeFileSync(scriptPath, "﻿" + detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), pid: process.pid, force: !!m.force, reportUrl: UPDATE_REPORT_URL, runnerId: RUNNER_ID, token: TOKEN }), "utf8");
     // Spawnar "powershell.exe" direto com detached:true não sobrevive de forma confiável à saída
     // do processo pai no Windows (PS 5.1) — o updater podia morrer em silêncio antes da 1ª linha
     // (era a causa do incidente anterior: lock órfão, luby offline ~30min). Rotear por
@@ -1028,6 +1057,9 @@ function connect(): void {
     try {
       if (m.t === "welcome") {
         console.log(`[runner] registered as ${RUNNER_ID} (${hostname()})`);
+        // UPD-01 Fase 1: booting AND reaching the Hub proves the running commit works — mark it as the
+        // known-good rollback point, so start-runner.ps1 can roll a LATER bad commit back to this one.
+        void repoCommit(RUNNER_ROOT).then((c) => { const cur = c.replace("+dirty", ""); if (cur) writeBootState(confirmBoot(cur, Date.now())); }).catch(() => { /* best-effort */ });
         clearUpdateResult();
         flushOutbox();
         pushExecutionManifest(`welcome:${RUNNER_ID}`);

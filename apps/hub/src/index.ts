@@ -28,6 +28,7 @@ import { transcribe, warmUp as warmUpStt } from "./stt.js";
 import { warmUp as warmUpEmbed } from "./embed.js";
 import { log, isLogLevel } from "./logger.js";
 import { updateStalled } from "./update-watchdog.js";
+import { retargetTarget } from "./update-retarget.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
@@ -466,6 +467,26 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, version: VERSION, uptime: Math.round(process.uptime()), runners: online }));
     return;
   }
+  // UPD-01 Fase 2 — out-of-band updater failure report. A runner's detached updater POSTs here even
+  // when the runner process is dead (crash-loop), so the owner learns why an update failed. Auth: a
+  // valid runner token (when auth is on) + the requestId shared secret the Hub minted for this update.
+  if (urlPath === "/runner-update-report" && req.method === "POST") {
+    let body = ""; let tooBig = false;
+    req.on("data", (chunk) => { body += chunk; if (body.length > 64 * 1024) { tooBig = true; req.destroy(); } });
+    req.on("error", () => { try { res.writeHead(400, secHeaders()).end(); } catch { /* ignore */ } });
+    req.on("end", () => {
+      if (tooBig) { try { res.writeHead(413, secHeaders()).end(); } catch { /* ignore */ } return; }
+      let d: any; try { d = JSON.parse(body); } catch { res.writeHead(400, { ...secHeaders(), "content-type": "application/json" }).end('{"ok":false}'); return; }
+      const runnerId = typeof d?.runnerId === "string" ? d.runnerId : "";
+      if (!runnerId || runnerId === LOCAL_ID) { res.writeHead(400, secHeaders()).end(); return; }
+      if (auth.AUTH_ENABLED && !auth.authenticateRunner(typeof d?.token === "string" ? d.token : "")) { res.writeHead(401, secHeaders()).end(); return; }
+      const pending = pendingRunnerUpdates[runnerId];
+      if (pending && typeof d?.requestId === "string" && d.requestId !== pending.requestId) { res.writeHead(409, secHeaders()).end(); return; }
+      try { recordRunnerUpdateReport(runnerId, d); } catch (e) { console.error("[hub] update-report:", String((e as any)?.message ?? e)); }
+      res.writeHead(200, { ...secHeaders(), "content-type": "application/json", "cache-control": "no-store" }).end('{"ok":true}');
+    });
+    return;
+  }
   // MapLibre starts with a private, network-free background style. Optional local files are fixed
   // by Hub environment variables; the request cannot select a path, so these routes never expose
   // arbitrary files from the host.
@@ -826,7 +847,7 @@ const runnerLabels: Record<string, string> = (() => { try { return JSON.parse(re
 for (const runnerId of Object.keys(runnerLabels)) if (runnerId !== "local") mirrorExecutionStore(runnerId);
 function saveRunnerLabels(): void { try { writeJsonAtomic(RUNNERS_FILE, runnerLabels, { pretty: true }); } catch { /* ignore */ } }
 interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastSeen: number; local: boolean; }
-interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; awaitingSince?: number; stalled?: boolean; stalledNotifiedAt?: number; }
+interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; awaitingSince?: number; stalled?: boolean; stalledNotifiedAt?: number; /** Last out-of-band phase the runner's detached updater phoned home (Fase 2 UPD-01): even when the runner process dies mid-update and never sends update_done, this records WHERE it died. */ lastPhase?: string; lastReportAt?: number; }
 const UPDATE_RETRY_MS = Math.max(30_000, Number(process.env.JARVIS_UPDATE_RETRY_SEC || 300) * 1000);
 // A machine that applied an update and reported ok goes to "awaiting_restart" and should reconnect on
 // the new commit within a normal restart window. Offline PAST this = the restart/updater hung (an
@@ -844,7 +865,8 @@ const pendingRunnerUpdates: Record<string, PendingRunnerUpdate> = (() => {
       const state: PendingRunnerUpdate["state"] = ["queued", "sent", "awaiting_restart", "blocked"].includes(value.state) ? value.state : "queued";
       out[id] = { requestId: value.requestId, targetCommit: value.targetCommit, requestedAt: Number(value.requestedAt) || Date.now(), state, force: value.force === true,
         fromCommit: typeof value.fromCommit === "string" ? value.fromCommit : undefined, lastAttemptAt: Number.isFinite(value.lastAttemptAt) ? Number(value.lastAttemptAt) : undefined, lastError: typeof value.lastError === "string" ? value.lastError : undefined,
-        awaitingSince: Number.isFinite(value.awaitingSince) ? Number(value.awaitingSince) : undefined, stalled: value.stalled === true, stalledNotifiedAt: Number.isFinite(value.stalledNotifiedAt) ? Number(value.stalledNotifiedAt) : undefined };
+        awaitingSince: Number.isFinite(value.awaitingSince) ? Number(value.awaitingSince) : undefined, stalled: value.stalled === true, stalledNotifiedAt: Number.isFinite(value.stalledNotifiedAt) ? Number(value.stalledNotifiedAt) : undefined,
+        lastPhase: typeof value.lastPhase === "string" ? value.lastPhase : undefined, lastReportAt: Number.isFinite(value.lastReportAt) ? Number(value.lastReportAt) : undefined };
     }
     return out;
   } catch { return {}; }
@@ -1037,7 +1059,14 @@ void repoRemoteUrl(UPDATE_ROOT).then((u) => { repoUrl = u; });
 // update restart is automatic (the process restarts). Refresh periodically for a live commit.
 let hubCommit = "";
 void repoCommit(UPDATE_ROOT).then((c) => { hubCommit = c; });
-setInterval(() => { void repoCommit(UPDATE_ROOT).then((c) => { hubCommit = c; }); }, 60_000).unref?.();
+setInterval(() => { void repoCommit(UPDATE_ROOT).then((c) => {
+  // When the Hub's own HEAD advances (it self-updated to a newer commit), re-aim every in-flight
+  // runner update at it — so a fix that landed AFTER a stuck update actually reaches the runner,
+  // instead of the Hub forever re-sending the target that isn't landing (UPD-01 Fase 2).
+  const moved = !!c && c.replace("+dirty", "") !== (hubCommit || "").replace("+dirty", "");
+  hubCommit = c;
+  if (moved) sweepRetargetPendingUpdates();
+}); }, 60_000).unref?.();
 const sameBuild = (a: string, b: string) => !!a && !!b && a.replace("+dirty", "") === b.replace("+dirty", "");
 const commitMatches = (actual: string, target: string) => { const a = (actual || "").replace("+dirty", ""), t = (target || "").replace("+dirty", ""); return !!a && !!t && (a === t || a.startsWith(t) || t.startsWith(a)); };
 let updateStatus: any = { supported: true, behind: 0 };
@@ -1293,8 +1322,10 @@ function normalizePendingRunnerUpdate(rc: RunnerConn): PendingRunnerUpdate | nul
   const pending = pendingRunnerUpdates[rc.id];
   if (!pending) return null;
   if (pending.state === "blocked") return pending;
-  const target = (hubCommit || "").replace("+dirty", "");
-  if (!target || commitMatches(pending.targetCommit, target)) return pending;
+  // Re-aim at the Hub's current commit when it moved past the pinned target (shared, unit-tested
+  // policy — see update-retarget.ts). null → the pinned target is still the Hub's commit, keep it.
+  const target = retargetTarget(pending, hubCommit);
+  if (!target) return pending;
   const clean = !!rc.info.commit && !rc.info.commit.includes("+dirty");
   if (clean && commitMatches(rc.info.commit || "", target) && (rc.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION) {
     delete pendingRunnerUpdates[rc.id]; savePendingRunnerUpdates();
@@ -1343,6 +1374,29 @@ function completePendingRunnerUpdate(rc: RunnerConn, m: any): void {
   const state = m.ok ? "awaiting_restart" : ((m.dirty || m.retryable === false) ? "blocked" : "queued");
   updateMachineNotice(rc.id, { ok: !!m.ok, dirty: !!m.dirty, behind: m.behind ?? 0, state, queued: !m.ok, log: String(m.log || "").slice(0, 3000), rolledBack: !!m.rolledBack });
 }
+/** UPD-01 Fase 2 — out-of-band failure report from a runner's DETACHED updater (POST /runner-update-report).
+ *  A runner can die mid-update (crash-loop, orphan lock, the ~30-min-offline incident) and never send
+ *  update_done over its socket. This HTTP path survives that, so the owner learns WHERE and WHY it failed.
+ *  Diagnostic only: it records the phase/lastError + alerts once per phase; it NEVER drives the update
+ *  state machine (the WS `update_done`/reconnect path owns state — two writers would race). */
+function recordRunnerUpdateReport(runnerId: string, r: { requestId?: string; phase?: string; ok?: boolean; error?: string; logTail?: string; targetCommit?: string }): void {
+  const label = runnerLabels[runnerId] || runners.get(runnerId)?.info.host || runnerId;
+  const phase = String(r.phase || "?").slice(0, 40);
+  const failed = r.ok === false || phase === "error";
+  const detail = String(r.error || r.logTail || "").replace(/\s+/g, " ").trim().slice(0, 500);
+  log[failed ? "warn" : "info"]("update_report", { runnerId, label, phase, ok: r.ok !== false, targetCommit: r.targetCommit, error: failed ? detail : undefined });
+  const pending = pendingRunnerUpdates[runnerId];
+  const prevPhase = pending?.lastPhase;
+  if (pending && (!r.requestId || r.requestId === pending.requestId)) {
+    pending.lastPhase = phase; pending.lastReportAt = Date.now();
+    if (failed && detail) pending.lastError = `[${phase}] ${detail}`.slice(0, 3000);
+    savePendingRunnerUpdates();
+  }
+  updateMachineNotice(runnerId, { state: pending?.state, phase, ok: r.ok !== false, log: failed ? detail : `updater: ${phase}` });
+  // Alert the owner only on a genuine failure, and only once per distinct phase, so a crash-loop
+  // phoning home every few seconds can't spam notifications.
+  if (failed && prevPhase !== phase) notifyEvent("machine", `${label}: falha na atualização (${phase})`, detail || "O updater reportou falha antes de concluir.");
+}
 function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
   const pending = normalizePendingRunnerUpdate(rc); if (!pending) return;
   if (pending.state === "blocked") return;
@@ -1354,6 +1408,17 @@ function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
     updateMachineNotice(rc.id, { ok: true, verified: true, state: "verified", behind: 1, log: `reiniciou e reconectou em ${rc.info.commit || pending.targetCommit}` }); flushQueuesForRunner(rc.id); return;
   }
   deliverPendingRunnerUpdate(rc, { retryNow: true });
+}
+/** UPD-01 Fase 2 — the Hub advanced its own HEAD: re-aim every in-flight runner update at the new
+ *  commit and re-deliver to the ones online; offline ones get their record re-aimed for the next
+ *  reconnect. Reuses the existing verify/normalize path so retarget + delivery stay in one place. */
+function sweepRetargetPendingUpdates(): void {
+  for (const id of Object.keys(pendingRunnerUpdates)) {
+    const rc = runners.get(id);
+    if (!rc) continue;
+    if (rc.ws && rc.ws.readyState === WebSocket.OPEN) verifyOrDeliverRunnerUpdate(rc);
+    else normalizePendingRunnerUpdate(rc);
+  }
 }
 
 function currentFrameworkManifest(): FrameworkManifest {
@@ -2758,6 +2823,10 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): 
  *  callers must NOT also broadcast a {t:message} assistant (they only persist it). */
 // Live turns keyed by session, so a "parar" from any client can abort the actual agent process.
 const localAborts = new Map<string, AbortController>();
+// When the user hit "parar": ctrl.abort() is instant, but the CLI child process still has to notice
+// the signal and actually exit before agentTurn's catch/finally unwinds — that gap is exactly the
+// "parar demora" complaint. Stamped here, consumed (and cleared) in agentTurn's cancel branch.
+const cancelRequestedAt = new Map<string, number>();
 // Execution controls must address the exact root turn. A session can start another turn after the
 // previous one finished; resolving cancellation through only the session id could otherwise let a
 // stale UI command abort the newer turn.
@@ -2770,7 +2839,7 @@ const activityBuf = new Map<string, any[]>();
 // Fila POR MÁQUINA + SESSÃO, dona no HUB (não mais só no navegador): toda web vendo a sessão enxerga a MESMA
 // fila, e o flush roda no servidor quando o turno termina — sobrevive mesmo que o dispositivo que
 // enfileirou saia. Cada item guarda texto + anexos (+ model/effort do envio original).
-type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; model?: string; effort?: string; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor };
+type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; model?: string; effort?: string; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor; queuedAt?: number };
 const queues = new Map<string, QueueItem[]>();
 // msgIds of queue items the user removed. A dequeue can land WHILE a flush is already mid-air: the
 // flush captures the items and clears the queue, then spends SECONDS in async routing (a CLI spawn)
@@ -2818,7 +2887,7 @@ function loadPendingInboundTurns(): void {
 function recoverPendingInboundTurns(): void {
   for (const [id, item] of [...pendingInboundTurns]) {
     const q = queueOf(LOCAL_ID, item.sessionId);
-    if (!q.some((queued) => queued.msgId === id)) q.push({ text: item.text, atts: item.atts || [], model: item.model, effort: item.effort, auto: item.auto, msgId: id, actor: { ...(item.actor || {}), source: "queue" } });
+    if (!q.some((queued) => queued.msgId === id)) pushQueueItem(LOCAL_ID, item.sessionId, { text: item.text, atts: item.atts || [], model: item.model, effort: item.effort, auto: item.auto, msgId: id, actor: { ...(item.actor || {}), source: "queue" } });
     pendingInboundTurns.delete(id);
     broadcastQueue(LOCAL_ID, item.sessionId);
   }
@@ -2834,8 +2903,18 @@ function broadcastQueue(runnerId: string, sid: string): void {
   // msgId travels so the client can remove by STABLE id (index drifts if the queue changed).
   broadcastOn(runnerId, sid, { t: "queue", runnerId, sessionId: sid, items: queueOf(runnerId, sid).map((q) => ({ text: q.text, atts: q.atts, msgId: q.msgId })) });
 }
+/** Single choke point for every "push onto a queue" call site (there are several — direct busy-session
+ *  enqueues as well as the enqueueChatTurn helper) so queue depth/wait-time are ALWAYS observable, not
+ *  just for the paths someone remembered to instrument. Stamps queuedAt for queue_flush's waitMs. */
+function pushQueueItem(runnerId: string, sid: string, item: QueueItem): number {
+  item.queuedAt = item.queuedAt ?? Date.now();
+  const q = queueOf(runnerId, sid);
+  q.push(item);
+  log.debug("queue_enqueue", { runnerId, sid, msgId: item.msgId, textLen: item.text.length, depth: q.length });
+  return q.length;
+}
 function enqueueChatTurn(runnerId: string, sid: string, item: QueueItem): void {
-  queueOf(runnerId, sid).push(item);
+  pushQueueItem(runnerId, sid, item);
   broadcastQueue(runnerId, sid);
   saveQueues();
 }
@@ -3296,7 +3375,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: reply.usage?.model || opts.model, ms: Date.now() - t0, ok: true, ts: Date.now() });
     // Structured observability: one line per turn — trace it by turnId, with duration/tokens/cost so a
     // slow or expensive turn is diagnosable and prompt/cost trends are analyzable. Metadata only (no text).
-    log.info("turn", { traceId: turnId, sessionId: sid, agent: agent.name, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort, ms: Date.now() - t0, inputTokens: reply.usage?.inputTokens, outputTokens: reply.usage?.outputTokens, contextTokens: reply.usage?.contextTokens, costUsd: reply.usage?.costUsd, replyChars: (reply.text || "").length, ok: true });
+    log.info("turn", { traceId: turnId, sessionId: sid, agent: agent.name, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort, ms: Date.now() - t0, spawnMs: reply.usage?.spawnMs, workMs: reply.usage?.workMs, inputTokens: reply.usage?.inputTokens, outputTokens: reply.usage?.outputTokens, contextTokens: reply.usage?.contextTokens, costUsd: reply.usage?.costUsd, replyChars: (reply.text || "").length, ok: true });
     if (reply.usage) emit(bridge.usage(reply.usage));
     emit(bridge.completed(reply.text));
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
@@ -3316,6 +3395,9 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   } catch (e) {
     // A user-initiated cancel is not a failure: tell the UI it stopped, and don't notify an error.
     if (ctrl.signal.aborted || String((e as any)?.message) === ABORTED) {
+      const requestedAt = cancelRequestedAt.get(sid);
+      if (requestedAt) cancelRequestedAt.delete(sid);
+      log.info("turn_cancel", { traceId: turnId, sessionId: sid, agent: agent.name, teardownMs: requestedAt ? Date.now() - requestedAt : undefined, totalMs: Date.now() - t0 });
       if (!sequencer.terminal) emit(bridge.cancelled("Cancelada por solicitação do usuário."));
       throw e;
     }
@@ -3372,6 +3454,10 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
   }
   broadcastQueue(runnerId, sid); saveQueues();
   if (!items.length) { releaseSessionDispatch(lease); return; }
+  // How long the OLDEST item in this batch sat queued before this flush attempt — the number that
+  // answers "did my message wait, or did the agent just take a while once it started?".
+  const _oldestQueuedAt = items.reduce((min, it) => (it.queuedAt != null && it.queuedAt < min ? it.queuedAt : min), Infinity);
+  const waitMs = Number.isFinite(_oldestQueuedAt) ? Date.now() - _oldestQueuedAt : undefined;
 
   const personalSeed = effectivePolicyFor(sid).policy.memory.allowPersonalContext === true
     ? items.find((item) => routePersonalIntent(item.text))
@@ -3447,6 +3533,7 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
   } finally {
     for (const it of items) if (it.msgId) cancelledFlushMsgIds.delete(it.msgId); // these ids did their job — keep the set bounded
     if (queueOf(runnerId, sid).length) pendingDispatchFlush.add(key);
+    log.debug("queue_flush", { runnerId, sid, items: items.length, waitMs, dispatched, remote: !!rid });
     releaseSessionDispatch(lease);
   }
 }
@@ -3488,7 +3575,7 @@ function cancelTurn(sid: string, ws: WebSocket): boolean {
   if (rid !== LOCAL_ID) { const rc = runners.get(rid); if (rc?.ws) return sendToRunner(rc, { t: "cancel", sessionId: sid }); return false; }
   const ctrl = localAborts.get(sid);
   const executionCancels = cancelLocalExecutionsForSession(sid);
-  if (ctrl) { ctrl.abort(); return true; }
+  if (ctrl) { cancelRequestedAt.set(sid, Date.now()); ctrl.abort(); return true; }
   if (activeRuns.has(sid)) { activeRuns.delete(sid); broadcastRuns(); void maybeFlushQueue(LOCAL_ID, sid, false); }
   return executionCancels > 0;
 }
@@ -4231,6 +4318,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!fullyAuthed(ws)) { try { send(ws, { t: "unauth", reason: "tempo de autenticação esgotado", claimed: auth.isClaimed() }); ws.close(); } catch { /* ignore */ } }
     }, 20000));
   }
+  const _wsConnectedAt = Date.now();
+  log.debug("ws_connect", { ip });
   // Attach listeners SYNCHRONOUSLY (before any await) so a client message sent
   // right after connect is never dropped. The initial state below is async
   // (agent caps + speaker list, which spawns Python), so pushing it before the
@@ -4239,6 +4328,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
   // NEVER crash the hub — an unhandled 'error' event would take the whole process down.
   ws.on("error", () => { try { ws.close(); } catch { /* ignore */ } });
   ws.on("close", () => {
+    log.debug("ws_disconnect", { ip, ms: Date.now() - _wsConnectedAt });
     subs.delete(ws);
     wakeClients.delete(ws);
     updateWatchers.delete(ws);
@@ -4642,7 +4732,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           }
           const turnActor = actorOf(ws);
           if (sessionDispatchBusy(ar, sid)) {
-            queueOf(ar, sid).push({ text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+            pushQueueItem(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
             broadcastQueue(ar, sid); saveQueues(); void maybeFlushQueue(ar, sid, false); send(ws, { t: "queued", runnerId: ar, sessionId: sid, text: msg.text }); return;
           }
           const lease = reserveSessionDispatch(ar, sid, turnActor.userId || "local", "send");
@@ -4821,12 +4911,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       return;
     }
     if (msg.t === "new") {
+      const _tNew = Date.now();
       const id = randomUUID();
       const agentName = agents.names().includes(msg.agent) ? msg.agent : agents.default;
       const cwd = typeof msg.cwd === "string" && existsSync(msg.cwd) ? msg.cwd : CWD;
       const s = store.ensure(id, { agent: agentName, cwd });
       subs.set(ws, id);
       syncTails();
+      log.debug("session_create", { sid: id, agent: agentName, ms: Date.now() - _tNew });
       send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
       pushSessions();
       return;
@@ -5485,21 +5577,26 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "enqueue" && typeof msg.sessionId === "string" && (typeof msg.text === "string" || Array.isArray(msg.attachments))) {
       const rid = activeRunner(ws);
       if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
-      queueOf(rid, msg.sessionId).push({ text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+      pushQueueItem(rid, msg.sessionId, { text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
       broadcastQueue(rid, msg.sessionId); saveQueues(); void maybeFlushQueue(rid, msg.sessionId, false); return;
     }
     if (msg.t === "dequeue" && typeof msg.sessionId === "string" && (typeof msg.msgId === "string" || typeof msg.index === "number")) {
       const rid = activeRunner(ws);
       if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
       const q = queueOf(rid, msg.sessionId);
+      let removedFromQueue = false, removedMsgId: string | undefined;
       // Prefer removal by STABLE msgId; index is a fallback (drifts if the queue changed since render).
       if (typeof msg.msgId === "string" && msg.msgId) {
+        removedMsgId = msg.msgId;
         const i = q.findIndex((it) => it.msgId === msg.msgId);
-        if (i >= 0) q.splice(i, 1);
+        if (i >= 0) { q.splice(i, 1); removedFromQueue = true; }
         markQueueItemCancelled(msg.msgId); // even if not in the live queue — a flush may already hold it
       } else if (typeof msg.index === "number" && msg.index >= 0 && msg.index < q.length) {
-        markQueueItemCancelled(q.splice(msg.index, 1)[0]?.msgId);
+        removedMsgId = q.splice(msg.index, 1)[0]?.msgId;
+        removedFromQueue = true;
+        markQueueItemCancelled(removedMsgId);
       }
+      log.debug("queue_dequeue", { runnerId: rid, sid: msg.sessionId, msgId: removedMsgId, removedFromQueue, depth: q.length });
       broadcastQueue(rid, msg.sessionId); saveQueues(); return;
     }
     if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { const rid = activeRunner(ws); if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(scopedSessionKey(rid, msg.sessionId), []); broadcastQueue(rid, msg.sessionId); saveQueues(); return; }
@@ -5664,7 +5761,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         }
         const turnActor = actorOf(ws);
         if (sessionDispatchBusy(ar, remoteSid)) {
-          queueOf(ar, remoteSid).push({ text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+          pushQueueItem(ar, remoteSid, { text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
           broadcastQueue(ar, remoteSid); saveQueues(); void maybeFlushQueue(ar, remoteSid, false);
           send(ws, { t: "queued", runnerId: ar, sessionId: remoteSid, text, voice: true });
           return;
