@@ -9,7 +9,9 @@ $root = Split-Path $PSScriptRoot -Parent            # ...\jarvis
 $hub  = Join-Path $root 'apps\hub'
 $log  = Join-Path $env:USERPROFILE '.jarvis\hub.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
-function Log($m) { Add-Content -Path $log -Value ("[launcher] {0} {1}" -f (Get-Date -Format o), $m) }
+# -Encoding Unicode (UTF-16LE) para CASAR com a saída do node redirecionada por `*>>` (também UTF-16LE
+# no PowerShell 5.1). Sem isso o Log() gravava ANSI e o hub.log virava um mix ANSI+UTF-16 ilegível.
+function Log($m) { Add-Content -Path $log -Encoding Unicode -Value ("[launcher] {0} {1}" -f (Get-Date -Format o), $m) }
 
 # Instancia unica DURA: um mutex nomeado garante UM supervisor mesmo que a task JarvisHub e um
 # restart-hub disparem start-hub.ps1 quase juntos. A guarda por porta (abaixo) tem uma janela de

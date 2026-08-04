@@ -8,7 +8,9 @@ $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 $log  = Join-Path $env:USERPROFILE '.jarvis\runner.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
-function Log($m) { Add-Content -Path $log -Value ("[launcher] {0} {1}" -f (Get-Date -Format o), $m) }
+# -Encoding Unicode (UTF-16LE) para casar com a saída do node por `*>>` (UTF-16LE no PS 5.1) e não
+# gerar um log com encoding misto (ANSI + UTF-16) ilegível.
+function Log($m) { Add-Content -Path $log -Encoding Unicode -Value ("[launcher] {0} {1}" -f (Get-Date -Format o), $m) }
 
 # Instância única (paridade com o mutex JarvisHubSupervisor do Hub). Diferente do Hub, o runner NÃO
 # abre porta, então NÃO há guarda de porta de reserva — o mutex é a ÚNICA trava. Sem ele, um 2º
