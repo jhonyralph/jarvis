@@ -77,7 +77,11 @@ test("AgentRegistry UI catalog exposes modelControl at the legacy top level and 
   assert.equal(codex.capabilities?.modelControl, "per_turn");
   assert.equal(codex.capabilities?.stream, "delta", "Codex emits live NDJSON items and rollout enrichment");
   assert.equal(codex.capabilities?.subagents, true, "Codex must advertise the child-rollout lifecycle its adapter observes");
-  assert.ok(codex.models.length > 0);
+  // Model DISCOVERY shells out to `codex debug models`; a machine without the codex CLI (e.g. CI)
+  // legitimately returns an empty catalog and reports the agent as not_installed. The catalog SHAPE is
+  // what this test guards — only require a populated list where the CLI is actually present.
+  assert.ok(Array.isArray(codex.models));
+  if (codex.support !== "not_installed") assert.ok(codex.models.length > 0);
 });
 
 test("AgentRegistry caches UI catalog and refresh forces rediscovery", async () => {

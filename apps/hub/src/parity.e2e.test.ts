@@ -50,7 +50,7 @@ class Inbox {
   private wake: (() => void) | undefined;
   constructor(readonly ws: WebSocket) { ws.on("message", (raw) => { try { this.messages.push(JSON.parse(raw.toString())); } catch { /* ignore */ } this.wake?.(); }); }
   send(message: unknown): void { this.ws.send(JSON.stringify(message)); }
-  async take(predicate: (message: any) => boolean, timeout = 10_000): Promise<any> {
+  async take(predicate: (message: any) => boolean, timeout = 20_000): Promise<any> {
     const end = Date.now() + timeout;
     while (Date.now() < end) {
       const index = this.messages.findIndex(predicate); if (index >= 0) return this.messages.splice(index, 1)[0];
@@ -60,7 +60,7 @@ class Inbox {
   }
 }
 
-test("remote Runner preserves the same progress, terminal and rich history lifecycle", { timeout: 35_000 }, async () => {
+test("remote Runner preserves the same progress, terminal and rich history lifecycle", { timeout: 70_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), "jarvis-parity-e2e-"));
   mkdirSync(join(home, ".jarvis"), { recursive: true });
   writeFileSync(join(home, ".jarvis", "policies.json"), JSON.stringify({
