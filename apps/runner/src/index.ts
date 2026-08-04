@@ -269,7 +269,11 @@ function Run-Step([string]$Exe, [string[]]$Args) {
   }
   Add-Progress ("ok: " + $cmd)
 }
-function Git([string[]]$Args) { Run-Step "git" $Args }
+# NÃO nomear esta função "Git": no PowerShell a resolução de comando é Alias>Função>Cmdlet>Aplicação,
+# então uma função chamada Git SOMBREIA o git.exe. Run-Step faz "& \$Exe" com \$Exe="git" → cairia na
+# própria função → recursão infinita → ScriptCallDepthException ("estouro de profundidade da chamada"),
+# que foi o que derrubou o update do runner. Com o nome Invoke-Git, "git"/"& git" resolvem o executável.
+function Invoke-Git([string[]]$Args) { Run-Step "git" $Args }
 function Npm([string[]]$Args) { Run-Step "npm.cmd" $Args }
 function Git-Out([string[]]$Args) {
   $out = & git @Args 2>&1
@@ -348,20 +352,20 @@ try {
   Set-Location $Root
   try { & git config --global --add safe.directory $Root 2>$null } catch {}
   $branch = Git-Out @("rev-parse", "--abbrev-ref", "HEAD")
-  Git @("fetch", "--quiet", "origin", $branch)
+  Invoke-Git @("fetch", "--quiet", "origin", $branch)
   $desired = Git-Out @("rev-parse", ($Target + "^{commit}"))
   $previous = Git-Out @("rev-parse", "HEAD")
   $depsChanged = Dependency-Manifests-Changed $previous $desired
   if ($Force) {
-    Git @("reset", "--hard", $desired)
-    Git @("clean", "-fd")
+    Invoke-Git @("reset", "--hard", $desired)
+    Invoke-Git @("clean", "-fd")
   } else {
     $dirty = Git-Out @("status", "--porcelain")
     if ($dirty) { throw "checkout com alterações locais; update sem force recusado" }
     $counts = Git-Out @("rev-list", "--left-right", "--count", ("HEAD..." + $desired))
     $ahead = [int](($counts -split "\\s+")[0])
     if ($ahead -gt 0) { throw ("checkout possui " + $ahead + " commit(s) locais fora do alvo") }
-    Git @("merge", "--ff-only", $desired)
+    Invoke-Git @("merge", "--ff-only", $desired)
   }
   Verify-Or-Repair $depsChanged
   $current = Git-Out @("rev-parse", "--short", "HEAD")
@@ -376,8 +380,8 @@ try {
   if ($previous) {
     try {
       Set-Location $Root
-      Git @("reset", "--hard", $previous)
-      Git @("clean", "-fd")
+      Invoke-Git @("reset", "--hard", $previous)
+      Invoke-Git @("clean", "-fd")
       Npm @("ci")
       Npm @("run", "update:verify", "--if-present")
       $rolledBack = $true
