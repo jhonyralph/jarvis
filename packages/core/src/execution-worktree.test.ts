@@ -18,12 +18,17 @@ function git(args: string[]): string {
   return String(result.stdout || "").trim();
 }
 
+// A temp dir in the CANONICAL long form. os.tmpdir() on the Windows CI runner is the 8.3 SHORT name
+// (C:\Users\RUNNER~1\…) while the manager (and git, and the OS) resolve it to the long name
+// (…\runneradmin\…). Building every fixture in the same form the manager returns is what keeps the
+// `workspace.cwd === <fixture path>` assertions valid on CI. realpathSync.native does the expansion;
+// no-op where tmpdir is already long (Linux/dev).
+function canonTmp(prefix: string): string {
+  return realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
+}
+
 function repository(): { base: string; repo: string; worktrees: string; cleanup: () => void } {
-  // realpathSync.native canonicalizes to the LONG form: os.tmpdir() on the Windows CI runner is the 8.3
-  // SHORT name (C:\Users\RUNNER~1\…) while the manager (and git, and the OS) resolve it to the long name
-  // (…\runneradmin\…). Building the fixtures in the same canonical form the manager returns is what keeps
-  // the `workspace.cwd === fixture.repo` assertions valid on CI. No-op where tmpdir is already long.
-  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "jarvis-managed-worktree-")));
+  const base = canonTmp("jarvis-managed-worktree-");
   const repo = join(base, "repo");
   const worktrees = join(base, "managed");
   mkdirSync(join(repo, "nested"), { recursive: true });
@@ -71,7 +76,7 @@ test("read-only is the default and a launch fails closed without a real sandbox"
 });
 
 test("read-only workspace also supports a non-Git directory", () => {
-  const base = mkdtempSync(join(tmpdir(), "jarvis-readonly-nongit-"));
+  const base = canonTmp("jarvis-readonly-nongit-");
   try {
     const workspace = new ManagedWorktreeManager(join(base, "managed")).prepare({ executionId: "read", cwd: base });
     assert.equal(workspace.access, "read_only");
