@@ -1,3 +1,10 @@
+# [0.10.0](https://github.com/jhonyralph/jarvis/compare/v0.9.0...v0.10.0) (2026-08-05)
+
+
+### Features
+
+* **mobile:** app agnóstico de servidor (URL in-app) + build Android no CI (iOS wired/off) ([525ffa1](https://github.com/jhonyralph/jarvis/commit/525ffa140b1ed172c342ebff16f8defe45553bac))
+
 # [0.9.0](https://github.com/jhonyralph/jarvis/compare/v0.8.0...v0.9.0) (2026-08-05)
 
 
