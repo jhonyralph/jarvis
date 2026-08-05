@@ -1,3 +1,16 @@
+# [0.11.0](https://github.com/jhonyralph/jarvis/compare/v0.10.1...v0.11.0) (2026-08-05)
+
+
+### Bug Fixes
+
+* **bg-jobs:** orienta comandos cmd.exe-safe no jarvis-run ([0bca3dd](https://github.com/jhonyralph/jarvis/commit/0bca3ddcf758edd962d520ef89c4b4fc5ccc761e))
+
+
+### Features
+
+* **hub-ui:** linha única, menu ⋯ e grupos colapsáveis no Histórico ([3f9e234](https://github.com/jhonyralph/jarvis/commit/3f9e234e3aaedb73357a4c3567a7a2fb70be6bcb))
+* **hub-ui:** organiza o Histórico por projeto + arquivar sessões ([862df0d](https://github.com/jhonyralph/jarvis/commit/862df0d61ac333834f1605ade0df0a078abbad74))
+
 ## [0.10.1](https://github.com/jhonyralph/jarvis/compare/v0.10.0...v0.10.1) (2026-08-05)
 
 
