@@ -184,6 +184,9 @@ test("the steering prompt teaches exactly the directive the Hub parses back", ()
   // The steering must document the SAME fence the parser recognizes — otherwise the loop never closes.
   assert.match(BACKGROUND_JOB_STEERING, /```jarvis-run/);
   assert.match(BACKGROUND_JOB_STEERING, /run_in_background/); // names the anti-pattern it replaces
+  // the command runs in cmd.exe on Windows: warn against Unix-only idioms (the `| tail` that broke jobs)
+  assert.match(BACKGROUND_JOB_STEERING, /cmd\.exe/);
+  assert.match(BACKGROUND_JOB_STEERING, /tail/);
   // round-trip: an agent that followed the instruction verbatim yields a parseable command
   const sample = "Vou rodar em segundo plano:\n```jarvis-run\nnpm run build\n```";
   assert.deepEqual(parseBackgroundRunDirectives(sample), ["npm run build"]);

@@ -96,7 +96,8 @@ export const BACKGROUND_JOB_STEERING =
   "Ambiente Jarvis: você roda como UM turno não-interativo. Tarefas em segundo plano nativas (run_in_background) NÃO sobrevivem ao fim do turno e você NÃO será reinvocado quando terminarem. "
   + "Para uma tarefa LONGA cujo resultado você precisa (build, testes, typecheck, script demorado), não use background nativo: emita um bloco cercado exatamente assim, um comando de shell por bloco:\n"
   + "```jarvis-run\n<comando>\n```\n"
-  + "O Jarvis executa esse comando de forma durável FORA deste turno e abre um NOVO turno com o resultado quando terminar. Após emitir o bloco, encerre o turno em vez de esperar. Use isso só para tarefas realmente demoradas; comandos rápidos rode normalmente.";
+  + "O Jarvis executa esse comando de forma durável FORA deste turno e abre um NOVO turno com o resultado quando terminar. Após emitir o bloco, encerre o turno em vez de esperar. Use isso só para tarefas realmente demoradas; comandos rápidos rode normalmente. "
+  + "O comando roda no shell nativo da máquina (no Windows é o cmd.exe, NÃO o bash): use comandos portáveis e NÃO use ferramentas só-Unix (tail/grep/head/sed) nem `2>/dev/null`. Não pagine a saída (nada de `| tail`) — o Jarvis já devolve o final do log automaticamente.";
 
 export interface ContinuationPlan {
   /** Whether the Hub should inject a continuation turn for this job. */
