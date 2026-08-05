@@ -1,3 +1,10 @@
+# [0.12.0](https://github.com/jhonyralph/jarvis/compare/v0.11.0...v0.12.0) (2026-08-05)
+
+
+### Features
+
+* **desktop:** bandeja gerencia o Runner em macOS/Linux, não só Windows ([e9da3b9](https://github.com/jhonyralph/jarvis/commit/e9da3b94a580477475364890675d0848274d2fc3))
+
 # [0.11.0](https://github.com/jhonyralph/jarvis/compare/v0.10.1...v0.11.0) (2026-08-05)
 
 
