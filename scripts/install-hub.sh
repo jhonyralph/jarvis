@@ -67,7 +67,12 @@ EOF
   systemctl --user daemon-reload
   systemctl --user enable --now jarvis-hub.service
   echo "Hub instalado (systemd --user: jarvis-hub) na porta 4577."
-  echo "Dica: 'loginctl enable-linger $USER' para subir sem login gráfico."
+  # Linger = o serviço --user sobe no BOOT sem nenhum login (equivalente headless ao auto-login).
+  if loginctl enable-linger "$USER" 2>/dev/null; then
+    echo "Linger habilitado: o Hub sobe após reboot mesmo SEM login."
+  else
+    echo "Para o Hub subir após reboot SEM login, rode: sudo loginctl enable-linger $USER"
+  fi
 fi
 echo ""
 echo "PRIMEIRO ACESSO (nenhum dispositivo logado ainda):"

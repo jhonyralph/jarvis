@@ -61,6 +61,31 @@ The machine then appears in the Hub's machine selector. Pick it to run agents th
   a manual `git pull --ff-only && npm ci && npm run update:verify` followed by a
   task/service restart is equivalent.
 
+## Survive a reboot (start without an interactive login)
+
+Hub and Runner already behave like a **self-restarting service**: a supervisor loop
+(`start-hub.ps1` / `start-runner.ps1`) relaunches the process ~3s after any exit, backed by
+the scheduled task's `RestartCount` (Windows), launchd `KeepAlive` (macOS) and systemd
+`Restart=always` (Linux). So a **crash or a killed process comes back on its own**.
+
+The one gap is a **reboot where nobody logs in**: the services start from a *user session*
+(the agent CLIs authenticate in the user's profile, so running as a SYSTEM service would break
+them). Close it per OS:
+
+- **Windows — auto-login.** Run **as Administrator**:
+  `powershell -ExecutionPolicy Bypass -File scripts\enable-autologin.ps1` (add `-User <conta>` for
+  another account; `-Disable` reverts). The session unlocks at boot and the `AtLogOn` tasks start
+  the Hub/Runner. ⚠ This unlocks the desktop for anyone with physical access, and the registry
+  method stores the password in plaintext. For **encrypted** storage prefer
+  [Sysinternals Autologon](https://learn.microsoft.com/sysinternals/downloads/autologon)
+  (stores it as an LSA secret). Use only on a trusted machine (e.g. behind Tailscale).
+- **Linux — linger (no login at all).** `install-runner.sh` / `install-hub.sh` now run
+  `loginctl enable-linger $USER` automatically; if it needed root, run `sudo loginctl enable-linger $USER`.
+  With linger the systemd `--user` service starts at boot with **no login** — the preferred headless setup.
+- **macOS — auto-login.** System Settings → **Users & Groups** → *Automatically log in as* → pick the
+  account. The launchd agent then loads in that GUI session at boot. (No script: Apple stores the
+  auto-login secret in `/etc/kcpassword`; set it through the GUI rather than hand-editing it.)
+
 ## Notes / limits
 
 - The runner is **headless** — no voice/UI there; the single UI is the Hub.

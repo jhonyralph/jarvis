@@ -88,5 +88,10 @@ EOF
   sleep 2
   systemctl --user is-active --quiet jarvis-runner.service || { echo "O serviço systemd não permaneceu ativo; consulte journalctl --user -u jarvis-runner."; exit 1; }
   echo "Runner instalado (systemd --user: jarvis-runner). Deve aparecer no seletor do Hub."
-  echo "Dica: rode 'loginctl enable-linger $USER' para o runner subir sem login gráfico."
+  # Linger = o serviço --user sobe no BOOT sem nenhum login (o equivalente headless ao auto-login).
+  if loginctl enable-linger "$USER" 2>/dev/null; then
+    echo "Linger habilitado: o runner sobe após reboot mesmo SEM login."
+  else
+    echo "Para o runner subir após reboot SEM login, rode: sudo loginctl enable-linger $USER"
+  fi
 fi
