@@ -14,15 +14,20 @@ import type { CapacitorConfig } from "@capacitor/cli";
  *
  * appId: change to YOUR reverse-domain before building for a store.
  */
-const HUB = process.env.JARVIS_APP_HUB_URL || ""; // e.g. https://jarvis.your-tailnet.ts.net
+// OPTIONAL personal build: set JARVIS_APP_HUB_URL to bake YOUR Hub as server.url. Left empty (the CI
+// default) the app is server-AGNOSTIC — no URL is embedded; the bundled launcher (www/index.html) asks
+// the user for their Hub URL at runtime and navigates the WebView there. This is what lets a single
+// generic APK/IPA be shared: each user enters their own address.
+const HUB = process.env.JARVIS_APP_HUB_URL || "";
 
 const config: CapacitorConfig = {
   appId: "chat.jarvis.app",
   appName: "Jarvis",
   webDir: "www",
-  ...(HUB
-    ? { server: { url: HUB, cleartext: HUB.startsWith("http://") } } // OTA: load the live UI from the Hub
-    : {}),
+  server: HUB
+    ? { url: HUB, cleartext: HUB.startsWith("http://"), allowNavigation: ["*"] } // personal build: OTA to the Hub
+    // generic build: launcher navigates to the user's Hub (any host); cleartext allows an http LAN/tailnet Hub
+    : { androidScheme: "https", cleartext: true, allowNavigation: ["*"] },
   plugins: {
     // Native push (APNs/FCM). The token is registered in the web bridge and sent to the Hub; the Hub
     // sends via APNs/FCM (server keys required — see docs/mobile.md; distinct from the web-push/VAPID

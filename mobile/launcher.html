@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Jarvis — servidor</title>
+<!--
+  Launcher AGNÓSTICO de servidor. O APK/IPA distribuído NÃO embute nenhuma URL (ver capacitor.config.ts):
+  este é o entry (www/index.html, colocado pelo sync-web.mjs). Ele pergunta a URL do SEU Hub, guarda em
+  localStorage e navega o WebView pra lá (a UI viva vem do Hub, modelo OTA). Reabrir com ?setup ou tocar
+  "Trocar servidor" volta a este formulário. A normalização espelha desktop/src/shared/hub-url.js.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100dvh; display: grid; place-items: center; background: #0b0b0d; color: #e8e8ea;
+    font: 15px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; padding: max(24px, env(safe-area-inset-top)) 24px; }
+  .card { width: 100%; max-width: 420px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: #a0a0a8; }
+  label { display: block; font-size: 13px; color: #a0a0a8; margin: 0 0 6px; }
+  input { width: 100%; padding: 13px 14px; font-size: 16px; border-radius: 12px; border: 1px solid #2a2a30;
+    background: #141418; color: #e8e8ea; }
+  input:focus { outline: none; border-color: #4c8dff; }
+  button { width: 100%; padding: 13px; margin-top: 14px; font-size: 16px; font-weight: 600; border: 0;
+    border-radius: 12px; background: #2e6bff; color: #fff; }
+  button:disabled { opacity: .5; }
+  .ghost { background: transparent; color: #a0a0a8; border: 1px solid #2a2a30; font-weight: 500; }
+  .err { color: #ff6b6b; font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .hint { color: #6b6b73; font-size: 12px; margin-top: 16px; }
+  .count { color: #4c8dff; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Conectar ao seu Jarvis</h1>
+    <p class="sub">Informe o endereço do <b>seu</b> Hub (na sua rede privada / Tailscale). Fica salvo neste app.</p>
+    <label for="url">URL do servidor</label>
+    <input id="url" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false"
+      placeholder="https://jarvis.sua-tailnet.ts.net">
+    <div class="err" id="err"></div>
+    <button id="connect">Conectar</button>
+    <button id="cancel" class="ghost" hidden>Editar endereço</button>
+    <p class="hint">Ex.: <code>https://jarvis.sua-tailnet.ts.net</code> ou <code>http://192.168.0.10:4577</code>.
+      Sem esquema, assumimos <code>https://</code>.</p>
+  </div>
+<script type="module">
+  import { normalizeHubUrlWeb as normalize } from "./hub-url-web.mjs";
+  var KEY = "jarvis.hubUrl";
+  var $ = function (id) { return document.getElementById(id); };
+
+  function go(url) { window.location.replace(url); }
+
+  var stored = "";
+  try { stored = localStorage.getItem(KEY) || ""; } catch (e) {}
+  var forceSetup = /[?&]setup\b/.test(location.search);
+
+  var input = $("url"), err = $("err"), connect = $("connect"), cancel = $("cancel");
+  if (stored) input.value = stored;
+
+  var timer = null;
+  function stopCountdown() { if (timer) { clearInterval(timer); timer = null; } connect.textContent = "Conectar"; connect.disabled = false; cancel.hidden = true; }
+
+  function submit() {
+    stopCountdown();
+    var r = normalize(input.value);
+    if (r.error) { err.textContent = r.error; return; }
+    err.textContent = "";
+    try { localStorage.setItem(KEY, r.url); } catch (e) {}
+    go(r.url);
+  }
+  connect.addEventListener("click", submit);
+  cancel.addEventListener("click", function () { stopCountdown(); input.focus(); });
+  input.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
+  input.addEventListener("input", stopCountdown);
+
+  // Auto-conecta em 2s se já houver URL salva e não for reconfiguração — mas dá pra cancelar e editar.
+  if (stored && !forceSetup) {
+    var left = 2;
+    cancel.hidden = false;
+    connect.disabled = true;
+    var tick = function () {
+      connect.innerHTML = 'Conectando em <span class="count">' + left + 's</span>…';
+      if (left <= 0) { stopCountdown(); submit(); return; }
+      left--;
+    };
+    tick();
+    timer = setInterval(tick, 1000);
+  } else {
+    input.focus();
+  }
+</script>
+</body>
+</html>

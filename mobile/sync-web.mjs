@@ -16,4 +16,10 @@ if (!existsSync(src)) {
 rmSync(dst, { recursive: true, force: true });
 mkdirSync(dst, { recursive: true });
 cpSync(src, dst, { recursive: true });
-console.log(`[sync-web] copied ${src} -> ${dst}`);
+// The app is server-AGNOSTIC: the ENTRY is the launcher (asks for the Hub URL at runtime, then navigates
+// the WebView there), NOT the bundled Hub UI. So override www/index.html with the launcher and ship its
+// normalizer module. The Hub UI files stay bundled as an offline fallback; the live UI comes from the
+// user's Hub over-the-air. (A build with JARVIS_APP_HUB_URL set still bakes server.url — see capacitor.config.ts.)
+cpSync(join(here, "launcher.html"), join(dst, "index.html"));
+cpSync(join(here, "hub-url-web.mjs"), join(dst, "hub-url-web.mjs"));
+console.log(`[sync-web] copied ${src} -> ${dst} (+ agnostic launcher as index.html)`);

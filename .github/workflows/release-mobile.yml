@@ -1,0 +1,122 @@
+name: Release mobile
+
+# Builds the mobile shell (mobile/) as a GENERIC, server-agnostic app — no Hub URL is baked (see
+# capacitor.config.ts); the user enters their own Hub address in-app on first launch. Android is built
+# and published; iOS is fully wired but GATED OFF until Apple signing secrets exist (see below).
+#
+# Run it:
+#   • Actions → "Release mobile" → Run workflow (optionally tick `publish` to attach to a Release).
+#   • Or it can be `workflow_call`-ed from release.yml later.
+#
+# The Android artifact is the SIDELOAD DEBUG apk (debug-signed, installable via "unknown sources") — no
+# release keystore required. To ship a store/signed build, add a keystore and switch to
+# `assembleSideloadRelease` / the `aab` task (see mobile/BUILD.md).
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Attach the APK to the matching GitHub Release"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21 # Jarvis native plugins target JVM 21 (mobile/BUILD.md)
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      # Root deps (the build script + Capacitor CLI resolve from here); then the mobile package.
+      - run: npm ci
+      - name: Install mobile deps
+        working-directory: mobile
+        run: npm install
+      - name: Add the Android platform (generated dir, not committed)
+        working-directory: mobile
+        run: npx cap add android || echo "android platform already present"
+
+      # GENERIC build: JARVIS_APP_HUB_URL is intentionally UNSET → no URL baked → the in-app launcher asks
+      # the user for their Hub. build-mobile.mjs runs sync-web + cap sync + Gradle assembleSideloadDebug.
+      - name: Build APK (server-agnostic, unsigned/sideload)
+        run: node scripts/build-mobile.mjs android
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-android-apk
+          path: mobile/android/app/build/outputs/apk/sideload/debug/app-sideload-debug.apk
+          if-no-files-found: error
+
+      - name: Attach APK to the Release
+        if: ${{ inputs.publish == true || inputs.ref != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.ref || github.ref_name }}"
+          cp mobile/android/app/build/outputs/apk/sideload/debug/app-sideload-debug.apk "Jarvis-${TAG}-android.apk"
+          gh release upload "$TAG" "Jarvis-${TAG}-android.apk" --clobber
+
+  # iOS — FULLY WIRED BUT DISABLED. Building an .ipa needs an Apple Developer account + signing certs.
+  # Enable by setting repository VARIABLE `ENABLE_IOS_BUILD=true` AND providing the signing SECRETS
+  # (APPLE_CERT_P12_BASE64, APPLE_CERT_PASSWORD, APPLE_PROVISIONING_PROFILE_BASE64, APPLE_TEAM_ID).
+  # Until then this job is skipped. See docs/mobile.md "iOS / Apple".
+  ios:
+    if: ${{ vars.ENABLE_IOS_BUILD == 'true' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Import Apple signing certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          KEYCHAIN=build.keychain
+          security create-keychain -p "" "$KEYCHAIN"
+          security set-keychain-settings "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          echo "$CERT_P12_BASE64" | base64 --decode > cert.p12
+          security import cert.p12 -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -s "$KEYCHAIN"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/jarvis.mobileprovision
+      - run: npm ci
+      - name: Install mobile deps
+        working-directory: mobile
+        run: npm install
+      # Generic build (no baked URL). Produces an Xcode archive; export to .ipa needs your export options
+      # + team id — left as the operator's final step (see docs/mobile.md).
+      - name: Build iOS archive (server-agnostic)
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node scripts/build-mobile.mjs build-apple -- --archive --cocoapods
+      - name: Upload iOS archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-ios-archive
+          path: mobile/build/Jarvis.xcarchive
+          if-no-files-found: warn
