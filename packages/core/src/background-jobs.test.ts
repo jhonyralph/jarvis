@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BackgroundJobStore, isTerminalJobStatus } from "./background-jobs.js";
+import { BackgroundJobStore, isTerminalJobStatus, planJobContinuation, type BackgroundJob } from "./background-jobs.js";
+
+function job(over: Partial<BackgroundJob> = {}): BackgroundJob {
+  return { jobId: "j1", originSessionId: "s1", runnerId: "local", command: "npm run typecheck", cwd: "/w", status: "succeeded", createdAt: 1, updatedAt: 2, autoContinueDepth: 0, ...over };
+}
 
 function dir(): string { return mkdtempSync(join(tmpdir(), "jarvis-bgjobs-")); }
 const JOURNAL = "background-jobs.jsonl";
@@ -124,6 +128,33 @@ test("automatic compaction triggers after compactEvery events without losing sta
     assert.equal(reloaded.get(j.jobId)!.resultSummary, "ok");
     assert.equal(reloaded.get(j.jobId)!.pid, 10);
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("planJobContinuation: acts only on a fresh terminal job, within the depth limit", () => {
+  // running → no action
+  assert.equal(planJobContinuation(job({ status: "running" })).act, false);
+  // already continued → no action (idempotency)
+  assert.equal(planJobContinuation(job({ continued: true })).act, false);
+  // depth ceiling reached → no action (anti-loop)
+  assert.equal(planJobContinuation(job({ autoContinueDepth: 8 }), { maxDepth: 8 }).act, false);
+  // fresh succeeded → act, stamps next depth
+  const ok = planJobContinuation(job({ autoContinueDepth: 2 }));
+  assert.equal(ok.act, true);
+  assert.equal(ok.nextDepth, 3);
+  assert.match(ok.text!, /concluiu com sucesso/);
+  assert.match(ok.text!, /Continue de onde parou/);
+});
+
+test("planJobContinuation: failed job surfaces exit code, output tail is bounded", () => {
+  const failed = planJobContinuation(job({ status: "failed", exitCode: 2, resultSummary: "TS2304: cannot find name" }));
+  assert.match(failed.text!, /falhou \(código de saída 2\)/);
+  assert.match(failed.text!, /TS2304/);
+  // a huge summary is truncated from the FRONT (keeps the tail — where errors usually are)
+  const big = "x".repeat(9000) + "TAIL_MARKER";
+  const bounded = planJobContinuation(job({ resultSummary: big }));
+  assert.ok(bounded.text!.length < 6000, "prompt stays bounded");
+  assert.match(bounded.text!, /TAIL_MARKER/);
+  assert.match(bounded.text!, /início cortado/);
 });
 
 test("a corrupt first line yields an empty store rather than throwing", () => {

@@ -83,6 +83,47 @@ export interface BackgroundJobStoreOptions {
   compactEvery?: number;
 }
 
+/** Default ceiling on how many times a single chain may auto-continue itself (background→continue→…). */
+export const DEFAULT_MAX_AUTO_CONTINUE_DEPTH = 8;
+
+export interface ContinuationPlan {
+  /** Whether the Hub should inject a continuation turn for this job. */
+  act: boolean;
+  reason: string;
+  /** The prompt text to feed the resumed session (only when act). */
+  text?: string;
+  /** autoContinueDepth to stamp on any NEW job the continuation turn spawns (anti-loop). */
+  nextDepth?: number;
+}
+
+/** Bounded, human-readable tail so a huge log can't blow up the continuation prompt / context. */
+function boundedSummary(s: string | undefined, cap = 4000): string {
+  if (!s) return "";
+  const t = s.trimEnd();
+  return t.length <= cap ? t : `…(início cortado)\n${t.slice(t.length - cap)}`;
+}
+
+/**
+ * Pure decision for the auto-continuation: given a job's durable state, should the Hub start a
+ * follow-up turn, and with what prompt? Enforces the three guards that keep this safe — terminal-only,
+ * idempotent (never twice), and depth-bounded (no infinite background→continue→background loop). The
+ * Hub calls markContinued() and enqueues the turn only when `act` is true.
+ */
+export function planJobContinuation(job: BackgroundJob, opts?: { maxDepth?: number }): ContinuationPlan {
+  const maxDepth = opts?.maxDepth ?? DEFAULT_MAX_AUTO_CONTINUE_DEPTH;
+  if (!isTerminalJobStatus(job.status)) return { act: false, reason: "job ainda em execução" };
+  if (job.continued) return { act: false, reason: "continuação já injetada" };
+  if (job.autoContinueDepth >= maxDepth) return { act: false, reason: `limite de auto-continuações atingido (${maxDepth})` };
+  const verb = job.status === "succeeded" ? "concluiu com sucesso"
+    : job.status === "failed" ? `falhou (código de saída ${job.exitCode ?? "?"})`
+    : "foi cancelado";
+  const tail = boundedSummary(job.resultSummary);
+  const text = `[Jarvis · job de background] O comando \`${job.command}\` que você iniciou em segundo plano ${verb}.`
+    + (tail ? `\n\nSaída (final):\n${tail}` : "")
+    + `\n\nContinue de onde parou, usando este resultado. (Se precisar rodar outra tarefa longa, use novamente o job de background em vez de background nativo.)`;
+  return { act: true, reason: "ok", text, nextDepth: job.autoContinueDepth + 1 };
+}
+
 const JARVIS_HOME = process.env.JARVIS_HOME || homedir();
 let SEQ = 0; // process-local uniquifier for generated ids (Date-independent, safe for tests)
 
