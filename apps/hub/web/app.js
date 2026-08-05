@@ -1071,8 +1071,12 @@
       if(create!==false) newTerminal(); else tx({t:'terminal_list',runnerId:selectedRunner()});
     }
     function closeTermPanel(){ if(!E.termPanel)return; E.termPanel.classList.add('hidden'); E.termPanel.setAttribute('aria-hidden','true'); }
-    function newTerminal(){
-      const runnerId=selectedRunner(), reqId='term-'+uid(); tx({t:'terminal_open',reqId,runnerId,cwd:termCwd(),cols:100,rows:30,title:machineLabel(runnerId)});
+    async function newTerminal(){
+      let runnerId=selectedRunner(), cwd=termCwd();
+      // Escolher a máquina onde o terminal abre (paridade com "nova sessão"). Só pergunta quando há
+      // mais de uma máquina; ao trocar de máquina, deixa o cwd em branco (a máquina remota usa o dela).
+      if(machines.length>1){ const mid=await pickMachine('Abrir terminal','Escolha a máquina onde o terminal vai rodar.'); if(!mid)return; if(mid!==runnerId){ runnerId=mid; cwd=''; if(currentMachine==='all')routedMachine=mid; } }
+      const reqId='term-'+uid(); tx({t:'terminal_open',reqId,runnerId,cwd,cols:100,rows:30,title:machineLabel(runnerId)});
       if(E.termMeta)E.termMeta.textContent='Abrindo terminal em '+machineLabel(runnerId)+'…';
       setTermEmpty('Abrindo terminal…','Aguardando resposta de '+machineLabel(runnerId)+'.');
     }
@@ -1120,6 +1124,7 @@
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
     function openSession(id,runnerId){ if(!id)return;
+      if(typeof findState!=='undefined'&&findState)closeFind(); if(typeof findRegion!=='undefined')findRegion='chat';  // abriu sessão → foco no chat; fecha barra órfã
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
       const listed=currentMachine==='all'&&sessions.find(x=>x.id===id&&(!runnerId||x.runnerId===runnerId)), rid=runnerId||(listed&&listed.runnerId)||selectedRunner();
@@ -1432,18 +1437,21 @@
       if(E.filesCnt) E.filesCnt.textContent = curFiles.length ? String(curFiles.length) : ''; }
     function nearPaneBottom(el,px=160){ return !!el && (el.scrollHeight - el.scrollTop - el.clientHeight) < px; }
     function scheduleAutoPager(fn){ requestAnimationFrame(()=>{ fn(); requestAnimationFrame(fn); }); }
+    let filesQuery='';  // Ctrl+F no painel de arquivos (modo 4): filtra a lista por trecho do caminho.
+    function filteredFiles(){ const q=filesQuery.trim().toLowerCase(); return q ? curFiles.filter(f=>String(f.path||'').toLowerCase().includes(q)) : curFiles; }
     function renderFiles(){ E.files.innerHTML=''; secCounts();
-      curFiles.slice(0,filesShown).forEach(f=>{ const d=document.createElement('div'); d.className='item readable'; d.title=f.path;
+      const _list=filteredFiles();
+      _list.slice(0,filesShown).forEach(f=>{ const d=document.createElement('div'); d.className='item readable'; d.title=f.path;
         const nm=(f.path||'').split(/[\\/]/).pop()||f.path;
         const cnt=(f.action==='edit'&&(f.adds||f.dels))?` <span class="fadd">+${f.adds||0}</span> <span class="fdel">-${f.dels||0}</span>`:'';
         d.innerHTML=`<span class="rbadge">${fileActIcon(f.action)}</span><span class="rtitle">${esc(nm)}</span>${cnt}`;
         d.onclick=()=>openFile(f.path,f.action); E.files.appendChild(d); });
-      if(E.filesMore){ const resta=curFiles.length-filesShown;
+      if(E.filesMore){ const resta=_list.length-filesShown;
         E.filesMore.textContent = resta>0 ? `Mostrar mais (${resta})` : 'Mostrar mais';
         E.filesMore.classList.toggle('hidden', resta<=0); }
       scheduleAutoPager(maybeAutoMoreFiles); }
-    function loadMoreFiles(){ if(curFiles.length<=filesShown)return; filesShown=Math.min(curFiles.length,filesShown+30); renderFiles(); }
-    function maybeAutoMoreFiles(){ if(!E.filesPane||E.filesPane.classList.contains('hidden')||curFiles.length<=filesShown)return; if(nearPaneBottom(E.filesPane)||E.filesPane.scrollHeight<=E.filesPane.clientHeight+40)loadMoreFiles(); }
+    function loadMoreFiles(){ const n=filteredFiles().length; if(n<=filesShown)return; filesShown=Math.min(n,filesShown+30); renderFiles(); }
+    function maybeAutoMoreFiles(){ if(!E.filesPane||E.filesPane.classList.contains('hidden')||filteredFiles().length<=filesShown)return; if(nearPaneBottom(E.filesPane)||E.filesPane.scrollHeight<=E.filesPane.clientHeight+40)loadMoreFiles(); }
     E.filesMore.onclick=loadMoreFiles;
     if(E.filesPane)E.filesPane.addEventListener('scroll',maybeAutoMoreFiles);
     // Upsert a file touched during a LIVE turn (from the stream tool events).
@@ -1521,7 +1529,7 @@
     }
     function setWorkFileSplit(on){ const app=document.getElementById('app'); if(app)app.classList.toggle('work-file-split',!!on); }
     const APP=()=>document.getElementById('app');
-    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); APP().classList.remove('file-full','file-open','tab-chat'); curFileSig=''; lastFileMsg=null; }
+    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); APP().classList.remove('file-full','file-open','tab-chat'); curFileSig=''; lastFileMsg=null; if(typeof findState!=='undefined'&&findState&&findState.container===E.fileBody)closeFind(); }
     function markFileOpen(){ APP().classList.add('file-open'); }
     // largura/altura persistidas do painel de arquivo (redimensionável) + modo de layout (lado a
     // lado / empilhado / abas), tudo salvo em cfg e reaplicado no reload.
@@ -1547,7 +1555,7 @@
     function fileSig(m){ return [m&&m.path||'', m&&m.mtimeMs!=null?m.mtimeMs:'', m&&m.size!=null?m.size:'', m&&m.truncated?'t':'', m&&m.image?'i':'', m&&m.error||''].join('|'); }
     function diffSig(m){ return [m&&m.path||'', m&&m.adds||0, m&&m.dels||0, (m&&m.rows||[]).map(r=>(r.t||'')+':'+(r.s||'')).join('\n'), m&&m.error||''].join('|'); }
     function fileOverlayCoversTree(){ return typeof matchMedia==='function' && matchMedia('(max-width:820px)').matches; }
-    function openFile(path,action,opts){ const keep=!!(opts&&opts.keepWork); if(E.workPanel&&!E.workPanel.classList.contains('hidden')&&!keep)closeWorkPanel(); if(!keep&&fileOverlayCoversTree()&&E.treePanel&&!E.treePanel.classList.contains('hidden'))closeTree(); setWorkFileSplit(keep); E.filePanel.classList.remove('hidden'); markFileOpen(); APP().classList.remove('tab-chat'); if(E.tabFileBtn){E.tabFileBtn.classList.add('on');E.tabChatBtn&&E.tabChatBtn.classList.remove('on');} E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
+    function openFile(path,action,opts){ if(typeof findRegion!=='undefined')findRegion='file'; const keep=!!(opts&&opts.keepWork); if(E.workPanel&&!E.workPanel.classList.contains('hidden')&&!keep)closeWorkPanel(); if(!keep&&fileOverlayCoversTree()&&E.treePanel&&!E.treePanel.classList.contains('hidden'))closeTree(); setWorkFileSplit(keep); E.filePanel.classList.remove('hidden'); markFileOpen(); APP().classList.remove('tab-chat'); if(E.tabFileBtn){E.tabFileBtn.classList.add('on');E.tabChatBtn&&E.tabChatBtn.classList.remove('on');} E.fileName.textContent=path.split(/[\\/]/).pop()||path; E.fileName.title=path;
       curFilePath=path; curFileLine=Math.max(0,Number(opts&&opts.line)||0); curFileDiffable=(action==='edit' && !!currentSession); curFileView=curFileDiffable?'diff':'full';
       renderFileViewBtns(); loadFileView(); }
     function loadFileView(opts){ const silent=!!(opts&&opts.silent); fileLastLoadAt=Date.now(); if(!silent){ curFileSig=''; E.fileStat.textContent=''; E.fileMeta.textContent=curFilePath; E.fileBody.className='filebody plain'; E.fileBody.textContent='Carregando…'; }
@@ -1866,10 +1874,10 @@
 
     // ---------- new session ----------
     // #6: em "Todas as máquinas" não há máquina atual — escolher onde criar a sessão (só as online).
-    function pickMachine(){ return new Promise(res=>{
+    function pickMachine(title,subtitle){ return new Promise(res=>{
       const ov=document.createElement('div'); ov.className='modal';
       const card=document.createElement('div'); card.className='card machinepick';
-      card.innerHTML='<div class="mph"><b>Criar nova sessão</b><span>Escolha onde o agente vai rodar.</span></div>';
+      card.innerHTML='<div class="mph"><b>'+esc(title||'Criar nova sessão')+'</b><span>'+esc(subtitle||'Escolha onde o agente vai rodar.')+'</span></div>';
       const list=document.createElement('div'); list.className='mplist';
       const done=(v)=>{ if(ov.parentNode) document.body.removeChild(ov); res(v); };
       machines.forEach(m=>{ const b=document.createElement('button'); b.className='mpopt'; b.type='button';
@@ -2411,6 +2419,87 @@
     E.searchGo.onclick=runSearch;
     E.searchClose.onclick=()=>E.searchModal.classList.add('hidden');
     E.searchInput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(searchTimer); runSearch(); } };
+
+    // ---------- Ctrl+F: busca CONTEXTUAL ----------
+    // Roteia pelo que está na frente do usuário: arquivo aberto → busca NO arquivo; painel de arquivos
+    // → filtra arquivos; chat aberto → busca NO chat; nada disso → pesquisa ENTRE sessões (modal atual).
+    // Substitui o Ctrl+F nativo do navegador (preventDefault) por essa busca de dentro do app.
+    let findState=null;  // { mode:'mark'|'files', container, bar, input, count, hits, idx }
+    function findEscRx(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+    function findUnmark(c){ if(!c)return; c.querySelectorAll('mark.findhit').forEach(m=>{ const p=m.parentNode; if(p){ p.replaceChild(document.createTextNode(m.textContent),m); p.normalize(); } }); }
+    function findMark(c,q){ findUnmark(c); const hits=[]; if(!q||!c)return hits; const rx=new RegExp(findEscRx(q),'gi');
+      const nodes=[], w=document.createTreeWalker(c,NodeFilter.SHOW_TEXT,{acceptNode(n){ return n.nodeValue&&n.nodeValue.trim()&&!(n.parentElement&&n.parentElement.closest('.findbar'))?NodeFilter.FILTER_ACCEPT:NodeFilter.FILTER_REJECT; }});
+      let n; while(n=w.nextNode()) nodes.push(n);
+      for(const node of nodes){ const s=node.nodeValue; rx.lastIndex=0; if(!rx.test(s))continue; rx.lastIndex=0;
+        const frag=document.createDocumentFragment(); let last=0,m;
+        while(m=rx.exec(s)){ if(m.index>last)frag.appendChild(document.createTextNode(s.slice(last,m.index))); const mk=document.createElement('mark'); mk.className='findhit'; mk.textContent=m[0]; frag.appendChild(mk); hits.push(mk); last=m.index+m[0].length; if(m.index===rx.lastIndex)rx.lastIndex++; }
+        if(last<s.length)frag.appendChild(document.createTextNode(s.slice(last))); node.parentNode.replaceChild(frag,node); }
+      return hits; }
+    function findCountTxt(){ if(!findState)return; findState.count.textContent = findState.hits.length? (findState.idx+1)+'/'+findState.hits.length : (findState.input.value?'0/0':''); }
+    function findGoto(delta){ if(!findState||!findState.hits.length)return; findState.hits.forEach(h=>h.classList.remove('cur')); const L=findState.hits.length; findState.idx=((findState.idx+delta)%L+L)%L; const h=findState.hits[findState.idx]; h.classList.add('cur'); if(h.scrollIntoView)h.scrollIntoView({block:'center',inline:'nearest'}); findCountTxt(); }
+    function closeFind(){ if(!findState)return; if(findState.mode==='mark') findUnmark(findState.container); if(findState.mode==='files'){ filesQuery=''; renderFiles(); } if(findState.mt)clearTimeout(findState.mt); if(findState.bar&&findState.bar.parentNode)findState.bar.remove(); findState=null; }
+    // Finder (modo 'finder', usado pela árvore): busca RECURSIVA de arquivos via `mention` (o mesmo
+    // buscador fuzzy do "@", que varre dentro das pastas sob o cwd) — o destaque no DOM só via nós
+    // renderizados, então não achava dentro de pasta fechada. Junta o caminho relativo ao cwd atual.
+    function findFinderJoin(rel){ const sep=(curCwd||'').includes('\\')?'\\':'/'; return (curCwd||'').replace(/[\\/]$/,'')+sep+String(rel).replace(/\//g,sep); }
+    function findFinderRender(files){ if(!findState||findState.mode!=='finder'||!findState.res)return; const res=findState.res; res.innerHTML='';
+      findState.count.textContent=files.length?(files.length+(files.length>=40?'+':'')):'0';
+      files.slice(0,40).forEach(rel=>{ const r=document.createElement('div'); r.className='findrow'; r.tabIndex=0; const nm=String(rel).split('/').pop();
+        r.innerHTML='<b>'+esc(nm)+'</b> <span class="mut">'+esc(rel)+'</span>'; r.onclick=()=>{ openFile(findFinderJoin(rel)); closeFind(); }; res.appendChild(r); });
+      if(!files.length){ const r=document.createElement('div'); r.className='findrow mut'; r.textContent='Nenhum arquivo.'; res.appendChild(r); } }
+    function openFind(mode,container,label){
+      if(findState){ if(findState.mode===mode&&findState.container===container){ findState.input.focus(); findState.input.select(); return; } closeFind(); }
+      const bar=document.createElement('div'); bar.className='findbar'+(mode==='finder'?' finder':'');
+      const inp=document.createElement('input'); inp.type='search'; inp.placeholder=(label||'Buscar')+'…'; inp.autocomplete='off'; inp.spellcheck=false;
+      const cnt=document.createElement('span'); cnt.className='findcount';
+      const btn=(t,tt,fn)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.title=tt; b.onmousedown=e=>e.preventDefault(); b.onclick=fn; return b; };
+      const row=document.createElement('div'); row.className='findrowtop'; row.appendChild(inp); row.appendChild(cnt);
+      if(mode==='mark'){ row.appendChild(btn('‹','Anterior (Shift+Enter)',()=>findGoto(-1))); row.appendChild(btn('›','Próximo (Enter)',()=>findGoto(1))); }
+      row.appendChild(btn('✕','Fechar (Esc)',closeFind)); bar.appendChild(row);
+      let res=null; if(mode==='finder'){ res=document.createElement('div'); res.className='findres'; bar.appendChild(res); }
+      document.body.appendChild(bar);
+      findState={mode,container,bar,input:inp,count:cnt,res,hits:[],idx:-1,mt:null};
+      inp.oninput=()=>{ if(mode==='files'){ filesQuery=inp.value; renderFiles(); const nn=filteredFiles().length; cnt.textContent=inp.value?(nn+' '+(nn===1?'arquivo':'arquivos')):''; }
+        else if(mode==='finder'){ clearTimeout(findState.mt); const q=inp.value.trim(); if(!q){ res.innerHTML=''; cnt.textContent=''; return; } findState.mt=setTimeout(()=>tx({t:'mention',q}),150); }
+        else { findState.hits=findMark(container,inp.value.trim()); findState.idx=-1; if(findState.hits.length)findGoto(1); else findCountTxt(); } };
+      inp.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); if(mode==='mark')findGoto(e.shiftKey?-1:1); else if(mode==='finder'){ const el=res&&res.querySelector('.findrow:not(.mut)'); if(el)el.click(); } else { const el=E.files.querySelector('.item'); if(el){ el.click(); closeFind(); } } }
+        else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); closeFind(); } };
+      setTimeout(()=>{ inp.focus(); inp.select(); },20);
+    }
+    // Região onde o usuário ESTÁ (último clique/foco) decide o alvo do Ctrl+F. Sem isto, com chat +
+    // arquivos na sidebar + visualizador abertos ao mesmo tempo, o chat sempre "vencia" e o painel de
+    // arquivos / "fora de tudo" nunca eram alcançados. Atualizada em pointerdown/focusin (captura).
+    let findRegion='chat';
+    function updFindRegion(t){ if(!t||!t.closest)return;
+      if(t.closest('.findbar')||t.closest('.modal'))return;           // interagir com a própria busca não muda a região
+      if(t.closest('#filePanel')) findRegion='file';
+      else if(t.closest('#filesPane')) findRegion='files';
+      else if(t.closest('#treePanel')) findRegion='tree';
+      else if(t.closest('#log')||t.closest('#composer')) findRegion='chat';
+      else findRegion='none';                                          // sessões/header/vazio → busca ENTRE sessões
+    }
+    document.addEventListener('pointerdown',(e)=>updFindRegion(e.target),true);
+    document.addEventListener('focusin',(e)=>updFindRegion(e.target),true);
+    function ctrlFTarget(){
+      const fileOpen = E.filePanel && !E.filePanel.classList.contains('hidden');
+      const chatOK = currentSession!=null && E.log && E.log.childElementCount>0;
+      if(findRegion==='file' && fileOpen) return ()=>openFind('mark',E.fileBody,'Buscar no arquivo');
+      if(findRegion==='files') return ()=>openFind('files',E.files,'Filtrar arquivos');
+      if(findRegion==='tree') return ()=>openFind('finder',E.treePanel,'Procurar arquivos (dentro das pastas)');
+      if(findRegion==='chat' && chatOK) return ()=>openFind('mark',E.log,'Buscar no chat');
+      if(findRegion==='none') return ()=>openSearch();
+      // região indefinida (ainda sem clique) → decide por visibilidade
+      if(fileOpen && !APP().classList.contains('tab-chat')) return ()=>openFind('mark',E.fileBody,'Buscar no arquivo');
+      if(chatOK) return ()=>openFind('mark',E.log,'Buscar no chat');
+      return ()=>openSearch();
+    }
+    document.addEventListener('keydown',(e)=>{
+      if(!(e.ctrlKey||e.metaKey) || e.altKey || (e.key!=='f'&&e.key!=='F')) return;
+      e.preventDefault(); e.stopPropagation();
+      if(findState){ findState.input.focus(); findState.input.select(); return; }
+      if(E.searchModal && !E.searchModal.classList.contains('hidden')){ E.searchInput.focus(); E.searchInput.select(); return; }
+      ctrlFTarget()();
+    }, true);
     // filtra ao digitar (debounce) — a 1ª busca parseia as sessões nativas, refinar o termo é instantâneo
     E.searchInput.oninput=()=>{ clearTimeout(searchTimer); const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; } if(searchMode==='semantic') return; searchTimer=setTimeout(runSearch,300); };
     E.searchResults.addEventListener('click',(e)=>{
@@ -3837,7 +3926,7 @@
         else if(m.t==='agent_catalog'){ caps=m.agents||caps; if(m.default&&!cfg.agent){cfg.agent=m.default;saveCfg();} if(!currentAgent) currentAgent=cfg.agent||m.default||(caps[0]||{}).name||null; syncModelEffort(); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') tx({t:'routines'}); }
         else if(m.t==='models_synced'){ caps=m.agents||caps; if(typeof syncModelEffort==='function') syncModelEffort(); const ch=m.changes||[]; toast(ch.length?('✅ Modelos sincronizados — '+ch.length+' ajuste'+(ch.length>1?'s':'')):'✅ Modelos sincronizados — nada a ajustar'); if(ch.length) syncReport(ch); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') tx({t:'routines'}); }
         else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=(m.runnerId||routedMachine||currentMachine||'local')+'|'+(m.cwd||curCwd||''); cmdReqPending=false; if(trigOpen()&&trigMode==='cmd') updateTrig(); }
-        else if(m.t==='mention_list'){ fileList=m.files||[]; if(trigOpen()&&trigMode==='file'){ trigItems=fileList.slice(0,50); trigIdx=trigItems.length?0:-1; renderTrig(); } }
+        else if(m.t==='mention_list'){ if(findState&&findState.mode==='finder'){ findFinderRender(m.files||[]); return; } fileList=m.files||[]; if(trigOpen()&&trigMode==='file'){ trigItems=fileList.slice(0,50); trigIdx=trigItems.length?0:-1; renderTrig(); } }
         else if(m.t==='worktree_preview'){ if(pendingPreview){ const f=pendingPreview; pendingPreview=null; f(m.candidates||[]); } }
         else if(m.t==='browser_event'){ if(m.event){ designEvent(m.event.kind||'browser',{url:m.event.url,runnerId:m.runnerId,pageId:m.event.pageId}); } }
         else if(m.t==='machines'){ machines=m.machines||[]; machines.forEach(mm=>{ const u=mm.updatePending;if(!u){const prior=updMach[mm.id];if(prior&&['queued','sent','awaiting_restart'].includes(prior.state)&&mm.online&&!mm.stale)updMach[mm.id]={label:mm.label,state:'verified',why:'reiniciou e versão confirmada'};return;} const state=u.state||'queued';updMach[mm.id]={label:mm.label,state,dirty:state==='blocked',why:state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':(mm.online?'aguardando nova tentativa':'offline — atualização guardada')};}); if(currentSession==null){ const ac=availableMachineCaps(); if(!currentAgent||!ac.some(c=>c.name===currentAgent)) currentAgent=(ac[0]||machineCaps()[0]||{}).name||currentAgent; syncModelEffort(); } renderUpdMachines(); renderUpdate(); renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(settingsPanelOpen('dispositivos')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
