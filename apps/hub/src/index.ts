@@ -45,7 +45,7 @@ import { runManagedTurn, type ManagedTurnInput, type TurnCtx } from "./turn.js";
 import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
 import { buildCouncilRoutePrompt, councilRouteFallback, parseCouncilRouteDecision, type CouncilRouteDecision } from "./councilRoute.js";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
-import { BackgroundJobStore, planJobContinuation, type BackgroundJob } from "@jarvis/core";
+import { BackgroundJobStore, planJobContinuation, type BackgroundJob, jobPaths, spawnDetachedJob, readJobPid, readJobCompletion } from "@jarvis/core";
 import { PersonalAssistantService } from "./personalAssistant.js";
 import { createBuiltInPersonalSources, createPersonalSourceFactory } from "./personalSources.js";
 import { createPersonalProactiveScheduler } from "./personalProactiveIntegration.js";
@@ -2957,6 +2957,35 @@ function reconcileBackgroundJobs(): void {
     if (plan.act && plan.text) injectJobContinuation(job, plan.text);
     else if (!plan.act && job.autoContinueDepth > 0) broadcastOn(job.runnerId || LOCAL_ID, job.originSessionId, { t: "notice", message: `Auto-continuação do job de background parada: ${plan.reason}.` });
   }
+}
+const HUB_JOB_DIR = join(JARVIS_DIR, "hub");
+/** Start a Hub-owned detached background job for a LOCAL session and record it durably. The worker
+ *  survives this turn (and the Hub); pollBackgroundJobs picks up its completion. */
+function startLocalBackgroundJob(originSessionId: string, command: string, cwd: string, autoContinueDepth = 0): BackgroundJob {
+  const job = backgroundJobs.create({ originSessionId, command, cwd, runnerId: LOCAL_ID, autoContinueDepth });
+  try {
+    spawnDetachedJob(command, cwd, jobPaths(HUB_JOB_DIR, job.jobId));
+    backgroundJobs.setStatus(job.jobId, "running");
+  } catch (error) {
+    backgroundJobs.setStatus(job.jobId, "failed", { exitCode: -1, resultSummary: `falha ao iniciar o job: ${String((error as Error)?.message || error)}` });
+    reconcileBackgroundJobs();
+  }
+  return backgroundJobs.get(job.jobId)!;
+}
+/** Poll local running jobs: adopt the worker's real pid, and on completion record the terminal state
+ *  (which reconcileBackgroundJobs then auto-continues). Runs on a short timer; crash-safe because the
+ *  result file persists — a job that finishes while the Hub is down is caught on the next poll. */
+function pollBackgroundJobs(): void {
+  let anyTerminal = false;
+  for (const job of backgroundJobs.running()) {
+    if ((job.runnerId || LOCAL_ID) !== LOCAL_ID) continue; // remote jobs are their runner's business (Phase 4)
+    const paths = jobPaths(HUB_JOB_DIR, job.jobId);
+    if (job.status === "queued") { const pid = readJobPid(paths); if (pid) backgroundJobs.setPid(job.jobId, pid); continue; }
+    if (job.pid === undefined) { const pid = readJobPid(paths); if (pid) backgroundJobs.setPid(job.jobId, pid); }
+    const completion = readJobCompletion(paths);
+    if (completion) { backgroundJobs.setStatus(job.jobId, completion.exitCode === 0 ? "succeeded" : "failed", completion); anyTerminal = true; }
+  }
+  if (anyTerminal) reconcileBackgroundJobs();
 }
 function flushQueuesForRunner(runnerId: string): void {
   for (const [key, items] of queues) {
@@ -5970,6 +5999,7 @@ try { loadQueues(); loadPendingInboundTurns(); recoverPendingInboundTurns(); con
 // Background-job auto-continuation: fire any continuation that a restart/busy-session left pending,
 // then poll as a safety net (the primary trigger is the job-completion path, added with the spawner).
 try { reconcileBackgroundJobs(); } catch { /* ignore */ }
+setInterval(() => { try { pollBackgroundJobs(); } catch { /* ignore */ } }, 2_000).unref?.();
 setInterval(() => { try { reconcileBackgroundJobs(); } catch { /* ignore */ } }, 30_000).unref?.();
 // A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
 // — fix them all proactively at boot, not just when the user happens to reopen one.
