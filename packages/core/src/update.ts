@@ -161,7 +161,7 @@ export async function updateCheck(root: string, fetch = true): Promise<UpdateSta
   try { await git(root, ["remote", "get-url", "origin"]); }
   catch { return { supported: false, current, currentFull, branch, behind: 0, ahead: 0, clean: true, checkedAt: Date.now(), error: "sem remote git (instale via git clone para auto-update)" }; }
   if (fetch) {
-    try { await git(root, ["fetch", "--quiet", "origin", branch], 30000); }
+    try { await git(root, ["fetch", "--quiet", "--tags", "origin", branch], 30000); }
     catch (e: any) { return { supported: true, current, currentFull, branch, behind: 0, ahead: 0, clean: true, checkedAt: Date.now(), error: "fetch falhou (rede?): " + String(e?.message ?? e).slice(0, 120) }; }
   }
   let behind = 0, ahead = 0, clean = true, latest: UpdateStatus["latest"];

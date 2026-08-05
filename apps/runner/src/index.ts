@@ -352,7 +352,7 @@ try {
   Set-Location $Root
   try { & git config --global --add safe.directory $Root 2>$null } catch {}
   $branch = Git-Out @("rev-parse", "--abbrev-ref", "HEAD")
-  Invoke-Git @("fetch", "--quiet", "origin", $branch)
+  Invoke-Git @("fetch", "--quiet", "--tags", "origin", $branch)
   $desired = Git-Out @("rev-parse", ($Target + "^{commit}"))
   $previous = Git-Out @("rev-parse", "HEAD")
   $depsChanged = Dependency-Manifests-Changed $previous $desired
