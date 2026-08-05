@@ -31,6 +31,45 @@ Two layers, updated independently:
   Live Updates / a self-hosted bundle the app downloads + swaps). More robust offline, more moving
   parts. Start with `server.url`; switch if review or offline demands it.
 
+## Server URL — agnostic (each user enters their own)
+
+The distributed app bakes **no** Hub URL, so a single generic APK/IPA can be shared and each person
+points it at **their own** Hub:
+
+- The bundled entry is a small **launcher** (`mobile/launcher.html`, staged as `www/index.html` by
+  `sync-web.mjs`). On first launch it asks for the Hub URL, normalizes it (mirrors the desktop's
+  `hub-url.js`: missing scheme → `https`, `ws/wss` → `http/https`, strips path/query), saves it to
+  `localStorage`, and navigates the WebView there (the live UI comes from the Hub, OTA). On later
+  launches it auto-connects after a 2 s countdown you can cancel to **trocar servidor** (or reopen
+  with `?setup`).
+- `capacitor.config.ts` sets `server.allowNavigation: ["*"]` + `cleartext: true` so the launcher can
+  reach any host the user enters, including an `http://` Hub on a LAN/Tailnet.
+- A **personal** build can still bake a URL: set `JARVIS_APP_HUB_URL` before building and it becomes
+  `server.url` (skips the launcher). CI leaves it unset → generic.
+- Caveat: at a runtime-navigated remote origin the native `window.jarvis` bridge (push, native
+  context) may be unavailable — the web experience works; those native extras are a device-tested
+  follow-up (they were already staged, below).
+
+## Building & distributing
+
+- **Android (works today):** CI workflow **"Release mobile"** (`.github/workflows/release-mobile.yml`)
+  builds the **sideload-debug APK** (debug-signed → installable via "unknown sources", no release
+  keystore) and uploads it as an artifact / Release asset. Locally: `npm run build:android`.
+- **iOS / Apple — needs a paid account (wired but OFF):** the workflow's `ios` job is fully written
+  but **gated**: it only runs when the repo **variable** `ENABLE_IOS_BUILD=true` AND the signing
+  **secrets** exist. To enable:
+  1. **Enroll in the Apple Developer Program — US$99/year** (individual or organization) at
+     <https://developer.apple.com/programs/>. A *free* Apple ID can build & run on **your own device**
+     from Xcode (7-day profile) but **cannot** sign a shareable IPA or a CI build — distribution needs
+     the paid program.
+  2. In the Apple Developer portal create a **Distribution certificate** (export as `.p12`) and a
+     **provisioning profile** for the app id `chat.jarvis.app`.
+  3. Add repo **secrets**: `APPLE_CERT_P12_BASE64` (base64 of the `.p12`), `APPLE_CERT_PASSWORD`,
+     `APPLE_PROVISIONING_PROFILE_BASE64`, `APPLE_TEAM_ID`; then set repo **variable**
+     `ENABLE_IOS_BUILD=true`. The `ios` job then archives on a macOS runner (export-to-IPA options are
+     the operator's final step).
+  - No paid account yet → leave it off; **Android covers testing** in the meantime.
+
 ## The three capabilities (all requested; staged, each device-tested)
 
 Wired into the web client behind a **feature-detected bridge**: it checks for the Capacitor runtime

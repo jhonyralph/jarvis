@@ -357,6 +357,15 @@ Environment variables provide bootstrap/default values — no secrets belong in
 the repo. Owner-editable execution settings are additionally persisted in
 `~/.jarvis/execution-config.json` on the Hub as described below.
 
+> **Nothing personal ships in this repo or in the installers.** The tracked
+> `.env.example` is a generic template; your real values (URLs, API keys, tokens)
+> go only in `~/.jarvis/hub.env` / `~/.jarvis/runner.env`, which are **gitignored**.
+> The desktop/runner installers take your Hub URL/token as an **argument or env
+> var** and bake nothing. The **mobile app is server-agnostic** — a single generic
+> APK/IPA asks each user for their **own** Hub URL on first launch (see
+> [docs/mobile.md](docs/mobile.md#server-url--agnostic-each-user-enters-their-own)).
+> So every user configures their own; this repo is safe to keep public.
+
 | Var | Default | What |
 |---|---|---|
 | `JARVIS_PORT` | `4577` | UI + WebSocket port |
@@ -380,6 +389,8 @@ the repo. Owner-editable execution settings are additionally persisted in
 | `JARVIS_EXECUTION_DEFAULT_WRITE` | `0` | Default for tasks that omit `write`; keep disabled unless isolated writer behavior is intentional |
 | `JARVIS_EXECUTION_WORKTREE_ROOT` | `~/.jarvis/worktrees` | Validated root used for isolated writer worktrees |
 | `JARVIS_PUBLIC_URL` | — | Base URL used in invite links |
+| `JARVIS_APP_HUB_URL` | — | **Desktop/mobile shells only.** The Hub URL the app loads. Leave **unset** for a generic build (desktop reads it at runtime; the mobile app asks in-app). Set it only to bake a personal build |
+| `JARVIS_BG_JOBS` | `on` | Durable background jobs + session auto-continue (the `` ```jarvis-run `` steering + runner). Set `off` to disable the steering/feature |
 | `JARVIS_REQUIRE_TLS` / `JARVIS_TRUST_PROXY` | off | Set both when behind a TLS proxy |
 | `JARVIS_AUDIT_MAX_MB` | `5` | Audit-log rotation cap. At the size the current `audit.log` becomes `audit.log.1` (one generation kept) and a fresh log starts |
 | `JARVIS_HUB` / `JARVIS_TOKEN` / `JARVIS_LABEL` | — | Runner: where to connect, and as whom |
