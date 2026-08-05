@@ -124,6 +124,28 @@ export function planJobContinuation(job: BackgroundJob, opts?: { maxDepth?: numb
   return { act: true, reason: "ok", text, nextDepth: job.autoContinueDepth + 1 };
 }
 
+/**
+ * Extract background-job requests the agent emitted IN-BAND in its reply. The agent asks for a durable
+ * job by writing a fenced block tagged `jarvis-run` (taught via the turn's system prompt); the Hub —
+ * which already owns the session/cwd/runner context — parses the FINISHED reply and launches the job.
+ * No MCP, no token, no per-turn config: the Hub sees the output and has all the context it needs.
+ *
+ * Tolerant of the wrapping models produce (leading spaces on the fence, CRLF, an optional language
+ * hint after the tag). Trims each command; caps how many a single turn may request (anti-spam).
+ */
+export function parseBackgroundRunDirectives(text: string, opts?: { max?: number }): string[] {
+  if (!text) return [];
+  const max = Math.max(1, opts?.max ?? 3);
+  const re = /^[ \t]*```[ \t]*jarvis-run\b[^\n]*\r?\n([\s\S]*?)^[ \t]*```/gim;
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) && out.length < max) {
+    const cmd = m[1].replace(/\s+$/, "").trim();
+    if (cmd) out.push(cmd);
+  }
+  return out;
+}
+
 const JARVIS_HOME = process.env.JARVIS_HOME || homedir();
 let SEQ = 0; // process-local uniquifier for generated ids (Date-independent, safe for tests)
 

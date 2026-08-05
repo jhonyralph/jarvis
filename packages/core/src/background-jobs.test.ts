@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BackgroundJobStore, isTerminalJobStatus, planJobContinuation, type BackgroundJob } from "./background-jobs.js";
+import { BackgroundJobStore, isTerminalJobStatus, planJobContinuation, parseBackgroundRunDirectives, type BackgroundJob } from "./background-jobs.js";
 
 function job(over: Partial<BackgroundJob> = {}): BackgroundJob {
   return { jobId: "j1", originSessionId: "s1", runnerId: "local", command: "npm run typecheck", cwd: "/w", status: "succeeded", createdAt: 1, updatedAt: 2, autoContinueDepth: 0, ...over };
@@ -155,6 +155,29 @@ test("planJobContinuation: failed job surfaces exit code, output tail is bounded
   assert.ok(bounded.text!.length < 6000, "prompt stays bounded");
   assert.match(bounded.text!, /TAIL_MARKER/);
   assert.match(bounded.text!, /início cortado/);
+});
+
+test("parseBackgroundRunDirectives: extracts fenced jarvis-run commands, tolerant of wrapping", () => {
+  const reply = [
+    "Vou rodar o typecheck em segundo plano.",
+    "```jarvis-run",
+    "npm run typecheck",
+    "```",
+    "e também os testes:",
+    "  ```jarvis-run sh",   // leading spaces + a language hint after the tag
+    "npm test -- --reporter=dot",
+    "  ```",
+  ].join("\n");
+  assert.deepEqual(parseBackgroundRunDirectives(reply), ["npm run typecheck", "npm test -- --reporter=dot"]);
+  // no directive → empty
+  assert.deepEqual(parseBackgroundRunDirectives("apenas texto normal, sem bloco"), []);
+  // a plain code block is NOT a directive
+  assert.deepEqual(parseBackgroundRunDirectives("```\nnpm run typecheck\n```"), []);
+  // multi-line command is preserved
+  assert.deepEqual(parseBackgroundRunDirectives("```jarvis-run\ncd app && npm ci\nnpm run build\n```"), ["cd app && npm ci\nnpm run build"]);
+  // cap applies
+  const many = Array.from({ length: 5 }, () => "```jarvis-run\necho x\n```").join("\n\n");
+  assert.equal(parseBackgroundRunDirectives(many, { max: 2 }).length, 2);
 });
 
 test("a corrupt first line yields an empty store rather than throwing", () => {

@@ -45,7 +45,7 @@ import { runManagedTurn, type ManagedTurnInput, type TurnCtx } from "./turn.js";
 import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
 import { buildCouncilRoutePrompt, councilRouteFallback, parseCouncilRouteDecision, type CouncilRouteDecision } from "./councilRoute.js";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
-import { BackgroundJobStore, planJobContinuation, type BackgroundJob, jobPaths, spawnDetachedJob, readJobPid, readJobCompletion } from "@jarvis/core";
+import { BackgroundJobStore, planJobContinuation, parseBackgroundRunDirectives, DEFAULT_MAX_AUTO_CONTINUE_DEPTH, type BackgroundJob, jobPaths, spawnDetachedJob, readJobPid, readJobCompletion } from "@jarvis/core";
 import { PersonalAssistantService } from "./personalAssistant.js";
 import { createBuiltInPersonalSources, createPersonalSourceFactory } from "./personalSources.js";
 import { createPersonalProactiveScheduler } from "./personalProactiveIntegration.js";
@@ -2959,18 +2959,28 @@ function reconcileBackgroundJobs(): void {
   }
 }
 const HUB_JOB_DIR = join(JARVIS_DIR, "hub");
+const JOB_CHAIN_WINDOW_MS = 15 * 60_000;
 /** Start a Hub-owned detached background job for a LOCAL session and record it durably. The worker
- *  survives this turn (and the Hub); pollBackgroundJobs picks up its completion. */
-function startLocalBackgroundJob(originSessionId: string, command: string, cwd: string, autoContinueDepth = 0): BackgroundJob {
-  const job = backgroundJobs.create({ originSessionId, command, cwd, runnerId: LOCAL_ID, autoContinueDepth });
+ *  survives this turn (and the Hub); pollBackgroundJobs picks up its completion. Anti-loop: refuse if
+ *  this session already spawned MAX jobs in the recent window (a runaway background→continue→background
+ *  chain), so the depth carried into planJobContinuation stays bounded. */
+function startLocalBackgroundJob(originSessionId: string, command: string, cwd: string): BackgroundJob | undefined {
+  const now = Date.now();
+  const depth = backgroundJobs.list().filter((j) => j.originSessionId === originSessionId && now - j.createdAt < JOB_CHAIN_WINDOW_MS).length;
+  if (depth >= DEFAULT_MAX_AUTO_CONTINUE_DEPTH) {
+    broadcastOn(LOCAL_ID, originSessionId, { t: "notice", message: `Limite de tarefas em segundo plano nesta sessão atingido (${DEFAULT_MAX_AUTO_CONTINUE_DEPTH}); rode manualmente.` });
+    return undefined;
+  }
+  const job = backgroundJobs.create({ originSessionId, command, cwd, runnerId: LOCAL_ID, autoContinueDepth: depth });
   try {
     spawnDetachedJob(command, cwd, jobPaths(HUB_JOB_DIR, job.jobId));
     backgroundJobs.setStatus(job.jobId, "running");
+    broadcastOn(LOCAL_ID, originSessionId, { t: "notice", message: `Tarefa em segundo plano iniciada: \`${command.slice(0, 80)}\`. Aviso e continuo quando terminar.` });
   } catch (error) {
     backgroundJobs.setStatus(job.jobId, "failed", { exitCode: -1, resultSummary: `falha ao iniciar o job: ${String((error as Error)?.message || error)}` });
     reconcileBackgroundJobs();
   }
-  return backgroundJobs.get(job.jobId)!;
+  return backgroundJobs.get(job.jobId);
 }
 /** Poll local running jobs: adopt the worker's real pid, and on completion record the terminal state
  *  (which reconcileBackgroundJobs then auto-continues). Runs on a short timer; crash-safe because the
@@ -3457,6 +3467,11 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     // recoverable trace of them to disk once done — verified: Task's toolUseResult.outputFile is
     // never populated). The buffered stream events ARE that trace; hand them back so the caller can
     // persist them onto the assistant message — otherwise they'd vanish the moment the turn ends.
+    // In-band background jobs: the agent requests a durable long task via a ```jarvis-run fenced block.
+    // The Hub owns this session/cwd, so it launches the job here; pollBackgroundJobs + reconcile then
+    // auto-continue THIS session when it finishes. Skipped for managed/subagent turns (isolated). Best-
+    // effort — a bad directive must never fail an otherwise-completed turn.
+    if (!opts.managed) { try { for (const command of parseBackgroundRunDirectives(reply.text || "")) startLocalBackgroundJob(sid, command, cwd); } catch { /* never break a completed turn */ } }
     return { ...reply, activity: buf.slice() };
   } catch (e) {
     // A user-initiated cancel is not a failure: tell the UI it stopped, and don't notify an error.
