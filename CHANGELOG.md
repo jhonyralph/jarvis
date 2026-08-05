@@ -1,3 +1,15 @@
+# [0.9.0](https://github.com/jhonyralph/jarvis/compare/v0.8.0...v0.9.0) (2026-08-05)
+
+
+### Bug Fixes
+
+* **update:** fetch com --tags no updater (rótulos de versão limpos, sem "vX +N") ([5500973](https://github.com/jhonyralph/jarvis/commit/55009734e6a88bad3aea15b364bb05d380714a73))
+
+
+### Features
+
+* **desktop:** centro de controle na bandeja (tray) para Hub e Runner ([6f3fb90](https://github.com/jhonyralph/jarvis/commit/6f3fb9025cb9fecb21e2f346e1205b5a284c4338))
+
 # [0.8.0](https://github.com/jhonyralph/jarvis/compare/v0.7.1...v0.8.0) (2026-08-05)
 
 
