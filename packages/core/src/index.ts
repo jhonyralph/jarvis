@@ -22,6 +22,7 @@ export * from "./turn.js";
 export * from "./attachments.js";
 export * from "./usage-ledger.js";
 export * from "./execution-store.js";
+export * from "./background-jobs.js";
 export * from "./codex-executions.js";
 export * from "./execution-tracker.js";
 export * from "./execution-adapters.js";

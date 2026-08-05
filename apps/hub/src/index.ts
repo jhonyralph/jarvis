@@ -45,6 +45,7 @@ import { runManagedTurn, type ManagedTurnInput, type TurnCtx } from "./turn.js";
 import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
 import { buildCouncilRoutePrompt, councilRouteFallback, parseCouncilRouteDecision, type CouncilRouteDecision } from "./councilRoute.js";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
+import { BackgroundJobStore, planJobContinuation, type BackgroundJob } from "@jarvis/core";
 import { PersonalAssistantService } from "./personalAssistant.js";
 import { createBuiltInPersonalSources, createPersonalSourceFactory } from "./personalSources.js";
 import { createPersonalProactiveScheduler } from "./personalProactiveIntegration.js";
@@ -265,6 +266,9 @@ const executionCfg: ExecutionRuntimeConfig = (() => {
 })();
 function saveExecutionCfg(): void { try { writeJsonAtomic(EXECUTION_CFG_FILE, executionCfg, { pretty: true }); } catch { /* ignore */ } }
 const localExecutionStore = new ExecutionStore({ root: LOCAL_EXECUTION_DIR, maxEventsPerRoot: executionCfg.maxEvents });
+// Durable store of Hub-owned background jobs (long tasks that outlive the one-shot agent turn and
+// auto-continue the session when they finish). Same dir as sessions.json (~/.jarvis/hub).
+const backgroundJobs = new BackgroundJobStore({ dir: join(JARVIS_DIR, "hub") });
 const compactedExecutions = localExecutionStore.compactBefore(Date.now() - executionCfg.retentionDays * 86_400_000);
 if (compactedExecutions.roots) console.log(`[hub] retenção de trabalhos: ${compactedExecutions.roots} diário(s) compactado(s), ${compactedExecutions.droppedEvents} evento(s) detalhado(s) removido(s)`);
 for (const snapshot of localExecutionStore.rootsForSession()) for (const node of snapshot.nodes) {
@@ -2924,6 +2928,35 @@ function enqueueChatTurn(runnerId: string, sid: string, item: QueueItem): void {
 }
 function flushAllQueues(): void {
   for (const [key, items] of queues) if (items.length) { const scope = splitScopedSessionKey(key); void maybeFlushQueue(scope.runnerId, scope.sessionId, false); }
+}
+
+/** Inject a background job's result as an autonomous continuation turn on its ORIGIN session. Goes
+ *  through the queue (not a raw runOwnedManagedTurn) so it inherits the concurrency lease, ownership
+ *  resolution and native --resume for free, and works for both local and remote-runner sessions. The
+ *  caller marks the job `continued` FIRST so a crash between mark and enqueue can't double-fire. */
+function injectJobContinuation(job: BackgroundJob, text: string): void {
+  const runnerId = job.runnerId || LOCAL_ID;
+  const sid = job.originSessionId;
+  if (!store.get(sid) && runnerId === LOCAL_ID) return; // origin session no longer exists locally — nothing to continue
+  const owner = captureSessionOwnerGeneration(runnerId, sid);
+  const actor: ContextActor = { userId: owner.principalId || "local", deviceId: "hub", source: "system" };
+  enqueueChatTurn(runnerId, sid, { text, atts: [], actor, msgId: `job:${job.jobId}` });
+  void maybeFlushQueue(runnerId, sid, false);
+}
+
+/** Fire the auto-continuation for every terminal job that hasn't been continued yet. Called from the
+ *  job-completion path (primary) and on a timer + at boot (safety net for jobs that finished while the
+ *  Hub was down, or whose session was busy). Idempotent: `markContinued` is durable, so a job is only
+ *  ever continued once even across restarts. */
+function reconcileBackgroundJobs(): void {
+  for (const job of backgroundJobs.pendingContinuation()) {
+    const plan = planJobContinuation(job);
+    // Whatever the decision, close the job out (markContinued) so it stops being pending; only inject
+    // when the plan says to. A depth-capped job gets a heads-up instead of a silent stop.
+    backgroundJobs.markContinued(job.jobId);
+    if (plan.act && plan.text) injectJobContinuation(job, plan.text);
+    else if (!plan.act && job.autoContinueDepth > 0) broadcastOn(job.runnerId || LOCAL_ID, job.originSessionId, { t: "notice", message: `Auto-continuação do job de background parada: ${plan.reason}.` });
+  }
 }
 function flushQueuesForRunner(runnerId: string): void {
   for (const [key, items] of queues) {
@@ -5934,6 +5967,10 @@ setInterval(() => void refreshUpdate(true), 6 * 3600_000); // then every 6h
 try { const purged = purgeProbeJunk(); if (purged) console.log(`[hub] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
 try { const s = purgeScratch(); if (s) console.log(`[hub] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
 try { loadQueues(); loadPendingInboundTurns(); recoverPendingInboundTurns(); const n = [...queues.values()].reduce((a, q) => a + q.length, 0); if (n) { console.log(`[hub] fila restaurada: ${n} mensagem(ns) (cache com TTL)`); setTimeout(flushAllQueues, 1500).unref?.(); } } catch { /* ignore */ }
+// Background-job auto-continuation: fire any continuation that a restart/busy-session left pending,
+// then poll as a safety net (the primary trigger is the job-completion path, added with the spawner).
+try { reconcileBackgroundJobs(); } catch { /* ignore */ }
+setInterval(() => { try { reconcileBackgroundJobs(); } catch { /* ignore */ } }, 30_000).unref?.();
 // A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
 // — fix them all proactively at boot, not just when the user happens to reopen one.
 try { let n = 0; for (const meta of store.list()) { const s = store.ensure(meta.id); const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) n++; } if (n) console.log(`[hub] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`); } catch { /* ignore */ }
