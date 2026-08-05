@@ -41,6 +41,9 @@ export interface SessionMeta {
   updatedAt: number;
   lastMessage: string;
   count: number;
+  archived?: boolean;
+  /** Sum of every message's recorded usage.costUsd — lets the client offer a "sort by cost" view. 0 when nothing was billed/estimated. */
+  cost: number;
 }
 
 interface SessionData {
@@ -52,6 +55,8 @@ interface SessionData {
   updatedAt: number;
   messages: StoredMessage[];
   hidden?: boolean;
+  /** User-archived: still listed (so it can be found), but filtered out of the default "Active" view. */
+  archived?: boolean;
   rootExecutionId?: string;
   executionId?: string;
 }
@@ -99,6 +104,7 @@ export class Store {
         updatedAt: s.updatedAt ?? Date.now(),
         messages,
         hidden: s.hidden === true,
+        archived: s.archived === true,
         rootExecutionId: typeof s.rootExecutionId === "string" ? s.rootExecutionId : undefined,
         executionId: typeof s.executionId === "string" ? s.executionId : undefined,
       };
@@ -170,6 +176,16 @@ export class Store {
   }
 
   isHidden(id: string): boolean { return this.data[id]?.hidden === true; }
+
+  /** Archive / unarchive a session. Archived sessions stay listed (with the flag) so they can still be
+   *  found, but the client filters them out of the default "Active" view. */
+  setArchived(id: string, archived: boolean): boolean {
+    const s = this.data[id];
+    if (!s) return false;
+    s.archived = archived === true;
+    this.flush();
+    return true;
+  }
 
   /** Clear a session's messages and (re)bind its agent/cwd — used by the voice
    *  "nova sessão" flow to start the fixed voice session fresh. */
@@ -260,6 +276,8 @@ export class Store {
         updatedAt: s.updatedAt,
         lastMessage: s.messages.at(-1)?.text.slice(0, 60) ?? "",
         count: s.messages.length,
+        archived: s.archived === true,
+        cost: s.messages.reduce((sum, m) => sum + (m.usage?.costUsd ?? 0), 0),
       }));
   }
 

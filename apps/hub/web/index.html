@@ -825,6 +825,23 @@
     #recents .rsum:hover { opacity:1; background:#ffffff14; }
     #recents .rdel { flex:none; background:none; border:0; cursor:pointer; font-size:13px; padding:2px 5px; opacity:.4; border-radius:6px; line-height:1; }
     #recents .rdel:hover { opacity:1; background:#ef444422; }
+    #recents .rarch { flex:none; background:none; border:0; cursor:pointer; font-size:13px; padding:2px 5px; opacity:.4; border-radius:6px; line-height:1; }
+    #recents .rarch:hover { opacity:1; background:#ffffff14; }
+    /* cabeçalho de grupo (Agrupar por projeto/máquina/agente/data) + botão "+" por grupo */
+    #recents .rgroup { display:flex; align-items:center; gap:6px; padding:9px 6px 3px; font-size:10.5px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--mut); position:sticky; top:0; background:var(--side); z-index:1; }
+    #recents .rgroup .rglabel { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #recents .rgroup .rgcnt { flex:none; font-weight:600; opacity:.7; }
+    #recents .rgroup .rgnew { flex:none; background:none; border:1px solid var(--line); color:var(--mut); cursor:pointer; font-size:13px; line-height:1; border-radius:6px; padding:1px 6px; }
+    #recents .rgroup .rgnew:hover { color:#fff; border-color:#4f83ff88; background:#2563eb1f; }
+    #recents .item.archived { opacity:.62; }
+    /* barra de opções da lista (agrupar / ordenar / filtrar) */
+    #recToolbar { display:flex; justify-content:flex-end; padding:0 2px 4px; }
+    #recOptsBtn { background:none; border:1px solid var(--line); color:var(--mut); cursor:pointer; font-size:11.5px; border-radius:7px; padding:3px 8px; display:inline-flex; align-items:center; gap:5px; }
+    #recOptsBtn:hover { color:#fff; border-color:#4f83ff66; }
+    #recOptsBtn #recOptsLabel { font-weight:600; }
+    .pop .optseg { display:flex; gap:4px; padding:2px 2px 8px; flex-wrap:wrap; }
+    .pop .optseg button { flex:1 1 auto; background:#ffffff0a; border:1px solid var(--line); color:var(--mut); cursor:pointer; font-size:12px; border-radius:7px; padding:5px 8px; white-space:nowrap; }
+    .pop .optseg button.on { color:#fff; border-color:#4f83ff88; background:#2563eb26; }
     #side .rsec { display:flex; align-items:center; justify-content:space-between; }
     .busy { opacity:.55 !important; cursor:progress !important; pointer-events:none; }
     /* auth gate (device pairing) */
@@ -1153,6 +1170,7 @@
         <button type="button" class="ltab" id="tabFiles">📄 Arquivos<span class="tcnt" id="filesCnt"></span></button>
       </div>
       <div class="pane" id="recPane">
+        <div id="recToolbar"><button type="button" id="recOptsBtn" title="Agrupar, ordenar e filtrar as conversas">⚙ <span id="recOptsLabel">Projeto</span></button></div>
         <div id="recents"></div>
         <button id="moreBtn" class="ghost hidden" data-i18n="showMore">Mostrar mais</button>
       </div>

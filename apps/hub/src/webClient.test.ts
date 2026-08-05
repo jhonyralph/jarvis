@@ -29,6 +29,7 @@ interface ClientHandle {
   socket(): FakeSocket;
   store: Record<string, string>;
   openSession(id: string, runnerId?: string): void;
+  organizeSessions(list: any[], opts: any): { groups: any[]; total: number; shownCount: number; groupBy: string; sortBy: string; status: string };
 }
 
 /** One permissive fake element: every property access the client makes resolves to something inert. */
@@ -116,6 +117,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   get sessions(){ return sessions; },
   get recentsRows(){ return E.recents.children.map(c=>String(c.textContent||'')); },
   openSession: (id,rid)=>openSession(id,rid),
+  organizeSessions: (list,opts)=>organizeSessions(list,opts),
 };`;
 
   const factory = new Function(
@@ -253,4 +255,47 @@ test("a machine missing from the unified view is named, not silently dropped", a
     { runnerId: "notebook-1", label: "Notebook", online: true, contributed: true },
   ] });
   assert.equal(client.recentsRows.find((r) => r.includes("⚠")), undefined, "visão completa não mostra aviso");
+});
+
+// ---- Fase 1: organização da lista (agrupar / ordenar / filtrar / arquivar) ----
+const ORG = [
+  { id: "a", title: "Zebra", agent: "claude-code", cwd: "/work/api", runnerId: "local", machine: "Desktop", updatedAt: 300, cost: 0.10 },
+  { id: "b", title: "Alpha", agent: "codex", cwd: "/work/api", runnerId: "local", machine: "Desktop", updatedAt: 100, cost: 0.50 },
+  { id: "c", title: "Meio", agent: "claude-code", cwd: "/work/web", runnerId: "notebook-1", machine: "Notebook", updatedAt: 200, cost: 0.01, archived: true },
+];
+
+test("organizeSessions groups by project and keeps the recency order inside a group", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  const org = client.organizeSessions(ORG, { groupBy: "project", sortBy: "recency", status: "all" });
+  // two projects (api, web); the last path segment is the label
+  assert.deepEqual(org.groups.map((g) => g.label), ["api", "web"]);
+  const api = org.groups.find((g) => g.label === "api");
+  assert.deepEqual(api.sessions.map((s: any) => s.id), ["a", "b"], "recency: 300 antes de 100 dentro do grupo");
+  assert.equal(api.cwd, "/work/api"); assert.equal(api.runnerId, "local");
+});
+
+test("organizeSessions: status filter hides archived by default and can show only archived", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  assert.deepEqual(client.organizeSessions(ORG, { status: "active" }).groups.flatMap((g: any) => g.sessions.map((s: any) => s.id)).sort(), ["a", "b"], "active esconde arquivada 'c'");
+  assert.deepEqual(client.organizeSessions(ORG, { status: "archived" }).groups.flatMap((g: any) => g.sessions.map((s: any) => s.id)), ["c"], "archived mostra só 'c'");
+  assert.equal(client.organizeSessions(ORG, { status: "all" }).total, 3);
+});
+
+test("organizeSessions: alpha and cost sorts reorder the flat set", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  const alpha = client.organizeSessions(ORG, { groupBy: "none", sortBy: "alpha", status: "all" });
+  assert.deepEqual(alpha.groups[0].sessions.map((s: any) => s.id), ["b", "c", "a"], "Alpha < Meio < Zebra");
+  const cost = client.organizeSessions(ORG, { groupBy: "none", sortBy: "cost", status: "all" });
+  assert.deepEqual(cost.groups[0].sessions.map((s: any) => s.id), ["b", "a", "c"], "0.50 > 0.10 > 0.01");
+});
+
+test("organizeSessions: limit caps the visible set BEFORE grouping (pagination) but total stays full", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  const org = client.organizeSessions(ORG, { groupBy: "project", sortBy: "recency", status: "all", limit: 1 });
+  assert.equal(org.shownCount, 1); assert.equal(org.total, 3);
+  assert.deepEqual(org.groups.flatMap((g: any) => g.sessions.map((s: any) => s.id)), ["a"], "só a mais recente entra no recorte");
 });

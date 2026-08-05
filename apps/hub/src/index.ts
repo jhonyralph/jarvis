@@ -4775,13 +4775,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const explicitListRunner = msg.t === "listdir" && typeof msg.runnerId === "string" ? msg.runnerId : null;
       if (explicitListRunner && !canUseRunner(ws, explicitListRunner)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
       const ar = explicitListRunner || activeRunner(ws);
-      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete" || msg.t === "dropLast" || msg.t === "getWorktreePreview")) {
+      if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete" || msg.t === "dropLast" || msg.t === "archive" || msg.t === "getWorktreePreview")) {
         const targeted = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((id: unknown): id is string => typeof id === "string") : (typeof msg.sessionId === "string" ? [msg.sessionId] : []);
         if (targeted.some((sid: string) => isInternalExecutionSession(ar, sid))) { send(ws, { t: "error", message: "sessão interna só pode ser acessada pelo painel Trabalhos" }); return; }
         const rc = runners.get(ar);
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
         if (msg.t === "list") { sendToRunner(rc, { t: "list" }); return; }
         if (msg.t === "dropLast" && typeof msg.sessionId === "string") { activityBuf.delete(scopedSessionKey(ar, msg.sessionId)); sendToRunner(rc, { t: "dropLast", sessionId: msg.sessionId }); return; }
+        if (msg.t === "archive" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) { sendToRunner(rc, { t: "archive", sessionId: msg.sessionId, sessionIds: msg.sessionIds, archived: msg.archived !== false }); return; }
         if (msg.t === "delete" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) {
           const requestedIds = Array.isArray(msg.sessionIds)
             ? msg.sessionIds.filter((id: unknown): id is string => typeof id === "string")
@@ -4896,6 +4897,18 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const okCount = deletedIds.length;
       auth.audit("delete", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${okCount}/${ids.length} conversa(s)` });
       send(ws, { t: "deleted", sessionId: msg.sessionId, ids: deletedIds, ok: okCount === ids.length, okCount });
+      pushSessions();
+      return;
+    }
+    // Archive / unarchive local managed sessions (non-destructive; the session stays listed but drops out
+    // of the default "Active" view). `archived:false` unarchives. Remote/native sessions are skipped.
+    if (msg.t === "archive" && (typeof msg.sessionId === "string" || Array.isArray(msg.sessionIds))) {
+      const ids: string[] = Array.isArray(msg.sessionIds) ? msg.sessionIds.filter((x: any) => typeof x === "string") : [msg.sessionId];
+      const archived = msg.archived !== false;
+      let okCount = 0;
+      for (const sid of ids) { if (isNativeId(sid) || store.isHidden(sid)) continue; if (store.setArchived(sid, archived)) okCount++; }
+      auth.audit(archived ? "archive" : "unarchive", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${okCount}/${ids.length} conversa(s)` });
+      send(ws, { t: "archived", ids, archived, ok: okCount === ids.length, okCount });
       pushSessions();
       return;
     }

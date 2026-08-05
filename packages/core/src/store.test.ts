@@ -148,6 +148,35 @@ test("migrates a legacy sessions.json (inline messages) into per-session JSONL o
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test("setArchived flags a session, survives reload, and shows in list()", () => {
+  const d = dir();
+  try {
+    const s = new Store(DEF, d);
+    s.add("a", { role: "user", text: "oi", ts: 1 });
+    assert.equal(s.list().find((x) => x.id === "a")?.archived, false, "not archived by default");
+    assert.equal(s.setArchived("a", true), true);
+    assert.equal(s.list().find((x) => x.id === "a")?.archived, true, "archived shows in the flag");
+    assert.equal(s.list().some((x) => x.id === "a"), true, "archived sessions stay LISTED (findable)");
+    const reopened = new Store(DEF, d);
+    assert.equal(reopened.get("a")?.archived, true, "archived survives reload");
+    assert.equal(reopened.setArchived("a", false), true);
+    assert.equal(reopened.get("a")?.archived, false);
+    assert.equal(s.setArchived("ghost", true), false, "unknown id → false");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("list() reports a session's cumulative cost from message usage (for the cost sort)", () => {
+  const d = dir();
+  try {
+    const s = new Store(DEF, d);
+    s.add("c", { role: "user", text: "oi", ts: 1 });
+    assert.equal(s.list().find((x) => x.id === "c")?.cost, 0, "no usage yet → cost 0");
+    s.add("c", { role: "assistant", text: "r1", ts: 2, usage: { costUsd: 0.02 } });
+    s.add("c", { role: "assistant", text: "r2", ts: 3, usage: { costUsd: 0.03 } });
+    assert.ok(Math.abs((s.list().find((x) => x.id === "c")?.cost ?? 0) - 0.05) < 1e-9, "sums every message's costUsd");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 test("deleting a session removes its history file too", () => {
   const d = dir();
   try {

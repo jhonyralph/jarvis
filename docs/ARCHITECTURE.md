@@ -90,6 +90,28 @@ chat session. The wake/voice session can additionally receive the same audio
 when it is controlling another conversation. There is no separate public
 `listen` protocol today.
 
+## Session list (Histórico)
+
+The client sidebar organizes conversations instead of showing one flat feed. A
+per-client toolbar (persisted in `localStorage['jarvis_recents_prefs']`) drives a
+single **pure** function (`organizeSessions` in `app.js`, covered by
+`apps/hub/src/webClient.test.ts`):
+
+- **Group by** — Project (last path segment of the session `cwd`), Machine, Agent,
+  Date bucket, or None. Each group header shows a count and, for Project/Machine
+  groups, a **＋** that opens a new session already scoped to that folder/machine.
+- **Sort by** — Recency (default), Alphabetical, or Cost. Cost comes from a new
+  `cost` field on the session metadata (`Store.list()` sums each message's
+  `usage.costUsd`), so the sort is real, not cosmetic.
+- **Show** — Active (default), Archived, or All. Archiving is non-destructive:
+  `Store.setArchived(id, flag)` keeps the session listed (so it stays findable)
+  but the "Active" view filters it out. The flag persists in `sessions.json` and
+  is honored on both the Hub and remote Runners — the `archive` op forwards to the
+  owning Runner exactly like `delete`/`dropLast`.
+
+Grouping/sorting/filtering are view-only; the underlying `sessions` array (and its
+Hub-authored order) is never mutated, so machine-routing invariants are unaffected.
+
 ## Data & security model
 
 - **Storage:** crash-safe (atomic) JSON snapshots + local files on each machine

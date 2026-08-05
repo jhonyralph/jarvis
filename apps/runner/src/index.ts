@@ -1307,6 +1307,13 @@ function connect(): void {
         }
         return;
       }
+      if (m.t === "archive" && (typeof m.sessionId === "string" || Array.isArray(m.sessionIds))) {
+        const ids: string[] = Array.isArray(m.sessionIds) ? m.sessionIds.filter((x: unknown): x is string => typeof x === "string") : (typeof m.sessionId === "string" ? [m.sessionId] : []);
+        const archived = m.archived !== false;
+        for (const sid of ids) { if (isNativeId(sid) || store.isHidden(sid)) continue; store.setArchived(sid, archived); }
+        pushSessions();
+        return;
+      }
       if (m.t === "update") {
         if (updateInProgress) { send({ t: "update_done", requestId: m.requestId, ok: false, log: "outra atualização já está em andamento" }); return; }
         updateInProgress = true;

@@ -27,7 +27,7 @@
       'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileFmt','fileCopy','fileFull','fileClose','annoSend','annoCount','annoBar','annoSelLbl','annoAdd','annoCancelSel','fileResize','fileResizeV','fileLayoutSw','fileTabs','tabChatBtn','tabFileBtn','nativeChip',
       'designBtn','designPanel','designUrl','designDetect','designOpen','designGrab','designClose','designHost','designCompose','designSel','designCount','designClear','designSelList','designNote','designCoverage','designSend','designCancel','designStatus',
       'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
-      'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status','optsBtn'].reduce((o,k)=>(o[k]=$(k),o),{});
+      'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status','optsBtn','recOptsBtn','recOptsLabel'].reduce((o,k)=>(o[k]=$(k),o),{});
     const MIC_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M19 11a7 7 0 0 1-14 0"></path><path d="M12 18v3"></path><path d="M8 21h8"></path></svg>';
     const SEND_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>';
     if(E.mic)E.mic.innerHTML=MIC_ICON;
@@ -1726,18 +1726,38 @@
 
     // Ao enviar, a sessão vira a MAIS RECENTE → sobe pro topo do menu na hora (o servidor confirma depois).
     let lastBump=null;
+    // ---------- organização da lista de conversas (agrupar / ordenar / filtrar) ----------
+    // Prefs persistidas: como o Histórico é agrupado, ordenado e filtrado. Espelha o padrão dos
+    // três prints do usuário (lista tipo Claude Code, com projetos como cabeçalhos).
+    const REC_GROUPS=['project','machine','agent','date','none'], REC_SORTS=['recency','alpha','cost'], REC_STATUS=['active','archived','all'];
+    const recGroupLabels={project:'Projeto',machine:'Máquina',agent:'Agente',date:'Data',none:'Nenhum'};
+    const recSortLabels={recency:'Recentes',alpha:'Alfabética',cost:'Custo'};
+    const recStatusLabels={active:'Ativas',archived:'Arquivadas',all:'Todas'};
+    let recPrefs=Object.assign({groupBy:'project',sortBy:'recency',status:'active'},(()=>{try{return JSON.parse(localStorage.getItem('jarvis_recents_prefs')||'{}');}catch(e){return{};}})());
+    if(!REC_GROUPS.includes(recPrefs.groupBy))recPrefs.groupBy='project';
+    if(!REC_SORTS.includes(recPrefs.sortBy))recPrefs.sortBy='recency';
+    if(!REC_STATUS.includes(recPrefs.status))recPrefs.status='active';
+    function saveRecPrefs(){ try{ localStorage.setItem('jarvis_recents_prefs',JSON.stringify(recPrefs)); }catch(e){} }
+    let recFilteredTotal=0; // total após filtro de status (paginação "Mostrar mais" usa isto, não sessions.length)
+    // Último segmento do caminho de trabalho — o "nome do projeto" que vira cabeçalho de grupo.
+    function projectLabelOf(cwd){ if(!cwd)return 'Sem pasta'; const parts=String(cwd).split(/[\\/]+/).filter(Boolean); return parts.length?parts[parts.length-1]:String(cwd); }
+    function dateBucketOf(ts,now){ if(!ts)return 'Sem data'; const day=86400000, a=new Date(now), b=new Date(ts); const midnight=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime(); const diff=midnight(a)-midnight(b); if(diff<=0)return 'Hoje'; if(diff<=day)return 'Ontem'; if(diff<7*day)return 'Últimos 7 dias'; if(diff<30*day)return 'Últimos 30 dias'; return 'Mais antigas'; }
+    function recGroupKey(s,groupBy,now){ if(groupBy==='machine')return 'm:'+(s.machine||s.runnerId||'local'); if(groupBy==='agent')return 'a:'+(s.agent||'—'); if(groupBy==='date')return 'd:'+dateBucketOf(s.updatedAt||0,now); if(groupBy==='none')return ''; return 'p:'+projectLabelOf(s.cwd); }
+    function recGroupLabel(s,groupBy,now){ if(groupBy==='machine')return s.machine||'Local'; if(groupBy==='agent')return s.agent||'—'; if(groupBy==='date')return dateBucketOf(s.updatedAt||0,now); if(groupBy==='none')return ''; return projectLabelOf(s.cwd); }
+    // PURA e testável: aplica filtro de status → ordenação → recorte (limit) → agrupamento,
+    // preservando a ordem ordenada dentro de cada grupo e a ordem de aparição entre grupos.
+    function organizeSessions(list,opts){ opts=opts||{}; const groupBy=REC_GROUPS.includes(opts.groupBy)?opts.groupBy:'project', sortBy=REC_SORTS.includes(opts.sortBy)?opts.sortBy:'recency', status=REC_STATUS.includes(opts.status)?opts.status:'active'; const now=opts.now||Date.now(), limit=opts.limit==null?Infinity:opts.limit;
+      const filtered=(list||[]).filter(s=> status==='all'?true : status==='archived'?!!s.archived : !s.archived );
+      const rank={recency:(a,b)=>(b.updatedAt||0)-(a.updatedAt||0), alpha:(a,b)=>String(a.title||'').localeCompare(String(b.title||''),undefined,{sensitivity:'base'}), cost:(a,b)=>(b.cost||0)-(a.cost||0)||(b.updatedAt||0)-(a.updatedAt||0)}[sortBy];
+      const sorted=rank?filtered.slice().sort(rank):filtered.slice();
+      const visible=sorted.slice(0,limit); const groups=[]; const idx=new Map();
+      for(const s of visible){ const key=recGroupKey(s,groupBy,now); let g=idx.get(key); if(!g){ g={key,label:recGroupLabel(s,groupBy,now),cwd:s.cwd||'',runnerId:s.runnerId||'local',machine:s.machine||'',sessions:[]}; idx.set(key,g); groups.push(g); } g.sessions.push(s); }
+      return {groups,total:filtered.length,shownCount:visible.length,groupBy,sortBy,status}; }
+
     function bumpSession(sid){ if(!sid)return; const runner=sessionRunner(); lastBump={sid,runner,ts:Date.now()}; const i=sessions.findIndex(s=>s.id===sid&&(currentMachine!=='all'||(s.runnerId||'local')===runner)); if(i>0){ const [s]=sessions.splice(i,1); sessions.unshift(s); renderRecents(); } }
-    function renderRecents(){ E.recents.innerHTML='';
-      const visibleRuns=currentMachine==='all'?sessions.filter(s=>(activeRunsByRunner[s.runnerId||'local']||[]).includes(s.id)).length:activeRuns.length;
-      if(visibleRuns){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+visibleRuns+' rodando agora'; E.recents.appendChild(h); }
-      // Visão unificada incompleta: diz QUAIS máquinas ficaram de fora, em vez de só mostrar menos itens.
-      if(currentMachine==='all'){ const missing=allViewMachines.filter(x=>x&&!x.contributed);
-        if(missing.length){ const w=document.createElement('div'); w.className='runhdr partial';
-          w.textContent='⚠ sem '+missing.map(x=>x.label+(x.online?' (não respondeu)':' (offline)')).join(', ');
-          w.title='A lista abaixo não inclui as sessões dessas máquinas.'; E.recents.appendChild(w); } }
-      secCounts();
-      sessions.slice(0,shown).forEach(s=>{ const runner=s.runnerId||selectedRunner(), run=(activeRunsByRunner[runner]||[]).includes(s.id), un=unread.has(sessionStateKey(s.id,runner))&&!run&&!(s.id===currentSession&&runner===currentSessionRunner);
-      const d=document.createElement('div'); d.className='item'+(s.id===currentSession&&runner===currentSessionRunner?' active':'')+(run?' running':'')+(un?' unread':'');
+    // Monta o item (linha) de UMA conversa — extraído para o render agrupado reaproveitar.
+    function renderRecentRow(s){ const runner=s.runnerId||selectedRunner(), run=(activeRunsByRunner[runner]||[]).includes(s.id), un=unread.has(sessionStateKey(s.id,runner))&&!run&&!(s.id===currentSession&&runner===currentSessionRunner);
+      const d=document.createElement('div'); d.className='item'+(s.id===currentSession&&runner===currentSessionRunner?' active':'')+(run?' running':'')+(un?' unread':'')+(s.archived?' archived':'');
       const nat=isNative(s.id);
       // "nativo" NÃO vai mais na listagem (encurtava o nome da sessão); a marca de nativo continua no tooltip (title) do item.
       const mb=(currentMachine==='all'&&s.machine)?`<span class="rmachine" style="--mh:${machineHue(s.machine)}" title="Máquina: ${esc(s.machine)}">${esc(s.machine)}</span>`:'';
@@ -1746,6 +1766,12 @@
       const sum=document.createElement('button'); sum.type='button'; sum.className='rsum'; sum.title='Resumir e falar (não entra no histórico)';
       const busySum=voiceOp==='summarize'&&voiceOpSid===s.id; sum.textContent=busySum?'⏳':'🔊'; if(busySum){ sum.disabled=true; sum.classList.add('busy'); voiceOpBtn=sum; }
       sum.onclick=(e)=>{ e.stopPropagation(); if(!startVoiceOp('summarize',sum,'⏳',s.id))return; status('speaking',t('stSummarizing')); tx({t:'summarize',sessionId:s.id,speak:true}); }; d.appendChild(sum);
+      // Arquivar / desarquivar (nativas não têm flag no store — sem botão). Otimista NÃO: espera o
+      // servidor reenviar a lista, igual ao delete, pra não "sumir" antes de persistir.
+      if(!nat){ const arch=document.createElement('button'); arch.type='button'; arch.className='rarch'; arch.title=s.archived?'Desarquivar conversa':'Arquivar conversa'; arch.textContent=s.archived?'📤':'📥';
+        arch.onclick=(e)=>{ e.stopPropagation(); arch.textContent='⏳'; arch.disabled=true; tx({t:'archive',sessionId:s.id,archived:!s.archived});
+          setTimeout(()=>{ if(arch.isConnected){ arch.textContent=s.archived?'📤':'📥'; arch.disabled=false; } }, 6000); };
+        d.appendChild(arch); }
       const del=document.createElement('button'); del.type='button'; del.className='rdel'; del.title='Remover conversa'; del.textContent='🗑';
       del.onclick=async(e)=>{ e.stopPropagation(); const ia=(s.agent==='codex')?'codex':'claude';
         const ok=await dialog({title:`Remover "${s.title||'conversa'}"? Apaga no Jarvis e a sessão no ${ia} — não dá pra desfazer.`, okText:'Remover', danger:true});
@@ -1757,14 +1783,47 @@
         tx({t:'delete',sessionId:s.id,alsoNative:true});
         setTimeout(()=>{ if(del.isConnected){ del.textContent='🗑'; del.disabled=false; toast(t('tDelNoResp')); } }, 6000); };
       d.appendChild(del);
-      d.title=`${s.title||'Sessão'}\n— ${s.agent||''}${nat?' · nativo':''}\n${s.cwd||''}`;
+      d.title=`${s.title||'Sessão'}\n— ${s.agent||''}${nat?' · nativo':''}${s.archived?' · arquivada':''}\n${s.cwd||''}`;
       d.onclick=()=>{ openSession(s.id,runner); closeSide(); };
-      E.recents.appendChild(d); });
-      E.moreBtn.classList.toggle('hidden', sessions.length<=shown); scheduleAutoPager(maybeAutoMoreRecents); }
-    function loadMoreRecents(){ if(sessions.length<=shown)return; shown=Math.min(sessions.length,shown+20); renderRecents(); }
-    function maybeAutoMoreRecents(){ if(!E.recPane||E.recPane.classList.contains('hidden')||sessions.length<=shown)return; if(nearPaneBottom(E.recPane)||E.recPane.scrollHeight<=E.recPane.clientHeight+40)loadMoreRecents(); }
+      return d; }
+    // Cabeçalho de grupo (Projeto/Máquina/Agente/Data) com contagem e "+" pra criar sessão ali.
+    function renderGroupHeader(g,groupBy){ const h=document.createElement('div'); h.className='rgroup';
+      const lbl=document.createElement('span'); lbl.className='rglabel'; lbl.textContent=g.label; lbl.title=(groupBy==='project'?(g.cwd||g.label):g.label); h.appendChild(lbl);
+      const cnt=document.createElement('span'); cnt.className='rgcnt'; cnt.textContent=String(g.sessions.length); h.appendChild(cnt);
+      // "+" só faz sentido quando o grupo carrega um destino concreto: projeto (pasta) ou máquina.
+      if(groupBy==='project'||groupBy==='machine'){ const add=document.createElement('button'); add.type='button'; add.className='rgnew'; add.textContent='＋';
+        add.title=groupBy==='project'?('Nova sessão em '+(g.cwd||g.label)):('Nova sessão em '+(g.machine||g.label));
+        add.onclick=(e)=>{ e.stopPropagation(); if(groupBy==='project') startNewSession({target:g.runnerId,cwd:g.cwd}); else startNewSession({target:g.runnerId}); };
+        h.appendChild(add); }
+      return h; }
+    function renderRecents(){ E.recents.innerHTML='';
+      const visibleRuns=currentMachine==='all'?sessions.filter(s=>(activeRunsByRunner[s.runnerId||'local']||[]).includes(s.id)).length:activeRuns.length;
+      if(visibleRuns){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+visibleRuns+' rodando agora'; E.recents.appendChild(h); }
+      // Visão unificada incompleta: diz QUAIS máquinas ficaram de fora, em vez de só mostrar menos itens.
+      if(currentMachine==='all'){ const missing=allViewMachines.filter(x=>x&&!x.contributed);
+        if(missing.length){ const w=document.createElement('div'); w.className='runhdr partial';
+          w.textContent='⚠ sem '+missing.map(x=>x.label+(x.online?' (não respondeu)':' (offline)')).join(', ');
+          w.title='A lista abaixo não inclui as sessões dessas máquinas.'; E.recents.appendChild(w); } }
+      secCounts();
+      if(E.recOptsLabel) E.recOptsLabel.textContent=(recGroupLabels[recPrefs.groupBy]||'—')+(recPrefs.status!=='active'?(' · '+recStatusLabels[recPrefs.status]):'');
+      const org=organizeSessions(sessions,{groupBy:recPrefs.groupBy,sortBy:recPrefs.sortBy,status:recPrefs.status,limit:shown});
+      recFilteredTotal=org.total;
+      if(!org.shownCount){ const empty=document.createElement('div'); empty.className='mut'; empty.style.cssText='padding:14px 8px;font-size:12.5px'; empty.textContent=recPrefs.status==='archived'?'Nenhuma conversa arquivada.':'Nenhuma conversa.'; E.recents.appendChild(empty); }
+      org.groups.forEach(g=>{ if(org.groupBy!=='none') E.recents.appendChild(renderGroupHeader(g,org.groupBy)); g.sessions.forEach(s=>E.recents.appendChild(renderRecentRow(s))); });
+      E.moreBtn.classList.toggle('hidden', org.total<=shown); scheduleAutoPager(maybeAutoMoreRecents); }
+    function loadMoreRecents(){ if(recFilteredTotal<=shown)return; shown=Math.min(recFilteredTotal,shown+20); renderRecents(); }
+    function maybeAutoMoreRecents(){ if(!E.recPane||E.recPane.classList.contains('hidden')||recFilteredTotal<=shown)return; if(nearPaneBottom(E.recPane)||E.recPane.scrollHeight<=E.recPane.clientHeight+40)loadMoreRecents(); }
     E.moreBtn.onclick=loadMoreRecents;
     if(E.recPane)E.recPane.addEventListener('scroll',maybeAutoMoreRecents);
+    // Popover de opções da lista: Agrupar / Ordenar / Status. Cada escolha persiste e re-renderiza.
+    function buildRecOptsPop(p){ p.appendChild(ph('Organizar conversas'));
+      const seg=(title,options,labels,cur,pick)=>{ p.appendChild(ph(title)); const row=document.createElement('div'); row.className='optseg';
+        options.forEach(opt=>{ const b=document.createElement('button'); b.type='button'; b.className='seg'+(opt===cur?' on':''); b.textContent=labels[opt]||opt; b.onclick=()=>{ pick(opt); saveRecPrefs(); shown=Math.max(shown,16); renderRecents(); replaceOpenPop(E.recOptsBtn,buildRecOptsPop); }; row.appendChild(b); });
+        p.appendChild(row); };
+      seg('Agrupar por',REC_GROUPS,recGroupLabels,recPrefs.groupBy,v=>recPrefs.groupBy=v);
+      seg('Ordenar por',REC_SORTS,recSortLabels,recPrefs.sortBy,v=>recPrefs.sortBy=v);
+      seg('Mostrar',REC_STATUS,recStatusLabels,recPrefs.status,v=>recPrefs.status=v); }
+    if(E.recOptsBtn) E.recOptsBtn.onclick=()=>togglePop(E.recOptsBtn,buildRecOptsPop);
 
     // ---------- seletor de máquina (runners) ----------
     function renderMachines(){
@@ -1887,15 +1946,19 @@
       card.appendChild(list);
       const cancel=document.createElement('button'); cancel.className='ghost mpcancel'; cancel.type='button'; cancel.textContent='Cancelar'; cancel.onclick=()=>done(null); card.appendChild(cancel);
       ov.appendChild(card); ov.onclick=(e)=>{ if(e.target===ov) done(null); }; document.body.appendChild(ov); }); }
-    E.newSess.onclick=async()=>{ // cria sessão vazia (agente/pasta ajustáveis pelos pills até a 1ª msg)
-      let target=currentMachine;
-      if(currentMachine==='all'){ const mid=await pickMachine(); if(!mid) return; target=mid; if(mid!==routedMachine){ routedMachine=mid; tx({t:'runner',runnerId:mid}); } }
+    // Cria sessão vazia (agente/pasta ajustáveis pelos pills até a 1ª msg). opts.target fixa a máquina
+    // (pula o picker), opts.cwd fixa a pasta — usados pelo "+" de cada grupo (projeto/máquina) na lista.
+    async function startNewSession(opts){ opts=opts||{};
+      let target=opts.target||currentMachine;
+      if((!opts.target && currentMachine==='all')){ const mid=await pickMachine(); if(!mid) return; target=mid; }
+      if(currentMachine==='all' && target!==routedMachine){ routedMachine=target; tx({t:'runner',runnerId:target}); }
       const pm=machines.find(x=>x.id===target); const avail=(pm&&Array.isArray(pm.agents)&&pm.agents.length)?pm.agents:machineAgents();
-      let agent=cfg.agent||currentAgent||(caps[0]||{}).name; if(!avail.includes(agent)) agent=avail[0]||agent;
-      const cwd=target==='local'?(cfg.lastCwd||''):'';
+      let agent=opts.agent||cfg.agent||currentAgent||(caps[0]||{}).name; if(!avail.includes(agent)) agent=avail[0]||agent;
+      const cwd=opts.cwd!=null?opts.cwd:(target==='local'?(cfg.lastCwd||''):'');
       if(currentSession!=null){ draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; saveDrafts(); stashAttachments(currentSession,currentSessionRunner); }
       pendingNewSession={runnerId:target,agent,cwd,at:Date.now()}; creatingSession=true; currentSession=null; currentSessionRunner=target; activeRuns=activeRunsByRunner[target]||[]; curStarted=false; curNative=false; curNativeWritable=false; curNativeId=''; attachments=[]; renderAttach(); clearQueue(); updateOfflineBanner(); setHash('');
-      E.title.textContent='Criando sessão...'; refreshTitleInfo(); E.log.innerHTML=''; tx({t:'new',agent,cwd}); closeSide(); };
+      E.title.textContent='Criando sessão...'; refreshTitleInfo(); E.log.innerHTML=''; tx({t:'new',agent,cwd}); closeSide(); }
+    E.newSess.onclick=()=>startNewSession();
 
     // ---------- search (input com foco imediato; sem prompt) ----------
     E.searchBtn.onclick=()=>openSearch();
