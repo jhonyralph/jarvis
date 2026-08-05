@@ -78,9 +78,16 @@ Hub/Runner health). It auto-detects the machine's role:
 
 - **Hub machine:** Reiniciar Hub · **Atualizar máquinas** (same as the UI "all machines")
   · Abrir log do Hub.
-- **Runner-only machine (e.g. Notebook):** Iniciar/Parar Runner (the `JarvisRunner` scheduled
-  task) · **Atualizar esta máquina** (`git fetch --tags` + `git pull --ff-only` + restart
-  the task — the one-time bootstrap when a machine can't self-update) · Abrir log do Runner.
+- **Runner-only machine (e.g. Notebook):** Iniciar/Parar Runner · **Atualizar esta máquina**
+  (`git fetch --tags` + `git pull --ff-only` + restart the service — the one-time bootstrap when
+  a machine can't self-update) · Abrir log do Runner.
+
+The Runner service is managed on **every OS** (`runnerService()` in `desktop/src/control/actions.js`):
+Windows via the `JarvisRunner` **scheduled task** (PowerShell), macOS via the `com.jarvis.runner`
+**launchd** agent (`launchctl load`/`unload`), Linux via the `jarvis-runner.service` **systemd --user**
+unit (`systemctl --user start`/`stop`) — matching exactly what `install-runner.sh`/`.ps1` register, so
+the same single desktop installer manages the Runner identically on Windows, macOS and Linux. Hub
+controls (restart/update/logs) are HTTP/file-based and were already OS-agnostic.
 
 Closing the window minimizes to the tray; the app keeps running and can start at login
 (minimized). A native notification fires when the Hub goes offline.

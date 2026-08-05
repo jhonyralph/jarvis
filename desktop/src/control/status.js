@@ -3,7 +3,9 @@
 //
 // A machine can be a Hub, a Runner, or both. The tray auto-adapts from two probed capabilities:
 //   hasHub        — the Hub health endpoint (:4577/health) answered
-//   hasRunnerTask — a `JarvisRunner` scheduled task exists on this machine
+//   hasRunnerTask — a Runner SERVICE is installed on this machine: a `JarvisRunner` scheduled task
+//                   (Windows), the com.jarvis.runner launchd agent (macOS) or the jarvis-runner.service
+//                   systemd unit (Linux) — see runnerService() in actions.js.
 // Runner-only (e.g. Notebook) = hasRunnerTask && !hasHub → Hub controls hidden, "update" becomes git-pull.
 
 const HUB_HEALTH_URL = "http://127.0.0.1:4577/health";
