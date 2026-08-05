@@ -1,3 +1,10 @@
+# [0.8.0](https://github.com/jhonyralph/jarvis/compare/v0.7.1...v0.8.0) (2026-08-05)
+
+
+### Features
+
+* **hub-ui:** busca in-panel (Ctrl+F) + seletor de máquina no terminal ([e7142bd](https://github.com/jhonyralph/jarvis/commit/e7142bd1f0a7f739b357f6a294e9306e6cbb66e9))
+
 ## [0.7.1](https://github.com/jhonyralph/jarvis/compare/v0.7.0...v0.7.1) (2026-08-05)
 
 
