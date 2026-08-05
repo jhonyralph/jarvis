@@ -67,7 +67,43 @@ mac/Linux:  ./scripts/jarvis.sh  update | update-apply | update-rollback
 ```
 
 The admin API is loopback-only (`127.0.0.1:4578`), so these work from the host
-even with no device logged in.
+even with no device logged in. New in 0.8.x: `POST /admin/restart` restarts the Hub
+**without** updating (drains active turns, then the supervisor respawns it) — this is
+what the tray's "Reiniciar Hub" uses.
+
+## From the tray (desktop app)
+
+The desktop app runs a **control center in the system tray** (green/yellow/red icon =
+Hub/Runner health). It auto-detects the machine's role:
+
+- **Hub machine:** Reiniciar Hub · **Atualizar máquinas** (same as the UI "all machines")
+  · Abrir log do Hub.
+- **Runner-only machine (e.g. Luby):** Iniciar/Parar Runner (the `JarvisRunner` scheduled
+  task) · **Atualizar esta máquina** (`git fetch --tags` + `git pull --ff-only` + restart
+  the task — the one-time bootstrap when a machine can't self-update) · Abrir log do Runner.
+
+Closing the window minimizes to the tray; the app keeps running and can start at login
+(minimized). A native notification fires when the Hub goes offline.
+
+## Desktop app (the Electron shell) — a SEPARATE update channel
+
+The desktop **app** does not self-update via git. It updates via **electron-updater from
+GitHub Releases** (installers published by CI on every version tag). Consequences:
+
+- Running the **unpackaged/dev** build (`npm start`, or a source run) → the update panel
+  shows **"Auto-update indisponível nesta execução (build não empacotado)"** and it never
+  advances. Install a **packaged** build (`Jarvis-Setup-X.Y.Z.exe` / `.dmg` / `.AppImage` /
+  `.deb` from the release) once; from then on it self-updates.
+- After a release, the Hub jumps to the new version instantly (git), but the app catches up
+  only after electron-updater checks → downloads → you click **Instalar**. A brief
+  "one version behind" window is expected, not a bug.
+
+## Version labels
+
+Machine version in the fleet list uses `git describe` (tag + distance). The updater fetches
+`--tags`, so a machine on a release commit shows the exact tag (e.g. `v0.8.0`). If a machine
+was pulled without tags it may transiently show `vX.Y.Z +N` (N commits past the last known
+tag) until the next update — cosmetic only; a `git fetch --tags` clears it.
 
 ## Notes / limits
 

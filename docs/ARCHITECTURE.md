@@ -36,7 +36,10 @@ defined there.
   push-to-talk audio, and can subscribe as a **listener** to play spoken (TTS) responses.
   Each native shell adds capabilities via a feature-detected `window.jarvis` bridge (no-op
   in a plain browser, so the UI is never forked). The Electron client additionally hosts
-  **Design Mode** — see [`specs/DSK-01-12-desktop-design-mode.md`](specs/DSK-01-12-desktop-design-mode.md).
+  **Design Mode** — see [`specs/DSK-01-12-desktop-design-mode.md`](specs/DSK-01-12-desktop-design-mode.md) —
+  and a **system-tray control center** (`desktop/src/control/`) with live Hub/Runner status
+  and actions (restart Hub, start/stop Runner, update machines, logs), auto-adapting to a
+  hub / runner-only machine. See [`updates.md`](updates.md#from-the-tray-desktop-app).
 
 ## Adapters (the agnostic core) — `packages/core`
 
@@ -56,6 +59,12 @@ defined there.
   `startLocalTournament`, mirroring the council path).
 - `packages/core/src/progressive-reply.ts` — portable "ack → process → deliver"
   helper for slow voice/agent replies (see `docs/voice-progressive-disclosure.md`).
+- `packages/core/src/background-jobs.ts` + `background-runner.ts` — durable
+  background jobs that outlive the one-shot turn: an fsynced job journal + pure
+  continuation planner (`background-jobs.ts`) and a detached, reaper-safe process
+  runner reporting back via files (`background-runner.ts`). The Hub parses a
+  `` ```jarvis-run `` block from the reply, runs the job, and auto-continues the
+  session on completion (see README "Durable background jobs & auto-continue").
 - `packages/protocol/src/runner.ts` — actual Hub↔Runner WebSocket contract. The
   `listdir`/`dirs` messages carry an optional `files` array for the file-tree
   explorer (the legacy folder-picker omits the flag and still sees folders only).

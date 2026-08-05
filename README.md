@@ -60,6 +60,8 @@ Everything external enters through a swappable adapter (`AgentAdapter`,
 | **Explore & review files** | A file-tree explorer (🗂 in the chat header) browses the session's folder; the file/diff viewer is line-numbered, resizable, has a full-screen mode, a proper tokenizer for syntax colours (regex/template-literal aware), and a **Formatado/Bruto** toggle that renders Markdown. Select a line or a start→end range, attach comments, then send them all to a chosen AI (Orca-style diff annotation). |
 | **Compete for the best answer** | **Torneio**: fan the same task out to N candidates in isolated worktrees, a judge scores them, and the winner is promoted automatically (built on `jarvis_delegate`). |
 | **Native desktop client** | An optional Electron shell (`desktop/`) loads the live Hub UI and adds Design Mode (grab a web element → send to the agent). Installers for Windows/macOS/Linux build via CI on a version tag. |
+| **Tray control center** | The desktop app lives in the **system tray** with a live status icon (Hub/Runner health) and actions: restart Hub, start/stop the Runner, update machines, open logs, offline notification. Auto-adapts to the machine's role (a runner-only box like a headless server hides the Hub controls). Closing minimizes to tray; starts at login. See [docs/updates.md](docs/updates.md#from-the-tray-desktop-app). |
+| **Long tasks don't stall the chat** | An agent can hand a long command (build/tests/typecheck) to a **durable background job** with a `` ```jarvis-run `` block. Jarvis runs it OUT of the one-shot turn (it survives the turn and even a Hub restart) and, when it finishes, **auto-continues the session** with the result — no more "I'll get back to you" that never comes. |
 | **Ask what's up** | Spoken digest across all sessions and machines, or a summary of one conversation. |
 | **Stay in budget** | Context window, typed token/cost history for every adapter that reports usage, and Claude plan-limit (5h / weekly) indicator. |
 | **Route automatically** | In Automatic mode, the Hub's configurable routing model chooses an available agent for a new session and the compatible model/effort for every turn; the selected machine never changes. |
@@ -230,6 +232,34 @@ therefore appears as offline/reconciling rather than a fabricated success or
 cancellation. Internal sessions used by managed children are hidden from the
 normal chat list, search and digest.
 
+### Durable background jobs & auto-continue
+
+Each agent turn is a **one-shot** CLI invocation (`claude -p`, `codex exec`, …): the
+model's own "background" tasks die when the turn ends, and nothing re-invokes it — so
+"I'll run the build and continue" never continued. Jarvis closes that loop **in-band**:
+
+- The agent asks for a durable long task by emitting a fenced block:
+
+  ~~~
+  ```jarvis-run
+  npm run typecheck
+  ```
+  ~~~
+
+  (a system-prompt addendum on non-managed turns teaches this; disable with
+  `JARVIS_BG_JOBS=off`).
+- The Hub — which already owns the session/cwd — parses the reply, launches the command
+  as a **Hub-owned detached process** that outlives the turn (and survives a Hub restart),
+  streaming output to a log and recording lifecycle in an fsynced journal
+  (`~/.jarvis/hub/background-jobs.jsonl`).
+- When it finishes, the Hub **auto-starts a continuation turn** on the origin session with
+  the result, so the agent picks up exactly where it left off. Guards: per-session
+  anti-loop depth cap, idempotent (never fires twice, even across restarts), and it never
+  runs inside managed/sub-agent turns.
+
+Nothing to configure: run a long task, get on with your day, and the conversation
+continues itself when the job lands.
+
 The same journal is the recovery source for an unfinished chat turn. Reopening a
 session, reconnecting a device or restarting the Hub replays the pending
 canonical activity from disk. The live buffer is released only after the
@@ -382,6 +412,9 @@ drift with `node scripts/environment-catalog.mjs --check`.
 | Machine shows **⚠ sem IA** | No supported CLI was both found and usable there. Run `npm run agents:report` on that machine, then authenticate the selected provider. |
 | `401 ... OAuth access token has been revoked` | Same thing — that's the agent CLI's login, not a Jarvis token. `claude auth logout && claude auth login`. |
 | Update says *"alterações locais não commitadas"* | That machine's clone is dirty. Working as intended: commit, or `git reset --hard origin/main` there. |
+| **"Update all machines" does nothing / *"nenhuma máquina foi alterada"*** | The **Hub's own** clone is dirty (uncommitted changes) or ahead of `origin` — the all-machines preflight refuses to proceed so nothing is lost. Commit or `git stash` on the Hub, then retry. Do **not** force (the Hub update does `git reset --hard` and would discard those changes). |
+| Desktop app stuck **one version behind** / *"auto-update indisponível"* | You're running the **unpackaged/dev** desktop build, which never self-updates. Install a packaged `Jarvis-Setup-X.Y.Z` (`.exe`/`.dmg`/`.AppImage`/`.deb`) from the GitHub Release once; it auto-updates from then on. |
+| Machine version shows **`vX.Y.Z +N`** instead of the tag | Tags weren't fetched on that clone (cosmetic — the code is correct). Fixed automatically by the updater (`git fetch --tags`); `git fetch --tags` clears it immediately. |
 | Switching sessions is slow on a remote machine | Usually the network, not the code. `tailscale status`: if the peer says `relay` instead of `direct`, traffic is bouncing through a DERP relay. `tailscale netcheck` on both ends shows which side blocks UDP. |
 | A runner terminal window won't go away | It's being started by hand. Use the service (`Start-ScheduledTask JarvisRunner` / `systemctl --user start jarvis-runner`) and close the terminal. |
 
