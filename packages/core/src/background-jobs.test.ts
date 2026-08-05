@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BackgroundJobStore, isTerminalJobStatus, planJobContinuation, parseBackgroundRunDirectives, type BackgroundJob } from "./background-jobs.js";
+import { BackgroundJobStore, isTerminalJobStatus, planJobContinuation, parseBackgroundRunDirectives, BACKGROUND_JOB_STEERING, type BackgroundJob } from "./background-jobs.js";
 
 function job(over: Partial<BackgroundJob> = {}): BackgroundJob {
   return { jobId: "j1", originSessionId: "s1", runnerId: "local", command: "npm run typecheck", cwd: "/w", status: "succeeded", createdAt: 1, updatedAt: 2, autoContinueDepth: 0, ...over };
@@ -178,6 +178,15 @@ test("parseBackgroundRunDirectives: extracts fenced jarvis-run commands, toleran
   // cap applies
   const many = Array.from({ length: 5 }, () => "```jarvis-run\necho x\n```").join("\n\n");
   assert.equal(parseBackgroundRunDirectives(many, { max: 2 }).length, 2);
+});
+
+test("the steering prompt teaches exactly the directive the Hub parses back", () => {
+  // The steering must document the SAME fence the parser recognizes — otherwise the loop never closes.
+  assert.match(BACKGROUND_JOB_STEERING, /```jarvis-run/);
+  assert.match(BACKGROUND_JOB_STEERING, /run_in_background/); // names the anti-pattern it replaces
+  // round-trip: an agent that followed the instruction verbatim yields a parseable command
+  const sample = "Vou rodar em segundo plano:\n```jarvis-run\nnpm run build\n```";
+  assert.deepEqual(parseBackgroundRunDirectives(sample), ["npm run build"]);
 });
 
 test("a corrupt first line yields an empty store rather than throwing", () => {

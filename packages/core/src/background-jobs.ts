@@ -86,6 +86,18 @@ export interface BackgroundJobStoreOptions {
 /** Default ceiling on how many times a single chain may auto-continue itself (background→continue→…). */
 export const DEFAULT_MAX_AUTO_CONTINUE_DEPTH = 8;
 
+/**
+ * System-prompt addendum that teaches the agent to hand long tasks to Jarvis instead of its native
+ * background (which dies with the one-shot turn). Injected on non-managed turns; the Hub parses the
+ * `jarvis-run` block from the reply (parseBackgroundRunDirectives), runs it durably, and opens a new
+ * turn with the result. Keep it short — it costs prompt tokens on every turn.
+ */
+export const BACKGROUND_JOB_STEERING =
+  "Ambiente Jarvis: você roda como UM turno não-interativo. Tarefas em segundo plano nativas (run_in_background) NÃO sobrevivem ao fim do turno e você NÃO será reinvocado quando terminarem. "
+  + "Para uma tarefa LONGA cujo resultado você precisa (build, testes, typecheck, script demorado), não use background nativo: emita um bloco cercado exatamente assim, um comando de shell por bloco:\n"
+  + "```jarvis-run\n<comando>\n```\n"
+  + "O Jarvis executa esse comando de forma durável FORA deste turno e abre um NOVO turno com o resultado quando terminar. Após emitir o bloco, encerre o turno em vez de esperar. Use isso só para tarefas realmente demoradas; comandos rápidos rode normalmente.";
+
 export interface ContinuationPlan {
   /** Whether the Hub should inject a continuation turn for this job. */
   act: boolean;

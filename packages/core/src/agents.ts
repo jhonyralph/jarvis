@@ -32,6 +32,7 @@ import {
   type SupportLevel,
 } from "./agent-contract.js";
 import { codexChildRollouts } from "./codex-executions.js";
+import { BACKGROUND_JOB_STEERING } from "./background-jobs.js";
 import { EXECUTION_ADAPTER_PROFILES, EXECUTION_ADAPTER_IDS, mapProviderExecutionFixture, type ExecutionAdapterId } from "./execution-adapters.js";
 
 /** Effective unattended execution policy. The historical default is full access; operators can
@@ -744,7 +745,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // and as a bonus removes the CLI's own "no stdin data received in 3s" wait on every turn.
     const args = ["-p", ...fmt];
     if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
-    else if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
+    else {
+      // Non-managed turns only: teach the agent to hand long tasks to Jarvis's durable background jobs
+      // (the Hub parses the ```jarvis-run block from the reply). Managed/subagent turns are isolated.
+      if (process.env.JARVIS_BG_JOBS !== "off") args.push("--append-system-prompt", BACKGROUND_JOB_STEERING);
+      if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
+    }
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("--model", model);
     if (effort) args.push("--effort", effort === "ultracode" ? "xhigh" : effort); // ultracode -> xhigh
