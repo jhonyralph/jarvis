@@ -24,6 +24,8 @@ export interface AdminCtx {
   applyHubUpdate: (force: boolean, allMachines: boolean) => Promise<any>;
   rollbackHubUpdate: () => Promise<any>;
   queueAllRunnerUpdates: () => Promise<any>;
+  /** Restart the Hub process (drains active turns, then the supervisor respawns it). Fire-and-forget. */
+  restartHub: () => void;
   dropRevoked: () => void;
   refreshPrincipalRole: (deviceId: string, role: auth.Role) => void;
   /** RunnerConn registry (structural: .id / .local / .ws are read) */
@@ -62,6 +64,9 @@ export function startAdminApi(ctx: AdminCtx): void {
         if (req.method === "POST" && url === "/admin/update") return json(200, await ctx.applyHubUpdate(false, false));
         if (req.method === "POST" && url === "/admin/update/rollback") return json(200, await ctx.rollbackHubUpdate());
         if (req.method === "POST" && url === "/admin/update-runners") return json(200, await ctx.queueAllRunnerUpdates());
+        // Plain Hub restart (no update) — the tray/control app's "Reiniciar Hub" button. Returns
+        // immediately; the drain+respawn happens in the background (supervisor brings it back).
+        if (req.method === "POST" && url === "/admin/restart") { ctx.restartHub(); return json(200, { ok: true, restarting: true }); }
         // purge the "ok" probe litter on connected runners via their existing delete handler
         // (no git-pull/restart needed): query the session list, delete the "ok" natives, repeat.
         if (req.method === "POST" && url === "/admin/purge-runner-ok") {

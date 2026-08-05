@@ -14,6 +14,7 @@ const { app, BrowserWindow, shell, ipcMain, webContents } = require("electron")
 const path = require("node:path")
 const { registerBrowserIpc } = require("./src/browser/register-browser-ipc")
 const { registerUpdaterIpc } = require("./src/updater/register-updater-ipc")
+const { createTray } = require("./src/control/tray")
 
 // Where the live Hub UI lives. Same env name as the Capacitor shell (mobile/capacitor.config.ts).
 // Normalizado/validado: um valor em formato errado não falha alto — o app entraria no loop de
@@ -33,6 +34,21 @@ const RELOAD_MAX_MS = 15000
 let mainWindow = null
 let reloadTimer = null
 let reloadDelay = RELOAD_BASE_MS
+/** @type {{destroy:()=>void}|null} */
+let tray = null
+app.isQuitting = false
+
+/** Show/focus the window (recreating it if it was destroyed) — used by the tray and notifications. */
+function showWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus() }
+  else createWindow(true)
+}
+/** Real quit (tray "Sair"): a plain window close only HIDES to the tray. */
+function quitApp() {
+  app.isQuitting = true
+  if (tray) { tray.destroy(); tray = null }
+  app.quit()
+}
 
 function scheduleReload() {
   if (reloadTimer) return
@@ -45,8 +61,9 @@ function scheduleReload() {
   reloadDelay = Math.min(reloadDelay * 2, RELOAD_MAX_MS)
 }
 
-function createWindow() {
+function createWindow(show = true) {
   mainWindow = new BrowserWindow({
+    show, // `--tray` / launched-at-login starts hidden (tray only)
     width: 1280,
     height: 860,
     minWidth: 800,
@@ -98,6 +115,11 @@ function createWindow() {
     if (isMainFrame && errorCode !== -3) scheduleReload()
   })
 
+  // Closing the window HIDES it to the tray (Jarvis keeps running in the background); real quit is the
+  // tray "Sair" (quitApp sets app.isQuitting first).
+  mainWindow.on("close", (e) => {
+    if (!app.isQuitting) { e.preventDefault(); mainWindow.hide() }
+  })
   mainWindow.on("closed", () => {
     mainWindow = null
   })
@@ -105,7 +127,14 @@ function createWindow() {
   mainWindow.loadURL(HUB_URL).catch(() => scheduleReload())
 }
 
+// Single instance: pressing Windows→Jarvis (or launching again) focuses the running tray app instead
+// of opening a second window/tray.
+const HAS_LOCK = app.requestSingleInstanceLock()
+if (!HAS_LOCK) app.quit()
+app.on("second-instance", () => showWindow())
+
 app.whenReady().then(() => {
+  if (!HAS_LOCK) return
   registerBrowserIpc({ ipcMain, webContents })
   // Auto-update is driven by the web UI (banner + "check" + "restart and install"), so the user
   // sees it in the same place as everything else instead of a native dialog. Packaged builds only;
@@ -115,13 +144,16 @@ app.whenReady().then(() => {
     isPackaged: () => app.isPackaged,
     getWindow: () => mainWindow,
   })
-  createWindow()
+  // Launched at login (or with --tray) → start hidden in the tray; otherwise show the window.
+  const startHidden = process.argv.includes("--tray") || app.getLoginItemSettings().wasOpenedAtLogin
+  createWindow(!startHidden)
+  try { tray = createTray({ showWindow, quit: quitApp }) } catch (e) { console.error("[jarvis] tray falhou:", e && e.message) }
   updater.checkOnBoot()
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(true); else showWindow()
   })
 })
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit()
-})
+// With the tray, closing the last window does NOT quit — Jarvis stays in the background. Quit is the
+// tray "Sair" (quitApp). Keeping the process alive on all platforms is the whole point of the tray.
+app.on("window-all-closed", () => { /* intentionally no-op: the tray keeps Jarvis running */ })

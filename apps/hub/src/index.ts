@@ -6002,7 +6002,7 @@ startAdminApi({ updateRoot: UPDATE_ROOT, port: PORT, applyHubUpdate, rollbackHub
   if (hubUpdateInProgress) return { ok: false, busy: true, log: "outra atualização já está em andamento" };
   hubUpdateInProgress = true; const drainError = await drainHubForUpdate(); const result = drainError ? { ok: false, log: drainError } : await updateRollback(UPDATE_ROOT);
   if (result.ok) scheduleRestart(); else hubUpdateInProgress = false; return result;
-}, queueAllRunnerUpdates: queueAllRemoteRunnerUpdates, dropRevoked, refreshPrincipalRole, runners, runnerLabels, runnerSessions, sendToRunner });
+}, queueAllRunnerUpdates: queueAllRemoteRunnerUpdates, restartHub: scheduleRestart, dropRevoked, refreshPrincipalRole, runners, runnerLabels, runnerSessions, sendToRunner });
 
 void refreshLocalAgents();
 setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min; probes are version/login-status checks, never inference turns
