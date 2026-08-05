@@ -1,3 +1,10 @@
+## [0.10.1](https://github.com/jhonyralph/jarvis/compare/v0.10.0...v0.10.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **ci:** escopa o teste mobile ao launcher (não puxa o apply-context-native, quebrado no Windows) ([47f8d0b](https://github.com/jhonyralph/jarvis/commit/47f8d0b066cb6b2e0b26721df6203fe1c3273ebb))
+
 # [0.10.0](https://github.com/jhonyralph/jarvis/compare/v0.9.0...v0.10.0) (2026-08-05)
 
 
