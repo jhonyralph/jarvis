@@ -23,7 +23,7 @@ test("classify: present hub that is unreachable → down", () => {
   assert.match(st.tooltip, /OFFLINE/);
 });
 
-test("classify: runner-only machine (Luby) — no hub, runner stopped → down + runnerOnly", () => {
+test("classify: runner-only machine (Notebook) — no hub, runner stopped → down + runnerOnly", () => {
   const st = classify({ hasHub: false, hubReachable: false, hasRunnerTask: true, runnerRunning: false });
   assert.equal(st.runnerOnly, true);
   assert.equal(st.level, "down");

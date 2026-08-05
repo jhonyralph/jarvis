@@ -995,7 +995,7 @@
       return flow.childNodes.length?flow:null; }
     // Trocar de sessão custa DUAS travessias de rede quando ela vive em outra máquina
     // (browser → hub → runner → hub → browser), e esse enlace pode ser um relay: medido entre
-    // Luby e o Desktop, o RTT oscila de 28ms a 621ms via DERP. O payload, porém, é o mesmo que
+    // Notebook e o Desktop, o RTT oscila de 28ms a 621ms via DERP. O payload, porém, é o mesmo que
     // já desenhamos — então guardamos: revisitar pinta na hora e a cópia fresca só substitui
     // quando chega. Limitado a poucas sessões porque isso também roda no celular.
     function selectedRunner(){ return currentMachine==='all'?(routedMachine||'local'):(currentMachine||'local'); }
@@ -3843,7 +3843,7 @@
       // 'all' é uma VISÃO sintética, não um runner: não existe machines[].id==='all'. Marcá-la como
       // "máquina a restaurar" fazia o handler de 'machines' cair no else e derrubar a vista pra 'local',
       // apagando a preferência salva — com a lista agregada (as duas máquinas) ainda na tela. Era a
-      // origem da mistura Desktop⇄Luby depois de cada reconexão. Ver o inicializador de restoringMachine.
+      // origem da mistura Desktop⇄Notebook depois de cada reconexão. Ver o inicializador de restoringMachine.
       if(currentMachine!=='local'&&currentMachine!=='all'){ restoringMachine=true; }
       else if(currentSession) openSession(currentSession,currentSessionRunner);
       if(cfg.push) enablePush(); requestCommands(); if(hashWork())openWorkPanel({fromHash:true}); }

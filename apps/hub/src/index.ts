@@ -818,7 +818,7 @@ function secState(ws: WebSocket): void {
   const p = principalOf(ws);
   const onlineRunners = new Set([...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN).map((r) => r.id));
   // Show the runner's REGISTERED/renamed label (runnerLabels), not the stale mint-time token
-  // label — otherwise a machine that connected as "Luby" still reads "nova máquina" here.
+  // label — otherwise a machine that connected as "Notebook" still reads "nova máquina" here.
   const runnerTokens = auth.listRunnerTokens().map((rt) => ({ ...rt, label: runnerLabels[rt.runnerId] || rt.label, online: onlineRunners.has(rt.runnerId) }));
   // The main machine (the Hub itself, "machine 0") — always shown, never removable.
   const lr = runners.get(LOCAL_ID);

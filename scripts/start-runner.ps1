@@ -15,7 +15,7 @@ function Log($m) { Add-Content -Path $log -Encoding Unicode -Value ("[launcher] 
 # Instância única (paridade com o mutex JarvisHubSupervisor do Hub). Diferente do Hub, o runner NÃO
 # abre porta, então NÃO há guarda de porta de reserva — o mutex é a ÚNICA trava. Sem ele, um 2º
 # supervisor (2º logon, política de restart da task, ou handoff de update) roda em paralelo e cada um
-# spawna seu runner, acumulando processos node (foi a causa dos ~13 processos / 48% de CPU na Luby).
+# spawna seu runner, acumulando processos node (foi a causa dos ~13 processos / 48% de CPU na Notebook).
 # Local (sem Global): os lançadores rodam na sessão interativa do mesmo usuário. Fail-open: se o mutex
 # não puder ser criado, seguimos SEM trava — um runner de pé, mesmo duplicado, é melhor que nenhum.
 try {

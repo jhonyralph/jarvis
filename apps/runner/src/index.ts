@@ -419,7 +419,7 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
     writeFileSync(scriptPath, "﻿" + detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), pid: process.pid, force: !!m.force, reportUrl: UPDATE_REPORT_URL, runnerId: RUNNER_ID, token: TOKEN }), "utf8");
     // Spawnar "powershell.exe" direto com detached:true não sobrevive de forma confiável à saída
     // do processo pai no Windows (PS 5.1) — o updater podia morrer em silêncio antes da 1ª linha
-    // (era a causa do incidente anterior: lock órfão, luby offline ~30min). Rotear por
+    // (era a causa do incidente anterior: lock órfão, notebook offline ~30min). Rotear por
     // "cmd /c start /b" é o padrão que realmente destaca o processo do job/console do pai.
     const updater = spawn("cmd.exe", ["/c", "start", "\"\"", "/b", "powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { detached: true, stdio: "ignore", windowsHide: true });
     updater.unref();

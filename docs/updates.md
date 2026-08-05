@@ -78,7 +78,7 @@ Hub/Runner health). It auto-detects the machine's role:
 
 - **Hub machine:** Reiniciar Hub · **Atualizar máquinas** (same as the UI "all machines")
   · Abrir log do Hub.
-- **Runner-only machine (e.g. Luby):** Iniciar/Parar Runner (the `JarvisRunner` scheduled
+- **Runner-only machine (e.g. Notebook):** Iniciar/Parar Runner (the `JarvisRunner` scheduled
   task) · **Atualizar esta máquina** (`git fetch --tags` + `git pull --ff-only` + restart
   the task — the one-time bootstrap when a machine can't self-update) · Abrir log do Runner.
 

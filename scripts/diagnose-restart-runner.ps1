@@ -1,5 +1,5 @@
 <#
-  diagnose-restart-runner.ps1 — Passos 1→2 do playbook de recuperação do runner (ex.: Luby).
+  diagnose-restart-runner.ps1 — Passos 1→2 do playbook de recuperação do runner (ex.: Notebook).
 
   Roda NA MÁQUINA DO RUNNER (não no Hub). Mostra o estado atual + as últimas linhas do log
   (Passo 1 — diagnóstico), depois faz o restart padrão da tarefa "JarvisRunner" (Passo 2):
@@ -61,4 +61,4 @@ $task2 = Get-ScheduledTask -TaskName 'JarvisRunner' -ErrorAction SilentlyContinu
 Write-Host ("Estado da tarefa: {0}" -f $task2.State)
 Write-Host "--- últimas 20 linhas do runner.log (pós-restart) ---"
 Show-LogTail 20
-Write-Host "`nCole esta saída completa se a Luby ainda não aparecer online no Hub." -ForegroundColor Cyan
+Write-Host "`nCole esta saída completa se a Notebook ainda não aparecer online no Hub." -ForegroundColor Cyan

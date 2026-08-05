@@ -1,7 +1,7 @@
 /**
  * Regression tests for the WEB CLIENT (apps/hub/web/app.js).
  *
- * That file carries the whole machine/session routing model and had zero coverage — the Desktop⇄Luby
+ * That file carries the whole machine/session routing model and had zero coverage — the Desktop⇄Notebook
  * session mixing came from there, not from the Hub. app.js is a classic <script> (no modules, no
  * exports), so we load its SOURCE into a function scope with a minimal DOM/WebSocket stub and append
  * an epilogue that hands back the internals we assert on. No jsdom, no new dependency.
@@ -156,7 +156,7 @@ async function authenticate(client: ClientHandle, machines: any[]): Promise<Fake
 
 const MACHINES = [
   { id: "local", label: "Desktop", local: true, online: true, agents: ["claude-code"] },
-  { id: "luby-1", label: "Luby", local: false, online: true, agents: ["claude-code"] },
+  { id: "notebook-1", label: "Notebook", local: false, online: true, agents: ["claude-code"] },
 ];
 
 test("client boots into the unified view and STAYS there across a reconnect", async () => {
@@ -166,7 +166,7 @@ test("client boots into the unified view and STAYS there across a reconnect", as
   // Regression: postAuth() flagged 'all' as a machine to restore; the 'machines' handler then found no
   // machines[].id === 'all', fell into the else, and dropped the view to 'local' while the aggregated
   // (two-machine) list stayed on screen — with the per-row machine chips gone, since those only render
-  // when currentMachine === 'all'. That is exactly the "Desktop stuff on Luby" report.
+  // when currentMachine === 'all'. That is exactly the "Desktop stuff on Notebook" report.
   assert.equal(client.currentMachine, "all", "a visão unificada não pode virar 'local' sozinha");
   assert.equal(client.store["jarvis_machine"], "all", "a preferência salva não pode ser apagada");
   assert.equal(client.restoringMachine, false, "'all' não é uma máquina a restaurar");
@@ -177,27 +177,27 @@ test("a reconnect resets routedMachine so the client re-asserts routing to the H
   const sock = await authenticate(client, MACHINES);
 
   // The Hub's clientRunner is per-socket and starts at LOCAL. If the client kept believing it was
-  // still routed to Luby, openSession() would skip {t:'runner'} and every open/send would execute on
-  // the Desktop against a session id that only exists on Luby.
+  // still routed to Notebook, openSession() would skip {t:'runner'} and every open/send would execute on
+  // the Desktop against a session id that only exists on Notebook.
   assert.equal(client.routedMachine, "local", "socket novo => o espelho do roteamento volta a 'local'");
 
   sock.sent.length = 0;
-  client.openSession("sessao-da-luby", "luby-1");
+  client.openSession("sessao-da-notebook", "notebook-1");
   const runnerFrames = sock.sent.filter((f) => f && f.t === "runner");
-  assert.deepEqual(runnerFrames.map((f) => f.runnerId), ["luby-1"], "abrir sessão remota tem de reafirmar a máquina");
+  assert.deepEqual(runnerFrames.map((f) => f.runnerId), ["notebook-1"], "abrir sessão remota tem de reafirmar a máquina");
   const openFrame = sock.sent.find((f) => f && f.t === "open");
   assert.ok(openFrame, "o open precisa ser enviado");
   assert.ok(sock.sent.indexOf(runnerFrames[0]) < sock.sent.indexOf(openFrame), "{t:'runner'} tem de vir ANTES do open");
 });
 
 test("a real remote machine IS restored after a reconnect", async () => {
-  const client = loadClient({ machine: "luby-1" });
+  const client = loadClient({ machine: "notebook-1" });
   const sock = await authenticate(client, MACHINES);
 
   // The counterpart of the fix: a genuine runner id must still be re-selected on the Hub, otherwise
-  // the machine bar shows Luby while the Hub serves the Desktop.
-  assert.equal(client.currentMachine, "luby-1");
-  assert.ok(sock.sent.some((f) => f && f.t === "runner" && f.runnerId === "luby-1"), "deve reenviar {t:'runner'} para a máquina salva");
+  // the machine bar shows Notebook while the Hub serves the Desktop.
+  assert.equal(client.currentMachine, "notebook-1");
+  assert.ok(sock.sent.some((f) => f && f.t === "runner" && f.runnerId === "notebook-1"), "deve reenviar {t:'runner'} para a máquina salva");
 });
 
 test("a saved machine that no longer exists falls back to local and clears the preference", async () => {
@@ -214,17 +214,17 @@ test("the unified list only accepts the aggregate, never a single machine's list
 
   sock.deliver({ t: "sessions", runnerId: "all", sessions: [
     { id: "s-desktop", title: "Desktop 1", runnerId: "local", machine: "Desktop", updatedAt: 200 },
-    { id: "s-luby", title: "Luby 1", runnerId: "luby-1", machine: "Luby", updatedAt: 100 },
+    { id: "s-notebook", title: "Notebook 1", runnerId: "notebook-1", machine: "Notebook", updatedAt: 100 },
   ], machines: [
     { runnerId: "local", label: "Desktop", online: true, contributed: true },
-    { runnerId: "luby-1", label: "Luby", online: true, contributed: true },
+    { runnerId: "notebook-1", label: "Notebook", online: true, contributed: true },
   ] });
-  assert.deepEqual(client.sessions.map((s: any) => s.id), ["s-desktop", "s-luby"]);
+  assert.deepEqual(client.sessions.map((s: any) => s.id), ["s-desktop", "s-notebook"]);
 
   // A stray single-machine list must NOT replace the aggregate — that would drop the other machine's
   // sessions and leave the rows unlabelled.
-  sock.deliver({ t: "sessions", runnerId: "luby-1", sessions: [{ id: "s-luby", title: "Luby 1", updatedAt: 100 }], recentDirs: [] });
-  assert.deepEqual(client.sessions.map((s: any) => s.id), ["s-desktop", "s-luby"], "lista de máquina única não pode sobrescrever o agregado");
+  sock.deliver({ t: "sessions", runnerId: "notebook-1", sessions: [{ id: "s-notebook", title: "Notebook 1", updatedAt: 100 }], recentDirs: [] });
+  assert.deepEqual(client.sessions.map((s: any) => s.id), ["s-desktop", "s-notebook"], "lista de máquina única não pode sobrescrever o agregado");
 });
 
 test("a machine missing from the unified view is named, not silently dropped", async () => {
@@ -235,22 +235,22 @@ test("a machine missing from the unified view is named, not silently dropped", a
   // before this, both just produced a shorter list with no explanation.
   sock.deliver({ t: "sessions", runnerId: "all", sessions: [{ id: "s-desktop", runnerId: "local", machine: "Desktop", updatedAt: 1 }], machines: [
     { runnerId: "local", label: "Desktop", online: true, contributed: true },
-    { runnerId: "luby-1", label: "Luby", online: false, contributed: false },
+    { runnerId: "notebook-1", label: "Notebook", online: false, contributed: false },
   ] });
   const warning = client.recentsRows.find((r) => r.includes("⚠"));
   assert.ok(warning, "a visão parcial precisa avisar quais máquinas ficaram de fora");
-  assert.match(warning!, /Luby \(offline\)/);
+  assert.match(warning!, /Notebook \(offline\)/);
 
   sock.deliver({ t: "sessions", runnerId: "all", sessions: [{ id: "s-desktop", runnerId: "local", machine: "Desktop", updatedAt: 1 }], machines: [
     { runnerId: "local", label: "Desktop", online: true, contributed: true },
-    { runnerId: "luby-1", label: "Luby", online: true, contributed: false },
+    { runnerId: "notebook-1", label: "Notebook", online: true, contributed: false },
   ] });
-  assert.match(client.recentsRows.find((r) => r.includes("⚠"))!, /Luby \(não respondeu\)/);
+  assert.match(client.recentsRows.find((r) => r.includes("⚠"))!, /Notebook \(não respondeu\)/);
 
   // Complete aggregation => no warning at all.
   sock.deliver({ t: "sessions", runnerId: "all", sessions: [{ id: "s-desktop", runnerId: "local", machine: "Desktop", updatedAt: 1 }], machines: [
     { runnerId: "local", label: "Desktop", online: true, contributed: true },
-    { runnerId: "luby-1", label: "Luby", online: true, contributed: true },
+    { runnerId: "notebook-1", label: "Notebook", online: true, contributed: true },
   ] });
   assert.equal(client.recentsRows.find((r) => r.includes("⚠")), undefined, "visão completa não mostra aviso");
 });
