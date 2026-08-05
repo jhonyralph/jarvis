@@ -16,7 +16,7 @@
     "test:ui:personal": "playwright test --config tests/personal-assistant/playwright.config.ts",
     "test:ui:personal:install": "playwright install chromium",
     "agents:report": "node --import tsx scripts/agent-report.ts",
-    "update:verify": "npm run check",
+    "update:verify": "npm run typecheck",
     "check": "npm run typecheck && npm test",
     "hooks:install": "git config core.hooksPath .githooks",
     "prepare": "git config core.hooksPath .githooks || exit 0",

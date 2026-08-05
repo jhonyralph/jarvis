@@ -23,6 +23,14 @@ it, optionally to **all machines** at once.
   performs deterministic dependency installation
   (`npm ci` when a lockfile exists), and `npm run update:verify`. Only a verified
   checkout is restarted by Task Scheduler / launchd / systemd.
+  - `update:verify` runs **typecheck only** — a *deterministic* gate. It must NOT run
+    the full test suite: that includes port/timing-heavy **e2e** tests (parity,
+    framework, update-handshake) whose occasional flake would fail the verify, abort
+    the update, and — since the Hub keeps re-forcing an unreached target — trap the
+    runner in an **update loop**. The full suite is already gated earlier, on every
+    machine that *authors* code, by the pre-push hook and by CI (Ubuntu + Windows),
+    so a released deploy target has already passed it; a runtime regression that slips
+    past typecheck is caught by the launcher's boot-health rollback to the last-good commit.
 - **All machines** is a durable deployment, not a broadcast to whoever happens
   to be online. The target commit is persisted for every known runner. The Hub
   updates and restarts first; runners receive the target when they reconnect.
