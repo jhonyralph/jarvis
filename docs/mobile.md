@@ -55,6 +55,15 @@ points it at **their own** Hub:
 - **Android (works today):** CI workflow **"Release mobile"** (`.github/workflows/release-mobile.yml`)
   builds the **sideload-debug APK** (debug-signed → installable via "unknown sources", no release
   keystore) and uploads it as an artifact / Release asset. Locally: `npm run build:android`.
+- **Manual only, and it skips when nothing changed.** The workflow **never runs on push** — trigger it
+  from **Actions → "Release mobile" → Run workflow** (tick `publish` to attach the APK to the matching
+  Release). Because the app is a **WebView shell**, a first `decide` job fingerprints exactly what ends
+  up in the app (`scripts/mobile-app-hash.mjs` over `apps/hub/web/**`, the `mobile/` shell, and the
+  build scripts — docs/tests/generated dirs excluded) and compares it to the fingerprint saved beside
+  the previous release. **Unchanged → the build is skipped**; changed / first run / `force` → it builds.
+  So editing only the Hub backend or docs won't rebuild the app, but any change to the web UI or shell
+  will. The baseline (`mobile-app-hash.txt`) is uploaded next to the APK on publish. Release builds
+  (`workflow_call` from `release.yml`) always build.
 - **iOS / Apple — needs a paid account (wired but OFF):** the workflow's `ios` job is fully written
   but **gated**: it only runs when the repo **variable** `ENABLE_IOS_BUILD=true` AND the signing
   **secrets** exist. To enable:

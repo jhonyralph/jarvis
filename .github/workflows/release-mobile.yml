@@ -18,6 +18,10 @@ on:
         description: "Attach the APK to the matching GitHub Release"
         type: boolean
         default: false
+      force:
+        description: "Build even if the app fingerprint is unchanged (skip the 'needs build?' gate)"
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       ref:
@@ -28,7 +32,43 @@ permissions:
   contents: write
 
 jobs:
+  # Gate: the app is a WEBVIEW shell, so if nothing that ends up IN the app changed since the last
+  # published APK (web payload apps/hub/web/**, the mobile shell, or the build scripts), rebuilding is
+  # pointless. scripts/mobile-app-hash.mjs fingerprints exactly that set and compares to the fingerprint
+  # saved beside the previous release. Release builds (workflow_call) and `force` always build.
+  decide:
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.fp.outputs.needed }}
+      hash: ${{ steps.fp.outputs.hash }}
+      reason: ${{ steps.fp.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: fp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" != "true" ]; then
+            # Pull the previous release's fingerprint; absent (first adoption) → empty baseline → build.
+            gh release download --pattern mobile-app-hash.txt --dir _prev 2>/dev/null || true
+            BASE=""
+            [ -f _prev/mobile-app-hash.txt ] && BASE="$(tr -d '[:space:]' < _prev/mobile-app-hash.txt)"
+            node scripts/mobile-app-hash.mjs --against "$BASE"
+          else
+            node scripts/mobile-app-hash.mjs   # emits hash=
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=forced or release build" >> "$GITHUB_OUTPUT"
+          fi
+      - run: echo "Build needed=${{ steps.fp.outputs.needed }} — ${{ steps.fp.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+
   android:
+    needs: decide
+    if: ${{ needs.decide.outputs.needed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,13 +114,17 @@ jobs:
           TAG="${{ inputs.ref || github.ref_name }}"
           cp mobile/android/app/build/outputs/apk/sideload/debug/app-sideload-debug.apk "Jarvis-${TAG}-android.apk"
           gh release upload "$TAG" "Jarvis-${TAG}-android.apk" --clobber
+          # Save the fingerprint of THIS app as the baseline the next run's gate compares against.
+          printf '%s' "${{ needs.decide.outputs.hash }}" > mobile-app-hash.txt
+          gh release upload "$TAG" mobile-app-hash.txt --clobber
 
   # iOS — FULLY WIRED BUT DISABLED. Building an .ipa needs an Apple Developer account + signing certs.
   # Enable by setting repository VARIABLE `ENABLE_IOS_BUILD=true` AND providing the signing SECRETS
   # (APPLE_CERT_P12_BASE64, APPLE_CERT_PASSWORD, APPLE_PROVISIONING_PROFILE_BASE64, APPLE_TEAM_ID).
   # Until then this job is skipped. See docs/mobile.md "iOS / Apple".
   ios:
-    if: ${{ vars.ENABLE_IOS_BUILD == 'true' }}
+    needs: decide
+    if: ${{ vars.ENABLE_IOS_BUILD == 'true' && needs.decide.outputs.needed == 'true' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
