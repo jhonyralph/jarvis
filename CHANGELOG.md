@@ -1,3 +1,10 @@
+# [0.13.0](https://github.com/jhonyralph/jarvis/compare/v0.12.0...v0.13.0) (2026-08-05)
+
+
+### Features
+
+* **install:** auto-login (Windows) + linger (Linux) p/ subir após reboot sem login ([976008e](https://github.com/jhonyralph/jarvis/commit/976008ecca22408cc4c12c411128423c5abb2621))
+
 # [0.12.0](https://github.com/jhonyralph/jarvis/compare/v0.11.0...v0.12.0) (2026-08-05)
 
 
