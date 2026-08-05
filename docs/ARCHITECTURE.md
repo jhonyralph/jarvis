@@ -100,6 +100,10 @@ single **pure** function (`organizeSessions` in `app.js`, covered by
 - **Group by** — Project (last path segment of the session `cwd`), Machine, Agent,
   Date bucket, or None. Each group header shows a count and, for Project/Machine
   groups, a **＋** that opens a new session already scoped to that folder/machine.
+  Clicking a header **collapses/expands** that group (a chevron appears on hover;
+  the collapsed set persists in `localStorage['jarvis_recents_collapsed']`).
+- **Compact rows** — each session is a single line; its actions (summarize, archive,
+  delete) live behind a per-row **⋯** menu instead of inline buttons, to save width.
 - **Sort by** — Recency (default), Alphabetical, or Cost. Cost comes from a new
   `cost` field on the session metadata (`Store.list()` sums each message's
   `usage.costUsd`), so the sort is real, not cosmetic.

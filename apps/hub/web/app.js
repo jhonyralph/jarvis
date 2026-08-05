@@ -1739,6 +1739,10 @@
     if(!REC_STATUS.includes(recPrefs.status))recPrefs.status='active';
     function saveRecPrefs(){ try{ localStorage.setItem('jarvis_recents_prefs',JSON.stringify(recPrefs)); }catch(e){} }
     let recFilteredTotal=0; // total após filtro de status (paginação "Mostrar mais" usa isto, não sessions.length)
+    // Grupos recolhidos (clicar no nome do grupo alterna). Persistido por (modo de agrupamento + chave).
+    let recCollapsed=new Set((()=>{try{return JSON.parse(localStorage.getItem('jarvis_recents_collapsed')||'[]');}catch(e){return[];}})());
+    function saveRecCollapsed(){ try{ localStorage.setItem('jarvis_recents_collapsed',JSON.stringify([...recCollapsed])); }catch(e){} }
+    function groupCollapseKey(groupBy,key){ return groupBy+' '+key; }
     // Último segmento do caminho de trabalho — o "nome do projeto" que vira cabeçalho de grupo.
     function projectLabelOf(cwd){ if(!cwd)return 'Sem pasta'; const parts=String(cwd).split(/[\\/]+/).filter(Boolean); return parts.length?parts[parts.length-1]:String(cwd); }
     function dateBucketOf(ts,now){ if(!ts)return 'Sem data'; const day=86400000, a=new Date(now), b=new Date(ts); const midnight=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime(); const diff=midnight(a)-midnight(b); if(diff<=0)return 'Hoje'; if(diff<=day)return 'Ontem'; if(diff<7*day)return 'Últimos 7 dias'; if(diff<30*day)return 'Últimos 30 dias'; return 'Mais antigas'; }
@@ -1755,7 +1759,16 @@
       return {groups,total:filtered.length,shownCount:visible.length,groupBy,sortBy,status}; }
 
     function bumpSession(sid){ if(!sid)return; const runner=sessionRunner(); lastBump={sid,runner,ts:Date.now()}; const i=sessions.findIndex(s=>s.id===sid&&(currentMachine!=='all'||(s.runnerId||'local')===runner)); if(i>0){ const [s]=sessions.splice(i,1); sessions.unshift(s); renderRecents(); } }
-    // Monta o item (linha) de UMA conversa — extraído para o render agrupado reaproveitar.
+    // Menu "⋯" de ações da conversa (Resumir / Arquivar / Remover) — junta os botões antes soltos na
+    // linha, liberando espaço. `anchor` é o botão ⋯ (leva o estado ⏳ do resumo mesmo após fechar o menu).
+    function buildRowMenu(p,s,anchor,runner,nat){ p.appendChild(ph(s.title||'Sessão'));
+      const item=(icon,label,danger,fn)=>{ const o=document.createElement('div'); o.className='opt'+(danger?' danger':''); o.innerHTML='<span class="aiico">'+icon+'</span> '+esc(label); o.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); fn(); }; p.appendChild(o); };
+      item('🔊','Resumir e falar',false,()=>{ closePop(); if(!startVoiceOp('summarize',anchor,'⏳',s.id))return; status('speaking',t('stSummarizing')); tx({t:'summarize',sessionId:s.id,speak:true}); });
+      if(!nat) item(s.archived?'📤':'📥', s.archived?'Desarquivar':'Arquivar', false, ()=>{ closePop(); tx({t:'archive',sessionId:s.id,archived:!s.archived}); toast(s.archived?'Desarquivando…':'Arquivando…'); });
+      item('🗑','Remover',true,async()=>{ closePop(); const ia=(s.agent==='codex')?'codex':'claude';
+        const ok=await dialog({title:`Remover "${s.title||'conversa'}"? Apaga no Jarvis e a sessão no ${ia} — não dá pra desfazer.`, okText:'Remover', danger:true});
+        if(!ok) return; tx({t:'delete',sessionId:s.id,alsoNative:true}); toast('Removendo…'); }); }
+    // Monta o item (linha ÚNICA) de UMA conversa — extraído para o render agrupado reaproveitar.
     function renderRecentRow(s){ const runner=s.runnerId||selectedRunner(), run=(activeRunsByRunner[runner]||[]).includes(s.id), un=unread.has(sessionStateKey(s.id,runner))&&!run&&!(s.id===currentSession&&runner===currentSessionRunner);
       const d=document.createElement('div'); d.className='item'+(s.id===currentSession&&runner===currentSessionRunner?' active':'')+(run?' running':'')+(un?' unread':'')+(s.archived?' archived':'');
       const nat=isNative(s.id);
@@ -1763,38 +1776,27 @@
       const mb=(currentMachine==='all'&&s.machine)?`<span class="rmachine" style="--mh:${machineHue(s.machine)}" title="Máquina: ${esc(s.machine)}">${esc(s.machine)}</span>`:'';
       const personalHint=personalTurnSuggestions&&personalTurnSuggestions.has(sessionStateKey(s.id,runner));
       d.innerHTML=`<span class="rdot"></span><span class="rbadge" title="${esc(s.agent||'')}">${agentIcon(s.agent)}</span><span class="rtitle">${esc(s.title||'Sessão')}</span>${personalHint?`<span class="rpersonal" title="${esc(t('personalSuggestionsAvailable'))}">⌖</span>`:''}${mb}`;
-      const sum=document.createElement('button'); sum.type='button'; sum.className='rsum'; sum.title='Resumir e falar (não entra no histórico)';
-      const busySum=voiceOp==='summarize'&&voiceOpSid===s.id; sum.textContent=busySum?'⏳':'🔊'; if(busySum){ sum.disabled=true; sum.classList.add('busy'); voiceOpBtn=sum; }
-      sum.onclick=(e)=>{ e.stopPropagation(); if(!startVoiceOp('summarize',sum,'⏳',s.id))return; status('speaking',t('stSummarizing')); tx({t:'summarize',sessionId:s.id,speak:true}); }; d.appendChild(sum);
-      // Arquivar / desarquivar (nativas não têm flag no store — sem botão). Otimista NÃO: espera o
-      // servidor reenviar a lista, igual ao delete, pra não "sumir" antes de persistir.
-      if(!nat){ const arch=document.createElement('button'); arch.type='button'; arch.className='rarch'; arch.title=s.archived?'Desarquivar conversa':'Arquivar conversa'; arch.textContent=s.archived?'📤':'📥';
-        arch.onclick=(e)=>{ e.stopPropagation(); arch.textContent='⏳'; arch.disabled=true; tx({t:'archive',sessionId:s.id,archived:!s.archived});
-          setTimeout(()=>{ if(arch.isConnected){ arch.textContent=s.archived?'📤':'📥'; arch.disabled=false; } }, 6000); };
-        d.appendChild(arch); }
-      const del=document.createElement('button'); del.type='button'; del.className='rdel'; del.title='Remover conversa'; del.textContent='🗑';
-      del.onclick=async(e)=>{ e.stopPropagation(); const ia=(s.agent==='codex')?'codex':'claude';
-        const ok=await dialog({title:`Remover "${s.title||'conversa'}"? Apaga no Jarvis e a sessão no ${ia} — não dá pra desfazer.`, okText:'Remover', danger:true});
-        if(!ok) return;
-        // NÃO remove da lista aqui — só marca "removendo" e espera o servidor confirmar.
-        // A lista só some quando o servidor apaga de fato e reenvia as sessões (evita
-        // "sumiço fantasma": esconder na tela sem ter apagado no servidor).
-        del.textContent='⏳'; del.disabled=true;
-        tx({t:'delete',sessionId:s.id,alsoNative:true});
-        setTimeout(()=>{ if(del.isConnected){ del.textContent='🗑'; del.disabled=false; toast(t('tDelNoResp')); } }, 6000); };
-      d.appendChild(del);
+      const more=document.createElement('button'); more.type='button'; more.className='rmore'; more.title='Ações'; more.textContent='⋯';
+      const busySum=voiceOp==='summarize'&&voiceOpSid===s.id; if(busySum){ more.textContent='⏳'; more.classList.add('busy'); voiceOpBtn=more; }
+      more.onclick=(e)=>{ e.stopPropagation(); openPop(more,(p)=>buildRowMenu(p,s,more,runner,nat)); };
+      d.appendChild(more);
       d.title=`${s.title||'Sessão'}\n— ${s.agent||''}${nat?' · nativo':''}${s.archived?' · arquivada':''}\n${s.cwd||''}`;
       d.onclick=()=>{ openSession(s.id,runner); closeSide(); };
       return d; }
-    // Cabeçalho de grupo (Projeto/Máquina/Agente/Data) com contagem e "+" pra criar sessão ali.
+    // Cabeçalho de grupo (Projeto/Máquina/Agente/Data): chevron + nome + contagem + "+". Clicar no
+    // cabeçalho recolhe/expande o grupo (o chevron aparece no hover; ▾ recolhido = "abrir", ▴ = "fechar").
     function renderGroupHeader(g,groupBy){ const h=document.createElement('div'); h.className='rgroup';
-      const lbl=document.createElement('span'); lbl.className='rglabel'; lbl.textContent=g.label; lbl.title=(groupBy==='project'?(g.cwd||g.label):g.label); h.appendChild(lbl);
+      const ck=groupCollapseKey(groupBy,g.key), collapsed=recCollapsed.has(ck); if(collapsed) h.classList.add('collapsed');
+      const chev=document.createElement('span'); chev.className='rgchev'; h.appendChild(chev); // direção vem da classe .collapsed (triângulo CSS)
+      const lbl=document.createElement('span'); lbl.className='rglabel'; lbl.textContent=g.label; h.appendChild(lbl);
       const cnt=document.createElement('span'); cnt.className='rgcnt'; cnt.textContent=String(g.sessions.length); h.appendChild(cnt);
       // "+" só faz sentido quando o grupo carrega um destino concreto: projeto (pasta) ou máquina.
       if(groupBy==='project'||groupBy==='machine'){ const add=document.createElement('button'); add.type='button'; add.className='rgnew'; add.textContent='＋';
         add.title=groupBy==='project'?('Nova sessão em '+(g.cwd||g.label)):('Nova sessão em '+(g.machine||g.label));
         add.onclick=(e)=>{ e.stopPropagation(); if(groupBy==='project') startNewSession({target:g.runnerId,cwd:g.cwd}); else startNewSession({target:g.runnerId}); };
         h.appendChild(add); }
+      h.title=(collapsed?'Expandir':'Recolher')+' · '+(groupBy==='project'?(g.cwd||g.label):g.label);
+      h.onclick=()=>{ if(recCollapsed.has(ck)) recCollapsed.delete(ck); else recCollapsed.add(ck); saveRecCollapsed(); renderRecents(); };
       return h; }
     function renderRecents(){ E.recents.innerHTML='';
       const visibleRuns=currentMachine==='all'?sessions.filter(s=>(activeRunsByRunner[s.runnerId||'local']||[]).includes(s.id)).length:activeRuns.length;
@@ -1809,7 +1811,7 @@
       const org=organizeSessions(sessions,{groupBy:recPrefs.groupBy,sortBy:recPrefs.sortBy,status:recPrefs.status,limit:shown});
       recFilteredTotal=org.total;
       if(!org.shownCount){ const empty=document.createElement('div'); empty.className='mut'; empty.style.cssText='padding:14px 8px;font-size:12.5px'; empty.textContent=recPrefs.status==='archived'?'Nenhuma conversa arquivada.':'Nenhuma conversa.'; E.recents.appendChild(empty); }
-      org.groups.forEach(g=>{ if(org.groupBy!=='none') E.recents.appendChild(renderGroupHeader(g,org.groupBy)); g.sessions.forEach(s=>E.recents.appendChild(renderRecentRow(s))); });
+      org.groups.forEach(g=>{ if(org.groupBy!=='none'){ E.recents.appendChild(renderGroupHeader(g,org.groupBy)); if(recCollapsed.has(groupCollapseKey(org.groupBy,g.key))) return; } g.sessions.forEach(s=>E.recents.appendChild(renderRecentRow(s))); });
       E.moreBtn.classList.toggle('hidden', org.total<=shown); scheduleAutoPager(maybeAutoMoreRecents); }
     function loadMoreRecents(){ if(recFilteredTotal<=shown)return; shown=Math.min(recFilteredTotal,shown+20); renderRecents(); }
     function maybeAutoMoreRecents(){ if(!E.recPane||E.recPane.classList.contains('hidden')||recFilteredTotal<=shown)return; if(nearPaneBottom(E.recPane)||E.recPane.scrollHeight<=E.recPane.clientHeight+40)loadMoreRecents(); }
