@@ -1,3 +1,15 @@
+# [0.7.0](https://github.com/jhonyralph/jarvis/compare/v0.6.1...v0.7.0) (2026-08-05)
+
+
+### Features
+
+* **background-jobs:** gatilho in-band + auto-continuação ligada ponta a ponta (Fase 3) ([91018a2](https://github.com/jhonyralph/jarvis/commit/91018a2b5be60c4b381f18d7f22fe2aaf7f4094a))
+* **background-jobs:** planejador puro da auto-continuação (guards + prompt) ([915a160](https://github.com/jhonyralph/jarvis/commit/915a1608920b75ce3a90ef00e064b49351215996))
+* **background-jobs:** spawner destacado + poll no Hub (Fase 2) ([04efdd8](https://github.com/jhonyralph/jarvis/commit/04efdd8f24619fae3fb169c477d54c37a85ff611))
+* **background-jobs:** steering do agente para usar jobs duráveis (Fase 5 — feature completa) ([7f2ec6b](https://github.com/jhonyralph/jarvis/commit/7f2ec6b14a30d3b5a1db98bcbb631770b86bf09f))
+* **background-jobs:** store durável para jobs de background do Hub (fundação) ([aa80938](https://github.com/jhonyralph/jarvis/commit/aa80938a1df0442196f1ac5482abb2c1d84773f3))
+* **background-jobs:** wiring no Hub — reconciliador de auto-continuação (inerte até o spawner) ([02aa20e](https://github.com/jhonyralph/jarvis/commit/02aa20e87b3c634b79ed4587e9e476eef1681f94))
+
 ## [0.6.1](https://github.com/jhonyralph/jarvis/compare/v0.6.0...v0.6.1) (2026-08-05)
 
 
