@@ -19,7 +19,11 @@ function git(args: string[]): string {
 }
 
 function repository(): { base: string; repo: string; worktrees: string; cleanup: () => void } {
-  const base = mkdtempSync(join(tmpdir(), "jarvis-managed-worktree-"));
+  // realpathSync.native canonicalizes to the LONG form: os.tmpdir() on the Windows CI runner is the 8.3
+  // SHORT name (C:\Users\RUNNER~1\…) while the manager (and git, and the OS) resolve it to the long name
+  // (…\runneradmin\…). Building the fixtures in the same canonical form the manager returns is what keeps
+  // the `workspace.cwd === fixture.repo` assertions valid on CI. No-op where tmpdir is already long.
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "jarvis-managed-worktree-")));
   const repo = join(base, "repo");
   const worktrees = join(base, "managed");
   mkdirSync(join(repo, "nested"), { recursive: true });
