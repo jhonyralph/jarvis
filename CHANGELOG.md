@@ -1,3 +1,10 @@
+## [0.13.1](https://github.com/jhonyralph/jarvis/compare/v0.13.0...v0.13.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **desktop:** bandeja mostra o emblema do Jarvis + ponto de status, não um círculo ([805dd8b](https://github.com/jhonyralph/jarvis/commit/805dd8b3e1d6072fcb74f39a40aa478213010d33))
+
 # [0.13.0](https://github.com/jhonyralph/jarvis/compare/v0.12.0...v0.13.0) (2026-08-05)
 
 
