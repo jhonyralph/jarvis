@@ -1,3 +1,10 @@
+## [0.7.1](https://github.com/jhonyralph/jarvis/compare/v0.7.0...v0.7.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **desktop:** homepage + author para o empacotamento Linux (electron-builder exige) ([8d5c204](https://github.com/jhonyralph/jarvis/commit/8d5c20496a58331ffbfc4c3e4aaf3951440ce0d5))
+
 # [0.7.0](https://github.com/jhonyralph/jarvis/compare/v0.6.1...v0.7.0) (2026-08-05)
 
 
