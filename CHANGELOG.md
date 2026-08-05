@@ -1,3 +1,10 @@
+## [0.13.2](https://github.com/jhonyralph/jarvis/compare/v0.13.1...v0.13.2) (2026-08-05)
+
+
+### Bug Fixes
+
+* **update:** update:verify roda só typecheck (não a suíte e2e flaky) ([efc2ed0](https://github.com/jhonyralph/jarvis/commit/efc2ed0e049444e4402c6b44d0d60fce86066ec9))
+
 ## [0.13.1](https://github.com/jhonyralph/jarvis/compare/v0.13.0...v0.13.1) (2026-08-05)
 
 
