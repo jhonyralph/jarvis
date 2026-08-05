@@ -1,3 +1,11 @@
+## [0.6.1](https://github.com/jhonyralph/jarvis/compare/v0.6.0...v0.6.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **ci:** pre-push hook não roda no CI — destrava o push de release do semantic-release ([b755dda](https://github.com/jhonyralph/jarvis/commit/b755ddaf18657ac6deda74a4f47b2593966a3465))
+* **worktree:** canonicaliza short-path 8.3 e case via realpathSync.native no Windows ([c7f539b](https://github.com/jhonyralph/jarvis/commit/c7f539b5ac3dfc46ff2cc2131960f472d29440bf))
+
 # [0.6.0](https://github.com/jhonyralph/jarvis/compare/v0.5.1...v0.6.0) (2026-08-04)
 
 
