@@ -1,3 +1,10 @@
+# [0.14.0](https://github.com/jhonyralph/jarvis/compare/v0.13.2...v0.14.0) (2026-08-06)
+
+
+### Features
+
+* **framework:** import por PREVIEW (seed/nativo) com diff e exclusão por arquivo + painel de info da sessão ([ce56bc7](https://github.com/jhonyralph/jarvis/commit/ce56bc708c2c767ee21d758b60957863b9b81fac)), closes [#treeBody](https://github.com/jhonyralph/jarvis/issues/treeBody)
+
 ## [0.13.2](https://github.com/jhonyralph/jarvis/compare/v0.13.1...v0.13.2) (2026-08-05)
 
 
