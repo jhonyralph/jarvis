@@ -1,3 +1,10 @@
+# [0.15.0](https://github.com/jhonyralph/jarvis/compare/v0.14.1...v0.15.0) (2026-08-06)
+
+
+### Features
+
+* **framework-ui:** redesenha painel em duas caixas (o que já existe × importar) + feedback por botão ([f6f2b5d](https://github.com/jhonyralph/jarvis/commit/f6f2b5d5c0075a2b20fe3e7bca6692c2eb2add69))
+
 ## [0.14.1](https://github.com/jhonyralph/jarvis/compare/v0.14.0...v0.14.1) (2026-08-06)
 
 
