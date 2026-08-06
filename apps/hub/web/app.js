@@ -17,8 +17,8 @@
     } catch {}
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','aiBtn','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','councilBtn','tourneyBtn','councilModal','councilClose','solutionHelpBtn','solutionTitle','solutionHelp','solutionAgentsMode','solutionAgentList','solutionCount','solutionCriteriaWrap','solutionCriteria','solutionWrite','solutionPostAction','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','councilBtn','tourneyBtn','councilModal','councilClose','solutionHelpBtn','solutionTitle','solutionHelp','solutionAgentsMode','solutionAgentList','solutionCount','solutionCriteriaWrap','solutionCriteria','solutionWrite','solutionPostAction','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','solutionRounds','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwUpdates','fwCatBtn','fwCatalog','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -68,7 +68,24 @@
     // visualizador de imagem (modal) — clicar em qualquer imagem (mensagem, preview do anexo,
     // miniatura da fila) abre aqui; fecha no ✕, no fundo ou com Esc. Nunca abre nova guia.
     function openImg(src){ if(!src)return; E.imgModalPic.src=src; E.imgModal.classList.remove('hidden'); }
-    function closeImg(){ E.imgModal.classList.add('hidden'); E.imgModalPic.removeAttribute('src'); }
+    // Ao fechar um modal/overlay, o elemento focado dentro dele vira "órfão" numa subárvore display:none
+    // → o teclado não vai a lugar nenhum (o input do chat parece travado até um app-switch refocar a
+    // janela). Este helper devolve o foco a um elemento VISÍVEL: o botão de fechar das configurações se
+    // elas seguem abertas, senão o compositor do chat. Só age se o foco realmente saiu (dentro do modal
+    // fechado ou no body) — nunca rouba foco de outro elemento visível.
+    function restoreFocusAfterModal(modalEl){
+      try{
+        const a=document.activeElement;
+        if(a && a!==document.body && !(modalEl&&modalEl.contains(a))) return; // foco já está fora, num visível
+        if(a && a.blur) a.blur();                                             // desprende o foco órfão (fix do travamento)
+        const fine=window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+        if(!fine) return;                                                     // em touch, não força foco (evita abrir teclado)
+        const settingsOpen=E.settings && !E.settings.classList.contains('hidden') && modalEl!==E.settings;
+        const target=settingsOpen ? (E.setX||E.input) : E.input;
+        if(target) target.focus();
+      }catch(e){}
+    }
+    function closeImg(){ E.imgModal.classList.add('hidden'); E.imgModalPic.removeAttribute('src'); restoreFocusAfterModal(E.imgModal); }
     E.imgModal.onclick=(e)=>{ if(e.target===E.imgModal||e.target===E.imgClose) closeImg(); };
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!E.imgModal.classList.contains('hidden')){ e.stopPropagation(); closeImg(); } });
     // visualizador de arquivo anexado (não-imagem) — clicar no chip "📎 nome" abre o conteúdo aqui
@@ -77,7 +94,7 @@
       E.fileModalName.textContent=f.name||'arquivo';
       const hl=highlight(f.content||'',f.name); if(hl!=null){ E.fileModalBody.innerHTML=hl; } else E.fileModalBody.textContent=f.content||'';
       E.fileModal.classList.remove('hidden'); }
-    function closeFileModal(){ E.fileModal.classList.add('hidden'); E.fileModalBody.innerHTML=''; }
+    function closeFileModal(){ E.fileModal.classList.add('hidden'); E.fileModalBody.innerHTML=''; restoreFocusAfterModal(E.fileModal); }
     E.fileModal.onclick=(e)=>{ if(e.target===E.fileModal) closeFileModal(); };
     E.fileModalClose.onclick=closeFileModal;
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!E.fileModal.classList.contains('hidden')){ e.stopPropagation(); closeFileModal(); } });
@@ -2023,15 +2040,16 @@
       solutionMode=mode||'council';
       document.querySelectorAll('.sworkmode').forEach(b=>b.classList.toggle('on',b.dataset.mode===solutionMode));
       if(E.solutionHelp)E.solutionHelp.textContent=t(SOLUTION_HELP[solutionMode]||'swHelpCouncil');
-      const isCouncil=solutionMode==='council', isBenchmark=solutionMode==='benchmark';
-      const cm=E.councilMode&&E.councilMode.closest('label'), cc=E.councilContext&&E.councilContext.closest('.cswitchfield'), sw=E.solutionWrite&&E.solutionWrite.closest('.solutionWrite'), sp=E.solutionCount&&E.solutionCount.closest('.solutionParallel');
-      if(cm)cm.classList.toggle('hidden',!isCouncil);
-      if(cc)cc.classList.toggle('hidden',!isCouncil);
+      const isCouncil=solutionMode==='council', isBenchmark=solutionMode==='benchmark', isDebate=solutionMode==='debate';
+      const cm=E.councilMode&&E.councilMode.closest('label'), cc=E.councilContext&&E.councilContext.closest('.cswitchfield'), sw=E.solutionWrite&&E.solutionWrite.closest('.solutionWrite'), sp=E.solutionCount&&E.solutionCount.closest('.solutionParallel'), sr=E.solutionRounds&&E.solutionRounds.closest('.cfield');
+      if(cm)cm.classList.toggle('hidden',!isCouncil);                 // lentes/papéis: só Conselho
+      if(cc)cc.classList.toggle('hidden',!(isCouncil||isDebate));     // contexto recente: Conselho e Debate
       if(sw)sw.classList.toggle('hidden',!isBenchmark);
-      if(sp)sp.classList.toggle('hidden',isCouncil);
+      if(sp)sp.classList.toggle('hidden',isCouncil||isDebate);        // execuções paralelas: nem Conselho nem Debate
+      if(sr)sr.classList.toggle('hidden',!isDebate);                  // teto de rodadas: só Debate
       if(E.solutionTitle)E.solutionTitle.textContent=t('swName');
-      if(E.councilGo)E.councilGo.textContent=isCouncil?'Convocar':'Iniciar';
-      if(E.councilTopic)E.councilTopic.placeholder=isCouncil?'O que o Conselho deve discutir?':'Descreva a tarefa, PR, diff ou cenário para esta rodada.';
+      if(E.councilGo)E.councilGo.textContent=isCouncil?'Convocar':isDebate?'Debater':'Iniciar';
+      if(E.councilTopic)E.councilTopic.placeholder=isCouncil?'O que o Conselho deve discutir?':isDebate?'Sobre o que as IAs devem debater até chegar a um consenso?':'Descreva a tarefa, PR, diff ou cenário para esta rodada.';
       renderSolutionAgents();
     }
     document.querySelectorAll('.sworkmode').forEach(b=>b.onclick=()=>setSolutionMode(b.dataset.mode));
@@ -2045,6 +2063,7 @@
       E.councilMode.value='auto';
       E.councilContext.checked=true;
       if(E.solutionCount)E.solutionCount.value='3';
+      if(E.solutionRounds){ let r=3; try{ r=Number(localStorage.getItem('debateRounds'))||3; }catch(_){} E.solutionRounds.value=String(Math.min(6,Math.max(1,r))); }
       if(E.solutionCriteria)E.solutionCriteria.value='';
       if(E.solutionAgentsMode)E.solutionAgentsMode.value='auto';
       if(E.solutionPostAction)E.solutionPostAction.value='none';
@@ -2053,7 +2072,7 @@
       E.councilModal.classList.remove('hidden');
       setTimeout(()=>E.councilTopic.focus(),20);
     }
-    function closeCouncil(){ E.councilModal.classList.add('hidden'); E.councilGo.disabled=false; E.councilNote.textContent=''; }
+    function closeCouncil(){ E.councilModal.classList.add('hidden'); E.councilGo.disabled=false; E.councilNote.textContent=''; restoreFocusAfterModal(E.councilModal); }
     E.councilBtn.onclick=openCouncil;
     if(E.tourneyBtn) E.tourneyBtn.onclick=async()=>{
       openCouncil();
@@ -2065,16 +2084,20 @@
       const topic=(E.councilTopic.value||'').trim();
       if(!topic){ E.councilNote.textContent='Informe o tema.'; return; }
       if(!currentSession){ closeCouncil(); toast(t('tOpenFirst')); return; }
-      E.councilGo.disabled=true; E.councilNote.textContent=solutionMode==='council'?'Convocando...':'Iniciando...';
+      E.councilGo.disabled=true; E.councilNote.textContent=solutionMode==='council'?'Convocando...':solutionMode==='debate'?'Iniciando debate...':'Iniciando...';
       const fullTopic=topic+solutionPostfix();
       const selected=selectedSolutionDescriptors().map(d=>d.name);
       if(solutionMode==='council'){
         tx({t:'council_start',sessionId:currentSession,topic:fullTopic,mode:E.councilMode.value,includeContext:E.councilContext.checked,model:curModel,effort:curEffort,agents:selected});
+      }else if(solutionMode==='debate'){
+        const rounds=Math.min(6,Math.max(1,Number(E.solutionRounds&&E.solutionRounds.value)||3));
+        try{ localStorage.setItem('debateRounds',String(rounds)); }catch(_){}
+        tx({t:'debate_start',sessionId:currentSession,topic:fullTopic,includeContext:E.councilContext.checked,model:curModel,effort:curEffort,agents:selected,maxRounds:rounds});
       }else{
         const criteria=(E.solutionCriteria&&E.solutionCriteria.value||'').trim()+solutionPostfix();
         tx({t:'tournament_start',sessionId:currentSession,task:fullTopic,mode:solutionMode,competitors:solutionCompetitors(),criteria:criteria||undefined,write:solutionMode==='benchmark'&&(!E.solutionWrite||E.solutionWrite.checked)});
       }
-      closeCouncil(); closeSide(); toast(solutionMode==='council'?'Conselho convocado.':t('swStarted'));
+      closeCouncil(); closeSide(); toast(solutionMode==='council'?'Conselho convocado.':solutionMode==='debate'?'Debate iniciado.':t('swStarted'));
     };
     // Resumir a sessão ATUAL exigia abrir a barra lateral e achar a sessão na lista — no celular,
     // onde a lateral é overlay, isso é o caminho todo. O panorama (🎧) fica só na lateral: dois
@@ -2082,7 +2105,7 @@
     E.sumHdr.onclick=()=>{ if(!currentSession){ toast(t('tOpenFirst')); return; }
       if(!startVoiceOp('summarize',E.sumHdr,'⏳',currentSession))return; status('speaking',t('stSummarizing')); tx({t:'summarize',sessionId:currentSession,speak:true}); };
     // ---------- canvas: overlay central iterativo (voz: resolução de sessão, pasta, confirmação; depois imagens/diagramas) ----------
-    function hideCanvas(){ E.canvasModal.classList.add('hidden'); }
+    function hideCanvas(){ E.canvasModal.classList.add('hidden'); restoreFocusAfterModal(E.canvasModal); }
     function renderCanvas(m){ if(m.op==='close'){ hideCanvas(); return; }
       E.canvasTitle.textContent=m.title||'🎙 Jarvis'; const b=E.canvasBody; b.innerHTML='';
       const mkRow=()=>{ const r=document.createElement('div'); r.className='row'; r.style.cssText='gap:6px;flex-wrap:wrap;margin-top:10px'; return r; };
@@ -2482,7 +2505,7 @@
       E.searchResults.innerHTML=searchMode==='semantic'?'<div class="mut">Buscando por significado (pode levar alguns segundos)…</div>':'<div class="mut">Buscando…</div>';
       tx(searchMode==='semantic'?{t:'memory_search',query:q,sessionId:currentSession,scope:semanticSearchScope}:{t:'search',query:q}); }
     E.searchGo.onclick=runSearch;
-    E.searchClose.onclick=()=>E.searchModal.classList.add('hidden');
+    E.searchClose.onclick=()=>{ E.searchModal.classList.add('hidden'); restoreFocusAfterModal(E.searchModal); };
     E.searchInput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(searchTimer); runSearch(); } };
 
     // ---------- Ctrl+F: busca CONTEXTUAL ----------
@@ -3209,7 +3232,7 @@
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; if(E.setSilenceSec)E.setSilenceSec.value=cfg.silenceSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); requestPushStatus(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'}); tx({t:'list_voices'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
-      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); E.executionSettings.classList.toggle('hidden',!isOwner); if(E.frameworkSettings)E.frameworkSettings.classList.toggle('hidden',!isOwner); if(E.policySettings)E.policySettings.classList.toggle('hidden',!isOwner); if(E.fallbackSettings)E.fallbackSettings.classList.toggle('hidden',!isOwner); if(E.logSettings)E.logSettings.classList.toggle('hidden',!isOwner); if(isOwner){ fillRoutineMachines(); validateRoutineCron(); tx({t:'routines'}); tx({t:'execution_cfg'}); tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwArmInventory(); tx({t:'fallback_cfg'}); tx({t:'log_cfg'}); tx({t:'policy_state',sessionId:currentSession}); }
+      const isOwner=authUser&&authUser.role==='owner'; E.routinesSection.classList.toggle('hidden',!isOwner); E.executionSettings.classList.toggle('hidden',!isOwner); if(E.frameworkSettings)E.frameworkSettings.classList.toggle('hidden',!isOwner); if(E.policySettings)E.policySettings.classList.toggle('hidden',!isOwner); if(E.fallbackSettings)E.fallbackSettings.classList.toggle('hidden',!isOwner); if(E.logSettings)E.logSettings.classList.toggle('hidden',!isOwner); if(isOwner){ fillRoutineMachines(); validateRoutineCron(); tx({t:'routines'}); tx({t:'execution_cfg'}); tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); tx({t:'framework_updates'}); fwArmInventory(); tx({t:'fallback_cfg'}); tx({t:'log_cfg'}); tx({t:'policy_state',sessionId:currentSession}); }
       settingsSetupNav(isOwner);
       tx({t:'voice_cfg'}); requestPersonalState(); if(E.setLang) E.setLang.value=lang; };
     // ---------- configurações: navegação lateral + busca (like Claude/VS Code) ----------
@@ -3300,6 +3323,62 @@
     if(E.fwSeed) E.fwSeed.onclick=()=>fwSend('Verificando pacote base',{t:'framework_seed_preview'},E.fwSeed);
     if(E.fwImport) E.fwImport.onclick=()=>fwSend('Verificando instruções desta máquina',{t:'framework_import_native_preview'},E.fwImport);
     if(E.fwPublish) E.fwPublish.onclick=()=>{ E.fwStatus.textContent='Publicando…'; fwSend('Publicando nas máquinas',{t:'publish_framework'},E.fwPublish); };
+    // ── Catálogo de skills NATIVAS por IA: lista o que já está instalado em cada provedor e importa para
+    // o framework universal (passa a valer no "/" de todas as IAs, com verificação diária de atualização).
+    let fwCatLoaded=false, fwCatSelected=new Set(), fwCatalogCache=[], fwCatQuery='', fwCatHidden=new Set();
+    try{ fwCatHidden=new Set(JSON.parse(localStorage.getItem('fwCatHidden')||'[]')); }catch(_){}
+    function fwCatSaveHidden(){ try{ localStorage.setItem('fwCatHidden',JSON.stringify([...fwCatHidden])); }catch(_){} }
+    const FW_PROVIDER_LABEL={claude:'Claude',codex:'Codex',gemini:'Gemini',cursor:'Cursor',copilot:'Copilot',opencode:'OpenCode',cline:'Cline',qwen:'Qwen',continue:'Continue',kiro:'Kiro',antigravity:'Antigravity',aider:'Aider'};
+    if(E.fwCatBtn) E.fwCatBtn.onclick=()=>{ if(!E.fwCatalog) return; if(E.fwCatalog.classList.contains('hidden')){ E.fwCatalog.classList.remove('hidden'); E.fwCatBtn.textContent='Ocultar catálogo'; if(!fwCatLoaded) fwSend('Carregando skills instaladas',{t:'framework_native_catalog'},E.fwCatBtn); } else { E.fwCatalog.classList.add('hidden'); E.fwCatBtn.textContent='Ver catálogo'; } };
+    function fwCatSyncImportBtn(){ const imp=document.getElementById('fwCatImport'); if(imp){ imp.disabled=!fwCatSelected.size; imp.textContent='Importar ('+fwCatSelected.size+')'; } }
+    // Passar `entries` = carga nova (reseta seleção + cache). Sem argumento = re-render (filtro) preservando
+    // a seleção. Grupos por IA são <details> COLAPSADOS por padrão (o Cursor pode ter centenas) — abrem ao
+    // filtrar. Cada grupo tem "selecionar todos" e contador; um filtro no topo busca por nome/descrição.
+    function renderFwCatalog(entries){
+      if(entries){ fwCatalogCache=entries; fwCatSelected=new Set(); }
+      fwCatLoaded=true; if(!E.fwCatalog) return;
+      const list=fwCatalogCache||[];
+      if(!list.length){ E.fwCatalog.innerHTML='<div class="mut">Nenhuma skill/comando instalado encontrado nesta máquina.</div>'; return; }
+      const q=fwCatQuery.trim().toLowerCase();
+      // Universo de IAs (do cache completo) → chips de mostrar/ocultar. Contagem por IA independe do filtro.
+      const provCount={}; for(const e of list){ provCount[e.provider]=(provCount[e.provider]||0)+1; }
+      const allProvs=Object.keys(provCount).sort();
+      const groups={}; for(const e of list){ if(fwCatHidden.has(e.provider)) continue; if(q && !((e.name||'').toLowerCase().includes(q)||(e.description||'').toLowerCase().includes(q))) continue; (groups[e.provider]=groups[e.provider]||[]).push(e); }
+      const provs=Object.keys(groups).sort();
+      const shown=provs.reduce((n,p)=>n+groups[p].length,0);
+      let html='<div class="row" style="gap:8px;align-items:center;margin-bottom:6px"><input id="fwCatFilter" placeholder="Filtrar skills…" value="'+esc(fwCatQuery)+'" autocomplete="off" style="flex:1;min-width:120px;font-size:12px"><span class="mut" style="font-size:11px;flex:none">'+shown+'/'+list.length+'</span><button id="fwCatImport" class="ghost" type="button" style="font-size:11px;padding:2px 8px;flex:none"'+(fwCatSelected.size?'':' disabled')+'>Importar ('+fwCatSelected.size+')</button></div>';
+      // Chips por IA: clicar mostra/oculta aquela IA (persiste). Oculta = esmaecida com risco.
+      html+='<div class="row" style="gap:4px;flex-wrap:wrap;margin-bottom:6px" title="Clique numa IA para mostrar/ocultar suas skills">'+allProvs.map(p=>{ const hid=fwCatHidden.has(p); return '<button class="ghost fwcat-prov" data-provider="'+esc(p)+'" type="button" style="font-size:10.5px;padding:1px 7px'+(hid?';opacity:.45;text-decoration:line-through':'')+'">'+(hid?'🚫 ':'')+esc(FW_PROVIDER_LABEL[p]||p)+' ('+provCount[p]+')</button>'; }).join('')+'</div>';
+      if(!provs.length){ html+='<div class="mut">'+(q?'Nada corresponde ao filtro.':'Todas as IAs estão ocultas — reative nos chips acima.')+'</div>'; E.fwCatalog.innerHTML=html; return; }
+      for(const p of provs){
+        const items=groups[p].sort((a,b)=>a.name.localeCompare(b.name));
+        const selCount=items.filter(e=>fwCatSelected.has(e.id)).length;
+        html+='<details class="fwcat-g"'+(q?' open':'')+' style="margin:4px 0;border:1px solid #ffffff12;border-radius:8px;padding:2px 8px"><summary style="cursor:pointer;font-size:12px;display:flex;gap:8px;align-items:center;justify-content:space-between;padding:4px 0"><span><span class="fwcat-cv"></span> <b>'+esc(FW_PROVIDER_LABEL[p]||p)+'</b> <span class="mut">('+items.length+(selCount?' · '+selCount+' sel.':'')+')</span></span><button class="ghost fwcat-all" data-provider="'+esc(p)+'" type="button" style="font-size:10.5px;padding:1px 7px;flex:none">Selecionar todos</button></summary><div style="margin-top:2px">';
+        for(const e of items){ const tag=e.kind==='skill'?'skill':'cmd'; const checked=(e.tracked||fwCatSelected.has(e.id))?' checked':''; const dis=e.tracked?' disabled':'';
+          html+='<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 4px;font-size:12px"><input type="checkbox" class="fwcat-ck" data-id="'+esc(e.id)+'"'+checked+dis+' style="margin-top:2px"><span style="min-width:0"><b>'+esc(e.name)+'</b> <span class="mut">['+tag+']</span>'+(e.tracked?' <span style="color:#4ade80">· já importada</span>':'')+(e.description?'<br><span class="mut" style="font-size:11px">'+esc(e.description)+'</span>':'')+'</span></label>';
+        }
+        html+='</div></details>';
+      }
+      E.fwCatalog.innerHTML=html;
+    }
+    if(E.fwCatalog){
+      E.fwCatalog.addEventListener('change',e=>{ const ck=e.target.closest('.fwcat-ck'); if(!ck||ck.disabled) return; if(ck.checked) fwCatSelected.add(ck.dataset.id); else fwCatSelected.delete(ck.dataset.id); fwCatSyncImportBtn(); });
+      E.fwCatalog.addEventListener('input',e=>{ const f=e.target.closest('#fwCatFilter'); if(!f) return; fwCatQuery=f.value; const pos=f.selectionStart; renderFwCatalog(); const nf=document.getElementById('fwCatFilter'); if(nf){ nf.focus(); try{ nf.setSelectionRange(pos,pos); }catch(_){} } });
+      E.fwCatalog.addEventListener('click',e=>{
+        const imp=e.target.closest('#fwCatImport'); if(imp){ const ids=[...fwCatSelected]; if(!ids.length){ toast('Selecione ao menos uma skill.'); return; } fwSend('Importando '+ids.length+' skill(s)',{t:'framework_import_native_skill_preview',ids},imp); return; }
+        const prov=e.target.closest('.fwcat-prov'); if(prov){ const p=prov.dataset.provider; if(fwCatHidden.has(p)){ fwCatHidden.delete(p); } else { fwCatHidden.add(p); fwCatalogCache.forEach(en=>{ if(en.provider===p) fwCatSelected.delete(en.id); }); } fwCatSaveHidden(); renderFwCatalog(); return; }
+        const all=e.target.closest('.fwcat-all'); if(all){ e.preventDefault(); e.stopPropagation(); const det=all.closest('.fwcat-g'); if(!det) return; const cks=[...det.querySelectorAll('.fwcat-ck:not(:disabled)')]; const allSel=cks.length&&cks.every(c=>fwCatSelected.has(c.dataset.id)); cks.forEach(c=>{ if(allSel){ fwCatSelected.delete(c.dataset.id); c.checked=false; } else { fwCatSelected.add(c.dataset.id); c.checked=true; } }); all.textContent=allSel?'Selecionar todos':'Limpar seleção'; fwCatSyncImportBtn(); }
+      });
+    }
+    // Banner "atualizações disponíveis" — populado pela verificação diária (notify-only; nada é aplicado
+    // sem confirmação). "Revisar" dispara o mesmo update-check → prévia → aplicar das fontes.
+    function renderFwUpdates(alerts){
+      if(!E.fwUpdates) return; const a=alerts||[];
+      if(!a.length){ E.fwUpdates.classList.add('hidden'); E.fwUpdates.innerHTML=''; return; }
+      E.fwUpdates.classList.remove('hidden');
+      E.fwUpdates.innerHTML='<div style="font-weight:600;margin-bottom:4px">🔔 '+a.length+' atualização(ões) disponível(is)</div>'+a.map(u=>{ const flag=u.scanBlocked?' <span style="color:#f87171">· sinalizada (revisar)</span>':''; return '<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin:2px 0"><span style="min-width:0">'+esc(u.label||u.id)+' <span class="mut">('+esc(u.type)+(u.changed?', '+u.changed+' arq.':'')+')</span>'+flag+'</span><button class="ghost fw-upd-review" data-id="'+esc(u.id)+'" type="button" style="font-size:11px;padding:2px 8px">Revisar</button></div>'; }).join('');
+    }
+    if(E.fwUpdates) E.fwUpdates.addEventListener('click',e=>{ const r=e.target.closest('.fw-upd-review'); if(!r) return; fwSend('Buscando atualização',{t:'framework_update_check',id:r.dataset.id}); });
     // Framework: inventário, importação com gate de segurança (zip/GitHub) e atualização por fonte.
     let fwSourcesCache=[], fwPreviewToken='', fwPreviewBlocked=false, fwPreviewSelected=new Set(), fwWatchdog=null, fwInvTimer=null, fwLogSeeded=false;
     // Registro visível "O que foi feito": cada ação anota início e resultado, e um watchdog avisa quando
@@ -3309,7 +3388,7 @@
     // reenvio/spam). fwArrived() é o ponto único que TODA resposta do framework chama → destrava lá;
     // o watchdog também destrava ao desistir (senão o botão ficava clicável e sem feedback).
     let fwPending=false, fwActiveBtn=null;
-    const FW_ACTION_BTNS=['fwSeed','fwImport','fwPublish','fwNewFile','fwRefresh','fwZipBtn','fwGhBtn'];
+    const FW_ACTION_BTNS=['fwSeed','fwImport','fwPublish','fwNewFile','fwRefresh','fwZipBtn','fwGhBtn','fwCatBtn'];
     // Trava geral + SPINNER no botão clicado (você vê QUAL ação está rodando, não só um log). Destrava
     // no ponto único fwArrived() (toda resposta chama) e no watchdog ao desistir.
     function fwBusy(on,btn){ fwPending=on; FW_ACTION_BTNS.forEach(id=>{ const b=E[id]; if(b) b.disabled=on; }); if(E.frameworkSettings) E.frameworkSettings.classList.toggle('fwbusy',on);
@@ -3332,7 +3411,8 @@
     const fwExpanded=new Set(); // pastas expandidas no inventário (padrão: tudo colapsado, igual à aba de arquivos da sessão; o usuário expande)
     // Constrói o inventário como DOM aninhado e colapsável: cada pasta tem um container-irmão .fw-tchildren
     // e o toggle é O(1) (só liga/desliga a classe .open), exatamente como o #treeBody da sessão.
-    function fwRenderTree(node,depth,prefix,container){
+    function fwRenderTree(node,depth,prefix,container,probMap){
+      probMap=probMap||{};
       Object.keys(node.dirs).sort().forEach(d=>{
         const full=prefix?prefix+'/'+d:d, open=fwExpanded.has(full);
         const row=document.createElement('div'); row.className='fw-node'; row.style.paddingLeft=(depth*14+6)+'px';
@@ -3343,27 +3423,47 @@
         const kids=document.createElement('div'); kids.className='fw-tchildren'+(open?' open':'');
         row.onclick=()=>{ const nowOpen=kids.classList.toggle('open'); tw.textContent=nowOpen?'▾':'▸'; if(nowOpen)fwExpanded.add(full); else fwExpanded.delete(full); };
         container.append(row,kids);
-        fwRenderTree(node.dirs[d],depth+1,full,kids);
+        fwRenderTree(node.dirs[d],depth+1,full,kids,probMap);
       });
       node.files.slice().sort((a,b)=>a.leaf.localeCompare(b.leaf)).forEach(f=>{
         const row=document.createElement('div'); row.className='fw-file'; row.dataset.path=f.path; row.setAttribute('role','button'); row.tabIndex=0; row.style.paddingLeft=(depth*14+6)+'px';
         const nm=document.createElement('span'); nm.className='tn'; nm.style.cssText='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis'; nm.textContent='📄 '+f.leaf; nm.title=f.path;
         const meta=document.createElement('span'); meta.className='mut'; meta.style.fontSize='11px'; meta.innerHTML=(f.tokens||0)+' tk · '+fwStatusBadge(f.status);
         const del=document.createElement('button'); del.type='button'; del.className='ghost fw-file-del'; del.title='Remover do framework'; del.setAttribute('aria-label','Remover '+f.path); del.textContent='🗑'; del.dataset.path=f.path;
-        row.append(nm,meta,del); container.appendChild(row);
+        const pm=probMap[f.path];
+        if(pm){ const cnt=pm.hi+pm.md+pm.lo+pm.err+pm.warn; const mk=document.createElement('span'); mk.className='fwmark '+((pm.hi||pm.err)?'hi':'md'); mk.textContent='⚠ '+cnt; mk.title='Problemas neste arquivo — clique para abrir na falha'; mk.dataset.path=f.path; mk.dataset.line=pm.line||0; mk.dataset.msg=pm.msg||''; row.append(nm,meta,mk,del); }
+        else row.append(nm,meta,del);
+        container.appendChild(row);
       });
     }
     function renderFwInventory(inv,scan,validation){
       if(!E.fwInventory) return;
       const files=(inv&&inv.files)||[];
+      // Mapa de problemas por arquivo: achados de segurança + erros/avisos de validação + avisos de orçamento.
+      // Alimenta tanto o marcador na árvore quanto o painel navegável.
+      const probMap={};
+      const addProb=(path,sev,line,msg,kind)=>{ if(!path) return; const m=probMap[path]=probMap[path]||{hi:0,md:0,lo:0,err:0,warn:0,line:0,msg:''}; if(sev==='high')m.hi++; else if(sev==='medium')m.md++; else if(sev==='low')m.lo++; if(kind==='err')m.err++; else if(kind==='warn')m.warn++; if(line&&!m.line)m.line=line; if(msg&&!m.msg)m.msg=msg; };
+      const findings=(scan&&scan.findings)||[], issues=(validation&&validation.issues)||[], bwarns=(inv&&inv.warnings)||[];
+      findings.forEach(f=>addProb(f.path,f.severity,f.line,f.message));
+      issues.forEach(i=>addProb(i.path,null,i.line||0,i.message,i.level==='error'?'err':'warn'));
+      bwarns.forEach(w=>addProb(w.path,null,0,w.message,'warn'));
       E.fwInventory.innerHTML='';
-      if(files.length) fwRenderTree(fwBuildTree(files),0,'',E.fwInventory);
+      if(files.length) fwRenderTree(fwBuildTree(files),0,'',E.fwInventory,probMap);
       else E.fwInventory.innerHTML='<div class="mut">Nenhum arquivo ainda. Use “Novo arquivo”, o pacote base ou importe um pacote.</div>';
-      const t=(inv&&inv.totals)||{}, warn=((inv&&inv.warnings)||[]).map(w=>'⚠ '+esc(w.message)).join('<br>');
+      const t=(inv&&inv.totals)||{};
       const sc=(scan&&scan.counts)||{high:0,medium:0,low:0};
       const scanTxt=scan?('Segurança: '+(sc.high?('<span style="color:#f87171">'+sc.high+' alto(s)</span>'):'<span style="color:#4ade80">0 alto</span>')+', '+sc.medium+' médio(s), '+sc.low+' baixo(s)'):'';
       const valTxt=validation?(' · Validação: '+(validation.errors?('<span style="color:#f87171">'+validation.errors+' erro(s)</span>'):'ok')+(validation.warnings?(', '+validation.warnings+' aviso(s)'):'')):'';
-      E.fwHealth.innerHTML=(files.length?('Sempre-ligado (instruções): <b>~'+(t.alwaysOnTokens||0)+' tk</b> · sob demanda: ~'+(t.onDemandTokens||0)+' tk · catálogo de skills: ~'+(t.metadataTokens||0)+' tk<br>'):'')+scanTxt+valTxt+(warn?('<br>'+warn):'');
+      // Painel de problemas navegável: cada item abre o arquivo na linha da falha.
+      const probItems=[]
+        .concat(findings.map(f=>({path:f.path,line:f.line||0,label:'<span style="color:'+fwSevColor(f.severity)+'">●</span> <b>'+esc(f.rule)+'</b>',msg:f.message})))
+        .concat(issues.map(i=>({path:i.path,line:i.line||0,label:(i.level==='error'?'<span style="color:#f87171">erro</span>':'<span style="color:#f5b544">aviso</span>'),msg:i.message})))
+        .concat(bwarns.map(w=>({path:w.path||'',line:0,label:'<span style="color:#f5b544">orçamento</span>',msg:w.message})));
+      let probHtml='';
+      if(probItems.length){ probHtml='<details class="fwprob"'+(sc.high?' open':'')+'><summary>⚠ Problemas ('+probItems.length+') — clique para abrir no arquivo</summary><div style="margin-top:2px">'
+        +probItems.slice(0,200).map(p=>'<div class="fwprob-i" role="button" tabindex="0" data-path="'+esc(p.path)+'" data-line="'+p.line+'" data-msg="'+esc(p.msg)+'">'+p.label+' <span class="mut">'+esc(p.path)+(p.line?(':'+p.line):'')+'</span> — '+esc(p.msg)+'</div>').join('')
+        +'</div></details>'; }
+      E.fwHealth.innerHTML=(files.length?('Sempre-ligado (instruções): <b>~'+(t.alwaysOnTokens||0)+' tk</b> · sob demanda: ~'+(t.onDemandTokens||0)+' tk · catálogo de skills: ~'+(t.metadataTokens||0)+' tk<br>'):'')+scanTxt+valTxt+probHtml;
     }
     function renderFwSources(sources){
       fwSourcesCache=sources||[]; if(!E.fwSources) return;
@@ -3407,8 +3507,8 @@
         +'<div style="margin-top:4px">Segurança: '+(sc.high?('<b style="color:#f87171">'+sc.high+' alto(s) — bloqueado</b>'):'<span style="color:#4ade80">0 alto</span>')+', '+sc.medium+' médio(s), '+sc.low+' baixo(s)</div>'
         +(rowsHtml?('<div class="fwplist">'+rowsHtml+'</div><div class="mut" style="font-size:11px;margin-top:3px">Desmarque o que não quiser importar. Tudo pode ser removido depois pela lista do inventário.</div>'):'')
         +(c.unchanged?('<div class="mut" style="margin-top:3px;font-size:11px">'+c.unchanged+' arquivo(s) idêntico(s) já existem — não serão alterados.</div>'):'')
-        +(findings?('<div style="margin-top:4px">'+findings+'</div>'):'')
-        +(issues?('<div style="margin-top:4px">'+issues+'</div>'):'')
+        +(findings?('<details class="fwpsec"'+(sc.high?' open':'')+'><summary>Achados de segurança ('+((p.scan&&p.scan.findings)||[]).length+')</summary><div style="margin-top:2px">'+findings+'</div></details>'):'')
+        +(issues?('<details class="fwpsec"><summary>Validação ('+((p.validation&&p.validation.issues)||[]).length+')</summary><div style="margin-top:2px">'+issues+'</div></details>'):'')
         +(skipped.length?('<div class="mut" style="margin-top:4px">Ignorados: '+skipped.slice(0,20).map(esc).join(', ')+'</div>'):'');
       // Fontes já importadas (ou "buscar atualização") default para Sobrescrever — é o caso de update manual.
       if(E.fwPreviewMode)E.fwPreviewMode.value=isUpdate?'overwrite':'keep';
@@ -3423,7 +3523,7 @@
       if(!m.hasCurrent){ const n=document.createElement('div'); n.className='dline sec'; n.textContent='(arquivo novo — sem versão atual para comparar)'; E.fwDiffBody.appendChild(n); }
       (m.rows||[]).forEach(r=>{ const d=document.createElement('div'); d.className='dline '+(r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx'); d.textContent=r.s; E.fwDiffBody.appendChild(d); });
       E.fwDiffModal.classList.remove('hidden'); }
-    function fwCloseDiff(){ if(E.fwDiffModal)E.fwDiffModal.classList.add('hidden'); }
+    function fwCloseDiff(){ if(E.fwDiffModal)E.fwDiffModal.classList.add('hidden'); restoreFocusAfterModal(E.fwDiffModal); }
     if(E.fwLogClear) E.fwLogClear.onclick=()=>{ if(E.fwLog){ E.fwLog.innerHTML='—'; fwLogSeeded=false; } };
     if(E.fwRefresh) E.fwRefresh.onclick=()=>fwSend('Atualizando inventário',{t:'framework_inventory'},E.fwRefresh);
     if(E.fwZipBtn) E.fwZipBtn.onclick=()=>E.fwZip&&E.fwZip.click();
@@ -3439,28 +3539,47 @@
     if(E.fwDiffModal) E.fwDiffModal.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.stopPropagation(); fwCloseDiff(); } });
     if(E.fwSources) E.fwSources.addEventListener('click',e=>{ const upd=e.target.closest('.fw-src-upd'), del=e.target.closest('.fw-src-del'); if(upd){ fwSend('Buscando atualização',{t:'framework_update_check',id:upd.dataset.id}); } else if(del){ fwSend('Removendo fonte',{t:'framework_source_remove',id:del.dataset.id}); } });
     // Editor de arquivo em modal sobreposto, com guard de alterações não salvas.
-    let fwEditPath='', fwEditOrig='', fwEditMode='edit', fwSavingContent='', fwViewMode='edit', fwIsMd=false;
+    let fwEditPath='', fwEditOrig='', fwEditMode='edit', fwSavingContent='', fwViewMode='edit', fwIsMd=false, fwPendingJump=null, fwWrapOn=false;
+    try{ fwWrapOn=localStorage.getItem('fwEditWrap')==='1'; }catch(_){}
+    // Abrir um arquivo NA linha da falha (a partir do painel de problemas ou do marcador na árvore): guarda o
+    // alvo e pede o arquivo; ao chegar (framework_file), pula para a linha, seleciona e mostra o banner.
+    function fwOpenAt(path,line,msg){ if(!path) return; fwPendingJump={path:path,line:line||0,msg:msg||''}; tx({t:'framework_read',path:path}); }
+    function fwSetFindingBanner(text){ if(!E.fwEditFinding) return; if(text){ E.fwEditFinding.textContent='⚠ '+text; E.fwEditFinding.classList.remove('hidden'); } else { E.fwEditFinding.textContent=''; E.fwEditFinding.classList.add('hidden'); } }
+    // Régua de números de linha, sincronizada com a textarea (rolagem vertical). O editor é sem quebra
+    // (wrap=off), então 1 linha lógica = 1 linha visual → os números alinham com as linhas dos achados.
+    function fwUpdateGutter(){ if(!E.fwEditGutter||!E.fwEditBody) return; const n=(E.fwEditBody.value.match(/\n/g)||[]).length+1; let s='1'; for(let i=2;i<=n;i++) s+='\n'+i; E.fwEditGutter.textContent=s; E.fwEditGutter.scrollTop=E.fwEditBody.scrollTop; }
+    // Quebra de linha (toggle persistido): sem quebra → régua alinhada + scroll horizontal; com quebra →
+    // prosa flui, mas a régua fica OCULTA (números não alinhariam com linhas quebradas).
+    function fwApplyWrap(){ if(!E.fwEditBody) return; E.fwEditBody.classList.toggle('wrapon',fwWrapOn); try{ E.fwEditBody.wrap=fwWrapOn?'soft':'off'; }catch(_){} if(E.fwEditGutter)E.fwEditGutter.style.display=fwWrapOn?'none':''; if(E.fwEditWrapBtn)E.fwEditWrapBtn.textContent=fwWrapOn?'▦ Exibir linhas: não':'▦ Exibir linhas: sim'; if(!fwWrapOn)fwUpdateGutter(); }
+    function fwJumpToLine(line,msg){ if(!E.fwEditBody) return; fwSetView('edit'); const ta=E.fwEditBody; if(line>0){ const lines=ta.value.split('\n'); let start=0; for(let i=0;i<line-1&&i<lines.length;i++) start+=lines[i].length+1; const end=start+((lines[line-1]||'').length); ta.focus(); try{ ta.setSelectionRange(start,end); }catch(_){} const lh=parseFloat(getComputedStyle(ta).lineHeight)||18; ta.scrollTop=Math.max(0,(line-2)*lh); } fwUpdateGutter(); fwSetFindingBanner((line>0?('Linha '+line+': '):'')+(msg||'')); }
     function fwEditDirtyNow(){ return !!E.fwEditBody && (E.fwEditBody.value!==fwEditOrig); }
     function fwSyncDirty(){ if(E.fwEditDirty)E.fwEditDirty.style.display=fwEditDirtyNow()?'':'none'; }
     // Markdown abre renderizado (a maioria dos arquivos é .md); "Editar" mostra a textarea e "Formatado"
     // volta re-renderizando o que está sendo editado. Reusa renderMarkdown/enhanceMarkdown do chat.
     function fwSetView(mode){ fwViewMode=mode; const view=mode==='view'&&fwIsMd;
       if(E.fwEditView){ E.fwEditView.classList.toggle('hidden',!view); if(view){ E.fwEditView.innerHTML=renderMarkdown(E.fwEditBody?E.fwEditBody.value:''); enhanceMarkdown(E.fwEditView); } }
+      if(E.fwEditWrap)E.fwEditWrap.style.display=view?'none':'flex';
       if(E.fwEditBody)E.fwEditBody.classList.toggle('hidden',view);
       if(E.fwEditFmt)E.fwEditFmt.textContent=view?'✏️ Editar':'👁 Formatado';
-      if(!view)setTimeout(()=>{ if(E.fwEditBody)E.fwEditBody.focus(); },0); }
-    function fwOpenNew(){ fwEditMode='new'; fwEditPath=''; fwEditOrig=''; fwIsMd=false; if(E.fwEditTitle)E.fwEditTitle.textContent='Novo arquivo'; if(E.fwEditPathRow)E.fwEditPathRow.style.display=''; if(E.fwEditPath)E.fwEditPath.value=''; if(E.fwEditBody)E.fwEditBody.value=''; if(E.fwEditDelete)E.fwEditDelete.style.display='none'; if(E.fwEditSave)E.fwEditSave.disabled=false; if(E.fwEditFmt)E.fwEditFmt.classList.add('hidden'); fwSetView('edit'); fwSyncDirty(); if(E.fwEditModal)E.fwEditModal.classList.remove('hidden'); setTimeout(()=>{ if(E.fwEditPath)E.fwEditPath.focus(); },0); }
-    function fwShowFile(path,content){ fwEditMode='edit'; fwEditPath=path||''; fwEditOrig=content||''; if(E.fwEditTitle)E.fwEditTitle.textContent=fwEditPath||'Arquivo'; if(E.fwEditPathRow)E.fwEditPathRow.style.display='none'; if(E.fwEditBody)E.fwEditBody.value=content||''; if(E.fwEditDelete)E.fwEditDelete.style.display=''; if(E.fwEditSave)E.fwEditSave.disabled=false; fwIsMd=/\.(md|markdown|mdx)$/i.test(fwEditPath); if(E.fwEditFmt)E.fwEditFmt.classList.toggle('hidden',!fwIsMd); fwSetView(fwIsMd?'view':'edit'); fwSyncDirty(); if(E.fwEditModal)E.fwEditModal.classList.remove('hidden'); }
-    function fwCloseEdit(force){ if(!force && fwEditDirtyNow() && !confirm('Descartar alterações não salvas?')) return false; if(E.fwEditModal){ E.fwEditModal.classList.add('hidden'); E.fwEditModal.classList.remove('max'); } if(E.fwEditMax){ E.fwEditMax.textContent='⛶'; E.fwEditMax.title='Maximizar'; } return true; }
+      if(!view){ fwApplyWrap(); setTimeout(()=>{ if(E.fwEditBody)E.fwEditBody.focus(); },0); } }
+    function fwOpenNew(){ fwSetFindingBanner(''); fwEditMode='new'; fwEditPath=''; fwEditOrig=''; fwIsMd=false; if(E.fwEditTitle)E.fwEditTitle.textContent='Novo arquivo'; if(E.fwEditPathRow)E.fwEditPathRow.style.display=''; if(E.fwEditPath)E.fwEditPath.value=''; if(E.fwEditBody)E.fwEditBody.value=''; if(E.fwEditDelete)E.fwEditDelete.style.display='none'; if(E.fwEditSave)E.fwEditSave.disabled=false; if(E.fwEditFmt)E.fwEditFmt.classList.add('hidden'); fwSetView('edit'); fwSyncDirty(); if(E.fwEditModal)E.fwEditModal.classList.remove('hidden'); setTimeout(()=>{ if(E.fwEditPath)E.fwEditPath.focus(); },0); }
+    function fwShowFile(path,content){ fwSetFindingBanner(''); fwEditMode='edit'; fwEditPath=path||''; fwEditOrig=content||''; if(E.fwEditTitle)E.fwEditTitle.textContent=fwEditPath||'Arquivo'; if(E.fwEditPathRow)E.fwEditPathRow.style.display='none'; if(E.fwEditBody)E.fwEditBody.value=content||''; if(E.fwEditDelete)E.fwEditDelete.style.display=''; if(E.fwEditSave)E.fwEditSave.disabled=false; fwIsMd=/\.(md|markdown|mdx)$/i.test(fwEditPath); if(E.fwEditFmt)E.fwEditFmt.classList.toggle('hidden',!fwIsMd); fwSetView(fwIsMd?'view':'edit'); fwSyncDirty(); if(E.fwEditModal)E.fwEditModal.classList.remove('hidden'); }
+    function fwCloseEdit(force){ if(!force && fwEditDirtyNow() && !confirm('Descartar alterações não salvas?')) return false; if(E.fwEditModal){ E.fwEditModal.classList.add('hidden'); E.fwEditModal.classList.remove('max'); } if(E.fwEditMax){ E.fwEditMax.textContent='⛶'; E.fwEditMax.title='Maximizar'; } restoreFocusAfterModal(E.fwEditModal); return true; }
     function fwDoSave(){ const path=fwEditMode==='new'?((E.fwEditPath&&E.fwEditPath.value||'').trim()):fwEditPath; if(!path){ toast('Informe o caminho (ex.: commands/plan.md)'); return; } fwSavingContent=E.fwEditBody?E.fwEditBody.value:''; if(E.fwEditSave)E.fwEditSave.disabled=true; fwSend('Salvando '+path,{t:'framework_save',path:path,content:fwSavingContent}); }
     if(E.fwNewFile) E.fwNewFile.onclick=fwOpenNew;
-    if(E.fwInventory) E.fwInventory.addEventListener('click',e=>{ const del=e.target.closest('.fw-file-del'); if(del){ e.stopPropagation(); const p=del.dataset.path; if(p && confirm('Remover “'+p+'” do framework?\n\nApaga o arquivo desta máquina. Publique depois para propagar a remoção às outras.')) fwSend('Removendo '+p,{t:'framework_delete',path:p}); return; } const el=e.target.closest('.fw-file'); if(el&&el.dataset.path) tx({t:'framework_read',path:el.dataset.path}); });
+    if(E.fwInventory) E.fwInventory.addEventListener('click',e=>{ const del=e.target.closest('.fw-file-del'); if(del){ e.stopPropagation(); const p=del.dataset.path; if(p && confirm('Remover “'+p+'” do framework?\n\nApaga o arquivo desta máquina. Publique depois para propagar a remoção às outras.')) fwSend('Removendo '+p,{t:'framework_delete',path:p}); return; } const mk=e.target.closest('.fwmark'); if(mk){ e.stopPropagation(); fwOpenAt(mk.dataset.path,+mk.dataset.line||0,mk.dataset.msg||''); return; } const el=e.target.closest('.fw-file'); if(el&&el.dataset.path) tx({t:'framework_read',path:el.dataset.path}); });
+    // Painel de problemas (dentro de fwHealth): clicar/Enter abre o arquivo na linha da falha.
+    if(E.fwHealth){ const openProb=el=>{ if(el) fwOpenAt(el.dataset.path,+el.dataset.line||0,el.dataset.msg||''); };
+      E.fwHealth.addEventListener('click',e=>{ openProb(e.target.closest('.fwprob-i')); });
+      E.fwHealth.addEventListener('keydown',e=>{ if(e.key!=='Enter'&&e.key!==' ')return; const it=e.target.closest('.fwprob-i'); if(it){ e.preventDefault(); openProb(it); } }); }
     if(E.fwInventory) E.fwInventory.addEventListener('keydown',e=>{ if(e.key!=='Enter'&&e.key!==' ')return; if(e.target.closest('.fw-file-del'))return; const el=e.target.closest&&e.target.closest('.fw-file'); if(el&&el.dataset.path){ e.preventDefault(); tx({t:'framework_read',path:el.dataset.path}); } });
-    if(E.fwEditBody) E.fwEditBody.addEventListener('input',fwSyncDirty);
+    if(E.fwEditBody) E.fwEditBody.addEventListener('input',()=>{ fwSyncDirty(); fwUpdateGutter(); });
+    if(E.fwEditBody) E.fwEditBody.addEventListener('scroll',()=>{ if(E.fwEditGutter) E.fwEditGutter.scrollTop=E.fwEditBody.scrollTop; });
     if(E.fwEditSave) E.fwEditSave.onclick=fwDoSave;
     if(E.fwEditCancel) E.fwEditCancel.onclick=()=>fwCloseEdit(false);
     if(E.fwEditClose) E.fwEditClose.onclick=()=>fwCloseEdit(false);
     if(E.fwEditFmt) E.fwEditFmt.onclick=()=>fwSetView(fwViewMode==='view'?'edit':'view');
+    if(E.fwEditWrapBtn) E.fwEditWrapBtn.onclick=()=>{ fwWrapOn=!fwWrapOn; try{ localStorage.setItem('fwEditWrap',fwWrapOn?'1':'0'); }catch(_){} fwApplyWrap(); };
     if(E.fwEditMax) E.fwEditMax.onclick=()=>{ const max=E.fwEditModal.classList.toggle('max'); E.fwEditMax.textContent=max?'🗗':'⛶'; E.fwEditMax.title=max?'Restaurar':'Maximizar'; };
     if(E.fwEditDelete) E.fwEditDelete.onclick=()=>{ if(!fwEditPath){ fwCloseEdit(true); return; } if(!confirm('Excluir '+fwEditPath+'?')) return; fwSend('Excluindo '+fwEditPath,{t:'framework_delete',path:fwEditPath}); };
     if(E.fwEditModal) E.fwEditModal.addEventListener('mousedown',e=>{ if(e.target===E.fwEditModal) fwCloseEdit(false); });
@@ -3665,7 +3784,7 @@
     // framework, rota, dispositivos e atualização têm as próprias ações/auto-save.
     function settingsInstallPanelSaves(){ ['geral','voz','notif','automacao'].forEach(name=>{ const panel=E.settings&&E.settings.querySelector('.spanel[data-panel="'+name+'"]'); if(!panel||panel.querySelector('.settings-panel-actions'))return; const wrap=document.createElement('div'); wrap.className='settings-panel-actions'; const btn=document.createElement('button'); btn.type='button'; btn.className='set-save'; btn.textContent='Salvar'; btn.onclick=()=>settingsSaveGeneral(btn); wrap.appendChild(btn); panel.appendChild(wrap); }); }
     settingsInstallPanelSaves();
-    if(E.setX) E.setX.onclick=()=>E.settings.classList.add('hidden'); // fechar (único), no canto do card
+    if(E.setX) E.setX.onclick=()=>{ E.settings.classList.add('hidden'); restoreFocusAfterModal(E.settings); }; // fechar (único), no canto do card
 
     // ---------- generic dialog (substitui alert/confirm/prompt nativos) ----------
     let dlgResolve=null;
@@ -4032,7 +4151,7 @@
           E.execCfgNote.textContent=m.saved?(m.restartRequired?'✓ Política salva. Reinicie o Hub para aplicar: '+(m.restartFields||[]).join(', ')+'.':'✓ Política salva e aplicada para novas delegações.'):'Ativação, retenção, limite do diário e raiz de worktrees exigem reinício; concorrência, profundidade e escrita padrão valem para novas delegações.'; }
         else if(m.t==='framework_cfg'){ fwArrived(); if(m.preference&&E.setFwPref)E.setFwPref.value=m.preference; if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version;
           if(m.machines){ fwMachineStatus={}; m.machines.forEach(mc=>{ fwMachineStatus[mc.runnerId]={label:mc.label,state:mc.local?'fonte':((mc.protocolVersion||1)<7?'needs_update':mc.queued?'queued':mc.online?'pronta':'offline')}; }); renderFwStatus(); } }
-        else if(m.t==='framework_file'){ fwArrived(); fwShowFile(m.path||'', m.content||''); }
+        else if(m.t==='framework_file'){ fwArrived(); fwShowFile(m.path||'', m.content||''); if(fwPendingJump&&fwPendingJump.path===(m.path||'')) fwJumpToLine(fwPendingJump.line,fwPendingJump.msg); fwPendingJump=null; }
         else if(m.t==='framework_saved'){ fwArrived(); if(m.ok){ tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwLog('✓ '+(m.deleted?'excluído':'salvo')+' '+esc(m.path||''),'#4ade80');
             if(m.deleted){ fwCloseEdit(true); toast('Arquivo excluído'); }
             else { if(E.fwEditModal&&!E.fwEditModal.classList.contains('hidden')){ fwEditMode='edit'; fwEditPath=m.path||fwEditPath; fwEditOrig=fwSavingContent; if(E.fwEditPathRow)E.fwEditPathRow.style.display='none'; if(E.fwEditTitle)E.fwEditTitle.textContent=fwEditPath; if(E.fwEditDelete)E.fwEditDelete.style.display=''; fwSyncDirty(); } if(E.fwEditSave)E.fwEditSave.disabled=false; toast('Arquivo salvo'); } }
@@ -4042,8 +4161,10 @@
         else if(m.t==='framework_inventory'){ fwArrived(); if(fwInvTimer){clearTimeout(fwInvTimer);fwInvTimer=null;} renderFwInventory(m.inventory,m.scan,m.validation); renderFwSources(m.sources); if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version; const n=((m.inventory&&m.inventory.files)||[]).length; fwLog('inventário: '+n+' arquivo(s) · seg. '+(((m.scan&&m.scan.counts)||{}).high||0)+' alto(s)'); }
         else if(m.t==='framework_import_preview'){ fwArrived(); if(m.ok){ renderFwPreview(m.token,m.source||{},m.preview||{},!!m.isUpdate); const sc=((m.preview&&m.preview.scan&&m.preview.scan.counts)||{}); fwLog('prévia pronta: '+((m.preview&&m.preview.fileCount)||0)+' arquivo(s), '+(sc.high||0)+' alto(s)'+((sc.high)?' — <b style="color:#f87171">bloqueado até override</b>':''),(sc.high?'#f5b544':null)); } else { fwLog('✖ importar: '+esc(m.error||'falha'),'#f87171'); toast('Importar: '+(m.error||'falha')); } }
         else if(m.t==='framework_update'){ fwArrived(); if(m.ok){ if(m.hasUpdate){ renderFwPreview(m.token,m.source||{},m.preview||{},true); fwLog('atualização disponível — revise a prévia','#f5b544'); toast('Atualização disponível'); } else { fwLog('✓ já está atualizado','#4ade80'); toast('Já está atualizado'); } } else { fwLog('✖ atualização: '+esc(m.error||'falha'),'#f87171'); toast('Atualização: '+(m.error||'falha')); } }
-        else if(m.t==='framework_import_applied'){ fwArrived(); if(m.ok){ closeFwPreview(); tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwLog('✓ aplicado: '+((m.written||[]).length)+' escrito(s)'+((m.skippedExisting&&m.skippedExisting.length)?', '+m.skippedExisting.length+' mantido(s)':'')+(m.forced?' (override)':''),'#4ade80'); toast('Aplicado'); } else { if(E.fwPreviewApply)E.fwPreviewApply.disabled=false; fwLog('✖ aplicar: '+esc(m.error||'falha'),'#f87171'); toast('Aplicar: '+(m.error||'falha')); } }
+        else if(m.t==='framework_import_applied'){ fwArrived(); if(m.ok){ closeFwPreview(); tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); tx({t:'framework_updates'}); if(fwCatLoaded) tx({t:'framework_native_catalog'}); fwLog('✓ aplicado: '+((m.written||[]).length)+' escrito(s)'+((m.skippedExisting&&m.skippedExisting.length)?', '+m.skippedExisting.length+' mantido(s)':'')+(m.forced?' (override)':''),'#4ade80'); toast('Aplicado'); } else { if(E.fwPreviewApply)E.fwPreviewApply.disabled=false; fwLog('✖ aplicar: '+esc(m.error||'falha'),'#f87171'); toast('Aplicar: '+(m.error||'falha')); } }
         else if(m.t==='framework_source_removed'){ fwArrived(); tx({t:'framework_inventory'}); fwLog(m.ok?'✓ fonte removida':'fonte não encontrada',m.ok?'#4ade80':null); toast(m.ok?'Fonte removida':'Fonte não encontrada'); }
+        else if(m.t==='framework_native_catalog'){ fwArrived(); if(m.ok){ renderFwCatalog(m.entries); fwLog('catálogo: '+((m.entries||[]).length)+' skill(s)/comando(s) instalado(s)'); } else { fwLog('✖ catálogo: '+esc(m.error||'falha'),'#f87171'); toast('Catálogo: '+(m.error||'falha')); } }
+        else if(m.t==='framework_updates'){ renderFwUpdates(m.alerts); if((m.alerts||[]).length) fwLog('🔔 '+m.alerts.length+' atualização(ões) disponível(is)','#f5b544'); }
         else if(m.t==='framework_import_diff'){ fwArrived(); if(m.ok){ fwShowDiff(m); } else { fwLog('✖ diferenças: '+esc(m.error||'falha'),'#f87171'); toast('Diferenças: '+(m.error||'falha')); } }
         else if(m.t==='fallback_cfg'){ renderFallback(m); if(m.saved)toast('IA secundária salva'); }
         else if(m.t==='log_cfg'){ renderLog(m); if(m.saved)toast('Logs salvos'); }
@@ -4067,6 +4188,7 @@
         else if(m.t==='execution_connection'){ if(m.runnerId)workConnections.set(m.runnerId,m.state);renderWorkConnection();if(workSelected&&(workNodes.get(workSelected)||{}).runnerId===m.runnerId)renderWorkDetail(); }
         else if(m.t==='council_started'){ toast('Conselho em andamento em Trabalhos.'); if(m.rootExecutionId){ workSelected=m.rootExecutionId; tx({t:'executions_list',scope:'all',rootExecutionId:m.rootExecutionId,runnerId:m.runnerId,limit:500}); } }
         else if(m.t==='tournament_started'){ const lbl=m.mode==='review'?'Revisão paralela':m.mode==='audit'?'Auditoria':'Benchmark'; toast(lbl+' em andamento em Trabalhos.'); if(m.rootExecutionId){ workSelected=m.rootExecutionId; tx({t:'executions_list',scope:'all',rootExecutionId:m.rootExecutionId,runnerId:m.runnerId,limit:500}); } }
+        else if(m.t==='debate_started'){ toast('Debate iniciado ('+((m.debaters||[]).length)+' IAs, até '+(m.maxRounds||'?')+' rodadas) — as rodadas aparecem na conversa.'); }
         else if(m.t==='execution_control_result'||m.t==='execution_input_result'||m.t==='execution_archive_result'){
           const unsupported=Array.isArray(m.unsupportedIds)?m.unsupportedIds.length:0; toast(m.ok?(unsupported?`⚠ Atualizado parcialmente · ${unsupported} sem suporte`:'✓ Trabalho atualizado'):('⚠ '+(m.error||'Não foi possível atualizar o trabalho.')));
           if(m.executionId)tx({t:'execution_open',executionId:m.executionId,limit:500});

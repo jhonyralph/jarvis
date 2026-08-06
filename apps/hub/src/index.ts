@@ -34,8 +34,8 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
-import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec, type FrameworkSourceType } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -385,7 +385,9 @@ function savePublishedSnapshot(files: FrameworkFile[]): void { try { writeJsonAt
 // Server-held import previews: an import (zip/GitHub) is staged here after the security scan, and only
 // written to disk when the owner confirms `framework_import_apply` with the matching token. This keeps
 // the (possibly large, possibly hostile) payload off the client round-trip and gates apply on review.
-interface PendingFrameworkImport { files: FrameworkFile[]; hash: string; scanBlocked: boolean; source: { type: "zip" | "github" | "starter" | "native"; name?: string; spec?: GithubSpec; ref?: string; commit?: string; id?: string }; createdAt: number }
+interface PendingFrameworkImport { files: FrameworkFile[]; hash: string; scanBlocked: boolean; source: { type: "zip" | "github" | "starter" | "native"; name?: string; spec?: GithubSpec; ref?: string; commit?: string; id?: string; nativeEntries?: Array<{ entryId: string; provider: string; kind: "skill" | "command"; name: string; hash: string; paths: string[] }> }; createdAt: number }
+interface FrameworkUpdateAlert { id: string; type: FrameworkSourceType; label: string; provider?: string; scanBlocked: boolean; changed: number; at: number }
+let frameworkUpdateAlerts: FrameworkUpdateAlert[] = [];
 const pendingFrameworkImports = new Map<string, PendingFrameworkImport>();
 const IMPORT_TTL_MS = 15 * 60 * 1000;
 const MAX_IMPORT_B64 = 25 * 1024 * 1024; // ~18 MB decoded — a framework pack is far smaller
@@ -1190,8 +1192,8 @@ const LOCAL_OPS = new Set(["sendTo", "search"]);
 // Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
-const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "council_start", "tournament_start", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
-const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "tournament_start", "summarize", "digest", "routine_run", "terminal_open"]);
+const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "council_start", "tournament_start", "debate_start", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
+const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "tournament_start", "debate_start", "summarize", "digest", "routine_run", "terminal_open"]);
 function holdForHubUpdate(ws: WebSocket, msg: any): boolean {
   if (!hubUpdateInProgress || !UPDATE_BLOCKED_OPS.has(msg.t)) return false;
   const runnerId = activeRunner(ws);
@@ -3316,6 +3318,94 @@ async function startLocalTournament(ws: WebSocket, input: { sessionId: string; t
   });
 }
 
+/** Debate iterativo local: rodadas de resposta + réplica cruzada entre 2+ IAs, com um JUIZ decidindo a
+ *  convergência a cada rodada (para cedo no consenso) até o teto configurável. Read-only, via one-shot;
+ *  cada rodada é transmitida à sessão para o usuário acompanhar a discussão. Cancelável como um run. */
+async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic: string; agents?: string[]; model?: string; effort?: string; maxRounds?: number; includeContext: boolean }): Promise<void> {
+  if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Debate ainda não grava resultado em sessão nativa" }); return; }
+  if (store.isHidden(input.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita Debate" }); return; }
+  const s = store.get(input.sessionId);
+  if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
+  // Seleciona 2+ IAs distintas, disponíveis e com suporte a análise one-shot.
+  const wanted = new Set((input.agents || []).filter(Boolean));
+  const debaters: DebateDebater[] = [];
+  let idx = 0;
+  for (const name of agents.names()) {
+    if (wanted.size && !wanted.has(name)) continue;
+    const a = agents.get(name);
+    if (!a.oneShot) continue;
+    try { if (!(await a.available())) continue; } catch { continue; }
+    debaters.push({ id: `p${++idx}`, agent: name, label: name });
+  }
+  if (debaters.length < 2) { send(ws, { t: "error", message: "Debate exige ao menos 2 IAs disponíveis (com suporte a análise one-shot)" }); return; }
+  const maxRounds = clampDebateRounds(input.maxRounds);
+  const recent = councilRecentLocal(input.sessionId);
+  const topic = councilTopic(input.topic, recent, input.includeContext);
+  const cwd = s.cwd || CWD;
+  const usageKey = "__debate__:" + input.sessionId;
+
+  const postAssistant = (text: string): void => {
+    const at = Date.now();
+    store.add(input.sessionId, { role: "assistant", text, ts: at, agent: "jarvis" });
+    broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "assistant", text, ts: at, agent: "jarvis" } });
+    pushSessions();
+  };
+  const reqText = `🗣️ Debate (${debaters.length} IAs, até ${maxRounds} rodadas): ${input.topic.split(/\r?\n/)[0].slice(0, 200)}`;
+  const ts = Date.now();
+  store.add(input.sessionId, { role: "user", text: reqText, ts, agent: "jarvis" });
+  broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "user", text: reqText, ts, agent: "jarvis" } });
+  pushSessions();
+  auth.audit("debate_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${debaters.length} IAs · teto ${maxRounds}` });
+
+  const debateId = "debate:" + randomUUID();
+  const ctrl = new AbortController();
+  localManagedRuns.add(debateId); localExecutionAborts.set(debateId, ctrl); broadcastRuns();
+  send(ws, { t: "debate_started", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, debaters: debaters.map((d) => d.label), maxRounds });
+
+  const oneShotBy = async (agentName: string, prompt: string, model?: string, effort?: string): Promise<{ text: string; usage?: any }> => {
+    const a = agents.get(agentName);
+    const opts = await compatibleAgentOpts(a, model, effort);
+    return (a.oneShot ? await a.oneShot(prompt, opts) : await a.send("__debate__", prompt, cwd, opts)) as any;
+  };
+  const oneShotAdapter = async (a: AgentAdapter, prompt: string): Promise<{ text: string; usage?: any }> => {
+    const opts = await compatibleAgentOpts(a, summaryCfg.model, summaryCfg.effort);
+    return (a.oneShot ? await a.oneShot(prompt, opts) : await a.send("__debatejudge__", prompt, cwd, opts)) as any;
+  };
+
+  let responses: DebaterResponse[] = [];
+  let converged = false, failed = false, roundsDone = 0;
+  try {
+    for (let round = 1; round <= maxRounds; round++) {
+      if (ctrl.signal.aborted) { failed = true; break; }
+      const prev = new Map(responses.map((r) => [r.id, r.text]));
+      responses = await Promise.all(debaters.map(async (d) => {
+        const others = round === 1 ? [] : responses.filter((r) => r.id !== d.id);
+        const prompt = round === 1 ? buildDebateOpeningPrompt(topic) : buildDebateRebuttalPrompt(topic, round, prev.get(d.id) || "", others);
+        try { const reply = await oneShotBy(d.agent, prompt, input.model, input.effort); addUsage(usageKey, d.agent, reply.usage); return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" }; }
+        catch (e: any) { failed = true; return { id: d.id, label: d.label, text: "(falha: " + String(e?.message ?? e) + ")" }; }
+      }));
+      roundsDone = round;
+      let verdict: DebateVerdict = { converged: false, confidence: 0, reason: "" };
+      try { const judge = summaryAgent(); const jr = await oneShotAdapter(judge, buildDebateJudgePrompt(topic, round, responses)); addUsage(usageKey, judge.name, jr.usage); verdict = parseDebateVerdict(jr.text); }
+      catch { verdict = { converged: false, confidence: 0, reason: "juiz indisponível" }; }
+      postAssistant(formatDebateRoundMessage(round, responses, verdict));
+      if (verdict.converged) { converged = true; break; }
+    }
+    let summary: string | undefined;
+    if (!ctrl.signal.aborted) {
+      try { const synth = summaryAgent(); const sr = await oneShotAdapter(synth, buildDebateSynthesisPrompt(topic, responses, { converged, rounds: roundsDone })); addUsage(usageKey, synth.name, sr.usage); summary = sr.text; }
+      catch { summary = undefined; }
+    }
+    postAssistant(formatDebateFinalMessage({ rounds: roundsDone, maxRounds, converged, debaters: debaters.map((d) => d.label), summary, failed: failed || ctrl.signal.aborted }));
+  } catch (error: any) {
+    send(ws, { t: "error", message: "Debate: " + String(error?.message ?? error) });
+  } finally {
+    localManagedRuns.delete(debateId);
+    if (localExecutionAborts.get(debateId) === ctrl) localExecutionAborts.delete(debateId);
+    broadcastRuns();
+  }
+}
+
 async function startRemoteCouncil(ws: WebSocket, rc: RunnerConn, input: {
   sessionId: string;
   topic: string;
@@ -5096,6 +5186,21 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
       return;
     }
+    // Debate iterativo (modo do Conselho): rodadas de réplica cruzada entre 2+ IAs até o juiz declarar
+    // consenso ou atingir o teto. LOCAL-only por enquanto (mesma limitação do Torneio).
+    if (msg.t === "debate_start" && typeof msg.sessionId === "string" && typeof msg.topic === "string") {
+      if (activeRunner(ws) !== LOCAL_ID) { send(ws, { t: "error", message: "Debate por enquanto roda só na máquina servidora" }); return; }
+      await startLocalDebate(ws, {
+        sessionId: msg.sessionId,
+        topic: msg.topic.slice(0, 20_000),
+        includeContext: msg.includeContext !== false,
+        model: typeof msg.model === "string" ? msg.model : undefined,
+        effort: typeof msg.effort === "string" ? msg.effort : undefined,
+        agents: Array.isArray(msg.agents) ? msg.agents.filter((x: any) => typeof x === "string").slice(0, 12) : undefined,
+        maxRounds: typeof msg.maxRounds === "number" ? msg.maxRounds : undefined,
+      });
+      return;
+    }
     // Espaço de Soluções: Benchmark/Revisão/Auditoria local com N candidatos + consolidador.
     // LOCAL-only por enquanto (o caminho remoto exigiria handler no runner, como o council).
     if (msg.t === "tournament_start" && typeof msg.sessionId === "string" && typeof msg.task === "string") {
@@ -5274,6 +5379,43 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
       return;
     }
+    // Catalog of this machine's INSTALLED native skills/commands across every AI provider, so the owner
+    // can import them into the universal framework (then served under every AI's "/"). Metadata only.
+    if (msg.t === "framework_native_catalog") {
+      if (!requireOwner(ws)) return;
+      try {
+        const entries = listNativeCatalog();
+        const tracked = new Set(frameworkSources.list().filter((s) => s.type === "native" && s.entryId).map((s) => s.entryId));
+        send(ws, { t: "framework_native_catalog", ok: true, entries: entries.map((e) => ({ ...e, tracked: tracked.has(e.id) })) });
+      } catch (e: any) { send(ws, { t: "framework_native_catalog", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // Stage the chosen native skills/commands as a preview (scan + per-file diff). On apply each becomes
+    // a tracked `native` source (autoUpdate) so the daily job can flag drift and re-sync (with confirm).
+    if (msg.t === "framework_import_native_skill_preview") {
+      if (!requireOwner(ws)) return;
+      try {
+        const ids = Array.isArray(msg.ids) ? (msg.ids as unknown[]).map((x) => String(x)).filter(Boolean) : [];
+        if (!ids.length) throw new Error("nenhuma skill/comando selecionado");
+        const { entries, missing } = collectNativeCatalogFiles(ids);
+        if (!entries.length) throw new Error("as skills selecionadas não puderam ser lidas" + (missing.length ? ` (${missing.length} indisponível(is))` : ""));
+        const files = entries.flatMap((e) => e.files);
+        const current = readCanonicalFramework(frameworkRoot()).files;
+        const preview = buildImportPreview(files, missing.map((m) => `${m} (indisponível)`), current);
+        sweepPendingImports();
+        const token = randomUUID();
+        const nativeEntries = entries.map((e) => ({ entryId: e.id, provider: e.provider, kind: e.kind, name: e.name, hash: e.hash, paths: e.files.map((f) => f.path) }));
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "native", nativeEntries }, createdAt: Date.now() });
+        send(ws, { t: "framework_import_preview", ok: true, token, isUpdate: false, source: { type: "native", count: entries.length }, preview: previewPayload(preview) });
+      } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // The current "update available" alerts raised by the daily drift job (the client asks on panel open).
+    if (msg.t === "framework_updates") {
+      if (!requireOwner(ws)) return;
+      send(ws, { t: "framework_updates", alerts: frameworkUpdateAlerts });
+      return;
+    }
     if (msg.t === "publish_framework") {
       if (!requireOwner(ws)) return;
       const base = readCanonicalFramework(frameworkRoot(), frameworkCfg.version);
@@ -5357,12 +5499,29 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
       return;
     }
-    // Re-fetch a previously imported GitHub source and preview the drift ("buscar atualização").
+    // Re-fetch a previously imported source (GitHub or native provider skill) and preview the drift
+    // ("buscar atualização"). Never applies — the owner confirms via framework_import_apply.
     if (msg.t === "framework_update_check") {
       if (!requireOwner(ws)) return;
       try {
         const rec = frameworkSources.get(String(msg.id || ""));
-        if (!rec || rec.type !== "github" || !rec.owner || !rec.repo) throw new Error("fonte não encontrada");
+        if (!rec) throw new Error("fonte não encontrada");
+        // Native provider skill/command: re-collect from disk and diff by content hash.
+        if (rec.type === "native" && rec.entryId) {
+          const { entries } = collectNativeCatalogFiles([rec.entryId]);
+          const e = entries[0];
+          if (!e) throw new Error("a skill nativa não está mais disponível nesta máquina");
+          const current = readCanonicalFramework(frameworkRoot()).files;
+          const preview = buildImportPreview(e.files, [], current);
+          const hasUpdate = e.hash !== rec.hash;
+          sweepPendingImports();
+          const token = randomUUID();
+          pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "native", nativeEntries: [{ entryId: e.id, provider: e.provider, kind: e.kind, name: e.name, hash: e.hash, paths: e.files.map((f) => f.path) }] }, createdAt: Date.now() });
+          frameworkUpdateAlerts = frameworkUpdateAlerts.filter((a) => a.id !== rec.id || hasUpdate);
+          send(ws, { t: "framework_update", ok: true, id: rec.id, hasUpdate, token, source: { type: "native", label: rec.label || e.name, provider: e.provider }, preview: previewPayload(preview) });
+          return;
+        }
+        if (rec.type !== "github" || !rec.owner || !rec.repo) throw new Error("esta fonte não suporta verificação de atualização");
         const spec: GithubSpec = { owner: rec.owner, repo: rec.repo, ref: rec.ref, subdir: rec.subdir };
         const fetched = await fetchGithubFramework(spec);
         const current = readCanonicalFramework(frameworkRoot()).files;
@@ -5371,6 +5530,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         sweepPendingImports();
         const token = randomUUID();
         pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "github", spec, ref: fetched.ref, commit: fetched.commit, id: rec.id }, createdAt: Date.now() });
+        frameworkUpdateAlerts = frameworkUpdateAlerts.filter((a) => a.id !== rec.id || hasUpdate);
         send(ws, { t: "framework_update", ok: true, id: rec.id, hasUpdate, token, source: { type: "github", repo: `${rec.owner}/${rec.repo}${rec.subdir ? "/" + rec.subdir : ""}`, ref: fetched.ref, commit: fetched.commit, previousCommit: rec.commit }, preview: previewPayload(preview) });
       } catch (e: any) { send(ws, { t: "framework_update", ok: false, error: String(e?.message ?? e) }); }
       return;
@@ -5411,6 +5571,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         } else if (pending.source.type === "zip") {
           const id = zipSourceId(pending.source.name || "pacote.zip");
           frameworkSources.upsert({ id, type: "zip", hash: pending.hash, files: pending.files.map((f) => f.path), importedAt: Date.now(), updatedAt: Date.now() });
+        } else if (pending.source.type === "native" && pending.source.nativeEntries) {
+          const chosenPaths = new Set(chosen.map((f) => f.path));
+          for (const ne of pending.source.nativeEntries) {
+            const appliedPaths = ne.paths.filter((p) => chosenPaths.has(p));
+            if (!appliedPaths.length) continue; // entry fully deselected in the preview → don't track it
+            const id = nativeSourceId(ne.entryId);
+            const prior = frameworkSources.get(id);
+            // Track the FULL entry hash (over all of the skill's files) so a future drift check —
+            // which re-collects the whole entry — compares like-for-like even on a partial import.
+            frameworkSources.upsert({ id, type: "native", provider: ne.provider, kind: ne.kind, entryId: ne.entryId, label: ne.name, autoUpdate: prior?.autoUpdate ?? true, hash: ne.hash, files: appliedPaths, importedAt: prior?.importedAt || Date.now(), updatedAt: Date.now() });
+          }
         }
         pendingFrameworkImports.delete(String(msg.token || ""));
         send(ws, { t: "framework_import_applied", ok: true, written: r.written, skippedExisting: r.skippedExisting, forced: !!msg.force && pending.scanBlocked });
@@ -6086,6 +6257,40 @@ try { let n = 0; for (const meta of listNative()) n += reconcileNativeExecutions
 // Graceful shutdown: the Hub is also a runner (it spawns local agent CLIs under the configured permission mode).
 // A service stop / SIGTERM would orphan them — abort every live local turn (killTree fires via the
 // AbortSignal) before exiting, mirroring the runner.
+// ── Framework auto-update: once a day (and shortly after boot) re-check every tracked source for drift
+// and raise "update available" alerts. Policy is NOTIFY-ONLY — nothing is ever applied automatically;
+// the owner reviews each drift (scan + diff) and confirms. Zip sources have no origin to re-fetch.
+function isOwnerSocket(ws: WebSocket): boolean {
+  if (!auth.AUTH_ENABLED) return true;
+  return principalOf(ws)?.role === "owner";
+}
+function broadcastFrameworkUpdates(): void {
+  const payload = { t: "framework_updates" as const, alerts: frameworkUpdateAlerts };
+  for (const c of wss.clients) { const w = c as WebSocket; if (w.readyState === WebSocket.OPEN && !runnerSockets.has(w) && isOwnerSocket(w)) { try { send(w, payload); } catch { /* skip */ } } }
+}
+async function scanFrameworkSourceDrift(): Promise<void> {
+  let current: FrameworkFile[];
+  try { current = readCanonicalFramework(frameworkRoot()).files; } catch { return; }
+  const alerts: FrameworkUpdateAlert[] = [];
+  for (const s of frameworkSources.list()) {
+    if (s.autoUpdate === false) continue;
+    try {
+      if (s.type === "github" && s.owner && s.repo) {
+        const fetched = await fetchGithubFramework({ owner: s.owner, repo: s.repo, ref: s.ref, subdir: s.subdir });
+        const preview = buildImportPreview(fetched.files, [], current);
+        if (preview.hash !== s.hash) alerts.push({ id: s.id, type: "github", label: s.label || `${s.owner}/${s.repo}${s.subdir ? "/" + s.subdir : ""}`, scanBlocked: preview.scan.blocked, changed: preview.files.length, at: Date.now() });
+      } else if (s.type === "native" && s.entryId) {
+        const { entries } = collectNativeCatalogFiles([s.entryId]);
+        const e = entries[0];
+        if (e && e.hash !== s.hash) { const preview = buildImportPreview(e.files, [], current); alerts.push({ id: s.id, type: "native", label: s.label || e.name, provider: e.provider, scanBlocked: preview.scan.blocked, changed: preview.files.length, at: Date.now() }); }
+      }
+      // zip: no remote origin to re-fetch — cannot auto-check.
+    } catch { /* transient (offline / rate-limit / source gone) — retry next cycle */ }
+  }
+  frameworkUpdateAlerts = alerts;
+  broadcastFrameworkUpdates();
+}
+
 let hubShuttingDown = false;
 async function hubShutdown(sig: string): Promise<void> {
   if (hubShuttingDown) return; hubShuttingDown = true;
@@ -6107,6 +6312,10 @@ server.listen(PORT, () => {
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
   console.log(`[hub] guard: rate-limit + conn caps + ${Math.round(guard.MAX_PAYLOAD / 1024 / 1024)}MB payload cap active${/^(on|1|true)$/i.test(process.env.JARVIS_TRUST_PROXY || "") ? " (trust-proxy on)" : ""}`);
   if (process.env.JARVIS_PERSONAL_PROACTIVE !== "0") personalProactiveScheduler.start();
+  if (process.env.JARVIS_FRAMEWORK_AUTOUPDATE !== "0") {
+    setTimeout(() => { void scanFrameworkSourceDrift(); }, 30_000).unref?.();          // shortly after boot
+    setInterval(() => { void scanFrameworkSourceDrift(); }, 24 * 60 * 60 * 1000).unref?.(); // daily
+  }
   if (!auth.AUTH_ENABLED) {
     console.log(`[hub] AUTH DISABLED (JARVIS_AUTH=off) — every connection is trusted. Use ONLY on a private network (never a public server).`);
   } else if (!auth.isClaimed()) {

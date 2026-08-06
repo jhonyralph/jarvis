@@ -269,7 +269,10 @@
     #fwEditModal, #fwDiffModal { z-index:46; }
     #fwEditModal .fweditcard, #fwDiffModal .fwdiffcard { width:min(900px,96vw); max-width:min(900px,96vw); height:min(82dvh,760px); }
     #fwEditModal.max { padding:0; } #fwEditModal.max .fweditcard { width:100%; max-width:100%; height:100%; max-height:100%; border-radius:0; }
-    #fwEditModal .fweditbody { flex:1; min-height:0; width:100%; box-sizing:border-box; resize:none; background:#0f141b; color:var(--text); border:1px solid #ffffff1f; border-radius:10px; padding:10px 12px; font:12.5px ui-monospace,Menlo,Consolas,monospace; }
+    #fwEditModal .fweditwrap { flex:1; min-height:0; display:flex; border:1px solid #ffffff1f; border-radius:10px; overflow:hidden; background:#0f141b; }
+    #fwEditModal .fwgutter { flex:none; min-width:40px; overflow:hidden; text-align:right; box-sizing:border-box; padding:10px 8px; color:#5a6b82; background:#0c1118; border-right:1px solid #ffffff14; font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace; white-space:pre; user-select:none; }
+    #fwEditModal .fweditbody { flex:1; min-height:0; min-width:0; box-sizing:border-box; resize:none; background:transparent; color:var(--text); border:0; border-radius:0; padding:10px 12px; font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace; white-space:pre; overflow:auto; }
+    #fwEditModal .fweditbody.wrapon { white-space:pre-wrap; overflow-wrap:anywhere; overflow-x:hidden; }
     #fwEditModal .fweditview { flex:1; min-height:0; border:1px solid #ffffff1f; border-radius:10px; }
     #fwDiffModal .fwdiffbody { flex:1; min-height:0; border:1px solid var(--line); border-radius:10px; }
     /* lista selecionável da prévia de importação */
@@ -282,6 +285,19 @@
     #fwPreviewBody .fwpst.new { background:#2ea04322; color:#4ade80; }
     #fwPreviewBody .fwpst.dup { background:#f5b54422; color:#f5b544; }
     #fwPreviewBody .fwpp { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; }
+    #fwPreviewBody code { white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere; }
+    #fwPreviewBody details.fwpsec > summary { cursor:pointer; font-size:11.5px; color:var(--mut,#8ea0b5); margin-top:6px; }
+    #fwPreviewBody details.fwpsec[open] > summary { color:var(--text,#e6edf3); }
+    /* Painel de problemas do inventário: itens clicáveis que navegam até a falha no arquivo. */
+    .fwprob { margin-top:6px; }
+    .fwprob > summary { cursor:pointer; font-weight:600; font-size:12px; }
+    .fwprob-i { padding:3px 6px; border-radius:6px; cursor:pointer; font-size:12px; line-height:1.4; }
+    .fwprob-i:hover, .fwprob-i:focus { background:#ffffff10; outline:none; }
+    .fwprob-i code { font-size:11px; }
+    #fwInventory .fw-file .fwmark { flex:none; font-size:10.5px; padding:0 6px; border-radius:20px; cursor:pointer; }
+    #fwInventory .fw-file .fwmark.hi { background:#f8717122; color:#f87171; }
+    #fwInventory .fw-file .fwmark.md { background:#f5b54422; color:#f5b544; }
+    #fwEditFinding { margin:0 0 8px; padding:6px 10px; border-radius:8px; background:#f8717118; border:1px solid #f8717140; color:#f3b6b6; font-size:12px; }
     #fwPreviewBody .fwpdiff { flex:none; font-size:10.5px; padding:1px 8px; }
     #imgModal .imgwrap { position:relative; max-width:96vw; max-height:min(92dvh,var(--safe-height)); }
     #imgModal img { max-width:96vw; max-height:min(92dvh,var(--safe-height)); width:auto; height:auto; border-radius:10px; object-fit:contain; display:block; }
@@ -1221,6 +1237,10 @@
     .fwhist > summary::-webkit-details-marker { display:none; }
     .fwhist > summary::before { content:'▸ '; }
     .fwhist[open] > summary::before { content:'▾ '; }
+    .fwcat-g > summary { list-style:none; }
+    .fwcat-g > summary::-webkit-details-marker { display:none; }
+    .fwcat-g > summary .fwcat-cv::before { content:'▸'; display:inline-block; width:12px; color:var(--mut,#8ea0b5); }
+    .fwcat-g[open] > summary .fwcat-cv::before { content:'▾'; }
   </style>
 </head>
 <body>
@@ -1440,6 +1460,7 @@
       <button type="button" class="sworkmode" data-mode="benchmark" data-i18n="swModeBenchmark" title="Compara soluções concorrentes e escolhe a melhor.">Benchmark</button>
       <button type="button" class="sworkmode" data-mode="review" data-i18n="swModeReview" title="Roda várias revisões independentes para achar problemas complementares.">Revisão</button>
       <button type="button" class="sworkmode" data-mode="audit" data-i18n="swModeAudit" title="Revisão formal com severidade, evidências e plano de ação.">Auditoria</button>
+      <button type="button" class="sworkmode" data-mode="debate" title="Discussão iterativa entre 2+ IAs, com réplicas cruzadas, até um juiz declarar consenso (ou atingir o teto de rodadas).">Debate</button>
     </div>
     <div id="solutionHelp" class="solutionhelp"></div>
     <label>Objetivo<textarea id="councilTopic" placeholder="O que o Espaço de Soluções deve analisar, comparar, revisar ou auditar?"></textarea></label>
@@ -1460,6 +1481,7 @@
         <option value="manual">Selecionar manualmente</option>
       </select></label>
       <label class="cfield solutionParallel">Execuções paralelas<input id="solutionCount" type="number" min="2" max="6" value="3"></label>
+      <label class="cfield solutionRounds hidden">Rodadas (teto)<input id="solutionRounds" type="number" min="1" max="6" value="3" title="Máximo de rodadas do debate; para antes se as IAs chegarem a consenso."></label>
     </div>
     <div id="solutionAgentList" class="agentlist hidden"></div>
     <label id="solutionCriteriaWrap">Critérios<textarea id="solutionCriteria" placeholder="Opcional: critérios de julgamento, foco da revisão ou severidade esperada."></textarea></label>
@@ -1486,13 +1508,18 @@
     <div class="row fwedithead" style="align-items:center;gap:8px">
       <b id="fwEditTitle" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">Arquivo</b>
       <span id="fwEditDirty" style="font-size:12px;color:#f5b544;display:none;flex:none">• não salvo</span>
+      <button id="fwEditWrapBtn" class="ghost" type="button" style="flex:none;font-size:11.5px;padding:3px 10px" title="Exibir/ocultar números de linha (ao ocultar, a prosa passa a quebrar linha)">▦ Exibir linhas: sim</button>
       <button id="fwEditFmt" class="ghost hidden" type="button" style="flex:none;font-size:11.5px;padding:3px 10px">✏️ Editar</button>
       <button id="fwEditMax" class="ghost helpicon" type="button" title="Maximizar" aria-label="Maximizar">⛶</button>
       <button id="fwEditClose" class="ghost helpicon" type="button" title="Fechar" aria-label="Fechar">✕</button>
     </div>
     <label id="fwEditPathRow" style="display:none">Caminho<input id="fwEditPath" type="text" placeholder="commands/plan.md · skills/review/SKILL.md · instructions.md" autocomplete="off"></label>
+    <div id="fwEditFinding" class="hidden"></div>
     <div id="fwEditView" class="filebody mdview fweditview hidden"></div>
-    <textarea id="fwEditBody" class="fweditbody" placeholder="Conteúdo do arquivo (markdown). Em comandos, use $ARGUMENTS onde entram os argumentos."></textarea>
+    <div id="fwEditWrap" class="fweditwrap">
+      <div id="fwEditGutter" class="fwgutter" aria-hidden="true">1</div>
+      <textarea id="fwEditBody" class="fweditbody" wrap="off" spellcheck="false" placeholder="Conteúdo do arquivo (markdown). Em comandos, use $ARGUMENTS onde entram os argumentos."></textarea>
+    </div>
     <div class="row" style="justify-content:space-between;align-items:center">
       <button id="fwEditDelete" class="ghost" type="button">Excluir</button>
       <span class="row" style="gap:8px"><button id="fwEditCancel" class="ghost" type="button">Fechar</button><button id="fwEditSave" type="button">Salvar</button></span>
@@ -1955,6 +1982,7 @@
             <!-- BLOCO B — o que VAI SER IMPORTADO -->
             <div class="fwblock">
               <div class="fwblock-h"><span>➕ Importar</span></div>
+              <div id="fwUpdates" class="hidden" style="margin-bottom:8px;border:1px solid #f5b54455;border-radius:8px;padding:8px 10px;background:#1c1810;font-size:12px"></div>
               <div class="mut" style="font-size:12px;margin-bottom:8px">Escolha uma fonte. Tudo passa por <b>prévia</b> (scan de segurança + diff + custo de token) — <b>nada é escrito sem a sua confirmação</b>.</div>
               <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
                 <button id="fwSeed" class="ghost" type="button">Pacote base</button>
@@ -1967,17 +1995,24 @@
                 <button id="fwGhBtn" class="ghost" type="button">Baixar do GitHub</button>
               </div>
               <div class="mut" style="font-size:11.5px;margin-top:4px"><b>Pacote base</b>: conjunto pronto (review, pesquisa, segurança, digest…). <b>Desta máquina</b>: copia CLAUDE.md/AGENTS.md/GEMINI.md desta máquina.</div>
+              <div class="fwcat-wrap" style="margin-top:10px;border-top:1px solid #ffffff14;padding-top:10px">
+                <div class="row" style="gap:8px;align-items:center;justify-content:space-between">
+                  <span style="font-weight:600;font-size:12.5px">🧩 Skills por IA (nesta máquina)</span>
+                  <button id="fwCatBtn" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Ver catálogo</button>
+                </div>
+                <div class="mut" style="font-size:11.5px;margin-top:4px">O que está instalado na pasta de skills/comandos de cada IA <b>nesta máquina</b> (próprias ou de terceiros — não necessariamente “embutidas”). Importe para o framework universal e passam a valer no “/” de <b>todas</b> as IAs — com verificação diária de atualização.</div>
+                <div id="fwCatalog" class="hidden" style="margin-top:8px"></div>
+              </div>
               <div id="fwSources" style="font-size:12px;margin-top:8px"></div>
-              <div id="fwPreview" class="hidden" style="margin-top:8px;border:1px solid #2b3550;border-radius:8px;padding:10px;background:#121a26">
+              <div id="fwPreview" class="hidden" style="margin-top:8px;border:1px solid #2b3550;border-radius:8px;padding:10px;background:#121a26;text-align:left">
                 <div class="sec" id="fwPreviewTitle" style="margin-top:0">O que vai ser importado</div>
                 <div id="fwPreviewBody" style="font-size:12px"></div>
-                <div class="row" id="fwPreviewForceRow" style="gap:6px;align-items:center;margin-top:8px">
-                  <label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" id="fwPreviewForce"> Aplicar mesmo com achados de segurança <b>altos</b> (override)</label>
+                <div id="fwPreviewForceRow" style="margin-top:8px">
+                  <label style="font-size:12px;line-height:1.5;display:block;cursor:pointer"><input type="checkbox" id="fwPreviewForce" style="vertical-align:-2px;margin-right:6px">Aplicar mesmo com achados de segurança <b>altos</b> (override)</label>
                 </div>
-                <div class="row" style="gap:8px;justify-content:flex-end;align-items:center;margin-top:8px">
-                  <label style="font-size:12px">Modo<select id="fwPreviewMode"><option value="keep">Manter existentes (mesclar)</option><option value="overwrite">Sobrescrever conflitos</option></select></label>
-                  <button id="fwPreviewCancel" class="ghost" type="button">Cancelar</button>
-                  <button id="fwPreviewApply" type="button">Aplicar</button>
+                <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-top:8px">
+                  <label style="font-size:12px;display:inline-flex;align-items:center;gap:6px">Modo<select id="fwPreviewMode"><option value="keep">Manter existentes (mesclar)</option><option value="overwrite">Sobrescrever conflitos</option></select></label>
+                  <span style="display:flex;gap:8px;align-items:center"><button id="fwPreviewCancel" class="ghost" type="button">Cancelar</button><button id="fwPreviewApply" type="button">Aplicar</button></span>
                 </div>
               </div>
             </div>
