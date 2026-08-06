@@ -16,8 +16,8 @@
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, basename } from "node:path";
-import { frameworkRoot, type FrameworkPreference } from "./framework.js";
+import { join, basename, dirname } from "node:path";
+import { frameworkRoot, hashFrameworkFiles, type FrameworkPreference, type FrameworkFile } from "./framework.js";
 
 /** "jarvis" is the universal, provider-agnostic framework source — it is not a real adapter, so it is
  *  offered alongside whatever AI is active (see expandCommand), not selected by cmdAgentOf. */
@@ -291,4 +291,98 @@ export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | nul
     return { name: cmd.name, expanded: out.join("\n").trim() };
   }
   return null;
+}
+
+/* ── Native skills catalog ─────────────────────────────────────────────────────────────────────────
+ * Enumerate each AI's INSTALLED native skills/commands so the owner can import them into the universal
+ * Framework Jarvis (which is then served under EVERY AI's "/"). We deliberately skip `jarvis` entries
+ * (already universal), and mcp/builtin (no importable file). Metadata only — no file bodies are read
+ * here (a provider like cursor can have hundreds of skills); bodies are read on import per selection. */
+export interface NativeCatalogEntry {
+  /** stable `${provider}:${kind}:${name}` — the id the client selects and the import re-resolves. */
+  id: string;
+  provider: CmdAgent;
+  kind: "skill" | "command";
+  name: string;
+  description: string;
+  source: "user" | "project";
+}
+export interface CollectedNativeEntry extends NativeCatalogEntry {
+  /** the entry's files mapped to framework paths (skills/<slug>/… or commands/<ns>/<cmd>.md). */
+  files: FrameworkFile[];
+  /** content hash of THIS entry's files — stored per source for daily drift detection. */
+  hash: string;
+}
+
+const NATIVE_MAX_FILE = 512 * 1024;
+const BINARY_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".pdf", ".zip", ".gz", ".tar", ".tgz", ".mp3", ".mp4", ".wav", ".mov", ".woff", ".woff2", ".ttf", ".otf", ".eot", ".exe", ".dll", ".bin", ".so", ".dylib", ".class", ".jar", ".wasm"]);
+/** Sanitize a provider skill/command name into a safe framework path segment (no traversal, no odd chars). */
+function safeSlug(name: string): string {
+  const s = String(name).trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+  return s || "item";
+}
+/** List every file (relative) under a skill directory, skipping dotfiles/dirs. */
+function listSkillFiles(dir: string, rel = ""): string[] {
+  const out: string[] = [];
+  let entries: import("node:fs").Dirent[];
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const d of entries) {
+    if (d.name.startsWith(".")) continue;
+    const childRel = rel ? `${rel}/${d.name}` : d.name;
+    if (d.isDirectory()) out.push(...listSkillFiles(join(dir, d.name), childRel));
+    else if (d.isFile()) out.push(childRel);
+  }
+  return out;
+}
+
+/** Installed native skills/commands across all providers, as lightweight catalog metadata. */
+export function listNativeCatalog(cwd?: string): NativeCatalogEntry[] {
+  const seen = new Set<string>();
+  const out: NativeCatalogEntry[] = [];
+  for (const c of listCommands(cwd)) {
+    if (c.agent === "jarvis") continue;                        // already universal — nothing to import
+    if (c.kind !== "skill" && c.kind !== "command") continue;  // mcp/builtin have no importable file
+    if (!c.path) continue;
+    const id = `${c.agent}:${c.kind}:${c.name}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, provider: c.agent, kind: c.kind, name: c.name, description: c.description, source: c.source === "project" ? "project" : "user" });
+  }
+  return out.sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
+}
+
+/** Read the actual files for the chosen catalog ids, mapped to framework paths, grouped per entry with
+ *  a per-entry hash (for source tracking). Skips binaries and oversized files. `missing` collects ids
+ *  that no longer resolve or yielded no readable text. */
+export function collectNativeCatalogFiles(ids: string[], cwd?: string): { entries: CollectedNativeEntry[]; missing: string[] } {
+  const want = new Set(ids);
+  const byId = new Map<string, SlashCommand>();
+  for (const c of listCommands(cwd)) {
+    if (c.agent === "jarvis" || !c.path) continue;
+    const id = `${c.agent}:${c.kind}:${c.name}`;
+    if (want.has(id) && !byId.has(id)) byId.set(id, c);
+  }
+  const entries: CollectedNativeEntry[] = [];
+  const missing: string[] = [];
+  for (const id of ids) {
+    const c = byId.get(id);
+    if (!c || (c.kind !== "skill" && c.kind !== "command")) { missing.push(id); continue; }
+    const files: FrameworkFile[] = [];
+    if (c.kind === "skill") {
+      const dir = dirname(c.path);
+      const slug = safeSlug(c.name);
+      for (const rel of listSkillFiles(dir)) {
+        const ext = (/\.[^.\/]+$/.exec(rel)?.[0] || "").toLowerCase();
+        if (BINARY_EXT.has(ext)) continue;
+        const abs = join(dir, rel);
+        try { if (statSync(abs).size > NATIVE_MAX_FILE) continue; files.push({ path: `skills/${slug}/${rel}`, content: readFileSync(abs, "utf8") }); } catch { /* unreadable — skip */ }
+      }
+    } else {
+      const slug = c.name.split(":").map(safeSlug).join("/");
+      try { files.push({ path: `commands/${slug}.md`, content: readFileSync(c.path, "utf8") }); } catch { /* unreadable */ }
+    }
+    if (!files.length) { missing.push(id); continue; }
+    entries.push({ id, provider: c.agent, kind: c.kind, name: c.name, description: c.description, source: c.source === "project" ? "project" : "user", files, hash: hashFrameworkFiles(files) });
+  }
+  return { entries, missing };
 }

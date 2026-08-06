@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readJson, writeJsonAtomic } from "./persist.js";
 
-export type FrameworkSourceType = "github" | "zip";
+export type FrameworkSourceType = "github" | "zip" | "native";
 
 export interface FrameworkSource {
   id: string;
@@ -18,6 +18,16 @@ export interface FrameworkSource {
   subdir?: string;
   /** commit sha of the last import (github). */
   commit?: string;
+  /** native: the provider the skill/command came from (claude, codex, cursor…). */
+  provider?: string;
+  /** native: whether the origin is a provider skill or a command file. */
+  kind?: "skill" | "command";
+  /** native: the catalog entry id (`${provider}:${kind}:${name}`) used to re-collect on drift check. */
+  entryId?: string;
+  /** human label for the UI (native skill/command name; zip filename). */
+  label?: string;
+  /** whether the daily job re-checks this source for drift and raises an "update available" alert. */
+  autoUpdate?: boolean;
   /** content hash of the file set last imported from this source (drift detection). */
   hash: string;
   /** framework paths this source contributed at last import. */
@@ -32,6 +42,11 @@ export function githubSourceId(owner: string, repo: string, subdir?: string): st
 }
 export function zipSourceId(name: string): string {
   return `zip:${name}`.toLowerCase();
+}
+/** Stable id for a native provider skill/command imported into the universal framework. `entryId` is
+ *  the catalog id (`${provider}:${kind}:${name}`), so re-importing the same skill updates the record. */
+export function nativeSourceId(entryId: string): string {
+  return `native:${entryId}`.toLowerCase();
 }
 
 export class FrameworkSourceStore {
