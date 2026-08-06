@@ -18,7 +18,7 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','aiBtn','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','councilBtn','tourneyBtn','councilModal','councilClose','solutionHelpBtn','solutionTitle','solutionHelp','solutionAgentsMode','solutionAgentList','solutionCount','solutionCriteriaWrap','solutionCriteria','solutionWrite','solutionPostAction','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwZip','fwZipBtn','fwGh','fwGhBtn','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -27,7 +27,7 @@
       'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileFmt','fileCopy','fileFull','fileClose','annoSend','annoCount','annoBar','annoSelLbl','annoAdd','annoCancelSel','fileResize','fileResizeV','fileLayoutSw','fileTabs','tabChatBtn','tabFileBtn','nativeChip',
       'designBtn','designPanel','designUrl','designDetect','designOpen','designGrab','designClose','designHost','designCompose','designSel','designCount','designClear','designSelList','designNote','designCoverage','designSend','designCancel','designStatus',
       'imgModal','imgModalPic','imgClose','fileModal','fileModalName','fileModalBody','fileModalClose',
-      'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','menuBtn','side','sideClose','backdrop','status','optsBtn','recOptsBtn','recOptsLabel'].reduce((o,k)=>(o[k]=$(k),o),{});
+      'dlg','dlgTitle','dlgInput','dlgOk','dlgCancel','sessionInfo','siAvatar','siTitle','siSub','siRows','siCopy','siClose','menuBtn','side','sideClose','backdrop','status','optsBtn','recOptsBtn','recOptsLabel'].reduce((o,k)=>(o[k]=$(k),o),{});
     const MIC_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M19 11a7 7 0 0 1-14 0"></path><path d="M12 18v3"></path><path d="M8 21h8"></path></svg>';
     const SEND_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>';
     if(E.mic)E.mic.innerHTML=MIC_ICON;
@@ -3297,11 +3297,11 @@
     function fwStateLabel(st){ return ({materialized:'✓ materializado',current:'✓ já atual',sent:'enviado',queued:'na fila',needs_update:'⚠ máquina desatualizada',error:'⚠ erro',offline:'offline',pronta:'pronta',fonte:'fonte (esta máquina)'})[st]||st; }
     function renderFwStatus(){ const ids=Object.keys(fwMachineStatus); E.fwStatus.innerHTML=ids.length?ids.map(id=>'<div>'+esc(fwMachineStatus[id].label)+' — '+esc(fwStateLabel(fwMachineStatus[id].state))+'</div>').join(''):'—'; }
     if(E.setFwPref) E.setFwPref.onchange=()=>tx({t:'set_framework_cfg',preference:E.setFwPref.value});
-    if(E.fwSeed) E.fwSeed.onclick=()=>fwSend('Instalando pacote base',{t:'framework_seed'});
-    if(E.fwImport) E.fwImport.onclick=()=>fwSend('Importando instruções desta máquina',{t:'framework_import'});
+    if(E.fwSeed) E.fwSeed.onclick=()=>fwSend('Verificando pacote base',{t:'framework_seed_preview'});
+    if(E.fwImport) E.fwImport.onclick=()=>fwSend('Verificando instruções desta máquina',{t:'framework_import_native_preview'});
     if(E.fwPublish) E.fwPublish.onclick=()=>{ E.fwStatus.textContent='Publicando…'; fwSend('Publicando nas máquinas',{t:'publish_framework'}); };
     // Framework: inventário, importação com gate de segurança (zip/GitHub) e atualização por fonte.
-    let fwSourcesCache=[], fwPreviewToken='', fwPreviewBlocked=false, fwWatchdog=null, fwInvTimer=null, fwLogSeeded=false;
+    let fwSourcesCache=[], fwPreviewToken='', fwPreviewBlocked=false, fwPreviewSelected=new Set(), fwWatchdog=null, fwInvTimer=null, fwLogSeeded=false;
     // Registro visível "O que foi feito": cada ação anota início e resultado, e um watchdog avisa quando
     // o Hub não responde (Hub desatualizado — as ações novas só existem após reiniciar o Hub).
     function fwLog(html,color){ if(!E.fwLog) return; if(!fwLogSeeded){ E.fwLog.innerHTML=''; fwLogSeeded=true; } const line=document.createElement('div'); line.style.cssText='margin:2px 0'; const ts=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); line.innerHTML='<span class="mut" style="font-size:10.5px">'+ts+'</span> <span'+(color?(' style="color:'+color+'"'):'')+'>'+html+'</span>'; E.fwLog.insertBefore(line,E.fwLog.firstChild); while(E.fwLog.childNodes.length>30) E.fwLog.removeChild(E.fwLog.lastChild); }
@@ -3318,18 +3318,36 @@
       files.forEach(f=>{ const segs=String(f.path).split('/'); let node=root; for(let i=0;i<segs.length-1;i++){ const d=segs[i]; node.dirs[d]=node.dirs[d]||{dirs:{},files:[]}; node=node.dirs[d]; } node.files.push(Object.assign({},f,{leaf:segs[segs.length-1]})); });
       return root;
     }
-    function fwRenderTree(node,depth){
-      let html='';
-      Object.keys(node.dirs).sort().forEach(d=>{ html+='<div class="fw-node" style="padding-left:'+(depth*14)+'px">📁 '+esc(d)+'</div>'+fwRenderTree(node.dirs[d],depth+1); });
-      node.files.slice().sort((a,b)=>a.leaf.localeCompare(b.leaf)).forEach(f=>{ html+='<div class="fw-file" data-path="'+esc(f.path)+'" role="button" tabindex="0" style="padding-left:'+(depth*14+2)+'px;display:flex;justify-content:space-between;gap:8px;align-items:center"><span>📄 '+esc(f.leaf)+'</span><span class="mut" style="font-size:11px">'+(f.tokens||0)+' tk · '+fwStatusBadge(f.status)+'</span></div>'; });
-      return html;
+    const fwExpanded=new Set(); // pastas expandidas no inventário (padrão: tudo colapsado, igual à aba de arquivos da sessão; o usuário expande)
+    // Constrói o inventário como DOM aninhado e colapsável: cada pasta tem um container-irmão .fw-tchildren
+    // e o toggle é O(1) (só liga/desliga a classe .open), exatamente como o #treeBody da sessão.
+    function fwRenderTree(node,depth,prefix,container){
+      Object.keys(node.dirs).sort().forEach(d=>{
+        const full=prefix?prefix+'/'+d:d, open=fwExpanded.has(full);
+        const row=document.createElement('div'); row.className='fw-node'; row.style.paddingLeft=(depth*14+6)+'px';
+        const tw=document.createElement('span'); tw.className='fw-tw'; tw.textContent=open?'▾':'▸';
+        const ic=document.createElement('span'); ic.className='ti'; ic.textContent='📁';
+        const nm=document.createElement('span'); nm.className='tn'; nm.style.cssText='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis'; nm.textContent=d; nm.title=full;
+        row.append(tw,ic,nm);
+        const kids=document.createElement('div'); kids.className='fw-tchildren'+(open?' open':'');
+        row.onclick=()=>{ const nowOpen=kids.classList.toggle('open'); tw.textContent=nowOpen?'▾':'▸'; if(nowOpen)fwExpanded.add(full); else fwExpanded.delete(full); };
+        container.append(row,kids);
+        fwRenderTree(node.dirs[d],depth+1,full,kids);
+      });
+      node.files.slice().sort((a,b)=>a.leaf.localeCompare(b.leaf)).forEach(f=>{
+        const row=document.createElement('div'); row.className='fw-file'; row.dataset.path=f.path; row.setAttribute('role','button'); row.tabIndex=0; row.style.paddingLeft=(depth*14+6)+'px';
+        const nm=document.createElement('span'); nm.className='tn'; nm.style.cssText='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis'; nm.textContent='📄 '+f.leaf; nm.title=f.path;
+        const meta=document.createElement('span'); meta.className='mut'; meta.style.fontSize='11px'; meta.innerHTML=(f.tokens||0)+' tk · '+fwStatusBadge(f.status);
+        const del=document.createElement('button'); del.type='button'; del.className='ghost fw-file-del'; del.title='Remover do framework'; del.setAttribute('aria-label','Remover '+f.path); del.textContent='🗑'; del.dataset.path=f.path;
+        row.append(nm,meta,del); container.appendChild(row);
+      });
     }
     function renderFwInventory(inv,scan,validation){
       if(!E.fwInventory) return;
       const files=(inv&&inv.files)||[];
-      E.fwInventory.innerHTML=files.length
-        ? fwRenderTree(fwBuildTree(files),0)
-        : '<div class="mut">Nenhum arquivo ainda. Use “Novo arquivo”, o pacote base ou importe um pacote.</div>';
+      E.fwInventory.innerHTML='';
+      if(files.length) fwRenderTree(fwBuildTree(files),0,'',E.fwInventory);
+      else E.fwInventory.innerHTML='<div class="mut">Nenhum arquivo ainda. Use “Novo arquivo”, o pacote base ou importe um pacote.</div>';
       const t=(inv&&inv.totals)||{}, warn=((inv&&inv.warnings)||[]).map(w=>'⚠ '+esc(w.message)).join('<br>');
       const sc=(scan&&scan.counts)||{high:0,medium:0,low:0};
       const scanTxt=scan?('Segurança: '+(sc.high?('<span style="color:#f87171">'+sc.high+' alto(s)</span>'):'<span style="color:#4ade80">0 alto</span>')+', '+sc.medium+' médio(s), '+sc.low+' baixo(s)'):'';
@@ -3345,17 +3363,29 @@
         return '<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin-top:4px"><span class="mut">'+label+' · '+((s.files||[]).length)+' arq.</span><span>'+upd+'<button class="ghost fw-src-del" data-id="'+esc(s.id)+'" type="button" style="font-size:11px;padding:2px 8px">Remover</button></span></div>';
       }).join('');
     }
+    const fwSrcLabel=(source)=>({github:'GitHub: '+esc((source.repo||''))+(source.ref?(' @'+esc(source.ref)):''),zip:'Zip: '+esc(source.name||''),starter:'Pacote base (embutido)',native:'Instruções desta máquina'})[source.type]||'Importação';
+    const fwSrcShort=(source)=>({github:'GitHub',zip:'Zip',starter:'Pacote base',native:'Desta máquina'})[source.type]||'Importação';
+    function fwUpdateApplyState(){ if(!E.fwPreviewApply) return; const forced=!!(E.fwPreviewForce&&E.fwPreviewForce.checked); E.fwPreviewApply.disabled=(fwPreviewBlocked&&!forced)||!fwPreviewSelected.size; E.fwPreviewApply.textContent=fwPreviewSelected.size?('Aplicar '+fwPreviewSelected.size+' arquivo(s)'):'Aplicar'; }
     function renderFwPreview(token,source,p,isUpdate){
       fwPreviewToken=token; fwPreviewBlocked=!!(p.scan&&p.scan.blocked); source=source||{}; p=p||{};
-      const srcLabel=source.type==='github'?('GitHub: '+esc(source.repo||'')+(source.ref?(' @'+esc(source.ref)):'')):('Zip: '+esc(source.name||''));
-      if(E.fwPreviewTitle)E.fwPreviewTitle.textContent=(isUpdate?'Atualização':'Prévia')+' — '+(source.type==='github'?'GitHub':'Zip');
+      const srcLabel=fwSrcLabel(source);
+      if(E.fwPreviewTitle)E.fwPreviewTitle.textContent=(isUpdate?'Atualização':'Prévia')+' — '+fwSrcShort(source);
       const sc=(p.scan&&p.scan.counts)||{high:0,medium:0,low:0};
       const c=(p.counts)||{new:0,modified:0,unchanged:0};
       const diffTxt=(isUpdate||c.modified||c.unchanged)
-        ? ('<span style="color:#4ade80">'+c.new+' novo(s)</span>, <span style="color:#f5b544">'+c.modified+' alterado(s)</span>, '+c.unchanged+' igual(is)')
+        ? ('<span style="color:#4ade80">'+c.new+' novo(s)</span>, <span style="color:#f5b544">'+c.modified+' duplicado(s) alterado(s)</span>, '+c.unchanged+' idêntico(s)')
         : (c.new+' novo(s)');
-      const changed=((p.inventory&&p.inventory.files)||[]).filter(f=>f.status==='new'||f.status==='modified').slice(0,30)
-        .map(f=>'<div style="margin:1px 0">'+(f.status==='modified'?'<span style="color:#f5b544">alterado</span>':'<span style="color:#4ade80">novo</span>')+' '+esc(f.path)+'</div>').join('');
+      // Lista selecionável: cada arquivo que muda vem marcado (dá para excluir da importação); os duplicados
+      // que diferem ganham "diferenças" (diff estilo IDE contra a versão atual em disco).
+      const invFiles=(p.inventory&&p.inventory.files)||[];
+      const changedFiles=invFiles.filter(f=>f.status==='new'||f.status==='modified');
+      fwPreviewSelected=new Set(changedFiles.map(f=>f.path));
+      const rowsHtml=changedFiles.slice(0,300).map(f=>{ const dup=f.status==='modified';
+        return '<label class="fwprow"><input type="checkbox" class="fwpsel" data-path="'+esc(f.path)+'" checked>'
+          +'<span class="fwpst '+(dup?'dup':'new')+'">'+(dup?'duplicado':'novo')+'</span>'
+          +'<span class="fwpp">'+esc(f.path)+'</span>'
+          +(dup?'<button type="button" class="ghost fwpdiff" data-path="'+esc(f.path)+'">diferenças</button>':'')
+          +'</label>'; }).join('');
       const findings=((p.scan&&p.scan.findings)||[]).slice(0,40).map(f=>'<div style="margin:2px 0"><span style="color:'+fwSevColor(f.severity)+'">●</span> <b>'+esc(f.rule)+'</b> '+esc(f.path)+(f.line?(':'+f.line):'')+' — '+esc(f.message)+(f.snippet?('<br><code class="mut" style="font-size:11px">'+esc(f.snippet)+'</code>'):'')+'</div>').join('');
       const issues=((p.validation&&p.validation.issues)||[]).slice(0,30).map(i=>'<div class="mut" style="margin:1px 0">'+(i.level==='error'?'<span style="color:#f87171">erro</span>':'aviso')+': '+esc(i.path)+' — '+esc(i.message)+'</div>').join('');
       const t=(p.inventory&&p.inventory.totals)||{}, skipped=(p.skipped||[]);
@@ -3364,7 +3394,8 @@
         +'<div style="margin-top:4px">Mudanças: '+diffTxt+'</div>'
         +(p.identical?'<div style="margin-top:4px;color:#4ade80">✓ Idêntico ao atual — nada a aplicar.</div>':'')
         +'<div style="margin-top:4px">Segurança: '+(sc.high?('<b style="color:#f87171">'+sc.high+' alto(s) — bloqueado</b>'):'<span style="color:#4ade80">0 alto</span>')+', '+sc.medium+' médio(s), '+sc.low+' baixo(s)</div>'
-        +(changed?('<div style="margin-top:4px">'+changed+'</div>'):'')
+        +(rowsHtml?('<div class="fwplist">'+rowsHtml+'</div><div class="mut" style="font-size:11px;margin-top:3px">Desmarque o que não quiser importar. Tudo pode ser removido depois pela lista do inventário.</div>'):'')
+        +(c.unchanged?('<div class="mut" style="margin-top:3px;font-size:11px">'+c.unchanged+' arquivo(s) idêntico(s) já existem — não serão alterados.</div>'):'')
         +(findings?('<div style="margin-top:4px">'+findings+'</div>'):'')
         +(issues?('<div style="margin-top:4px">'+issues+'</div>'):'')
         +(skipped.length?('<div class="mut" style="margin-top:4px">Ignorados: '+skipped.slice(0,20).map(esc).join(', ')+'</div>'):'');
@@ -3372,33 +3403,54 @@
       if(E.fwPreviewMode)E.fwPreviewMode.value=isUpdate?'overwrite':'keep';
       if(E.fwPreviewForceRow)E.fwPreviewForceRow.style.display=fwPreviewBlocked?'':'none';
       if(E.fwPreviewForce)E.fwPreviewForce.checked=false;
-      if(E.fwPreviewApply)E.fwPreviewApply.disabled=fwPreviewBlocked;
+      fwUpdateApplyState();
       if(E.fwPreview)E.fwPreview.classList.remove('hidden');
     }
-    function closeFwPreview(){ fwPreviewToken=''; if(E.fwPreview)E.fwPreview.classList.add('hidden'); }
+    function closeFwPreview(){ fwPreviewToken=''; fwPreviewSelected=new Set(); if(E.fwPreview)E.fwPreview.classList.add('hidden'); }
+    // Diff estilo IDE (unificado) de um arquivo da prévia contra a versão atual em disco.
+    function fwShowDiff(m){ if(!E.fwDiffModal||!E.fwDiffBody) return; if(E.fwDiffTitle)E.fwDiffTitle.textContent='Diferenças — '+(m.path||''); E.fwDiffBody.innerHTML='';
+      if(!m.hasCurrent){ const n=document.createElement('div'); n.className='dline sec'; n.textContent='(arquivo novo — sem versão atual para comparar)'; E.fwDiffBody.appendChild(n); }
+      (m.rows||[]).forEach(r=>{ const d=document.createElement('div'); d.className='dline '+(r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx'); d.textContent=r.s; E.fwDiffBody.appendChild(d); });
+      E.fwDiffModal.classList.remove('hidden'); }
+    function fwCloseDiff(){ if(E.fwDiffModal)E.fwDiffModal.classList.add('hidden'); }
     if(E.fwLogClear) E.fwLogClear.onclick=()=>{ if(E.fwLog){ E.fwLog.innerHTML='—'; fwLogSeeded=false; } };
     if(E.fwRefresh) E.fwRefresh.onclick=()=>fwSend('Atualizando inventário',{t:'framework_inventory'});
     if(E.fwZipBtn) E.fwZipBtn.onclick=()=>E.fwZip&&E.fwZip.click();
     if(E.fwZip) E.fwZip.onchange=()=>{ const f=E.fwZip.files&&E.fwZip.files[0]; if(!f) return; if(f.size>18*1024*1024){ toast('Arquivo muito grande'); E.fwZip.value=''; return; } const r=new FileReader(); r.onload=()=>{ const b64=String(r.result||'').split(',').pop()||''; fwSend('Verificando pacote '+f.name,{t:'framework_import_zip',name:f.name,dataB64:b64}); E.fwZip.value=''; }; r.onerror=()=>{ fwLog('✖ Falha ao ler o arquivo','#f87171'); E.fwZip.value=''; }; r.readAsDataURL(f); };
     if(E.fwGhBtn) E.fwGhBtn.onclick=()=>{ const v=(E.fwGh.value||'').trim(); if(!v){ toast('Informe owner/repo ou URL do GitHub'); return; } fwSend('Baixando de '+v,{t:'framework_import_github',source:v}); };
-    if(E.fwPreviewForce) E.fwPreviewForce.onchange=()=>{ if(E.fwPreviewApply)E.fwPreviewApply.disabled=fwPreviewBlocked&&!E.fwPreviewForce.checked; };
+    if(E.fwPreviewForce) E.fwPreviewForce.onchange=fwUpdateApplyState;
     if(E.fwPreviewCancel) E.fwPreviewCancel.onclick=closeFwPreview;
-    if(E.fwPreviewApply) E.fwPreviewApply.onclick=()=>{ if(!fwPreviewToken) return; fwSend('Aplicando importação ('+(E.fwPreviewMode.value==='overwrite'?'sobrescrever':'mesclar')+')',{t:'framework_import_apply',token:fwPreviewToken,mode:E.fwPreviewMode.value,force:!!(E.fwPreviewForce&&E.fwPreviewForce.checked)}); E.fwPreviewApply.disabled=true; };
+    if(E.fwPreviewApply) E.fwPreviewApply.onclick=()=>{ if(!fwPreviewToken) return; const paths=[...fwPreviewSelected]; if(!paths.length){ toast('Selecione ao menos um arquivo.'); return; } fwSend('Aplicando importação ('+(E.fwPreviewMode.value==='overwrite'?'sobrescrever':'mesclar')+', '+paths.length+' arq.)',{t:'framework_import_apply',token:fwPreviewToken,mode:E.fwPreviewMode.value,force:!!(E.fwPreviewForce&&E.fwPreviewForce.checked),paths}); E.fwPreviewApply.disabled=true; };
+    if(E.fwPreviewBody) E.fwPreviewBody.addEventListener('change',e=>{ const cb=e.target.closest('.fwpsel'); if(!cb) return; if(cb.checked)fwPreviewSelected.add(cb.dataset.path); else fwPreviewSelected.delete(cb.dataset.path); fwUpdateApplyState(); });
+    if(E.fwPreviewBody) E.fwPreviewBody.addEventListener('click',e=>{ const d=e.target.closest('.fwpdiff'); if(!d) return; e.preventDefault(); if(fwPreviewToken) fwSend('Carregando diferenças de '+d.dataset.path,{t:'framework_import_diff',token:fwPreviewToken,path:d.dataset.path}); });
+    if(E.fwDiffClose) E.fwDiffClose.onclick=fwCloseDiff;
+    if(E.fwDiffModal) E.fwDiffModal.addEventListener('click',e=>{ if(e.target===E.fwDiffModal) fwCloseDiff(); });
+    if(E.fwDiffModal) E.fwDiffModal.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.stopPropagation(); fwCloseDiff(); } });
     if(E.fwSources) E.fwSources.addEventListener('click',e=>{ const upd=e.target.closest('.fw-src-upd'), del=e.target.closest('.fw-src-del'); if(upd){ fwSend('Buscando atualização',{t:'framework_update_check',id:upd.dataset.id}); } else if(del){ fwSend('Removendo fonte',{t:'framework_source_remove',id:del.dataset.id}); } });
     // Editor de arquivo em modal sobreposto, com guard de alterações não salvas.
-    let fwEditPath='', fwEditOrig='', fwEditMode='edit', fwSavingContent='';
+    let fwEditPath='', fwEditOrig='', fwEditMode='edit', fwSavingContent='', fwViewMode='edit', fwIsMd=false;
     function fwEditDirtyNow(){ return !!E.fwEditBody && (E.fwEditBody.value!==fwEditOrig); }
     function fwSyncDirty(){ if(E.fwEditDirty)E.fwEditDirty.style.display=fwEditDirtyNow()?'':'none'; }
-    function fwOpenNew(){ fwEditMode='new'; fwEditPath=''; fwEditOrig=''; if(E.fwEditTitle)E.fwEditTitle.textContent='Novo arquivo'; if(E.fwEditPathRow)E.fwEditPathRow.style.display=''; if(E.fwEditPath)E.fwEditPath.value=''; if(E.fwEditBody)E.fwEditBody.value=''; if(E.fwEditDelete)E.fwEditDelete.style.display='none'; if(E.fwEditSave)E.fwEditSave.disabled=false; fwSyncDirty(); if(E.fwEditModal)E.fwEditModal.classList.remove('hidden'); setTimeout(()=>{ if(E.fwEditPath)E.fwEditPath.focus(); },0); }
-    function fwShowFile(path,content){ fwEditMode='edit'; fwEditPath=path||''; fwEditOrig=content||''; if(E.fwEditTitle)E.fwEditTitle.textContent=fwEditPath||'Arquivo'; if(E.fwEditPathRow)E.fwEditPathRow.style.display='none'; if(E.fwEditBody)E.fwEditBody.value=content||''; if(E.fwEditDelete)E.fwEditDelete.style.display=''; if(E.fwEditSave)E.fwEditSave.disabled=false; fwSyncDirty(); if(E.fwEditModal)E.fwEditModal.classList.remove('hidden'); setTimeout(()=>{ if(E.fwEditBody)E.fwEditBody.focus(); },0); }
-    function fwCloseEdit(force){ if(!force && fwEditDirtyNow() && !confirm('Descartar alterações não salvas?')) return false; if(E.fwEditModal)E.fwEditModal.classList.add('hidden'); return true; }
+    // Markdown abre renderizado (a maioria dos arquivos é .md); "Editar" mostra a textarea e "Formatado"
+    // volta re-renderizando o que está sendo editado. Reusa renderMarkdown/enhanceMarkdown do chat.
+    function fwSetView(mode){ fwViewMode=mode; const view=mode==='view'&&fwIsMd;
+      if(E.fwEditView){ E.fwEditView.classList.toggle('hidden',!view); if(view){ E.fwEditView.innerHTML=renderMarkdown(E.fwEditBody?E.fwEditBody.value:''); enhanceMarkdown(E.fwEditView); } }
+      if(E.fwEditBody)E.fwEditBody.classList.toggle('hidden',view);
+      if(E.fwEditFmt)E.fwEditFmt.textContent=view?'✏️ Editar':'👁 Formatado';
+      if(!view)setTimeout(()=>{ if(E.fwEditBody)E.fwEditBody.focus(); },0); }
+    function fwOpenNew(){ fwEditMode='new'; fwEditPath=''; fwEditOrig=''; fwIsMd=false; if(E.fwEditTitle)E.fwEditTitle.textContent='Novo arquivo'; if(E.fwEditPathRow)E.fwEditPathRow.style.display=''; if(E.fwEditPath)E.fwEditPath.value=''; if(E.fwEditBody)E.fwEditBody.value=''; if(E.fwEditDelete)E.fwEditDelete.style.display='none'; if(E.fwEditSave)E.fwEditSave.disabled=false; if(E.fwEditFmt)E.fwEditFmt.classList.add('hidden'); fwSetView('edit'); fwSyncDirty(); if(E.fwEditModal)E.fwEditModal.classList.remove('hidden'); setTimeout(()=>{ if(E.fwEditPath)E.fwEditPath.focus(); },0); }
+    function fwShowFile(path,content){ fwEditMode='edit'; fwEditPath=path||''; fwEditOrig=content||''; if(E.fwEditTitle)E.fwEditTitle.textContent=fwEditPath||'Arquivo'; if(E.fwEditPathRow)E.fwEditPathRow.style.display='none'; if(E.fwEditBody)E.fwEditBody.value=content||''; if(E.fwEditDelete)E.fwEditDelete.style.display=''; if(E.fwEditSave)E.fwEditSave.disabled=false; fwIsMd=/\.(md|markdown|mdx)$/i.test(fwEditPath); if(E.fwEditFmt)E.fwEditFmt.classList.toggle('hidden',!fwIsMd); fwSetView(fwIsMd?'view':'edit'); fwSyncDirty(); if(E.fwEditModal)E.fwEditModal.classList.remove('hidden'); }
+    function fwCloseEdit(force){ if(!force && fwEditDirtyNow() && !confirm('Descartar alterações não salvas?')) return false; if(E.fwEditModal){ E.fwEditModal.classList.add('hidden'); E.fwEditModal.classList.remove('max'); } if(E.fwEditMax){ E.fwEditMax.textContent='⛶'; E.fwEditMax.title='Maximizar'; } return true; }
     function fwDoSave(){ const path=fwEditMode==='new'?((E.fwEditPath&&E.fwEditPath.value||'').trim()):fwEditPath; if(!path){ toast('Informe o caminho (ex.: commands/plan.md)'); return; } fwSavingContent=E.fwEditBody?E.fwEditBody.value:''; if(E.fwEditSave)E.fwEditSave.disabled=true; fwSend('Salvando '+path,{t:'framework_save',path:path,content:fwSavingContent}); }
     if(E.fwNewFile) E.fwNewFile.onclick=fwOpenNew;
-    if(E.fwInventory) E.fwInventory.addEventListener('click',e=>{ const el=e.target.closest('.fw-file'); if(el&&el.dataset.path) tx({t:'framework_read',path:el.dataset.path}); });
-    if(E.fwInventory) E.fwInventory.addEventListener('keydown',e=>{ if(e.key!=='Enter'&&e.key!==' ')return; const el=e.target.closest&&e.target.closest('.fw-file'); if(el&&el.dataset.path){ e.preventDefault(); tx({t:'framework_read',path:el.dataset.path}); } });
+    if(E.fwInventory) E.fwInventory.addEventListener('click',e=>{ const del=e.target.closest('.fw-file-del'); if(del){ e.stopPropagation(); const p=del.dataset.path; if(p && confirm('Remover “'+p+'” do framework?\n\nApaga o arquivo desta máquina. Publique depois para propagar a remoção às outras.')) fwSend('Removendo '+p,{t:'framework_delete',path:p}); return; } const el=e.target.closest('.fw-file'); if(el&&el.dataset.path) tx({t:'framework_read',path:el.dataset.path}); });
+    if(E.fwInventory) E.fwInventory.addEventListener('keydown',e=>{ if(e.key!=='Enter'&&e.key!==' ')return; if(e.target.closest('.fw-file-del'))return; const el=e.target.closest&&e.target.closest('.fw-file'); if(el&&el.dataset.path){ e.preventDefault(); tx({t:'framework_read',path:el.dataset.path}); } });
     if(E.fwEditBody) E.fwEditBody.addEventListener('input',fwSyncDirty);
     if(E.fwEditSave) E.fwEditSave.onclick=fwDoSave;
     if(E.fwEditCancel) E.fwEditCancel.onclick=()=>fwCloseEdit(false);
+    if(E.fwEditClose) E.fwEditClose.onclick=()=>fwCloseEdit(false);
+    if(E.fwEditFmt) E.fwEditFmt.onclick=()=>fwSetView(fwViewMode==='view'?'edit':'view');
+    if(E.fwEditMax) E.fwEditMax.onclick=()=>{ const max=E.fwEditModal.classList.toggle('max'); E.fwEditMax.textContent=max?'🗗':'⛶'; E.fwEditMax.title=max?'Restaurar':'Maximizar'; };
     if(E.fwEditDelete) E.fwEditDelete.onclick=()=>{ if(!fwEditPath){ fwCloseEdit(true); return; } if(!confirm('Excluir '+fwEditPath+'?')) return; fwSend('Excluindo '+fwEditPath,{t:'framework_delete',path:fwEditPath}); };
     if(E.fwEditModal) E.fwEditModal.addEventListener('mousedown',e=>{ if(e.target===E.fwEditModal) fwCloseEdit(false); });
     if(E.fwEditModal) E.fwEditModal.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.stopPropagation(); fwCloseEdit(false); } });
@@ -3627,7 +3679,39 @@
       return L; }
     function refreshTitleInfo(){ const L=sessionInfoLines(), full=L.map(([k,v])=>k+': '+v).join('\n'); E.title.title=full; E.title.setAttribute('aria-label',full||E.title.textContent||''); }
     async function copySessionId(){ if(!currentSession)return; const value=currentSession; try{ if(!navigator.clipboard)throw new Error('clipboard indisponível'); await navigator.clipboard.writeText(value); toast('ID da sessão copiado.'); }catch(e){ await dialog({title:'ID da sessão:\n'+value,okText:'Fechar',cancelText:null}); } }
-    E.title.onclick=async()=>{ const L=sessionInfoLines(); const full=L.length?L.map(([k,v])=>k+': '+v).join('\n'):(E.title.textContent||'Jarvis'); if(!currentSession){ await dialog({title:full,okText:'Fechar',cancelText:null}); return; } if(await dialog({title:full,okText:'📋 Copiar ID',cancelText:'Fechar'})) await copySessionId(); };
+    // Painel rico da sessão: em vez de um blob de texto no dialog genérico, um card com cabeçalho
+    // (avatar + título + agente·modelo) e linhas ícone/rótulo/valor, badges de estado e ID em mono.
+    function relTimeLabel(ts){ if(!ts)return ''; const d=Math.max(0,Date.now()-ts), min=60000,h=3600000,day=86400000;
+      if(d<min)return 'agora mesmo'; if(d<h)return 'há '+Math.floor(d/min)+' min'; if(d<day)return 'há '+Math.floor(d/h)+' h';
+      const dd=Math.floor(d/day); if(dd<7)return 'há '+dd+' dia'+(dd>1?'s':''); return new Date(ts).toLocaleDateString('pt-BR'); }
+    function sessionInfoRows(){ const rows=[], add=(ic,k,v,extra)=>{ if(v!=null&&v!=='') rows.push(Object.assign({ic,k,v},extra||{})); };
+      const cap=(caps||[]).find(c=>c.name===currentAgent); add('🤖','Agente',(cap&&(cap.label||cap.name))||currentAgent);
+      const model=curModel||sessDeclModel; add('🧠','Modelo', model?modelLabel(currentAgent,model):'Automático');
+      const eff=curEffort||sessDeclEffort; if(eff) add('🎚️','Esforço', effLabel(eff));
+      const runner=currentSessionRunner||selectedRunner(); if((machines&&machines.length>1)||(runner&&runner!=='local')) add('🖥️','Máquina', machineLabel(runner));
+      if(curCwd) add('📁','Pasta', projectLabelOf(curCwd), {sub:curCwd});
+      const s=(sessions||[]).find(x=>x.id===currentSession); if(s&&s.updatedAt) add('🕑','Atualizada', relTimeLabel(s.updatedAt), {sub:new Date(s.updatedAt).toLocaleString('pt-BR')});
+      const badges=[]; if(curNative)badges.push({t:'nativa'}); if(currentSession)badges.push({t:curStarted?'em andamento':'nova',soft:true}); if(badges.length) add('⚑','Estado', badges);
+      if(currentSession) add('🔑','ID', currentSession, {mono:true});
+      return rows; }
+    function openSessionInfo(){ const title=(E.title.textContent||'Sessão').trim()||'Sessão';
+      E.siTitle.textContent=title; E.siAvatar.textContent=(title[0]||'✦').toUpperCase();
+      const cap=(caps||[]).find(c=>c.name===currentAgent), model=curModel||sessDeclModel;
+      E.siSub.textContent=[(cap&&(cap.label||cap.name))||currentAgent, model?modelLabel(currentAgent,model):'Automático'].filter(Boolean).join(' · ');
+      E.siRows.innerHTML=''; sessionInfoRows().forEach(r=>{ const row=document.createElement('div'); row.className='sirow';
+        const ic=document.createElement('span'); ic.className='ic'; ic.textContent=r.ic; ic.setAttribute('aria-hidden','true');
+        const k=document.createElement('span'); k.className='k'; k.textContent=r.k;
+        const v=document.createElement('span'); v.className='v'+(r.mono?' mono':'');
+        if(Array.isArray(r.v)){ r.v.forEach(b=>{ const bd=document.createElement('span'); bd.className='sibadge'+(b.soft?' soft':''); bd.textContent=b.t; v.appendChild(bd); }); }
+        else { v.appendChild(document.createTextNode(r.v)); if(r.sub){ const sm=document.createElement('small'); sm.textContent=r.sub; v.appendChild(sm); } }
+        row.appendChild(ic); row.appendChild(k); row.appendChild(v); E.siRows.appendChild(row); });
+      E.siCopy.classList.toggle('hidden',!currentSession); E.sessionInfo.classList.remove('hidden'); }
+    function closeSessionInfo(){ E.sessionInfo.classList.add('hidden'); }
+    E.title.onclick=openSessionInfo;
+    E.siClose.onclick=closeSessionInfo;
+    E.siCopy.onclick=()=>copySessionId();
+    E.sessionInfo.onclick=(e)=>{ if(e.target===E.sessionInfo) closeSessionInfo(); };
+    document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!E.sessionInfo.classList.contains('hidden')){ e.stopPropagation(); closeSessionInfo(); } });
     // ---------- catálogo de vozes (timbre falado): listar + ouvir amostra + escolher (Gap 6) ----------
     let voiceList=[], voiceCur='';
     function voiceId(v){ return typeof v==='string'?v:(v&&v.id)||''; }
@@ -3949,6 +4033,7 @@
         else if(m.t==='framework_update'){ fwArrived(); if(m.ok){ if(m.hasUpdate){ renderFwPreview(m.token,m.source||{},m.preview||{},true); fwLog('atualização disponível — revise a prévia','#f5b544'); toast('Atualização disponível'); } else { fwLog('✓ já está atualizado','#4ade80'); toast('Já está atualizado'); } } else { fwLog('✖ atualização: '+esc(m.error||'falha'),'#f87171'); toast('Atualização: '+(m.error||'falha')); } }
         else if(m.t==='framework_import_applied'){ fwArrived(); if(m.ok){ closeFwPreview(); tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwLog('✓ aplicado: '+((m.written||[]).length)+' escrito(s)'+((m.skippedExisting&&m.skippedExisting.length)?', '+m.skippedExisting.length+' mantido(s)':'')+(m.forced?' (override)':''),'#4ade80'); toast('Aplicado'); } else { if(E.fwPreviewApply)E.fwPreviewApply.disabled=false; fwLog('✖ aplicar: '+esc(m.error||'falha'),'#f87171'); toast('Aplicar: '+(m.error||'falha')); } }
         else if(m.t==='framework_source_removed'){ fwArrived(); tx({t:'framework_inventory'}); fwLog(m.ok?'✓ fonte removida':'fonte não encontrada',m.ok?'#4ade80':null); toast(m.ok?'Fonte removida':'Fonte não encontrada'); }
+        else if(m.t==='framework_import_diff'){ fwArrived(); if(m.ok){ fwShowDiff(m); } else { fwLog('✖ diferenças: '+esc(m.error||'falha'),'#f87171'); toast('Diferenças: '+(m.error||'falha')); } }
         else if(m.t==='fallback_cfg'){ renderFallback(m); if(m.saved)toast('IA secundária salva'); }
         else if(m.t==='log_cfg'){ renderLog(m); if(m.saved)toast('Logs salvos'); }
         else if(m.t==='notice'){ if(m.message)toast(m.message); if(E.fallbackSettings&&!E.fallbackSettings.classList.contains('hidden'))tx({t:'fallback_cfg'}); }

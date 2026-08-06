@@ -379,6 +379,28 @@ export function installFrameworkStarterPack(root = frameworkRoot()): FrameworkIm
   return { imported, skipped };
 }
 
+/** The bundled starter pack as pure data, so callers can build an import preview (scan + diff) and let
+ *  the owner confirm/exclude items BEFORE anything is written — instead of the old one-click install. */
+export function starterFrameworkFiles(): FrameworkFile[] {
+  return STARTER_FRAMEWORK_FILES.map((f) => ({ path: f.path, content: f.content }));
+}
+
+/** Read this machine's native global instruction files (CLAUDE.md / AGENTS.md / GEMINI.md) into a
+ *  framework file set — pure, no writes. Returns [{path:"instructions.md", content}] when any native
+ *  instruction exists, else []. Feeds the same preview/confirm flow as zip/GitHub imports. */
+export function collectNativeFrameworkFiles(opts: { home?: string } = {}): FrameworkFile[] {
+  const home = opts.home ?? homedir();
+  const sources: Array<[string, string]> = [
+    ["Claude (CLAUDE.md)", join(home, ".claude", "CLAUDE.md")],
+    ["AGENTS.md", join(home, ".codex", "AGENTS.md")],
+    ["Gemini (GEMINI.md)", join(home, ".gemini", "GEMINI.md")],
+  ];
+  const parts: string[] = [];
+  for (const [label, p] of sources) { try { const c = readFileSync(p, "utf8").trim(); if (c) parts.push(`# ${label}\n\n${c}`); } catch { /* absent */ } }
+  if (!parts.length) return [];
+  return [{ path: "instructions.md", content: parts.join("\n\n---\n\n") + "\n" }];
+}
+
 /** Minimal, safe importer: seed instructions.md from this machine's existing global instruction files
  *  (CLAUDE.md / AGENTS.md / GEMINI.md), so a user's current behavior becomes the framework's starting
  *  point. Never overwrites an existing instructions.md. Commands/skills are added via the editor. */

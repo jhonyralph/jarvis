@@ -32,9 +32,9 @@ import { retargetTarget } from "./update-retarget.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, type SessionHit } from "@jarvis/core";
+import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -385,7 +385,7 @@ function savePublishedSnapshot(files: FrameworkFile[]): void { try { writeJsonAt
 // Server-held import previews: an import (zip/GitHub) is staged here after the security scan, and only
 // written to disk when the owner confirms `framework_import_apply` with the matching token. This keeps
 // the (possibly large, possibly hostile) payload off the client round-trip and gates apply on review.
-interface PendingFrameworkImport { files: FrameworkFile[]; hash: string; scanBlocked: boolean; source: { type: "zip" | "github"; name?: string; spec?: GithubSpec; ref?: string; commit?: string; id?: string }; createdAt: number }
+interface PendingFrameworkImport { files: FrameworkFile[]; hash: string; scanBlocked: boolean; source: { type: "zip" | "github" | "starter" | "native"; name?: string; spec?: GithubSpec; ref?: string; commit?: string; id?: string }; createdAt: number }
 const pendingFrameworkImports = new Map<string, PendingFrameworkImport>();
 const IMPORT_TTL_MS = 15 * 60 * 1000;
 const MAX_IMPORT_B64 = 25 * 1024 * 1024; // ~18 MB decoded — a framework pack is far smaller
@@ -5243,6 +5243,37 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       catch (e: any) { send(ws, { t: "framework_seeded", ok: false, error: String(e?.message ?? e) }); }
       return;
     }
+    // Stage the bundled starter pack as a preview (scan + per-file diff) instead of writing it directly —
+    // the owner inspects, can exclude items, and confirms via framework_import_apply.
+    if (msg.t === "framework_seed_preview") {
+      if (!requireOwner(ws)) return;
+      try {
+        const files = starterFrameworkFiles();
+        const current = readCanonicalFramework(frameworkRoot()).files;
+        const preview = buildImportPreview(files, [], current);
+        sweepPendingImports();
+        const token = randomUUID();
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "starter" }, createdAt: Date.now() });
+        send(ws, { t: "framework_import_preview", ok: true, token, isUpdate: false, source: { type: "starter" }, preview: previewPayload(preview) });
+      } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // Stage "import from this machine" (native CLAUDE.md/AGENTS.md/GEMINI.md → instructions.md) as a
+    // preview so the owner sees exactly what would be written and can diff against the current file.
+    if (msg.t === "framework_import_native_preview") {
+      if (!requireOwner(ws)) return;
+      try {
+        const files = collectNativeFrameworkFiles({});
+        if (!files.length) throw new Error("nenhuma instrução nativa encontrada nesta máquina (CLAUDE.md / AGENTS.md / GEMINI.md)");
+        const current = readCanonicalFramework(frameworkRoot()).files;
+        const preview = buildImportPreview(files, [], current);
+        sweepPendingImports();
+        const token = randomUUID();
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "native" }, createdAt: Date.now() });
+        send(ws, { t: "framework_import_preview", ok: true, token, isUpdate: false, source: { type: "native" }, preview: previewPayload(preview) });
+      } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
     if (msg.t === "publish_framework") {
       if (!requireOwner(ws)) return;
       const base = readCanonicalFramework(frameworkRoot(), frameworkCfg.version);
@@ -5344,6 +5375,22 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       } catch (e: any) { send(ws, { t: "framework_update", ok: false, error: String(e?.message ?? e) }); }
       return;
     }
+    // Line diff of one staged file against the current on-disk version (IDE-style, for "ver diferenças"
+    // on a duplicate/modified file in the preview). Reuses core `lineDiff`; nothing is written.
+    if (msg.t === "framework_import_diff") {
+      if (!requireOwner(ws)) return;
+      try {
+        const pending = pendingFrameworkImports.get(String(msg.token || ""));
+        if (!pending) throw new Error("prévia expirada — refaça a importação");
+        const path = String(msg.path || "");
+        const incoming = pending.files.find((f) => f.path === path);
+        if (!incoming) throw new Error("arquivo não encontrado na prévia");
+        const current = readCanonicalFramework(frameworkRoot()).files.find((f) => f.path === path);
+        const rows = lineDiff(current?.content ?? "", incoming.content ?? "");
+        send(ws, { t: "framework_import_diff", ok: true, path, rows, hasCurrent: !!current });
+      } catch (e: any) { send(ws, { t: "framework_import_diff", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
     // Apply a staged import. Refuses when the scan flagged HIGH unless `force` overrides. Additive
     // by default (`keep`); `overwrite` replaces conflicting files (used by updates).
     if (msg.t === "framework_import_apply") {
@@ -5351,9 +5398,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       try {
         const pending = pendingFrameworkImports.get(String(msg.token || ""));
         if (!pending) throw new Error("prévia expirada — refaça a importação");
-        if (pending.scanBlocked && !msg.force) throw new Error("bloqueado por achados de segurança de severidade alta — revise e confirme o override para prosseguir");
+        const chosen = Array.isArray(msg.paths) && msg.paths.length ? pending.files.filter((f) => (msg.paths as string[]).includes(f.path)) : pending.files;
+        if (!chosen.length) throw new Error("nenhum arquivo selecionado para aplicar");
+        // Block is re-evaluated against the CHOSEN subset — deselecting the flagged file lifts the block.
+        if (pending.scanBlocked && !msg.force && scanFramework(chosen).blocked) throw new Error("bloqueado por achados de segurança de severidade alta — revise e confirme o override para prosseguir");
         const mode = msg.mode === "overwrite" ? "overwrite" : "keep";
-        const r = applyFrameworkImport(pending.files, { mode });
+        const r = applyFrameworkImport(chosen, { mode });
         if (pending.source.type === "github" && pending.source.spec) {
           const s = pending.source.spec; const id = pending.source.id || githubSourceId(s.owner, s.repo, s.subdir);
           const prior = frameworkSources.get(id);
