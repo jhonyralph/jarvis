@@ -34,7 +34,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec, type FrameworkSourceType } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -3321,12 +3321,13 @@ async function startLocalTournament(ws: WebSocket, input: { sessionId: string; t
 /** Debate iterativo local: rodadas de resposta + réplica cruzada entre 2+ IAs, com um JUIZ decidindo a
  *  convergência a cada rodada (para cedo no consenso) até o teto configurável. Read-only, via one-shot;
  *  cada rodada é transmitida à sessão para o usuário acompanhar a discussão. Cancelável como um run. */
-async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic: string; agents?: string[]; model?: string; effort?: string; maxRounds?: number; includeContext: boolean }): Promise<void> {
+async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic: string; agents?: string[]; effortLevel: EffortLevel; maxRounds?: number; includeContext: boolean }): Promise<void> {
   if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Debate ainda não grava resultado em sessão nativa" }); return; }
   if (store.isHidden(input.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita Debate" }); return; }
   const s = store.get(input.sessionId);
   if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
-  // Seleciona 2+ IAs distintas, disponíveis e com suporte a análise one-shot.
+  // Seleciona 2+ IAs distintas, disponíveis e com suporte a análise one-shot. Cada IA usa o SEU modelo
+  // default e o esforço mapeado do nível escolhido para a escala dela (cada provedor nomeia diferente).
   const wanted = new Set((input.agents || []).filter(Boolean));
   const debaters: DebateDebater[] = [];
   let idx = 0;
@@ -3335,7 +3336,9 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
     const a = agents.get(name);
     if (!a.oneShot) continue;
     try { if (!(await a.available())) continue; } catch { continue; }
-    debaters.push({ id: `p${++idx}`, agent: name, label: name });
+    let model: string | undefined, effort: string | undefined;
+    try { const caps = await a.capabilities(); const m = caps.models.find((x) => x.id === (caps as any).defaultModel) || caps.models[0]; model = m?.id; effort = resolveEffortLevel(input.effortLevel, m?.efforts, (m as any)?.defaultEffort); } catch { /* agente decide */ }
+    debaters.push({ id: `p${++idx}`, agent: name, model, effort, label: name });
   }
   if (debaters.length < 2) { send(ws, { t: "error", message: "Debate exige ao menos 2 IAs disponíveis (com suporte a análise one-shot)" }); return; }
   const maxRounds = clampDebateRounds(input.maxRounds);
@@ -3350,7 +3353,8 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
     broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "assistant", text, ts: at, agent: "jarvis" } });
     pushSessions();
   };
-  const reqText = `🗣️ Debate (${debaters.length} IAs, até ${maxRounds} rodadas): ${input.topic.split(/\r?\n/)[0].slice(0, 200)}`;
+  const effortPt = input.effortLevel === "max" ? "máximo" : input.effortLevel === "high" ? "alto" : "médio";
+  const reqText = `🗣️ Debate (${debaters.length} IAs, até ${maxRounds} rodadas, esforço ${effortPt}): ${input.topic.split(/\r?\n/)[0].slice(0, 200)}`;
   const ts = Date.now();
   store.add(input.sessionId, { role: "user", text: reqText, ts, agent: "jarvis" });
   broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "user", text: reqText, ts, agent: "jarvis" } });
@@ -3381,7 +3385,7 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
       responses = await Promise.all(debaters.map(async (d) => {
         const others = round === 1 ? [] : responses.filter((r) => r.id !== d.id);
         const prompt = round === 1 ? buildDebateOpeningPrompt(topic) : buildDebateRebuttalPrompt(topic, round, prev.get(d.id) || "", others);
-        try { const reply = await oneShotBy(d.agent, prompt, input.model, input.effort); addUsage(usageKey, d.agent, reply.usage); return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" }; }
+        try { const reply = await oneShotBy(d.agent, prompt, d.model, d.effort); addUsage(usageKey, d.agent, reply.usage); return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" }; }
         catch (e: any) { failed = true; return { id: d.id, label: d.label, text: "(falha: " + String(e?.message ?? e) + ")" }; }
       }));
       roundsDone = round;
@@ -5194,8 +5198,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         sessionId: msg.sessionId,
         topic: msg.topic.slice(0, 20_000),
         includeContext: msg.includeContext !== false,
-        model: typeof msg.model === "string" ? msg.model : undefined,
-        effort: typeof msg.effort === "string" ? msg.effort : undefined,
+        effortLevel: normalizeEffortLevel(msg.effortLevel),
         agents: Array.isArray(msg.agents) ? msg.agents.filter((x: any) => typeof x === "string").slice(0, 12) : undefined,
         maxRounds: typeof msg.maxRounds === "number" ? msg.maxRounds : undefined,
       });
