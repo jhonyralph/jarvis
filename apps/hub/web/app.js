@@ -3305,9 +3305,16 @@
     // Registro visível "O que foi feito": cada ação anota início e resultado, e um watchdog avisa quando
     // o Hub não responde (Hub desatualizado — as ações novas só existem após reiniciar o Hub).
     function fwLog(html,color){ if(!E.fwLog) return; if(!fwLogSeeded){ E.fwLog.innerHTML=''; fwLogSeeded=true; } const line=document.createElement('div'); line.style.cssText='margin:2px 0'; const ts=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); line.innerHTML='<span class="mut" style="font-size:10.5px">'+ts+'</span> <span'+(color?(' style="color:'+color+'"'):'')+'>'+html+'</span>'; E.fwLog.insertBefore(line,E.fwLog.firstChild); while(E.fwLog.childNodes.length>30) E.fwLog.removeChild(E.fwLog.lastChild); }
-    function fwArrived(){ if(fwWatchdog){ clearTimeout(fwWatchdog); fwWatchdog=null; } }
-    function fwArm(){ fwArrived(); fwWatchdog=setTimeout(()=>{ fwWatchdog=null; fwLog('✖ Sem resposta do Hub — <b>reinicie o Hub</b> para ativar estas ações (elas só existem no Hub atualizado).','#f87171'); },7000); }
-    function fwSend(label,msg){ fwLog('⏳ '+esc(label)+'…'); fwArm(); tx(msg); }
+    // Enquanto uma ação está em andamento, TRAVA os botões (feedback claro de "executando" + impede
+    // reenvio/spam). fwArrived() é o ponto único que TODA resposta do framework chama → destrava lá;
+    // o watchdog também destrava ao desistir (senão o botão ficava clicável e sem feedback).
+    let fwPending=false;
+    const FW_ACTION_BTNS=['fwSeed','fwImport','fwPublish','fwNewFile','fwRefresh','fwZipBtn','fwGhBtn'];
+    function fwBusy(on){ fwPending=on; FW_ACTION_BTNS.forEach(id=>{ const b=E[id]; if(b) b.disabled=on; }); if(E.frameworkSettings) E.frameworkSettings.classList.toggle('fwbusy',on); }
+    function fwClearWatch(){ if(fwWatchdog){ clearTimeout(fwWatchdog); fwWatchdog=null; } }
+    function fwArrived(){ fwClearWatch(); fwBusy(false); }
+    function fwArm(){ fwClearWatch(); fwWatchdog=setTimeout(()=>{ fwWatchdog=null; fwBusy(false); fwLog('✖ Sem resposta do Hub — <b>reinicie o Hub</b> para ativar estas ações (elas só existem no Hub atualizado).','#f87171'); },7000); }
+    function fwSend(label,msg){ if(fwPending){ fwLog('⏳ já há uma ação em andamento — aguarde…','#f5b544'); return; } fwLog('⏳ '+esc(label)+'…'); fwBusy(true); fwArm(); tx(msg); }
     // Sentinela de abertura: o Hub antigo ainda responde framework_cfg/save (fatia 1), mas NÃO o
     // framework_inventory/import (fatia 2). Só o framework_inventory limpa esta — se estourar, é Hub velho.
     function fwArmInventory(){ if(fwInvTimer)clearTimeout(fwInvTimer); fwInvTimer=setTimeout(()=>{ fwInvTimer=null; fwLog('✖ Hub desatualizado — a árvore de arquivos e o import não respondem. <b>Reinicie o Hub</b> para ativar a gestão de framework.','#f87171'); },7000); }

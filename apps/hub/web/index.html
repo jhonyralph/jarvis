@@ -1208,6 +1208,9 @@
     .findbar .findrow:hover, .findbar .findrow:focus { background:#ffffff14; outline:none; }
     .findbar .findrow .mut { color:var(--mut,#8ea0b5); font-size:11px; margin-left:6px; }
     .findbar .findrow.mut { color:var(--mut,#8ea0b5); cursor:default; }
+    /* framework: enquanto uma ação roda, o painel mostra "executando" (cursor de progresso) e os botões travados */
+    #frameworkSettings.fwbusy { cursor:progress; }
+    #frameworkSettings.fwbusy button[disabled] { opacity:.5; cursor:progress; }
   </style>
 </head>
 <body>
