@@ -1211,6 +1211,16 @@
     /* framework: enquanto uma ação roda, o painel mostra "executando" (cursor de progresso) e os botões travados */
     #frameworkSettings.fwbusy { cursor:progress; }
     #frameworkSettings.fwbusy button[disabled] { opacity:.5; cursor:progress; }
+    /* caixas separadas: "o que já existe" x "importar" — em vez de tudo num scroll com um log no topo */
+    #frameworkSettings .fwblock { border:1px solid var(--line,#ffffff1f); border-radius:10px; padding:10px 12px; margin-top:10px; background:#0e141c; }
+    #frameworkSettings .fwblock-h { display:flex; justify-content:space-between; align-items:center; font-weight:600; font-size:13px; margin-bottom:8px; }
+    #frameworkSettings button.fwrun { position:relative; }
+    #frameworkSettings button.fwrun::after { content:''; width:11px; height:11px; margin-left:7px; display:inline-block; vertical-align:-1px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:fwspin .7s linear infinite; }
+    @keyframes fwspin { to { transform:rotate(360deg); } }
+    .fwhist > summary { list-style:none; }
+    .fwhist > summary::-webkit-details-marker { display:none; }
+    .fwhist > summary::before { content:'▸ '; }
+    .fwhist[open] > summary::before { content:'▾ '; }
   </style>
 </head>
 <body>
@@ -1917,54 +1927,67 @@
         <section class="spanel hidden" data-panel="framework">
           <div id="frameworkSettings" class="hidden">
             <div class="sec">Meu Framework (universal)</div>
-            <div class="mut" style="font-size:12px;margin-bottom:6px">Comandos, skills e instruções que valem para <b>todas as IAs</b> e são publicados em <b>todas as suas máquinas</b>. O Jarvis é a fonte da verdade; os arquivos nativos de cada IA são adapters. Aparecem no menu “/” marcados como <b>universal</b>.</div>
-            <div class="sec" style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">O que foi feito<button id="fwLogClear" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Limpar</button></div>
-            <div id="fwLog" style="font-size:12px;max-height:150px;overflow:auto;background:#0f141b;border:1px solid #ffffff14;border-radius:8px;padding:6px 8px">Cada ação registra o resultado aqui. Se você clicar e nada aparecer, o Hub está desatualizado — reinicie-o para ativar estas ações.</div>
-            <label style="margin-top:10px">Quando um “/nome” existe nativo e universal
-              <select id="setFwPref">
-                <option value="ask">Perguntar (mostra os dois; prefere o nativo)</option>
-                <option value="native">Sempre o nativo da IA</option>
-                <option value="jarvis">Sempre o universal do Framework</option>
-              </select>
-            </label>
-            <div class="sec" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">Configurado hoje<button id="fwRefresh" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Atualizar</button></div>
-            <div id="fwHealth" class="mut" style="font-size:12px;margin-bottom:6px">—</div>
-            <div id="fwInventory" style="font-size:12px"></div>
-            <div class="mut" style="font-size:12px;margin:4px 0 6px">Clique num arquivo acima para abrir e editar em uma janela.</div>
-            <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:2px">
-              <button id="fwNewFile" type="button">Novo arquivo</button>
-              <button id="fwSeed" class="ghost" type="button">Instalar pacote base</button>
-              <button id="fwImport" class="ghost" type="button">Importar desta máquina</button>
-            </div>
-            <div class="mut" style="font-size:11.5px;margin-top:4px"><b>Novo arquivo</b>: cria um comando, skill ou instrução do zero. <b>Instalar pacote base</b>: adiciona um conjunto pronto (review, pesquisa, segurança, digest…) sem sobrescrever o que você já tem. <b>Importar desta máquina</b>: copia o CLAUDE.md/AGENTS.md/GEMINI.md desta máquina para as instruções universais.</div>
-            <div class="sec" style="margin-top:10px">Importar pacote</div>
-            <div class="mut" style="font-size:12px;margin-bottom:6px">Suba um <b>.zip</b> ou baixe de um repositório <b>GitHub público</b>. Todo pacote é <b>verificado</b> (scan de segurança + validação + custo de token) antes de aplicar — nada é escrito sem a sua confirmação. A verificação reduz risco, mas não substitui a sua revisão.</div>
-            <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
-              <input type="file" id="fwZip" accept=".zip,application/zip" style="display:none">
-              <button id="fwZipBtn" class="ghost" type="button">Subir .zip…</button>
-              <input id="fwGh" placeholder="owner/repo[/subpasta][@ref] ou URL do GitHub" autocomplete="off" style="flex:1;min-width:180px">
-              <button id="fwGhBtn" class="ghost" type="button">Baixar do GitHub</button>
-            </div>
-            <div id="fwSources" style="font-size:12px;margin-top:8px"></div>
-            <div id="fwPreview" class="hidden" style="margin-top:8px;border:1px solid #2b3550;border-radius:8px;padding:10px">
-              <div class="sec" id="fwPreviewTitle" style="margin-top:0">Prévia da importação</div>
-              <div id="fwPreviewBody" style="font-size:12px"></div>
-              <div class="row" id="fwPreviewForceRow" style="gap:6px;align-items:center;margin-top:8px">
-                <label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" id="fwPreviewForce"> Aplicar mesmo com achados de segurança <b>altos</b> (override)</label>
+            <div class="mut" style="font-size:12px;margin-bottom:8px">Comandos, skills e instruções que valem para <b>todas as IAs</b> e são publicados em <b>todas as suas máquinas</b>. O Jarvis é a fonte da verdade; os arquivos nativos de cada IA são adapters. Aparecem no menu “/” marcados como <b>universal</b>.</div>
+
+            <!-- BLOCO A — o que JÁ EXISTE (estado atual) -->
+            <div class="fwblock">
+              <div class="fwblock-h"><span>📁 O que já existe</span><button id="fwRefresh" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Atualizar</button></div>
+              <div id="fwHealth" class="mut" style="font-size:12px;margin-bottom:6px">—</div>
+              <div id="fwInventory" style="font-size:12px"></div>
+              <div class="mut" style="font-size:11.5px;margin:4px 0 8px">Clique num arquivo para abrir e editar.</div>
+              <label style="margin-top:2px">Quando um “/nome” existe nativo e universal
+                <select id="setFwPref">
+                  <option value="ask">Perguntar (mostra os dois; prefere o nativo)</option>
+                  <option value="native">Sempre o nativo da IA</option>
+                  <option value="jarvis">Sempre o universal do Framework</option>
+                </select>
+              </label>
+              <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">
+                <button id="fwNewFile" type="button">Novo arquivo</button>
+                <span style="flex:1"></span>
+                <span id="fwVersion" class="mut" style="font-size:12px">—</span>
+                <button id="fwPublish" type="button">Publicar em todas as máquinas</button>
               </div>
-              <div class="row" style="gap:8px;justify-content:flex-end;align-items:center;margin-top:8px">
-                <label style="font-size:12px">Modo<select id="fwPreviewMode"><option value="keep">Manter existentes (mesclar)</option><option value="overwrite">Sobrescrever conflitos</option></select></label>
-                <button id="fwPreviewCancel" class="ghost" type="button">Cancelar</button>
-                <button id="fwPreviewApply" type="button">Aplicar</button>
+              <div class="mut" style="font-size:11.5px;margin-top:4px">Publicar envia o estado atual para cada máquina; as offline recebem ao reconectar.</div>
+              <div id="fwStatus" class="mut" style="font-size:12px;margin-top:6px"></div>
+            </div>
+
+            <!-- BLOCO B — o que VAI SER IMPORTADO -->
+            <div class="fwblock">
+              <div class="fwblock-h"><span>➕ Importar</span></div>
+              <div class="mut" style="font-size:12px;margin-bottom:8px">Escolha uma fonte. Tudo passa por <b>prévia</b> (scan de segurança + diff + custo de token) — <b>nada é escrito sem a sua confirmação</b>.</div>
+              <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+                <button id="fwSeed" class="ghost" type="button">Pacote base</button>
+                <button id="fwImport" class="ghost" type="button">Desta máquina</button>
+                <input type="file" id="fwZip" accept=".zip,application/zip" style="display:none">
+                <button id="fwZipBtn" class="ghost" type="button">Subir .zip…</button>
+              </div>
+              <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
+                <input id="fwGh" placeholder="owner/repo[/subpasta][@ref] ou URL do GitHub" autocomplete="off" style="flex:1;min-width:180px">
+                <button id="fwGhBtn" class="ghost" type="button">Baixar do GitHub</button>
+              </div>
+              <div class="mut" style="font-size:11.5px;margin-top:4px"><b>Pacote base</b>: conjunto pronto (review, pesquisa, segurança, digest…). <b>Desta máquina</b>: copia CLAUDE.md/AGENTS.md/GEMINI.md desta máquina.</div>
+              <div id="fwSources" style="font-size:12px;margin-top:8px"></div>
+              <div id="fwPreview" class="hidden" style="margin-top:8px;border:1px solid #2b3550;border-radius:8px;padding:10px;background:#121a26">
+                <div class="sec" id="fwPreviewTitle" style="margin-top:0">O que vai ser importado</div>
+                <div id="fwPreviewBody" style="font-size:12px"></div>
+                <div class="row" id="fwPreviewForceRow" style="gap:6px;align-items:center;margin-top:8px">
+                  <label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" id="fwPreviewForce"> Aplicar mesmo com achados de segurança <b>altos</b> (override)</label>
+                </div>
+                <div class="row" style="gap:8px;justify-content:flex-end;align-items:center;margin-top:8px">
+                  <label style="font-size:12px">Modo<select id="fwPreviewMode"><option value="keep">Manter existentes (mesclar)</option><option value="overwrite">Sobrescrever conflitos</option></select></label>
+                  <button id="fwPreviewCancel" class="ghost" type="button">Cancelar</button>
+                  <button id="fwPreviewApply" type="button">Aplicar</button>
+                </div>
               </div>
             </div>
-            <div class="sec" style="margin-top:10px">Publicar</div>
-            <div class="mut" style="font-size:12px;margin-bottom:6px">Envia o framework para cada máquina. As que estiverem offline recebem ao reconectar.</div>
-            <div class="row" style="justify-content:space-between;align-items:center">
-              <span id="fwVersion" class="mut" style="font-size:12px">—</span>
-              <button id="fwPublish" type="button">Publicar em todas as máquinas</button>
-            </div>
-            <div id="fwStatus" class="mut" style="font-size:12px;margin-top:6px">—</div>
+
+            <!-- HISTÓRICO — o antigo log, agora colapsável no rodapé (não é mais a UI principal) -->
+            <details class="fwhist" style="margin-top:12px">
+              <summary style="font-size:12px;cursor:pointer;color:var(--mut,#8ea0b5)">Histórico de ações</summary>
+              <div class="row" style="justify-content:flex-end;margin:4px 0"><button id="fwLogClear" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Limpar</button></div>
+              <div id="fwLog" style="font-size:12px;max-height:150px;overflow:auto;background:#0f141b;border:1px solid #ffffff14;border-radius:8px;padding:6px 8px">Cada ação registra o resultado aqui. Se você clicar e nada aparecer, o Hub está desatualizado — reinicie-o para ativar estas ações.</div>
+            </details>
           </div>
           <div id="fwOwnerHint" class="mut" style="font-size:12px">Esta seção é exclusiva do dono.</div>
         </section>

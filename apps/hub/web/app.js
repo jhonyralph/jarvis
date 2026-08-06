@@ -3297,9 +3297,9 @@
     function fwStateLabel(st){ return ({materialized:'✓ materializado',current:'✓ já atual',sent:'enviado',queued:'na fila',needs_update:'⚠ máquina desatualizada',error:'⚠ erro',offline:'offline',pronta:'pronta',fonte:'fonte (esta máquina)'})[st]||st; }
     function renderFwStatus(){ const ids=Object.keys(fwMachineStatus); E.fwStatus.innerHTML=ids.length?ids.map(id=>'<div>'+esc(fwMachineStatus[id].label)+' — '+esc(fwStateLabel(fwMachineStatus[id].state))+'</div>').join(''):'—'; }
     if(E.setFwPref) E.setFwPref.onchange=()=>tx({t:'set_framework_cfg',preference:E.setFwPref.value});
-    if(E.fwSeed) E.fwSeed.onclick=()=>fwSend('Verificando pacote base',{t:'framework_seed_preview'});
-    if(E.fwImport) E.fwImport.onclick=()=>fwSend('Verificando instruções desta máquina',{t:'framework_import_native_preview'});
-    if(E.fwPublish) E.fwPublish.onclick=()=>{ E.fwStatus.textContent='Publicando…'; fwSend('Publicando nas máquinas',{t:'publish_framework'}); };
+    if(E.fwSeed) E.fwSeed.onclick=()=>fwSend('Verificando pacote base',{t:'framework_seed_preview'},E.fwSeed);
+    if(E.fwImport) E.fwImport.onclick=()=>fwSend('Verificando instruções desta máquina',{t:'framework_import_native_preview'},E.fwImport);
+    if(E.fwPublish) E.fwPublish.onclick=()=>{ E.fwStatus.textContent='Publicando…'; fwSend('Publicando nas máquinas',{t:'publish_framework'},E.fwPublish); };
     // Framework: inventário, importação com gate de segurança (zip/GitHub) e atualização por fonte.
     let fwSourcesCache=[], fwPreviewToken='', fwPreviewBlocked=false, fwPreviewSelected=new Set(), fwWatchdog=null, fwInvTimer=null, fwLogSeeded=false;
     // Registro visível "O que foi feito": cada ação anota início e resultado, e um watchdog avisa quando
@@ -3308,13 +3308,17 @@
     // Enquanto uma ação está em andamento, TRAVA os botões (feedback claro de "executando" + impede
     // reenvio/spam). fwArrived() é o ponto único que TODA resposta do framework chama → destrava lá;
     // o watchdog também destrava ao desistir (senão o botão ficava clicável e sem feedback).
-    let fwPending=false;
+    let fwPending=false, fwActiveBtn=null;
     const FW_ACTION_BTNS=['fwSeed','fwImport','fwPublish','fwNewFile','fwRefresh','fwZipBtn','fwGhBtn'];
-    function fwBusy(on){ fwPending=on; FW_ACTION_BTNS.forEach(id=>{ const b=E[id]; if(b) b.disabled=on; }); if(E.frameworkSettings) E.frameworkSettings.classList.toggle('fwbusy',on); }
+    // Trava geral + SPINNER no botão clicado (você vê QUAL ação está rodando, não só um log). Destrava
+    // no ponto único fwArrived() (toda resposta chama) e no watchdog ao desistir.
+    function fwBusy(on,btn){ fwPending=on; FW_ACTION_BTNS.forEach(id=>{ const b=E[id]; if(b) b.disabled=on; }); if(E.frameworkSettings) E.frameworkSettings.classList.toggle('fwbusy',on);
+      if(fwActiveBtn){ fwActiveBtn.classList.remove('fwrun'); fwActiveBtn=null; }
+      if(on&&btn){ fwActiveBtn=btn; btn.classList.add('fwrun'); } }
     function fwClearWatch(){ if(fwWatchdog){ clearTimeout(fwWatchdog); fwWatchdog=null; } }
     function fwArrived(){ fwClearWatch(); fwBusy(false); }
     function fwArm(){ fwClearWatch(); fwWatchdog=setTimeout(()=>{ fwWatchdog=null; fwBusy(false); fwLog('✖ Sem resposta do Hub — <b>reinicie o Hub</b> para ativar estas ações (elas só existem no Hub atualizado).','#f87171'); },7000); }
-    function fwSend(label,msg){ if(fwPending){ fwLog('⏳ já há uma ação em andamento — aguarde…','#f5b544'); return; } fwLog('⏳ '+esc(label)+'…'); fwBusy(true); fwArm(); tx(msg); }
+    function fwSend(label,msg,btn){ if(fwPending){ fwLog('⏳ já há uma ação em andamento — aguarde…','#f5b544'); return; } fwLog('⏳ '+esc(label)+'…'); fwBusy(true,btn); fwArm(); tx(msg); }
     // Sentinela de abertura: o Hub antigo ainda responde framework_cfg/save (fatia 1), mas NÃO o
     // framework_inventory/import (fatia 2). Só o framework_inventory limpa esta — se estourar, é Hub velho.
     function fwArmInventory(){ if(fwInvTimer)clearTimeout(fwInvTimer); fwInvTimer=setTimeout(()=>{ fwInvTimer=null; fwLog('✖ Hub desatualizado — a árvore de arquivos e o import não respondem. <b>Reinicie o Hub</b> para ativar a gestão de framework.','#f87171'); },7000); }
@@ -3421,10 +3425,10 @@
       E.fwDiffModal.classList.remove('hidden'); }
     function fwCloseDiff(){ if(E.fwDiffModal)E.fwDiffModal.classList.add('hidden'); }
     if(E.fwLogClear) E.fwLogClear.onclick=()=>{ if(E.fwLog){ E.fwLog.innerHTML='—'; fwLogSeeded=false; } };
-    if(E.fwRefresh) E.fwRefresh.onclick=()=>fwSend('Atualizando inventário',{t:'framework_inventory'});
+    if(E.fwRefresh) E.fwRefresh.onclick=()=>fwSend('Atualizando inventário',{t:'framework_inventory'},E.fwRefresh);
     if(E.fwZipBtn) E.fwZipBtn.onclick=()=>E.fwZip&&E.fwZip.click();
-    if(E.fwZip) E.fwZip.onchange=()=>{ const f=E.fwZip.files&&E.fwZip.files[0]; if(!f) return; if(f.size>18*1024*1024){ toast('Arquivo muito grande'); E.fwZip.value=''; return; } const r=new FileReader(); r.onload=()=>{ const b64=String(r.result||'').split(',').pop()||''; fwSend('Verificando pacote '+f.name,{t:'framework_import_zip',name:f.name,dataB64:b64}); E.fwZip.value=''; }; r.onerror=()=>{ fwLog('✖ Falha ao ler o arquivo','#f87171'); E.fwZip.value=''; }; r.readAsDataURL(f); };
-    if(E.fwGhBtn) E.fwGhBtn.onclick=()=>{ const v=(E.fwGh.value||'').trim(); if(!v){ toast('Informe owner/repo ou URL do GitHub'); return; } fwSend('Baixando de '+v,{t:'framework_import_github',source:v}); };
+    if(E.fwZip) E.fwZip.onchange=()=>{ const f=E.fwZip.files&&E.fwZip.files[0]; if(!f) return; if(f.size>18*1024*1024){ toast('Arquivo muito grande'); E.fwZip.value=''; return; } const r=new FileReader(); r.onload=()=>{ const b64=String(r.result||'').split(',').pop()||''; fwSend('Verificando pacote '+f.name,{t:'framework_import_zip',name:f.name,dataB64:b64},E.fwZipBtn); E.fwZip.value=''; }; r.onerror=()=>{ fwLog('✖ Falha ao ler o arquivo','#f87171'); E.fwZip.value=''; }; r.readAsDataURL(f); };
+    if(E.fwGhBtn) E.fwGhBtn.onclick=()=>{ const v=(E.fwGh.value||'').trim(); if(!v){ toast('Informe owner/repo ou URL do GitHub'); return; } fwSend('Baixando de '+v,{t:'framework_import_github',source:v},E.fwGhBtn); };
     if(E.fwPreviewForce) E.fwPreviewForce.onchange=fwUpdateApplyState;
     if(E.fwPreviewCancel) E.fwPreviewCancel.onclick=closeFwPreview;
     if(E.fwPreviewApply) E.fwPreviewApply.onclick=()=>{ if(!fwPreviewToken) return; const paths=[...fwPreviewSelected]; if(!paths.length){ toast('Selecione ao menos um arquivo.'); return; } fwSend('Aplicando importação ('+(E.fwPreviewMode.value==='overwrite'?'sobrescrever':'mesclar')+', '+paths.length+' arq.)',{t:'framework_import_apply',token:fwPreviewToken,mode:E.fwPreviewMode.value,force:!!(E.fwPreviewForce&&E.fwPreviewForce.checked),paths}); E.fwPreviewApply.disabled=true; };
