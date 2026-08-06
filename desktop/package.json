@@ -1,6 +1,6 @@
 {
   "name": "jarvis-desktop",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "private": true,
   "description": "Jarvis desktop shell (Electron) — a rich CLIENT that loads the live Hub UI. Intentionally OUTSIDE the npm workspace so it never touches the Hub/runner install or CI (mirrors mobile/).",
   "homepage": "https://github.com/jhonyralph/jarvis",

@@ -1,3 +1,10 @@
+## [0.14.1](https://github.com/jhonyralph/jarvis/compare/v0.14.0...v0.14.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **framework-ui:** trava botões durante a ação (feedback de "executando") + anti-spam ([3284ffc](https://github.com/jhonyralph/jarvis/commit/3284ffc6d59c04b5e9fee6486eff39b63699308e))
+
 # [0.14.0](https://github.com/jhonyralph/jarvis/compare/v0.13.2...v0.14.0) (2026-08-06)
 
 
