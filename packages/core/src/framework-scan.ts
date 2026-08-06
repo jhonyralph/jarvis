@@ -42,13 +42,23 @@ function snip(s: string): string {
   return t.length > MAX_SNIPPET ? t.slice(0, MAX_SNIPPET) + "…" : t;
 }
 
-const SECRET_FILE = /(\.ssh\/|\bid_rsa\b|\bid_ed25519\b|\.aws\/(credentials|config)|\.netrc\b|\.npmrc\b|\/etc\/passwd|\.pem\b|\bgh\s+auth\s+token\b|\bGITHUB_TOKEN\b|\bAWS_SECRET_ACCESS_KEY\b|\bAWS_ACCESS_KEY_ID\b|\bANTHROPIC_API_KEY\b|\bOPENAI_API_KEY\b)/i;
+// Acesso REAL a credencial: arquivo de chave/segredo, ou comando que IMPRIME um token. HIGH.
+const SECRET_FILE = /(\.ssh\/|\bid_rsa\b|\bid_ed25519\b|\.aws\/(credentials|config)|\.netrc\b|\.npmrc\b|\/etc\/passwd|\.pem\b|\bgh\s+auth\s+token\b)/i;
+// Só o NOME de uma variável de segredo (GITHUB_TOKEN, *_API_KEY…). Comuníssimo em documentação/CI —
+// citar o nome NÃO é ler o segredo. MEDIUM (aparece pra revisão, não bloqueia sozinho).
+const SECRET_NAME = /\b(GITHUB_TOKEN|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|ANTHROPIC_API_KEY|OPENAI_API_KEY|NPM_TOKEN|SLACK_TOKEN)\b/;
 const ENV_DUMP = /\b(printenv|process\.env|os\.environ|getenv)\b|Env:\s*|\$Env:/i;
 const PIPE_TO_SHELL = /\b(curl|wget|iwr|invoke-webrequest|fetch)\b[^\n|]*\|\s*(sudo\s+)?(bash|sh|zsh|python3?|node|pwsh|powershell)\b/i;
 const NET_TOOL = /\b(curl|wget|nc|ncat|telnet|scp|rsync|invoke-webrequest|iwr)\b/i;
-const CODE_EXEC = /\b(child_process|subprocess|os\.system|execSync|spawnSync|runInThisContext)\b|\b(eval|exec|atob|Function)\s*\(/i;
+// Primitivas de execução. NÃO usa /i e exige o parêntese COLADO (`exec(`, `Function(`, `eval(`) — antes,
+// `(eval|exec|Function)\s*\(` com /i casava "function (", "no eval (", "exec (" em PROSA/tabelas comuns
+// de docs, gerando falso-positivo em quase todo markdown. `Function` é case-sensitive (o construtor JS).
+const CODE_EXEC = /\b(child_process|subprocess|os\.system|execSync|spawnSync|runInThisContext)\b|\b(eval|exec|atob)\(|\bFunction\(/;
 const BROAD_SHELL = /allowed-tools\s*:\s*(.+)$/i;
-const BROAD_SHELL_VALUE = /\bBash\s*\(\s*\*\s*\)|(^|[,[\s])(Bash|Shell|Sh|Execute)([,\]\s]|$)/i;
+// Curinga = grant IRRESTRITO (Bash(*), Shell(*), ou um `*` solto na lista) → HIGH.
+const BROAD_SHELL_WILDCARD = /\b(Bash|Shell|Sh|Execute|Exec)\s*\(\s*\*\s*\)|(^|[,[\s(])\*([,\])\s]|$)/i;
+// Declarar uma ferramenta de shell ESCOPADA (ex.: "Read, Bash, Write") é normal numa skill de dev → MEDIUM.
+const BROAD_SHELL_VALUE = /(^|[,[\s])(Bash|Shell|Sh|Execute)([,\]\s]|$)/i;
 const BASE64_BLOB = /[A-Za-z0-9+/]{200,}={0,2}/;
 const URL = /\bhttps?:\/\/[^\s)'"`<>]+/gi;
 const IP_HOST = /^https?:\/\/(\d{1,3}\.){3}\d{1,3}/i;
@@ -87,8 +97,10 @@ export function scanFramework(files: FrameworkFile[]): ScanReport {
 
       if (inFrontmatter) {
         const bs = BROAD_SHELL.exec(line);
-        if (bs && BROAD_SHELL_VALUE.test(bs[1])) {
-          push(ln, "high", "broad-shell-grant", "grant de shell amplo em allowed-tools (ex.: Bash(*)) pré-aprova execução irrestrita.", line);
+        if (bs && BROAD_SHELL_WILDCARD.test(bs[1])) {
+          push(ln, "high", "broad-shell-grant", "grant de shell CURINGA em allowed-tools (ex.: Bash(*)) pré-aprova execução irrestrita.", line);
+        } else if (bs && BROAD_SHELL_VALUE.test(bs[1])) {
+          push(ln, "medium", "shell-grant", "allowed-tools declara shell (ex.: Bash) — escopado é normal em skill de dev; revise a origem do pacote.", line);
         }
       }
 
@@ -98,13 +110,15 @@ export function scanFramework(files: FrameworkFile[]): ScanReport {
         push(ln, "medium", "network-tool", "ferramenta de rede (curl/wget/nc…) pode buscar payload ou exfiltrar dados.", line);
       }
       if (SECRET_FILE.test(line)) {
-        push(ln, "high", "credential-access", "acesso a segredo/credencial (chave SSH, token, credenciais de cloud).", line);
+        push(ln, "high", "credential-access", "acesso a arquivo de credencial (chave SSH, .pem, .aws/credentials) ou comando que imprime segredo.", line);
+      } else if (SECRET_NAME.test(line)) {
+        push(ln, "medium", "credential-name", "menção ao NOME de uma variável de segredo (ex.: GITHUB_TOKEN) — comum em documentação; não é leitura do segredo.", line);
       }
       if (ENV_DUMP.test(line)) {
         push(ln, "medium", "env-access", "leitura de variáveis de ambiente — pode enumerar segredos.", line);
       }
       if (CODE_EXEC.test(line)) {
-        push(ln, "high", "code-exec", "primitiva de execução de código (eval/exec/child_process/subprocess/os.system).", line);
+        push(ln, "medium", "code-exec", "primitiva de execução de código no corpo — vira TEXTO de prompt (não é executada pelo Jarvis); revise se o pacote é confiável.", line);
       }
       if (BASE64_BLOB.test(line)) {
         push(ln, "medium", "opaque-blob", "blob longo tipo base64 — pode ocultar payload; revise manualmente.", line);
