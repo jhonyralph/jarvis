@@ -1,3 +1,16 @@
+# [0.18.0](https://github.com/jhonyralph/jarvis/compare/v0.17.0...v0.18.0) (2026-08-07)
+
+
+### Bug Fixes
+
+* **chat:** texto de subagente como markdown intercalado (paridade com chat/Trabalhos) ([6b0264b](https://github.com/jhonyralph/jarvis/commit/6b0264b4ff3afce381ab98ea7dc7efcf92df72ae))
+
+
+### Features
+
+* **solutions-debate:** debatentes como execução gerenciada (subagentes em Trabalhos) ([87ff69b](https://github.com/jhonyralph/jarvis/commit/87ff69bc8c923523d7b047d703463b556d55d637))
+* **solutions:** rascunho por sessão + contador do limite de 20k no Objetivo ([b6230f5](https://github.com/jhonyralph/jarvis/commit/b6230f597575561cde7d8e7e092db53206c24b30))
+
 # [0.17.0](https://github.com/jhonyralph/jarvis/compare/v0.16.0...v0.17.0) (2026-08-07)
 
 
