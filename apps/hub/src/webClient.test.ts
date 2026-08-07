@@ -30,6 +30,16 @@ interface ClientHandle {
   store: Record<string, string>;
   openSession(id: string, runnerId?: string): void;
   organizeSessions(list: any[], opts: any): { groups: any[]; total: number; shownCount: number; groupBy: string; sortBy: string; status: string };
+  // Espaço de Soluções + fluxo de subagente (test-only handles).
+  el(k: string): any;
+  makeEl(tag: string): any;
+  setSession(id: string | null, runner: string): void;
+  solutionSnapshot(): any;
+  saveSolutionState(): void;
+  applySolutionDraft(d: any): void;
+  updateSolutionCount(): void;
+  appendFlowText(container: any, st: any, text: string): void;
+  closeFlowText(st: any): void;
 }
 
 /** One permissive fake element: every property access the client makes resolves to something inert. */
@@ -118,6 +128,15 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   get recentsRows(){ return E.recents.children.map(c=>String(c.textContent||'')); },
   openSession: (id,rid)=>openSession(id,rid),
   organizeSessions: (list,opts)=>organizeSessions(list,opts),
+  el: (k)=>E[k],
+  makeEl: (t)=>document.createElement(t),
+  setSession: (id,r)=>{ currentSession=id; currentSessionRunner=r; },
+  solutionSnapshot: ()=>solutionSnapshot(),
+  saveSolutionState: ()=>saveSolutionState(),
+  applySolutionDraft: (d)=>applySolutionDraft(d),
+  updateSolutionCount: ()=>updateSolutionCount(),
+  appendFlowText: (c,s,t)=>appendFlowText(c,s,t),
+  closeFlowText: (s)=>closeFlowText(s),
 };`;
 
   const factory = new Function(
@@ -318,4 +337,76 @@ test("organizeSessions: grouped caps EACH group at perGroupLimit and 'expanded' 
   const apiX = expanded.groups.find((g: any) => g.label === "api");
   assert.deepEqual(apiX.sessions.map((s: any) => s.id), ["a", "b"], "expandido mostra todas do grupo");
   assert.equal(apiX.hidden, 0); assert.equal(apiX.expanded, true);
+});
+
+// ---- Espaço de Soluções: contador visível do limite do Objetivo (não truncar em silêncio) ----
+test("contador do Objetivo avisa o corte do servidor (20k) em vez de truncar em silêncio", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  const topic = client.el("councilTopic"), count = client.el("councilTopicCount");
+  topic.value = "x".repeat(19000);
+  client.updateSolutionCount();
+  assert.match(count.textContent, /19000 \/ 20000/, "mostra quanto foi usado do teto");
+  assert.doesNotMatch(count.textContent, /será cortado/, "abaixo do teto não avisa corte");
+  topic.value = "y".repeat(20001);
+  client.updateSolutionCount();
+  assert.match(count.textContent, /20001 \/ 20000/);
+  assert.match(count.textContent, /será cortado em 20000/, "acima do teto avisa que o servidor vai cortar");
+});
+
+// ---- Subagente inline no chat: texto do agente como markdown intercalado (paridade com o chat) ----
+test("appendFlowText acumula texto contíguo e closeFlowText abre bloco novo após uma ferramenta", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  const container = client.makeEl("div"); const st: any = {};
+  client.appendFlowText(container, st, "Analisando ");
+  client.appendFlowText(container, st, "o diff.");
+  assert.equal(container.children.length, 1, "texto contíguo fica num único bloco de markdown");
+  assert.equal(st.curTextRaw, "Analisando o diff.");
+  client.closeFlowText(st);
+  assert.equal(st.curTextEl, null, "fechar solta o estado do bloco");
+  client.appendFlowText(container, st, "Depois da ferramenta.");
+  assert.equal(container.children.length, 2, "texto após uma ferramenta abre um bloco NOVO (interleaving)");
+});
+
+// ---- Espaço de Soluções: rascunho por sessão sobrevive a reload (roundtrip salva→restaura) ----
+test("rascunho do Espaço de Soluções persiste por sessão e é restaurado ao reabrir", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-debate", "local");
+  client.el("councilTopic").value = "Investigar por que o build quebra";
+  client.el("councilMode").value = "deep";
+  client.el("solutionEffort").value = "max";
+  client.el("solutionRounds").value = "5";
+  client.saveSolutionState();
+
+  const drafts = JSON.parse(client.store["jarvis_solution_drafts"] || "{}");
+  const saved = Object.values(drafts)[0] as any;
+  assert.ok(saved, "algo foi persistido em localStorage");
+  assert.equal(saved.topic, "Investigar por que o build quebra");
+  assert.equal(saved.councilMode, "deep");
+  assert.equal(saved.effort, "max");
+  assert.equal(saved.rounds, "5");
+
+  // simula reload: some com os valores em memória e restaura a partir do que ficou salvo.
+  client.el("councilTopic").value = "";
+  client.el("councilMode").value = "auto";
+  client.applySolutionDraft(saved);
+  assert.equal(client.el("councilTopic").value, "Investigar por que o build quebra", "texto restaurado ao reabrir");
+  assert.equal(client.el("councilMode").value, "deep", "modo restaurado");
+  assert.equal(client.el("solutionEffort").value, "max", "esforço restaurado");
+  assert.equal(client.el("solutionRounds").value, "5", "rodadas restauradas");
+});
+
+// draft só persiste quando há conteúdo: esvaziar o Objetivo apaga o rascunho (paridade com o composer).
+test("esvaziar o Objetivo remove o rascunho salvo da sessão", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-vazia", "local");
+  client.el("councilTopic").value = "algum tema";
+  client.saveSolutionState();
+  assert.equal(Object.keys(JSON.parse(client.store["jarvis_solution_drafts"] || "{}")).length, 1);
+  client.el("councilTopic").value = "";
+  client.saveSolutionState();
+  assert.equal(Object.keys(JSON.parse(client.store["jarvis_solution_drafts"] || "{}")).length, 0, "sem conteúdo, não sobra rascunho");
 });

@@ -17,7 +17,7 @@
     } catch {}
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','aiBtn','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','councilBtn','tourneyBtn','councilModal','councilClose','solutionHelpBtn','solutionTitle','solutionHelp','solutionAgentsMode','solutionAgentList','solutionCount','solutionCriteriaWrap','solutionCriteria','solutionWrite','solutionPostAction','councilTopic','councilMode','councilContext','councilNote','councilCancel','councilGo','solutionRounds','solutionEffort','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','councilBtn','tourneyBtn','councilModal','councilClose','solutionHelpBtn','solutionTitle','solutionHelp','solutionAgentsMode','solutionAgentList','solutionCount','solutionCriteriaWrap','solutionCriteria','solutionWrite','solutionPostAction','councilTopic','councilTopicCount','councilMode','councilContext','councilNote','councilCancel','councilGo','solutionRounds','solutionEffort','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwUpdates','fwCatBtn','fwCatalog','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -2056,7 +2056,60 @@
     selectTab(cfg.tab);
     E.digestBtn.onclick=()=>{ if(!startVoiceOp('digest',E.digestBtn,'⏳ gerando…'))return; status('speaking',t('stAnalyzing')); tx({t:'digest',speak:true}); };
     const SOLUTION_HELP={council:'swHelpCouncil',benchmark:'swHelpBenchmark',review:'swHelpReview',audit:'swHelpAudit'};
+    const SOLUTION_MAX_CHARS=20000;   // espelha o corte do servidor (index.ts: msg.topic/task.slice(0,20_000)) — feedback pra não truncar em silêncio
     let solutionMode='council';
+    // Rascunho do Espaço de Soluções POR SESSÃO, persistido — igual ao composer do chat: sobrevive a
+    // reload/atualização/lock da página. Guarda TODOS os campos (modo, tema, critérios, IAs
+    // selecionadas, etc.), não só o texto, e restaura a seleção anterior ao reabrir. Limpo no envio.
+    const solutionDraftBySession=(()=>{ try{ return JSON.parse(localStorage.getItem('jarvis_solution_drafts')||'{}'); }catch(e){ return {}; } })();
+    function saveSolutionDrafts(){ try{ localStorage.setItem('jarvis_solution_drafts', JSON.stringify(solutionDraftBySession)); }catch(e){} }
+    function solutionSnapshot(){
+      return { mode:solutionMode,
+        topic:E.councilTopic?E.councilTopic.value:'',
+        councilMode:E.councilMode?E.councilMode.value:'auto',
+        context:E.councilContext?E.councilContext.checked:true,
+        agentsMode:E.solutionAgentsMode?E.solutionAgentsMode.value:'auto',
+        count:E.solutionCount?E.solutionCount.value:'3',
+        rounds:E.solutionRounds?E.solutionRounds.value:'3',
+        effort:E.solutionEffort?E.solutionEffort.value:'high',
+        criteria:E.solutionCriteria?E.solutionCriteria.value:'',
+        write:E.solutionWrite?E.solutionWrite.checked:true,
+        postAction:E.solutionPostAction?E.solutionPostAction.value:'none',
+        agents:E.solutionAgentList?[...E.solutionAgentList.querySelectorAll('input:checked')].map(x=>x.value):[] };
+    }
+    // Só persiste quando há CONTEÚDO de verdade (tema ou critérios) — settings sozinhos não são "mensagem".
+    function saveSolutionState(){ if(currentSession==null)return; const key=sessionStateKey(currentSession,currentSessionRunner), s=solutionSnapshot();
+      if((s.topic&&s.topic.trim())||(s.criteria&&s.criteria.trim())) solutionDraftBySession[key]=s; else delete solutionDraftBySession[key];
+      saveSolutionDrafts(); }
+    function clearSolutionState(){ if(currentSession==null)return; delete solutionDraftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveSolutionDrafts(); }
+    function stashSolutionDraft(){ if(E.councilModal&&!E.councilModal.classList.contains('hidden')) saveSolutionState(); }   // salva antes de um descarte de aba, só se o modal estiver aberto
+    function applySolutionDraft(d){
+      E.councilTopic.value=d.topic||'';
+      E.councilMode.value=d.councilMode||'auto';
+      E.councilContext.checked=d.context!==false;
+      if(E.solutionCount)E.solutionCount.value=d.count||'3';
+      if(E.solutionRounds)E.solutionRounds.value=d.rounds||'3';
+      if(E.solutionEffort)E.solutionEffort.value=['medium','high','max'].includes(d.effort)?d.effort:'high';
+      if(E.solutionCriteria)E.solutionCriteria.value=d.criteria||'';
+      if(E.solutionWrite)E.solutionWrite.checked=d.write!==false;
+      if(E.solutionPostAction)E.solutionPostAction.value=d.postAction||'none';
+      if(E.solutionAgentsMode)E.solutionAgentsMode.value=['auto','all','manual'].includes(d.agentsMode)?d.agentsMode:'auto';
+      setSolutionMode(d.mode||'council');   // reconstrói a lista de IAs conforme modo/agentsMode
+      if(E.solutionAgentList&&Array.isArray(d.agents)){ const set=new Set(d.agents); E.solutionAgentList.querySelectorAll('input[type=checkbox]').forEach(chk=>{ chk.checked=set.has(chk.value); }); }
+    }
+    function applySolutionDefaults(){
+      const draft=(E.input.value||'').trim();
+      E.councilTopic.value=draft||'';
+      E.councilMode.value='auto';
+      E.councilContext.checked=true;
+      if(E.solutionCount)E.solutionCount.value='3';
+      if(E.solutionRounds){ let r=3; try{ r=Number(localStorage.getItem('debateRounds'))||3; }catch(_){} E.solutionRounds.value=String(Math.min(6,Math.max(1,r))); }
+      if(E.solutionEffort){ let ef='high'; try{ ef=localStorage.getItem('debateEffort')||'high'; }catch(_){} E.solutionEffort.value=['medium','high','max'].includes(ef)?ef:'high'; }
+      if(E.solutionCriteria)E.solutionCriteria.value='';
+      if(E.solutionAgentsMode)E.solutionAgentsMode.value='auto';
+      if(E.solutionPostAction)E.solutionPostAction.value='none';
+      setSolutionMode('council');
+    }
     function solutionDescriptors(){
       return availableMachineCaps().filter(c=>c&&c.name&&!['not_installed','unauthenticated'].includes(c.support||''));
     }
@@ -2069,7 +2122,7 @@
       if(mode!=='manual')return;
       list.forEach((d,i)=>{
         const lab=document.createElement('label'); lab.className='row';
-        const chk=document.createElement('input'); chk.type='checkbox'; chk.value=d.name; chk.checked=i<Math.max(1,Math.min(3,list.length));
+        const chk=document.createElement('input'); chk.type='checkbox'; chk.value=d.name; chk.checked=i<Math.max(1,Math.min(3,list.length)); chk.onchange=saveSolutionState;
         const text=document.createElement('span'); text.className='adesc';
         const b=document.createElement('b'); b.textContent=(d.label||d.name);
         const s=document.createElement('span'); const ms=selectableModels(d); s.textContent=(ms.length?ms.length+' modelos':'modelo automático')+' · '+(d.name||'');
@@ -2104,6 +2157,17 @@
       if(v==='handoff')return '\n\nResultado esperado: prepare um encaminhamento pronto para uma IA executar depois, com objetivo, contexto, passos, criterios de aceite e riscos.';
       return '';
     }
+    // Contador visível do Objetivo: o servidor corta o texto (tema+postfix) em SOLUTION_MAX_CHARS. Em vez
+    // de truncar em silêncio, mostra quanto falta e avisa que vai cortar se passar. O postfix (plano/
+    // encaminhamento) também conta no limite do servidor, então entra na contagem.
+    function updateSolutionCount(){
+      if(!E.councilTopicCount)return;
+      const len=((E.councilTopic&&E.councilTopic.value)||'').length+solutionPostfix().length;
+      const over=len>SOLUTION_MAX_CHARS;
+      E.councilTopicCount.textContent=`${len} / ${SOLUTION_MAX_CHARS}`+(over?` · será cortado em ${SOLUTION_MAX_CHARS} ao enviar`:'');
+      E.councilTopicCount.classList.toggle('over',over);
+      E.councilTopicCount.classList.toggle('warn',!over&&len>SOLUTION_MAX_CHARS*0.9);
+    }
     function setSolutionMode(mode){
       solutionMode=mode||'council';
       document.querySelectorAll('.sworkmode').forEach(b=>b.classList.toggle('on',b.dataset.mode===solutionMode));
@@ -2121,24 +2185,22 @@
       if(E.councilTopic)E.councilTopic.placeholder=isCouncil?'O que o Conselho deve discutir?':isDebate?'Sobre o que as IAs devem debater até chegar a um consenso?':'Descreva a tarefa, PR, diff ou cenário para esta rodada.';
       renderSolutionAgents();
     }
-    document.querySelectorAll('.sworkmode').forEach(b=>b.onclick=()=>setSolutionMode(b.dataset.mode));
+    document.querySelectorAll('.sworkmode').forEach(b=>b.onclick=()=>{ setSolutionMode(b.dataset.mode); saveSolutionState(); });
     if(E.solutionHelpBtn)E.solutionHelpBtn.onclick=openSolutionHelp;
-    if(E.solutionAgentsMode)E.solutionAgentsMode.onchange=renderSolutionAgents;
+    if(E.solutionAgentsMode)E.solutionAgentsMode.onchange=()=>{ renderSolutionAgents(); saveSolutionState(); };
+    // Persistência ao vivo do rascunho por sessão (todos os campos do Espaço de Soluções).
+    if(E.councilTopic)E.councilTopic.addEventListener('input',()=>{ saveSolutionState(); updateSolutionCount(); });
+    if(E.solutionCriteria)E.solutionCriteria.addEventListener('input',saveSolutionState);
+    [E.councilMode,E.councilContext,E.solutionCount,E.solutionRounds,E.solutionEffort,E.solutionWrite,E.solutionPostAction].forEach(el=>{ if(el)el.addEventListener('change',saveSolutionState); });
+    if(E.solutionPostAction)E.solutionPostAction.addEventListener('change',updateSolutionCount);   // muda o postfix → recontar
     function openCouncil(){
       if(!currentSession){ toast(t('tOpenFirst')); return; }
       if(curNative){ toast(t('swNative')); return; }
-      const draft=(E.input.value||'').trim();
-      E.councilTopic.value=draft||'';
-      E.councilMode.value='auto';
-      E.councilContext.checked=true;
-      if(E.solutionCount)E.solutionCount.value='3';
-      if(E.solutionRounds){ let r=3; try{ r=Number(localStorage.getItem('debateRounds'))||3; }catch(_){} E.solutionRounds.value=String(Math.min(6,Math.max(1,r))); }
-      if(E.solutionEffort){ let ef='high'; try{ ef=localStorage.getItem('debateEffort')||'high'; }catch(_){} E.solutionEffort.value=['medium','high','max'].includes(ef)?ef:'high'; }
-      if(E.solutionCriteria)E.solutionCriteria.value='';
-      if(E.solutionAgentsMode)E.solutionAgentsMode.value='auto';
-      if(E.solutionPostAction)E.solutionPostAction.value='none';
+      // Reabrir com o que ficou preenchido antes (tema, modo, IAs, critérios…); senão, defaults.
+      const saved=sessionValue(solutionDraftBySession,currentSession,currentSessionRunner);
+      if(saved&&typeof saved==='object') applySolutionDraft(saved); else applySolutionDefaults();
+      updateSolutionCount();
       E.councilNote.textContent='';
-      setSolutionMode('council');
       E.councilModal.classList.remove('hidden');
       setTimeout(()=>E.councilTopic.focus(),20);
     }
@@ -2168,7 +2230,7 @@
         const criteria=(E.solutionCriteria&&E.solutionCriteria.value||'').trim()+solutionPostfix();
         tx({t:'tournament_start',sessionId:currentSession,task:fullTopic,mode:solutionMode,competitors:solutionCompetitors(),criteria:criteria||undefined,write:solutionMode==='benchmark'&&(!E.solutionWrite||E.solutionWrite.checked)});
       }
-      closeCouncil(); closeSide(); toast(solutionMode==='council'?'Conselho convocado.':solutionMode==='debate'?'Debate iniciado.':t('swStarted'));
+      clearSolutionState(); closeCouncil(); closeSide(); toast(solutionMode==='council'?'Conselho convocado.':solutionMode==='debate'?'Debate iniciado.':t('swStarted'));
     };
     // Resumir a sessão ATUAL exigia abrir a barra lateral e achar a sessão na lista — no celular,
     // onde a lateral é overlay, isso é o caminho todo. O panorama (🎧) fica só na lateral: dois
@@ -4834,7 +4896,7 @@
       }
       if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
-    document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ stashDraft(); return; }   // vai esconder (lock/background) → salva o draft ANTES de um possível descarte da aba
+    document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ stashDraft(); stashSolutionDraft(); return; }   // vai esconder (lock/background) → salva os drafts ANTES de um possível descarte da aba
       if(document.visibilityState==='visible' && (!ws||ws.readyState>1)){ if(reconnectT){clearTimeout(reconnectT);reconnectT=null;} connect(); } });
-    window.addEventListener('pagehide', stashDraft);   // último recurso antes do unload/descarte
+    window.addEventListener('pagehide', ()=>{ stashDraft(); stashSolutionDraft(); });   // último recurso antes do unload/descarte
     setSpeakBtn(); connect();

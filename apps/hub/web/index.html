@@ -539,6 +539,9 @@
     .modegrid button { min-height:40px; padding:7px 8px; border-radius:8px; background:#ffffff08; border:1px solid var(--line); color:var(--text); font-size:12.5px; }
     .modegrid button.on { background:#2563eb26; border-color:#2563eb88; color:#dbeafe; }
     .solutionhelp { border:1px solid var(--line); background:#ffffff07; border-radius:8px; padding:8px 10px; color:#aeb9c8; font-size:12.5px; line-height:1.4; }
+    .charcount { font-size:11px; color:var(--mut); text-align:right; margin-top:-4px; }
+    .charcount.warn { color:#f5b544; }
+    .charcount.over { color:#f87171; font-weight:600; }
     .helpicon { width:32px; height:32px; min-height:32px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; font-weight:800; }
     .agentlist { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; max-height:170px; overflow:auto; border:1px solid var(--line); border-radius:9px; padding:8px; background:#0f141b; }
     .agentlist label.row { min-height:38px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:#ffffff06; }
@@ -1464,6 +1467,7 @@
     </div>
     <div id="solutionHelp" class="solutionhelp"></div>
     <label>Objetivo<textarea id="councilTopic" placeholder="O que o Espaço de Soluções deve analisar, comparar, revisar ou auditar?"></textarea></label>
+    <div id="councilTopicCount" class="charcount" aria-live="polite"></div>
     <div class="cgrid">
       <label class="cfield">Modo<select id="councilMode">
         <option value="auto">Auto</option>
