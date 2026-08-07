@@ -878,6 +878,15 @@
     // rest of a long turn (it used to flip only when the WHOLE turn ended). Direct children only, so a
     // sub-agent box's internals aren't touched from the top level.
     function flipDone(container){ if(container) container.querySelectorAll(':scope > .strtool[data-name]:not(.tdone)').forEach(setToolDone); }
+    // Texto do assistente renderizado como markdown e INTERCALADO com as ferramentas — a MESMA
+    // aparência do fluxo principal do chat e do painel Trabalhos. Reaproveitado pelo corpo de um
+    // sub-agente (expandido inline no chat) e por qualquer container de fluxo: `st` guarda o bloco
+    // aberto (curTextEl/curTextRaw); closeFlowText o fecha para que o próximo texto abra um bloco
+    // NOVO abaixo da ferramenta seguinte, preservando a ordem cronológica (como faz o nível raiz).
+    function appendFlowText(container,st,text){ if(!text)return;
+      if(!st.curTextEl){ flipDone(container); st.curTextEl=document.createElement('div'); st.curTextEl.className='strtext done'; st.curTextRaw=''; container.appendChild(st.curTextEl); }
+      st.curTextRaw+=text; st.curTextEl.innerHTML=md(st.curTextRaw); }
+    function closeFlowText(st){ if(st){ st.curTextEl=null; st.curTextRaw=''; } }
     function contextManifestEl(manifest){
       if(!manifest||manifest.schemaVersion!==1)return null;
       const details=document.createElement('details'); details.className='context-manifest';
@@ -984,29 +993,28 @@
         title.textContent=desc||'sub-agente';
         head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
         closeTextBlock(); flow.appendChild(wrap);
-        const rec={wrap,body,title,countEl,open,count:0,preview:null,previewText:''}; subAgents[id]=rec; if(executionId)bindInlineWork(rec,executionId); return rec; }
+        const rec={wrap,body,title,countEl,open,count:0,curTextEl:null,curTextRaw:''}; subAgents[id]=rec; if(executionId)bindInlineWork(rec,executionId); return rec; }
       normalizeActivity(events).forEach(ev=>{
         if(ev.kind==='tool_group'){
-          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); sa.body.appendChild(toolGroupEl(ev.items,true,opts)); sa.count+=(ev.items||[]).length; sa.countEl.textContent=sa.count; return; }
+          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); closeFlowText(sa); sa.body.appendChild(toolGroupEl(ev.items,true,opts)); sa.count+=(ev.items||[]).length; sa.countEl.textContent=sa.count; return; }
           closeTextBlock(); flow.appendChild(toolGroupEl(ev.items,true,opts));
         } else if(ev.kind==='tool_repeat_group'){
-          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); sa.body.appendChild(repeatGroupEl(ev.items,true)); sa.count+=(ev.items||[]).length; sa.countEl.textContent=sa.count; return; }
+          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); closeFlowText(sa); sa.body.appendChild(repeatGroupEl(ev.items,true)); sa.count+=(ev.items||[]).length; sa.countEl.textContent=sa.count; return; }
           closeTextBlock(); flow.appendChild(repeatGroupEl(ev.items,true));
         } else if(ev.kind==='tool'){
-          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); sa.body.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail,toolOpts(opts,ev))); sa.count++; sa.countEl.textContent=sa.count; return; }
+          if(ev.parentId){ const sa=ensureSA(ev.parentId,null,ev.executionId); closeFlowText(sa); sa.body.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail,toolOpts(opts,ev))); sa.count++; sa.countEl.textContent=sa.count; return; }
           if((ev.name==='Task'||ev.name==='Agent')&&ev.toolId){ ensureSA(ev.toolId,(ev.summary||'').replace(/^Subagente:\s*/,'')||'sub-agente',ev.executionId); return; }
           closeTextBlock(); flow.appendChild(toolRowEl(ev.name,ev.summary,ev.path,ev.adds,ev.dels,true,ev.rows,ev.detail,toolOpts(opts,ev)));
         } else if(ev.kind==='text'){
           const t=ev.text||''; if(!t)return;
           if(ev.parentId){
             const sa=ensureSA(ev.parentId,null,ev.executionId);
-            if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); }
-            sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240);
+            appendFlowText(sa.body,sa,t);
           } else {
             if(!curTextEl){ flipDone(flow); curTextEl=document.createElement('div'); curTextEl.className='strtext done'; curTextRaw=''; flow.appendChild(curTextEl); }
             curTextRaw+=t; curTextEl.innerHTML=md(curTextRaw); rootText=true;
           }
-        } else if(ev.kind==='thinking'){ if(ev.parentId){const sa=ensureSA(ev.parentId,null,ev.executionId);sa.body.appendChild(thinkingEl(ev.text,true,opts));sa.count++;sa.countEl.textContent=sa.count;}else{closeTextBlock();flow.appendChild(thinkingEl(ev.text,true,opts));} }
+        } else if(ev.kind==='thinking'){ if(ev.parentId){const sa=ensureSA(ev.parentId,null,ev.executionId);closeFlowText(sa);sa.body.appendChild(thinkingEl(ev.text,true,opts));sa.count++;sa.countEl.textContent=sa.count;}else{closeTextBlock();flow.appendChild(thinkingEl(ev.text,true,opts));} }
       });
       if(rootText) flow.dataset.rootText='1';
       return flow.childNodes.length?flow:null; }
@@ -1333,7 +1341,7 @@
       title.textContent=desc||'sub-agente';
       head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
       closeTextBlock(); strFlow.appendChild(wrap);
-      const rec={wrap,body,title,countEl,open,count:0,preview:null,previewText:''}; subAgents[id]=rec; if(executionId)bindInlineWork(rec,executionId); return rec; }
+      const rec={wrap,body,title,countEl,open,count:0,curTextEl:null,curTextRaw:''}; subAgents[id]=rec; if(executionId)bindInlineWork(rec,executionId); return rec; }
     function bindInlineWork(rec,executionId){ if(!rec||!rec.open||!executionId)return; rec.wrap.dataset.executionId=executionId; rec.open.classList.add('ready'); rec.open.onclick=e=>{e.stopPropagation();openWorkPanel();openWorkNode(executionId);}; const n=workNodes.get(executionId);if(n){if(n.title)rec.title.textContent=n.title;rec.wrap.dataset.state=n.state||'unknown';const state=rec.wrap.querySelector('.sastate');if(state)state.textContent=workStateLabel(n.state).toLowerCase();} }
     function appendLiveTool(container,item,done,opts){
       const fk=fileGroupKey(item), rk=repeatToolKey(item), k=fk||rk, scope=liveScope(item.parentId);
@@ -1348,16 +1356,16 @@
       const readKey=readToolKey(name,path,summary,detail,parentId);
       const liveKey=readKey||(toolId?(parentId||'root')+'\0'+toolId:'');
       if(liveKey&&liveTools[liveKey]){ const row=liveTools[liveKey]; if(row.classList.contains('strgroup')){ const list=row._items||[], hit=list.find(x=>x.toolId&&x.toolId===toolId)||(list[list.length-1]||{}); Object.assign(hit,item); refreshToolGroup(row,done); } else if(row.classList.contains('strrepeat')){ const list=row._items||[], hit=list.find(x=>x.toolId&&x.toolId===toolId)||(list[list.length-1]||{}); Object.assign(hit,item); refreshRepeatGroup(row,done); } else if(summary){row.dataset.sum=summary;const ttl=row.querySelector('.ttl');if(ttl)ttl.textContent=(done?pastify(name,summary):summary)||name||'';} if(done)setToolDone(row); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} autoScroll(); return; }
-      if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); if(!fileGroupKey(item)&&!repeatToolKey(item))flipDone(sa.body); const row=appendLiveTool(sa.body,item,done); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} if(liveKey)liveTools[liveKey]=row; sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
+      if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); closeFlowText(sa); if(!fileGroupKey(item)&&!repeatToolKey(item))flipDone(sa.body); const row=appendLiveTool(sa.body,item,done); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} if(liveKey)liveTools[liveKey]=row; sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
       if((name==='Task'||name==='Agent')&&toolId){ breakLiveGroup(parentId); flipDone(strFlow); ensureSubAgent(toolId,(summary||'').replace(/^Subagente:\s*/,'')||'sub-agente',executionId); autoScroll(); return; }
       closeTextBlock(); if(!fileGroupKey(item)&&!repeatToolKey(item))flipDone(strFlow); const row=appendLiveTool(strFlow,item,done); if(status==='failed'){row.classList.add('terr');row.title=error||'Falha na ferramenta';} if(liveKey)liveTools[liveKey]=row; autoScroll(); }
     function streamThinking(text,parentId,executionId){ if(isGenericThinking(text))return; breakLiveGroup(parentId); if(!strFlow)streamStartUI();
       const row=thinkingEl(text,false,null);
-      if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); flipDone(sa.body); sa.body.appendChild(row); sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
+      if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); closeFlowText(sa); flipDone(sa.body); sa.body.appendChild(row); sa.count++; sa.countEl.textContent=sa.count; autoScroll(); return; }
       closeTextBlock(); flipDone(strFlow); strFlow.appendChild(row); autoScroll(); }
     function streamText(t,parentId,executionId){
       breakLiveGroup(parentId);
-      if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); if(!sa.preview){ sa.preview=document.createElement('div'); sa.preview.className='sapreview'; sa.body.appendChild(sa.preview); } sa.previewText+=t; sa.preview.textContent=sa.previewText.slice(-240); autoScroll(); return; }
+      if(parentId){ const sa=ensureSubAgent(parentId,null,executionId); appendFlowText(sa.body,sa,t); autoScroll(); return; }
       if(!strFlow)streamStartUI();
       // Abre um bloco NOVO de texto se o anterior foi fechado por uma ferramenta; senão acumula.
       // Um novo bloco de texto significa que as ferramentas anteriores já terminaram → passa pra passado.
