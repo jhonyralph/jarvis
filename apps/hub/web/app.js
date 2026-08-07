@@ -1181,6 +1181,7 @@
       { const savedAsk=getAsk(m.sessionId,sessionRunner()); if(savedAsk&&savedAsk.length&&!askActive) renderAskCard(savedAsk,sessionRunner()); }   // restaura decision-card pendente (lock/reload)
       if(!stagingActive) tx({t:'stage_state',sessionId:m.sessionId});   // restaura painel de refino de voz, se houver (lock/reload)
       renderPersonalTurnSuggestionForCurrent(true);
+      renderStoredSearchCards();   // reinjeta os cards de sugestão guardados desta sessão (sobrevivem a navegar/reload)
       refreshComposer();
     }
     // Anchor: a user message must never land under an open reply bubble, even if the echo arrives
@@ -1427,12 +1428,37 @@
       return box;
     }
     function addErr(t,opts){ const d=document.createElement('div'); d.className='msg err'; d.appendChild(errorBoxEl(t,opts)); E.log.appendChild(d); autoScroll(); }
-    function searchCardHtml(m){ let h='<b>🔎 '+esc(m.query)+'</b>'+md(m.answer||'');
-      (m.matches||[]).forEach(x=>{ h+=`<div class="match" data-id="${esc(x.id)}" data-runner="${esc(x.runnerId||'')}">📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
+    // Um box de sugestão referencia uma sessão existente (id/agent/why). O `action` (quando existe) é o
+    // texto pronto pra rodar; clicar no box OU no ▶ LANÇA a ação numa sessão NOVA (sem sair daqui) —
+    // "↗ ver sessão" abre a sessão referenciada só pra inspecionar. Sem action é busca literal → abre.
+    function matchRowHtml(x,action){ return `<div class="match" data-id="${esc(x.id)}" data-runner="${esc(x.runnerId||'')}"${action?` data-action="${esc(action)}"`:''}>`+
+        `📂 <b>${esc(x.title||x.id)}</b> <span class="chip">${esc(x.agent||'')}</span>`+
         (x.why||x.progress?`<br><span class="mut">${esc(x.why||x.progress||'')}</span>`:'')+
-        (m.action?`<br><button type="button" class="exec ghost" data-id="${esc(x.id)}" data-runner="${esc(x.runnerId||'')}" data-action="${esc(m.action)}">▶ executar ação</button>`:'')+`</div>`; });
-      return h; }
-    function addSearchCard(m){ const d=document.createElement('div'); d.className='msg bot'; d.innerHTML=searchCardHtml(m); E.log.appendChild(d); autoScroll(); if(m.audio) playTTS(m.audio); }
+        (action?`<div class="matchacts" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">`+
+          `<button type="button" class="exec ghost" data-id="${esc(x.id)}" data-runner="${esc(x.runnerId||'')}" data-action="${esc(action)}">▶ executar ação</button>`+
+          `<button type="button" class="refopen ghost" data-id="${esc(x.id)}" data-runner="${esc(x.runnerId||'')}">↗ ver sessão</button></div>`:'')+
+        `</div>`; }
+    function searchCardInner(m,omitQuery){ return (omitQuery?'':'<b>🔎 '+esc(m.query||'')+'</b>')+md(m.answer||'')+(m.matches||[]).map(x=>matchRowHtml(x,m.action)).join(''); }
+    function searchCardHtml(m){ return searchCardInner(m,false); }   // usado só no modal de busca (transiente)
+    // Card persistente no chat: cabeçalho com minimizar/dispensar. `rec` é o MESMO objeto guardado em
+    // searchCardsBySession — mutar rec.minimized/dismissed e salvar persiste o estado.
+    function buildSearchCardEl(rec){ const d=document.createElement('div'); d.className='msg bot searchcard'; d.dataset.cid=rec.cid;
+      const head=document.createElement('div'); head.className='searchcard-head'; head.style.cssText='display:flex;align-items:center;gap:6px;margin-bottom:4px';
+      const ttl=document.createElement('div'); ttl.className='searchcard-title'; ttl.style.cssText='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;opacity:.9'; ttl.textContent='🔎 '+String(rec.query||'Sugestões').slice(0,90);
+      const min=document.createElement('button'); min.type='button'; min.className='ghost searchcard-min'; min.style.cssText='border:0;background:none;cursor:pointer;font-size:14px;padding:0 4px'; min.title='Minimizar';
+      const dis=document.createElement('button'); dis.type='button'; dis.className='ghost searchcard-dismiss'; dis.style.cssText='border:0;background:none;cursor:pointer;font-size:13px;padding:0 4px'; dis.textContent='✕'; dis.title=t('notificationDismiss')||'Dispensar';
+      const body=document.createElement('div'); body.className='searchcard-body';
+      const applyMin=()=>{ body.style.display=rec.minimized?'none':''; min.textContent=rec.minimized?'⌄':'⌃'; min.setAttribute('aria-expanded',String(!rec.minimized)); };
+      body.innerHTML=searchCardInner(rec,true); applyMin();
+      min.onclick=(e)=>{ e.stopPropagation(); rec.minimized=!rec.minimized; applyMin(); saveSearchCards(); };
+      dis.onclick=(e)=>{ e.stopPropagation(); rec.dismissed=true; saveSearchCards(); d.remove(); toast(t('notificationDismissed')||'Sugestão dispensada'); };
+      head.append(ttl,min,dis); d.append(head,body); return d; }
+    function addSearchCard(m){ const rec={cid:uid(),query:m.query||'',answer:m.answer||'',matches:m.matches||[],action:m.action||'',ts:Date.now(),dismissed:false,minimized:false};
+      if(currentSession){ const key=sessionStateKey(currentSession,currentSessionRunner); (searchCardsBySession[key]||(searchCardsBySession[key]=[])).push(rec); saveSearchCards(); }
+      E.log.appendChild(buildSearchCardEl(rec)); autoScroll(); if(m.audio) playTTS(m.audio); }
+    // Reinjeta os cards guardados (não dispensados) da sessão atual — chamado após montar o histórico.
+    function renderStoredSearchCards(){ if(!currentSession||!E.log)return; const key=sessionStateKey(currentSession,currentSessionRunner);
+      (searchCardsBySession[key]||[]).filter(r=>r&&!r.dismissed).forEach(r=>E.log.appendChild(buildSearchCardEl(r))); }
     function renderSearchInto(c,m){ c.innerHTML=searchCardHtml(m); if(m.audio) playTTS(m.audio); }
     // Filtro literal (busca digitada): lista de sessões cujo título/conversa contém os termos. Sem áudio.
     function hitsHtml(m){ const hits=m.hits||[]; const more=(m.done===false);
@@ -1760,6 +1786,11 @@
     let recCollapsed=new Set((()=>{try{return JSON.parse(localStorage.getItem('jarvis_recents_collapsed')||'[]');}catch(e){return[];}})());
     function saveRecCollapsed(){ try{ localStorage.setItem('jarvis_recents_collapsed',JSON.stringify([...recCollapsed])); }catch(e){} }
     function groupCollapseKey(groupBy,key){ return groupBy+' '+key; }
+    // Cada grupo (projeto/máquina/agente/data) mostra no máximo REC_GROUP_PAGE itens; o resto fica atrás
+    // de um "ver mais" centralizado por grupo. `recGroupExpanded` guarda quais grupos foram expandidos
+    // (em memória — reabrir a lista volta ao teto de 7, comportamento esperado de "ver mais").
+    const REC_GROUP_PAGE=7;
+    let recGroupExpanded=new Set();
     // Último segmento do caminho de trabalho — o "nome do projeto" que vira cabeçalho de grupo.
     function projectLabelOf(cwd){ if(!cwd)return 'Sem pasta'; const parts=String(cwd).split(/[\\/]+/).filter(Boolean); return parts.length?parts[parts.length-1]:String(cwd); }
     function dateBucketOf(ts,now){ if(!ts)return 'Sem data'; const day=86400000, a=new Date(now), b=new Date(ts); const midnight=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime(); const diff=midnight(a)-midnight(b); if(diff<=0)return 'Hoje'; if(diff<=day)return 'Ontem'; if(diff<7*day)return 'Últimos 7 dias'; if(diff<30*day)return 'Últimos 30 dias'; return 'Mais antigas'; }
@@ -1767,13 +1798,21 @@
     function recGroupLabel(s,groupBy,now){ if(groupBy==='machine')return s.machine||'Local'; if(groupBy==='agent')return s.agent||'—'; if(groupBy==='date')return dateBucketOf(s.updatedAt||0,now); if(groupBy==='none')return ''; return projectLabelOf(s.cwd); }
     // PURA e testável: aplica filtro de status → ordenação → recorte (limit) → agrupamento,
     // preservando a ordem ordenada dentro de cada grupo e a ordem de aparição entre grupos.
-    function organizeSessions(list,opts){ opts=opts||{}; const groupBy=REC_GROUPS.includes(opts.groupBy)?opts.groupBy:'project', sortBy=REC_SORTS.includes(opts.sortBy)?opts.sortBy:'recency', status=REC_STATUS.includes(opts.status)?opts.status:'active'; const now=opts.now||Date.now(), limit=opts.limit==null?Infinity:opts.limit;
+    function organizeSessions(list,opts){ opts=opts||{}; const groupBy=REC_GROUPS.includes(opts.groupBy)?opts.groupBy:'project', sortBy=REC_SORTS.includes(opts.sortBy)?opts.sortBy:'recency', status=REC_STATUS.includes(opts.status)?opts.status:'active'; const now=opts.now||Date.now();
+      const grouped=groupBy!=='none', expanded=opts.expanded||new Set();
+      // Agrupado: sem teto global — pega TODAS e aplica o teto POR grupo (7 + "ver mais"). Sem agrupamento:
+      // mantém o teto global antigo (`limit`) com o "Mostrar mais" único no rodapé da lista.
+      const perGroup=grouped?(opts.perGroupLimit==null?REC_GROUP_PAGE:opts.perGroupLimit):Infinity;
+      const globalLimit=grouped?Infinity:(opts.limit==null?Infinity:opts.limit);
       const filtered=(list||[]).filter(s=> status==='all'?true : status==='archived'?!!s.archived : !s.archived );
       const rank={recency:(a,b)=>(b.updatedAt||0)-(a.updatedAt||0), alpha:(a,b)=>String(a.title||'').localeCompare(String(b.title||''),undefined,{sensitivity:'base'}), cost:(a,b)=>(b.cost||0)-(a.cost||0)||(b.updatedAt||0)-(a.updatedAt||0)}[sortBy];
       const sorted=rank?filtered.slice().sort(rank):filtered.slice();
-      const visible=sorted.slice(0,limit); const groups=[]; const idx=new Map();
-      for(const s of visible){ const key=recGroupKey(s,groupBy,now); let g=idx.get(key); if(!g){ g={key,label:recGroupLabel(s,groupBy,now),cwd:s.cwd||'',runnerId:s.runnerId||'local',machine:s.machine||'',sessions:[]}; idx.set(key,g); groups.push(g); } g.sessions.push(s); }
-      return {groups,total:filtered.length,shownCount:visible.length,groupBy,sortBy,status}; }
+      const visible=sorted.slice(0,globalLimit); const groups=[]; const idx=new Map();
+      for(const s of visible){ const key=recGroupKey(s,groupBy,now); let g=idx.get(key); if(!g){ g={key,label:recGroupLabel(s,groupBy,now),cwd:s.cwd||'',runnerId:s.runnerId||'local',machine:s.machine||'',all:[]}; idx.set(key,g); groups.push(g); } g.all.push(s); }
+      let shownCount=0;
+      for(const g of groups){ g.total=g.all.length; const isExp=expanded.has(groupCollapseKey(groupBy,g.key));
+        g.sessions=(grouped&&!isExp)?g.all.slice(0,perGroup):g.all; g.hidden=g.total-g.sessions.length; g.expanded=isExp; shownCount+=g.sessions.length; }
+      return {groups,total:filtered.length,shownCount,groupBy,sortBy,status}; }
 
     function bumpSession(sid){ if(!sid)return; const runner=sessionRunner(); lastBump={sid,runner,ts:Date.now()}; const i=sessions.findIndex(s=>s.id===sid&&(currentMachine!=='all'||(s.runnerId||'local')===runner)); if(i>0){ const [s]=sessions.splice(i,1); sessions.unshift(s); renderRecents(); } }
     // Menu "⋯" de ações da conversa (Resumir / Arquivar / Remover) — junta os botões antes soltos na
@@ -1806,7 +1845,7 @@
       const ck=groupCollapseKey(groupBy,g.key), collapsed=recCollapsed.has(ck); if(collapsed) h.classList.add('collapsed');
       const chev=document.createElement('span'); chev.className='rgchev'; h.appendChild(chev); // direção vem da classe .collapsed (triângulo CSS)
       const lbl=document.createElement('span'); lbl.className='rglabel'; lbl.textContent=g.label; h.appendChild(lbl);
-      const cnt=document.createElement('span'); cnt.className='rgcnt'; cnt.textContent=String(g.sessions.length); h.appendChild(cnt);
+      const cnt=document.createElement('span'); cnt.className='rgcnt'; cnt.textContent=String(g.total!=null?g.total:g.sessions.length); h.appendChild(cnt);
       // "+" só faz sentido quando o grupo carrega um destino concreto: projeto (pasta) ou máquina.
       if(groupBy==='project'||groupBy==='machine'){ const add=document.createElement('button'); add.type='button'; add.className='rgnew'; add.textContent='＋';
         add.title=groupBy==='project'?('Nova sessão em '+(g.cwd||g.label)):('Nova sessão em '+(g.machine||g.label));
@@ -1815,6 +1854,13 @@
       h.title=(collapsed?'Expandir':'Recolher')+' · '+(groupBy==='project'?(g.cwd||g.label):g.label);
       h.onclick=()=>{ if(recCollapsed.has(ck)) recCollapsed.delete(ck); else recCollapsed.add(ck); saveRecCollapsed(); renderRecents(); };
       return h; }
+    // "ver mais / ver menos" centralizado no rodapé de um grupo que passa do teto de 7.
+    function renderGroupMore(g,groupBy){ const gk=groupCollapseKey(groupBy,g.key);
+      const row=document.createElement('div'); row.className='rgmore-row'; row.style.cssText='display:flex;justify-content:center;padding:2px 8px 8px';
+      const b=document.createElement('button'); b.type='button'; b.className='rgmore ghost'; b.style.cssText='background:none;border:0;color:var(--accent,#6ea8fe);cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px;opacity:.9';
+      b.textContent=g.expanded?'ver menos':('ver mais ('+g.hidden+')'); b.setAttribute('aria-expanded',String(!!g.expanded));
+      b.onclick=(e)=>{ e.stopPropagation(); if(recGroupExpanded.has(gk)) recGroupExpanded.delete(gk); else recGroupExpanded.add(gk); renderRecents(); };
+      row.appendChild(b); return row; }
     function renderRecents(){ E.recents.innerHTML='';
       const visibleRuns=currentMachine==='all'?sessions.filter(s=>(activeRunsByRunner[s.runnerId||'local']||[]).includes(s.id)).length:activeRuns.length;
       if(visibleRuns){ const h=document.createElement('div'); h.className='runhdr'; h.textContent='▶ '+visibleRuns+' rodando agora'; E.recents.appendChild(h); }
@@ -1825,13 +1871,17 @@
           w.title='A lista abaixo não inclui as sessões dessas máquinas.'; E.recents.appendChild(w); } }
       secCounts();
       if(E.recOptsLabel) E.recOptsLabel.textContent=(recGroupLabels[recPrefs.groupBy]||'—')+(recPrefs.status!=='active'?(' · '+recStatusLabels[recPrefs.status]):'');
-      const org=organizeSessions(sessions,{groupBy:recPrefs.groupBy,sortBy:recPrefs.sortBy,status:recPrefs.status,limit:shown});
+      const org=organizeSessions(sessions,{groupBy:recPrefs.groupBy,sortBy:recPrefs.sortBy,status:recPrefs.status,limit:shown,perGroupLimit:REC_GROUP_PAGE,expanded:recGroupExpanded});
       recFilteredTotal=org.total;
       if(!org.shownCount){ const empty=document.createElement('div'); empty.className='mut'; empty.style.cssText='padding:14px 8px;font-size:12.5px'; empty.textContent=recPrefs.status==='archived'?'Nenhuma conversa arquivada.':'Nenhuma conversa.'; E.recents.appendChild(empty); }
-      org.groups.forEach(g=>{ if(org.groupBy!=='none'){ E.recents.appendChild(renderGroupHeader(g,org.groupBy)); if(recCollapsed.has(groupCollapseKey(org.groupBy,g.key))) return; } g.sessions.forEach(s=>E.recents.appendChild(renderRecentRow(s))); });
-      E.moreBtn.classList.toggle('hidden', org.total<=shown); scheduleAutoPager(maybeAutoMoreRecents); }
+      org.groups.forEach(g=>{ if(org.groupBy!=='none'){ E.recents.appendChild(renderGroupHeader(g,org.groupBy)); if(recCollapsed.has(groupCollapseKey(org.groupBy,g.key))) return; }
+        g.sessions.forEach(s=>E.recents.appendChild(renderRecentRow(s)));
+        if(org.groupBy!=='none' && g.total>REC_GROUP_PAGE) E.recents.appendChild(renderGroupMore(g,org.groupBy)); });
+      // Agrupado: paginação é POR grupo (ver mais/menos). Sem agrupamento: mantém o "Mostrar mais" global.
+      const paged=org.groupBy==='none';
+      E.moreBtn.classList.toggle('hidden', !paged || org.total<=shown); if(paged) scheduleAutoPager(maybeAutoMoreRecents); }
     function loadMoreRecents(){ if(recFilteredTotal<=shown)return; shown=Math.min(recFilteredTotal,shown+20); renderRecents(); }
-    function maybeAutoMoreRecents(){ if(!E.recPane||E.recPane.classList.contains('hidden')||recFilteredTotal<=shown)return; if(nearPaneBottom(E.recPane)||E.recPane.scrollHeight<=E.recPane.clientHeight+40)loadMoreRecents(); }
+    function maybeAutoMoreRecents(){ if(recPrefs.groupBy!=='none')return; if(!E.recPane||E.recPane.classList.contains('hidden')||recFilteredTotal<=shown)return; if(nearPaneBottom(E.recPane)||E.recPane.scrollHeight<=E.recPane.clientHeight+40)loadMoreRecents(); }
     E.moreBtn.onclick=loadMoreRecents;
     if(E.recPane)E.recPane.addEventListener('scroll',maybeAutoMoreRecents);
     // Popover de opções da lista: Agrupar / Ordenar / Status. Cada escolha persiste e re-renderiza.
@@ -1920,6 +1970,16 @@
     const AUTO_AGENT='__jarvis_auto_agent__', AUTO_MODEL='__jarvis_auto__', AUTO_EFFORT='__jarvis_auto_effort__';
     let sessionPrefs={}; try{ sessionPrefs=JSON.parse(localStorage.getItem('jarvis_session_prefs')||'{}'); }catch(e){}
     function saveSessionPrefs(){ try{ localStorage.setItem('jarvis_session_prefs',JSON.stringify(sessionPrefs)); }catch(e){} }
+    // Cards de sugestão (busca cross-sessão): guardados POR sessão pra não sumirem ao navegar/recarregar.
+    // Chave = sessionStateKey da sessão onde apareceram. Cap global pra não crescer sem limite no storage.
+    let searchCardsBySession={}; try{ const raw=JSON.parse(localStorage.getItem('jarvis_search_cards')||'{}'); if(raw&&typeof raw==='object') searchCardsBySession=raw; }catch(e){}
+    function saveSearchCards(){ try{
+      const all=[];
+      for(const k of Object.keys(searchCardsBySession)){ const arr=(searchCardsBySession[k]||[]).filter(r=>r&&!r.dismissed); if(arr.length) searchCardsBySession[k]=arr; else delete searchCardsBySession[k]; arr.forEach(r=>all.push(r)); }
+      if(all.length>60){ all.sort((a,b)=>(b.ts||0)-(a.ts||0)); const keep=new Set(all.slice(0,60).map(r=>r.cid));
+        for(const k of Object.keys(searchCardsBySession)){ searchCardsBySession[k]=searchCardsBySession[k].filter(r=>keep.has(r.cid)); if(!searchCardsBySession[k].length) delete searchCardsBySession[k]; } }
+      localStorage.setItem('jarvis_search_cards',JSON.stringify(searchCardsBySession));
+    }catch(e){} }
     // Modelo/esforço REAIS que a sessão nativa (criada na máquina) reporta — o servidor lê do transcript.
     // Só as sessões nativas mandam isso; sessão gerenciada deixa null e cai no pref/default como antes.
     let sessDeclModel=null, sessDeclEffort=null, lastRouteReason='';
@@ -2594,8 +2654,9 @@
     // filtra ao digitar (debounce) — a 1ª busca parseia as sessões nativas, refinar o termo é instantâneo
     E.searchInput.oninput=()=>{ clearTimeout(searchTimer); const q=E.searchInput.value.trim(); if(!q){ E.searchResults.innerHTML=''; return; } if(searchMode==='semantic') return; searchTimer=setTimeout(runSearch,300); };
     E.searchResults.addEventListener('click',(e)=>{
-      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); if(exec.dataset.runner){ routedMachine=exec.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort,auto:routeAutoFor(exec.dataset.id)}); openSession(exec.dataset.id,exec.dataset.runner); E.searchModal.classList.add('hidden'); return; }
-      const match=e.target.closest('.match'); if(match){ if(match.dataset.runner){ routedMachine=match.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(match.dataset.id,match.dataset.runner); E.searchModal.classList.add('hidden'); } });
+      const refopen=e.target.closest('.refopen'); if(refopen){ e.stopPropagation(); if(refopen.dataset.runner){ routedMachine=refopen.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(refopen.dataset.id,refopen.dataset.runner); E.searchModal.classList.add('hidden'); return; }
+      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); launchSuggestionInNewSession(exec.dataset.action,{id:exec.dataset.id,runnerId:exec.dataset.runner}); E.searchModal.classList.add('hidden'); return; }
+      const match=e.target.closest('.match'); if(match){ if(match.dataset.action){ e.stopPropagation(); launchSuggestionInNewSession(match.dataset.action,{id:match.dataset.id,runnerId:match.dataset.runner}); E.searchModal.classList.add('hidden'); return; } if(match.dataset.runner){ routedMachine=match.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(match.dataset.id,match.dataset.runner); E.searchModal.classList.add('hidden'); } });
 
     let memoryPreviewToken='', memoryApplyToken='', memoryPreviewNote='', memoryApplyNote='';
     function showMemoryPreview(m){ memoryPreviewToken=m.token||''; memoryApplyToken=''; memoryPreviewNote=m.note||''; memoryApplyNote=''; E.memoryTarget.textContent=m.target||'—'; E.memoryNote.textContent=m.appendText||m.note||'';
@@ -4313,6 +4374,7 @@
         else if(m.t==='searchResult'){ clearPending();
           if(m.hits!==undefined){ if(!E.searchModal.classList.contains('hidden') && m.query===E.searchInput.value.trim()) renderHits(E.searchResults,m); }   // filtro literal digitado (ignora resposta obsoleta)
           else if(!E.searchModal.classList.contains('hidden')) renderSearchInto(E.searchResults,m); else addSearchCard(m); }   // busca falada (LLM + áudio)
+        else if(m.t==='sendNewResult'){ const sid=m.sessionId, rn=m.runnerId||'local'; if(sid) toast('▶ Nova sessão em execução'+(m.title?': '+String(m.title).slice(0,40):''),{onClick:()=>openSession(sid,rn),ariaLabel:'Abrir a nova sessão',duration:14000}); }
         else if(m.t==='memory_result'){ if(E.searchModal.classList.contains('hidden'))return;
           if(m.error){ E.searchResults.innerHTML='<div class="mut">'+esc(m.error)+'</div>'; return; }
           const hits=(m.hits||[]).map(h=>({id:h.id,runnerId:h.runnerId,title:h.title,agent:h.agent,cwd:h.cwd,where:'content',snippet:'['+(h.score||0)+'%] '+(h.snippet||'')}));
@@ -4474,8 +4536,9 @@
       if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
       const tableCopy=e.target.closest&&e.target.closest('.mdtable-copy'); if(tableCopy){ const table=tableCopy.closest('.mdtable-wrap')?.querySelector('table'); if(table){ navigator.clipboard.writeText(tableText(table)); const old=tableCopy.textContent; tableCopy.textContent='copiado'; setTimeout(()=>tableCopy.textContent=old,1200); } return; }
       const tablePng=e.target.closest&&e.target.closest('.mdtable-png'); if(tablePng){ exportTablePng(tablePng.closest('.mdtable-wrap')?.querySelector('table'), tablePng); return; }
-      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); if(exec.dataset.runner){ routedMachine=exec.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } tx({t:'sendTo',sessionId:exec.dataset.id,text:exec.dataset.action,speak,model:curModel,effort:curEffort,auto:routeAutoFor(exec.dataset.id)}); openSession(exec.dataset.id,exec.dataset.runner); return; }
-      const match=e.target.closest('.match'); if(match){ if(match.dataset.runner){ routedMachine=match.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(match.dataset.id,match.dataset.runner); return; }
+      const refopen=e.target.closest('.refopen'); if(refopen){ e.stopPropagation(); if(refopen.dataset.runner){ routedMachine=refopen.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(refopen.dataset.id,refopen.dataset.runner); return; }
+      const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); launchSuggestionInNewSession(exec.dataset.action,{id:exec.dataset.id,runnerId:exec.dataset.runner}); return; }
+      const match=e.target.closest('.match'); if(match){ if(match.dataset.action){ e.stopPropagation(); launchSuggestionInNewSession(match.dataset.action,{id:match.dataset.id,runnerId:match.dataset.runner}); return; } if(match.dataset.runner){ routedMachine=match.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(match.dataset.id,match.dataset.runner); return; }
       // file references in the chat (markdown links) must NOT navigate away — open in the panel.
       const a=e.target.closest && e.target.closest('a'); if(a){ const href=a.getAttribute('href')||'';
         if(/^(https?:|mailto:|tel:|#)/i.test(href)) return; // real links pass through
@@ -4600,6 +4663,13 @@
       tx({t:'send',text:body,speak,model:curModel,effort:curEffort,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
       refreshComposer(); }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
+    // Sugestão "executar ação": roda em uma sessão NOVA com a config de IA/modelo/esforço do chat atual,
+    // SEM sair da sessão de origem. O servidor cria a sessão e responde `sendNewResult` com o id — a
+    // sessão aparece no histórico/execuções e o toast oferece um atalho pra abri-la quando quiser.
+    function suggestionTitleFrom(action,ref){ const s=String(action||'').replace(/\s+/g,' ').trim(); return String((ref&&ref.title)||s||'Nova sessão').slice(0,60); }
+    function launchSuggestionInNewSession(action,ref){ if(!action){ toast('Sem ação para executar'); return; }
+      tx({t:'sendNew',text:action,agent:currentAgent,cwd:curCwd,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession||''),msgId:uid(),title:suggestionTitleFrom(action,ref),ref:(ref&&ref.id)?{sessionId:ref.id,runnerId:ref.runnerId||'local'}:undefined});
+      toast('▶ Executando em nova sessão…'); }
     // Fim de turno de uma sessão. O FLUSH da fila agora é do SERVIDOR (flushQueue no hub): ele
     // envia a fila acumulada e re-transmite {t:queue}/{t:message}. Aqui só destravamos o composer.
     function onTurnEnd(sid,runner){ if(!sid)return; const rid=runner||sessionRunner(), key=sessionStateKey(sid,rid); justSent.delete(key); delete stopping[key];

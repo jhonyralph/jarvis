@@ -1188,12 +1188,12 @@ const RUNNER_OPS = new Set(["list", "open", "send", "new", "listdir", "configure
 // is selected — they never take the remote-forward path. These were NOT in RUNNER_OPS, so a member
 // without local access reached them: `sendTo` executes a turn ON THE HUB (normally full-access),
 // and search/summary read every local session. Gate them on LOCAL_ID like any other machine op.
-const LOCAL_OPS = new Set(["sendTo", "search"]);
+const LOCAL_OPS = new Set(["sendTo", "sendNew", "search"]);
 // Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
 const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "council_start", "tournament_start", "debate_start", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
-const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "tournament_start", "debate_start", "summarize", "digest", "routine_run", "terminal_open"]);
+const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "sendNew", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "tournament_start", "debate_start", "summarize", "digest", "routine_run", "terminal_open"]);
 function holdForHubUpdate(ws: WebSocket, msg: any): boolean {
   if (!hubUpdateInProgress || !UPDATE_BLOCKED_OPS.has(msg.t)) return false;
   const runnerId = activeRunner(ws);
@@ -5887,6 +5887,37 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (queueOf(LOCAL_ID, s.id).length) pendingDispatchFlush.add(scopedSessionKey(LOCAL_ID, s.id));
         releaseSessionDispatch(lease);
       }
+      return;
+    }
+
+    // Suggestion card / cross-session "executar ação": run the action in a BRAND-NEW hub-managed
+    // session (with the chat's chosen agent/model/effort) WITHOUT navigating the asker away. Creates
+    // the session, replies with its id so the UI can offer a jump-link, then dispatches via the same
+    // queue→flush lifecycle a normal send uses (so it shows as "rodando agora" and persists its trace).
+    if (msg.t === "sendNew" && typeof msg.text === "string") {
+      const text = msg.text.trim();
+      if (!text) { send(ws, { t: "error", message: "ação vazia" }); return; }
+      const turnActor = actorOf(ws);
+      const agentName = agents.names().includes(msg.agent) ? msg.agent : agents.default;
+      const cwd = typeof msg.cwd === "string" && existsSync(msg.cwd) ? msg.cwd : CWD;
+      const title = (typeof msg.title === "string" && msg.title.trim() ? msg.title.trim() : text).slice(0, 60);
+      const id = randomUUID();
+      const s = store.ensure(id, { agent: agentName, cwd, title });
+      pushSessions();
+      const ref = msg.ref && typeof msg.ref.sessionId === "string"
+        ? { sessionId: msg.ref.sessionId, runnerId: typeof msg.ref.runnerId === "string" ? msg.ref.runnerId : LOCAL_ID }
+        : undefined;
+      send(ws, { t: "sendNewResult", runnerId: LOCAL_ID, sessionId: id, agent: s.agent, title: s.title, ref });
+      enqueueChatTurn(LOCAL_ID, id, {
+        text,
+        atts: Array.isArray(msg.attachments) ? msg.attachments : [],
+        model: typeof msg.model === "string" ? msg.model : undefined,
+        effort: typeof msg.effort === "string" ? msg.effort : undefined,
+        auto: autoFlags(msg.auto),
+        msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
+        actor: { ...turnActor, source: "queue" },
+      });
+      void maybeFlushQueue(LOCAL_ID, id, false);
       return;
     }
 
