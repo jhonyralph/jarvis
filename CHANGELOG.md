@@ -1,3 +1,10 @@
+# [0.17.0](https://github.com/jhonyralph/jarvis/compare/v0.16.0...v0.17.0) (2026-08-07)
+
+
+### Features
+
+* **solutions-debate:** progresso ao vivo por rodada/IA no chat ([72b6e8b](https://github.com/jhonyralph/jarvis/commit/72b6e8b0e820d3fa70337c2106fe10d29cc87b2e))
+
 # [0.16.0](https://github.com/jhonyralph/jarvis/compare/v0.15.0...v0.16.0) (2026-08-07)
 
 
