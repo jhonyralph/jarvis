@@ -1127,7 +1127,7 @@
       currentAgent=s.agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=s.cwd||''; curNative=!!s.native||isNative(id);
       curNativeWritable=false; curNativeId=''; curStarted=!!s.started; sessDeclModel=s.model||null; sessDeclEffort=s.effort||null; lastRouteReason='';
       E.title.textContent=s.title||'Carregando sessão...'; refreshTitleInfo(); syncModelEffort(); clearLimitBanner();
-      clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; E.log.innerHTML='';
+      clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; debateProgressEl=null; debateProgressId=null; E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false; updateStopStatus();
       const row=document.createElement('div'); row.className='msg bot pending sessionload';
       const work=document.createElement('span'); work.className='work';
@@ -1158,7 +1158,7 @@
       currentAgent=(m.session||{}).agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null; lastRouteReason='';   // modelo/esforço reais da sessão da máquina (só nativas mandam)
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0; maybeRestoreTree();
-      E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearLimitBanner(); clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; E.log.innerHTML='';
+      E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearLimitBanner(); clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; debateProgressEl=null; debateProgressId=null; E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
       updateStopStatus();   // reflete o "parando…" da sessão ATUAL (por sessão, não global)
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
@@ -4136,6 +4136,18 @@
     function tx(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
     function frameRunner(m){ return (m&&m.runnerId)||selectedRunner(); }
     function currentFrame(m,sid){ return (sid||(m&&m.sessionId))===currentSession&&frameRunner(m)===currentSessionRunner; }
+    // Card ÚNICO de progresso do Debate, atualizado em lugar (a IA é one-shot: feedback por IA concluída
+    // na rodada, não token-a-token). Fica fixo no rodapé do log e some quando chega `phase:'done'`.
+    let debateProgressEl=null, debateProgressId=null;
+    function renderDebateProgress(m){
+      if(m.phase==='done'){ if(debateProgressEl){ try{debateProgressEl.remove();}catch(e){} } debateProgressEl=null; debateProgressId=null; return; }
+      if(!debateProgressEl || debateProgressId!==m.debateId){ if(debateProgressEl){ try{debateProgressEl.remove();}catch(e){} } debateProgressEl=document.createElement('div'); debateProgressEl.className='msg bot debate-progress'; debateProgressId=m.debateId; }
+      const ico=s=> s==='done'?'✓':s==='failed'?'⚠':'⏳';
+      const ias=(m.debaters||[]).map(d=>`<span style="white-space:nowrap">${ico(d.state)} ${esc(d.label)}</span>`).join(' &nbsp;·&nbsp; ');
+      const phase = m.phase==='judging'?'juiz avaliando…':m.phase==='synthesizing'?'sintetizando resultado…':'debatendo…';
+      debateProgressEl.innerHTML=`<div style="font-weight:600;margin-bottom:4px">🗣️ Debate — rodada ${m.round||1}/${m.maxRounds||'?'} <span class="mut" style="font-weight:400">· ${phase}</span></div>`+(ias?`<div style="display:flex;gap:6px;flex-wrap:wrap;font-size:12.5px;opacity:.95">${ias}</div>`:'');
+      E.log.appendChild(debateProgressEl); autoScroll();
+    }
     // deep-link: preserves both the conversation and the selected work. Old #<sessionId> links stay valid.
     function hashParams(){ const raw=location.hash.slice(1); if(!raw||/^personal-assistant(?:\?|$)/.test(raw))return new URLSearchParams(); if(!raw.includes('=')&&!raw.includes('&')){const p=new URLSearchParams();p.set('session',decodeURIComponent(raw));return p;}return new URLSearchParams(raw); }
     function setHash(id){ const p=new URLSearchParams(); if(id){p.set('session',id);p.set('runner',currentSessionRunner);} if(workSelected&&!E.workPanel.classList.contains('hidden'))p.set('work',workSelected); const h=p.toString(); if(h){if(location.hash!=='#'+h)history.replaceState(null,'','#'+h);}else if(location.hash)history.replaceState(null,'',location.pathname+location.search); }
@@ -4253,6 +4265,7 @@
         else if(m.t==='council_started'){ toast('Conselho em andamento em Trabalhos.'); if(m.rootExecutionId){ workSelected=m.rootExecutionId; tx({t:'executions_list',scope:'all',rootExecutionId:m.rootExecutionId,runnerId:m.runnerId,limit:500}); } }
         else if(m.t==='tournament_started'){ const lbl=m.mode==='review'?'Revisão paralela':m.mode==='audit'?'Auditoria':'Benchmark'; toast(lbl+' em andamento em Trabalhos.'); if(m.rootExecutionId){ workSelected=m.rootExecutionId; tx({t:'executions_list',scope:'all',rootExecutionId:m.rootExecutionId,runnerId:m.runnerId,limit:500}); } }
         else if(m.t==='debate_started'){ toast('Debate iniciado ('+((m.debaters||[]).length)+' IAs, até '+(m.maxRounds||'?')+' rodadas) — as rodadas aparecem na conversa.'); }
+        else if(m.t==='debate_progress'){ if(currentFrame(m)) renderDebateProgress(m); }
         else if(m.t==='execution_control_result'||m.t==='execution_input_result'||m.t==='execution_archive_result'){
           const unsupported=Array.isArray(m.unsupportedIds)?m.unsupportedIds.length:0; toast(m.ok?(unsupported?`⚠ Atualizado parcialmente · ${unsupported} sem suporte`:'✓ Trabalho atualizado'):('⚠ '+(m.error||'Não foi possível atualizar o trabalho.')));
           if(m.executionId)tx({t:'execution_open',executionId:m.executionId,limit:500});

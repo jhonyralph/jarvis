@@ -3378,17 +3378,25 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
 
   let responses: DebaterResponse[] = [];
   let converged = false, failed = false, roundsDone = 0;
+  // Progresso ao vivo: cada IA é uma chamada one-shot BLOQUEANTE (sem stream token-a-token), então o
+  // feedback é por IA concluída dentro da rodada + fase do juiz/síntese — mata a "cegueira" da espera.
+  // Transmitido a todos que veem a sessão (broadcast); `phase:'done'` no fim remove o card no cliente.
+  const emitDebateProgress = (round: number, phase: string, states: Array<{ label: string; state: string }>): void =>
+    broadcast(input.sessionId, { t: "debate_progress", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, round, maxRounds, phase, debaters: states });
   try {
     for (let round = 1; round <= maxRounds; round++) {
       if (ctrl.signal.aborted) { failed = true; break; }
       const prev = new Map(responses.map((r) => [r.id, r.text]));
-      responses = await Promise.all(debaters.map(async (d) => {
+      const roundState = debaters.map((d) => ({ label: d.label, state: "running" as string }));
+      emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })));
+      responses = await Promise.all(debaters.map(async (d, i) => {
         const others = round === 1 ? [] : responses.filter((r) => r.id !== d.id);
         const prompt = round === 1 ? buildDebateOpeningPrompt(topic) : buildDebateRebuttalPrompt(topic, round, prev.get(d.id) || "", others);
-        try { const reply = await oneShotBy(d.agent, prompt, d.model, d.effort); addUsage(usageKey, d.agent, reply.usage); return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" }; }
-        catch (e: any) { failed = true; return { id: d.id, label: d.label, text: "(falha: " + String(e?.message ?? e) + ")" }; }
+        try { const reply = await oneShotBy(d.agent, prompt, d.model, d.effort); addUsage(usageKey, d.agent, reply.usage); roundState[i].state = "done"; emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p }))); return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" }; }
+        catch (e: any) { failed = true; roundState[i].state = "failed"; emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p }))); return { id: d.id, label: d.label, text: "(falha: " + String(e?.message ?? e) + ")" }; }
       }));
       roundsDone = round;
+      emitDebateProgress(round, "judging", roundState.map((p) => ({ ...p })));
       let verdict: DebateVerdict = { converged: false, confidence: 0, reason: "" };
       try { const judge = summaryAgent(); const jr = await oneShotAdapter(judge, buildDebateJudgePrompt(topic, round, responses)); addUsage(usageKey, judge.name, jr.usage); verdict = parseDebateVerdict(jr.text); }
       catch { verdict = { converged: false, confidence: 0, reason: "juiz indisponível" }; }
@@ -3397,6 +3405,7 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
     }
     let summary: string | undefined;
     if (!ctrl.signal.aborted) {
+      emitDebateProgress(roundsDone, "synthesizing", []);
       try { const synth = summaryAgent(); const sr = await oneShotAdapter(synth, buildDebateSynthesisPrompt(topic, responses, { converged, rounds: roundsDone })); addUsage(usageKey, synth.name, sr.usage); summary = sr.text; }
       catch { summary = undefined; }
     }
@@ -3404,6 +3413,7 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
   } catch (error: any) {
     send(ws, { t: "error", message: "Debate: " + String(error?.message ?? error) });
   } finally {
+    emitDebateProgress(roundsDone, "done", []);
     localManagedRuns.delete(debateId);
     if (localExecutionAborts.get(debateId) === ctrl) localExecutionAborts.delete(debateId);
     broadcastRuns();
