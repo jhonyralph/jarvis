@@ -1,3 +1,19 @@
+# [0.16.0](https://github.com/jhonyralph/jarvis/compare/v0.15.0...v0.16.0) (2026-08-07)
+
+
+### Bug Fixes
+
+* **framework-scan:** corta falso-positivo em pacotes de doc sem perder o sinal real ([7417558](https://github.com/jhonyralph/jarvis/commit/74175583cd577af9507a6ae79a4d77100619b3ac))
+
+
+### Features
+
+* **framework-catalog:** catálogo de skills instaladas por IA + fonte native rastreável ([0bf2890](https://github.com/jhonyralph/jarvis/commit/0bf2890dac8f0b759b9e9e7ba78c20a3178f8431))
+* **framework): catálogo/auto-update/navegação de problemas + editor com linhas e quebra + modo Debate; fix(ui:** foco preso ao fechar modais ([a0eee65](https://github.com/jhonyralph/jarvis/commit/a0eee65f0d6cd7505e1f69d3ac82772451f1fc34))
+* **sessions:** cards de sugestão persistentes + lista agrupada com teto por grupo ([c9aabec](https://github.com/jhonyralph/jarvis/commit/c9aabecf648069548b7e21eb12938937ddb6a3be))
+* **solutions-debate:** fundação do modo Debate (prompts, juiz, teto de rodadas) ([f5e3558](https://github.com/jhonyralph/jarvis/commit/f5e3558a4b7e27ded6e39efc373bd5f2829452c9))
+* **solutions-debate:** nível de esforço configurável por IA (médio/alto/máximo) ([ba7fe0c](https://github.com/jhonyralph/jarvis/commit/ba7fe0c8f3077a5e4564c0e7492674e6c9f75640))
+
 # [0.15.0](https://github.com/jhonyralph/jarvis/compare/v0.14.1...v0.15.0) (2026-08-06)
 
 
