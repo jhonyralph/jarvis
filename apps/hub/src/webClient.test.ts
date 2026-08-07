@@ -292,10 +292,30 @@ test("organizeSessions: alpha and cost sorts reorder the flat set", async () => 
   assert.deepEqual(cost.groups[0].sessions.map((s: any) => s.id), ["b", "a", "c"], "0.50 > 0.10 > 0.01");
 });
 
-test("organizeSessions: limit caps the visible set BEFORE grouping (pagination) but total stays full", async () => {
+test("organizeSessions: groupBy 'none' respects the global limit (flat pagination)", async () => {
   const client = loadClient();
   await authenticate(client, MACHINES);
-  const org = client.organizeSessions(ORG, { groupBy: "project", sortBy: "recency", status: "all", limit: 1 });
+  // sem agrupamento, o teto GLOBAL (`limit`) ainda recorta a lista achatada — path do "Mostrar mais".
+  const org = client.organizeSessions(ORG, { groupBy: "none", sortBy: "recency", status: "all", limit: 1 });
   assert.equal(org.shownCount, 1); assert.equal(org.total, 3);
-  assert.deepEqual(org.groups.flatMap((g: any) => g.sessions.map((s: any) => s.id)), ["a"], "só a mais recente entra no recorte");
+  assert.deepEqual(org.groups.flatMap((g: any) => g.sessions.map((s: any) => s.id)), ["a"], "só a mais recente entra no recorte flat");
+});
+
+test("organizeSessions: grouped caps EACH group at perGroupLimit and 'expanded' reveals the rest", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  // Agrupado IGNORA o teto global (limit) e aplica o teto POR grupo. Aqui perGroupLimit=1: o grupo
+  // 'api' (2 sessões) mostra só a mais recente e reporta o resto como escondido.
+  const capped = client.organizeSessions(ORG, { groupBy: "project", sortBy: "recency", status: "all", limit: 1, perGroupLimit: 1 });
+  assert.equal(capped.total, 3, "total continua cheio");
+  const api = capped.groups.find((g: any) => g.label === "api");
+  assert.deepEqual(api.sessions.map((s: any) => s.id), ["a"], "só a mais recente do grupo entra sob o teto");
+  assert.equal(api.total, 2); assert.equal(api.hidden, 1); assert.equal(api.expanded, false);
+  const web = capped.groups.find((g: any) => g.label === "web");
+  assert.equal(web.hidden, 0, "grupo com 1 item não esconde nada");
+  // Expandir o grupo 'api' (via chave do grupo em `expanded`) revela todas as suas sessões.
+  const expanded = client.organizeSessions(ORG, { groupBy: "project", sortBy: "recency", status: "all", perGroupLimit: 1, expanded: new Set([`project ${api.key}`]) });
+  const apiX = expanded.groups.find((g: any) => g.label === "api");
+  assert.deepEqual(apiX.sessions.map((s: any) => s.id), ["a", "b"], "expandido mostra todas do grupo");
+  assert.equal(apiX.hidden, 0); assert.equal(apiX.expanded, true);
 });
