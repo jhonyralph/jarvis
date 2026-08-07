@@ -3319,8 +3319,9 @@ async function startLocalTournament(ws: WebSocket, input: { sessionId: string; t
 }
 
 /** Debate iterativo local: rodadas de resposta + réplica cruzada entre 2+ IAs, com um JUIZ decidindo a
- *  convergência a cada rodada (para cedo no consenso) até o teto configurável. Read-only, via one-shot;
- *  cada rodada é transmitida à sessão para o usuário acompanhar a discussão. Cancelável como um run. */
+ *  convergência a cada rodada (para cedo no consenso) até o teto configurável. Read-only. Com Trabalhos
+ *  habilitado, cada rodada roda os debatentes como execução gerenciada (subagentes visíveis no painel);
+ *  sem Trabalhos, cai no one-shot. Cada rodada é transmitida à sessão. Cancelável como um run. */
 async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic: string; agents?: string[]; effortLevel: EffortLevel; maxRounds?: number; includeContext: boolean }): Promise<void> {
   if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Debate ainda não grava resultado em sessão nativa" }); return; }
   if (store.isHidden(input.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita Debate" }); return; }
@@ -3378,25 +3379,52 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
 
   let responses: DebaterResponse[] = [];
   let converged = false, failed = false, roundsDone = 0;
-  // Progresso ao vivo: cada IA é uma chamada one-shot BLOQUEANTE (sem stream token-a-token), então o
-  // feedback é por IA concluída dentro da rodada + fase do juiz/síntese — mata a "cegueira" da espera.
-  // Transmitido a todos que veem a sessão (broadcast); `phase:'done'` no fim remove o card no cliente.
-  const emitDebateProgress = (round: number, phase: string, states: Array<{ label: string; state: string }>): void =>
-    broadcast(input.sessionId, { t: "debate_progress", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, round, maxRounds, phase, debaters: states });
+  // Progresso ao vivo. Com Trabalhos habilitado, cada rodada roda os debatentes como uma EXECUÇÃO
+  // gerenciada (read-only): suas ferramentas/subagentes streamam pro painel Trabalhos (um root por
+  // rodada — o run() proíbe reusar rootExecutionId) e o texto integral volta em report.tasks[].summary
+  // (= reply.text). Sem Trabalhos, cai no one-shot anterior (progresso por IA no card). O juiz e a
+  // síntese seguem one-shot (são meta-chamadas de resumo, não produzem subagentes). `phase:'done'`
+  // no finally remove o card. `rootExecutionId` no frame liga o botão "ver em Trabalhos" do card.
+  const useManaged = executionCfg.enabled;
+  const emitDebateProgress = (round: number, phase: string, states: Array<{ label: string; state: string }>, rootExecutionId?: string): void =>
+    broadcast(input.sessionId, { t: "debate_progress", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, round, maxRounds, phase, rootExecutionId, debaters: states });
   try {
     for (let round = 1; round <= maxRounds; round++) {
       if (ctrl.signal.aborted) { failed = true; break; }
       const prev = new Map(responses.map((r) => [r.id, r.text]));
+      const prevResponses = responses;
       const roundState = debaters.map((d) => ({ label: d.label, state: "running" as string }));
-      emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })));
-      responses = await Promise.all(debaters.map(async (d, i) => {
-        const others = round === 1 ? [] : responses.filter((r) => r.id !== d.id);
-        const prompt = round === 1 ? buildDebateOpeningPrompt(topic) : buildDebateRebuttalPrompt(topic, round, prev.get(d.id) || "", others);
-        try { const reply = await oneShotBy(d.agent, prompt, d.model, d.effort); addUsage(usageKey, d.agent, reply.usage); roundState[i].state = "done"; emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p }))); return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" }; }
-        catch (e: any) { failed = true; roundState[i].state = "failed"; emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p }))); return { id: d.id, label: d.label, text: "(falha: " + String(e?.message ?? e) + ")" }; }
-      }));
+      const promptFor = (d: DebateDebater): string => round === 1
+        ? buildDebateOpeningPrompt(topic)
+        : buildDebateRebuttalPrompt(topic, round, prev.get(d.id) || "", prevResponses.filter((r) => r.id !== d.id));
+      if (useManaged) {
+        const roundRoot = `${debateId}-r${round}`;
+        emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })), roundRoot);
+        executionOwnership.claim(LOCAL_ID, roundRoot, socketPrincipalId(ws));
+        localManagedRuns.add(roundRoot);
+        const plan: ManagedExecutionPlan = { rootExecutionId: roundRoot, runnerId: LOCAL_ID, tasks: debaters.map((d) => ({ id: d.id, title: `${d.label} · rodada ${round}`, prompt: promptFor(d), agent: d.agent, cwd, depth: 1, write: false, model: d.model, effort: d.effort })) };
+        try {
+          const report = await localManagedExecution.run(plan, {
+            title: `🗣️ Debate · rodada ${round}/${maxRounds}`,
+            policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy({ maxConcurrency: debaters.length, maxDepth: 2, maxTasks: debaters.length }, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd }).policy)),
+            signal: ctrl.signal,
+            onAccepted: (root) => emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })), root),
+          });
+          const byId = new Map(report.tasks.map((rec) => [rec.task.id, rec]));
+          report.tasks.forEach((rec) => addUsage(usageKey, rec.task.agent, rec.usage));
+          responses = debaters.map((d, i) => { const rec = byId.get(d.id); const ok = rec?.state === "succeeded"; const text = (rec?.summary || "").trim(); if (!ok) failed = true; roundState[i].state = ok ? "done" : "failed"; return { id: d.id, label: d.label, text: ok && text ? text : `(falha: ${rec?.error || rec?.state || "sem resposta"})` }; });
+        } finally { localManagedRuns.delete(roundRoot); }
+        emitDebateProgress(round, "judging", roundState.map((p) => ({ ...p })), roundRoot);
+      } else {
+        emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })));
+        responses = await Promise.all(debaters.map(async (d, i) => {
+          const prompt = promptFor(d);
+          try { const reply = await oneShotBy(d.agent, prompt, d.model, d.effort); addUsage(usageKey, d.agent, reply.usage); roundState[i].state = "done"; emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p }))); return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" }; }
+          catch (e: any) { failed = true; roundState[i].state = "failed"; emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p }))); return { id: d.id, label: d.label, text: "(falha: " + String(e?.message ?? e) + ")" }; }
+        }));
+        emitDebateProgress(round, "judging", roundState.map((p) => ({ ...p })));
+      }
       roundsDone = round;
-      emitDebateProgress(round, "judging", roundState.map((p) => ({ ...p })));
       let verdict: DebateVerdict = { converged: false, confidence: 0, reason: "" };
       try { const judge = summaryAgent(); const jr = await oneShotAdapter(judge, buildDebateJudgePrompt(topic, round, responses)); addUsage(usageKey, judge.name, jr.usage); verdict = parseDebateVerdict(jr.text); }
       catch { verdict = { converged: false, confidence: 0, reason: "juiz indisponível" }; }

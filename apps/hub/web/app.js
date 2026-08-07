@@ -4145,7 +4145,10 @@
       const ico=s=> s==='done'?'✓':s==='failed'?'⚠':'⏳';
       const ias=(m.debaters||[]).map(d=>`<span style="white-space:nowrap">${ico(d.state)} ${esc(d.label)}</span>`).join(' &nbsp;·&nbsp; ');
       const phase = m.phase==='judging'?'juiz avaliando…':m.phase==='synthesizing'?'sintetizando resultado…':'debatendo…';
-      debateProgressEl.innerHTML=`<div style="font-weight:600;margin-bottom:4px">🗣️ Debate — rodada ${m.round||1}/${m.maxRounds||'?'} <span class="mut" style="font-weight:400">· ${phase}</span></div>`+(ias?`<div style="display:flex;gap:6px;flex-wrap:wrap;font-size:12.5px;opacity:.95">${ias}</div>`:'');
+      // Quando a rodada roda como execução gerenciada, o frame traz `rootExecutionId` → botão pra abrir
+      // os subagentes/ferramentas ao vivo no painel Trabalhos (aponta pro root da rodada atual).
+      const work = m.rootExecutionId ? `<button type="button" class="dbg-work ghost" data-root="${esc(m.rootExecutionId)}" style="border:0;background:none;cursor:pointer;color:var(--accent,#6ea8fe);font-size:12px;padding:0 4px">↗ ver em Trabalhos</button>` : '';
+      debateProgressEl.innerHTML=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="font-weight:600;flex:1;min-width:0">🗣️ Debate — rodada ${m.round||1}/${m.maxRounds||'?'} <span class="mut" style="font-weight:400">· ${phase}</span></span>${work}</div>`+(ias?`<div style="display:flex;gap:6px;flex-wrap:wrap;font-size:12.5px;opacity:.95">${ias}</div>`:'');
       E.log.appendChild(debateProgressEl); autoScroll();
     }
     // deep-link: preserves both the conversation and the selected work. Old #<sessionId> links stay valid.
@@ -4549,6 +4552,7 @@
       if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
       const tableCopy=e.target.closest&&e.target.closest('.mdtable-copy'); if(tableCopy){ const table=tableCopy.closest('.mdtable-wrap')?.querySelector('table'); if(table){ navigator.clipboard.writeText(tableText(table)); const old=tableCopy.textContent; tableCopy.textContent='copiado'; setTimeout(()=>tableCopy.textContent=old,1200); } return; }
       const tablePng=e.target.closest&&e.target.closest('.mdtable-png'); if(tablePng){ exportTablePng(tablePng.closest('.mdtable-wrap')?.querySelector('table'), tablePng); return; }
+      const dbgWork=e.target.closest('.dbg-work'); if(dbgWork){ e.stopPropagation(); const root=dbgWork.dataset.root; if(root){ openWorkPanel(); openWorkNode(root); } return; }
       const refopen=e.target.closest('.refopen'); if(refopen){ e.stopPropagation(); if(refopen.dataset.runner){ routedMachine=refopen.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(refopen.dataset.id,refopen.dataset.runner); return; }
       const exec=e.target.closest('.exec'); if(exec){ e.stopPropagation(); launchSuggestionInNewSession(exec.dataset.action,{id:exec.dataset.id,runnerId:exec.dataset.runner}); return; }
       const match=e.target.closest('.match'); if(match){ if(match.dataset.action){ e.stopPropagation(); launchSuggestionInNewSession(match.dataset.action,{id:match.dataset.id,runnerId:match.dataset.runner}); return; } if(match.dataset.runner){ routedMachine=match.dataset.runner; tx({t:'runner',runnerId:routedMachine}); } openSession(match.dataset.id,match.dataset.runner); return; }
