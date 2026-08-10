@@ -165,6 +165,10 @@ let sessionDefaultsDoc: SessionDefaultsDocument = loadSessionDefaults(SESSION_DE
 // Per-session permission mode for turn dispatch: the Store for managed sessions (durable +
 // inheritable), an in-memory map for native imported sessions (which have no Store record).
 const nativeSessionPermissionModes = new Map<string, PermissionMode>();
+// Permission mode chosen in the client picker for a REMOTE session, keyed "runnerId\0sessionId".
+// The owning runner keeps the durable copy in its own store; this just carries the choice to the
+// next forwarded turn (there is no remote setmode round-trip).
+const remoteSessionModes = new Map<string, PermissionMode>();
 function sessionPermissionMode(sid: string): PermissionMode | undefined {
   return store.get(sid)?.permissionMode ?? nativeSessionPermissionModes.get(sid);
 }
@@ -1873,7 +1877,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
           agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId,
           sessionCost: su.costUsd, sessionUsage: su,
           inputTokens: m.inputTokens || su.contextTokens, contextWindowTokens: m.contextWindowTokens || su.contextWindowTokens,
-          model: m.model || su.model, effort: m.effort || su.effort,
+          model: m.model || su.model, effort: m.effort || su.effort, permissionMode: m.permissionMode,
         },
         total: m.total,
         messages: messages.map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity, contextManifest: x.contextManifest })),
@@ -3775,7 +3779,7 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
         if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
         if (abortIfCancelled()) return; // usuário removeu o item durante o preflight — não despacha
         const turnId = (items.find((q) => q.msgId)?.msgId) || randomUUID();
-        const ok = sendOwnedRunnerTurn(rc, sid, turnId, actor.userId || "local", { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, actor });
+        const ok = sendOwnedRunnerTurn(rc, sid, turnId, actor.userId || "local", { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, opts: { permissionMode: remoteSessionModes.get(rc.id + " " + sid) }, actor });
         if (!ok) throw new Error("não foi possível enviar a fila para a máquina");
         dispatched = true;
         markRunnerSessionActive(rid, sid);
@@ -5042,7 +5046,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           const personal = await personalContextForChat(ar, sid, msg.text, turnActor, () => refreshSessionDispatchAuthorization(lease));
           if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
           const turnId = (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID();
-          if (!sendOwnedRunnerTurn(rc, sid, turnId, turnActor.userId || "local", { t: "send", text: msg.text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker: typeof msg.speaker === "string" ? msg.speaker : undefined, actor: turnActor })) {
+          if (!sendOwnedRunnerTurn(rc, sid, turnId, turnActor.userId || "local", { t: "send", text: msg.text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort, permissionMode: remoteSessionModes.get(rc.id + " " + sid) }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker: typeof msg.speaker === "string" ? msg.speaker : undefined, actor: turnActor })) {
             remoteSpeak.delete(ar + "\0" + sid);
             send(ws, { t: "error", message: "não foi possível enviar para a máquina" }); return;
           }
@@ -6207,6 +6211,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     const inboundActor = actorOf(ws);
     const inboundKey = recordPendingInboundTurn(activeRunner(ws), sid, msg, text, inboundActor);
     { const _p = principalOf(ws); auth.audit("send", { userId: _p?.userId, deviceId: _p?.deviceId, detail: `${sid}: ${String(text).slice(0, 80)}` }); }
+    // Remember the picker's permission mode for a remote session so the forwarded turn carries it
+    // (local sessions persist it via the setmode handler + the Store instead).
+    { const _rr = activeRunner(ws); if (_rr !== LOCAL_ID) { const _pm = normalizePermissionMode(typeof msg.permissionMode === "string" ? msg.permissionMode : undefined); if (_pm) remoteSessionModes.set(_rr + "" + sid, _pm); } }
 
     const approvalCommand = adaptiveApprovalVoiceCommand(text);
     if (approvalCommand) {
@@ -6293,7 +6300,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const personal = await personalContextForChat(ar, remoteSid, text, turnActor, () => refreshSessionDispatchAuthorization(lease));
         if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
         const turnId = (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID();
-        if (!sendOwnedRunnerTurn(rc, remoteSid, turnId, turnActor.userId || "local", { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, actor: turnActor })) {
+        if (!sendOwnedRunnerTurn(rc, remoteSid, turnId, turnActor.userId || "local", { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort, permissionMode: remoteSessionModes.get(rc.id + " " + remoteSid) }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, actor: turnActor })) {
           remoteSpeak.delete(ar + "\0" + remoteSid);
           send(ws, { t: "error", message: "não foi possível enviar para a máquina" });
           return;

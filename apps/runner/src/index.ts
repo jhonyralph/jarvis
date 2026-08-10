@@ -31,7 +31,8 @@ import {
   pendingActivityReplay,
   formatCouncilFinalMessage, managedChildExecutionId,
   TerminalManager,
-  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type MemoryAppendPreview,
+  loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
+  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
 
@@ -106,6 +107,11 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new AntigravityCliAdapter())
   .register(new MockAgentAdapter());
 const store = new Store({ agent: DEFAULT_AGENT, cwd: CWD });
+// Permission-mode defaults + inheritance, mirroring the Hub (each machine has its own config/store).
+let sessionDefaultsDoc: SessionDefaultsDocument = loadSessionDefaults();
+const nativeSessionPermissionModes = new Map<string, PermissionMode>();
+function sessionPermissionMode(sid: string): PermissionMode | undefined { return store.get(sid)?.permissionMode ?? nativeSessionPermissionModes.get(sid); }
+function setSessionPermissionMode(sid: string, mode: PermissionMode): void { if (!store.setPermissionMode(sid, mode)) nativeSessionPermissionModes.set(sid, mode); }
 const contextManifests = new ContextManifestStore(JDIR);
 const memoryProvenance = new MemoryProvenanceStore(JDIR);
 const frameworkProvenance = new FrameworkProvenanceStore(JDIR);
@@ -582,7 +588,7 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
     const live = pendingActivityReplay(executionStore, sessionId, h.messages);
-    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, model: h.model, effort: h.effort, total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId), liveActivity: live?.events, liveState: live?.state, liveTurnId: live?.turnId, liveUpdatedAt: live?.updatedAt, liveTruncated: live?.truncated });
+    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, model: h.model, effort: h.effort, permissionMode: sessionPermissionMode(sessionId), total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId), liveActivity: live?.events, liveState: live?.state, liveTurnId: live?.turnId, liveUpdatedAt: live?.updatedAt, liveTruncated: live?.truncated });
     startTail(sessionId); // live-mirror new turns (external CLI) to the Hub
   } else {
     if (store.isHidden(sessionId)) { send({ t: "error", reqId, message: "sessão interna não pode ser aberta pelo chat" }); return; }
@@ -595,7 +601,7 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
     const live = pendingActivityReplay(executionStore, s.id, all);
     send({
       t: "history", reqId, sessionId: s.id, title: nh?.title || s.title, agent: s.agent, cwd: s.cwd,
-      writable: true, total: all.length, nativeId: nid, inputTokens: nh?.inputTokens, contextWindowTokens: nh?.contextWindowTokens, model: nh?.model || lastUsage?.model, effort: nh?.effort || lastUsage?.effort,
+      writable: true, total: all.length, nativeId: nid, inputTokens: nh?.inputTokens, contextWindowTokens: nh?.contextWindowTokens, model: nh?.model || lastUsage?.model, effort: nh?.effort || lastUsage?.effort, permissionMode: sessionPermissionMode(s.id),
       messages: all.map((m: any) => ({
         role: m.role, text: m.text, ts: m.ts, agent: m.agent, speaker: m.speaker,
         images: m.images, files: m.files, activity: m.activity, usage: m.usage, contextManifest: m.contextManifest,
@@ -850,7 +856,7 @@ async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter,
   try {
     emit(bridge.accepted()); emit(bridge.started());
     const prior = store.history(sessionId).slice(0, -1).filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
-    const reply = await selected.send(sessionId, agentInput, cwd, { ...opts, turnId, history: prior, signal: ctrl.signal }, (ev) => {
+    const reply = await selected.send(sessionId, agentInput, cwd, { ...opts, permissionMode: opts.permissionMode ?? sessionPermissionMode(sessionId), turnId, history: prior, signal: ctrl.signal }, (ev) => {
       if (isProviderExecutionEvent(ev)) {
         let projected: ReturnType<ExecutionTracker["handleProviderEvent"]> | undefined;
         let projectionFailed = false;
@@ -1160,11 +1166,18 @@ function connect(): void {
       }
       if (m.t === "list") { pushSessions(); return; }
       if (m.t === "new") {
-        const id = randomUUID();
-        const agentName = agents.names().includes(m.agent) ? m.agent : agents.default;
         const cwd = (typeof m.cwd === "string" && m.cwd && existsSync(m.cwd)) ? m.cwd : CWD;
-        const s = store.ensure(id, { agent: agentName, cwd });
-        send({ t: "history", reqId: m.reqId, sessionId: id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: 0, messages: [] });
+        // Seed like the Hub: existing project inherits from its last started session; a new project
+        // falls back to this machine's configured defaults. Explicit agent picked in the dialog wins.
+        const seed = { ...resolveSessionDefaults(sessionDefaultsDoc, cwd) };
+        const inherited = store.inheritForCwd(cwd);
+        if (inherited) for (const k of ["agent", "model", "effort", "permissionMode"] as const) { const v = inherited[k]; if (v) (seed as Record<string, unknown>)[k] = v; }
+        const explicitAgent = agents.names().includes(m.agent) ? m.agent : undefined;
+        const agentName = explicitAgent || (seed.agent && agents.names().includes(seed.agent) ? seed.agent : agents.default);
+        const permissionMode = normalizePermissionMode(typeof m.permissionMode === "string" ? m.permissionMode : undefined) ?? seed.permissionMode;
+        const id = randomUUID();
+        const s = store.ensure(id, { agent: agentName, cwd, permissionMode });
+        send({ t: "history", reqId: m.reqId, sessionId: id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: 0, messages: [], model: seed.model, effort: seed.effort, permissionMode: s.permissionMode });
         pushSessions();
         return;
       }
@@ -1218,7 +1231,7 @@ function connect(): void {
         if (!store.reconfigure(s.id, { agent: agentName, cwd })) { send({ t: "error", reqId: m.reqId, message: "sessão já iniciada — agente e pasta travados" }); return; }
         const ns = store.get(s.id)!;
         const all = store.history(ns.id);
-        send({ t: "history", reqId: m.reqId, sessionId: ns.id, title: ns.title, agent: ns.agent, cwd: ns.cwd, writable: true, total: all.length, messages: all.map((x: any) => ({ role: x.role, text: x.text, ts: x.ts })) });
+        send({ t: "history", reqId: m.reqId, sessionId: ns.id, title: ns.title, agent: ns.agent, cwd: ns.cwd, writable: true, total: all.length, permissionMode: sessionPermissionMode(ns.id), messages: all.map((x: any) => ({ role: x.role, text: x.text, ts: x.ts })) });
         pushSessions();
         return;
       }
@@ -1227,9 +1240,10 @@ function connect(): void {
           send({ t: "error", message: "contexto pessoal inválido ou acima do limite" });
           return;
         }
+        { const pm = normalizePermissionMode(typeof m.opts?.permissionMode === "string" ? m.opts.permissionMode : undefined); if (pm) setSessionPermissionMode(m.sessionId, pm); }
         await doSend(
           m.sessionId, String(m.text ?? ""), m.agent, m.cwd,
-          { model: m.model ?? m.opts?.model, effort: m.effort ?? m.opts?.effort },
+          { model: m.model ?? m.opts?.model, effort: m.effort ?? m.opts?.effort, permissionMode: normalizePermissionMode(typeof m.opts?.permissionMode === "string" ? m.opts.permissionMode : undefined) },
           Array.isArray(m.attachments) ? m.attachments : [],
           typeof m.turnId === "string" ? m.turnId : undefined,
           typeof m.speaker === "string" ? m.speaker : undefined,

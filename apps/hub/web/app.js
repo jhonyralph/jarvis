@@ -2834,7 +2834,10 @@
     function pickMode(mode){
       if(currentSession==null){ sdDoc.global=Object.assign({},sdDoc.global,{permissionMode:mode}); tx({t:'set_session_defaults',doc:sdDoc}); curMode=mode; renderControls(); return; }
       const key=sessionStateKey(currentSession,currentSessionRunner), pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{});
-      pref.permissionMode=mode; sessionPrefs[key]=pref; saveSessionPrefs(); curMode=mode; tx({t:'setmode',sessionId:currentSession,mode}); renderControls();
+      pref.permissionMode=mode; sessionPrefs[key]=pref; saveSessionPrefs(); curMode=mode;
+      // Local: persist na hora via setmode. Remoto: sem round-trip de setmode — o modo viaja no próximo envio (opts).
+      if(!currentSessionRunner||currentSessionRunner==='local') tx({t:'setmode',sessionId:currentSession,mode});
+      renderControls();
     }
     function buildModePop(p){ p.appendChild(ph('Modo de permissão · '+(currentAgent||''))); const sup=supportedModesFor(currentAgent);
       if(currentSession==null){ const n=document.createElement('div'); n.className='mut'; n.style.cssText='padding:0 2px 8px;font-size:11.5px'; n.textContent='Sem sessão aberta: esta escolha vira o padrão global para novas sessões.'; p.appendChild(n); }
@@ -4621,7 +4624,7 @@
           // O usuário grava, vê "transcrevendo…" e a mensagem entra na fila para rodar no próximo turno.
           const sessionBusy=busy(currentSession);
           status('busy', sessionBusy ? '🎧 transcrevendo para a fila…' : '🎧 transcrevendo…');   // Gap 5: feedback claro durante o STT
-          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
+          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; syncComposerActions(); if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?t('spListeningAns'):t('spListening')); if(auto)tx({t:'wake_event',phase:'capturing',sessionId:currentSession});
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ resumeWakeAfterRecording(wakePaused); const msg=t('wakeMicError')+': '+micErrorText(e); addErr(msg); toast(msg); tx({t:'wake_event',phase:'mic_error',sessionId:currentSession,error:String((e&&e.message)||e)}); recording=false; status(''); } }
@@ -4773,7 +4776,7 @@
       if(askActive&&sid===currentSession){ const runner=askActive.runnerId||sessionRunner(); try{askActive.card.remove();}catch(e){} askActive=null; askVoice=false; clearAsk(sid,runner); tx({t:'ask_clear',sessionId:sid}); }
       const askKey=askStateKey(sid); if(askingSids.delete(askKey)) tx({t:'ask_clear',sessionId:sid}); bumpSession(sid); markJustSent(sid);
       if(sid===currentSession){ stick=true; addOptimisticUser(sid,msgId,body,atts||[]); if(!curStarted){ curStarted=true; renderControls(); } showPending(); }
-      tx({t:'send',text:body,speak,model:curModel,effort:curEffort,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
+      tx({t:'send',text:body,speak,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
       refreshComposer(); }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
     // Sugestão "executar ação": roda em uma sessão NOVA com a config de IA/modelo/esforço do chat atual,
@@ -4781,7 +4784,7 @@
     // sessão aparece no histórico/execuções e o toast oferece um atalho pra abri-la quando quiser.
     function suggestionTitleFrom(action,ref){ const s=String(action||'').replace(/\s+/g,' ').trim(); return String((ref&&ref.title)||s||'Nova sessão').slice(0,60); }
     function launchSuggestionInNewSession(action,ref){ if(!action){ toast('Sem ação para executar'); return; }
-      tx({t:'sendNew',text:action,agent:currentAgent,cwd:curCwd,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession||''),msgId:uid(),title:suggestionTitleFrom(action,ref),ref:(ref&&ref.id)?{sessionId:ref.id,runnerId:ref.runnerId||'local'}:undefined});
+      tx({t:'sendNew',text:action,agent:currentAgent,cwd:curCwd,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession||''),msgId:uid(),title:suggestionTitleFrom(action,ref),ref:(ref&&ref.id)?{sessionId:ref.id,runnerId:ref.runnerId||'local'}:undefined});
       toast('▶ Executando em nova sessão…'); }
     // Fim de turno de uma sessão. O FLUSH da fila agora é do SERVIDOR (flushQueue no hub): ele
     // envia a fila acumulada e re-transmite {t:queue}/{t:message}. Aqui só destravamos o composer.
@@ -4843,7 +4846,7 @@
       if(text.startsWith('!')) pushBang(text.slice(1).split('\n')[0].trim());   // guarda no histórico do "!"
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; if(currentSession) delete attachmentsBySession[sessionStateKey(currentSession,currentSessionRunner)]; renderAttach();
       if(currentSession){ delete draftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
-      if(busy(currentSession)){ const mid=uid(); queueOf(currentSession).push({text:text||'(anexo)',atts,msgId:mid}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,auto:routeAutoFor(currentSession),msgId:mid}); return; }
+      if(busy(currentSession)){ const mid=uid(); queueOf(currentSession).push({text:text||'(anexo)',atts,msgId:mid}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),msgId:mid}); return; }
       setRestorable(currentSession,text,atts); sendMsgTo(currentSession,text||'(anexo)',atts); };
     E.stopBtn.onclick=()=>{
       stopTTS();   // parar o turno também silencia qualquer áudio em reprodução

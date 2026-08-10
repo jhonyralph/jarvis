@@ -185,6 +185,7 @@ export type RunnerToHub =
       contextWindowTokens?: number;
       model?: string;
       effort?: string;
+      permissionMode?: PermissionMode;
       /** files touched by tools in this session (real paths, for the viewer/diff panel) */
       files?: TouchedFileMeta[];
       /** Durable replay for the latest user turn that does not yet have a stored assistant reply. */
