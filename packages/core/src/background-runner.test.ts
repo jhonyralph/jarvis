@@ -3,8 +3,31 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { jobPaths, buildJobScripts, parseJobResult, jobLogTail, readJobCompletion, spawnDetachedJob, readJobPid } from "./background-runner.js";
+import { jobPaths, buildJobScripts, parseJobResult, jobLogTail, readJobCompletion, spawnDetachedJob, readJobPid, stripPowerShellNativeNoise } from "./background-runner.js";
 import { BackgroundJobStore, planJobContinuation } from "./background-jobs.js";
+
+test("stripPowerShellNativeNoise limpa o frame de erro nativo e preserva a saída real", () => {
+  const raw = [
+    "cmd.exe : ✓ Switched active account for github.com to jonathanvinna",
+    "No C:\\Users\\Jonathan\\.jarvis\\hub\\jobs\\job-x.ps1:4 caractere:1",
+    "+ & cmd.exe /c 'C:\\Users\\Jonathan\\.jarvis\\hub\\jobs\\job-x.cmd'  ...",
+    "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+    "    + CategoryInfo          : NotSpecified: (✓ Switched ac...jonathanvinna:String) [], RemoteException",
+    "    + FullyQualifiedErrorId : NativeCommandError",
+    " ",
+    "Cloning into 'mia-v2'...",
+    "DONE_CLONING",
+  ].join("\r\n");
+  const clean = stripPowerShellNativeNoise(raw);
+  assert.match(clean, /✓ Switched active account/, "mantém a mensagem real do gh (desembrulhada)");
+  assert.match(clean, /Cloning into 'mia-v2'/);
+  assert.match(clean, /DONE_CLONING/);
+  assert.ok(!/NativeCommandError/.test(clean), "remove o marcador de erro do PowerShell");
+  assert.ok(!/CategoryInfo/.test(clean));
+  assert.ok(!/\.ps1:\d+/.test(clean), "remove a linha de posição do frame");
+  assert.ok(!/^\s*\+\s*~/m.test(clean), "remove o sublinhado ~~~~");
+  assert.ok(!/cmd\.exe :/.test(clean), "desembrulha o prefixo exe :");
+});
 
 function dir(): string { return mkdtempSync(join(tmpdir(), "jarvis-bgrun-")); }
 async function waitFor(pred: () => boolean, ms = 25_000): Promise<boolean> {

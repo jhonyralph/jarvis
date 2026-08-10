@@ -12,6 +12,7 @@
  *   JARVIS_AGENT_PERMISSION_MODE  full-access | provider-default
  */
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
@@ -45,7 +46,7 @@ import { runManagedTurn, type ManagedTurnInput, type TurnCtx } from "./turn.js";
 import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
 import { buildCouncilRoutePrompt, councilRouteFallback, parseCouncilRouteDecision, type CouncilRouteDecision } from "./councilRoute.js";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
-import { BackgroundJobStore, planJobContinuation, parseBackgroundRunDirectives, DEFAULT_MAX_AUTO_CONTINUE_DEPTH, type BackgroundJob, jobPaths, spawnDetachedJob, readJobPid, readJobCompletion } from "@jarvis/core";
+import { BackgroundJobStore, planJobContinuation, parseBackgroundRunDirectives, DEFAULT_MAX_AUTO_CONTINUE_DEPTH, isTerminalJobStatus, type BackgroundJob, jobPaths, spawnDetachedJob, readJobPid, readJobCompletion } from "@jarvis/core";
 import { PersonalAssistantService } from "./personalAssistant.js";
 import { createBuiltInPersonalSources, createPersonalSourceFactory } from "./personalSources.js";
 import { createPersonalProactiveScheduler } from "./personalProactiveIntegration.js";
@@ -2959,6 +2960,7 @@ function reconcileBackgroundJobs(): void {
     if (plan.act && plan.text) injectJobContinuation(job, plan.text);
     else if (!plan.act && job.autoContinueDepth > 0) broadcastOn(job.runnerId || LOCAL_ID, job.originSessionId, { t: "notice", message: `Auto-continuação do job de background parada: ${plan.reason}.` });
   }
+  broadcastBackgroundJobs();
 }
 const HUB_JOB_DIR = join(JARVIS_DIR, "hub");
 const JOB_CHAIN_WINDOW_MS = 15 * 60_000;
@@ -2978,6 +2980,7 @@ function startLocalBackgroundJob(originSessionId: string, command: string, cwd: 
     spawnDetachedJob(command, cwd, jobPaths(HUB_JOB_DIR, job.jobId));
     backgroundJobs.setStatus(job.jobId, "running");
     broadcastOn(LOCAL_ID, originSessionId, { t: "notice", message: `Tarefa em segundo plano iniciada: \`${command.slice(0, 80)}\`. Aviso e continuo quando terminar.` });
+    broadcastBackgroundJobs();
   } catch (error) {
     backgroundJobs.setStatus(job.jobId, "failed", { exitCode: -1, resultSummary: `falha ao iniciar o job: ${String((error as Error)?.message || error)}` });
     reconcileBackgroundJobs();
@@ -2988,16 +2991,38 @@ function startLocalBackgroundJob(originSessionId: string, command: string, cwd: 
  *  (which reconcileBackgroundJobs then auto-continues). Runs on a short timer; crash-safe because the
  *  result file persists — a job that finishes while the Hub is down is caught on the next poll. */
 function pollBackgroundJobs(): void {
-  let anyTerminal = false;
+  let anyTerminal = false, changed = false;
   for (const job of backgroundJobs.running()) {
     if ((job.runnerId || LOCAL_ID) !== LOCAL_ID) continue; // remote jobs are their runner's business (Phase 4)
     const paths = jobPaths(HUB_JOB_DIR, job.jobId);
-    if (job.status === "queued") { const pid = readJobPid(paths); if (pid) backgroundJobs.setPid(job.jobId, pid); continue; }
-    if (job.pid === undefined) { const pid = readJobPid(paths); if (pid) backgroundJobs.setPid(job.jobId, pid); }
+    if (job.status === "queued") { const pid = readJobPid(paths); if (pid) { backgroundJobs.setPid(job.jobId, pid); changed = true; } continue; }
+    if (job.pid === undefined) { const pid = readJobPid(paths); if (pid) { backgroundJobs.setPid(job.jobId, pid); changed = true; } }
     const completion = readJobCompletion(paths);
     if (completion) { backgroundJobs.setStatus(job.jobId, completion.exitCode === 0 ? "succeeded" : "failed", completion); anyTerminal = true; }
   }
+  if (anyTerminal || changed) broadcastBackgroundJobs();
   if (anyTerminal) reconcileBackgroundJobs();
+}
+/** Mata o worker detached de um job (e sua árvore) — best-effort, multiplataforma. */
+function killJob(pid: number): void {
+  try {
+    if (process.platform === "win32") spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { stdio: "ignore", windowsHide: true }).unref?.();
+    else { try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch { /* já saiu */ } } }
+  } catch { /* best effort */ }
+}
+/** Jobs mostrados ao dono na UI: tudo ainda vivo + os terminais recentes (para ver "acabou/falhou" por
+ *  um tempo). Comando truncado; nada além do próprio comando é exposto. */
+function backgroundJobsForUi(): Array<Record<string, unknown>> {
+  const RECENT_MS = 10 * 60_000, now = Date.now();
+  return backgroundJobs.list()
+    .filter((j) => !isTerminalJobStatus(j.status) || now - j.updatedAt < RECENT_MS)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 30)
+    .map((j) => ({ jobId: j.jobId, command: j.command.length > 200 ? j.command.slice(0, 200) + "…" : j.command, status: j.status, sessionId: j.originSessionId, runnerId: j.runnerId || LOCAL_ID, createdAt: j.createdAt, updatedAt: j.updatedAt, exitCode: j.exitCode }));
+}
+function broadcastBackgroundJobs(): void {
+  const payload = { t: "background_jobs" as const, jobs: backgroundJobsForUi() };
+  for (const c of wss.clients) { const w = c as WebSocket; if (w.readyState === WebSocket.OPEN && !runnerSockets.has(w) && isOwnerSocket(w)) { try { send(w, payload); } catch { /* skip */ } } }
 }
 function flushQueuesForRunner(runnerId: string): void {
   for (const [key, items] of queues) {
@@ -5987,6 +6012,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       broadcastQueue(rid, msg.sessionId); saveQueues(); return;
     }
     if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { const rid = activeRunner(ws); if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(scopedSessionKey(rid, msg.sessionId), []); broadcastQueue(rid, msg.sessionId); saveQueues(); return; }
+    // Monitor de jobs em background (comandos ```jarvis-run```): lista para o dono, e cancelar.
+    if (msg.t === "background_jobs") { if (!requireOwner(ws)) return; send(ws, { t: "background_jobs", jobs: backgroundJobsForUi() }); return; }
+    if (msg.t === "background_job_cancel" && typeof msg.jobId === "string") {
+      if (!requireOwner(ws)) return;
+      const job = backgroundJobs.get(msg.jobId);
+      if (job && !isTerminalJobStatus(job.status)) {
+        if (job.pid) killJob(job.pid);
+        try { backgroundJobs.setStatus(job.jobId, "cancelled", { exitCode: -1, resultSummary: "cancelado pelo usuário" }); } catch { /* já terminal — corrida */ }
+        backgroundJobs.markContinued(job.jobId); // cancel do usuário NÃO auto-continua a sessão
+        broadcastOn(job.runnerId || LOCAL_ID, job.originSessionId, { t: "notice", message: `Tarefa em segundo plano cancelada: \`${job.command.slice(0, 80)}\`.` });
+      }
+      broadcastBackgroundJobs();
+      return;
+    }
     if (msg.t === "flushqueue" && typeof msg.sessionId === "string") { const rid = activeRunner(ws); if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } void maybeFlushQueue(rid, msg.sessionId, false); return; }
     // "voltar" mensagem cancelada: tira a última mensagem do usuário do store (sessão do hub) pra
     // ela não reaparecer no reload. Nativa não dá (o transcript é do claude) — some só na tela.
@@ -6322,6 +6361,10 @@ try { loadQueues(); loadPendingInboundTurns(); recoverPendingInboundTurns(); con
 try { reconcileBackgroundJobs(); } catch { /* ignore */ }
 setInterval(() => { try { pollBackgroundJobs(); } catch { /* ignore */ } }, 2_000).unref?.();
 setInterval(() => { try { reconcileBackgroundJobs(); } catch { /* ignore */ } }, 30_000).unref?.();
+// Safety-net: drena filas locais ociosas que encalharam. A continuação de um job enfileira o turno e
+// chama maybeFlushQueue UMA vez; se esse flush bater num gate transitório (reserva de dispatch, timing
+// de boot), nada mais re-dispara — o flush de fim-de-turno só roda quando um turno termina, e não há.
+setInterval(() => { try { flushAllQueues(); } catch { /* ignore */ } }, 15_000).unref?.();
 // A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
 // — fix them all proactively at boot, not just when the user happens to reopen one.
 try { let n = 0; for (const meta of store.list()) { const s = store.ensure(meta.id); const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) n++; } if (n) console.log(`[hub] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`); } catch { /* ignore */ }

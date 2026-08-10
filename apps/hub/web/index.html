@@ -318,6 +318,15 @@
     /* fila de mensagens */
     #queueRow { display:flex; flex-direction:column; gap:5px; margin-bottom:6px; }
     #queueRow.hidden { display:none; }
+    #bgJobs { display:flex; flex-direction:column; gap:4px; margin-bottom:6px; }
+    #bgJobs.hidden { display:none; }
+    #bgJobs .bgj { display:flex; align-items:center; gap:8px; font-size:11.5px; padding:4px 8px; border:1px solid var(--line,#ffffff1f); border-radius:8px; background:#0e141c; }
+    #bgJobs .bgj .bgj-ic { flex:none; }
+    #bgJobs .bgj .bgj-cmd { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,Menlo,Consolas,monospace; }
+    #bgJobs .bgj .bgj-act { flex:none; background:none; border:0; cursor:pointer; font-size:11px; padding:2px 6px; border-radius:6px; color:var(--mut,#8ea0b5); }
+    #bgJobs .bgj .bgj-act:hover { background:#ffffff12; color:var(--text,#e6edf3); }
+    #bgJobs .bgj .bgj-act.danger { color:#f0883e; }
+    #bgJobs .bgj.run { border-color:#f5b54455; }
     /* a fila pode crescer: cabeçalho fixo, itens rolam. Limite pensado pra mobile (vh) e desktop (px). */
     #queueRow .qlist { display:flex; flex-direction:column; gap:5px; max-height:min(42vh,280px); overflow-y:auto; padding-right:2px; }
     #queueRow .qhdr { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11.5px; color:var(--mut); }
@@ -1298,6 +1307,7 @@
       <div id="log"></div>
       <form id="composer">
         <button type="button" id="scrollBtn" class="hidden" title="Ir para as mensagens recentes"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 16 18 9"></polyline></svg></button>
+        <div id="bgJobs" class="hidden"></div>
         <div id="queueRow" class="hidden"></div>
         <div id="attachRow"></div>
         <div id="cmdPop" class="cmdpop hidden"></div>

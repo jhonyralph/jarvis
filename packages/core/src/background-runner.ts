@@ -123,10 +123,31 @@ function decodeLoose(buf: Buffer): string {
   return buf.toString("utf8").replace(/^﻿/, "");
 }
 
+/**
+ * Remove o "frame" de erro que o Windows PowerShell injeta quando um comando NATIVO (cmd/git/gh…)
+ * escreve no stderr — o wrapper roda `& cmd.exe … *>>`, então cada linha de stderr vira um ErrorRecord
+ * formatado (NativeCommandError). Isso não é falha (o exit code vem do processo), só polui o log que
+ * alimenta o turno de continuação. Aqui dropamos as linhas do frame e desembrulhamos `exe : mensagem`
+ * de volta para a mensagem real. Pure.
+ */
+export function stripPowerShellNativeNoise(text: string): string {
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (/\.ps1:\d+\s+(char|caractere):\d+/.test(line)) continue;              // "At/No …ps1:N char/caractere:M"
+    if (/^\s*\+\s*~+\s*$/.test(line)) continue;                               // "+ ~~~~~~"
+    if (/^\s*\+\s*(CategoryInfo|FullyQualifiedErrorId)\b/.test(line)) continue;
+    if (/^\s*\+\s*&?\s*cmd\.exe\b/i.test(line)) continue;                     // echo da linha ofensora
+    const m = /^\s*[\w.-]+\.exe\s*:\s*(.*)$/.exec(line);                      // "cmd.exe : ✓ Switched…" → "✓ Switched…"
+    if (m) { if (m[1].trim()) out.push(m[1]); continue; }
+    out.push(line);
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
 /** Bounded tail of the job log (keeps the END — where errors are — and caps the prompt size). Pure. */
 export function jobLogTail(logText: string | undefined, cap = 4000): string {
   if (!logText) return "";
-  const t = logText.replace(/\r\n/g, "\n").trimEnd();
+  const t = stripPowerShellNativeNoise(logText.replace(/\r\n/g, "\n")).trimEnd();
   return t.length <= cap ? t : `…(início cortado)\n${t.slice(t.length - cap)}`;
 }
 
