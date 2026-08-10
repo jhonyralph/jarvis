@@ -37,10 +37,60 @@ import { EXECUTION_ADAPTER_PROFILES, EXECUTION_ADAPTER_IDS, mapProviderExecution
 
 /** Effective unattended execution policy. The historical default is full access; operators can
  * opt into each provider's own sandbox/approval behavior without changing adapter code. */
-export function agentPermissionMode(value = process.env.JARVIS_AGENT_PERMISSION_MODE): PermissionMode {
-  return value === "provider-default" || value === "provider_default" ? "provider_default" : "full_access";
+/** Accept a canonical or legacy permission-mode string; return the canonical value, or undefined
+ * when unrecognized. Legacy: full_access/full-access → bypass; provider_default/provider-default →
+ * manual (each CLI's own "ask" default). */
+export function normalizePermissionMode(value?: string): PermissionMode | undefined {
+  switch (value) {
+    case "manual": case "accept_edits": case "plan": case "auto": case "bypass": return value;
+    case "full_access": case "full-access": return "bypass";
+    case "provider_default": case "provider-default": return "manual";
+    default: return undefined;
+  }
 }
-const fullAccess = (): boolean => agentPermissionMode() === "full_access";
+
+/** Effective unattended execution policy. The historical default is full access (bypass); operators
+ * opt into a provider's own approval behavior via JARVIS_AGENT_PERMISSION_MODE, and a per-turn
+ * SendOpts.permissionMode (the UI picker) overrides it. */
+export function agentPermissionMode(value = process.env.JARVIS_AGENT_PERMISSION_MODE): PermissionMode {
+  return normalizePermissionMode(value) ?? "bypass";
+}
+
+/** The mode that actually governs a turn: an explicit per-turn choice wins, else the global default. */
+export function effectivePermissionMode(opts?: SendOpts): PermissionMode {
+  return normalizePermissionMode(opts?.permissionMode) ?? agentPermissionMode();
+}
+
+/** Canonical → provider argv. Pure and total: every provider maps every canonical mode to the
+ * closest argv it can express. Providers that can't express an intermediate mode degrade toward the
+ * MORE restrictive option (their own "ask" default), never silently to bypass; the UI only offers
+ * modes in each adapter's `supportedPermissionModes`, so degradation is a safety net, not the normal
+ * path. The Jarvis-managed subagent sandbox is enforced separately (managedAdapterSecurityArgs) and
+ * is never routed through here. */
+export function permissionArgs(agent: string, mode: PermissionMode): string[] {
+  const bypass = mode === "bypass";
+  switch (agent) {
+    case "claude-code":
+      return ["--permission-mode", ({ manual: "manual", accept_edits: "acceptEdits", plan: "plan", auto: "auto", bypass: "bypassPermissions" } as const)[mode]];
+    case "codex":
+      if (bypass) return ["--dangerously-bypass-approvals-and-sandbox"];
+      if (mode === "plan") return ["--sandbox", "read-only"];
+      if (mode === "accept_edits") return ["--sandbox", "workspace-write"];
+      if (mode === "auto") return ["--ask-for-approval", "on-request"];
+      return []; // manual → Codex's own default approval (asks)
+    case "gemini": return bypass ? ["--yolo"] : [];
+    case "cursor": return bypass ? ["--force"] : [];
+    case "copilot": return bypass ? ["--yolo"] : []; // --no-ask-user stays in buildCopilotArgs
+    case "opencode": return bypass ? ["--auto"] : [];
+    case "cline": return ["--auto-approve", bypass ? "true" : "false"];
+    case "qwen": return ["--approval-mode", bypass ? "yolo" : "default"];
+    case "continue": return bypass ? ["--auto"] : [];
+    case "kiro": return bypass ? ["--trust-all-tools"] : [];
+    case "aider": return bypass ? ["--yes-always"] : [];
+    default: return [];
+  }
+}
+
 const effectiveCaps = (caps: AgentCapabilities): AgentCapabilities => ({ ...caps, permissionMode: agentPermissionMode() });
 const claudeInputContext = (u: any): number | undefined => {
   if (!u) return undefined;
@@ -137,6 +187,9 @@ export interface AgentCaps {
 export interface SendOpts {
   model?: string;
   effort?: string;
+  /** Per-turn permission mode chosen in the UI; overrides the global JARVIS_AGENT_PERMISSION_MODE.
+   *  Canonical values; legacy strings are normalized (see normalizePermissionMode). */
+  permissionMode?: PermissionMode;
   /** Abort the underlying agent process (user hit "parar"). Rejects the send with ABORTED. */
   signal?: AbortSignal;
   /** Provider-neutral continuity for CLIs without a safely addressable native session. The current
@@ -294,10 +347,10 @@ export function safeProviderValue(v?: string): string | undefined {
 
 /** Complete Aider argv composition, kept pure to prove a managed invocation never inherits the
  * global unattended `--yes-always` switch. */
-export function buildAiderInvocationArgs(messageFile: string, opts?: SendOpts, unattendedFullAccess = fullAccess()): string[] {
+export function buildAiderInvocationArgs(messageFile: string, opts?: SendOpts, unattendedBypass = effectivePermissionMode(opts) === "bypass"): string[] {
   const args = ["--message-file", messageFile, "--no-stream", "--no-pretty"];
   if (opts?.managed) args.push(...managedAdapterSecurityArgs("aider", opts.managed));
-  else if (unattendedFullAccess) args.push("--yes-always");
+  else if (unattendedBypass) args.push("--yes-always");
   const model = safeProviderValue(opts?.model); if (model) args.push("--model", model);
   return args;
 }
@@ -718,7 +771,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       id: this.name, label: "Claude Code", command: this.bin, version, support,
       reason: support === "not_installed" ? "CLI claude não encontrado" : support === "unauthenticated" ? "execute claude login nesta máquina" : undefined,
       capabilities: {
-        permissionMode: agentPermissionMode(), stream: "delta", tools: true, thinking: true, plans: false, subagents: true,
+        permissionMode: agentPermissionMode(), supportedPermissionModes: ["plan", "bypass"], stream: "delta", tools: true, thinking: true, plans: false, subagents: true,
         nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
         cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
         commands: true, skills: true, mcp: true, oneShot: true, remote: true,
@@ -749,7 +802,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // Non-managed turns only: teach the agent to hand long tasks to Jarvis's durable background jobs
       // (the Hub parses the ```jarvis-run block from the reply). Managed/subagent turns are isolated.
       if (process.env.JARVIS_BG_JOBS !== "off") args.push("--append-system-prompt", BACKGROUND_JOB_STEERING);
-      if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
+      args.push(...permissionArgs("claude-code", effectivePermissionMode(opts)));
     }
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("--model", model);
@@ -854,7 +907,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
     validateModelSelection(await this.capabilities(), opts);
     const args = ["-p", "--output-format", "json"]; // prompt via stdin — see send()
-    if (fullAccess()) args.push("--permission-mode", "bypassPermissions");
+    args.push(...permissionArgs("claude-code", effectivePermissionMode(opts)));
     if (opts?.noMcp) args.push("--strict-mcp-config"); // no --mcp-config ⇒ load zero MCP servers
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
@@ -1142,7 +1195,7 @@ export class CodexAdapter implements AgentAdapter {
       id: this.name, label: "OpenAI Codex", command: "codex", version, support,
       reason: support === "not_installed" ? "CLI codex não encontrado" : support === "unauthenticated" ? "execute codex login nesta máquina" : "stream e modelos funcionam, mas todos os tipos de evento ainda precisam de certificação real por versão do CLI",
       capabilities: {
-        permissionMode: agentPermissionMode(), stream: "delta", tools: true, thinking: true, plans: false, subagents: true,
+        permissionMode: agentPermissionMode(), supportedPermissionModes: ["plan", "bypass"], stream: "delta", tools: true, thinking: true, plans: false, subagents: true,
         nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
         cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
         commands: true, skills: true, mcp: true, oneShot: true, remote: true,
@@ -1162,7 +1215,7 @@ export class CodexAdapter implements AgentAdapter {
     if (prev) assertNativeSessionBinding(this.sessions, sessionId, prev);
     const args = prev ? ["exec", "resume", prev, "--json"] : ["exec", "--cd", cwd, "--json"];
     if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
-    else if (fullAccess()) args.push("--dangerously-bypass-approvals-and-sandbox");
+    else args.push(...permissionArgs("codex", effectivePermissionMode(opts)));
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
@@ -1290,7 +1343,7 @@ export class CodexAdapter implements AgentAdapter {
     validateModelSelection(await this.capabilities(), opts);
     // run in ONESHOT_CWD (excluded from the native list) so throwaway prompts don't litter the sidebar
     const args = ["exec", "--cd", ONESHOT_CWD, "--json"];
-    if (fullAccess()) args.push("--dangerously-bypass-approvals-and-sandbox");
+    args.push(...permissionArgs("codex", effectivePermissionMode(opts)));
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
@@ -1604,14 +1657,14 @@ const structuredCaps = (over: Partial<AgentCapabilities> = {}): AgentCapabilitie
   modelCatalog: "provider_dynamic", modelControl: "per_turn", sessionContinuity: "native_id", toolLifecycle: "start_only", ...over,
 });
 
-export function buildGeminiArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--output-format", "stream-json"]; if (fullAccess()) a.push("--yolo"); if (sid) a.push("--resume", sid); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); a.push("--prompt", text); return a; }
-export function buildCursorArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--print", "--output-format", "stream-json"]; if (fullAccess()) a.push("--force"); if (sid) a.push("--resume", sid); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); a.push(text); return a; }
-export function buildCopilotArgs(text: string, cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--prompt", text, "--output-format=json", "--stream=on", "--no-ask-user", "-C", cwd]; if (fullAccess()) a.push("--yolo"); if (sid) a.push(`--resume=${sid}`); const model = safeProviderValue(opts?.model), effort = safeIdent(opts?.effort); if (model) a.push(`--model=${model}`); if (effort) a.push(`--effort=${effort}`); return a; }
-export function buildOpenCodeArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["run", "--format", "json"]; if (fullAccess()) a.push("--auto"); if (sid) a.push("--session", sid); const model = safeProviderValue(opts?.model), effort = safeProviderValue(opts?.effort); if (model) a.push("--model", model); if (effort) a.push("--variant", effort); a.push(text); return a; }
-export function buildClineArgs(text: string, cwd: string, _sid?: string, opts?: SendOpts): string[] { const a = ["--json", "--auto-approve", fullAccess() ? "true" : "false", "--cwd", cwd]; const model = safeProviderValue(opts?.model), effort = safeIdent(opts?.effort); if (model) a.push("--model", model); if (effort) a.push("--thinking", effort); a.push(text); return a; }
-export function buildQwenArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--output-format", "stream-json", "--include-partial-messages", "--approval-mode", fullAccess() ? "yolo" : "default"]; if (sid) a.push("--resume", sid); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); a.push("--prompt", text); return a; }
-export function buildContinueArgs(text: string, opts?: SendOpts): string[] { const a = ["-p", text, "--format", "json"]; if (fullAccess()) a.push("--auto"); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); return a; }
-export function buildKiroArgs(text: string, opts?: SendOpts): string[] { const a = ["chat", "--no-interactive"]; if (fullAccess()) a.push("--trust-all-tools"); const effort = safeIdent(opts?.effort); if (effort) a.push("--effort", effort); a.push(text); return a; }
+export function buildGeminiArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--output-format", "stream-json", ...permissionArgs("gemini", effectivePermissionMode(opts))]; if (sid) a.push("--resume", sid); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); a.push("--prompt", text); return a; }
+export function buildCursorArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--print", "--output-format", "stream-json", ...permissionArgs("cursor", effectivePermissionMode(opts))]; if (sid) a.push("--resume", sid); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); a.push(text); return a; }
+export function buildCopilotArgs(text: string, cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--prompt", text, "--output-format=json", "--stream=on", "--no-ask-user", "-C", cwd, ...permissionArgs("copilot", effectivePermissionMode(opts))]; if (sid) a.push(`--resume=${sid}`); const model = safeProviderValue(opts?.model), effort = safeIdent(opts?.effort); if (model) a.push(`--model=${model}`); if (effort) a.push(`--effort=${effort}`); return a; }
+export function buildOpenCodeArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["run", "--format", "json", ...permissionArgs("opencode", effectivePermissionMode(opts))]; if (sid) a.push("--session", sid); const model = safeProviderValue(opts?.model), effort = safeProviderValue(opts?.effort); if (model) a.push("--model", model); if (effort) a.push("--variant", effort); a.push(text); return a; }
+export function buildClineArgs(text: string, cwd: string, _sid?: string, opts?: SendOpts): string[] { const a = ["--json", ...permissionArgs("cline", effectivePermissionMode(opts)), "--cwd", cwd]; const model = safeProviderValue(opts?.model), effort = safeIdent(opts?.effort); if (model) a.push("--model", model); if (effort) a.push("--thinking", effort); a.push(text); return a; }
+export function buildQwenArgs(text: string, _cwd: string, sid?: string, opts?: SendOpts): string[] { const a = ["--output-format", "stream-json", "--include-partial-messages", ...permissionArgs("qwen", effectivePermissionMode(opts))]; if (sid) a.push("--resume", sid); const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); a.push("--prompt", text); return a; }
+export function buildContinueArgs(text: string, opts?: SendOpts): string[] { const a = ["-p", text, "--format", "json", ...permissionArgs("continue", effectivePermissionMode(opts))]; const model = safeProviderValue(opts?.model); if (model) a.push("--model", model); return a; }
+export function buildKiroArgs(text: string, opts?: SendOpts): string[] { const a = ["chat", "--no-interactive", ...permissionArgs("kiro", effectivePermissionMode(opts))]; const effort = safeIdent(opts?.effort); if (effort) a.push("--effort", effort); a.push(text); return a; }
 
 export class GeminiCliAdapter extends StructuredCliAdapter {
   constructor() { super({ id: "gemini", label: "Google Gemini CLI", command: "gemini", parser: parseGeminiCliEvent, source: "gemini stream-json", capabilities: structuredCaps({ usage: true, mcp: true, commands: true, skills: true, toolLifecycle: "full" }), args: buildGeminiArgs }); }
@@ -1757,7 +1810,7 @@ export class AiderAdapter implements AgentAdapter {
     // stateless throwaway (no history restore, no commits) in the excluded oneshot dir
     const mf = tempTextFile("jarvis_aider", text);
     try {
-      const args = ["--message-file", mf.path, "--no-stream", "--no-pretty", "--no-auto-commits"]; if (fullAccess()) args.push("--yes-always");
+      const args = ["--message-file", mf.path, "--no-stream", "--no-pretty", "--no-auto-commits", ...permissionArgs("aider", effectivePermissionMode(opts))];
       const model = safeProviderValue(opts?.model); if (model) args.push("--model", model);
       const out = await run("aider", args, ONESHOT_CWD, "");
       return { text: out.trim() };

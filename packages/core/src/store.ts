@@ -6,7 +6,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ContextManifest } from "@jarvis/protocol";
+import type { ContextManifest, PermissionMode } from "@jarvis/protocol";
 import { writeJsonAtomic, writeTextAtomic, readJson } from "./persist.js";
 
 export interface StoredMessage {
@@ -44,6 +44,8 @@ export interface SessionMeta {
   archived?: boolean;
   /** Sum of every message's recorded usage.costUsd — lets the client offer a "sort by cost" view. 0 when nothing was billed/estimated. */
   cost: number;
+  /** Last permission mode chosen for this session (durable, mutable, inheritable). */
+  permissionMode?: PermissionMode;
 }
 
 interface SessionData {
@@ -59,6 +61,9 @@ interface SessionData {
   archived?: boolean;
   rootExecutionId?: string;
   executionId?: string;
+  /** Permission mode chosen for this session. Unlike agent/cwd this is NOT locked — the user can
+   *  switch it mid-conversation via the picker; the latest value is what new sessions inherit. */
+  permissionMode?: PermissionMode;
 }
 
 function titleFromMessage(text: string, cap = 240): string {
@@ -107,6 +112,7 @@ export class Store {
         archived: s.archived === true,
         rootExecutionId: typeof s.rootExecutionId === "string" ? s.rootExecutionId : undefined,
         executionId: typeof s.executionId === "string" ? s.executionId : undefined,
+        permissionMode: typeof s.permissionMode === "string" ? (s.permissionMode as PermissionMode) : undefined,
       };
       if (inline && inline.length) { this.rewriteMessages(id, messages); migrated = true; }
     }
@@ -151,7 +157,7 @@ export class Store {
   }
 
   /** Create if missing. agent + cwd are set here and never change afterwards. */
-  ensure(id: string, opts?: { title?: string; agent?: string; cwd?: string; hidden?: boolean; rootExecutionId?: string; executionId?: string }): SessionData {
+  ensure(id: string, opts?: { title?: string; agent?: string; cwd?: string; hidden?: boolean; rootExecutionId?: string; executionId?: string; permissionMode?: PermissionMode }): SessionData {
     let s = this.data[id];
     if (!s) {
       s = this.data[id] = {
@@ -165,10 +171,34 @@ export class Store {
         hidden: opts?.hidden === true,
         rootExecutionId: opts?.rootExecutionId,
         executionId: opts?.executionId,
+        permissionMode: opts?.permissionMode,
       };
       this.flush();
     }
     return s;
+  }
+
+  /** Set the session's permission mode. Mutable at any time (the picker can switch mid-conversation),
+   *  unlike agent/cwd which are locked once the session starts. Returns false if the session is gone. */
+  setPermissionMode(id: string, mode: PermissionMode): boolean {
+    const s = this.data[id];
+    if (!s) return false;
+    if (s.permissionMode === mode) return true;
+    s.permissionMode = mode;
+    this.flush();
+    return true;
+  }
+
+  /** Settings a NEW session for `cwd` should inherit from the most recent STARTED session in the same
+   *  folder: its agent, last-used model/effort (from that session's last message usage) and permission
+   *  mode. Returns undefined when the project has no prior started session (a genuinely new project). */
+  inheritForCwd(cwd: string): { agent?: string; model?: string; effort?: string; permissionMode?: PermissionMode } | undefined {
+    const s = Object.values(this.data)
+      .filter((x) => !x.hidden && x.cwd === cwd && x.messages.length > 0)
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (!s) return undefined;
+    const lastUsage = [...s.messages].reverse().find((m) => m.usage)?.usage;
+    return { agent: s.agent, model: lastUsage?.model, effort: lastUsage?.effort, permissionMode: s.permissionMode };
   }
 
   get(id: string): SessionData | undefined {
@@ -278,6 +308,7 @@ export class Store {
         count: s.messages.length,
         archived: s.archived === true,
         cost: s.messages.reduce((sum, m) => sum + (m.usage?.costUsd ?? 0), 0),
+        permissionMode: s.permissionMode,
       }));
   }
 

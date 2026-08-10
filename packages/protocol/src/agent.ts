@@ -12,10 +12,18 @@ export type ModelControl = "per_turn" | "configuration_only" | "provider_default
 export type SessionContinuity = "native_id" | "jarvis_history" | "cwd_global" | "none";
 export type ToolLifecycle = "full" | "start_only" | "unobservable" | "none";
 export type Modality = "text" | "image" | "audio" | "file";
-export type PermissionMode = "provider_default" | "full_access";
+/** Canonical, provider-independent permission mode. The resolver in core (`permissionArgs`)
+ *  translates each value to a provider's native approval/sandbox flags, degrading toward the more
+ *  restrictive option (never silently to `bypass`) when a provider can't express it. Legacy values
+ *  `provider_default`/`full_access` are still accepted on input and normalized (→ `manual`/`bypass`). */
+export type PermissionMode = "manual" | "accept_edits" | "plan" | "auto" | "bypass";
 
 export interface AgentCapabilities {
+  /** The current default mode reported for this adapter (informational; per-turn choice overrides). */
   permissionMode: PermissionMode;
+  /** Canonical modes this adapter honors end-to-end today; drives the UI picker (modes outside this
+   *  list render disabled). Absent ⇒ treat as ["bypass"]. Expands as the approval bridge lands. */
+  supportedPermissionModes?: PermissionMode[];
   stream: StreamGranularity;
   tools: boolean;
   toolLifecycle: ToolLifecycle;
@@ -186,7 +194,7 @@ export function modelSupports(d: AgentDescriptor, modelId?: string, effort?: str
 }
 
 export const LIMITED_CAPABILITIES: AgentCapabilities = Object.freeze<AgentCapabilities>({
-  permissionMode: "full_access", stream: "final_only", tools: false, toolLifecycle: "none", thinking: false, plans: false, subagents: false,
+  permissionMode: "bypass", supportedPermissionModes: ["bypass"], stream: "final_only", tools: false, toolLifecycle: "none", thinking: false, plans: false, subagents: false,
   nativeSessions: false, nativeResume: false, sessionContinuity: "none", files: false, diffs: false, usage: false, cost: "unavailable",
   attachments: ["text", "file"], commands: false, skills: false, mcp: false, oneShot: true, remote: true, modelCatalog: "none", modelControl: "none",
 });

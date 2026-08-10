@@ -23,7 +23,7 @@ import { PushCenter, type PushActor } from "./push.js";
 import { RunnerListWaiters } from "./runnerListWaiters.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, resolveClosestModel, createAgentEventBridge, createEventSequencer, ackThenWork, routePersonalIntent, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent } from "@jarvis/core";
+import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, resolveClosestModel, createAgentEventBridge, createEventSequencer, ackThenWork, routePersonalIntent, loadSessionDefaults, saveSessionDefaults, resolveSessionDefaults, normalizePermissionMode, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent, type PermissionMode, type SessionDefaults, type SessionDefaultsDocument } from "@jarvis/core";
 import { synthesize, listVoices, listVoiceCatalog, hasVoice, warmUp as warmUpTts } from "./tts.js";
 import { transcribe, warmUp as warmUpStt } from "./stt.js";
 import { warmUp as warmUpEmbed } from "./embed.js";
@@ -159,6 +159,41 @@ const JARVIS_DIR = join(process.env.JARVIS_HOME || homedir(), ".jarvis");
 const personalSessionBindings = new PersonalSessionBindings(join(JARVIS_DIR, "hub", "personal-session-bindings.json"));
 const ADAPTIVE_POLICY_FILE = join(JARVIS_DIR, "policies.json");
 let adaptivePolicyDoc: AdaptivePolicyDocument = loadAdaptivePolicyDocument(ADAPTIVE_POLICY_FILE);
+// Durable defaults for a NEW session (agent/model/effort/permission), scoped global + per project.
+const SESSION_DEFAULTS_FILE = join(JARVIS_DIR, "session-defaults.json");
+let sessionDefaultsDoc: SessionDefaultsDocument = loadSessionDefaults(SESSION_DEFAULTS_FILE);
+// Per-session permission mode for turn dispatch: the Store for managed sessions (durable +
+// inheritable), an in-memory map for native imported sessions (which have no Store record).
+const nativeSessionPermissionModes = new Map<string, PermissionMode>();
+function sessionPermissionMode(sid: string): PermissionMode | undefined {
+  return store.get(sid)?.permissionMode ?? nativeSessionPermissionModes.get(sid);
+}
+function setSessionPermissionMode(sid: string, mode: PermissionMode): void {
+  if (!store.setPermissionMode(sid, mode)) nativeSessionPermissionModes.set(sid, mode);
+}
+/** Bounded, validated shape for the durable session-defaults config coming from the Settings UI:
+ *  known fields only, agent names checked against the registry, permission modes normalized, arrays
+ *  capped. Anything unrecognized is dropped rather than trusted. */
+function sanitizeSessionDefaults(input: unknown): SessionDefaultsDocument {
+  const one = (v: unknown): SessionDefaults => {
+    const o = (v ?? {}) as Record<string, unknown>;
+    const out: SessionDefaults = {};
+    if (typeof o.agent === "string" && agents.names().includes(o.agent)) out.agent = o.agent;
+    if (typeof o.model === "string" && o.model.length <= 160) out.model = o.model;
+    if (typeof o.effort === "string" && o.effort.length <= 40) out.effort = o.effort;
+    const pm = normalizePermissionMode(typeof o.permissionMode === "string" ? o.permissionMode : undefined);
+    if (pm) out.permissionMode = pm;
+    return out;
+  };
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const projects = Array.isArray(raw.projects)
+    ? raw.projects
+        .filter((p): p is Record<string, unknown> => !!p && typeof (p as Record<string, unknown>).projectRoot === "string" && ((p as Record<string, unknown>).projectRoot as string).length > 0 && ((p as Record<string, unknown>).projectRoot as string).length <= 400)
+        .slice(0, 200)
+        .map((p) => ({ projectRoot: p.projectRoot as string, ...one(p) }))
+    : [];
+  return { global: one(raw.global), projects };
+}
 const personalAssistant = new PersonalAssistantService({
   root: join(JARVIS_DIR, "personal"),
   sourceFactory: createPersonalSourceFactory(),
@@ -3584,7 +3619,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   try {
     emit(bridge.accepted()); emit(bridge.started());
     const prior = store.history(sid).slice(0, -1).filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
-    const reply = await agent.send(sid, agentText, cwd, { ...opts, turnId, history: prior, signal: ctrl.signal }, (ev) => {
+    const reply = await agent.send(sid, agentText, cwd, { ...opts, permissionMode: opts.permissionMode ?? sessionPermissionMode(sid), turnId, history: prior, signal: ctrl.signal }, (ev) => {
       if (isProviderExecutionEvent(ev)) {
         let projected: ReturnType<ExecutionTracker["handleProviderEvent"]> | undefined;
         let projectionFailed = false;
@@ -5069,6 +5104,30 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       pushSessions();
       return;
     }
+    // Set/switch a session's permission mode (the picker). Mutable at any time, unlike agent/cwd.
+    // Persisted on the session (managed) or an in-memory map (native), so the next turn — and any
+    // NEW session opened later for the same project — inherits it.
+    if (msg.t === "setmode" && typeof msg.sessionId === "string") {
+      const pm = normalizePermissionMode(typeof msg.mode === "string" ? msg.mode : undefined);
+      if (!pm) { send(ws, { t: "error", message: "modo de permissão inválido" }); return; }
+      setSessionPermissionMode(msg.sessionId, pm);
+      send(ws, { t: "mode", runnerId: LOCAL_ID, sessionId: msg.sessionId, mode: pm });
+      pushSessions();
+      return;
+    }
+    // Durable session-defaults config (agent/model/effort/permission), scoped global + per project.
+    // A brand-new project seeds a new session from here (an existing one seeds from its last session).
+    if (msg.t === "get_session_defaults") {
+      send(ws, { t: "session_defaults", doc: sessionDefaultsDoc });
+      return;
+    }
+    if (msg.t === "set_session_defaults") {
+      if (!requireOwner(ws)) return;
+      sessionDefaultsDoc = sanitizeSessionDefaults(msg.doc);
+      try { saveSessionDefaults(sessionDefaultsDoc, SESSION_DEFAULTS_FILE); } catch { /* best-effort */ }
+      send(ws, { t: "session_defaults", doc: sessionDefaultsDoc, saved: true });
+      return;
+    }
     // plan usage (5h / weekly windows) — account-level, from the local agent's usage endpoint
     if (msg.t === "get_usage") {
       const name = typeof msg.agent === "string" && agents.names().includes(msg.agent) ? msg.agent : agents.default;
@@ -5130,7 +5189,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, {
         t: "history", runnerId: LOCAL_ID,
         sessionId: msg.sessionId,
-        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, sessionCost: costOf(msg.sessionId), sessionUsage: sessionUsage(msg.sessionId), model: h.model, effort: h.effort },
+        session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, sessionCost: costOf(msg.sessionId), sessionUsage: sessionUsage(msg.sessionId), model: h.model, effort: h.effort, permissionMode: sessionPermissionMode(msg.sessionId) },
         total: h.messages.length,
         messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })),
         files: sessionFiles(msg.sessionId),
@@ -5154,7 +5213,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const su = sessionUsage(s.id), nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
       const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
       const files = [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))];
-      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: nh?.title || s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
+      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: nh?.title || s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort, permissionMode: sessionPermissionMode(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
       replayActivity(ws, LOCAL_ID, s.id);
       replayRoute(ws, LOCAL_ID, s.id);
       sendPendingAsk(ws, LOCAL_ID, s.id);
@@ -5164,13 +5223,22 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "new") {
       const _tNew = Date.now();
       const id = randomUUID();
-      const agentName = agents.names().includes(msg.agent) ? msg.agent : agents.default;
       const cwd = typeof msg.cwd === "string" && existsSync(msg.cwd) ? msg.cwd : CWD;
-      const s = store.ensure(id, { agent: agentName, cwd });
+      // Seed the new session: an EXISTING project inherits from its last started session; a brand-new
+      // project falls back to the configured per-project/global defaults. Only fields the source
+      // actually has are applied (an inherited-but-empty field falls through to the config, then to
+      // the system default). An explicit agent picked in the dialog always wins.
+      const seed: SessionDefaults = { ...resolveSessionDefaults(sessionDefaultsDoc, cwd) };
+      const inherited = store.inheritForCwd(cwd);
+      if (inherited) for (const k of ["agent", "model", "effort", "permissionMode"] as const) { const v = inherited[k]; if (v) (seed as Record<string, unknown>)[k] = v; }
+      const explicitAgent = agents.names().includes(msg.agent) ? msg.agent : undefined;
+      const agentName = explicitAgent || (seed.agent && agents.names().includes(seed.agent) ? seed.agent : agents.default);
+      const permissionMode = normalizePermissionMode(typeof msg.permissionMode === "string" ? msg.permissionMode : undefined) ?? seed.permissionMode;
+      const s = store.ensure(id, { agent: agentName, cwd, permissionMode });
       subs.set(ws, id);
       syncTails();
       log.debug("session_create", { sid: id, agent: agentName, ms: Date.now() - _tNew });
-      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
+      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: id, session: { agent: s.agent, cwd: s.cwd, title: s.title, model: seed.model, effort: seed.effort, permissionMode: s.permissionMode }, messages: [] });
       pushSessions();
       return;
     }

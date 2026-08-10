@@ -10,7 +10,7 @@
  * Correlation: request-scoped Hub->Runner messages carry a `reqId`; the Runner
  * echoes it on the matching reply so the Hub can route back to the right client.
  */
-import type { AgentEvent } from "./agent.js";
+import type { AgentEvent, PermissionMode } from "./agent.js";
 import type { ContextActor, ContextManifest } from "./context.js";
 import type { ExecutionHubToRunner, ExecutionRunnerToHub, ExecutionState, ManagedExecutionPlanWire, ManagedExecutionPolicyWire } from "./execution.js";
 
@@ -254,7 +254,7 @@ export type HubToRunner =
       contextPrefix?: string;
       agent?: string;
       cwd?: string;
-      opts?: { model?: string; effort?: string };
+      opts?: { model?: string; effort?: string; permissionMode?: PermissionMode };
       /** idempotency key — the Runner executes a given turnId at most once (dedupes re-delivery:
        *  client resend on reconnect, queue re-flush, WS redelivery). See @jarvis/core createSeenSet. */
       turnId?: string;
@@ -267,7 +267,7 @@ export type HubToRunner =
     }
   | { t: "list" }
   /** create a fresh managed session on the runner (reply: history with the new id) */
-  | { t: "new"; reqId: string; agent?: string; cwd?: string }
+  | { t: "new"; reqId: string; agent?: string; cwd?: string; permissionMode?: PermissionMode }
   /** folder browser for the "new conversation" dialog (reply: dirs) */
   | { t: "listdir"; reqId: string; path?: string; files?: boolean }
   /** change agent/cwd of a not-yet-started session (reply: history) */

@@ -1165,6 +1165,9 @@
       currentSession=m.sessionId; currentSessionRunner=targetRunner; lastByMachine[currentMachine]=m.sessionId; unread.delete(sessionStateKey(m.sessionId,targetRunner)); updateOfflineBanner();
       currentAgent=(m.session||{}).agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
       sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null; lastRouteReason='';   // modelo/esforço reais da sessão da máquina (só nativas mandam)
+      // Adopt the server's permission-mode seed (new session: inherited/config; existing: stored) into
+      // this session's pref so the picker reflects it — without clobbering an explicit local choice.
+      { const spm=(m.session||{}).permissionMode; if(spm){ const key=sessionStateKey(m.sessionId,targetRunner), pr=Object.assign({},sessionValue(sessionPrefs,m.sessionId,targetRunner)||{}); if(!pr.permissionMode){ pr.permissionMode=spm; sessionPrefs[key]=pr; saveSessionPrefs(); } } }
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0; maybeRestoreTree();
       E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearLimitBanner(); clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; debateProgressEl=null; debateProgressId=null; E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
@@ -1966,7 +1969,14 @@
     const modelObj=(agent,id)=>{ if(!id)return null; const ms=capsFor(agent).models||[]; return ms.find(m=>m.id===id)||null; };
     function fillEfforts(effSel,agent,modelId,val){ const m=modelObj(agent,modelId); const efs=(m&&m.efforts)||[]; fillSel(effSel,efs, (efs.includes(val)&&val)||(m&&m.defaultEffort)||efs[0]); }
     // footer pill state: model/effort vary per-message; agent/folder lock once the session starts
-    let curModel=null, curEffort=null, curCwd='', curStarted=false;
+    let curModel=null, curEffort=null, curCwd='', curStarted=false, curMode=null;
+    // Durable session-defaults config (mirrors ~/.jarvis/session-defaults.json on the Hub); the "no
+    // session open" mode pick edits its global default, matching the model/effort "vira padrão" UX.
+    let sdDoc={global:{},projects:[]};
+    const MODE_LABELS={manual:'Manual',accept_edits:'Aceitar edições',plan:'Planejar',auto:'Automático',bypass:'Ignorar permissões'};
+    const MODE_DESC={manual:'Sempre perguntar antes de fazer alterações',accept_edits:'Aceitar automaticamente todas as edições',plan:'Criar um plano antes de fazer alterações',auto:'A IA gerencia decisões de permissão',bypass:'Aceita todas as permissões'};
+    const modeLabel=m=>m?(MODE_LABELS[m]||m):'Padrão';
+    function supportedModesFor(agent){ const cap=(caps||[]).find(c=>c.name===agent); return (cap&&cap.capabilities&&cap.capabilities.supportedPermissionModes)||['bypass']; }
     const modelLabel=(agent,id)=>{ const m=modelObj(agent,id); return m?(m.label||m.id):(id||'Automático'); };
     const effortsFor=(agent,id)=>{ const c=capsFor(agent), m=id&&(c.models||[]).find(x=>x.id===id); return m?(m.efforts||[]):[...new Set((c.models||[]).flatMap(x=>x.efforts||[]))]; };
     const EFF_PT={minimal:'Mínimo',low:'Baixo',medium:'Médio',high:'Alto',xhigh:'Muito alto',max:'Máximo',ultra:'Ultra',ultracode:'Ultracode'};
@@ -2003,6 +2013,7 @@
       const efs=effortsFor(currentAgent,curModel);
       const okE=e=>e&&efs.includes(e);
       curEffort = pref.effort===AUTO_EFFORT?null:(okE(pref.effort)?pref.effort : (okE(sessDeclEffort)?sessDeclEffort : (okE(cfg.effort)?cfg.effort : ((modelObj(currentAgent,curModel)||{}).defaultEffort||null))));
+      curMode = pref.permissionMode || (currentSession==null ? ((sdDoc.global&&sdDoc.global.permissionMode)||null) : null);
       renderControls(); }
     function renderControls(){
       const pref=sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}, agentAuto=!curStarted&&!curNative&&pref.agent===AUTO_AGENT;
@@ -2820,6 +2831,17 @@
       preview(); range.oninput=preview; range.onchange=()=>{ const selected=efs[Number(range.value)]||efs[0]; auto.classList.remove('sel'); auto.setAttribute('aria-pressed','false'); auto.textContent='✨ Automático'; saveEffort(selected); range.setAttribute('aria-valuetext',effLabel(selected)); };
       manual.append(range,value); p.appendChild(manual); }
 
+    function pickMode(mode){
+      if(currentSession==null){ sdDoc.global=Object.assign({},sdDoc.global,{permissionMode:mode}); tx({t:'set_session_defaults',doc:sdDoc}); curMode=mode; renderControls(); return; }
+      const key=sessionStateKey(currentSession,currentSessionRunner), pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{});
+      pref.permissionMode=mode; sessionPrefs[key]=pref; saveSessionPrefs(); curMode=mode; tx({t:'setmode',sessionId:currentSession,mode}); renderControls();
+    }
+    function buildModePop(p){ p.appendChild(ph('Modo de permissão · '+(currentAgent||''))); const sup=supportedModesFor(currentAgent);
+      if(currentSession==null){ const n=document.createElement('div'); n.className='mut'; n.style.cssText='padding:0 2px 8px;font-size:11.5px'; n.textContent='Sem sessão aberta: esta escolha vira o padrão global para novas sessões.'; p.appendChild(n); }
+      ['manual','accept_edits','plan','auto','bypass'].forEach(mode=>{ const ok=sup.includes(mode); const o=document.createElement('div'); o.className='opt'+(curMode===mode?' sel':'')+(ok?'':' disabled');
+        o.innerHTML='<span class="ailbl"><b>'+esc(MODE_LABELS[mode])+'</b><span>'+esc(MODE_DESC[mode]||'')+'</span></span>'+(curMode===mode?'<span class="r">atual</span>':(ok?'':'<span class="r">indisponível</span>'));
+        if(ok) o.onclick=()=>{ closePop(); pickMode(mode); }; p.appendChild(o); }); }
+
     function buildAiPop(p){
       aiReturnAfterClose=false;
       p.classList.add('ai-pop');
@@ -2837,6 +2859,7 @@
       add('🤖','Agente / IA',valueOf(E.agentName),curStarted||curNative,()=>openSub(buildAgentPop,()=>{ agentPopShowAll=false; }));
       add('◈','Modelo',valueOf(E.modelName),false,()=>openSub(buildModelPop));
       add('⚡','Esforço',valueOf(E.effortName),false,()=>openSub(buildEffortPop));
+      add('🛡','Modo',modeLabel(curMode),false,()=>openSub(buildModePop));
     }
 
     function buildFolderBrowser(p,{runnerId='local',initial='',onUse,showRecents=false}={}){ popMode='folder'; browseRunner=runnerId; browseUse=onUse||null; p.appendChild(ph('Pasta de trabalho'));
@@ -4346,6 +4369,8 @@
         }
         else if(m.t==='execution_error'){ const msg=m.message||m.code||'Falha ao carregar trabalhos'; if(m.executionId)workTranscriptLoading.delete(m.executionId); if(!m.executionId){workLoadError=String(msg);workLoadingMore=false;E.workMore.disabled=false;E.workMore.textContent='Tentar novamente';renderWorkTree();} if(m.executionId===workSelected)E.workDetailBody.insertAdjacentHTML('afterbegin',`<div class="worknotice err">${esc(String(msg))}</div>`); else toast('⚠ '+msg); }
         else if(m.t==='update_status'){ updState=m.status; renderUpdate(); }
+        else if(m.t==='session_defaults'){ sdDoc=m.doc||sdDoc; if(m.saved)toast('✅ Padrão de permissão salvo'); syncModelEffort(); }
+        else if(m.t==='mode'){ /* server confirmed the session permission mode; picker already reflects it */ }
         else if(m.t==='update_progress'){ if(E.updStatus) E.updStatus.textContent='… '+(m.message||'atualizando'); toast('🔄 '+(m.message||''));
           // Machine snapshots carry the durable queue keyed by runner id. Do not synthesize rows by
           // label here: the next snapshot would add the same machine under its id and duplicate it.
@@ -4356,7 +4381,7 @@
           renderUpdMachines(); }
         else if(m.t==='update_result'){ if(m.ok){ toast('✅ '+((m.log||'atualizado').split('\n').pop()||'').slice(0,80)); } else { toast('⚠ Falha: '+(m.log||'').slice(0,120)); if(E.updStatus) E.updStatus.textContent='⚠ '+(m.log||'').slice(0,140); E.updActions.classList.remove('hidden'); } }
         else if(m.t==='unauth'){ if(m.reason==='token inválido'){ authToken=''; localStorage.removeItem('jarvis_token'); } gateError(m.error||m.reason||''); showGate(m.claimed); }
-        else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} if(!currentAgent) currentAgent=cfg.agent||m.default||(caps[0]||{}).name||null; syncModelEffort(); clearLimitBanner(); enter(); }
+        else if(m.t==='hello'){ caps=m.agents||[]; if(!cfg.agent){cfg.agent=m.default;saveCfg();} if(!currentAgent) currentAgent=cfg.agent||m.default||(caps[0]||{}).name||null; syncModelEffort(); clearLimitBanner(); enter(); tx({t:'get_session_defaults'}); }
         else if(m.t==='agent_catalog'){ caps=m.agents||caps; if(m.default&&!cfg.agent){cfg.agent=m.default;saveCfg();} if(!currentAgent) currentAgent=cfg.agent||m.default||(caps[0]||{}).name||null; syncModelEffort(); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') tx({t:'routines'}); }
         else if(m.t==='models_synced'){ caps=m.agents||caps; if(typeof syncModelEffort==='function') syncModelEffort(); const ch=m.changes||[]; toast(ch.length?('✅ Modelos sincronizados — '+ch.length+' ajuste'+(ch.length>1?'s':'')):'✅ Modelos sincronizados — nada a ajustar'); if(ch.length) syncReport(ch); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') tx({t:'routines'}); }
         else if(m.t==='command_list'){ cmdList=m.commands||[]; cmdListFor=(m.runnerId||routedMachine||currentMachine||'local')+'|'+(m.cwd||curCwd||''); cmdReqPending=false; if(trigOpen()&&trigMode==='cmd') updateTrig(); }

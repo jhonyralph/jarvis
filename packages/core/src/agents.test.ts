@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions } from "./agents.js";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("native continuity rejects one provider thread bound to multiple Jarvis sessions", () => {
@@ -12,10 +12,38 @@ test("native continuity rejects one provider thread bound to multiple Jarvis ses
 });
 
 test("permission mode is explicit and defaults conservatively to the historical full-access behavior", () => {
-  assert.equal(agentPermissionMode(undefined), "full_access");
-  assert.equal(agentPermissionMode("provider-default"), "provider_default");
-  assert.equal(agentPermissionMode("provider_default"), "provider_default");
-  assert.equal(agentPermissionMode("typo"), "full_access");
+  assert.equal(agentPermissionMode(undefined), "bypass");
+  assert.equal(agentPermissionMode("full-access"), "bypass");
+  assert.equal(agentPermissionMode("provider-default"), "manual");
+  assert.equal(agentPermissionMode("provider_default"), "manual");
+  assert.equal(agentPermissionMode("typo"), "bypass");
+});
+
+test("canonical permission modes map to each provider's native argv without silently escalating to bypass", () => {
+  // Claude expresses all five canonical modes natively.
+  assert.deepEqual(permissionArgs("claude-code", "plan"), ["--permission-mode", "plan"]);
+  assert.deepEqual(permissionArgs("claude-code", "accept_edits"), ["--permission-mode", "acceptEdits"]);
+  assert.deepEqual(permissionArgs("claude-code", "auto"), ["--permission-mode", "auto"]);
+  assert.deepEqual(permissionArgs("claude-code", "bypass"), ["--permission-mode", "bypassPermissions"]);
+  // Codex: plan → read-only sandbox; bypass → the dangerous flag; manual → its own default (no flag).
+  assert.deepEqual(permissionArgs("codex", "plan"), ["--sandbox", "read-only"]);
+  assert.deepEqual(permissionArgs("codex", "bypass"), ["--dangerously-bypass-approvals-and-sandbox"]);
+  assert.deepEqual(permissionArgs("codex", "manual"), []);
+  // Providers with only a yolo-style switch: non-bypass adds nothing (their own "ask" default).
+  assert.deepEqual(permissionArgs("gemini", "bypass"), ["--yolo"]);
+  assert.deepEqual(permissionArgs("gemini", "plan"), []);
+  // Providers that always emit an explicit token still resolve to a safe value off-bypass.
+  assert.deepEqual(permissionArgs("qwen", "manual"), ["--approval-mode", "default"]);
+  assert.deepEqual(permissionArgs("cline", "bypass"), ["--auto-approve", "true"]);
+  assert.deepEqual(permissionArgs("cline", "manual"), ["--auto-approve", "false"]);
+});
+
+test("effective permission mode lets a per-turn choice override the global default, with legacy normalization", () => {
+  assert.equal(effectivePermissionMode({ permissionMode: "plan" }), "plan");
+  assert.equal(effectivePermissionMode({}), agentPermissionMode());
+  assert.equal(normalizePermissionMode("full_access"), "bypass");
+  assert.equal(normalizePermissionMode("provider-default"), "manual");
+  assert.equal(normalizePermissionMode("nonsense"), undefined);
 });
 
 test("managed Claude argv is safe-mode and excludes delegation/shell capabilities", () => {
