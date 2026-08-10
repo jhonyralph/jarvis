@@ -1,3 +1,10 @@
+## [0.18.1](https://github.com/jhonyralph/jarvis/compare/v0.18.0...v0.18.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **background-jobs:** drenar fila encalhada + monitor com navegação/cancelar + limpar ruído do log ([18e40f3](https://github.com/jhonyralph/jarvis/commit/18e40f3e7f3ead96d5cafdd3c72d610a545784c2))
+
 # [0.18.0](https://github.com/jhonyralph/jarvis/compare/v0.17.0...v0.18.0) (2026-08-07)
 
 
