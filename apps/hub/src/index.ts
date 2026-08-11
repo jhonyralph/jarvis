@@ -5618,7 +5618,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const token = randomUUID();
         const nativeEntries = entries.map((e) => ({ entryId: e.id, provider: e.provider, kind: e.kind, name: e.name, hash: e.hash, paths: e.files.map((f) => f.path) }));
         pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "native", nativeEntries }, createdAt: Date.now() });
-        send(ws, { t: "framework_import_preview", ok: true, token, isUpdate: false, source: { type: "native", count: entries.length }, preview: previewPayload(preview) });
+        // Reimportar algo já rastreado é ATUALIZAR: a prévia abre em "sobrescrever" (substituir a versão
+        // antiga) e os arquivos que diferem aparecem como duplicados, com o botão de ver as diferenças —
+        // a decisão continua sua, mas o padrão deixa de ser "mesclar e manter o antigo".
+        const isUpdate = entries.some((e) => !!frameworkSources.get(nativeSourceId(e.id)));
+        send(ws, { t: "framework_import_preview", ok: true, token, isUpdate, source: { type: "native", count: entries.length }, preview: previewPayload(preview) });
       } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
       return;
     }

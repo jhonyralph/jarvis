@@ -4978,7 +4978,13 @@
       if(trigMode==='file'){ const at=fileAt||atTok(); if(!at){ closeTrig(); return; } const v=E.input.value; E.input.value=v.slice(0,at.start)+it+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} return; }
       // cmd mode: replace just the "/tok" with "/name " (keeps surrounding text intact)
       const at=slashAt||slashTok()||{start:0,end:E.input.value.length}; const v=E.input.value;
-      E.input.value=v.slice(0,at.start)+'/'+it.name+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} }
+      // Se o MESMO nome existe no framework universal e na instalação nativa da IA, insere a origem
+      // escolhida (`/jarvis:nome` ou `/native:nome`) — senão a escolha do menu se perderia e quem
+      // decidiria seria só a preferência global, silenciosamente (foi assim que uma skill importada
+      // ficou sombreada por uma versão nativa antiga).
+      const homonym=(cmdList||[]).some(c=>c.name===it.name&&(c.agent==='jarvis')!==(it.agent==='jarvis'));
+      const token=homonym?((it.agent==='jarvis'?'jarvis:':'native:')+it.name):it.name;
+      E.input.value=v.slice(0,at.start)+'/'+token+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} }
 
     E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; syncComposerActions(); if(currentSession) draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; updateTrig(); };
     E.input.onkeydown=(e)=>{

@@ -219,13 +219,29 @@ test("a Jarvis skill INLINES its SKILL.md body (so an AI without the skill can s
 
 test("preference decides a native-vs-Jarvis homonym", () => {
   // "review" exists as a Claude builtin AND a Jarvis universal skill.
-  // native/ask → the builtin wins → passes through raw (expandCommand returns null).
+  // native → the builtin wins → passes through raw (expandCommand returns null).
   assert.equal(expandCommand("/review x", undefined, "claude", { preference: "native" }), null, "native prefers the Claude builtin (raw pass-through)");
-  assert.equal(expandCommand("/review x", undefined, "claude"), null, "ask defaults to native-first");
   // jarvis → the universal skill wins → inlined body.
   const j = expandCommand("/review x", undefined, "claude", { preference: "jarvis" });
   assert.ok(j, "jarvis preference resolves the universal skill");
   assert.match(j!.expanded, /Review the diff carefully for x/);
+  assert.equal(j!.source, "jarvis", "a origem usada volta no resultado (transparência)");
+  // "ask" NÃO pode ser um "native" disfarçado: sem escolha explícita vale a versão do framework, que é
+  // a que o usuário curou e a única que funciona em qualquer IA (o corpo vai inline no prompt).
+  const a = expandCommand("/review x", undefined, "claude");
+  assert.ok(a, "ask resolve o universal em vez de sombrear a skill importada");
+  assert.match(a!.expanded, /Review the diff carefully for x/);
+});
+
+test("prefixo explícito de origem vence a preferência (o menu insere jarvis:/native:)", () => {
+  const j = expandCommand("/jarvis:review x", undefined, "claude", { preference: "native" });
+  assert.ok(j, "jarvis: força o universal mesmo com preferência native");
+  assert.match(j!.expanded, /Review the diff carefully for x/);
+  assert.equal(j!.source, "jarvis");
+  // native: força o lado nativo — aqui o builtin do Claude, que passa cru (null)
+  assert.equal(expandCommand("/native:review x", undefined, "claude", { preference: "jarvis" }), null, "native: força o builtin mesmo com preferência jarvis");
+  // um prefixo sem correspondência não deve casar com outra coisa por engano
+  assert.equal(expandCommand("/jarvis:cx-only x", undefined, "codex"), null, "jarvis:<nome que só existe nativo> não resolve");
 });
 
 test.after(() => rmSync(HOME, { recursive: true, force: true }));

@@ -188,6 +188,14 @@ const leafOf = (name: string): string => name.split(":").pop() || name;
  *  universal one, "native"/"ask" prefer the AI's own (the composer surfaces both tags for "ask"). With
  *  no framework homonym in play this is the legacy first-match, preserving provider priority. */
 function pickCommand(pool: SlashCommand[], typed: string, preference: FrameworkPreference): SlashCommand | undefined {
+  // Prefixo EXPLÍCITO do usuário (`/jarvis:nome` ou `/native:nome`) vence qualquer preferência: é o que
+  // o menu insere quando o mesmo nome existe nos dois lados, para a escolha não se perder no caminho.
+  const forced = /^(jarvis|native):(.+)$/i.exec(typed);
+  if (forced) {
+    const want = forced[1].toLowerCase(), bare = forced[2];
+    const byName = (c: SlashCommand): boolean => c.name === bare || leafOf(c.name) === leafOf(bare);
+    return pool.find((c) => byName(c) && (want === "jarvis" ? c.agent === "jarvis" : c.agent !== "jarvis"));
+  }
   const exact = pool.filter((c) => c.name === typed);
   const matches = exact.length ? exact : pool.filter((c) => leafOf(c.name) === leafOf(typed));
   if (matches.length <= 1) return matches[0];
@@ -195,7 +203,10 @@ function pickCommand(pool: SlashCommand[], typed: string, preference: FrameworkP
   const nativeM = matches.find((c) => c.agent !== "jarvis");
   if (!jarvisM) return matches[0];        // e.g. claude vs codex homonym — keep priority order
   if (!nativeM) return jarvisM;
-  return preference === "jarvis" ? jarvisM : nativeM;
+  // "ask" NÃO é um "native" disfarçado: sem escolha explícita, a versão do framework universal é a que
+  // o usuário curou e a única que funciona em qualquer IA (o corpo vai inline no prompt). "native" só
+  // ganha quando o usuário pediu isso de fato — na configuração ou no prefixo.
+  return preference === "native" ? nativeM : jarvisM;
 }
 /** The prompt a matched command/skill/mcp expands to. null = pass the raw "/name" through unchanged
  *  (built-ins — Claude resolves them itself; or an unreadable command file). */
@@ -296,7 +307,7 @@ export function listCommandsPublic(cwd?: string): Array<Omit<SlashCommand, "path
  *  chat still shows the raw "/name"). Name-tolerant: falls back to a leaf-name match. When `agent` is
  *  given, ONLY that agent's entries are considered (a Codex turn never runs a Claude command); pass
  *  the session's adapter name via cmdAgentOf. null when it isn't one — the caller sends `text` as-is. */
-export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | null, opts?: { preference?: FrameworkPreference }): { name: string; expanded: string } | null {
+export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | null, opts?: { preference?: FrameworkPreference }): { name: string; expanded: string; source: "jarvis" | "native" } | null {
   const preference = opts?.preference ?? "ask";
   const all = listCommands(cwd);     // priority-sorted-then-alpha
   // Eligible pool: the active AI's own entries PLUS the universal Jarvis framework, which is offered
@@ -317,7 +328,7 @@ export function expandCommand(text: string, cwd?: string, agent?: CmdAgent | nul
     const exp = expandOne(cmd, (m[3] || "").trim());
     if (exp == null) continue;   // built-in / unreadable → leave the line raw, keep scanning
     const out = [...lines]; out[i] = lines[i].slice(0, m.index + m[1].length) + exp;
-    return { name: cmd.name, expanded: out.join("\n").trim() };
+    return { name: cmd.name, expanded: out.join("\n").trim(), source: cmd.agent === "jarvis" ? "jarvis" : "native" };
   }
   return null;
 }
