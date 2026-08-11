@@ -1,3 +1,12 @@
+# [0.19.0](https://github.com/jhonyralph/jarvis/compare/v0.18.1...v0.19.0) (2026-08-11)
+
+
+### Features
+
+* **framework:** excluir pasta inteira do inventário ([2f75bff](https://github.com/jhonyralph/jarvis/commit/2f75bff1f4446e39da1eb8548e2dff3509105126))
+* **permissions:** modos de permissão canônicos por IA + config durável e herança por sessão/projeto (Fases 1–2) ([f445d35](https://github.com/jhonyralph/jarvis/commit/f445d35a1aef0a02b8108a2df796d5d8f6d8cbb7))
+* **permissions:** propaga modos de permissão para runners remotos (Fase 2) ([9553241](https://github.com/jhonyralph/jarvis/commit/9553241a6a55e79f491b4e4bf0fbdc097d7f92d4))
+
 ## [0.18.1](https://github.com/jhonyralph/jarvis/compare/v0.18.0...v0.18.1) (2026-08-10)
 
 
