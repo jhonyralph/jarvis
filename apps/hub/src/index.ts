@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec, type FrameworkSourceType } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -323,6 +323,8 @@ const localExecutionStore = new ExecutionStore({ root: LOCAL_EXECUTION_DIR, maxE
 // Durable store of Hub-owned background jobs (long tasks that outlive the one-shot agent turn and
 // auto-continue the session when they finish). Same dir as sessions.json (~/.jarvis/hub).
 const backgroundJobs = new BackgroundJobStore({ dir: join(JARVIS_DIR, "hub") });
+// Acompanhamento de fluxos: o estado é do Hub para valer em qualquer máquina (decisão da descoberta).
+const workflowRuns = new WorkflowRunStore({ dir: join(JARVIS_DIR, "hub") });
 const compactedExecutions = localExecutionStore.compactBefore(Date.now() - executionCfg.retentionDays * 86_400_000);
 if (compactedExecutions.roots) console.log(`[hub] retenção de trabalhos: ${compactedExecutions.roots} diário(s) compactado(s), ${compactedExecutions.droppedEvents} evento(s) detalhado(s) removido(s)`);
 for (const snapshot of localExecutionStore.rootsForSession()) for (const node of snapshot.nodes) {
@@ -3093,6 +3095,56 @@ function pollBackgroundJobs(): void {
   if (anyTerminal || changed) broadcastBackgroundJobs();
   if (anyTerminal) reconcileBackgroundJobs();
 }
+/* ── Fluxos: acompanhamento (F2–F7) ───────────────────────────────────────────────────────────────
+ * O run é do Hub (visível de qualquer máquina). Aqui ficam só os efeitos: ler a definição publicada,
+ * transmitir o estado e aplicar o que a IA declarou no fim do turno. A lógica é pura, no core. */
+function loadWorkflowDefinitions(): ReturnType<typeof workflowFromFile>[] {
+  try {
+    return readCanonicalFramework(frameworkRoot()).files
+      .filter((f) => f.path.startsWith("workflows/"))
+      .map((f) => workflowFromFile(f.content))
+      .filter(Boolean);
+  } catch { return []; }
+}
+function workflowRunPayload(run: WorkflowRun): Record<string, unknown> {
+  return { ...run, summary: summarizeRun(run), taskLabel: taskLabel(run.task) };
+}
+function broadcastWorkflowRuns(sessionId?: string): void {
+  const payload = { t: "workflow_runs" as const, runs: workflowRuns.list().slice(0, 50).map(workflowRunPayload) };
+  for (const c of wss.clients) { const w = c as WebSocket; if (w.readyState === WebSocket.OPEN && !runnerSockets.has(w) && isOwnerSocket(w)) { try { send(w, payload); } catch { /* skip */ } } }
+  if (sessionId) { const run = workflowRuns.forSession(sessionId); if (run) broadcastOn(LOCAL_ID, sessionId, { t: "workflow_run", sessionId, run: workflowRunPayload(run) }); }
+}
+/** Aplica o que a IA declarou no texto do turno (F4) e os sinais locais (F7). Nunca quebra o turno. */
+function applyWorkflowFromReply(sessionId: string, replyText: string): void {
+  try {
+    const run = workflowRuns.forSession(sessionId);
+    if (!run) return;
+    const directives = parseStepDirectives(replyText || "");
+    if (!directives.length) { suggestWorkflowSignals(sessionId, run, replyText || ""); return; }
+    const now = Date.now();
+    const { run: next, applied } = applyStepDirectives(run, directives, now);
+    if (!applied.length) return;
+    workflowRuns.put(next);
+    const s = summarizeRun(next);
+    broadcastOn(LOCAL_ID, sessionId, { t: "notice", message: `Fluxo: ${applied.map((a) => `${a.action === "skip" ? "pulou" : a.action === "current" ? "foco em" : "concluiu"} “${a.title}”`).join("; ")} (${s.done}/${s.total})` });
+    broadcastWorkflowRuns(sessionId);
+  } catch { /* acompanhar nunca pode derrubar o turno */ }
+}
+
+/** F7 — sinais locais: o turno deixou pista de PR/commit/teste? Apenas SUGERE marcar o passo atual;
+ *  nunca altera estado sozinho (a decisão continua sua). Silencioso quando não há sinal claro. */
+function suggestWorkflowSignals(sessionId: string, run: WorkflowRun, replyText: string): void {
+  const cur = run.steps.find((s) => s.id === run.currentStepId);
+  if (!cur) return;
+  const text = replyText.slice(0, 20_000);
+  const signals: string[] = [];
+  if (/https?:\/\/[^\s)]+\/(pull|merge_requests)\/\d+/i.test(text)) signals.push("PR aberto");
+  if (/\b[0-9a-f]{7,40}\b(?=[^\n]*\bcommit\b)|\bcommit\s+[0-9a-f]{7,40}\b/i.test(text)) signals.push("commit");
+  if (/\b(\d+)\s*(?:tests?|testes)\s*(?:pass|passaram|passing|ok)\b|\bpass\s+\d+\b|\ball tests? pass/i.test(text)) signals.push("testes verdes");
+  if (!signals.length) return;
+  broadcastOn(LOCAL_ID, sessionId, { t: "notice", message: `Fluxo: detectei ${signals.join(" e ")} neste turno. Marcar “${cur.title}” como feito?` });
+}
+
 /** Mata o worker detached de um job (e sua árvore) — best-effort, multiplataforma. */
 function killJob(pid: number): void {
   try {
@@ -3652,6 +3704,14 @@ function reconcileNativeExecutions(sid: string): number {
   return changed;
 }
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply & { activity?: any[] }> {
+  // F4 — a IA conduz: quando há fluxo ativo nesta sessão, o turno leva junto onde estamos e como
+  // declarar avanço. Só custa tokens enquanto existe acompanhamento em andamento.
+  if (!opts.managed) {
+    try {
+      const activeRun = workflowRuns.forSession(sid);
+      if (activeRun) agentText = `${buildWorkflowSteering(activeRun)}\n\n---\n\n${agentText}`;
+    } catch { /* nunca impedir o turno por causa do acompanhamento */ }
+  }
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
   activeRuns.add(sid); broadcastRuns();
@@ -3721,6 +3781,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     // auto-continue THIS session when it finishes. Skipped for managed/subagent turns (isolated). Best-
     // effort — a bad directive must never fail an otherwise-completed turn.
     if (!opts.managed) { try { for (const command of parseBackgroundRunDirectives(reply.text || "")) startLocalBackgroundJob(sid, command, cwd); } catch { /* never break a completed turn */ } }
+    if (!opts.managed) applyWorkflowFromReply(sid, reply.text || "");   // F4: registra o que a IA declarou
     return { ...reply, activity: buf.slice() };
   } catch (e) {
     // A user-initiated cancel is not a failure: tell the UI it stopped, and don't notify an error.
@@ -5642,6 +5703,60 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           .map((c) => ({ path: c.path, id: c.def.id, name: c.def.name, steps: c.def.steps.length }));
         send(ws, { t: "workflow_list", ok: true, workflows: defs, candidates });
       } catch (e: any) { send(ws, { t: "workflow_list", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // F2 — iniciar o acompanhamento de um fluxo numa TAREFA (referência agnóstica de rastreador).
+    if (msg.t === "workflow_run_start" && typeof msg.workflowId === "string") {
+      if (!requireOwner(ws)) return;
+      try {
+        const def = loadWorkflowDefinitions().find((d) => d!.id === msg.workflowId);
+        if (!def) throw new Error("fluxo não encontrado (publique/salve o fluxo primeiro)");
+        const task = normalizeTaskRef(msg.task);
+        const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : "";
+        const existing = task.key ? workflowRuns.forTask(task.tracker, task.key) : undefined;
+        if (existing) {                                   // mesma tarefa já acompanhada: apenas liga a sessão
+          const linked = linkSession(existing, sessionId, Date.now());
+          workflowRuns.put(linked);
+          send(ws, { t: "workflow_run", sessionId, run: workflowRunPayload(linked), reused: true });
+        } else {
+          const run = createRun(def, task, { runId: "wfr-" + randomUUID(), now: Date.now(), sessionId });
+          workflowRuns.put(run);
+          send(ws, { t: "workflow_run", sessionId, run: workflowRunPayload(run) });
+        }
+        broadcastWorkflowRuns(sessionId);
+      } catch (e: any) { send(ws, { t: "error", message: "Fluxo: " + String(e?.message ?? e) }); }
+      return;
+    }
+    // Estado atual: todos os runs (painel) e o da sessão aberta.
+    if (msg.t === "workflow_runs") {
+      if (!requireOwner(ws)) return;
+      const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : "";
+      send(ws, { t: "workflow_runs", runs: workflowRuns.list().slice(0, 50).map(workflowRunPayload) });
+      if (sessionId) { const run = workflowRuns.forSession(sessionId); send(ws, { t: "workflow_run", sessionId, run: run ? workflowRunPayload(run) : null }); }
+      return;
+    }
+    // F3/F5 — marcar, avançar, pular (com o pulo REGISTRADO) e anexar evidência. Gates só sinalizam.
+    if (msg.t === "workflow_run_update" && typeof msg.runId === "string") {
+      if (!requireOwner(ws)) return;
+      try {
+        const run = workflowRuns.get(msg.runId);
+        if (!run) throw new Error("acompanhamento não encontrado");
+        const now = Date.now();
+        const by: MarkedBy = msg.by === "ai" ? "ai" : msg.by === "signal" ? "signal" : "user";
+        let next = run;
+        const op = String(msg.op || "");
+        if (op === "mark") next = markStep(run, String(msg.stepId || ""), (["pending", "done", "skipped"].includes(msg.state) ? msg.state : "done") as RunStepState, { by, now });
+        else if (op === "advance") next = advanceRun(run, { by, now });
+        else if (op === "jump") next = jumpToStep(run, String(msg.stepId || ""), { by, now });
+        else if (op === "evidence") next = attachEvidence(run, String(msg.stepId || ""), { kind: msg.kind === "link" ? "link" : "text", value: String(msg.value || "") }, { by, now });
+        else if (op === "finish") next = { ...run, status: "done", updatedAt: now };
+        else if (op === "abandon") next = { ...run, status: "abandoned", updatedAt: now };
+        else throw new Error("operação desconhecida");
+        workflowRuns.put(next);
+        const sid = typeof msg.sessionId === "string" ? msg.sessionId : (next.sessions[0] || "");
+        send(ws, { t: "workflow_run", sessionId: sid, run: workflowRunPayload(next) });
+        broadcastWorkflowRuns(sid);
+      } catch (e: any) { send(ws, { t: "error", message: "Fluxo: " + String(e?.message ?? e) }); }
       return;
     }
     // Proposta a partir de uma skill: o Jarvis sugere os passos; NADA é salvo até você confirmar.

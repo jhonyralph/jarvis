@@ -319,6 +319,22 @@
     /* fila de mensagens */
     #queueRow { display:flex; flex-direction:column; gap:5px; margin-bottom:6px; }
     #queueRow.hidden { display:none; }
+    /* acompanhamento de fluxo de trabalho */
+    #wfRun { border:1px solid #ffffff1f; border-radius:8px; background:#0e141c; padding:6px 8px; margin-bottom:6px; font-size:11.5px; }
+    #wfRun.hidden { display:none; }
+    #wfRun .wfhdr { display:flex; align-items:center; gap:8px; justify-content:space-between; }
+    #wfRun .wfsteps { display:none; flex-direction:column; gap:2px; margin-top:5px; max-height:min(38vh,240px); overflow:auto; }
+    #wfRun.open .wfsteps { display:flex; }
+    #wfRun .wfs { display:flex; align-items:center; gap:7px; padding:2px 4px; border-radius:6px; cursor:pointer; }
+    #wfRun .wfs:hover { background:#ffffff0d; }
+    #wfRun .wfs.cur { background:#f5b54418; }
+    #wfRun .wfs .wfst { flex:none; width:14px; text-align:center; }
+    #wfRun .wfs .wft { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #wfRun .wfs.done .wft { color:var(--mut,#8ea0b5); text-decoration:line-through; }
+    #wfRun .wfs.skipped .wft { color:#f0883e; }
+    #wfRun .wfbadge { flex:none; font-size:10px; padding:0 6px; border-radius:20px; background:#ffffff12; color:var(--mut,#8ea0b5); }
+    #wfRun .wfact { flex:none; background:none; border:0; cursor:pointer; font-size:11px; color:var(--mut,#8ea0b5); padding:2px 6px; border-radius:6px; }
+    #wfRun .wfact:hover { background:#ffffff12; color:var(--text,#e6edf3); }
     #bgJobs { display:flex; flex-direction:column; gap:4px; margin-bottom:6px; }
     #bgJobs.hidden { display:none; }
     #bgJobs .bgj { display:flex; align-items:center; gap:8px; font-size:11.5px; padding:4px 8px; border:1px solid var(--line,#ffffff1f); border-radius:8px; background:#0e141c; }
@@ -1311,6 +1327,7 @@
       <div id="log"></div>
       <form id="composer">
         <button type="button" id="scrollBtn" class="hidden" title="Ir para as mensagens recentes"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 16 18 9"></polyline></svg></button>
+        <div id="wfRun" class="hidden"></div>
         <div id="bgJobs" class="hidden"></div>
         <div id="queueRow" class="hidden"></div>
         <div id="attachRow"></div>

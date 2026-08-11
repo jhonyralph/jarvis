@@ -1,0 +1,281 @@
+/**
+ * Acompanhamento de um fluxo em andamento (F2–F7).
+ *
+ * Decisões que este módulo materializa (vindas da descoberta):
+ *  - a unidade acompanhada é a TAREFA, com referência AGNÓSTICA de rastreador (Linear, GitHub, Jira,
+ *    outro ou nenhum) — nada aqui conhece um provedor específico;
+ *  - a IA conduz, mas quem marca pode ser você, a IA ou um sinal local — por isso todo passo guarda
+ *    QUEM marcou e quando (auditoria);
+ *  - gates apenas SINALIZAM: nunca existe transição proibida por gate;
+ *  - pular fases é permitido, e o que foi pulado fica registrado como `skipped` (não como feito) —
+ *    é isso que permite auditar depois "o que realmente foi executado".
+ *
+ * Puro: só estado → estado. A persistência (journal) e os efeitos vivem no store/Hub.
+ */
+import type { WorkflowDefinition } from "./workflow.js";
+
+export type RunStepState = "pending" | "done" | "skipped";
+export type MarkedBy = "user" | "ai" | "signal";
+export type RunStatus = "active" | "done" | "abandoned";
+
+export interface RunEvidence {
+  kind: "link" | "text";
+  value: string;
+  at: number;
+  by: MarkedBy;
+}
+
+export interface RunStep {
+  id: string;
+  title: string;
+  kind: "step" | "gate";
+  requiresEvidence?: boolean;
+  state: RunStepState;
+  at?: number;
+  by?: MarkedBy;
+  evidence?: RunEvidence[];
+}
+
+/** Referência de tarefa deliberadamente genérica: `tracker` é texto livre (linear, github, jira, …). */
+export interface TaskRef {
+  tracker: string;
+  key: string;
+  url?: string;
+  title?: string;
+}
+
+export interface WorkflowRun {
+  runId: string;
+  workflowId: string;
+  workflowName: string;
+  task: TaskRef;
+  steps: RunStep[];
+  /** passo em foco; undefined quando tudo terminou. */
+  currentStepId?: string;
+  status: RunStatus;
+  /** sessões que participaram — o mesmo fluxo pode atravessar sessões e máquinas. */
+  sessions: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export function normalizeTaskRef(input: unknown): TaskRef {
+  const raw = (input ?? {}) as Partial<TaskRef>;
+  const clean = (v: unknown, cap = 200): string => String(v ?? "").trim().slice(0, cap);
+  return {
+    tracker: clean(raw.tracker, 40).toLowerCase(),
+    key: clean(raw.key, 120),
+    url: clean(raw.url, 500) || undefined,
+    title: clean(raw.title, 300) || undefined,
+  };
+}
+
+/** Rótulo humano da tarefa, sem assumir provedor. */
+export function taskLabel(task: TaskRef): string {
+  const base = task.key || task.title || "(sem tarefa)";
+  return task.tracker ? `${task.tracker}: ${base}` : base;
+}
+
+export function createRun(def: WorkflowDefinition, task: TaskRef, opts: { runId: string; now: number; sessionId?: string }): WorkflowRun {
+  const steps: RunStep[] = def.steps.map((s) => ({
+    id: s.id, title: s.title, kind: s.kind, requiresEvidence: s.requiresEvidence, state: "pending" as RunStepState,
+  }));
+  return {
+    runId: opts.runId,
+    workflowId: def.id,
+    workflowName: def.name,
+    task: normalizeTaskRef(task),
+    steps,
+    currentStepId: steps[0]?.id,
+    status: steps.length ? "active" : "done",
+    sessions: opts.sessionId ? [opts.sessionId] : [],
+    createdAt: opts.now,
+    updatedAt: opts.now,
+  };
+}
+
+const clone = (run: WorkflowRun): WorkflowRun => ({ ...run, steps: run.steps.map((s) => ({ ...s, evidence: s.evidence ? [...s.evidence] : undefined })), sessions: [...run.sessions] });
+
+/** Primeiro passo ainda pendente (a "próxima fase natural"). */
+export function nextPendingStep(run: WorkflowRun): RunStep | undefined {
+  return run.steps.find((s) => s.state === "pending");
+}
+
+/** Um passo está "à frente" do atual? Usado pela UI para pedir confirmação ao PULAR fases. */
+export function isSkipAhead(run: WorkflowRun, stepId: string): boolean {
+  const target = run.steps.findIndex((s) => s.id === stepId);
+  if (target < 0) return false;
+  const next = nextPendingStep(run);
+  if (!next) return false;
+  const nextIdx = run.steps.findIndex((s) => s.id === next.id);
+  return target > nextIdx;
+}
+
+/** Passos que seriam PULADOS ao ir direto para `stepId` (ficam registrados como `skipped`). */
+export function stepsSkippedBy(run: WorkflowRun, stepId: string): RunStep[] {
+  const target = run.steps.findIndex((s) => s.id === stepId);
+  if (target < 0) return [];
+  return run.steps.slice(0, target).filter((s) => s.state === "pending");
+}
+
+function refreshStatus(run: WorkflowRun): void {
+  const next = nextPendingStep(run);
+  run.currentStepId = next?.id;
+  if (!next && run.status === "active") run.status = "done";
+  if (next && run.status === "done") run.status = "active";
+}
+
+export interface MarkOptions {
+  by: MarkedBy;
+  now: number;
+  /** evidência anexada no mesmo ato (opcional). */
+  evidence?: Omit<RunEvidence, "at" | "by">;
+}
+
+/** Marca um passo como feito/pendente/pulado. Nunca bloqueia: gates só sinalizam. */
+export function markStep(run: WorkflowRun, stepId: string, state: RunStepState, opts: MarkOptions): WorkflowRun {
+  const out = clone(run);
+  const step = out.steps.find((s) => s.id === stepId);
+  if (!step) return out;
+  step.state = state;
+  if (state === "pending") { delete step.at; delete step.by; }
+  else { step.at = opts.now; step.by = opts.by; }
+  if (opts.evidence?.value) {
+    step.evidence = [...(step.evidence || []), { kind: opts.evidence.kind, value: String(opts.evidence.value).slice(0, 2000), at: opts.now, by: opts.by }];
+  }
+  out.updatedAt = opts.now;
+  refreshStatus(out);
+  return out;
+}
+
+/** Conclui o passo atual e caminha para o próximo pendente. */
+export function advanceRun(run: WorkflowRun, opts: MarkOptions): WorkflowRun {
+  const current = run.currentStepId || nextPendingStep(run)?.id;
+  if (!current) return clone(run);
+  return markStep(run, current, "done", opts);
+}
+
+/**
+ * Vai direto para `stepId`. Tudo que ficou pendente antes vira `skipped` — registrado, não escondido.
+ * A confirmação de "você está pulando fases" é da UI (isSkipAhead/stepsSkippedBy); aqui só aplicamos,
+ * porque o mesmo caminho serve ao bypass pedido pela IA no chat, que apenas acompanha.
+ */
+export function jumpToStep(run: WorkflowRun, stepId: string, opts: MarkOptions): WorkflowRun {
+  let out = clone(run);
+  if (!out.steps.some((s) => s.id === stepId)) return out;
+  for (const skipped of stepsSkippedBy(out, stepId)) out = markStep(out, skipped.id, "skipped", opts);
+  const target = out.steps.find((s) => s.id === stepId);
+  if (target && target.state !== "pending") { target.state = "pending"; delete target.at; delete target.by; }
+  out.updatedAt = opts.now;
+  refreshStatus(out);
+  out.currentStepId = stepId;
+  if (out.status === "done") out.status = "active";
+  return out;
+}
+
+export function attachEvidence(run: WorkflowRun, stepId: string, evidence: Omit<RunEvidence, "at" | "by">, opts: { by: MarkedBy; now: number }): WorkflowRun {
+  const out = clone(run);
+  const step = out.steps.find((s) => s.id === stepId);
+  if (!step || !String(evidence.value || "").trim()) return out;
+  step.evidence = [...(step.evidence || []), { kind: evidence.kind, value: String(evidence.value).slice(0, 2000), at: opts.now, by: opts.by }];
+  out.updatedAt = opts.now;
+  return out;
+}
+
+export function linkSession(run: WorkflowRun, sessionId: string, now: number): WorkflowRun {
+  if (!sessionId || run.sessions.includes(sessionId)) return run;
+  const out = clone(run);
+  out.sessions.push(sessionId);
+  out.updatedAt = now;
+  return out;
+}
+
+export interface RunSummary {
+  total: number;
+  done: number;
+  skipped: number;
+  pending: number;
+  /** passos concluídos que EXIGIAM evidência e não têm nenhuma — sinalizado, nunca bloqueante. */
+  missingEvidence: string[];
+  current?: { id: string; title: string; kind: "step" | "gate" };
+  percent: number;
+}
+
+export function summarizeRun(run: WorkflowRun): RunSummary {
+  const total = run.steps.length;
+  const done = run.steps.filter((s) => s.state === "done").length;
+  const skipped = run.steps.filter((s) => s.state === "skipped").length;
+  const missingEvidence = run.steps.filter((s) => s.state === "done" && s.requiresEvidence && !(s.evidence && s.evidence.length)).map((s) => s.id);
+  const cur = run.steps.find((s) => s.id === run.currentStepId);
+  return {
+    total, done, skipped, pending: total - done - skipped,
+    missingEvidence,
+    current: cur ? { id: cur.id, title: cur.title, kind: cur.kind } : undefined,
+    percent: total ? Math.round(((done + skipped) / total) * 100) : 100,
+  };
+}
+
+/* ── F4: a IA conduz ───────────────────────────────────────────────────────────────────────────────
+ * A IA declara o avanço IN-BAND, no mesmo espírito do bloco ```jarvis-run``` que já funciona: uma
+ * linha curta e inequívoca. Formatos aceitos (tolerantes a maiúsculas/acentos):
+ *   jarvis-step: done 3           · jarvis-step: feito 3
+ *   jarvis-step: done pick-up     · jarvis-step: skip 2       · jarvis-step: current 4
+ * Números referem-se à POSIÇÃO (1-based) na lista; texto casa pelo id/título. */
+export interface StepDirective { action: "done" | "skip" | "current"; ref: string }
+
+export function parseStepDirectives(text: string, opts: { max?: number } = {}): StepDirective[] {
+  const max = Math.max(1, opts.max ?? 10);
+  const out: StepDirective[] = [];
+  const re = /^[ \t>*-]*jarvis-step\s*:\s*(done|feito|conclu[íi]do|skip|pular|pulado|current|atual)\s+(.+?)\s*$/gim;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(String(text || ""))) && out.length < max) {
+    const verb = m[1].toLowerCase();
+    const action: StepDirective["action"] = /^(skip|pular|pulado)$/.test(verb) ? "skip" : /^(current|atual)$/.test(verb) ? "current" : "done";
+    out.push({ action, ref: m[2].trim().slice(0, 120) });
+  }
+  return out;
+}
+
+/** Resolve a referência da IA (posição 1-based, id ou trecho do título) para um passo do run. */
+export function resolveStepRef(run: WorkflowRun, ref: string): RunStep | undefined {
+  const raw = String(ref || "").trim();
+  if (!raw) return undefined;
+  const asNum = /^#?(\d{1,3})$/.exec(raw);
+  if (asNum) {
+    const idx = Number(asNum[1]) - 1;
+    if (idx >= 0 && idx < run.steps.length) return run.steps[idx];
+  }
+  const norm = (s: string): string => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const key = norm(raw);
+  return run.steps.find((s) => norm(s.id) === key)
+    || run.steps.find((s) => norm(s.title) === key)
+    || run.steps.find((s) => norm(s.title).includes(key) || norm(s.id).includes(key));
+}
+
+/** Aplica as diretivas que a IA emitiu. Devolve o run novo e o que mudou (para registrar/mostrar). */
+export function applyStepDirectives(run: WorkflowRun, directives: StepDirective[], now: number): { run: WorkflowRun; applied: Array<{ action: StepDirective["action"]; stepId: string; title: string }> } {
+  let out = run;
+  const applied: Array<{ action: StepDirective["action"]; stepId: string; title: string }> = [];
+  for (const d of directives) {
+    const step = resolveStepRef(out, d.ref);
+    if (!step) continue;
+    if (d.action === "done") out = markStep(out, step.id, "done", { by: "ai", now });
+    else if (d.action === "skip") out = markStep(out, step.id, "skipped", { by: "ai", now });
+    else out = jumpToStep(out, step.id, { by: "ai", now });
+    applied.push({ action: d.action, stepId: step.id, title: step.title });
+  }
+  return { run: out, applied };
+}
+
+/** Instrução injetada no turno quando há fluxo ativo — curta, porque custa tokens em todo turno. */
+export function buildWorkflowSteering(run: WorkflowRun): string {
+  const s = summarizeRun(run);
+  const list = run.steps.map((st, i) => `${i + 1}. [${st.state === "done" ? "x" : st.state === "skipped" ? "-" : " "}] ${st.title}${st.kind === "gate" ? " (gate: só conferência)" : ""}${st.requiresEvidence ? " (pede evidência)" : ""}`).join("\n");
+  return [
+    `Fluxo de trabalho ativo: "${run.workflowName}" — tarefa ${taskLabel(run.task)}.`,
+    `Passo atual: ${s.current ? s.current.title : "(nenhum — fluxo concluído)"}.`,
+    list,
+    "Ao concluir um passo, emita numa linha própria: `jarvis-step: done <número>`. Para pular: `jarvis-step: skip <número>`. Para mudar o foco: `jarvis-step: current <número>`.",
+    "Gates são só conferência: sinalize e siga; nunca trave por causa deles. Passos que pedem evidência devem citar a evidência (link ou descrição) na resposta.",
+  ].join("\n");
+}
