@@ -1,3 +1,20 @@
+# [0.20.0](https://github.com/jhonyralph/jarvis/compare/v0.19.0...v0.20.0) (2026-08-11)
+
+
+### Bug Fixes
+
+* **commands:** a preferencia do framework decide o homonimo e o menu preserva a origem escolhida ([39ba5d5](https://github.com/jhonyralph/jarvis/commit/39ba5d5656020c596bcc019ef581128114e1b0e0))
+
+
+### Features
+
+* **framework-catalog:** descobrir skills de plugins/marketplace do Claude e do Codex ([9e5bba5](https://github.com/jhonyralph/jarvis/commit/9e5bba534ef73ab777c538297da93b0382915ff5))
+
+
+### Performance Improvements
+
+* **persist:** backup só do último estado bom, sem .bak no caminho quente + faxina de órfãos ([c81400c](https://github.com/jhonyralph/jarvis/commit/c81400ca53d76dd2ee363acdd1561691a5aef383))
+
 # [0.19.0](https://github.com/jhonyralph/jarvis/compare/v0.18.1...v0.19.0) (2026-08-11)
 
 
