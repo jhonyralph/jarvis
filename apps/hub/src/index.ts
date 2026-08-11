@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec, type FrameworkSourceType } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -58,6 +58,20 @@ import { PendingRequestRegistry, SessionDispatchReservations, remoteErrorRoute, 
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
 const CWD = process.env.JARVIS_CWD || process.cwd();
+// Manual permission mode (Fase 3): mint a per-process secret and publish the internal approval
+// endpoint via env, so the Claude adapter's stdio MCP bridge (spawned in THIS process) can call back
+// to ask the user before each tool. Loopback + this token guard the route (see /internal/perm).
+const PERM_TOKEN = randomBytes(24).toString("hex");
+process.env.JARVIS_PERM_TOKEN = PERM_TOKEN;
+process.env.JARVIS_PERM_URL = `http://127.0.0.1:${PORT}/internal/perm`;
+// A user must answer within this window; past it the request fails closed (deny) so a turn can never
+// hang forever waiting on an absent human.
+const PERM_TIMEOUT_MS = 5 * 60 * 1000;
+interface PermissionDecision { behavior: "allow" | "deny"; updatedInput?: unknown; message?: string }
+interface PendingPermission { sessionId: string; timer: ReturnType<typeof setTimeout>; settle: (d: PermissionDecision) => void; }
+// In-flight approval requests keyed by a random id; each holds the HTTP response open until the user
+// decides (permission_decision ws message) or the timeout fires.
+const pendingPermissions = new Map<string, PendingPermission>();
 const CONTEXT_PMTILES_FILE = process.env.JARVIS_PMTILES_FILE ? normalize(process.env.JARVIS_PMTILES_FILE) : "";
 const CONTEXT_MAP_STYLE_FILE = process.env.JARVIS_MAP_STYLE_FILE ? normalize(process.env.JARVIS_MAP_STYLE_FILE) : "";
 const LOCAL_ID = "local";
@@ -511,6 +525,41 @@ const server = createServer((req, res) => {
     let online = 0; for (const r of runners.values()) if (r.ws) online++;
     res.writeHead(200, { ...secHeaders(), "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify({ ok: true, version: VERSION, build: hubBuild || undefined, commit: hubCommit || undefined, uptime: Math.round(process.uptime()), runners: online }));
+    return;
+  }
+  // Manual permission mode (Fase 3) — the Claude adapter's stdio MCP approval bridge calls here for
+  // each tool. Guarded by loopback + the per-process token minted at boot. Holds the response open,
+  // asks the user in the UI (permission_request), and answers when they decide or on timeout (deny).
+  if (urlPath === "/internal/perm" && req.method === "POST") {
+    const ra = req.socket.remoteAddress || "";
+    const isLocal = ra === "127.0.0.1" || ra === "::1" || ra === "::ffff:127.0.0.1";
+    const bearerOk = String(req.headers["authorization"] || "") === "Bearer " + PERM_TOKEN;
+    let body = ""; let tooBig = false;
+    req.on("data", (chunk) => { body += chunk; if (body.length > 256 * 1024) { tooBig = true; req.destroy(); } });
+    req.on("error", () => { try { res.writeHead(400, secHeaders()).end(); } catch { /* ignore */ } });
+    req.on("end", () => {
+      if (tooBig) { try { res.writeHead(413, secHeaders()).end(); } catch { /* ignore */ } return; }
+      let d: any; try { d = JSON.parse(body); } catch { res.writeHead(400, secHeaders()).end(); return; }
+      const tokenOk = bearerOk || d?.token === PERM_TOKEN;
+      if (!isLocal || !tokenOk) { res.writeHead(401, secHeaders()).end(); return; }
+      const id = randomUUID();
+      const sessionId = typeof d?.sessionId === "string" ? d.sessionId : "";
+      const settle = (decision: PermissionDecision) => {
+        const p = pendingPermissions.get(id); if (!p) return; // already answered/timed out
+        clearTimeout(p.timer); pendingPermissions.delete(id);
+        try {
+          res.writeHead(200, { ...secHeaders(), "content-type": "application/json", "cache-control": "no-store" });
+          res.end(JSON.stringify(decision));
+        } catch { /* client (bridge) gone; nothing to do */ }
+        broadcast(sessionId, { t: "permission_resolved", sessionId, id, behavior: decision.behavior });
+      };
+      const timer = setTimeout(() => settle({ behavior: "deny", message: "Tempo esgotado — negado por segurança" }), PERM_TIMEOUT_MS);
+      pendingPermissions.set(id, { sessionId, timer, settle });
+      // A dropped bridge connection must not leak a pending entry (it would deny a later, unrelated turn's
+      // wait only via timeout, but also holds memory). If the request aborts, resolve it as a deny.
+      req.on("aborted", () => settle({ behavior: "deny", message: "Conexão encerrada" }));
+      broadcast(sessionId, { t: "permission_request", sessionId, id, tool: typeof d?.toolName === "string" ? d.toolName : "", input: d?.input ?? {}, cwd: sessionCwd(sessionId) });
+    });
     return;
   }
   // UPD-01 Fase 2 — out-of-band updater failure report. A runner's detached updater POSTs here even
@@ -5119,6 +5168,18 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       pushSessions();
       return;
     }
+    // Manual permission mode (Fase 3): the user answered a pending tool approval. Resolve the held
+    // HTTP response the Claude bridge is blocked on. Only someone who can access the session may
+    // decide; unknown/expired ids are ignored (already answered or timed out → deny).
+    if (msg.t === "permission_decision" && typeof msg.id === "string") {
+      const pending = pendingPermissions.get(msg.id);
+      if (pending) {
+        if (!canAccessSession(ws, LOCAL_ID, pending.sessionId)) { send(ws, { t: "error", message: "sem acesso a esta sessão" }); return; }
+        const allow = msg.behavior === "allow";
+        pending.settle(allow ? { behavior: "allow", updatedInput: msg.updatedInput } : { behavior: "deny", message: "Negado pelo usuário" });
+      }
+      return;
+    }
     // Durable session-defaults config (agent/model/effort/permission), scoped global + per project.
     // A brand-new project seeds a new session from here (an existing one seeds from its last session).
     if (msg.t === "get_session_defaults") {
@@ -5471,6 +5532,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "framework_delete") {
       if (!requireOwner(ws)) return;
       try { deleteFrameworkFile(String(msg.path || "")); send(ws, { t: "framework_saved", path: String(msg.path || ""), ok: true, deleted: true }); }
+      catch (e: any) { send(ws, { t: "framework_saved", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // Remove uma PASTA inteira do framework (uma skill com seus arquivos, um namespace de comandos).
+    // Mesmo limite de segurança do arquivo; publique depois para propagar a remoção às máquinas.
+    if (msg.t === "framework_delete_folder") {
+      if (!requireOwner(ws)) return;
+      const path = String(msg.path || "");
+      try { const r = deleteFrameworkFolder(path); send(ws, { t: "framework_saved", path, ok: true, deleted: true, folder: true, removed: r.removed }); }
       catch (e: any) { send(ws, { t: "framework_saved", ok: false, error: String(e?.message ?? e) }); }
       return;
     }

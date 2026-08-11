@@ -205,6 +205,33 @@ export function deleteFrameworkFile(relPath: string, root = frameworkRoot()): bo
   try { rmSync(toAbs(root, safe), { force: true }); return true; } catch { return false; }
 }
 
+/** Valida um caminho de PASTA do framework. Mesmo limite de segurança do arquivo (POSIX, sem `..`,
+ *  sem absoluto), mas exige um dos dois diretórios de topo — `instructions.md` é arquivo, não pasta. */
+export function assertSafeFolderPath(rel: string): string {
+  const posix = String(rel || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const segs = posix.split("/");
+  if (!posix || posix.startsWith("/") || /^[A-Za-z]:/.test(posix) || segs.some((s) => s === ".." || s === "." || s === "")) {
+    throw new Error(`caminho de pasta inválido: ${rel}`);
+  }
+  if (segs[0] !== "commands" && segs[0] !== "skills") throw new Error(`pasta fora do escopo do framework: ${rel}`);
+  return posix;
+}
+
+/** Remove uma PASTA do framework e tudo dentro dela (ex.: uma skill inteira, `skills/<nome>`, ou um
+ *  namespace de comandos). Retorna os caminhos de framework que existiam ali — para o UI reportar
+ *  quantos arquivos saíram. Publique depois para propagar a remoção às outras máquinas. */
+export function deleteFrameworkFolder(relPath: string, root = frameworkRoot()): { removed: string[] } {
+  const safe = assertSafeFolderPath(relPath);
+  const abs = toAbs(root, safe);
+  let isDir = false;
+  try { isDir = statSync(abs).isDirectory(); } catch { isDir = false; }
+  if (!isDir) throw new Error(`pasta não encontrada: ${safe}`);
+  const prefix = safe + "/";
+  const removed = readCanonicalFramework(root).files.map((f) => f.path).filter((p) => p.startsWith(prefix));
+  rmSync(abs, { recursive: true, force: true });
+  return { removed };
+}
+
 export interface FrameworkImportResult { imported: string[]; skipped: string[] }
 
 const STARTER_FRAMEWORK_FILES: FrameworkFile[] = [

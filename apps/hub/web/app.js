@@ -988,7 +988,7 @@
       function closeTextBlock(){ curTextEl=null; curTextRaw=''; }
       function ensureSA(id,desc,executionId){ if(subAgents[id]){ if(desc)subAgents[id].title.textContent=desc; if(executionId)bindInlineWork(subAgents[id],executionId); return subAgents[id]; }
         const wrap=document.createElement('div'); wrap.className='subagent'; wrap.dataset.id=id;
-        wrap.innerHTML='<div class="sahead"><span class="satog">▸</span><span>🤖</span><span class="satitle"></span><span class="sastate"></span><span class="sacount">0</span><button type="button" class="saopen" title="Abrir em Trabalhos">abrir</button></div><div class="sabody hidden"></div>';
+        wrap.innerHTML='<div class="sahead"><span class="satog">▾</span><span>🤖</span><span class="satitle"></span><span class="sastate"></span><span class="sacount">0</span><button type="button" class="saopen" title="Abrir em Trabalhos">abrir</button></div><div class="sabody"></div>';
         const head=wrap.querySelector('.sahead'), body=wrap.querySelector('.sabody'), title=wrap.querySelector('.satitle'), countEl=wrap.querySelector('.sacount'), tog=wrap.querySelector('.satog'), open=wrap.querySelector('.saopen');
         title.textContent=desc||'sub-agente';
         head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
@@ -1281,6 +1281,36 @@
       // terminar antes de começar, pra não sobrepor áudio.
       if(st.voice){ if(ttsPlaying) askPendingVoice=true; else startAskVoice(); }
     }
+    // ---- Modo Manual (Fase 3): card de aprovação de ferramenta ----
+    function permInputSummary(tool,input){ input=input||{};
+      if(tool==='Bash') return String(input.command||'').replace(/\s+/g,' ').slice(0,160);
+      if(input.file_path) return String(input.file_path);
+      if(input.path) return String(input.path);
+      if(input.url) return String(input.url);
+      if(input.pattern) return String(input.pattern);
+      if(input.command) return String(input.command).replace(/\s+/g,' ').slice(0,160);
+      return ''; }
+    function permInputDetail(input){ try{ const s=JSON.stringify(input||{},null,1); if(!s||s.length<=2) return ''; return s.length>2000?s.slice(0,2000)+'\n… (truncado)':s; }catch(e){ return ''; } }
+    function renderPermissionCard(m){
+      const id=m.id; if(!id) return;
+      if(E.log.querySelector('.permcard[data-id="'+id+'"]')) return; // idempotente
+      const card=document.createElement('div'); card.className='msg bot permcard'; card.dataset.id=id;
+      const hd=document.createElement('div'); hd.className='askhd';
+      const lbl=document.createElement('span'); lbl.textContent='🔐 Pedido de permissão'; hd.appendChild(lbl); card.appendChild(hd);
+      const summary=permInputSummary(m.tool,m.input);
+      const q=document.createElement('div'); q.className='askq'; q.textContent=(m.tool||'ferramenta')+(summary?' · '+summary:''); card.appendChild(q);
+      const detail=permInputDetail(m.input);
+      if(detail){ const pre=document.createElement('pre'); pre.style.cssText='margin:6px 0 0;padding:8px;background:rgba(0,0,0,.25);border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto'; pre.textContent=detail; card.appendChild(pre); }
+      const nav=document.createElement('div'); nav.className='asknav';
+      const deny=document.createElement('button'); deny.type='button'; deny.className='ghost'; deny.textContent='Negar';
+      const sp=document.createElement('span'); sp.className='grow';
+      const allow=document.createElement('button'); allow.type='button'; allow.textContent='Aprovar ✓';
+      const answer=(behavior)=>{ tx({t:'permission_decision', id, behavior}); card.classList.add('done'); nav.remove(); };
+      deny.onclick=()=>answer('deny'); allow.onclick=()=>answer('allow');
+      nav.appendChild(deny); nav.appendChild(sp); nav.appendChild(allow); card.appendChild(nav);
+      E.log.appendChild(card); autoScroll();
+    }
+    function removePermissionCard(id){ const c=E.log.querySelector('.permcard[data-id="'+id+'"]'); if(c)c.remove(); }
     // ---- wizard de VOZ dos cards de decisão ----
     function startAskVoice(){ if(!askActive)return; askVoice=true; askVoiceStep(); }
     function askVoiceStep(){ const st=askActive; if(!st||!askVoice)return; const q=st.questions[st.step];
@@ -1339,7 +1369,7 @@
     // text preview show "o que ele está fazendo"; the count badge shows progress at a glance.
     function ensureSubAgent(id,desc,executionId){ if(!strFlow)streamStartUI(); if(subAgents[id]){ if(desc)subAgents[id].title.textContent=desc; if(executionId)bindInlineWork(subAgents[id],executionId); return subAgents[id]; }
       const wrap=document.createElement('div'); wrap.className='subagent'; wrap.dataset.id=id;
-      wrap.innerHTML='<div class="sahead"><span class="satog">▸</span><span>🤖</span><span class="satitle"></span><span class="sastate"></span><span class="sacount">0</span><button type="button" class="saopen" title="Abrir em Trabalhos">abrir</button></div><div class="sabody hidden"></div>';
+      wrap.innerHTML='<div class="sahead"><span class="satog">▾</span><span>🤖</span><span class="satitle"></span><span class="sastate"></span><span class="sacount">0</span><button type="button" class="saopen" title="Abrir em Trabalhos">abrir</button></div><div class="sabody"></div>';
       const head=wrap.querySelector('.sahead'), body=wrap.querySelector('.sabody'), title=wrap.querySelector('.satitle'), countEl=wrap.querySelector('.sacount'), tog=wrap.querySelector('.satog'), open=wrap.querySelector('.saopen');
       title.textContent=desc||'sub-agente';
       head.onclick=()=>{ const hid=body.classList.toggle('hidden'); tog.textContent=hid?'▸':'▾'; };
@@ -3580,8 +3610,11 @@
         const ic=document.createElement('span'); ic.className='ti'; ic.textContent='📁';
         const nm=document.createElement('span'); nm.className='tn'; nm.style.cssText='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis'; nm.textContent=d; nm.title=full;
         row.append(tw,ic,nm);
+        // Excluir a PASTA inteira (uma skill com seus arquivos, um namespace de comandos). Os diretórios
+        // de topo (commands/skills) são estruturais — não ganham botão para não virar "apagar tudo".
+        if(full.includes('/')){ const fdel=document.createElement('button'); fdel.type='button'; fdel.className='ghost fw-folder-del'; fdel.title='Remover esta pasta e tudo dentro dela'; fdel.setAttribute('aria-label','Remover pasta '+full); fdel.textContent='🗑'; fdel.dataset.path=full; row.appendChild(fdel); }
         const kids=document.createElement('div'); kids.className='fw-tchildren'+(open?' open':'');
-        row.onclick=()=>{ const nowOpen=kids.classList.toggle('open'); tw.textContent=nowOpen?'▾':'▸'; if(nowOpen)fwExpanded.add(full); else fwExpanded.delete(full); };
+        row.onclick=(e)=>{ if(e&&e.target&&e.target.closest&&e.target.closest('.fw-folder-del'))return; const nowOpen=kids.classList.toggle('open'); tw.textContent=nowOpen?'▾':'▸'; if(nowOpen)fwExpanded.add(full); else fwExpanded.delete(full); };
         container.append(row,kids);
         fwRenderTree(node.dirs[d],depth+1,full,kids,probMap);
       });
@@ -3596,9 +3629,11 @@
         container.appendChild(row);
       });
     }
+    let fwInvFiles=[];   // arquivos do inventário atual — usado p/ contar o que sai ao remover uma pasta
     function renderFwInventory(inv,scan,validation){
       if(!E.fwInventory) return;
       const files=(inv&&inv.files)||[];
+      fwInvFiles=files;
       // Mapa de problemas por arquivo: achados de segurança + erros/avisos de validação + avisos de orçamento.
       // Alimenta tanto o marcador na árvore quanto o painel navegável.
       const probMap={};
@@ -3727,7 +3762,10 @@
     function fwCloseEdit(force){ if(!force && fwEditDirtyNow() && !confirm('Descartar alterações não salvas?')) return false; if(E.fwEditModal){ E.fwEditModal.classList.add('hidden'); E.fwEditModal.classList.remove('max'); } if(E.fwEditMax){ E.fwEditMax.textContent='⛶'; E.fwEditMax.title='Maximizar'; } restoreFocusAfterModal(E.fwEditModal); return true; }
     function fwDoSave(){ const path=fwEditMode==='new'?((E.fwEditPath&&E.fwEditPath.value||'').trim()):fwEditPath; if(!path){ toast('Informe o caminho (ex.: commands/plan.md)'); return; } fwSavingContent=E.fwEditBody?E.fwEditBody.value:''; if(E.fwEditSave)E.fwEditSave.disabled=true; fwSend('Salvando '+path,{t:'framework_save',path:path,content:fwSavingContent}); }
     if(E.fwNewFile) E.fwNewFile.onclick=fwOpenNew;
-    if(E.fwInventory) E.fwInventory.addEventListener('click',e=>{ const del=e.target.closest('.fw-file-del'); if(del){ e.stopPropagation(); const p=del.dataset.path; if(p && confirm('Remover “'+p+'” do framework?\n\nApaga o arquivo desta máquina. Publique depois para propagar a remoção às outras.')) fwSend('Removendo '+p,{t:'framework_delete',path:p}); return; } const mk=e.target.closest('.fwmark'); if(mk){ e.stopPropagation(); fwOpenAt(mk.dataset.path,+mk.dataset.line||0,mk.dataset.msg||''); return; } const el=e.target.closest('.fw-file'); if(el&&el.dataset.path) tx({t:'framework_read',path:el.dataset.path}); });
+    if(E.fwInventory) E.fwInventory.addEventListener('click',e=>{ const fdel=e.target.closest('.fw-folder-del'); if(fdel){ e.stopPropagation(); const p=fdel.dataset.path; if(!p) return;
+        const n=(fwInvFiles||[]).filter(f=>String(f.path||'').startsWith(p+'/')).length;
+        if(confirm('Remover a pasta “'+p+'” e '+n+' arquivo(s) dentro dela?\n\nApaga desta máquina. Publique depois para propagar a remoção às outras.')) fwSend('Removendo pasta '+p,{t:'framework_delete_folder',path:p});
+        return; } const del=e.target.closest('.fw-file-del'); if(del){ e.stopPropagation(); const p=del.dataset.path; if(p && confirm('Remover “'+p+'” do framework?\n\nApaga o arquivo desta máquina. Publique depois para propagar a remoção às outras.')) fwSend('Removendo '+p,{t:'framework_delete',path:p}); return; } const mk=e.target.closest('.fwmark'); if(mk){ e.stopPropagation(); fwOpenAt(mk.dataset.path,+mk.dataset.line||0,mk.dataset.msg||''); return; } const el=e.target.closest('.fw-file'); if(el&&el.dataset.path) tx({t:'framework_read',path:el.dataset.path}); });
     // Painel de problemas (dentro de fwHealth): clicar/Enter abre o arquivo na linha da falha.
     if(E.fwHealth){ const openProb=el=>{ if(el) fwOpenAt(el.dataset.path,+el.dataset.line||0,el.dataset.msg||''); };
       E.fwHealth.addEventListener('click',e=>{ openProb(e.target.closest('.fwprob-i')); });
@@ -4327,8 +4365,9 @@
         else if(m.t==='framework_cfg'){ fwArrived(); if(m.preference&&E.setFwPref)E.setFwPref.value=m.preference; if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version;
           if(m.machines){ fwMachineStatus={}; m.machines.forEach(mc=>{ fwMachineStatus[mc.runnerId]={label:mc.label,state:mc.local?'fonte':((mc.protocolVersion||1)<7?'needs_update':mc.queued?'queued':mc.online?'pronta':'offline')}; }); renderFwStatus(); } }
         else if(m.t==='framework_file'){ fwArrived(); fwShowFile(m.path||'', m.content||''); if(fwPendingJump&&fwPendingJump.path===(m.path||'')) fwJumpToLine(fwPendingJump.line,fwPendingJump.msg); fwPendingJump=null; }
-        else if(m.t==='framework_saved'){ fwArrived(); if(m.ok){ tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwLog('✓ '+(m.deleted?'excluído':'salvo')+' '+esc(m.path||''),'#4ade80');
-            if(m.deleted){ fwCloseEdit(true); toast('Arquivo excluído'); }
+        else if(m.t==='framework_saved'){ fwArrived(); if(m.ok){ tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwLog('✓ '+(m.deleted?(m.folder?'pasta excluída':'excluído'):'salvo')+' '+esc(m.path||'')+(m.folder?(' ('+((m.removed||[]).length)+' arquivo(s))'):''),'#4ade80');
+            if(m.folder){ toast('Pasta excluída ('+((m.removed||[]).length)+' arquivo(s))'); if(fwEditPath&&String(fwEditPath).startsWith(String(m.path||'')+'/')) fwCloseEdit(true); }
+            else if(m.deleted){ fwCloseEdit(true); toast('Arquivo excluído'); }
             else { if(E.fwEditModal&&!E.fwEditModal.classList.contains('hidden')){ fwEditMode='edit'; fwEditPath=m.path||fwEditPath; fwEditOrig=fwSavingContent; if(E.fwEditPathRow)E.fwEditPathRow.style.display='none'; if(E.fwEditTitle)E.fwEditTitle.textContent=fwEditPath; if(E.fwEditDelete)E.fwEditDelete.style.display=''; fwSyncDirty(); } if(E.fwEditSave)E.fwEditSave.disabled=false; toast('Arquivo salvo'); } }
           else { if(E.fwEditSave)E.fwEditSave.disabled=false; fwLog('✖ '+esc(m.error||'falha ao salvar'),'#f87171'); toast('Erro: '+(m.error||'falha')); } }
         else if(m.t==='framework_imported'){ fwArrived(); if(m.ok){ tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwLog('✓ importado desta máquina: '+esc((m.imported||[]).join(', ')||'nada novo'),'#4ade80'); toast('Importado: '+((m.imported||[]).join(', ')||'nada novo')); } else { fwLog('✖ '+esc(m.error||'falha'),'#f87171'); toast('Erro: '+(m.error||'falha')); } }
@@ -4439,6 +4478,8 @@
         else if(m.t==='asking'){ const k=askStateKey(m.sessionId,m.runnerId); if(m.on) askingSids.add(k); else askingSids.delete(k); if(currentFrame(m)){ if(m.on&&!busy(currentSession)) status('busy','Consolidando o resultado…'); else if(!askActive) status(''); refreshComposer(); } renderRecents(); }
         else if(m.t==='ask'){ askingSids.delete(askStateKey(m.sessionId,m.runnerId)); saveAsk(m.sessionId,m.questions||[],m.runnerId); if(m.sessionId===currentSession&&(m.runnerId||selectedRunner())===currentSessionRunner){ status(''); renderAskCard(m.questions||[],m.runnerId); refreshComposer(); } else { unread.add(sessionStateKey(m.sessionId,m.runnerId)); renderRecents(); } }
         else if(m.t==='ask_cleared'){ askingSids.delete(askStateKey(m.sessionId,m.runnerId)); clearAsk(m.sessionId,m.runnerId); if(currentFrame(m)){ if(askActive){try{askActive.card.remove();}catch(e){} askActive=null;askVoice=false;} status('');refreshComposer(); } }
+        else if(m.t==='permission_request'){ if(currentFrame(m)) renderPermissionCard(m); }
+        else if(m.t==='permission_resolved'){ if(currentFrame(m)) removePermissionCard(m.id); }
         else if(m.t==='agent_event'){ if(!currentFrame(m))return; const ev=m.event||{};
           if(liveTurnId!==ev.turnId){ liveTurnId=ev.turnId; seenAgentEvents.clear(); }
           if(ev.eventId&&seenAgentEvents.has(ev.eventId))return; if(ev.eventId){seenAgentEvents.add(ev.eventId);if(seenAgentEvents.size>1200)seenAgentEvents.delete(seenAgentEvents.values().next().value);}

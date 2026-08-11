@@ -11,6 +11,7 @@ import { join } from "node:path";
 const {
   readCanonicalFramework, materializeFramework, readReceipt,
   normalizeFrameworkPreference, FRAMEWORK_PREFERENCES, installFrameworkStarterPack,
+  deleteFrameworkFolder, assertSafeFolderPath,
 } = await import("./framework.js");
 
 function seedCanonical(root: string): void {
@@ -95,5 +96,39 @@ test("installFrameworkStarterPack seeds universal skills/commands without overwr
     const r2 = installFrameworkStarterPack(root);
     assert.equal(r2.imported.length, 0, "second install is idempotent");
     assert.ok(r2.skipped.length >= r1.imported.length, "existing starter files are skipped");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("deleteFrameworkFolder remove a pasta inteira e reporta os arquivos que saíram", () => {
+  const root = mkdtempSync(join(tmpdir(), "jf-delfolder-"));
+  try {
+    mkdirSync(join(root, "skills", "review"), { recursive: true });
+    writeFileSync(join(root, "skills", "review", "SKILL.md"), "---\nname: review\ndescription: x\n---\nBody\n");
+    writeFileSync(join(root, "skills", "review", "notes.md"), "notas\n");
+    mkdirSync(join(root, "skills", "outra"), { recursive: true });
+    writeFileSync(join(root, "skills", "outra", "SKILL.md"), "---\nname: outra\ndescription: y\n---\nB\n");
+    writeFileSync(join(root, "instructions.md"), "instruções\n");
+
+    const r = deleteFrameworkFolder("skills/review", root);
+    assert.deepEqual(r.removed.sort(), ["skills/review/SKILL.md", "skills/review/notes.md"]);
+    assert.equal(existsSync(join(root, "skills", "review")), false, "a pasta some do disco");
+    assert.ok(existsSync(join(root, "skills", "outra", "SKILL.md")), "as outras skills ficam intactas");
+    assert.ok(existsSync(join(root, "instructions.md")), "instructions.md fica intacto");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("deleteFrameworkFolder recusa caminho fora do escopo, traversal e pasta inexistente", () => {
+  const root = mkdtempSync(join(tmpdir(), "jf-delfolder2-"));
+  try {
+    mkdirSync(join(root, "skills", "ok"), { recursive: true });
+    writeFileSync(join(root, "skills", "ok", "SKILL.md"), "---\nname: ok\ndescription: z\n---\nB\n");
+    assert.throws(() => deleteFrameworkFolder("../..", root), /inválido|escopo/i);
+    assert.throws(() => deleteFrameworkFolder("skills/../../etc", root), /inválido|escopo/i);
+    assert.throws(() => deleteFrameworkFolder("C:/Windows", root), /inválido|escopo/i);
+    assert.throws(() => deleteFrameworkFolder("instructions.md", root), /escopo/i, "instructions.md é arquivo, não pasta");
+    assert.throws(() => deleteFrameworkFolder("skills/naoexiste", root), /não encontrada/i);
+    assert.ok(existsSync(join(root, "skills", "ok", "SKILL.md")), "nada foi apagado nas recusas");
+    // aceita e normaliza a barra final
+    assert.equal(assertSafeFolderPath("skills/ok/"), "skills/ok");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

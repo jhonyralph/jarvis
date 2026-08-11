@@ -149,6 +149,7 @@
     .subagent .saopen { display:none; min-width:34px; min-height:30px; padding:2px 7px; background:#2563eb22; color:#9cc0ff; border:1px solid #2563eb55; font-size:11px; }
     .subagent .saopen.ready { display:inline-flex; align-items:center; justify-content:center; }
     .subagent .sabody { display:flex; flex-direction:column; gap:4px; padding:6px 9px 8px 22px; border-top:1px solid var(--line); }
+    .subagent .sabody:empty { display:none; }
     .subagent .sabody .strtext { background:none; padding:0; min-width:0; max-width:100%; overflow-wrap:anywhere; }
     .strtext { white-space:pre-wrap; } .strtext.done { white-space:normal; }
     .msg.bot .usage { margin-top:4px; }
@@ -681,6 +682,9 @@
     #fwInventory .fw-file:hover, #fwInventory .fw-file:focus-visible { background:#ffffff12; outline:none; }
     #fwInventory .fw-file-del { flex:none; font-size:11px; line-height:1; padding:2px 6px; opacity:.5; }
     #fwInventory .fw-file-del:hover, #fwInventory .fw-file-del:focus-visible { opacity:1; }
+    #fwInventory .fw-folder-del { flex:none; font-size:11px; line-height:1; padding:2px 6px; opacity:0; }
+    #fwInventory .fw-node:hover .fw-folder-del, #fwInventory .fw-folder-del:focus-visible { opacity:.75; }
+    #fwInventory .fw-folder-del:hover { opacity:1; }
     .personal-region-suggestion { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#ffffff0a; border:1px solid var(--line); border-radius:10px; padding:9px 12px; margin-bottom:8px; }
     .personal-region-suggestion button { flex:none; }
     .personal-policy { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 10px; padding:10px 0; font-size:12px; }
