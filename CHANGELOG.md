@@ -1,3 +1,11 @@
+# [0.21.0](https://github.com/jhonyralph/jarvis/compare/v0.20.0...v0.21.0) (2026-08-11)
+
+
+### Features
+
+* **workflow:** F1 — detectar o fluxo escrito numa skill, revisar e salvar no framework ([e32d089](https://github.com/jhonyralph/jarvis/commit/e32d0892b7da0edfee38288b3831d210f0749e91))
+* **workflow:** F2-F7 — acompanhar a tarefa pelo fluxo, com a IA conduzindo ([b0c7dd5](https://github.com/jhonyralph/jarvis/commit/b0c7dd5f878173a5abe8cec69e92f7bfc783ad69))
+
 # [0.20.0](https://github.com/jhonyralph/jarvis/compare/v0.19.0...v0.20.0) (2026-08-11)
 
 
