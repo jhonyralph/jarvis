@@ -27,8 +27,11 @@ import {
   fsyncSync,
   openSync,
   closeSync,
+  readdirSync,
+  statSync,
+  rmSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 /**
  * Windows-hardened atomic rename. `rename(tmp -> path)` maps to MoveFileEx-with-replace, which on
@@ -61,6 +64,36 @@ export interface WriteJsonOpts {
   backup?: boolean;
 }
 
+/**
+ * Último conteúdo que ESTE processo escreveu com sucesso, por caminho. O `.bak` é promovido a partir
+ * daqui em vez de copiar o primário às cegas: se algo externo (antivírus, indexador, edição manual —
+ * a mesma classe de interferência que motivou o retry de rename acima) corromper o primário, a
+ * escrita seguinte copiaria o lixo POR CIMA do último backup bom, destruindo a rede de segurança
+ * justamente quando ela é necessária. Limitado por tamanho para não segurar arquivos grandes na RAM.
+ */
+const lastGood = new Map<string, string>();
+const LAST_GOOD_MAX_BYTES = 512 * 1024;
+
+/** Grava o `.bak` sem confiar no primário: usa o último conteúdo bom conhecido; na falta dele (1ª
+ *  escrita após o boot) copia o primário apenas se ele ainda for JSON legível. */
+function backupPrevious(path: string, validate: boolean): void {
+  const cached = lastGood.get(path);
+  if (cached !== undefined) {
+    try { writeFileSync(path + ".bak", cached); } catch { /* best-effort backup */ }
+    return;
+  }
+  if (!existsSync(path)) return;
+  if (validate) {
+    try { JSON.parse(readFileSync(path, "utf8")); }
+    catch { return; } // primário ilegível → preserva o .bak anterior em vez de envenená-lo
+  }
+  try { copyFileSync(path, path + ".bak"); } catch { /* best-effort backup */ }
+}
+function rememberGood(path: string, content: string): void {
+  if (content.length <= LAST_GOOD_MAX_BYTES) lastGood.set(path, content);
+  else lastGood.delete(path);
+}
+
 export interface WriteTextOpts {
   /** keep a `.bak` copy of the previous good file before replacing (default true) */
   backup?: boolean;
@@ -78,10 +111,9 @@ export function writeTextAtomic(path: string, text: string, opts?: WriteTextOpts
   } finally {
     closeSync(fd);
   }
-  if (opts?.backup !== false && existsSync(path)) {
-    try { copyFileSync(path, path + ".bak"); } catch { /* best-effort backup */ }
-  }
+  if (opts?.backup !== false) backupPrevious(path, false); // texto livre: não dá para validar por parse
   renameSyncWithRetry(tmp, path);
+  if (opts?.backup !== false) rememberGood(path, text);
 }
 
 /**
@@ -106,10 +138,9 @@ export function writeJsonAtomic(path: string, data: unknown, opts?: WriteJsonOpt
     closeSync(fd);
   }
   // Preserve the last good file. Done BEFORE the rename so a crash here still leaves `path` intact.
-  if (opts?.backup !== false && existsSync(path)) {
-    try { copyFileSync(path, path + ".bak"); } catch { /* best-effort backup */ }
-  }
+  if (opts?.backup !== false) backupPrevious(path, true);
   renameSyncWithRetry(tmp, path); // atomic replace (Node maps this to MoveFileEx replace on Windows), retried on transient Windows locks
+  if (opts?.backup !== false) rememberGood(path, json);
 }
 
 /**
@@ -117,15 +148,65 @@ export function writeJsonAtomic(path: string, data: unknown, opts?: WriteJsonOpt
  * hand-corrupted primary therefore degrades to the last good snapshot instead of to "empty",
  * which is the whole point — losing one write is survivable, losing the file is not.
  */
-export function readJson<T>(path: string, fallback: T): T {
+export interface ReadJsonOpts {
+  /** aceitar o `.bak` quando o primário falha (default true). Passe false onde estado VELHO é pior
+   *  que vazio — ex.: turnos pendentes, que reentregues rodariam de novo (crédito/ação duplicada). */
+  allowStale?: boolean;
+  /** chamado quando o `.bak` foi (ou seria) usado — o fallback era 100% silencioso antes. */
+  onFallback?: (info: { path: string; used: boolean }) => void;
+}
+
+export function readJson<T>(path: string, fallback: T, opts?: ReadJsonOpts): T {
   try {
     return JSON.parse(readFileSync(path, "utf8")) as T;
   } catch {
-    try {
-      if (existsSync(path + ".bak")) return JSON.parse(readFileSync(path + ".bak", "utf8")) as T;
-    } catch { /* fall through to default */ }
+    const bak = path + ".bak";
+    if (existsSync(bak)) {
+      const allow = opts?.allowStale !== false;
+      try {
+        const parsed = allow ? (JSON.parse(readFileSync(bak, "utf8")) as T) : undefined;
+        const used = allow;
+        try { (opts?.onFallback ?? defaultFallbackNotice)({ path, used }); } catch { /* nunca quebrar a leitura */ }
+        if (used) return parsed as T;
+      } catch { /* .bak também ruim → default */ }
+    }
     return fallback;
   }
+}
+/** Sem isto o fallback é invisível: ninguém descobre que rodou com um snapshot antigo. */
+function defaultFallbackNotice(info: { path: string; used: boolean }): void {
+  console.warn(info.used
+    ? `[persist] ${info.path} ilegível — recuperado do .bak (estado pode estar defasado)`
+    : `[persist] ${info.path} ilegível — .bak IGNORADO por política (estado velho seria pior); seguindo com o padrão`);
+}
+
+/**
+ * Faxina de resíduos: remove `.bak`/`.tmp` ÓRFÃOS (cujo arquivo principal não existe mais) e `.tmp`
+ * esquecidos por uma escrita interrompida. Nunca toca num `.bak` cujo primário existe — esse é a
+ * própria rede de segurança. Retorna os caminhos removidos.
+ */
+export function cleanupOrphanBackups(dir: string, opts: { minAgeMs?: number; now?: () => number } = {}): string[] {
+  const minAge = opts.minAgeMs ?? 24 * 60 * 60 * 1000;
+  const now = (opts.now ?? Date.now)();
+  const removed: string[] = [];
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return removed; }
+  for (const name of names) {
+    const isBak = name.endsWith(".bak"), isTmp = name.endsWith(".tmp");
+    if (!isBak && !isTmp) continue;
+    const full = join(dir, name);
+    const primary = full.slice(0, -4);
+    if (existsSync(primary)) { if (!isTmp) continue; }        // .bak com primário vivo = rede de segurança
+    try {
+      // Idade com piso em 0: no Windows o mtime de um arquivo recém-criado pode vir alguns décimos de
+      // ms À FRENTE do relógio lido depois, e uma idade negativa faria o arquivo ser pulado para sempre.
+      const age = Math.max(0, now - statSync(full).mtimeMs);
+      if (age < minAge) continue;                              // recém-escrito: pode ser escrita em curso
+      rmSync(full, { force: true });
+      removed.push(full);
+    } catch { /* best effort */ }
+  }
+  return removed;
 }
 
 /** True if a usable JSON snapshot (primary or backup) exists on disk for `path`. */

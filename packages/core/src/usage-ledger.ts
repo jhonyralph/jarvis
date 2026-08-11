@@ -75,7 +75,10 @@ export class UsageLedger {
     }).sort((a, b) => b.usage.costUsd - a.usage.costUsd).slice(0, limit);
   }
   private trim(now: number): void { this.entries = this.entries.filter((e) => now - e.at < this.ttlMs).slice(-this.maxEntries); }
-  private flush(): void { writeJsonAtomic(this.file, this.entries); }
+  // Sem `.bak`: este arquivo é reescrito INTEIRO a cada registro de uso (todo turno) e chega a MBs —
+  // a cópia integral síncrona do backup dobrava o I/O e travava o event loop. A escrita já é atômica
+  // (tmp+fsync+rename), e o ledger é histórico de custo aparado: perder a última escrita é aceitável.
+  private flush(): void { writeJsonAtomic(this.file, this.entries, { backup: false }); }
 }
 
 function finite(value: unknown): number | undefined { const n = Number(value); return Number.isFinite(n) && n >= 0 ? n : undefined; }
