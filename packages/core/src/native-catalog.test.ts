@@ -54,3 +54,40 @@ test("collectNativeCatalogFiles maps a skill dir + a command to framework paths,
 test("nativeSourceId is stable and namespaced (lowercased)", () => {
   assert.equal(nativeSourceId("claude:skill:Reviewer"), "native:claude:skill:reviewer");
 });
+
+test("o catálogo enxerga skills/commands vindos de PLUGINS (Claude e Codex) com o rótulo do pacote", () => {
+  const home = mkdtempSync(join(tmpdir(), "jf-plug-"));
+  // Claude: plugins/marketplaces/<mkt>/plugins/<plugin>/{skills,commands}
+  const cPlug = join(home, "plugins", "marketplaces", "oficial", "plugins", "code-review");
+  mkdirSync(join(cPlug, "skills", "revisor"), { recursive: true });
+  writeFileSync(join(cPlug, "skills", "revisor", "SKILL.md"), "---\nname: revisor\ndescription: revisa PRs.\n---\nCorpo\n");
+  mkdirSync(join(cPlug, "commands"), { recursive: true });
+  writeFileSync(join(cPlug, "commands", "revisar.md"), "---\ndescription: revisa\n---\nRevise $ARGUMENTS\n");
+  // Codex: plugins/cache/<mkt>/<plugin>/<versão>/skills — a versão no meio não pode virar o rótulo
+  const xPlug = join(home, "codex", "plugins", "cache", "curated", "openai-templates", "0.1.1");
+  mkdirSync(join(xPlug, "skills", "relatorio"), { recursive: true });
+  writeFileSync(join(xPlug, "skills", "relatorio", "SKILL.md"), "---\nname: relatorio\ndescription: gera relatório.\n---\nCorpo\n");
+
+  const prevC = process.env.JARVIS_CLAUDE_HOME, prevX = process.env.JARVIS_CODEX_HOME, prevH = process.env.JARVIS_HOME;
+  process.env.JARVIS_CLAUDE_HOME = home;
+  process.env.JARVIS_CODEX_HOME = join(home, "codex");
+  process.env.JARVIS_HOME = home;
+  try {
+    const cat = listNativeCatalog();
+    const skill = cat.find((e) => e.id === "claude:skill:revisor");
+    assert.ok(skill, "skill de plugin do Claude aparece no catálogo");
+    assert.equal(skill!.plugin, "code-review", "rotulada com o nome do plugin");
+    const cmd = cat.find((e) => e.id === "claude:command:revisar");
+    assert.ok(cmd && cmd.plugin === "code-review", "comando de plugin também entra");
+    const codex = cat.find((e) => e.id === "codex:skill:relatorio");
+    assert.ok(codex, "skill de plugin do Codex aparece");
+    assert.equal(codex!.plugin, "openai-templates", "o diretório de versão não vira rótulo");
+
+    // e o conteúdo é importável (mesmo caminho do import do catálogo)
+    const { entries } = collectNativeCatalogFiles(["claude:skill:revisor"]);
+    assert.deepEqual(entries[0].files.map((f) => f.path), ["skills/revisor/SKILL.md"]);
+  } finally {
+    process.env.JARVIS_CLAUDE_HOME = prevC; process.env.JARVIS_CODEX_HOME = prevX; process.env.JARVIS_HOME = prevH;
+    rmSync(home, { recursive: true, force: true });
+  }
+});

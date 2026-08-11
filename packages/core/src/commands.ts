@@ -29,6 +29,8 @@ export interface SlashCommand {
   kind: "skill" | "command" | "mcp" | "builtin";
   agent: CmdAgent;
   source: "user" | "project" | "builtin";
+  /** nome do plugin/marketplace de origem, quando veio de um pacote instalado (não da pasta simples). */
+  plugin?: string;
   /** File to read for expansion — internal; stripped by listCommandsPublic before it reaches a client. */
   path: string;
 }
@@ -95,6 +97,31 @@ function scanCommands(dir: string, agent: CmdAgent, source: SlashCommand["source
     let parsed: { fm: Record<string, string>; body: string } = { fm: {}, body: "" };
     try { parsed = splitFrontmatter(readFileSync(f, "utf8")); } catch { /* name-only */ }
     out.push({ name: prefix + basename(d.name, ".md"), description: (parsed.fm.description || firstLine(parsed.body)).slice(0, 300), argHint: parsed.fm["argument-hint"], kind: "command", agent, source, path: f });
+  }
+}
+
+/* ── Skills/comandos vindos de PLUGINS ────────────────────────────────────────────────────────────
+ * Claude e Codex instalam pacotes de marketplace fora das pastas simples de skills:
+ *   Claude: ~/.claude/plugins/marketplaces/<mkt>/plugins/<plugin>/{skills,commands}
+ *   Codex:  ~/.codex/plugins/cache/<mkt>/<plugin>/<versão>/skills
+ * A profundidade varia (marketplace, versão), então em vez de fixar níveis nós CAMINHAMOS a árvore
+ * procurando qualquer diretório `skills`/`commands` e reusamos os mesmos scanners. O rótulo do plugin
+ * é o último diretório significativo do caminho (ignorando `plugins`/`marketplaces`/`cache` e versões),
+ * para o catálogo mostrar de onde a skill veio. */
+const PLUGIN_STRUCTURAL = new Set(["plugins", "marketplaces", "cache"]);
+const isVersionDir = (name: string): boolean => /^v?\d+(\.\d+)*$/.test(name);
+const PLUGIN_MAX_DEPTH = 6;
+function scanPluginTree(dir: string, agent: CmdAgent, out: SlashCommand[], depth = 0, label = ""): void {
+  if (depth > PLUGIN_MAX_DEPTH || !existsSync(dir)) return;
+  let entries: import("node:fs").Dirent[];
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const d of entries) {
+    if (!d.isDirectory() || d.name.startsWith(".")) continue;   // pula staging/ocultos
+    const child = join(dir, d.name);
+    if (d.name === "skills") { const before = out.length; scanSkills(child, agent, "user", out); for (let i = before; i < out.length; i++) out[i].plugin = label || undefined; continue; }
+    if (d.name === "commands" || d.name === "prompts") { const before = out.length; scanCommands(child, agent, "user", out); for (let i = before; i < out.length; i++) out[i].plugin = label || undefined; continue; }
+    const nextLabel = PLUGIN_STRUCTURAL.has(d.name) || isVersionDir(d.name) ? label : d.name;
+    scanPluginTree(child, agent, out, depth + 1, nextLabel);
   }
 }
 
@@ -217,7 +244,7 @@ export function listCommands(cwd?: string): SlashCommand[] {
     ["cline", join(homedir(), ".cline", "data", "settings", "skills"), join(homedir(), ".cline", "commands")],
     ["qwen", join(homedir(), ".qwen", "skills"), join(homedir(), ".qwen", "commands")],
   ];
-  const dirs = [join(ch, "skills"), join(ch, "commands"), join(xh, "skills"), join(xh, "prompts"), join(ah, "skills"), join(jf, "skills"), join(jf, "commands"), claudeJson(), process.env.JARVIS_CODEX_CONFIG || join(xh, "config.toml"), ...providerDirs.flatMap((x) => [x[1], x[2]])];
+  const dirs = [join(ch, "skills"), join(ch, "commands"), join(ch, "plugins"), join(xh, "skills"), join(xh, "prompts"), join(xh, "plugins"), join(ah, "skills"), join(jf, "skills"), join(jf, "commands"), claudeJson(), process.env.JARVIS_CODEX_CONFIG || join(xh, "config.toml"), ...providerDirs.flatMap((x) => [x[1], x[2]])];
   if (cwd) dirs.push(join(cwd, ".claude", "skills"), join(cwd, ".claude", "commands"), join(cwd, ".agents", "skills"), join(cwd, ".jarvis", "framework", "skills"), join(cwd, ".jarvis", "framework", "commands"), join(cwd, ".mcp.json"), join(cwd, ".cline", "mcp.json"), join(cwd, ".cursor", "mcp.json"));
   const key = dirs.map((d) => { try { return d + ":" + statSync(d).mtimeMs; } catch { return d + ":0"; } }).join("|");
   const ck = cwd || "";
@@ -230,6 +257,8 @@ export function listCommands(cwd?: string): SlashCommand[] {
   scanSkills(join(ah, "skills"), "codex", "user", out); // official cross-agent/Codex skill home
   scanCommands(join(xh, "prompts"), "codex", "user", out);   // Codex prompts are the equivalent of slash-commands
   for (const [agent, skills, commands] of providerDirs) { scanSkills(skills, agent, "user", out); scanCommands(commands, agent, "user", out); }
+  scanPluginTree(join(ch, "plugins"), "claude", out);  // pacotes de marketplace (Claude)
+  scanPluginTree(join(xh, "plugins"), "codex", out);   // pacotes de marketplace (Codex)
   scanSkills(join(jf, "skills"), "jarvis", "user", out);   // universal skills — offered under every AI
   scanCommands(join(jf, "commands"), "jarvis", "user", out);
   scanMcp(cwd, out);
@@ -306,6 +335,8 @@ export interface NativeCatalogEntry {
   name: string;
   description: string;
   source: "user" | "project";
+  /** plugin/marketplace de origem, quando a entrada veio de um pacote instalado. */
+  plugin?: string;
 }
 export interface CollectedNativeEntry extends NativeCatalogEntry {
   /** the entry's files mapped to framework paths (skills/<slug>/… or commands/<ns>/<cmd>.md). */
@@ -346,7 +377,7 @@ export function listNativeCatalog(cwd?: string): NativeCatalogEntry[] {
     const id = `${c.agent}:${c.kind}:${c.name}`;
     if (seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, provider: c.agent, kind: c.kind, name: c.name, description: c.description, source: c.source === "project" ? "project" : "user" });
+    out.push({ id, provider: c.agent, kind: c.kind, name: c.name, description: c.description, source: c.source === "project" ? "project" : "user", plugin: c.plugin });
   }
   return out.sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
 }
@@ -382,7 +413,7 @@ export function collectNativeCatalogFiles(ids: string[], cwd?: string): { entrie
       try { files.push({ path: `commands/${slug}.md`, content: readFileSync(c.path, "utf8") }); } catch { /* unreadable */ }
     }
     if (!files.length) { missing.push(id); continue; }
-    entries.push({ id, provider: c.agent, kind: c.kind, name: c.name, description: c.description, source: c.source === "project" ? "project" : "user", files, hash: hashFrameworkFiles(files) });
+    entries.push({ id, provider: c.agent, kind: c.kind, name: c.name, description: c.description, source: c.source === "project" ? "project" : "user", plugin: c.plugin, files, hash: hashFrameworkFiles(files) });
   }
   return { entries, missing };
 }
