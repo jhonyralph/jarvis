@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec, type FrameworkSourceType } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -3009,9 +3009,20 @@ function broadcastQueue(runnerId: string, sid: string): void {
 /** Single choke point for every "push onto a queue" call site (there are several — direct busy-session
  *  enqueues as well as the enqueueChatTurn helper) so queue depth/wait-time are ALWAYS observable, not
  *  just for the paths someone remembered to instrument. Stamps queuedAt for queue_flush's waitMs. */
+/** msgIds já ENTREGUES ao agente nesta execução do Hub. O caminho remoto já era idempotente (o runner
+ *  ignora um turnId repetido); o local não tinha memória, então um item que voltasse à fila — por
+ *  re-flush, reenvio do cliente ao reconectar ou restauração após falha — rodava DE NOVO, gerando um
+ *  turno duplicado e cobrado duas vezes. */
+const dispatchedTurns = createSeenSet(1000);
+
 function pushQueueItem(runnerId: string, sid: string, item: QueueItem): number {
   item.queuedAt = item.queuedAt ?? Date.now();
   const q = queueOf(runnerId, sid);
+  // Mesmo item chegando duas vezes (duplo submit, reenvio na reconexão) não entra duas vezes.
+  if (item.msgId && (q.some((x) => x.msgId === item.msgId) || dispatchedTurns.has(item.msgId))) {
+    log.debug("queue_enqueue_dup", { runnerId, sid, msgId: item.msgId });
+    return q.length;
+  }
   q.push(item);
   log.debug("queue_enqueue", { runnerId, sid, msgId: item.msgId, textLen: item.text.length, depth: q.length });
   return q.length;
@@ -3165,6 +3176,22 @@ function backgroundJobsForUi(): Array<Record<string, unknown>> {
 function broadcastBackgroundJobs(): void {
   const payload = { t: "background_jobs" as const, jobs: backgroundJobsForUi() };
   for (const c of wss.clients) { const w = c as WebSocket; if (w.readyState === WebSocket.OPEN && !runnerSockets.has(w) && isOwnerSocket(w)) { try { send(w, payload); } catch { /* skip */ } } }
+}
+/** Rede de segurança periódica: drena só fila ESQUECIDA — sessão ociosa, sem despacho em voo e com
+ *  item parado há um tempo. O flush cego a cada 15s reencostava em despachos em andamento; a
+ *  idempotência (dispatchedTurns) já impede repetir, mas não faz sentido insistir sem necessidade. */
+const IDLE_QUEUE_MS = 20_000;
+function flushIdleQueues(): void {
+  const now = Date.now();
+  for (const [key, items] of queues) {
+    if (!items.length) continue;
+    const scope = splitScopedSessionKey(key);
+    if (scope.runnerId === LOCAL_ID && activeRuns.has(scope.sessionId)) continue;        // turno rodando
+    if (dispatchReservations.isHeld(scope.runnerId, scope.sessionId)) continue;          // despacho em voo
+    const oldest = items.reduce((min, it) => (it.queuedAt != null && it.queuedAt < min ? it.queuedAt : min), Infinity);
+    if (Number.isFinite(oldest) && now - oldest < IDLE_QUEUE_MS) continue;               // acabou de entrar
+    void maybeFlushQueue(scope.runnerId, scope.sessionId, false);
+  }
 }
 function flushQueuesForRunner(runnerId: string): void {
   for (const [key, items] of queues) {
@@ -3844,6 +3871,13 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
     items = queue.splice(0, count);
   }
   broadcastQueue(runnerId, sid); saveQueues();
+  // Idempotência do despacho LOCAL/remoto: um item já entregue ao agente não pode ser entregue de novo
+  // (era isso que transformava um re-flush em turno duplicado, com custo real).
+  {
+    const filtered = filterForDispatch(items, (id) => dispatchedTurns.has(id));
+    if (filtered.duplicates.length) log.info("queue_dispatch_dup", { runnerId, sid, dropped: filtered.duplicates.length, msgIds: filtered.duplicates.map((d) => d.msgId) });
+    items = filtered.keep;
+  }
   if (!items.length) { releaseSessionDispatch(lease); return; }
   // How long the OLDEST item in this batch sat queued before this flush attempt — the number that
   // answers "did my message wait, or did the agent just take a while once it started?".
@@ -3922,6 +3956,9 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
     if (!dispatched) restoreItems();
     broadcastOn(runnerId, sid, { t: "error", message: String(e?.message ?? e) });
   } finally {
+    // Só o que REALMENTE chegou ao agente vira "já despachado" — se a entrega falhou, os itens voltam
+    // para a fila e precisam poder rodar; marcar antes da hora perderia a mensagem.
+    if (dispatched) for (const it of items) if (it.msgId) dispatchedTurns.add(it.msgId);
     for (const it of items) if (it.msgId) cancelledFlushMsgIds.delete(it.msgId); // these ids did their job — keep the set bounded
     if (queueOf(runnerId, sid).length) pendingDispatchFlush.add(key);
     log.debug("queue_flush", { runnerId, sid, items: items.length, waitMs, dispatched, remote: !!rid });
@@ -6680,7 +6717,7 @@ setInterval(() => { try { reconcileBackgroundJobs(); } catch { /* ignore */ } },
 // Safety-net: drena filas locais ociosas que encalharam. A continuação de um job enfileira o turno e
 // chama maybeFlushQueue UMA vez; se esse flush bater num gate transitório (reserva de dispatch, timing
 // de boot), nada mais re-dispara — o flush de fim-de-turno só roda quando um turno termina, e não há.
-setInterval(() => { try { flushAllQueues(); } catch { /* ignore */ } }, 15_000).unref?.();
+setInterval(() => { try { flushIdleQueues(); } catch { /* ignore */ } }, 15_000).unref?.();
 // A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
 // — fix them all proactively at boot, not just when the user happens to reopen one.
 try { let n = 0; for (const meta of store.list()) { const s = store.ensure(meta.id); const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) n++; } if (n) console.log(`[hub] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`); } catch { /* ignore */ }

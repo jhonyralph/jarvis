@@ -32,3 +32,33 @@ export function createSeenSet(cap = 500): SeenSet {
     get size(): number { return seen.size; },
   };
 }
+
+export interface DispatchFilter<T> {
+  /** itens que devem ir para o agente nesta leva. */
+  keep: T[];
+  /** itens descartados por já terem sido despachados (ou por repetirem outro da mesma leva). */
+  duplicates: T[];
+}
+
+/**
+ * Protege o despacho LOCAL contra o mesmo item rodar duas vezes.
+ *
+ * O caminho remoto já era idempotente (o runner ignora um turnId repetido), mas o local não tinha
+ * memória: um item que voltasse à fila — por re-flush periódico, reenvio do cliente ao reconectar ou
+ * restauração após uma falha de despacho — era executado DE NOVO, gerando um turno duplicado (com
+ * custo real). Aqui a leva é filtrada contra o que já foi despachado e contra repetições internas.
+ *
+ * Itens sem `msgId` passam sempre: não temos como identificá-los, e barrar por conteúdo impediria o
+ * usuário de repetir a mesma mensagem de propósito.
+ */
+export function filterForDispatch<T extends { msgId?: string }>(items: T[], alreadyDispatched: (id: string) => boolean): DispatchFilter<T> {
+  const keep: T[] = [], duplicates: T[] = [], inBatch = new Set<string>();
+  for (const item of items) {
+    const id = item?.msgId;
+    if (!id) { keep.push(item); continue; }
+    if (inBatch.has(id) || alreadyDispatched(id)) { duplicates.push(item); continue; }
+    inBatch.add(id);
+    keep.push(item);
+  }
+  return { keep, duplicates };
+}
