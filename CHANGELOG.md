@@ -1,3 +1,10 @@
+## [0.21.1](https://github.com/jhonyralph/jarvis/compare/v0.21.0...v0.21.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **queue:** despacho local idempotente — o mesmo item nao roda duas vezes ([cc03ab7](https://github.com/jhonyralph/jarvis/commit/cc03ab7f30855128d28225fda7e188a235594feb))
+
 # [0.21.0](https://github.com/jhonyralph/jarvis/compare/v0.20.0...v0.21.0) (2026-08-11)
 
 
