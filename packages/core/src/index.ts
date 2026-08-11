@@ -41,6 +41,7 @@ export * from "./council.js";
 export * from "./tournament.js";
 export * from "./debate.js";
 export * from "./effort.js";
+export * from "./workflow.js";
 export * from "./framework.js";
 export * from "./framework-frontmatter.js";
 export * from "./framework-inventory.js";
