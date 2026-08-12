@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { jobPaths, buildJobScripts, parseJobResult, jobLogTail, readJobCompletion, spawnDetachedJob, readJobPid, stripPowerShellNativeNoise } from "./background-runner.js";
+import { jobPaths, buildJobScripts, parseJobResult, jobLogTail, readJobCompletion, readJobLogTail, spawnDetachedJob, readJobPid, stripPowerShellNativeNoise } from "./background-runner.js";
 import { BackgroundJobStore, planJobContinuation } from "./background-jobs.js";
 
 test("stripPowerShellNativeNoise limpa o frame de erro nativo e preserva a saída real", () => {
@@ -87,6 +87,28 @@ test("readJobCompletion returns undefined until the result file is complete", ()
   try {
     const p = jobPaths(d, "j1");
     assert.equal(readJobCompletion(p), undefined, "no result file yet → still running");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("readJobLogTail expõe progresso ANTES do fim e nunca quebra sem log", async () => {
+  const d = dir();
+  try {
+    const p = jobPaths(d, "live-1");
+    // Sem arquivo de log ainda: "nada a mostrar", nunca um erro — é o estado do job recém-nascido.
+    assert.equal(readJobLogTail(p), "", "job sem log ainda → string vazia");
+    mkdirSync(p.dir, { recursive: true });
+    writeFileSync(p.log, "passo 1\r\npasso 2\r\n");
+    // O ponto da correção: dá para ver a saída COM O JOB AINDA RODANDO (sem result file).
+    assert.equal(readJobCompletion(p), undefined, "ainda sem result file → segue rodando");
+    assert.equal(readJobLogTail(p), "passo 1\npasso 2", "cauda visível durante a execução");
+    writeFileSync(p.log, "x".repeat(50) + "\nFIM");
+    assert.match(readJobLogTail(p, 20), /FIM$/, "mantém o FIM da saída quando corta");
+    // Log gigante: só a cauda é lida (o poll roda a cada 2s; reler megabytes seria desperdício) e o
+    // conteúdo final continua correto.
+    writeFileSync(p.log, "ruido\n".repeat(200_000) + "MARCADOR_FINAL\n");
+    const big = readJobLogTail(p, 200);
+    assert.ok(big.length <= 220, `cauda limitada, veio ${big.length}`);
+    assert.match(big, /MARCADOR_FINAL/, "o fim do log grande sobrevive");
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 

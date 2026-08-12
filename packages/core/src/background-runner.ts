@@ -17,7 +17,7 @@
  * OS. Paths live under <dir>/jobs/<jobId>.* so one job never collides with another.
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, openSync, closeSync, readSync, fstatSync } from "node:fs";
 import { join } from "node:path";
 
 export interface JobPaths {
@@ -149,6 +149,28 @@ export function jobLogTail(logText: string | undefined, cap = 4000): string {
   if (!logText) return "";
   const t = stripPowerShellNativeNoise(logText.replace(/\r\n/g, "\n")).trimEnd();
   return t.length <= cap ? t : `…(início cortado)\n${t.slice(t.length - cap)}`;
+}
+
+/** Bounded tail of a job's log WHILE IT RUNS, so the UI can show progress instead of a blind wait.
+ *  Best-effort by design: a missing/locked log is simply "nothing to show yet", never an error. */
+export function readJobLogTail(paths: JobPaths, cap = 2000): string {
+  let fd: number | undefined;
+  try {
+    if (!existsSync(paths.log)) return "";
+    // Lê só os ÚLTIMOS bytes, nunca o arquivo inteiro: isto roda no poll (a cada 2s) enquanto o job
+    // vive, e um `npm install`/build gera megabytes de log — reler tudo a cada ciclo seria desperdício
+    // proporcional ao tamanho do log. A janela é folgada em relação ao cap para o corte cair em texto
+    // já decodificado (multibyte no limite vira caractere inválido, que jobLogTail descarta na borda).
+    const window = Math.max(8192, cap * 8);
+    fd = openSync(paths.log, "r");
+    const size = fstatSync(fd).size;
+    const start = size > window ? size - window : 0;
+    const buf = Buffer.alloc(Math.min(size, window));
+    if (!buf.length) return "";
+    readSync(fd, buf, 0, buf.length, start);
+    return jobLogTail(decodeLoose(buf), cap);
+  } catch { return ""; }
+  finally { if (fd !== undefined) { try { closeSync(fd); } catch { /* já fechado */ } } }
 }
 
 /** Poll a job: has it finished? If so, return the exit code + bounded log tail for the store. */

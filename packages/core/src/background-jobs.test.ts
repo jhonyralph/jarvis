@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BackgroundJobStore, isTerminalJobStatus, planJobContinuation, parseBackgroundRunDirectives, BACKGROUND_JOB_STEERING, type BackgroundJob } from "./background-jobs.js";
+import { BackgroundJobStore, isTerminalJobStatus, planJobContinuation, parseBackgroundRunDirectives, canContinueOriginSession, BACKGROUND_JOB_STEERING, type BackgroundJob } from "./background-jobs.js";
 
 function job(over: Partial<BackgroundJob> = {}): BackgroundJob {
   return { jobId: "j1", originSessionId: "s1", runnerId: "local", command: "npm run typecheck", cwd: "/w", status: "succeeded", createdAt: 1, updatedAt: 2, autoContinueDepth: 0, ...over };
@@ -190,6 +190,36 @@ test("the steering prompt teaches exactly the directive the Hub parses back", ()
   // round-trip: an agent that followed the instruction verbatim yields a parseable command
   const sample = "Vou rodar em segundo plano:\n```jarvis-run\nnpm run build\n```";
   assert.deepEqual(parseBackgroundRunDirectives(sample), ["npm run build"]);
+  // O agente NÃO recebe confirmação de que o bloco virou job, então a instrução tem que dizer isso —
+  // sem esta parte ele afirma "te aviso quando terminar" e o usuário espera um turno que pode não vir.
+  assert.match(BACKGROUND_JOB_STEERING, /NÃO recebe confirmação/);
+  assert.match(BACKGROUND_JOB_STEERING, /painel de tarefas/);
+});
+
+test("canContinueOriginSession: sessão NATIVA continua mesmo fora do store gerenciado", () => {
+  // REGRESSÃO: o Hub checava só o store gerenciado. Sessão nativa nunca está lá, então toda
+  // continuação de sessão nativa era descartada calada — job rodava, terminava e a conversa parava.
+  assert.equal(canContinueOriginSession({
+    local: true, native: true, nativeTranscriptExists: true, managedSessionExists: false,
+  }), true, "transcript nativo existe → dá para continuar, mesmo sem linha no store");
+
+  // Transcript nativo apagado: aí sim não há o que continuar.
+  assert.equal(canContinueOriginSession({
+    local: true, native: true, nativeTranscriptExists: false, managedSessionExists: false,
+  }), false);
+
+  // Sessão gerenciada: comportamento antigo preservado.
+  assert.equal(canContinueOriginSession({
+    local: true, native: false, nativeTranscriptExists: false, managedSessionExists: true,
+  }), true);
+  assert.equal(canContinueOriginSession({
+    local: true, native: false, nativeTranscriptExists: false, managedSessionExists: false,
+  }), false, "sessão gerenciada apagada → nada a continuar");
+
+  // Sessão remota: quem decide é o runner dono; o Hub não pode vetar por ausência local.
+  assert.equal(canContinueOriginSession({
+    local: false, native: false, nativeTranscriptExists: false, managedSessionExists: false,
+  }), true);
 });
 
 test("a corrupt first line yields an empty store rather than throwing", () => {
