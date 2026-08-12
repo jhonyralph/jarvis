@@ -1,3 +1,10 @@
+## [0.22.3](https://github.com/jhonyralph/jarvis/compare/v0.22.2...v0.22.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* **ui:** colapsar Problemas e Fontes importadas do framework por padrao ([a95c29b](https://github.com/jhonyralph/jarvis/commit/a95c29bd17750be38d09e27804b2649a7aebae53))
+
 ## [0.22.2](https://github.com/jhonyralph/jarvis/compare/v0.22.1...v0.22.2) (2026-08-12)
 
 
