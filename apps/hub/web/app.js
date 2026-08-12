@@ -872,7 +872,7 @@
       (rows||[]).forEach(r=>{ const cls=r.t==='+'?'add':r.t==='-'?'del':r.t==='@'?'sec':'ctx'; const ln=document.createElement('span'); ln.className='dline '+cls; ln.textContent=r.s; w.appendChild(ln); });
       block.appendChild(w); w.scrollIntoView({block:'nearest'}); }
     // flip a live tool block to past tense when its turn finishes
-    function setToolDone(block){ if(block.classList.contains('tdone'))return; if(block.classList.contains('thinkbox')){ const ttl=block.querySelector('.ttl'); if(ttl) ttl.textContent='Pensando...'; block.classList.add('tdone'); return; } if(block.classList.contains('strgroup')){ refreshToolGroup(block,true); block.classList.add('tdone'); return; } if(block.classList.contains('strrepeat')){ refreshRepeatGroup(block,true); block.classList.add('tdone'); return; } const nm=block.dataset.name, ttl=block.querySelector('.ttl'); if(ttl&&nm) ttl.textContent=pastify(nm,block.dataset.sum); block.classList.add('tdone'); }
+    function setToolDone(block){ if(block.classList.contains('tdone'))return; if(block.classList.contains('thinkbox')){ const ttl=block.querySelector('.ttl'); if(ttl) ttl.textContent='Pensando...'; block.classList.add('tdone'); return; } if(block.classList.contains('strgroup')){ refreshToolGroup(block,true); block.classList.add('tdone'); return; } if(block.classList.contains('strrepeat')){ refreshRepeatGroup(block,true); block.classList.add('tdone'); return; } const nm=block.dataset.name, ttl=block.querySelector('.ttl'); if(ttl&&nm) ttl.textContent=pastify(nm,block.dataset.sum)||nm||''; block.classList.add('tdone'); }
     // Flip the tools ALREADY placed in a container to past tense ("Editando"→"Editado") the moment the
     // NEXT action in that container starts — a finished action shouldn't sit in present tense for the
     // rest of a long turn (it used to flip only when the WHOLE turn ended). Direct children only, so a
@@ -4985,7 +4985,7 @@
     });
     // Indicador de jobs em background (comandos ```jarvis-run```): visível em QUALQUER sessão, mostra o
     // que está rodando/na fila + recém-concluídos, com "ir" (navega até a sessão dona) e "cancelar".
-    let bgJobsCache=[];
+    let bgJobsCache=[], bgJobsOpen={}; // jobId -> saida expandida (sobrevive ao re-render do poll)
     function renderBgJobs(jobs){
       if(jobs)bgJobsCache=jobs; if(!E.bgJobs) return;
       const list=bgJobsCache||[];
@@ -4997,9 +4997,28 @@
         const ic=document.createElement('span'); ic.className='bgj-ic'; ic.textContent=ICON[j.status]||'•'; if(j.status==='succeeded')ic.style.color='#4ade80'; else if(j.status==='failed')ic.style.color='#f87171'; else if(j.status==='cancelled')ic.style.color='#f0883e';
         const cmd=document.createElement('span'); cmd.className='bgj-cmd'; cmd.textContent='job '+(LABEL[j.status]||j.status)+(j.status==='failed'&&j.exitCode!=null?' ('+j.exitCode+')':'')+': '+(j.command||''); cmd.title=j.command||'';
         row.append(ic,cmd);
+        // "terminou, mas continuou a conversa?" era invisível — e é justamente a duvida de quem espera
+        // um turno que talvez nunca venha. Terminal sem continuacao ganha selo de alerta.
+        if(j.status!=='running'&&j.status!=='queued'){
+          const s=document.createElement('span'); s.className='bgj-cont'+(j.continued?'':' warn');
+          s.textContent=j.continued?'✓ resultado devolvido':'⚠ nao continuou';
+          s.title=j.continued?'O Jarvis abriu um turno na sessao com o resultado deste job.':'O job terminou mas nenhum turno foi aberto com o resultado. Abra a sessao e use a saida abaixo.';
+          row.appendChild(s);
+        }
         const go=document.createElement('button'); go.type='button'; go.className='bgj-act'; go.textContent='ir'; go.title='Abrir a sessão dona deste job'; go.onclick=()=>{ if(j.sessionId) openSession(j.sessionId,j.runnerId); }; row.appendChild(go);
         if(j.status==='running'||j.status==='queued'){ const x=document.createElement('button'); x.type='button'; x.className='bgj-act danger'; x.textContent='cancelar'; x.title='Cancelar este job'; x.onclick=()=>{ if(confirm('Cancelar este job em background?')) tx({t:'background_job_cancel',jobId:j.jobId}); }; row.appendChild(x); }
         E.bgJobs.appendChild(row);
+        // Saida: ao vivo enquanto roda (a cauda anda a cada poll), e o resumo final depois. Colapsado
+        // por padrao para nao empurrar o chat; o estado de aberto sobrevive ao re-render.
+        if(j.output){
+          const d=document.createElement('details'); d.className='bgj-out'; d.open=!!bgJobsOpen[j.jobId];
+          d.addEventListener('toggle',()=>{ if(d.open)bgJobsOpen[j.jobId]=1; else delete bgJobsOpen[j.jobId]; });
+          const sm=document.createElement('summary'); sm.textContent=(j.status==='running'?'saida ao vivo':'saida final');
+          const pre=document.createElement('pre'); pre.textContent=j.output;
+          d.append(sm,pre); E.bgJobs.appendChild(d);
+          // Enquanto roda, mantem a cauda colada no fim (comportamento de terminal).
+          if(d.open&&j.status==='running') pre.scrollTop=pre.scrollHeight;
+        }
       });
     }
     function renderQueue(){ if(!E.queueRow)return; const q=queueOf(currentSession); E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!q.length); if(!q.length)return;

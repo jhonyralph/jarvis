@@ -96,7 +96,9 @@ export const BACKGROUND_JOB_STEERING =
   "Ambiente Jarvis: você roda como UM turno não-interativo. Tarefas em segundo plano nativas (run_in_background) NÃO sobrevivem ao fim do turno e você NÃO será reinvocado quando terminarem. "
   + "Para uma tarefa LONGA cujo resultado você precisa (build, testes, typecheck, script demorado), não use background nativo: emita um bloco cercado exatamente assim, um comando de shell por bloco:\n"
   + "```jarvis-run\n<comando>\n```\n"
-  + "O Jarvis executa esse comando de forma durável FORA deste turno e abre um NOVO turno com o resultado quando terminar. Após emitir o bloco, encerre o turno em vez de esperar. Use isso só para tarefas realmente demoradas; comandos rápidos rode normalmente. "
+  + "O Jarvis executa esse comando de forma durável FORA deste turno e, quando terminar, abre um NOVO turno com o resultado. Após emitir o bloco, encerre o turno em vez de esperar. "
+  + "IMPORTANTE: você NÃO recebe confirmação de que o bloco virou job — então NÃO afirme ao usuário que vai avisar/continuar como se fosse garantido. Diga que PEDIU a execução ao Jarvis e que o job aparece no painel de tarefas em segundo plano. Se o turno seguinte não trouxer o resultado, o job falhou em ser criado ou em continuar, e o usuário precisa saber disso em vez de ficar esperando. "
+  + "Use isso só para tarefas realmente demoradas; comandos rápidos rode normalmente. "
   + "O comando roda no shell nativo da máquina (no Windows é o cmd.exe, NÃO o bash): use comandos portáveis e NÃO use ferramentas só-Unix (tail/grep/head/sed) nem `2>/dev/null`. Não pagine a saída (nada de `| tail`) — o Jarvis já devolve o final do log automaticamente.";
 
 export interface ContinuationPlan {
@@ -114,6 +116,29 @@ function boundedSummary(s: string | undefined, cap = 4000): string {
   if (!s) return "";
   const t = s.trimEnd();
   return t.length <= cap ? t : `…(início cortado)\n${t.slice(t.length - cap)}`;
+}
+
+/**
+ * Can a job's ORIGIN session still receive the continuation turn on this machine?
+ *
+ * Existe porque o Hub errava exatamente aqui: checava só `store.get(sid)` (o store de sessões
+ * GERENCIADAS) e, como sessão NATIVA (`claude:<uuid>`) vive no transcript do provider e nunca esteve
+ * nesse store, TODA continuação de sessão nativa era descartada em silêncio — o job rodava, terminava
+ * bem, era marcado como continuado, e a conversa nunca seguia. Regra: a sessão está viva se o
+ * transcript nativo existe (caso nativo) OU há linha no store (caso gerenciado). Sessão remota é
+ * responsabilidade do runner dono, então não se decide por ela aqui.
+ */
+export function canContinueOriginSession(input: {
+  /** O job pertence a esta máquina (Hub local)? Para sessão remota, o dono decide. */
+  local: boolean;
+  native: boolean;
+  /** Transcript nativo legível (só relevante quando `native`). */
+  nativeTranscriptExists: boolean;
+  /** Linha no store de sessões gerenciadas (só relevante quando não `native`). */
+  managedSessionExists: boolean;
+}): boolean {
+  if (!input.local) return true;
+  return input.native ? input.nativeTranscriptExists : input.managedSessionExists;
 }
 
 /**

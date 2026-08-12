@@ -46,7 +46,7 @@ import { runManagedTurn, type ManagedTurnInput, type TurnCtx } from "./turn.js";
 import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
 import { buildCouncilRoutePrompt, councilRouteFallback, parseCouncilRouteDecision, type CouncilRouteDecision } from "./councilRoute.js";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
-import { BackgroundJobStore, planJobContinuation, parseBackgroundRunDirectives, DEFAULT_MAX_AUTO_CONTINUE_DEPTH, isTerminalJobStatus, type BackgroundJob, jobPaths, spawnDetachedJob, readJobPid, readJobCompletion } from "@jarvis/core";
+import { BackgroundJobStore, planJobContinuation, parseBackgroundRunDirectives, canContinueOriginSession, DEFAULT_MAX_AUTO_CONTINUE_DEPTH, isTerminalJobStatus, type BackgroundJob, jobPaths, spawnDetachedJob, readJobPid, readJobCompletion, readJobLogTail } from "@jarvis/core";
 import { PersonalAssistantService } from "./personalAssistant.js";
 import { createBuiltInPersonalSources, createPersonalSourceFactory } from "./personalSources.js";
 import { createPersonalProactiveScheduler } from "./personalProactiveIntegration.js";
@@ -3078,14 +3078,31 @@ function flushAllQueues(): void {
  *  through the queue (not a raw runOwnedManagedTurn) so it inherits the concurrency lease, ownership
  *  resolution and native --resume for free, and works for both local and remote-runner sessions. The
  *  caller marks the job `continued` FIRST so a crash between mark and enqueue can't double-fire. */
-function injectJobContinuation(job: BackgroundJob, text: string): void {
+/** A sessão de origem de um job ainda pode receber um turno nesta máquina? Sessão NATIVA vive no
+ *  transcript do provider (nunca no store gerenciado) — tratar as duas do mesmo jeito era o bug que
+ *  descartava a continuação de toda sessão nativa. */
+function originSessionAlive(sid: string, runnerId: string = LOCAL_ID): boolean {
+  const native = isNativeId(sid);
+  return canContinueOriginSession({
+    local: runnerId === LOCAL_ID,
+    native,
+    nativeTranscriptExists: native ? !!nativeInfo(sid) : false,
+    managedSessionExists: !native ? !!store.get(sid) : false,
+  });
+}
+function injectJobContinuation(job: BackgroundJob, text: string): { ok: true } | { ok: false; reason: string } {
   const runnerId = job.runnerId || LOCAL_ID;
   const sid = job.originSessionId;
-  if (!store.get(sid) && runnerId === LOCAL_ID) return; // origin session no longer exists locally — nothing to continue
+  // A sessão de origem pode ser NATIVA (`claude:<uuid>`) — ela nunca esteve no store gerenciado, e a
+  // checagem antiga (`!store.get(sid)`) derrubava a continuação de TODA sessão nativa em silêncio. O
+  // caminho de flush já sabe entregar turno nativo (deliverNativeTurn), então o que importa aqui é só
+  // se a sessão ainda EXISTE de alguma forma: transcript nativo legível, ou linha no store.
+  if (!originSessionAlive(sid, runnerId)) return { ok: false, reason: "a sessão de origem não existe mais nesta máquina" };
   const owner = captureSessionOwnerGeneration(runnerId, sid);
   const actor: ContextActor = { userId: owner.principalId || "local", deviceId: "hub", source: "system" };
   enqueueChatTurn(runnerId, sid, { text, atts: [], actor, msgId: `job:${job.jobId}` });
   void maybeFlushQueue(runnerId, sid, false);
+  return { ok: true };
 }
 
 /** Fire the auto-continuation for every terminal job that hasn't been continued yet. Called from the
@@ -3095,11 +3112,20 @@ function injectJobContinuation(job: BackgroundJob, text: string): void {
 function reconcileBackgroundJobs(): void {
   for (const job of backgroundJobs.pendingContinuation()) {
     const plan = planJobContinuation(job);
-    // Whatever the decision, close the job out (markContinued) so it stops being pending; only inject
-    // when the plan says to. A depth-capped job gets a heads-up instead of a silent stop.
+    // Close the job out (markContinued) so it stops being pending — retrying forever would be worse
+    // than reporting. The rule that matters: NUNCA sair daqui em silêncio. Se a continuação não vai
+    // acontecer, o usuário tem que ver na sessão, senão ele fica esperando um turno que nunca vem.
     backgroundJobs.markContinued(job.jobId);
-    if (plan.act && plan.text) injectJobContinuation(job, plan.text);
-    else if (!plan.act && job.autoContinueDepth > 0) broadcastOn(job.runnerId || LOCAL_ID, job.originSessionId, { t: "notice", message: `Auto-continuação do job de background parada: ${plan.reason}.` });
+    const target = job.runnerId || LOCAL_ID;
+    let failure = plan.act ? "" : plan.reason;
+    if (plan.act && plan.text) {
+      const injected = injectJobContinuation(job, plan.text);
+      if (!injected.ok) failure = injected.reason;
+    }
+    if (failure) {
+      log.warn("job_continuation_skipped", { jobId: job.jobId, sessionId: job.originSessionId, runnerId: target, reason: failure });
+      broadcastOn(target, job.originSessionId, { t: "notice", message: `A tarefa em segundo plano \`${job.command.slice(0, 60)}\` terminou (${job.status}), mas NÃO continuei a conversa: ${failure}. O resultado está no painel de tarefas.` });
+    }
   }
   broadcastBackgroundJobs();
 }
@@ -3120,7 +3146,14 @@ function startLocalBackgroundJob(originSessionId: string, command: string, cwd: 
   try {
     spawnDetachedJob(command, cwd, jobPaths(HUB_JOB_DIR, job.jobId));
     backgroundJobs.setStatus(job.jobId, "running");
-    broadcastOn(LOCAL_ID, originSessionId, { t: "notice", message: `Tarefa em segundo plano iniciada: \`${command.slice(0, 80)}\`. Aviso e continuo quando terminar.` });
+    // Só prometer o que dá para cumprir: a continuação depende da sessão ainda existir no fim. Checar
+    // AGORA não garante o futuro, mas transforma o caso estruturalmente impossível (sessão que já não
+    // existe) num aviso honesto em vez da promessa cega que existia aqui antes.
+    const canContinue = originSessionAlive(originSessionId);
+    broadcastOn(LOCAL_ID, originSessionId, { t: "notice", message: canContinue
+      ? `Tarefa em segundo plano iniciada: \`${command.slice(0, 80)}\`. Continuo a conversa sozinho quando terminar; acompanhe no painel de tarefas.`
+      : `Tarefa em segundo plano iniciada: \`${command.slice(0, 80)}\`, mas esta sessão não pôde ser identificada — vou registrar o resultado no painel de tarefas SEM continuar a conversa.` });
+    log.info("job_started", { jobId: job.jobId, sessionId: originSessionId, cwd, depth, canContinue, command: command.slice(0, 200) });
     broadcastBackgroundJobs();
   } catch (error) {
     backgroundJobs.setStatus(job.jobId, "failed", { exitCode: -1, resultSummary: `falha ao iniciar o job: ${String((error as Error)?.message || error)}` });
@@ -3141,7 +3174,10 @@ function pollBackgroundJobs(): void {
     const completion = readJobCompletion(paths);
     if (completion) { backgroundJobs.setStatus(job.jobId, completion.exitCode === 0 ? "succeeded" : "failed", completion); anyTerminal = true; }
   }
-  if (anyTerminal || changed) broadcastBackgroundJobs();
+  // Enquanto existe job vivo, re-transmite SEMPRE: é o que faz a cauda do log andar na tela em vez de
+  // o usuário encarar uma linha parada sem saber se o processo travou.
+  const anyLive = backgroundJobs.running().some((j) => (j.runnerId || LOCAL_ID) === LOCAL_ID);
+  if (anyTerminal || changed || anyLive) broadcastBackgroundJobs();
   if (anyTerminal) reconcileBackgroundJobs();
 }
 /* ── Fluxos: acompanhamento (F2–F7) ───────────────────────────────────────────────────────────────
@@ -3204,12 +3240,27 @@ function killJob(pid: number): void {
 /** Jobs mostrados ao dono na UI: tudo ainda vivo + os terminais recentes (para ver "acabou/falhou" por
  *  um tempo). Comando truncado; nada além do próprio comando é exposto. */
 function backgroundJobsForUi(): Array<Record<string, unknown>> {
-  const RECENT_MS = 10 * 60_000, now = Date.now();
+  // Uma hora (era 10min): a queixa real era job terminal SUMINDO da tela antes de o usuário entender o
+  // que houve — principalmente o que falhou. Enquanto vive, manda a cauda do log para dar progresso.
+  const RECENT_MS = 60 * 60_000, now = Date.now();
   return backgroundJobs.list()
     .filter((j) => !isTerminalJobStatus(j.status) || now - j.updatedAt < RECENT_MS)
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 30)
-    .map((j) => ({ jobId: j.jobId, command: j.command.length > 200 ? j.command.slice(0, 200) + "…" : j.command, status: j.status, sessionId: j.originSessionId, runnerId: j.runnerId || LOCAL_ID, createdAt: j.createdAt, updatedAt: j.updatedAt, exitCode: j.exitCode }));
+    .map((j) => {
+      const terminal = isTerminalJobStatus(j.status);
+      // Job vivo: lê a cauda do log agora (só os poucos em execução tocam o disco). Terminal: já temos
+      // o resumo persistido, não relê nada.
+      const output = terminal ? (j.resultSummary || "") : (j.runnerId || LOCAL_ID) === LOCAL_ID ? readJobLogTail(jobPaths(HUB_JOB_DIR, j.jobId), 2000) : "";
+      return {
+        jobId: j.jobId, command: j.command.length > 200 ? j.command.slice(0, 200) + "…" : j.command,
+        status: j.status, sessionId: j.originSessionId, runnerId: j.runnerId || LOCAL_ID,
+        createdAt: j.createdAt, updatedAt: j.updatedAt, exitCode: j.exitCode,
+        // `continued` distingue "terminou e devolveu o resultado na conversa" de "terminou e parou aqui" —
+        // exatamente a dúvida que não dava para responder olhando a tela.
+        continued: !!j.continued, output: output.length > 2000 ? output.slice(output.length - 2000) : output,
+      };
+    });
 }
 function broadcastBackgroundJobs(): void {
   const payload = { t: "background_jobs" as const, jobs: backgroundJobsForUi() };
@@ -3845,7 +3896,17 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     // The Hub owns this session/cwd, so it launches the job here; pollBackgroundJobs + reconcile then
     // auto-continue THIS session when it finishes. Skipped for managed/subagent turns (isolated). Best-
     // effort — a bad directive must never fail an otherwise-completed turn.
-    if (!opts.managed) { try { for (const command of parseBackgroundRunDirectives(reply.text || "")) startLocalBackgroundJob(sid, command, cwd); } catch { /* never break a completed turn */ } }
+    if (!opts.managed) {
+      try {
+        const directives = parseBackgroundRunDirectives(reply.text || "");
+        // Sem esta linha não havia como saber se um bloco ```jarvis-run foi visto e virou job: quando a
+        // continuação nao chegava, o log nao dizia NADA sobre jobs. Registra tambem o caso "a resposta
+        // tinha uma cerca jarvis-run mas o parser nao extraiu comando" — antes, indistinguivel.
+        const looksLikeDirective = /```[ \t]*jarvis-run\b/i.test(reply.text || "");
+        if (directives.length || looksLikeDirective) log.info("job_directives", { sessionId: sid, parsed: directives.length, fenced: looksLikeDirective });
+        for (const command of directives) startLocalBackgroundJob(sid, command, cwd);
+      } catch (e) { log.warn("job_directive_failed", { sessionId: sid, error: String((e as any)?.message ?? e) }); }
+    }
     if (!opts.managed) applyWorkflowFromReply(sid, reply.text || "");   // F4: registra o que a IA declarou
     return { ...reply, activity: buf.slice() };
   } catch (e) {
