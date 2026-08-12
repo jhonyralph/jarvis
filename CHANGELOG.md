@@ -1,3 +1,10 @@
+# [0.23.0](https://github.com/jhonyralph/jarvis/compare/v0.22.3...v0.23.0) (2026-08-12)
+
+
+### Features
+
+* **framework:** pasta reference/ e import que nao descarta em silencio ([4324590](https://github.com/jhonyralph/jarvis/commit/4324590118f818b4e866e6708a3a08ce73a6e27d))
+
 ## [0.22.3](https://github.com/jhonyralph/jarvis/compare/v0.22.2...v0.22.3) (2026-08-12)
 
 

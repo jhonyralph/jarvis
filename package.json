@@ -1,7 +1,7 @@
 {
   "name": "jarvis",
   "private": true,
-  "version": "0.22.3",
+  "version": "0.23.0",
   "description": "Self-hosted, agent-agnostic, voice-first control plane for coding agents",
   "workspaces": [
     "packages/*",
