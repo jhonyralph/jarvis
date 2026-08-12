@@ -508,21 +508,29 @@ async function publishAgentCatalog(): Promise<void> {
 
 function nativeDisplayTitleForSession(s: any): string {
   try {
-    const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-    const key = nid ? nativeIdForAgent(s.agent, nid) : null;
+    const key = nativeSessionKeysForManaged(s)[0] || null;
     const h = key ? nativeHistory(key) : null;
     return h?.title || s.title;
   } catch {
     return s.title;
   }
 }
+function nativeSessionKeysForManaged(s: any): string[] {
+  const keys: string[] = [];
+  const names = [s.agent, ...agents.names().filter((name) => name !== s.agent)];
+  for (const name of names) {
+    try {
+      const nid = agents.get(name).nativeSessionId?.(s.id);
+      const key = nid ? nativeIdForAgent(name, nid) : null;
+      if (key && !keys.includes(key)) keys.push(key);
+    } catch { /* ignore unavailable adapter */ }
+  }
+  return keys;
+}
 function allSessions(): RunnerSession[] {
   const own = store.list().map((s: any) => ({ id: s.id, title: nativeDisplayTitleForSession(s), agent: s.agent, cwd: s.cwd, updatedAt: s.updatedAt, source: "managed" as const, writable: true, started: s.count > 0 }));
   const native = filterUnboundNativeSessions(listNative(), own, (s) => {
-    try {
-      const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-      return nid ? nativeIdForAgent(s.agent, nid) : null;
-    } catch { return null; }
+    return nativeSessionKeysForManaged(s);
   }).map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, updatedAt: n.updatedAt, source: "native" as const, writable: n.agent === "claude-code" || n.agent === "codex", started: true }));
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);
 }

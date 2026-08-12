@@ -139,11 +139,12 @@ test("filterUnboundNativeSessions hides provider transcripts already bound to ma
   const native = [
     { id: "claude:native-1", title: "backing transcript" },
     { id: "codex:native-2", title: "standalone codex" },
+    { id: "codex:fallback-3", title: "fallback transcript" },
     { id: "managed-3", title: "accidental exact duplicate" },
   ];
   const managed = [
     { id: "managed-1", native: "claude:native-1" },
-    { id: "managed-3", native: null },
+    { id: "managed-3", native: ["codex:fallback-3"] },
   ];
 
   assert.deepEqual(

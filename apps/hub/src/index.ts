@@ -2408,23 +2408,31 @@ function syncTails(): void {
 /** Jarvis's own sessions merged with imported native Claude/Codex sessions (agent-tagged, newest first). */
 function nativeDisplayTitleForSession(s: any): string {
   try {
-    const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-    const key = nid ? nativeIdForAgent(s.agent, nid) : null;
+    const key = nativeSessionKeysForManaged(s)[0] || null;
     const h = key ? nativeHistory(key) : null;
     return h?.title || s.title;
   } catch {
     return s.title;
   }
 }
+function nativeSessionKeysForManaged(s: any): string[] {
+  const keys: string[] = [];
+  const names = [s.agent, ...agents.names().filter((name) => name !== s.agent)];
+  for (const name of names) {
+    try {
+      const nid = agents.get(name).nativeSessionId?.(s.id);
+      const key = nid ? nativeIdForAgent(name, nid) : null;
+      if (key && !keys.includes(key)) keys.push(key);
+    } catch { /* ignore unavailable adapter */ }
+  }
+  return keys;
+}
 function allSessions(): any[] {
   const own = store.list().map((s) => ({ ...s, title: nativeDisplayTitleForSession(s) }));
   // Uma sessão gerenciada pode criar um transcript NATIVO vinculado com outro id
   // (ex.: id Jarvis + `claude:<uuid>`). A sessão gerenciada é a linha canônica.
   const native = filterUnboundNativeSessions(listNative(), own, (s) => {
-    try {
-      const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-      return nid ? nativeIdForAgent(s.agent, nid) : null;
-    } catch { return null; }
+    return nativeSessionKeysForManaged(s);
   })
     .map((n) => ({ id: n.id, title: n.title, agent: n.agent, cwd: n.cwd, createdAt: n.updatedAt, updatedAt: n.updatedAt, lastMessage: "", count: n.count }));
   return [...own, ...native].sort((a, b) => b.updatedAt - a.updatedAt);

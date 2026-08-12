@@ -533,13 +533,13 @@ export function nativeIdForAgent(agent: string, nativeId: string): string | null
 export function filterUnboundNativeSessions<N extends { id: string }, M extends { id: string }>(
   native: N[],
   managed: M[],
-  boundNativeId: (managed: M) => string | null | undefined,
+  boundNativeId: (managed: M) => string | string[] | null | undefined,
 ): N[] {
   const managedIds = new Set(managed.map((s) => s.id));
   const bound = new Set<string>();
   for (const s of managed) {
     const id = boundNativeId(s);
-    if (id) bound.add(id);
+    for (const value of Array.isArray(id) ? id : [id]) if (value) bound.add(value);
   }
   return native.filter((n) => !managedIds.has(n.id) && !bound.has(n.id));
 }
