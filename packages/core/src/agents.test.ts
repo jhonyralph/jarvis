@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions } from "./agents.js";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, isClaudeAsyncAgentLaunch, parseClaudeTaskNotification, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("native continuity rejects one provider thread bound to multiple Jarvis sessions", () => {
@@ -432,4 +432,58 @@ test("resolveClosestModel preserves Claude family aliases (they survive catalog 
   const r = resolveClosestModel("opus", "high", claude);
   assert.equal(r.changed, false);
   assert.equal(r.model, "opus");
+});
+
+// Regression: Claude subagents are async by default. The Agent/Task tool_result returns a handle in
+// ~40ms, NOT the subagent's result. Treating it as terminal closed every background subagent seconds
+// after spawn, so Trabalhos showed zero active work while the chat was still waiting on them.
+// Payload below is the verbatim handshake + notification captured from session 220db30a.
+const ASYNC_LAUNCH = [{ type: "text", text: "Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)\nagentId: a31a75e75a094e385 (internal ID - do not mention to user." }];
+const NOTIFICATION = `<task-notification>
+<task-id>a31a75e75a094e385</task-id>
+<tool-use-id>toolu_013vHNuj2WnMBzfGyiXLRnJ9</tool-use-id>
+<status>completed</status>
+<summary>Agent "Neutralize nestjs backend+process skills" finished</summary>
+<result>All 11 files done.</result>
+</task-notification>`;
+
+test("async subagent launch handshake is not mistaken for the subagent's result", () => {
+  assert.equal(isClaudeAsyncAgentLaunch(ASYNC_LAUNCH), true);
+  assert.equal(isClaudeAsyncAgentLaunch("Async agent launched successfully."), true);
+  // A synchronous subagent returns its actual work — that one really is terminal.
+  assert.equal(isClaudeAsyncAgentLaunch([{ type: "text", text: "Done. All 13 in-scope files reviewed." }]), false);
+  // A sync subagent reporting ON agent code must not be mistaken for a launch handshake.
+  assert.equal(isClaudeAsyncAgentLaunch([{ type: "text", text: "Renamed the agentId: field in agents.ts and updated 9 refs." }]), false);
+  assert.equal(isClaudeAsyncAgentLaunch(""), false);
+  assert.equal(isClaudeAsyncAgentLaunch(undefined), false);
+});
+
+test("task-notification resolves the async subagent under the SAME providerId used at spawn", () => {
+  const [done] = parseClaudeTaskNotification(NOTIFICATION);
+  // tool-use-id — not task-id — is the providerId the execution_spawn was registered under.
+  assert.equal(done.providerId, "toolu_013vHNuj2WnMBzfGyiXLRnJ9");
+  assert.equal(done.state, "succeeded");
+  assert.equal(done.summary, 'Agent "Neutralize nestjs backend+process skills" finished');
+});
+
+test("task-notification maps every terminal status, and refuses to guess on the rest", () => {
+  const at = (status: string) => parseClaudeTaskNotification(`<task-notification><tool-use-id>t1</tool-use-id><status>${status}</status></task-notification>`);
+  assert.equal(at("completed")[0].state, "succeeded");
+  assert.equal(at("failed")[0].state, "failed");
+  assert.equal(at("stopped")[0].state, "cancelled");
+  // Unknown/non-terminal status must leave the child running instead of closing it on a guess.
+  assert.deepEqual(at("running"), []);
+  assert.deepEqual(at(""), []);
+  // No tool-use-id: the node is unaddressable, so it is dropped rather than mapped to the wrong child.
+  assert.deepEqual(parseClaudeTaskNotification("<task-notification><task-id>a1</task-id><status>completed</status></task-notification>"), []);
+});
+
+test("plain assistant text is never parsed as a task-notification", () => {
+  assert.deepEqual(parseClaudeTaskNotification("Faltam 2 agentes: nestjs data/deploy/security e os frontends."), []);
+  assert.deepEqual(parseClaudeTaskNotification(undefined), []);
+});
+
+test("a batch of notifications in one injected turn closes each child independently", () => {
+  const both = parseClaudeTaskNotification(`${NOTIFICATION}\n<task-notification><tool-use-id>toolu_02</tool-use-id><status>failed</status><summary>boom</summary></task-notification>`);
+  assert.deepEqual(both.map((d) => [d.providerId, d.state]), [["toolu_013vHNuj2WnMBzfGyiXLRnJ9", "succeeded"], ["toolu_02", "failed"]]);
 });

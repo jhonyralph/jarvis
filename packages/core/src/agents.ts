@@ -24,6 +24,7 @@ import {
   type AgentEvent,
   type EventSequencer,
   type CostKind,
+  type ExecutionState,
   type ModelDescriptor,
   type ModelSource,
   type PermissionMode,
@@ -118,6 +119,55 @@ function cliErrorMessage(value: unknown, fallback: string): string {
 /** For a file tool_use, extract the real path, +/- counts and this edit's diff rows, live. */
 function fileToolStat(name: string, input: any): { path?: string; adds?: number; dels?: number; rows?: unknown[] } {
   try { return toolFileStat(name, input); } catch { return {}; }
+}
+
+/** Flatten a Claude message `content` (string | block[]) into plain text for pattern matching. */
+function claudeContentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((b: any) => (typeof b === "string" ? b : b?.type === "text" ? String(b.text || "") : "")).join("\n");
+}
+
+// Claude subagents are ASYNC BY DEFAULT (`run_in_background` defaults to true). The Agent/Task
+// tool_result then comes back in ~40ms carrying only a HANDLE ("Async agent launched successfully…
+// agentId: <id>") — the subagent itself keeps running for minutes and only reports back later via a
+// <task-notification>. Treating that handshake as the child's terminal state closed every background
+// subagent seconds after spawn, so the Trabalhos panel showed zero active work while the chat was
+// legitimately still waiting on them.
+// Anchored on purpose: a SYNCHRONOUS subagent reporting on agent code could easily mention
+// "agentId:" in prose, and a false positive here would leave a finished child open forever.
+const CLAUDE_ASYNC_LAUNCH = /async agent launched|^\s*agentId:\s*\S+/im;
+
+/** True when an Agent/Task tool_result is only the async launch handshake, not the subagent's result. */
+export function isClaudeAsyncAgentLaunch(content: unknown): boolean {
+  return CLAUDE_ASYNC_LAUNCH.test(claudeContentText(content));
+}
+
+const TASK_NOTIFICATION_STATES: Record<string, ExecutionState> = {
+  completed: "succeeded", success: "succeeded", succeeded: "succeeded",
+  failed: "failed", error: "failed",
+  stopped: "cancelled", cancelled: "cancelled", canceled: "cancelled", killed: "cancelled",
+};
+
+/**
+ * The real terminal signal for an async Claude subagent. It arrives as an injected user turn and
+ * carries `<tool-use-id>`, which is exactly the providerId the spawn was registered under.
+ */
+export function parseClaudeTaskNotification(content: unknown): { providerId: string; state: ExecutionState; summary?: string }[] {
+  const text = claudeContentText(content);
+  if (!text.includes("<task-notification>")) return [];
+  const out: { providerId: string; state: ExecutionState; summary?: string }[] = [];
+  for (const block of text.split("<task-notification>").slice(1)) {
+    const body = block.split("</task-notification>")[0] || block;
+    const providerId = body.match(/<tool-use-id>\s*([^<\s]+)\s*<\/tool-use-id>/)?.[1];
+    if (!providerId) continue; // without the tool_use id we cannot address the node — ignore it.
+    const raw = (body.match(/<status>\s*([^<]*?)\s*<\/status>/)?.[1] || "").toLowerCase();
+    const state = TASK_NOTIFICATION_STATES[raw];
+    if (!state) continue; // unknown / non-terminal status: leave the child running rather than guess.
+    const summary = body.match(/<summary>\s*([\s\S]*?)\s*<\/summary>/)?.[1];
+    out.push({ providerId, state, summary: summary ? summary.slice(0, 2_000) : undefined });
+  }
+  return out;
 }
 
 // one-shot prompts (search / summary / digest / voice-intent) run in this dir so their
@@ -843,6 +893,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       let usage: AgentReply["usage"];
       let lastMsgUsage: any;
       const taskIds = new Set<string>();
+      // Spawned async and still unresolved: launched, but no <task-notification> seen yet.
+      const asyncTaskIds = new Set<string>();
       // Timing: the "result" NDJSON line carries the FINAL text/cost — everything a caller needs.
       // Whatever happens between that line and the OS process actually closing (runStream() only
       // resolves on close) is pure CLI-shutdown tail (MCP client teardown, telemetry flush, etc.)
@@ -881,9 +933,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             else if (b.type === "thinking") onEvent({ kind: "thinking", parentId });
           }
         } else if (o.type === "user") {
-          for (const b of o.message?.content || []) if (b?.type === "tool_result" && taskIds.has(String(b.tool_use_id || ""))) {
+          const content = o.message?.content;
+          for (const b of Array.isArray(content) ? content : []) if (b?.type === "tool_result" && taskIds.has(String(b.tool_use_id || ""))) {
             const failed = !!b.is_error;
+            // An async launch handshake is NOT the subagent's terminal state — it only says the
+            // agent started. Closing here would strand the node as "succeeded" seconds after spawn,
+            // and transition() treats terminal states as final, so no later activity could reopen it.
+            if (!failed && isClaudeAsyncAgentLaunch(b.content)) { asyncTaskIds.add(String(b.tool_use_id)); continue; }
             onEvent({ kind: "execution_state", providerId: String(b.tool_use_id), state: failed ? "failed" : "succeeded", summary: failed ? String(b.content || "subagente falhou") : undefined });
+          }
+          // The async subagent's real terminal signal arrives later, as an injected user turn.
+          for (const done of parseClaudeTaskNotification(content)) {
+            if (!taskIds.has(done.providerId)) continue;
+            onEvent({ kind: "execution_state", providerId: done.providerId, state: done.state, summary: done.summary });
+            asyncTaskIds.delete(done.providerId);
           }
         } else if (o.type === "result") {
           if (o.session_id) {
@@ -898,6 +961,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? tResult - tFirstLine : undefined };
         }
       }, opts?.signal);
+      // The turn ended while async subagents were still unresolved. The tracker will mark them
+      // `unknown`; say WHY, since Claude keeps their transcript and they can be resumed.
+      for (const providerId of asyncTaskIds) {
+        onEvent({ kind: "execution_state", providerId, state: "unknown", summary: "subagente assíncrono ainda sem task-notification quando o turno encerrou — transcript preservado, pode ser retomado" });
+      }
       const tClose = Date.now();
       if (tResult) {
         const tail = tClose - tResult;
