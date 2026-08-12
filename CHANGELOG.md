@@ -1,3 +1,10 @@
+## [0.22.1](https://github.com/jhonyralph/jarvis/compare/v0.22.0...v0.22.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **jobs:** continuar sessao nativa e nunca falhar calado no background ([#1](https://github.com/jhonyralph/jarvis/issues/1)) ([74702f9](https://github.com/jhonyralph/jarvis/commit/74702f9a8c9281f449f9010a443299065398cb9d))
+
 # [0.22.0](https://github.com/jhonyralph/jarvis/compare/v0.21.1...v0.22.0) (2026-08-12)
 
 
