@@ -1,3 +1,17 @@
+# [0.22.0](https://github.com/jhonyralph/jarvis/compare/v0.21.1...v0.22.0) (2026-08-12)
+
+
+### Bug Fixes
+
+* **sessions:** esconder transcript nativo de sessao que trocou de agente ([79c227c](https://github.com/jhonyralph/jarvis/commit/79c227caa2ed6fa7877072b260abf274a9872c85))
+* **turn:** nao tratar telemetria normal do provider como erro de limite ([45f7d80](https://github.com/jhonyralph/jarvis/commit/45f7d80603b06bca554ac94fc3f91bffcf868ae8))
+
+
+### Features
+
+* **permissions:** ponte MCP de aprovacao para o modo manual ([c8f036a](https://github.com/jhonyralph/jarvis/commit/c8f036a8711a53715d81a864a872cb722a6b1e9d))
+* **ui:** fluxos como cartoes colapsaveis com a skill de origem ([7ebee16](https://github.com/jhonyralph/jarvis/commit/7ebee16e863592a5ae12f0dd3f7b97eec87aad6d))
+
 ## [0.21.1](https://github.com/jhonyralph/jarvis/compare/v0.21.0...v0.21.1) (2026-08-11)
 
 
