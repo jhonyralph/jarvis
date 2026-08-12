@@ -3574,14 +3574,28 @@
     function renderFwWorkflows(m){
       fwWfLoaded=true; if(!E.fwWorkflows) return;
       const defs=(m&&m.workflows)||[], cands=(m&&m.candidates)||[];
+      // Origem legível: de qual arquivo do framework aquele fluxo saiu (ou se foi montado à mão).
+      const origem=(src)=>{ const p=src&&src.path; if(!p) return '<span class="wforig">✎ montado à mão</span>';
+        const skill=/^skills\/([^/]+)\//.exec(p); const nome=skill?skill[1]:p;
+        return '<span class="wforig" title="'+esc(p)+'">📄 skill: <b>'+esc(nome)+'</b></span>'; };
+      const selos=(steps)=>{ const g=(steps||[]).filter(x=>x.kind==='gate').length, e=(steps||[]).filter(x=>x.requiresEvidence).length;
+        return '<span class="wfchip">'+((steps||[]).length)+' passos</span>'+(g?'<span class="wfchip gate">'+g+' gate</span>':'')+(e?'<span class="wfchip evid">'+e+' evidência</span>':''); };
+      const passos=(steps)=>'<ol class="wfsteplist">'+(steps||[]).map(st=>'<li>'+esc(st.title)
+        +(st.kind==='gate'?'<span class="wfchip gate">gate</span>':'')
+        +(st.requiresEvidence?'<span class="wfchip evid">evidência</span>':'')+'</li>').join('')+'</ol>';
+
       let html='';
-      if(defs.length){ html+='<div class="sec" style="margin-top:0">Fluxos salvos</div>'+defs.map(d=>
-        '<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin:3px 0"><span style="min-width:0"><b>'+esc(d.name||d.id)+'</b> <span class="mut">'+((d.steps||[]).length)+' passo(s)'+((d.steps||[]).some(s=>s.kind==='gate')?' · com gate':'')+'</span></span><button class="ghost fwwf-edit" data-id="'+esc(d.id)+'" type="button" style="font-size:11px;padding:2px 8px">Revisar</button></div>').join('');
-      }
-      if(cands.length){ html+='<div class="sec">Skills com fluxo detectável</div>'+cands.map(c=>
-        '<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin:3px 0"><span style="min-width:0"><b>'+esc(c.name||c.id)+'</b> <span class="mut">'+c.steps+' passo(s) detectado(s) · '+esc(c.path)+'</span></span><button class="ghost fwwf-detect" data-path="'+esc(c.path)+'" type="button" style="font-size:11px;padding:2px 8px">Detectar</button></div>').join('');
-      }
-      if(!html) html='<div class="mut">Nenhum fluxo salvo e nenhuma skill com passos numerados/gates detectáveis. Você pode escrever os passos na skill (ex.: <code>### 1 — Nome</code>) e detectar de novo.</div>';
+      html+='<div class="sec" style="margin-top:0">Salvos no framework <span class="mut">('+defs.length+')</span></div>';
+      html+= defs.length ? defs.map(d=>'<details class="wfcard"><summary><span class="wfcv"></span><b>'+esc(d.name||d.id)+'</b>'+selos(d.steps)+origem(d.source)
+          +'<button class="ghost fwwf-edit" data-id="'+esc(d.id)+'" type="button">Revisar</button></summary>'+passos(d.steps)+'</details>').join('')
+        : '<div class="mut" style="font-size:11.5px;margin-bottom:6px">Nenhum fluxo salvo ainda.</div>';
+
+      html+='<div class="sec">Detectáveis nas skills <span class="mut">('+cands.length+')</span></div>';
+      html+= cands.length ? cands.map(c=>'<details class="wfcard"><summary><span class="wfcv"></span><b>'+esc(c.name||c.id)+'</b><span class="wfchip">'+c.steps+' passos detectados</span>'
+          +origem({path:c.path})+'<button class="ghost fwwf-detect" data-path="'+esc(c.path)+'" type="button">Detectar</button></summary>'
+          +'<div class="mut" style="font-size:11.5px;padding:4px 6px">Origem: <code>'+esc(c.path)+'</code>. Clique em <b>Detectar</b> para ver os passos propostos e revisar antes de salvar.</div></details>').join('')
+        : '<div class="mut" style="font-size:11.5px">Nenhuma skill com passos numerados ou gates. Escreva os passos na skill (ex.: <code>### 1 — Nome</code>) e recarregue.</div>';
+
       E.fwWorkflows.innerHTML=html+'<div id="fwWfDraft"></div>';
       if(fwWfDraft) renderFwWfDraft();
     }
@@ -3605,8 +3619,9 @@
         else if(g){ const s=fwWfDraft.steps[+g.dataset.i]; if(s) s.kind=g.checked?'gate':'step'; }
         else if(v){ const s=fwWfDraft.steps[+v.dataset.i]; if(s) s.requiresEvidence=v.checked; } });
       E.fwWorkflows.addEventListener('click',e=>{
-        const det=e.target.closest('.fwwf-detect'); if(det){ fwSend('Detectando fluxo em '+det.dataset.path,{t:'workflow_detect',path:det.dataset.path}); return; }
-        const ed=e.target.closest('.fwwf-edit'); if(ed){ const d=(fwWfCache.workflows||[]).find(x=>x.id===ed.dataset.id); if(d){ fwWfDraft=JSON.parse(JSON.stringify(d)); renderFwWfDraft(); } return; }
+        // os botões vivem dentro do <summary>: sem isto, clicar neles também abriria/fecharia o cartão
+        const det=e.target.closest('.fwwf-detect'); if(det){ e.preventDefault(); fwSend('Detectando fluxo em '+det.dataset.path,{t:'workflow_detect',path:det.dataset.path}); return; }
+        const ed=e.target.closest('.fwwf-edit'); if(ed){ e.preventDefault(); const d=(fwWfCache.workflows||[]).find(x=>x.id===ed.dataset.id); if(d){ fwWfDraft=JSON.parse(JSON.stringify(d)); renderFwWfDraft(); } return; }
         if(e.target.closest('#fwWfCancel')){ fwWfDraft=null; const h=document.getElementById('fwWfDraft'); if(h)h.innerHTML=''; return; }
         if(e.target.closest('#fwWfSave')){ if(!fwWfDraft) return; const def=Object.assign({},fwWfDraft,{steps:(fwWfDraft.steps||[]).filter(s=>!s._off).map(s=>({id:s.id,title:s.title,kind:s.kind,requiresEvidence:!!s.requiresEvidence,hint:s.hint}))});
           if(!def.steps.length){ toast('Marque ao menos um passo.'); return; } fwSend('Salvando fluxo '+(def.name||def.id),{t:'workflow_save',definition:def}); return; }
@@ -4910,7 +4925,10 @@
       E.wfRun.classList.remove('hidden'); E.wfRun.classList.toggle('open',wfOpen);
       const cur=steps.find(x=>x.id===wfRun.currentStepId);
       const falta=(s.missingEvidence||[]).length;
-      E.wfRun.innerHTML='<div class="wfhdr"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🧭 <b>'+esc(wfRun.workflowName||wfRun.workflowId)+'</b>'
+      // De onde este fluxo veio (qual skill) — a dúvida "qual é esse fluxo mesmo?" tem que morrer aqui.
+      const wfSrc=(wfDefs||[]).find(d=>d.id===wfRun.workflowId), wfPath=wfSrc&&wfSrc.source&&wfSrc.source.path;
+      const wfFrom=wfPath?(' <span class="mut" title="'+esc(wfPath)+'">· 📄 '+esc((/^skills\/([^/]+)\//.exec(wfPath)||[,wfPath])[1])+'</span>'):'';
+      E.wfRun.innerHTML='<div class="wfhdr"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🧭 <b>'+esc(wfRun.workflowName||wfRun.workflowId)+'</b>'+wfFrom
         +(wfRun.taskLabel?' <span class="mut">· '+esc(wfRun.taskLabel)+'</span>':'')
         +' <span class="wfbadge">'+(s.done||0)+'/'+(s.total||0)+'</span>'
         +(cur?' <span class="mut">→ '+esc(cur.title)+'</span>':' <span style="color:#4ade80">concluído</span>')
