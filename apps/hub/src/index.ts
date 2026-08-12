@@ -15,7 +15,7 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
-import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join, normalize, dirname, basename } from "node:path";
 import QRCode from "qrcode";
@@ -36,7 +36,7 @@ import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./s
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
-import { QueueBlockRegistry, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
+import { QueueBlockRegistry, readPackDir, packDirLabel, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -393,9 +393,12 @@ function saveVoiceCfg(): void { try { writeJsonAtomic(VOICE_CFG_FILE, voiceCfg, 
 // (~/.jarvis/framework) on this Hub machine. `preference` decides how a native-vs-universal "/name"
 // homonym resolves; `version` is the monotonic publish counter carried to every machine.
 const FRAMEWORK_CFG_FILE = join(JARVIS_DIR, "framework-config.json");
-const frameworkCfg: { preference: FrameworkPreference; version: number } = (() => {
-  try { const raw = JSON.parse(readFileSync(FRAMEWORK_CFG_FILE, "utf8")); return { preference: normalizeFrameworkPreference(raw?.preference), version: Math.max(0, Number(raw?.version) || 0) }; }
-  catch { return { preference: "ask", version: 0 }; }
+const frameworkCfg: { preference: FrameworkPreference; version: number; autoStartFlows: boolean } = (() => {
+  // `autoStartFlows` é a chave de desligar do DONO da máquina: o fluxo declara `autoStart` no pacote,
+  // mas quem sofre com um pacote de terceiro afobado é quem está na frente do chat. Liga por padrão —
+  // um fluxo que se declarou padrão pediu para valer; quem não quiser, desliga em um clique.
+  try { const raw = JSON.parse(readFileSync(FRAMEWORK_CFG_FILE, "utf8")); return { preference: normalizeFrameworkPreference(raw?.preference), version: Math.max(0, Number(raw?.version) || 0), autoStartFlows: raw?.autoStartFlows !== false }; }
+  catch { return { preference: "ask" as FrameworkPreference, version: 0, autoStartFlows: true }; }
 })();
 function saveFrameworkCfg(): void { try { writeJsonAtomic(FRAMEWORK_CFG_FILE, frameworkCfg, { pretty: true }); } catch { /* ignore */ } }
 const frameworkProvenance = new FrameworkProvenanceStore(JARVIS_DIR);
@@ -2393,11 +2396,22 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
 
 // Live mirror of native CLI sessions: tail the jsonl and broadcast new turns as they're
 // appended by an EXTERNAL Claude Code (or by us), so viewers update without refreshing.
-interface Tail { path: string; claude: boolean; offset: number; buf: string; paused: boolean; timer: ReturnType<typeof setInterval>; }
+interface Tail { path: string; claude: boolean; offset: number; buf: string; timer: ReturnType<typeof setInterval>; }
 const nativeTails = new Map<string, Tail>();
+/**
+ * Sessões cujo turno está sendo conduzido POR NÓS — o tail tem de ficar calado, senão rebroadcasta a
+ * nossa própria resposta (que o cliente já mostrou streamando) e ela aparece duplicada.
+ *
+ * A pausa vive AQUI, por sessionId, e não como campo do objeto Tail. O motivo é o bug que isto
+ * corrige: `syncTails()` destrói e recria o tail quando a sessão sai de vista (trocar de sessão,
+ * fechar a aba, reconexão de WebSocket). Quem pausava o objeto capturado no início do turno acabava
+ * despausando um objeto já descartado, enquanto o tail NOVO — criado no meio do turno, sem saber de
+ * pausa nenhuma — seguia emitindo. Chaveado por sessão, o silêncio sobrevive à recriação.
+ */
+const nativeTurnPaused = new Set<string>();
 function pollTail(sid: string): void {
   const t = nativeTails.get(sid);
-  if (!t || t.paused) return;
+  if (!t || nativeTurnPaused.has(sid)) return;
   let size: number;
   try { size = statSync(t.path).size; } catch { return; }
   if (size <= t.offset) return;
@@ -2425,7 +2439,7 @@ function startTail(sid: string): void {
   if (!f) return;
   let size = 0;
   try { size = statSync(f.path).size; } catch { /* new file */ }
-  nativeTails.set(sid, { path: f.path, claude: f.claude, offset: size, buf: "", paused: false, timer: setInterval(() => pollTail(sid), 900) });
+  nativeTails.set(sid, { path: f.path, claude: f.claude, offset: size, buf: "", timer: setInterval(() => pollTail(sid), 900) });
 }
 function stopTail(sid: string): void {
   const t = nativeTails.get(sid);
@@ -3851,12 +3865,44 @@ function reconcileNativeExecutions(sid: string): number {
   }
   return changed;
 }
+/** O fluxo que se declarou padrão (`autoStart` no `flows/<id>.json`). Se mais de um se declarar, vence
+ *  o menor id — determinístico — e o restante é registrado: dois pacotes brigando pelo padrão é
+ *  configuração a resolver, não sorteio a esconder. */
+function defaultWorkflowDefinition(): ReturnType<typeof workflowFromFile> {
+  const defs = readCanonicalFramework(frameworkRoot()).files
+    .filter((f) => f.path.startsWith("flows/"))
+    .map((f) => workflowFromFile(f.content))
+    .filter((d): d is NonNullable<typeof d> => !!d && d.autoStart === true)
+    .sort((a, b) => a.id.localeCompare(b.id));
+  if (defs.length > 1) log.warn("workflow_autostart_ambiguo", { escolhido: defs[0].id, outros: defs.slice(1).map((d) => d.id) });
+  return defs[0] ?? null;
+}
+
+/**
+ * Inicia sozinho o fluxo padrão na PRIMEIRA vez que uma sessão fala com a IA. Sem tarefa: o rastreador
+ * é opcional no acompanhamento, e exigir um aqui transformaria "automático" em mais um formulário.
+ *
+ * Só dispara quando a sessão NUNCA teve acompanhamento — inclusive concluído ou abandonado. Sem isso,
+ * abandonar um fluxo o faria renascer no turno seguinte, e não haveria como se livrar dele.
+ */
+function autoStartWorkflow(sid: string): WorkflowRun | undefined {
+  if (!frameworkCfg.autoStartFlows) return undefined;
+  if (workflowRuns.hasSession(sid)) return undefined;
+  const def = defaultWorkflowDefinition();
+  if (!def) return undefined;
+  const run = workflowRuns.put(createRun(def, { tracker: "", key: "" }, { runId: "wfr-" + randomUUID(), now: Date.now(), sessionId: sid }));
+  log.info("workflow_autostart", { sessionId: sid, workflowId: def.id, steps: def.steps.length });
+  broadcastOn(LOCAL_ID, sid, { t: "notice", message: `Fluxo “${def.name}” iniciado automaticamente nesta sessão (declarado como padrão pelo pacote). Para desligar: Configurações → Framework.` });
+  broadcastWorkflowRuns(sid);
+  return run;
+}
+
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply & { activity?: any[] }> {
   // F4 — a IA conduz: quando há fluxo ativo nesta sessão, o turno leva junto onde estamos e como
   // declarar avanço. Só custa tokens enquanto existe acompanhamento em andamento.
   if (!opts.managed) {
     try {
-      const activeRun = workflowRuns.forSession(sid);
+      const activeRun = workflowRuns.forSession(sid) ?? autoStartWorkflow(sid);
       if (activeRun) agentText = `${buildWorkflowSteering(activeRun)}\n\n---\n\n${agentText}`;
     } catch { /* nunca impedir o turno por causa do acompanhamento */ }
   }
@@ -4312,12 +4358,13 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   try { contextManifests.append(manifest); } catch (error) { console.warn("[hub] manifesto de contexto nativo não persistido:", String(error)); }
   opts.onDispatch?.();
   broadcast(sid, { t: "context_manifest", sessionId: sid, manifest });
-  // pause the live tail so it doesn't re-broadcast our own turn (already shown via streaming)
-  const tail = nativeTails.get(sid);
-  if (tail) tail.paused = true;
   // NOTE: native sessions have no Jarvis-side store — `files` rides the live broadcast (viewable
   // now) but isn't persisted; a reload rebuilds from the claude transcript, which doesn't carry it.
   broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text: showText, ts: now, agent: info.agent, speaker: opts.speaker, images, files, contextManifest: manifest } });
+  // Cala o tail para ele não rebroadcastar o nosso próprio turno (o cliente já mostra streamando).
+  // Por SESSÃO, não pelo objeto: o tail pode ser destruído e recriado no meio do turno. Marcado
+  // colado no try/finally — uma exceção entre marcar e o finally silenciaria o tail para sempre.
+  nativeTurnPaused.add(sid);
   try {
     const principalId = opts.actor?.userId || captureSessionOwnerGeneration(LOCAL_ID, sid).principalId || "local";
     const reply = await executionPrincipalContext.run(principalId, () => agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, turnId }));
@@ -4330,7 +4377,11 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
     const err = { t: "error" as const, message, limit: /limit|rate|quota|exceeded|usage/i.test(message) };
     if (ws) send(ws, err); else broadcast(sid, err);
   } finally {
-    if (tail) { try { tail.offset = statSync(tail.path).size; tail.buf = ""; } catch { /* ignore */ } tail.paused = false; }
+    // Relê o tail AGORA: o que existe no fim do turno pode não ser o mesmo objeto do começo, e era
+    // justamente isso que fazia a retomada cair num objeto descartado enquanto o novo seguia solto.
+    const tail = nativeTails.get(sid);
+    if (tail) { try { tail.offset = statSync(tail.path).size; tail.buf = ""; } catch { /* ignore */ } }
+    nativeTurnPaused.delete(sid);
   }
 }
 // Gap 18: "ack → processa → entrega" — busca cross-sessão e resumo/digest são operações genuinely
@@ -5744,7 +5795,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "framework_cfg") {
       if (!requireOwner(ws)) return;
       const manifest = currentFrameworkManifest();
-      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, root: frameworkRoot(),
+      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, autoStartFlows: frameworkCfg.autoStartFlows, root: frameworkRoot(),
         files: manifest.files.map((f) => ({ path: f.path })),
         machines: allowedRunnerIds(ws).map((id) => ({ runnerId: id, label: id === LOCAL_ID ? (runnerLabels[LOCAL_ID] || "esta máquina") : (runnerLabels[id] || runners.get(id)?.info.host || id),
           local: id === LOCAL_ID, online: id === LOCAL_ID || !!runners.get(id)?.ws, protocolVersion: runners.get(id)?.info.protocolVersion || (id === LOCAL_ID ? RUNNER_PROTOCOL_VERSION : 1), queued: !!pendingFrameworkPublish[id] })) });
@@ -5752,8 +5803,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (msg.t === "set_framework_cfg") {
       if (!requireOwner(ws)) return;
-      frameworkCfg.preference = normalizeFrameworkPreference(msg.preference); saveFrameworkCfg();
-      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, saved: true });
+      frameworkCfg.preference = normalizeFrameworkPreference(msg.preference);
+      // Só muda quando o cliente mandou o campo: um payload antigo (ou parcial) não pode religar
+      // silenciosamente um início automático que o dono desligou de propósito.
+      if (typeof msg.autoStartFlows === "boolean") frameworkCfg.autoStartFlows = msg.autoStartFlows;
+      saveFrameworkCfg();
+      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, autoStartFlows: frameworkCfg.autoStartFlows, saved: true });
       return;
     }
     if (msg.t === "framework_read") {
@@ -5787,6 +5842,52 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       try { const r = importFrameworkFromNative({}); send(ws, { t: "framework_imported", ok: true, imported: r.imported, skipped: r.skipped }); }
       catch (e: any) { send(ws, { t: "framework_imported", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // LIMPAR o framework inteiro. Existe porque a única forma de zerar era remover pasta por pasta, e
+    // "limpo, reimporto o nativo, reimporto o framework" é um ciclo legítimo — quando o conteúdo veio
+    // de fontes que mudaram de forma, mesclar por cima acumula lixo. Não publica: some desta máquina, e
+    // as outras só perdem o conteúdo quando você publicar de propósito. As FONTES também são zeradas,
+    // senão o registro apontaria para arquivos que não existem mais.
+    if (msg.t === "framework_reset") {
+      if (!requireOwner(ws)) return;
+      try {
+        const before = readCanonicalFramework(frameworkRoot()).files.length;
+        const removed: string[] = [];
+        for (const top of ["commands", "skills", "flows", "reference"]) {
+          try { removed.push(...deleteFrameworkFolder(top).removed); } catch { /* pasta não existe: nada a remover */ }
+        }
+        try { rmSync(join(frameworkRoot(), "instructions.md"), { force: true }); removed.push("instructions.md"); } catch { /* idem */ }
+        for (const s of frameworkSources.list()) frameworkSources.remove(s.id);
+        frameworkUpdateAlerts = [];
+        log.warn("framework_reset", { before, removed: removed.length });
+        send(ws, { t: "framework_reset", ok: true, removed: removed.length, before });
+      } catch (e: any) { send(ws, { t: "framework_reset", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // Importar de uma PASTA da máquina. Mesmo caminho do zip a partir da extração (projeção, promoção,
+    // limites, varredura, prévia) — a pasta só substitui a origem dos bytes. É o que permite reimportar
+    // um framework que vive local, e importar UM perfil por vez de um repositório com vários pacotes.
+    if (msg.t === "framework_import_dir" && typeof msg.path === "string") {
+      if (!requireOwner(ws)) return;
+      try {
+        const dir = String(msg.path).trim();
+        if (!dir) throw new Error("informe o caminho da pasta");
+        const read = readPackDir(dir);
+        const { files, skipped, outOfScope, outOfScopeSample, manifest, mapped, excluded } = extractFrameworkFiles(read.entries);
+        const allSkipped = [...read.skipped, ...skipped];
+        if (outOfScope) allSkipped.push(`${outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, flows/, reference/ ou instructions.md): ${outOfScopeSample.join(", ")}${outOfScope > outOfScopeSample.length ? ", …" : ""}`);
+        if (!files.length) throw new Error(`nenhum arquivo de framework encontrado em ${dir} (esperado commands/…, skills/… ou instructions.md, ou um jarvis.pack.json com projeção)`);
+        const current = readCanonicalFramework(frameworkRoot()).files;
+        const preview = buildImportPreview(files, allSkipped, current, manifest, { mapped, excluded });
+        sweepPendingImports();
+        const token = randomUUID();
+        const label = manifest?.title || packDirLabel(dir);
+        const id = manifest ? `pack:${manifest.name}` : `dir:${dir.replace(/\\/g, "/").toLowerCase()}`;
+        const isUpdate = !!frameworkSources.get(id);
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, manifest, source: { type: "zip", name: label, id }, createdAt: Date.now() });
+        send(ws, { t: "framework_import_preview", ok: true, token, isUpdate, source: { type: "dir", name: label, path: dir }, preview: previewPayload(preview) });
+      } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
       return;
     }
     if (msg.t === "framework_seed") {

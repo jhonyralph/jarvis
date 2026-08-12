@@ -111,6 +111,26 @@ test("normalize saneia a edição humana: ordem recalculada, ids únicos, títul
   assert.equal(def.steps[2].hint!.length, 200, "hint é limitado");
 });
 
+test("autoStart: o fluxo declara no PRÓPRIO arquivo que é o padrão", () => {
+  const comAuto = workflowFromFile('{"id":"p","name":"P","autoStart":true,"steps":[{"title":"1 — a"}]}');
+  assert.equal(comAuto!.autoStart, true, "viaja junto com o fluxo para todas as máquinas");
+
+  // Ausente, false, ou qualquer valor que não seja o booleano `true` → não é padrão. E o campo nem
+  // aparece: um `autoStart: false` explícito não diz nada que a ausência já não diga.
+  for (const raw of ['{"id":"p","name":"P","steps":[{"title":"1 — a"}]}',
+                     '{"id":"p","name":"P","autoStart":false,"steps":[{"title":"1 — a"}]}',
+                     '{"id":"p","name":"P","autoStart":"sim","steps":[{"title":"1 — a"}]}',
+                     '{"id":"p","name":"P","autoStart":1,"steps":[{"title":"1 — a"}]}']) {
+    const d = workflowFromFile(raw)!;
+    assert.equal(d.autoStart, undefined, raw);
+    assert.equal("autoStart" in d, false, "campo nem existe quando não é padrão");
+  }
+
+  // e sobrevive à ida e volta para o disco, que é o que faz a publicação levar a decisão junto
+  const back = workflowFromFile(workflowToFile(comAuto!).content);
+  assert.equal(back!.autoStart, true);
+});
+
 test("ida e volta para arquivo do framework", () => {
   const wf = parseWorkflowFromSkill(PHASE_GATE_STYLE, { path: "skills/discovery-breakdown/SKILL.md" });
   const file = workflowToFile(wf);

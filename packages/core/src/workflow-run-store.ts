@@ -108,6 +108,12 @@ export class WorkflowRunStore {
   }
 
   /** Run já existente para a mesma tarefa — evita abrir dois acompanhamentos do mesmo ticket. */
+  /** Esta sessão JÁ teve algum acompanhamento — inclusive concluído ou abandonado. É o que impede o
+   *  início automático de ressuscitar, no turno seguinte, um fluxo que você acabou de abandonar. */
+  hasSession(sessionId: string): boolean {
+    return this.list().some((r) => r.sessions.includes(sessionId));
+  }
+
   forTask(tracker: string, key: string): WorkflowRun | undefined {
     const t = String(tracker || "").toLowerCase(), k = String(key || "");
     if (!k) return undefined;

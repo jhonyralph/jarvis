@@ -183,6 +183,25 @@ test("store: sobrevive a restart, acha por sessão e por tarefa", () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("store: hasSession enxerga run ENCERRADO — é o que impede o padrão de ressuscitar", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jf-runs-has-"));
+  try {
+    const s = new WorkflowRunStore({ dir });
+    assert.equal(s.hasSession("sess-a"), false, "sessão virgem: o início automático pode agir");
+
+    s.put(createRun(DEF, TASK, { runId: "r1", now: 1, sessionId: "sess-a" }));
+    assert.equal(s.hasSession("sess-a"), true);
+
+    // abandonar tira do `forSession` (que só devolve ativo), mas NÃO do histórico da sessão —
+    // senão o fluxo padrão renasceria no turno seguinte e não haveria como se livrar dele.
+    s.put({ ...s.get("r1")!, status: "abandoned", updatedAt: 2 });
+    assert.equal(s.forSession("sess-a"), undefined);
+    assert.equal(s.hasSession("sess-a"), true, "já teve fluxo: não recomeça sozinho");
+
+    assert.equal(new WorkflowRunStore({ dir }).hasSession("sess-a"), true, "e isso sobrevive ao restart");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("store: linha corrompida no fim não derruba o estado anterior", () => {
   const dir = mkdtempSync(join(tmpdir(), "jf-runs2-"));
   try {

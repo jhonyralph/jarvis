@@ -116,6 +116,15 @@ Fluxo de trabalho que o Jarvis acompanha passo a passo (progresso, gates, evidê
 
 - `kind: "gate"` é **ponto de conferência: sinaliza, nunca bloqueia.**
 - `requiresEvidence: true` faz o passo pedir anexo (link, print, log) para contar como completo.
+- `"autoStart": true` (no nível do fluxo) marca este como o fluxo **padrão**: ele começa a acompanhar
+  sozinho cada sessão nova, sem ninguém precisar iniciar à mão. Fica declarado aqui, e não numa
+  configuração local, porque quem publica o pacote é quem sabe se aquele processo é *o jeito de
+  trabalhar* — e a decisão viaja junto para todas as máquinas.
+
+  Três limites deliberados: só entra em sessão que **nunca** teve fluxo (abandonar não faz voltar);
+  se dois pacotes se declararem padrão, vence o menor `id` e o conflito é registrado no log; e o dono
+  da máquina desliga tudo de uma vez em *Configurações → Framework*, porque quem sofre com um pacote
+  de terceiro afobado é quem está na frente do chat.
 
 Um fluxo pode ser **declarado** (este arquivo, versionado junto com o pacote — autoritativo) ou
 **detectado** (o Jarvis lê os títulos numerados e os `GATE` da sua skill e *propõe* os passos, que

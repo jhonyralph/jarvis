@@ -1300,9 +1300,16 @@
     #fwWorkflows .wfgroup[open] > summary .wfcv::before { content:'▾'; }
     #fwWorkflows .wfgroup > summary .wfchip { margin-left:auto; }
     #fwWorkflows .wfgbody { padding:0 8px 8px; }
+    /* Sugestões (palpite da heurística) ficam visualmente subordinadas e fechadas: não são fluxos. */
+    #fwWorkflows .wfsug { margin-top:10px; border-top:1px solid #ffffff14; padding-top:8px; }
+    #fwWorkflows .wfsug > summary { cursor:pointer; font-size:11.5px; color:var(--mut,#8ea0b5); list-style:none; }
+    #fwWorkflows .wfsug > summary::-webkit-details-marker { display:none; }
+    #fwWorkflows .wfsug > summary::before { content:'▸ '; }
+    #fwWorkflows .wfsug[open] > summary::before { content:'▾ '; }
     #fwWorkflows .wfchip { flex:none; font-size:10px; padding:0 6px; border-radius:20px; background:#ffffff12; color:var(--mut,#8ea0b5); }
     #fwWorkflows .wfchip.decl { background:#60a5fa22; color:#93c5fd; }
     #fwWorkflows .wfchip.det { background:#ffffff12; color:var(--mut,#8ea0b5); }
+    #fwWorkflows .wfchip.auto { background:#4ade8022; color:#4ade80; }
     #fwWorkflows .wfchip.gate { background:#f5b54422; color:#f5b544; }
     #fwWorkflows .wfchip.evid { background:#2ea04322; color:#4ade80; }
     #fwWorkflows .wforig { flex:none; font-size:10.5px; color:var(--mut,#8ea0b5); max-width:min(46%,320px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -2034,7 +2041,7 @@
 
             <!-- BLOCO A — o que JÁ EXISTE (estado atual) -->
             <div class="fwblock">
-              <div class="fwblock-h"><span>📁 O que já existe</span><button id="fwRefresh" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Atualizar</button></div>
+              <div class="fwblock-h"><span>📁 O que já existe</span><span style="display:flex;gap:6px"><button id="fwReset" class="ghost" type="button" style="font-size:11px;padding:2px 8px;color:#f87171">Limpar tudo</button><button id="fwRefresh" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Atualizar</button></span></div>
               <div id="fwHealth" class="mut" style="font-size:12px;margin-bottom:6px">—</div>
               <div id="fwInventory" style="font-size:12px"></div>
               <div class="mut" style="font-size:11.5px;margin:4px 0 8px">Clique num arquivo para abrir e editar.</div>
@@ -2045,6 +2052,8 @@
                   <option value="jarvis">Sempre o universal do Framework</option>
                 </select>
               </label>
+              <label style="font-size:12px;line-height:1.5;display:block;cursor:pointer;margin-top:6px"><input type="checkbox" id="setFwAutoFlow" style="vertical-align:-2px;margin-right:6px">Iniciar automaticamente o fluxo <b>padrão</b> em cada sessão nova</label>
+              <div class="mut" style="font-size:11.5px;margin-top:2px">Vale para o fluxo que se declarou padrão (<code>"autoStart": true</code> no <code>flows/&lt;id&gt;.json</code>). Só entra em sessão que ainda não teve fluxo — abandonar um não faz ele voltar.</div>
               <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">
                 <button id="fwNewFile" type="button">Novo arquivo</button>
                 <span style="flex:1"></span>
@@ -2070,6 +2079,11 @@
                 <input id="fwGh" placeholder="owner/repo[/subpasta][@ref] ou URL do GitHub" autocomplete="off" style="flex:1;min-width:180px">
                 <button id="fwGhBtn" class="ghost" type="button">Baixar do GitHub</button>
               </div>
+              <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
+                <input id="fwDir" placeholder="C:\Users\voce\Workspace\meu-framework (pasta nesta máquina)" autocomplete="off" style="flex:1;min-width:180px">
+                <button id="fwDirBtn" class="ghost" type="button">Importar da pasta</button>
+              </div>
+              <div class="mut" style="font-size:11.5px;margin-top:4px">A pasta é lida <b>nesta máquina</b> e passa pela mesma prévia do zip. É o caminho para um framework que não está no GitHub — e para importar <b>um pacote por vez</b> de um repositório que tem vários (aponte para a subpasta).</div>
               <div class="mut" style="font-size:11.5px;margin-top:4px"><b>Pacote base</b>: conjunto pronto (review, pesquisa, segurança, digest…). <b>Desta máquina</b>: copia CLAUDE.md/AGENTS.md/GEMINI.md desta máquina.</div>
               <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;border-top:1px solid #ffffff14;padding-top:8px">
                 <span class="mut" style="font-size:11.5px;flex:1;min-width:180px">Vai montar um framework do zero? Baixe o <b>modelo</b>: um pacote válido e comentado (manifesto, skill, comando, fluxo) — copiar e editar é mais rápido que ler a especificação.</span>

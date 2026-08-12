@@ -208,7 +208,10 @@ export function extractFrameworkFiles(entries: ArchiveEntry[], opts: { subdir?: 
     // PROMOÇÃO: `.md` de qualquer lugar vira uma skill que as IAs carregam de fato. Só `.md` — o resto
     // segue reposicionado como veio. `promoted` mantém os slugs únicos entre todos os arquivos do pacote.
     let outPath = rel, outContent = e.data.toString("utf8");
-    if (match?.as === "skill" && /\.md$/i.test(rel)) {
+    // A extensão é checada na ORIGEM, não no destino: numa regra de arquivo exato o destino é o
+    // prefixo declarado (ex.: "skills"), que não termina em .md — checar ali fazia a promoção não
+    // disparar e o arquivo pousar num caminho absurdo.
+    if (match?.as === "skill" && /\.md$/i.test(ep)) {
       const p = promoteToSkill(ep, outContent, promoted);
       outPath = p.path; outContent = p.content;
     }

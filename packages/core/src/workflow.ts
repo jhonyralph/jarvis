@@ -36,6 +36,15 @@ export interface WorkflowDefinition {
   name: string;
   /** de onde a proposta saiu; `manual` quando o humano montou do zero. */
   source: { kind: "skill" | "manual"; path?: string };
+  /**
+   * O fluxo começa a acompanhar SOZINHO cada sessão nova, sem você ter de iniciar à mão.
+   *
+   * Declarado aqui, no arquivo do fluxo, e não numa configuração do Jarvis: quem publica o pacote é
+   * quem sabe se aquele processo é "o jeito de trabalhar aqui" ou só mais um fluxo disponível — e a
+   * decisão viaja junto com o fluxo para todas as máquinas. Continua desligável de uma vez pelo dono
+   * da máquina (é ele quem sofre se um pacote de terceiro chegar afobado).
+   */
+  autoStart?: boolean;
   steps: WorkflowStep[];
 }
 
@@ -169,13 +178,17 @@ export function normalizeWorkflowDefinition(input: unknown, fallbackId = "fluxo"
     steps.push(step);
   }
   const srcPath = (raw.source as WorkflowDefinition["source"])?.path;
-  return {
+  const def: WorkflowDefinition = {
     schemaVersion: WORKFLOW_SCHEMA_VERSION,
     id,
     name: String(raw.name || id),
     source: srcPath ? { kind: "skill", path: String(srcPath) } : { kind: "manual" },
     steps,
   };
+  // Só grava o campo quando é `true`: um `autoStart: false` explícito não diz nada que a ausência já
+  // não diga, e polui todo fluxo salvo pelo editor com uma chave que ninguém escreveu.
+  if (raw.autoStart === true) def.autoStart = true;
+  return def;
 }
 
 /** Caminho canônico do fluxo dentro do framework (publicado junto com skills/commands). */

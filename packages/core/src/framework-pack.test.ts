@@ -104,6 +104,24 @@ test("map: origem que é ARQUIVO usa o destino tal e qual (promover um arquivo a
   assert.equal(applyPackMap("core/skills/quality/clean-code.md", rules)!.to, "skills/clean-code/SKILL.md");
 });
 
+test("map: promover UM arquivo específico — o destino é o prefixo, não um caminho .md", () => {
+  // Regressão: a extensão era checada no DESTINO ("skills", sem .md), então a promoção não disparava
+  // e o arquivo pousava literalmente em `skills`. Promover 4 arquivos avulsos de uma árvore que no
+  // resto vira referência é exatamente o caso do framework real.
+  const zip = unzip(zipStore([
+    { path: PACK_MANIFEST_FILE, content: JSON.stringify({ name: "p", map: {
+      "core/skills/quality/testing-patterns.md": { to: "skills", as: "skill" },
+      "core/skills": "reference/skills",
+    } }) },
+    { path: "core/skills/quality/testing-patterns.md", content: "# Testes\n\nPadrões de teste por camada.\n" },
+    { path: "core/skills/quality/outro.md", content: "# Outro\n\nchecklist\n" },
+  ]));
+  const r = extractFrameworkFiles(zip);
+  assert.deepEqual(r.files.map((f) => f.path), ["reference/skills/quality/outro.md", "skills/testing-patterns/SKILL.md"]);
+  assert.equal(checkConformance(r.files).loadableSkills, 1);
+  assert.equal(validateFramework(r.files).errors, 0);
+});
+
 test("map: a regra mais específica vence a mais genérica", () => {
   const { rules } = parsePackMap({ "core/skills": "reference/skills", "core/skills/process/writing-skills": "skills/writing-skills" });
   assert.equal(applyPackMap("core/skills/process/writing-skills/SKILL.md", rules)!.to, "skills/writing-skills/SKILL.md");

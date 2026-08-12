@@ -18,7 +18,7 @@
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','aiBtn','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','councilBtn','tourneyBtn','councilModal','councilClose','solutionHelpBtn','solutionTitle','solutionHelp','solutionAgentsMode','solutionAgentList','solutionCount','solutionCriteriaWrap','solutionCriteria','solutionWrite','solutionPostAction','councilTopic','councilTopicCount','councilMode','councilContext','councilNote','councilCancel','councilGo','solutionRounds','solutionEffort','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwTplBtn','fwUpdates','fwCatBtn','fwCatalog','fwWfBtn','fwWorkflows','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','wfRun','bgJobs','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','setFwAutoFlow','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwDir','fwDirBtn','fwTplBtn','fwReset','fwUpdates','fwCatBtn','fwCatalog','fwWfBtn','fwWorkflows','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','wfRun','bgJobs','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -3509,7 +3509,10 @@
     let fwMachineStatus={};
     function fwStateLabel(st){ return ({materialized:'✓ materializado',current:'✓ já atual',sent:'enviado',queued:'na fila',needs_update:'⚠ máquina desatualizada',error:'⚠ erro',offline:'offline',pronta:'pronta',fonte:'fonte (esta máquina)'})[st]||st; }
     function renderFwStatus(){ const ids=Object.keys(fwMachineStatus); E.fwStatus.innerHTML=ids.length?ids.map(id=>'<div>'+esc(fwMachineStatus[id].label)+' — '+esc(fwStateLabel(fwMachineStatus[id].state))+'</div>').join(''):'—'; }
-    if(E.setFwPref) E.setFwPref.onchange=()=>tx({t:'set_framework_cfg',preference:E.setFwPref.value});
+    if(E.setFwPref) E.setFwPref.onchange=()=>tx({t:'set_framework_cfg',preference:E.setFwPref.value,autoStartFlows:E.setFwAutoFlow?E.setFwAutoFlow.checked:undefined});
+    // Chave de desligar do dono da máquina: o pacote declara o fluxo padrão, mas quem decide se
+    // ele entra sozinho nas sessões é quem está na frente do chat.
+    if(E.setFwAutoFlow) E.setFwAutoFlow.onchange=()=>tx({t:'set_framework_cfg',preference:E.setFwPref?E.setFwPref.value:undefined,autoStartFlows:E.setFwAutoFlow.checked});
     if(E.fwSeed) E.fwSeed.onclick=()=>fwSend('Verificando pacote base',{t:'framework_seed_preview'},E.fwSeed);
     if(E.fwImport) E.fwImport.onclick=()=>fwSend('Verificando instruções desta máquina',{t:'framework_import_native_preview'},E.fwImport);
     if(E.fwPublish) E.fwPublish.onclick=()=>{ E.fwStatus.textContent='Publicando…'; fwSend('Publicando nas máquinas',{t:'publish_framework'},E.fwPublish); };
@@ -3569,7 +3572,7 @@
     }
     // ── Fluxos de trabalho (F1): o Jarvis PROPÕE os passos lidos da skill; você confirma/edita e salva.
     // Nada é salvo sem confirmação, e o fluxo salvo vai junto na publicação (vale em todas as máquinas).
-    let fwWfLoaded=false, fwWfDraft=null;
+    let fwWfLoaded=false, fwWfDraft=null, fwWfSugOpen=false;
     if(E.fwWfBtn) E.fwWfBtn.onclick=()=>{ if(!E.fwWorkflows) return; if(E.fwWorkflows.classList.contains('hidden')){ E.fwWorkflows.classList.remove('hidden'); E.fwWfBtn.textContent='Ocultar fluxos'; fwSend('Carregando fluxos',{t:'workflow_list'},E.fwWfBtn); } else { E.fwWorkflows.classList.add('hidden'); E.fwWfBtn.textContent='Ver fluxos'; } };
     function renderFwWorkflows(m){
       fwWfLoaded=true; if(!E.fwWorkflows) return;
@@ -3590,9 +3593,10 @@
       const origem=(src)=>{ const p=src&&src.path; if(!p) return '';
         const skill=/^skills\/([^/]+)\//.exec(p); const nome=skill?skill[1]:p;
         return '<span class="wforig" title="'+esc(p)+'">📄 '+esc(nome)+'</span>'; };
-      const selo=(d)=>d.via==='flow'
+      const selo=(d)=>(d.via==='flow'
         ? '<span class="wfchip decl" title="veio pronto no pacote — autoritativo">declarado</span>'
-        : '<span class="wfchip det" title="montado aqui a partir dos passos escritos na skill">detectado</span>';
+        : '<span class="wfchip det" title="montado aqui a partir dos passos escritos na skill">detectado</span>')
+        +(d.autoStart?'<span class="wfchip auto" title="inicia sozinho em cada sessão nova (desligável em Configurações → Framework)">padrão</span>':'');
       const selos=(steps)=>{ const g=(steps||[]).filter(x=>x.kind==='gate').length, e=(steps||[]).filter(x=>x.requiresEvidence).length;
         return '<span class="wfchip">'+((steps||[]).length)+' passos</span>'+(g?'<span class="wfchip gate">'+g+' gate</span>':'')+(e?'<span class="wfchip evid">'+e+' evidência</span>':''); };
       const passos=(steps)=>'<ol class="wfsteplist">'+(steps||[]).map(st=>'<li>'+esc(st.title)
@@ -3602,21 +3606,31 @@
       const grupo=(k,p,corpo,n)=>'<details class="wfgroup"><summary><span class="wfcv"></span>'+cab(k,p)
         +'<span class="wfchip">'+n+'</span></summary><div class="wfgbody">'+corpo+'</div></details>';
 
+      // FLUXO é `flows/<id>.json` no pacote — e só. O que a heurística acha lendo a prosa de uma skill
+      // é PALPITE, não fluxo: misturar os dois na mesma lista escondia o fluxo declarado no meio de
+      // sugestões e fazia parecer que existiam fluxos que ninguém declarou. As sugestões continuam
+      // disponíveis, mas atrás de um clique.
       let html='';
-      html+='<div class="sec" style="margin-top:0">Salvos no framework <span class="mut">('+defs.length+')</span></div>';
+      html+='<div class="sec" style="margin-top:0">Fluxos declarados <span class="mut">('+defs.length+')</span></div>';
       html+= defs.length ? agrupar(defs).map(([k,g])=>grupo(k,g.pack,g.itens.map(d=>
           '<details class="wfcard"><summary><span class="wfcv"></span><b>'+esc(d.name||d.id)+'</b>'+selo(d)+selos(d.steps)+origem(d.source)
           +'<button class="ghost fwwf-edit" data-id="'+esc(d.id)+'" type="button">Revisar</button></summary>'+passos(d.steps)+'</details>').join(''),g.itens.length)).join('')
-        : '<div class="mut" style="font-size:11.5px;margin-bottom:6px">Nenhum fluxo salvo ainda.</div>';
+        : '<div class="mut" style="font-size:11.5px;margin-bottom:6px">Nenhum fluxo declarado. Um fluxo é um arquivo <code>flows/&lt;id&gt;.json</code> dentro do pacote — importe um pacote que traga um, ou monte a partir de uma sugestão abaixo.</div>';
 
-      html+='<div class="sec">Detectáveis nas skills <span class="mut">('+cands.length+')</span></div>';
-      html+= cands.length ? agrupar(cands).map(([k,g])=>grupo(k,g.pack,g.itens.map(c=>
-          '<details class="wfcard"><summary><span class="wfcv"></span><b>'+esc(c.name||c.id)+'</b><span class="wfchip">'+c.steps+' passos detectados</span>'
-          +origem({path:c.path})+'<button class="ghost fwwf-detect" data-path="'+esc(c.path)+'" type="button">Detectar</button></summary>'
-          +'<div class="mut" style="font-size:11.5px;padding:4px 6px">Origem: <code>'+esc(c.path)+'</code>. Clique em <b>Detectar</b> para ver os passos propostos e revisar antes de salvar.</div></details>').join(''),g.itens.length)).join('')
-        : '<div class="mut" style="font-size:11.5px">Nenhuma skill com passos numerados ou gates. Escreva os passos na skill (ex.: <code>### 1 — Nome</code>) e recarregue.</div>';
+      if(cands.length){
+        html+='<details class="wfsug"'+(fwWfSugOpen?' open':'')+'><summary>'+cands.length+' skill(s) com passos que <b>poderiam</b> virar fluxo <span class="mut">— sugestões, ainda não são fluxos</span></summary>'
+          +'<div class="mut" style="font-size:11.5px;padding:4px 2px 6px">O Jarvis lê os títulos numerados e os GATE escritos na skill e propõe os passos. Só vira fluxo depois que você revisar e salvar — aí nasce o <code>flows/&lt;id&gt;.json</code>.</div>'
+          +agrupar(cands).map(([k,g])=>grupo(k,g.pack,g.itens.map(c=>
+            '<details class="wfcard"><summary><span class="wfcv"></span><b>'+esc(c.name||c.id)+'</b><span class="wfchip">'+c.steps+' passos detectados</span>'
+            +origem({path:c.path})+'<button class="ghost fwwf-detect" data-path="'+esc(c.path)+'" type="button">Detectar</button></summary>'
+            +'<div class="mut" style="font-size:11.5px;padding:4px 6px">Origem: <code>'+esc(c.path)+'</code>. Clique em <b>Detectar</b> para ver os passos propostos e revisar antes de salvar.</div></details>').join(''),g.itens.length)).join('')
+          +'</details>';
+      }
 
       E.fwWorkflows.innerHTML=html+'<div id="fwWfDraft"></div>';
+      // o estado aberto/fechado das sugestões sobrevive ao re-render (salvar um fluxo recarrega a lista)
+      const sug=E.fwWorkflows.querySelector('.wfsug');
+      if(sug) sug.addEventListener('toggle',()=>{ fwWfSugOpen=sug.open; });
       if(fwWfDraft) renderFwWfDraft();
     }
     // Rascunho editável: o humano confirma cada passo, marca gate / exige evidência, remove o que não serve.
@@ -3659,6 +3673,7 @@
     if(E.fwUpdates) E.fwUpdates.addEventListener('click',e=>{ const r=e.target.closest('.fw-upd-review'); if(!r) return; fwSend('Buscando atualização',{t:'framework_update_check',id:r.dataset.id}); });
     // Framework: inventário, importação com gate de segurança (zip/GitHub) e atualização por fonte.
     let fwSourcesCache=[], fwPreviewToken='', fwPreviewBlocked=false, fwPreviewSelected=new Set(), fwWatchdog=null, fwInvTimer=null, fwLogSeeded=false;
+    let fwInvCache=null;   // último inventário recebido — o "Limpar tudo" precisa saber o tamanho do estrago
     // Problemas e Fontes nascem COLAPSADOS. Estes flags só guardam a expansão MANUAL do usuário, para
     // o painel não fechar sozinho no meio da leitura quando o framework re-renderiza (inventário,
     // refresh, publicação). Não são persistidos: recarregar a página volta ao estado colapsado.
@@ -3768,8 +3783,8 @@
       }).join('')+'</div></details>';
       const sd=E.fwSources.querySelector('details.fwsrc'); if(sd) sd.addEventListener('toggle',()=>{ fwSrcOpen=sd.open; });
     }
-    const fwSrcLabel=(source)=>({github:'GitHub: '+esc((source.repo||''))+(source.ref?(' @'+esc(source.ref)):''),zip:'Zip: '+esc(source.name||''),starter:'Pacote base (embutido)',native:'Instruções desta máquina'})[source.type]||'Importação';
-    const fwSrcShort=(source)=>({github:'GitHub',zip:'Zip',starter:'Pacote base',native:'Desta máquina'})[source.type]||'Importação';
+    const fwSrcLabel=(source)=>({github:'GitHub: '+esc((source.repo||''))+(source.ref?(' @'+esc(source.ref)):''),zip:'Zip: '+esc(source.name||''),dir:'Pasta: '+esc(source.name||'')+(source.path?(' <span class="mut">'+esc(source.path)+'</span>'):''),starter:'Pacote base (embutido)',native:'Instruções desta máquina'})[source.type]||'Importação';
+    const fwSrcShort=(source)=>({github:'GitHub',zip:'Zip',dir:'Pasta',starter:'Pacote base',native:'Desta máquina'})[source.type]||'Importação';
     function fwUpdateApplyState(){ if(!E.fwPreviewApply) return; const forced=!!(E.fwPreviewForce&&E.fwPreviewForce.checked); E.fwPreviewApply.disabled=(fwPreviewBlocked&&!forced)||!fwPreviewSelected.size; E.fwPreviewApply.textContent=fwPreviewSelected.size?('Aplicar '+fwPreviewSelected.size+' arquivo(s)'):'Aplicar'; }
     function renderFwPreview(token,source,p,isUpdate){
       fwPreviewToken=token; fwPreviewBlocked=!!(p.scan&&p.scan.blocked); source=source||{}; p=p||{};
@@ -3854,6 +3869,19 @@
     if(E.fwZipBtn) E.fwZipBtn.onclick=()=>E.fwZip&&E.fwZip.click();
     if(E.fwZip) E.fwZip.onchange=()=>{ const f=E.fwZip.files&&E.fwZip.files[0]; if(!f) return; if(f.size>18*1024*1024){ toast('Arquivo muito grande'); E.fwZip.value=''; return; } const r=new FileReader(); r.onload=()=>{ const b64=String(r.result||'').split(',').pop()||''; fwSend('Verificando pacote '+f.name,{t:'framework_import_zip',name:f.name,dataB64:b64},E.fwZipBtn); E.fwZip.value=''; }; r.onerror=()=>{ fwLog('✖ Falha ao ler o arquivo','#f87171'); E.fwZip.value=''; }; r.readAsDataURL(f); };
     if(E.fwGhBtn) E.fwGhBtn.onclick=()=>{ const v=(E.fwGh.value||'').trim(); if(!v){ toast('Informe owner/repo ou URL do GitHub'); return; } fwSend('Baixando de '+v,{t:'framework_import_github',source:v},E.fwGhBtn); };
+    // Pasta desta máquina: mesma prévia do zip. Serve para framework sem GitHub e para importar um
+    // pacote por vez de um repositório que tem vários (basta apontar para a subpasta do pacote).
+    if(E.fwDirBtn) E.fwDirBtn.onclick=()=>{ const v=(E.fwDir.value||'').trim(); if(!v){ toast('Informe o caminho da pasta'); return; } fwSend('Lendo a pasta '+v,{t:'framework_import_dir',path:v},E.fwDirBtn); };
+    if(E.fwDir) E.fwDir.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); if(E.fwDirBtn) E.fwDirBtn.click(); } });
+    // Limpar tudo: destrutivo e local. Dupla confirmação com o NÚMERO de arquivos, porque "limpar" sem
+    // saber o tamanho do estrago é o tipo de botão que a pessoa clica achando que dá para desfazer.
+    if(E.fwReset) E.fwReset.onclick=()=>{
+      const n=(fwInvCache&&fwInvCache.inventory&&fwInvCache.inventory.totals&&fwInvCache.inventory.totals.files)||0;
+      if(!n){ toast('O framework já está vazio.'); return; }
+      if(!confirm('Apagar TODO o framework desta máquina?\n\n'+n+' arquivo(s) em commands/, skills/, flows/, reference/ e instructions.md, mais o registro de fontes importadas.\n\nNão dá para desfazer. As outras máquinas só perdem o conteúdo quando você publicar depois.')) return;
+      if(!confirm('Confirma? Isto apaga os '+n+' arquivo(s) agora.')) return;
+      fwSend('Limpando o framework',{t:'framework_reset'},E.fwReset);
+    };
     // Modelo de pacote: chega em base64 pela própria conexão e vira download no navegador.
     if(E.fwTplBtn) E.fwTplBtn.onclick=()=>fwSend('Gerando modelo de pacote',{t:'framework_pack_template'},E.fwTplBtn);
     function fwDownloadTemplate(m){
@@ -4505,7 +4533,7 @@
         else if(m.t==='adaptive_approvals'){ renderAdaptiveApprovals(m.approvals||[]); }
         else if(m.t==='execution_cfg'){ const c=m.cfg||{}; E.setExecEnabled.checked=c.enabled!==false; E.setExecRetention.value=c.retentionDays||30; E.setExecMaxEvents.value=c.maxEvents||5000; E.setExecConcurrency.value=c.maxConcurrency||6; E.setExecDepth.value=c.maxDepth||3; E.setExecDefaultWrite.checked=!!c.defaultWrite; E.setExecWorktree.value=c.worktreeRoot||'';
           E.execCfgNote.textContent=m.saved?(m.restartRequired?'✓ Política salva. Reinicie o Hub para aplicar: '+(m.restartFields||[]).join(', ')+'.':'✓ Política salva e aplicada para novas delegações.'):'Ativação, retenção, limite do diário e raiz de worktrees exigem reinício; concorrência, profundidade e escrita padrão valem para novas delegações.'; }
-        else if(m.t==='framework_cfg'){ fwArrived(); if(m.preference&&E.setFwPref)E.setFwPref.value=m.preference; if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version;
+        else if(m.t==='framework_cfg'){ fwArrived(); if(m.preference&&E.setFwPref)E.setFwPref.value=m.preference; if(typeof m.autoStartFlows==='boolean'&&E.setFwAutoFlow)E.setFwAutoFlow.checked=m.autoStartFlows; if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version;
           if(m.machines){ fwMachineStatus={}; m.machines.forEach(mc=>{ fwMachineStatus[mc.runnerId]={label:mc.label,state:mc.local?'fonte':((mc.protocolVersion||1)<7?'needs_update':mc.queued?'queued':mc.online?'pronta':'offline')}; }); renderFwStatus(); } }
         else if(m.t==='framework_file'){ fwArrived(); fwShowFile(m.path||'', m.content||''); if(fwPendingJump&&fwPendingJump.path===(m.path||'')) fwJumpToLine(fwPendingJump.line,fwPendingJump.msg); fwPendingJump=null; }
         else if(m.t==='framework_saved'){ fwArrived(); if(m.ok){ tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwLog('✓ '+(m.deleted?(m.folder?'pasta excluída':'excluído'):'salvo')+' '+esc(m.path||'')+(m.folder?(' ('+((m.removed||[]).length)+' arquivo(s))'):''),'#4ade80');
@@ -4515,7 +4543,7 @@
           else { if(E.fwEditSave)E.fwEditSave.disabled=false; fwLog('✖ '+esc(m.error||'falha ao salvar'),'#f87171'); toast('Erro: '+(m.error||'falha')); } }
         else if(m.t==='framework_imported'){ fwArrived(); if(m.ok){ tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwLog('✓ importado desta máquina: '+esc((m.imported||[]).join(', ')||'nada novo'),'#4ade80'); toast('Importado: '+((m.imported||[]).join(', ')||'nada novo')); } else { fwLog('✖ '+esc(m.error||'falha'),'#f87171'); toast('Erro: '+(m.error||'falha')); } }
         else if(m.t==='framework_seeded'){ fwArrived(); if(m.ok){ tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); fwLog('✓ pacote base: '+((m.imported||[]).length)+' instalado(s), '+((m.skipped||[]).length)+' preservado(s)','#4ade80'); toast(`Pacote base: ${(m.imported||[]).length} instalado(s).`); } else { fwLog('✖ '+esc(m.error||'falha'),'#f87171'); toast('Erro: '+(m.error||'falha')); } }
-        else if(m.t==='framework_inventory'){ fwArrived(); if(fwInvTimer){clearTimeout(fwInvTimer);fwInvTimer=null;} renderFwInventory(m.inventory,m.scan,m.validation); renderFwSources(m.sources); if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version; const n=((m.inventory&&m.inventory.files)||[]).length; fwLog('inventário: '+n+' arquivo(s) · seg. '+(((m.scan&&m.scan.counts)||{}).high||0)+' alto(s)'); }
+        else if(m.t==='framework_inventory'){ fwArrived(); fwInvCache=m; if(fwInvTimer){clearTimeout(fwInvTimer);fwInvTimer=null;} renderFwInventory(m.inventory,m.scan,m.validation); renderFwSources(m.sources); if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version; const n=((m.inventory&&m.inventory.files)||[]).length; fwLog('inventário: '+n+' arquivo(s) · seg. '+(((m.scan&&m.scan.counts)||{}).high||0)+' alto(s)'); }
         else if(m.t==='framework_import_preview'){ fwArrived(); if(m.ok){ renderFwPreview(m.token,m.source||{},m.preview||{},!!m.isUpdate); const sc=((m.preview&&m.preview.scan&&m.preview.scan.counts)||{}); fwLog('prévia pronta: '+((m.preview&&m.preview.fileCount)||0)+' arquivo(s), '+(sc.high||0)+' alto(s)'+((sc.high)?' — <b style="color:#f87171">bloqueado até override</b>':''),(sc.high?'#f5b544':null)); } else { fwLog('✖ importar: '+esc(m.error||'falha'),'#f87171'); toast('Importar: '+(m.error||'falha')); } }
         else if(m.t==='framework_update'){ fwArrived(); if(m.ok){ if(m.hasUpdate){ renderFwPreview(m.token,m.source||{},m.preview||{},true); fwLog('atualização disponível — revise a prévia','#f5b544'); toast('Atualização disponível'); } else { fwLog('✓ já está atualizado','#4ade80'); toast('Já está atualizado'); } } else { fwLog('✖ atualização: '+esc(m.error||'falha'),'#f87171'); toast('Atualização: '+(m.error||'falha')); } }
         else if(m.t==='framework_import_applied'){ fwArrived(); if(m.ok){ closeFwPreview(); tx({t:'framework_cfg'}); tx({t:'framework_inventory'}); tx({t:'framework_updates'}); if(fwCatLoaded) tx({t:'framework_native_catalog'}); fwLog('✓ aplicado: '+((m.written||[]).length)+' escrito(s)'+((m.skippedExisting&&m.skippedExisting.length)?', '+m.skippedExisting.length+' mantido(s)':'')+(m.forced?' (override)':''),'#4ade80'); toast('Aplicado'); } else { if(E.fwPreviewApply)E.fwPreviewApply.disabled=false; fwLog('✖ aplicar: '+esc(m.error||'falha'),'#f87171'); toast('Aplicar: '+(m.error||'falha')); } }
@@ -4524,6 +4552,7 @@
         else if(m.t==='workflow_detected'){ fwArrived(); if(m.ok){ fwWfDraft=m.definition; renderFwWfDraft(); fwLog(m.detected?('detectados '+m.detected+' passo(s) — revise e salve'):'nenhum passo detectado nessa skill',m.detected?'#4ade80':'#f5b544'); if(!m.detected) toast('Nada detectado nessa skill'); } else { fwLog('✖ detectar: '+esc(m.error||'falha'),'#f87171'); toast('Detectar: '+(m.error||'falha')); } }
         else if(m.t==='workflow_saved'){ fwArrived(); if(m.ok){ fwWfDraft=null; tx({t:'workflow_list'}); tx({t:'framework_inventory'}); fwLog('✓ fluxo salvo: '+esc(m.id)+' ('+m.steps+' passo(s))','#4ade80'); toast('Fluxo salvo — publique para valer nas outras máquinas'); } else { fwLog('✖ salvar fluxo: '+esc(m.error||'falha'),'#f87171'); toast('Salvar: '+(m.error||'falha')); } }
         else if(m.t==='framework_native_catalog'){ fwArrived(); if(m.ok){ renderFwCatalog(m.entries); fwLog('catálogo: '+((m.entries||[]).length)+' skill(s)/comando(s) instalado(s)'); } else { fwLog('✖ catálogo: '+esc(m.error||'falha'),'#f87171'); toast('Catálogo: '+(m.error||'falha')); } }
+        else if(m.t==='framework_reset'){ fwArrived(); if(m.ok){ fwInvCache=null; tx({t:'framework_inventory'}); tx({t:'workflow_list'}); fwLog('✓ framework limpo: '+m.removed+' arquivo(s) removido(s) e fontes zeradas','#4ade80'); toast('Framework limpo — importe o nativo e o framework de novo'); } else { fwLog('✖ limpar: '+esc(m.error||'falha'),'#f87171'); toast('Limpar: '+(m.error||'falha')); } }
         else if(m.t==='framework_pack_template'){ fwArrived(); if(m.ok){ fwDownloadTemplate(m); } else { fwLog('✖ modelo: '+esc(m.error||'falha'),'#f87171'); toast('Modelo: '+(m.error||'falha')); } }
         else if(m.t==='framework_updates'){ renderFwUpdates(m.alerts); if((m.alerts||[]).length) fwLog('🔔 '+m.alerts.length+' atualização(ões) disponível(is)','#f5b544'); }
         else if(m.t==='framework_import_diff'){ fwArrived(); if(m.ok){ fwShowDiff(m); } else { fwLog('✖ diferenças: '+esc(m.error||'falha'),'#f87171'); toast('Diferenças: '+(m.error||'falha')); } }
@@ -4994,10 +5023,18 @@
       if(!E.wfRun) return;
       // F6 — sem acompanhamento nesta sessão: SUGERE iniciar (discreto e dispensável, nunca obriga).
       if(!wfRun){
-        if(!wfDefs.length||wfHideSuggest){ E.wfRun.classList.add('hidden'); E.wfRun.innerHTML=''; return; }
+        if(!wfDefs.length){ E.wfRun.classList.add('hidden'); E.wfRun.innerHTML=''; return; }
         E.wfRun.classList.remove('hidden'); E.wfRun.classList.remove('open');
-        E.wfRun.innerHTML='<div class="wfhdr"><span class="mut" style="min-width:0">🧭 Nenhum fluxo acompanhando esta sessão.</span>'
-          +'<span class="row" style="gap:4px;flex:none"><button class="wfact wf-start" type="button">Iniciar fluxo</button><button class="wfact wf-dismiss" type="button" title="Não sugerir agora">✕</button></span></div>';
+        // Dispensar NÃO pode ser porta sem volta: esta faixa é o único lugar de onde se inicia um
+        // fluxo, e o ✕ fazia ela sumir por completo — sem nenhuma forma de voltar até recarregar a
+        // página. Agora encolhe para uma alça mínima, que devolve a sugestão com um clique.
+        if(wfHideSuggest){
+          E.wfRun.innerHTML='<div class="wfhdr"><button class="wfact wf-restore" type="button" title="Iniciar um fluxo de trabalho nesta sessão">🧭 fluxo</button></div>';
+          return;
+        }
+        const unico=wfDefs.length===1?(' <b>'+esc(wfDefs[0].name||wfDefs[0].id)+'</b>'):'';
+        E.wfRun.innerHTML='<div class="wfhdr"><span class="mut" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🧭 Nenhum fluxo acompanhando esta sessão'+(unico?' — disponível:'+unico:'')+'.</span>'
+          +'<span class="row" style="gap:4px;flex:none"><button class="wfact wf-start" type="button">Iniciar fluxo</button><button class="wfact wf-dismiss" type="button" title="Encolher (dá para reabrir depois)">✕</button></span></div>';
         return;
       }
       const s=wfRun.summary||{}, steps=wfRun.steps||[];
@@ -5047,6 +5084,7 @@
     if(E.wfRun) E.wfRun.addEventListener('click',e=>{
       if(e.target.closest('.wf-start')){ wfStartFlow(); return; }
       if(e.target.closest('.wf-dismiss')){ wfHideSuggest=true; renderWfRun(); return; }
+      if(e.target.closest('.wf-restore')){ wfHideSuggest=false; renderWfRun(); return; }
       if(!wfRun) return;
       if(e.target.closest('.wf-tog')){ wfOpen=!wfOpen; renderWfRun(); return; }
       const upd=(op,extra)=>tx(Object.assign({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op},extra||{}));
