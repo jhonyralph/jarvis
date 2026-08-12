@@ -82,7 +82,7 @@ export function assertSafeRelPath(rel: string): string {
   }
   // `workflows/` guarda a DEFINIÇÃO dos fluxos de trabalho (passos/gates), publicada junto com o resto
   // para que o acompanhamento seja o mesmo em todas as máquinas. Mesma fronteira dos demais topos.
-  if (!(posix === "instructions.md" || segs[0] === "commands" || segs[0] === "skills" || segs[0] === "workflows")) {
+  if (!(posix === "instructions.md" || segs[0] === "commands" || segs[0] === "skills" || segs[0] === "workflows" || segs[0] === "reference")) {
     throw new Error(`caminho de framework fora do escopo: ${rel}`);
   }
   return posix;
@@ -114,6 +114,7 @@ export function readCanonicalFramework(root = frameworkRoot(), version = 0): Fra
   collectDir(join(root, "commands"), root, files);
   collectDir(join(root, "skills"), root, files);
   collectDir(join(root, "workflows"), root, files);
+  collectDir(join(root, "reference"), root, files);
   const instr = join(root, "instructions.md");
   if (existsSync(instr)) { try { files.push({ path: "instructions.md", content: readFileSync(instr, "utf8") }); } catch { /* unreadable */ } }
   files.sort((a, b) => a.path.localeCompare(b.path));
@@ -134,6 +135,7 @@ function existingRelPaths(root: string): string[] {
   collectDir(join(root, "commands"), root, out);
   collectDir(join(root, "skills"), root, out);
   collectDir(join(root, "workflows"), root, out);
+  collectDir(join(root, "reference"), root, out);
   const rels = out.map((f) => f.path);
   if (existsSync(join(root, "instructions.md"))) rels.push("instructions.md");
   return rels;
@@ -217,7 +219,7 @@ export function assertSafeFolderPath(rel: string): string {
   if (!posix || posix.startsWith("/") || /^[A-Za-z]:/.test(posix) || segs.some((s) => s === ".." || s === "." || s === "")) {
     throw new Error(`caminho de pasta inválido: ${rel}`);
   }
-  if (segs[0] !== "commands" && segs[0] !== "skills" && segs[0] !== "workflows") throw new Error(`pasta fora do escopo do framework: ${rel}`);
+  if (segs[0] !== "commands" && segs[0] !== "skills" && segs[0] !== "workflows" && segs[0] !== "reference") throw new Error(`pasta fora do escopo do framework: ${rel}`);
   return posix;
 }
 

@@ -16,13 +16,14 @@ export function estimateTokens(text: string): number {
   return n === 0 ? 0 : Math.max(1, Math.ceil(n / 4));
 }
 
-export type FrameworkFileKind = "command" | "skill" | "instructions" | "workflow" | "other";
+export type FrameworkFileKind = "command" | "skill" | "instructions" | "workflow" | "reference" | "other";
 
 export function classifyFramework(path: string): FrameworkFileKind {
   if (path === "instructions.md") return "instructions";
   if (path.startsWith("skills/")) return "skill";
   if (path.startsWith("commands/")) return "command";
   if (path.startsWith("workflows/")) return "workflow";
+  if (path.startsWith("reference/")) return "reference";
   return "other";
 }
 

@@ -5977,7 +5977,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!b64) throw new Error("arquivo vazio");
         if (b64.length > MAX_IMPORT_B64) throw new Error("arquivo excede o limite permitido");
         const buf = Buffer.from(b64, "base64");
-        const { files, skipped } = extractFrameworkFiles(unzip(buf));
+        const { files, skipped, outOfScope, outOfScopeSample } = extractFrameworkFiles(unzip(buf));
+        // Nada de sumiço mudo: o que está fora de skills/commands/workflows/reference é reportado.
+        if (outOfScope) skipped.push(`${outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, workflows/, reference/ ou instructions.md): ${outOfScopeSample.join(", ")}${outOfScope > outOfScopeSample.length ? ", …" : ""}`);
         if (!files.length) throw new Error("nenhum arquivo de framework encontrado (esperado commands/…, skills/… ou instructions.md)");
         const current = readCanonicalFramework(frameworkRoot()).files;
         const preview = buildImportPreview(files, skipped, current);
@@ -5998,7 +6000,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const fetched = await fetchGithubFramework(spec);
         if (!fetched.files.length) throw new Error("nenhum arquivo de framework encontrado no repositório (esperado commands/…, skills/… ou instructions.md)");
         const current = readCanonicalFramework(frameworkRoot()).files;
-        const preview = buildImportPreview(fetched.files, fetched.skipped, current);
+        const ghSkipped = [...fetched.skipped];
+        if (fetched.outOfScope) ghSkipped.push(`${fetched.outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, workflows/, reference/ ou instructions.md): ${fetched.outOfScopeSample.join(", ")}${fetched.outOfScope > fetched.outOfScopeSample.length ? ", …" : ""}`);
+        const preview = buildImportPreview(fetched.files, ghSkipped, current);
         sweepPendingImports();
         const token = randomUUID();
         const src = { type: "github" as const, spec, ref: fetched.ref, commit: fetched.commit, id: githubSourceId(spec.owner, spec.repo, spec.subdir) };

@@ -128,3 +128,21 @@ test("extractFrameworkFiles dedupes repeated paths", () => {
   assert.equal(r.files[0].content, "first");
   assert.ok(r.skipped.some((s) => /duplicado/.test(s)));
 });
+
+test("workflows/ e reference/ entram no import; o que fica fora é CONTADO, não sumido em silêncio", () => {
+  const entries = [
+    { path: "pacote-abc/skills/review/SKILL.md", data: Buffer.from("---\nname: review\n---\nB") },
+    { path: "pacote-abc/workflows/entrega.json", data: Buffer.from('{"id":"entrega"}') },
+    { path: "pacote-abc/reference/core/flow/00-header.md", data: Buffer.from("# cabeçalho do fluxo") },
+    // fora do escopo — o caso real do ia-framework (core/flow/*.md sem pasta reconhecida)
+    { path: "pacote-abc/core/flow/F1-discovery.md", data: Buffer.from("# F1") },
+    { path: "pacote-abc/core/policy/regras.md", data: Buffer.from("# regras") },
+    { path: "pacote-abc/AGENTS.md", data: Buffer.from("# agents") },
+  ];
+  const r = extractFrameworkFiles(entries);
+  assert.deepEqual(r.files.map((f) => f.path).sort(), [
+    "reference/core/flow/00-header.md", "skills/review/SKILL.md", "workflows/entrega.json",
+  ], "workflows/ e reference/ passaram a ser aceitos");
+  assert.equal(r.outOfScope, 3, "os 3 de fora são contados");
+  assert.ok(r.outOfScopeSample.some((p) => p.includes("F1-discovery")), "e a amostra permite explicar o que ficou de fora");
+});

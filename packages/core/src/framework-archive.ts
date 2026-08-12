@@ -11,7 +11,15 @@ import { assertSafeRelPath, type FrameworkFile } from "./framework.js";
 
 export interface ArchiveEntry { path: string; data: Buffer }
 
-export interface ExtractResult { files: FrameworkFile[]; skipped: string[] }
+export interface ExtractResult {
+  files: FrameworkFile[];
+  skipped: string[];
+  /** quantos arquivos do pacote ficaram FORA do escopo do framework (nem skills/commands/workflows/reference). */
+  outOfScope: number;
+  /** amostra desses caminhos, para a prévia explicar o que não vai entrar. */
+  outOfScopeSample: string[];
+}
+const OUT_OF_SCOPE_SAMPLE = 15;
 
 /** Hard limits — a framework pack is small; anything past these is treated as hostile/misdirected. */
 export const MAX_FILE_BYTES = 512 * 1024;        // 512 KB per file (uncompressed)
@@ -113,8 +121,13 @@ export function untargz(buf: Buffer): ArchiveEntry[] {
  *  skills/ segment or a top `instructions.md`. */
 export function toFrameworkPath(entryPath: string): string | null {
   const segs = String(entryPath).replace(/\\/g, "/").split("/").filter((s) => s !== "");
+  // Pastas OCULTAS são ferramental, não conteúdo de framework — mesma regra do coletor em disco. Sem
+  // isto, `.github/workflows/ci.yml` entraria como definição de fluxo só pelo nome da pasta.
+  // `.`/`..` NÃO entram aqui: precisam seguir para assertSafeRelPath, que os REPORTA como tentativa
+  // de escapar do escopo — engoli-los silenciosamente esconderia justamente o caso perigoso.
+  if (segs.some((s) => s.startsWith(".") && s !== "." && s !== "..")) return null;
   for (let i = 0; i < segs.length; i++) {
-    if (segs[i] === "commands" || segs[i] === "skills") return segs.slice(i).join("/");
+    if (segs[i] === "commands" || segs[i] === "skills" || segs[i] === "workflows" || segs[i] === "reference") return segs.slice(i).join("/");
     if (segs[i] === "instructions.md") return "instructions.md";
   }
   return null;
@@ -129,6 +142,8 @@ export function extractFrameworkFiles(entries: ArchiveEntry[], opts: { subdir?: 
   const files: FrameworkFile[] = [];
   const skipped: string[] = [];
   const seen = new Set<string>();
+  let outOfScope = 0;
+  const outOfScopeSample: string[] = [];
   const subdir = (opts.subdir || "").replace(/^\/+|\/+$/g, "");
   let total = 0;
   for (const e of entries) {
@@ -141,7 +156,14 @@ export function extractFrameworkFiles(entries: ArchiveEntry[], opts: { subdir?: 
       ep = ep.slice(top);
     }
     const rel = toFrameworkPath(ep);
-    if (!rel) continue;                                 // not a framework file — ignore silently
+    // FORA do escopo do framework. Antes isto era descartado em SILÊNCIO: quem importava um pacote com
+    // a própria estrutura (ex.: `core/flow/*.md`) via a maior parte sumir sem explicação. Agora conta e
+    // devolve uma amostra, para a prévia mostrar o que NÃO vai entrar antes de aplicar.
+    if (!rel) {
+      outOfScope++;
+      if (outOfScopeSample.length < OUT_OF_SCOPE_SAMPLE) outOfScopeSample.push(ep);
+      continue;
+    }
     let safe: string;
     try { safe = assertSafeRelPath(rel); } catch (err: any) { skipped.push(`${e.path} (${err?.message || "caminho inválido"})`); continue; }
     if (seen.has(safe)) { skipped.push(`${safe} (duplicado no arquivo)`); continue; }
@@ -154,5 +176,5 @@ export function extractFrameworkFiles(entries: ArchiveEntry[], opts: { subdir?: 
     files.push({ path: safe, content: e.data.toString("utf8") });
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, skipped };
+  return { files, skipped, outOfScope, outOfScopeSample };
 }
