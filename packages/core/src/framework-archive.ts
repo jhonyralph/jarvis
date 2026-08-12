@@ -8,6 +8,7 @@
  */
 import { gunzipSync, inflateRawSync } from "node:zlib";
 import { assertSafeRelPath, type FrameworkFile } from "./framework.js";
+import { isPackManifestPath, parsePackManifest, type PackManifest } from "./framework-pack.js";
 
 export interface ArchiveEntry { path: string; data: Buffer }
 
@@ -18,6 +19,9 @@ export interface ExtractResult {
   outOfScope: number;
   /** amostra desses caminhos, para a prévia explicar o que não vai entrar. */
   outOfScopeSample: string[];
+  /** identidade declarada em `jarvis.pack.json`, quando o pacote traz uma. `null` = pacote sem
+   *  identidade: importa do mesmo jeito, mas a origem dos arquivos fica inferida da fonte. */
+  manifest: PackManifest | null;
 }
 const OUT_OF_SCOPE_SAMPLE = 15;
 
@@ -144,6 +148,7 @@ export function extractFrameworkFiles(entries: ArchiveEntry[], opts: { subdir?: 
   const seen = new Set<string>();
   let outOfScope = 0;
   const outOfScopeSample: string[] = [];
+  let manifest: PackManifest | null = null;
   const subdir = (opts.subdir || "").replace(/^\/+|\/+$/g, "");
   let total = 0;
   for (const e of entries) {
@@ -154,6 +159,13 @@ export function extractFrameworkFiles(entries: ArchiveEntry[], opts: { subdir?: 
       const top = ep.startsWith(`${subdir}/`) ? subdir.length + 1 : idx >= 0 ? idx + subdir.length + 2 : -1;
       if (top < 0) continue;                            // outside the requested subdir → ignore silently
       ep = ep.slice(top);
+    }
+    // A IDENTIDADE do pacote. Não é arquivo de framework (não vai para o disco nem para o manifesto
+    // de publicação): é lida aqui e devolvida à parte, para atribuir origem ao que veio junto. Sem o
+    // `continue` ela seria contada como "fora do escopo" e apareceria como ruído na prévia.
+    if (isPackManifestPath(ep)) {
+      if (!manifest && !e.data.includes(0) && e.data.length <= MAX_FILE_BYTES) manifest = parsePackManifest(e.data.toString("utf8"));
+      continue;
     }
     const rel = toFrameworkPath(ep);
     // FORA do escopo do framework. Antes isto era descartado em SILÊNCIO: quem importava um pacote com
@@ -176,5 +188,89 @@ export function extractFrameworkFiles(entries: ArchiveEntry[], opts: { subdir?: 
     files.push({ path: safe, content: e.data.toString("utf8") });
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, skipped, outOfScope, outOfScopeSample };
+  return { files, skipped, outOfScope, outOfScopeSample, manifest };
+}
+
+/* ── escrita de zip ──────────────────────────────────────────────────────────────────────────────
+ * O caminho inverso do leitor acima, usado por uma coisa só: entregar o pacote-modelo pelo botão
+ * "Baixar modelo". Método `store` (sem compressão) de propósito — o modelo tem poucos KB, e sem
+ * deflate o escritor cabe em uma tela e não tem estado. Datas fixas em 1980-01-01, então o mesmo
+ * conteúdo sempre gera os mesmos bytes (o teste de ida-e-volta depende disso).
+ */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+export function crc32(buf: Buffer): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+const DOS_DATE_1980 = 0x0021;
+const UTF8_NAMES = 0x0800;
+
+/** Monta um zip a partir de arquivos de texto. Lido de volta por `unzip` sem perda. */
+export function zipStore(files: { path: string; content: string }[]): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = Buffer.from(String(f.path).replace(/\\/g, "/"), "utf8");
+    const data = Buffer.from(String(f.content), "utf8");
+    const crc = crc32(data);
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(ZIP_LOCAL, 0);
+    local.writeUInt16LE(20, 4);            // versão necessária
+    local.writeUInt16LE(UTF8_NAMES, 6);
+    local.writeUInt16LE(0, 8);             // método: store
+    local.writeUInt16LE(0, 10);            // hora
+    local.writeUInt16LE(DOS_DATE_1980, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);  // comprimido
+    local.writeUInt32LE(data.length, 22);  // original
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);            // extra
+    locals.push(local, name, data);
+
+    const cen = Buffer.alloc(46);
+    cen.writeUInt32LE(ZIP_CEN, 0);
+    cen.writeUInt16LE(20, 4);              // versão de origem
+    cen.writeUInt16LE(20, 6);              // versão necessária
+    cen.writeUInt16LE(UTF8_NAMES, 8);
+    cen.writeUInt16LE(0, 10);
+    cen.writeUInt16LE(0, 12);
+    cen.writeUInt16LE(DOS_DATE_1980, 14);
+    cen.writeUInt32LE(crc, 16);
+    cen.writeUInt32LE(data.length, 20);
+    cen.writeUInt32LE(data.length, 24);
+    cen.writeUInt16LE(name.length, 28);
+    cen.writeUInt16LE(0, 30);              // extra
+    cen.writeUInt16LE(0, 32);              // comentário
+    cen.writeUInt16LE(0, 34);              // disco
+    cen.writeUInt16LE(0, 36);              // atributos internos
+    cen.writeUInt32LE(0, 38);              // atributos externos
+    cen.writeUInt32LE(offset, 42);         // deslocamento do cabeçalho local
+    centrals.push(cen, name);
+
+    offset += 30 + name.length + data.length;
+  }
+  const central = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(ZIP_EOCD, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(files.length, 8);
+  eocd.writeUInt16LE(files.length, 10);
+  eocd.writeUInt32LE(central.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  eocd.writeUInt16LE(0, 20);               // comentário
+  return Buffer.concat([...locals, central, eocd]);
 }

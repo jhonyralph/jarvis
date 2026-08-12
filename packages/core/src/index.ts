@@ -54,6 +54,8 @@ export * from "./framework-archive.js";
 export * from "./framework-import.js";
 export * from "./framework-github.js";
 export * from "./framework-sources.js";
+export * from "./framework-pack.js";
+export * from "./framework-conformance.js";
 export * from "./agent-availability.js";
 export * from "./preview.js";
 export * from "./terminal.js";

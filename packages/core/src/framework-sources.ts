@@ -26,6 +26,9 @@ export interface FrameworkSource {
   entryId?: string;
   /** human label for the UI (native skill/command name; zip filename). */
   label?: string;
+  /** identidade declarada em `jarvis.pack.json` no pacote importado. Ausente = pacote sem manifesto:
+   *  a origem ainda é conhecida (esta fonte), só não é auto-declarada pelo pacote. */
+  pack?: { name: string; title?: string; version?: string };
   /** whether the daily job re-checks this source for drift and raises an "update available" alert. */
   autoUpdate?: boolean;
   /** content hash of the file set last imported from this source (drift detection). */
@@ -47,6 +50,44 @@ export function zipSourceId(name: string): string {
  *  the catalog id (`${provider}:${kind}:${name}`), so re-importing the same skill updates the record. */
 export function nativeSourceId(entryId: string): string {
   return `native:${entryId}`.toLowerCase();
+}
+
+/**
+ * Origem de um arquivo do framework, do jeito que a interface mostra. A atribuição é por METADADO:
+ * o disco continua plano (`skills/<nome>/SKILL.md`), e quem sabe de onde cada caminho veio é o
+ * registro de fontes. Foi a escolha sobre namespear em disco (`skills/<pacote>/<nome>/`), que daria
+ * origem definitiva mas quebraria a exportação nativa — a descoberta das IAs é de um nível só.
+ */
+export interface PackRef {
+  /** slug do pacote (do manifesto) ou rótulo da fonte, quando não há manifesto. */
+  name: string;
+  title?: string;
+  version?: string;
+  /** true = o pacote se identificou via `jarvis.pack.json`; false = inferimos da fonte. */
+  declared: boolean;
+  sourceId: string;
+  sourceType: FrameworkSourceType;
+}
+
+export function packOfSource(src: FrameworkSource): PackRef {
+  if (src.pack?.name) {
+    return { name: src.pack.name, title: src.pack.title, version: src.pack.version, declared: true, sourceId: src.id, sourceType: src.type };
+  }
+  return { name: src.label || src.id, declared: false, sourceId: src.id, sourceType: src.type };
+}
+
+/**
+ * Índice reverso caminho → pacote. Um mesmo caminho pode ter sido contribuído por mais de uma fonte
+ * (reimportou de outro lugar por cima); vence a importação MAIS RECENTE, que é o que está no disco.
+ * Arquivo criado à mão no próprio Jarvis não aparece aqui — e é assim que a UI sabe dizer "local".
+ */
+export function buildPackIndex(sources: FrameworkSource[]): Record<string, PackRef> {
+  const out: Record<string, PackRef> = {};
+  for (const src of [...sources].sort((a, b) => a.updatedAt - b.updatedAt)) {
+    const ref = packOfSource(src);
+    for (const p of src.files ?? []) out[p] = ref;
+  }
+  return out;
 }
 
 export class FrameworkSourceStore {

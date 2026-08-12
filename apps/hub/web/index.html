@@ -1289,7 +1289,17 @@
     #fwWorkflows .wfcard[open] .wfcv::before { content:'▾'; }
     #fwWorkflows .wfcard > summary > b { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #fwWorkflows .wfcard > summary > button { margin-left:auto; flex:none; font-size:11px; padding:2px 8px; }
+    /* Grupo por pacote de origem: a resposta de "de onde veio" fica no cabeçalho, e vem colapsado. */
+    #fwWorkflows .wfgroup { border:1px solid #ffffff1f; border-radius:8px; margin:6px 0; background:#0b1119; }
+    #fwWorkflows .wfgroup > summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:7px; flex-wrap:wrap; padding:7px 9px; font-size:12px; }
+    #fwWorkflows .wfgroup > summary::-webkit-details-marker { display:none; }
+    #fwWorkflows .wfgroup > summary .wfcv::before { content:'▸'; display:inline-block; width:11px; color:var(--mut,#8ea0b5); }
+    #fwWorkflows .wfgroup[open] > summary .wfcv::before { content:'▾'; }
+    #fwWorkflows .wfgroup > summary .wfchip { margin-left:auto; }
+    #fwWorkflows .wfgbody { padding:0 8px 8px; }
     #fwWorkflows .wfchip { flex:none; font-size:10px; padding:0 6px; border-radius:20px; background:#ffffff12; color:var(--mut,#8ea0b5); }
+    #fwWorkflows .wfchip.decl { background:#60a5fa22; color:#93c5fd; }
+    #fwWorkflows .wfchip.det { background:#ffffff12; color:var(--mut,#8ea0b5); }
     #fwWorkflows .wfchip.gate { background:#f5b54422; color:#f5b544; }
     #fwWorkflows .wfchip.evid { background:#2ea04322; color:#4ade80; }
     #fwWorkflows .wforig { flex:none; font-size:10.5px; color:var(--mut,#8ea0b5); max-width:min(46%,320px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -2058,6 +2068,10 @@
                 <button id="fwGhBtn" class="ghost" type="button">Baixar do GitHub</button>
               </div>
               <div class="mut" style="font-size:11.5px;margin-top:4px"><b>Pacote base</b>: conjunto pronto (review, pesquisa, segurança, digest…). <b>Desta máquina</b>: copia CLAUDE.md/AGENTS.md/GEMINI.md desta máquina.</div>
+              <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;border-top:1px solid #ffffff14;padding-top:8px">
+                <span class="mut" style="font-size:11.5px;flex:1;min-width:180px">Vai montar um framework do zero? Baixe o <b>modelo</b>: um pacote válido e comentado (manifesto, skill, comando, fluxo) — copiar e editar é mais rápido que ler a especificação.</span>
+                <button id="fwTplBtn" class="ghost" type="button" style="font-size:11px;padding:2px 8px">Baixar modelo</button>
+              </div>
               <div class="fwcat-wrap" style="margin-top:10px;border-top:1px solid #ffffff14;padding-top:10px">
                 <div class="row" style="gap:8px;align-items:center;justify-content:space-between">
                   <span style="font-weight:600;font-size:12.5px">🧩 Skills por IA (nesta máquina)</span>

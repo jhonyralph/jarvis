@@ -17,7 +17,10 @@ export const NAME_MAX = 64;
 export const DESCRIPTION_MAX = 1024;
 const NAME_CHARSET = /^[a-z0-9-]+$/;
 const RESERVED = /\b(anthropic|claude)\b/i;
-const IN_SCOPE = /^(instructions\.md$|commands\/|skills\/)/;
+/** Os cinco topos do padrão. `flows/` e `reference/` entraram depois e ficaram de fora daqui por
+ *  descuido — o resultado era o validador marcar como "fora do escopo" arquivo que o importador
+ *  aceita de propósito, um contra o outro. Ver docs/framework-pack.md. */
+const IN_SCOPE = /^(instructions\.md$|commands\/|skills\/|flows\/|reference\/)/;
 
 function isSkillManifest(path: string): boolean {
   return path.startsWith("skills/") && path.endsWith("/SKILL.md");

@@ -36,7 +36,7 @@ import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./s
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
-import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, type FrameworkFile, type GithubSpec, type FrameworkSourceType } from "@jarvis/core";
+import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -452,7 +452,7 @@ function savePublishedSnapshot(files: FrameworkFile[]): void { try { writeJsonAt
 // Server-held import previews: an import (zip/GitHub) is staged here after the security scan, and only
 // written to disk when the owner confirms `framework_import_apply` with the matching token. This keeps
 // the (possibly large, possibly hostile) payload off the client round-trip and gates apply on review.
-interface PendingFrameworkImport { files: FrameworkFile[]; hash: string; scanBlocked: boolean; source: { type: "zip" | "github" | "starter" | "native"; name?: string; spec?: GithubSpec; ref?: string; commit?: string; id?: string; nativeEntries?: Array<{ entryId: string; provider: string; kind: "skill" | "command"; name: string; hash: string; paths: string[] }> }; createdAt: number }
+interface PendingFrameworkImport { files: FrameworkFile[]; hash: string; scanBlocked: boolean; manifest?: PackManifest | null; source: { type: "zip" | "github" | "starter" | "native"; name?: string; spec?: GithubSpec; ref?: string; commit?: string; id?: string; nativeEntries?: Array<{ entryId: string; provider: string; kind: "skill" | "command"; name: string; hash: string; paths: string[] }> }; createdAt: number }
 interface FrameworkUpdateAlert { id: string; type: FrameworkSourceType; label: string; provider?: string; scanBlocked: boolean; changed: number; at: number }
 let frameworkUpdateAlerts: FrameworkUpdateAlert[] = [];
 const pendingFrameworkImports = new Map<string, PendingFrameworkImport>();
@@ -1545,6 +1545,8 @@ function previewPayload(p: ReturnType<typeof buildImportPreview>) {
     skipped: p.skipped,
     scan: { counts: p.scan.counts, blocked: p.scan.blocked, findings: p.scan.findings },
     validation: { ok: p.validation.ok, errors: p.validation.errors, warnings: p.validation.warnings, issues: p.validation.issues },
+    conformance: p.conformance,
+    manifest: p.manifest,
     inventory: p.inventory,
     conflicts: p.conflicts,
     hash: p.hash,
@@ -5830,13 +5832,28 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       try {
         const files = readCanonicalFramework(frameworkRoot()).files;
-        const defs = files.filter((f) => f.path.startsWith("flows/")).map((f) => workflowFromFile(f.content)).filter(Boolean);
+        // Origem: por metadado. Um fluxo é atribuído ao pacote que trouxe o PRÓPRIO arquivo do fluxo;
+        // se ele foi montado aqui a partir de uma skill importada, herda o pacote da skill de origem.
+        // Sem nenhum dos dois é local — feito à mão nesta máquina.
+        const packs = buildPackIndex(frameworkSources.list());
+        // `via` diz COMO a origem foi estabelecida, e é o que separa os dois selos na interface:
+        //   flow  → o arquivo do fluxo veio no pacote (declarado, autoritativo);
+        //   skill → o fluxo foi montado aqui a partir de uma skill daquele pacote (derivado);
+        //   null  → feito à mão nesta máquina.
+        const packOf = (flowPath: string, skillPath?: string): { pack: PackRef | null; via: "flow" | "skill" | null } => {
+          if (packs[flowPath]) return { pack: packs[flowPath], via: "flow" };
+          if (skillPath && packs[skillPath]) return { pack: packs[skillPath], via: "skill" };
+          return { pack: null, via: null };
+        };
+        const defs = files.filter((f) => f.path.startsWith("flows/"))
+          .map((f) => { const def = workflowFromFile(f.content); return def ? { ...def, path: f.path, ...packOf(f.path, def.source.path) } : null; })
+          .filter(Boolean);
         // Skills que ainda não viraram fluxo — candidatas a detectar.
         const have = new Set(defs.map((d) => d!.id));
         const candidates = files.filter((f) => f.path.startsWith("skills/") && f.path.endsWith("/SKILL.md"))
           .map((f) => ({ path: f.path, def: parseWorkflowFromSkill(f.content, { path: f.path }) }))
           .filter((c) => c.def.steps.length >= 2 && !have.has(c.def.id))
-          .map((c) => ({ path: c.path, id: c.def.id, name: c.def.name, steps: c.def.steps.length }));
+          .map((c) => ({ path: c.path, id: c.def.id, name: c.def.name, steps: c.def.steps.length, pack: packs[c.path] ?? null }));
         send(ws, { t: "workflow_list", ok: true, workflows: defs, candidates });
       } catch (e: any) { send(ws, { t: "workflow_list", ok: false, error: String(e?.message ?? e) }); }
       return;
@@ -5966,7 +5983,19 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, { t: "framework_inventory", version: frameworkCfg.version, inventory,
         scan: { counts: scan.counts, blocked: scan.blocked, findings: scan.findings },
         validation: { ok: validation.ok, errors: validation.errors, warnings: validation.warnings, issues: validation.issues },
+        conformance: checkConformance(files),
+        packs: buildPackIndex(frameworkSources.list()),
         sources: frameworkSources.list() });
+      return;
+    }
+    // O pacote-modelo: um framework válido e comentado, para copiar em vez de ler a especificação.
+    // Vai pela própria conexão (já autenticada) em base64 — o cliente monta o download no navegador.
+    if (msg.t === "framework_pack_template") {
+      if (!requireOwner(ws)) return;
+      try {
+        const zip = zipStore(packTemplateFiles());
+        send(ws, { t: "framework_pack_template", ok: true, name: PACK_TEMPLATE_FILENAME, dataB64: zip.toString("base64") });
+      } catch (e: any) { send(ws, { t: "framework_pack_template", ok: false, error: String(e?.message ?? e) }); }
       return;
     }
     // Stage a zip upload (base64) → extract → scan → preview. Nothing is written yet.
@@ -5977,17 +6006,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!b64) throw new Error("arquivo vazio");
         if (b64.length > MAX_IMPORT_B64) throw new Error("arquivo excede o limite permitido");
         const buf = Buffer.from(b64, "base64");
-        const { files, skipped, outOfScope, outOfScopeSample } = extractFrameworkFiles(unzip(buf));
+        const { files, skipped, outOfScope, outOfScopeSample, manifest } = extractFrameworkFiles(unzip(buf));
         // Nada de sumiço mudo: o que está fora de skills/commands/flows/reference é reportado.
         if (outOfScope) skipped.push(`${outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, flows/, reference/ ou instructions.md): ${outOfScopeSample.join(", ")}${outOfScope > outOfScopeSample.length ? ", …" : ""}`);
         if (!files.length) throw new Error("nenhum arquivo de framework encontrado (esperado commands/…, skills/… ou instructions.md)");
         const current = readCanonicalFramework(frameworkRoot()).files;
-        const preview = buildImportPreview(files, skipped, current);
+        const preview = buildImportPreview(files, skipped, current, manifest);
         sweepPendingImports();
         const token = randomUUID();
+        // O pacote que se identifica manda no id da fonte: reimportar o mesmo framework de um zip
+        // renomeado passa a ATUALIZAR o registro em vez de criar uma origem duplicada.
         const name = String(msg.name || "pacote.zip");
-        const isUpdate = !!frameworkSources.get(zipSourceId(name));
-        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: { type: "zip", name }, createdAt: Date.now() });
+        const sourceId = manifest ? `pack:${manifest.name}` : zipSourceId(name);
+        const isUpdate = !!frameworkSources.get(sourceId);
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, manifest, source: { type: "zip", name, id: sourceId }, createdAt: Date.now() });
         send(ws, { t: "framework_import_preview", ok: true, token, isUpdate, source: { type: "zip", name }, preview: previewPayload(preview) });
       } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
       return;
@@ -6002,12 +6034,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const current = readCanonicalFramework(frameworkRoot()).files;
         const ghSkipped = [...fetched.skipped];
         if (fetched.outOfScope) ghSkipped.push(`${fetched.outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, flows/, reference/ ou instructions.md): ${fetched.outOfScopeSample.join(", ")}${fetched.outOfScope > fetched.outOfScopeSample.length ? ", …" : ""}`);
-        const preview = buildImportPreview(fetched.files, ghSkipped, current);
+        const preview = buildImportPreview(fetched.files, ghSkipped, current, fetched.manifest);
         sweepPendingImports();
         const token = randomUUID();
         const src = { type: "github" as const, spec, ref: fetched.ref, commit: fetched.commit, id: githubSourceId(spec.owner, spec.repo, spec.subdir) };
         const isUpdate = !!frameworkSources.get(src.id);
-        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, source: src, createdAt: Date.now() });
+        pendingFrameworkImports.set(token, { files: preview.files, hash: preview.hash, scanBlocked: preview.scan.blocked, manifest: fetched.manifest, source: src, createdAt: Date.now() });
         send(ws, { t: "framework_import_preview", ok: true, token, isUpdate, source: { type: "github", repo: `${spec.owner}/${spec.repo}${spec.subdir ? "/" + spec.subdir : ""}`, ref: fetched.ref, commit: fetched.commit }, preview: previewPayload(preview) });
       } catch (e: any) { send(ws, { t: "framework_import_preview", ok: false, error: String(e?.message ?? e) }); }
       return;
@@ -6077,13 +6109,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (pending.scanBlocked && !msg.force && scanFramework(chosen).blocked) throw new Error("bloqueado por achados de segurança de severidade alta — revise e confirme o override para prosseguir");
         const mode = msg.mode === "overwrite" ? "overwrite" : "keep";
         const r = applyFrameworkImport(chosen, { mode });
+        // A identidade declarada é gravada na fonte: é dela que sai a atribuição "de qual framework
+        // veio" na interface. `files` guarda o que foi REALMENTE aplicado (não a prévia inteira),
+        // senão um arquivo desmarcado continuaria sendo atribuído a este pacote.
+        const pack = pending.manifest ? { name: pending.manifest.name, title: pending.manifest.title, version: pending.manifest.version } : undefined;
+        const appliedPaths = chosen.map((f) => f.path);
         if (pending.source.type === "github" && pending.source.spec) {
           const s = pending.source.spec; const id = pending.source.id || githubSourceId(s.owner, s.repo, s.subdir);
           const prior = frameworkSources.get(id);
-          frameworkSources.upsert({ id, type: "github", owner: s.owner, repo: s.repo, ref: s.ref, subdir: s.subdir, commit: pending.source.commit, hash: pending.hash, files: pending.files.map((f) => f.path), importedAt: prior?.importedAt || Date.now(), updatedAt: Date.now() });
+          frameworkSources.upsert({ id, type: "github", owner: s.owner, repo: s.repo, ref: s.ref, subdir: s.subdir, commit: pending.source.commit, label: pack?.title || `${s.owner}/${s.repo}`, pack, hash: pending.hash, files: appliedPaths, importedAt: prior?.importedAt || Date.now(), updatedAt: Date.now() });
         } else if (pending.source.type === "zip") {
-          const id = zipSourceId(pending.source.name || "pacote.zip");
-          frameworkSources.upsert({ id, type: "zip", hash: pending.hash, files: pending.files.map((f) => f.path), importedAt: Date.now(), updatedAt: Date.now() });
+          const name = pending.source.name || "pacote.zip";
+          const id = pending.source.id || zipSourceId(name);
+          const prior = frameworkSources.get(id);
+          frameworkSources.upsert({ id, type: "zip", label: pack?.title || name, pack, hash: pending.hash, files: appliedPaths, importedAt: prior?.importedAt || Date.now(), updatedAt: Date.now() });
         } else if (pending.source.type === "native" && pending.source.nativeEntries) {
           const chosenPaths = new Set(chosen.map((f) => f.path));
           for (const ne of pending.source.nativeEntries) {

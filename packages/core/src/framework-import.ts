@@ -11,6 +11,8 @@ import { frameworkRoot, writeFrameworkFile, assertSafeRelPath, hashFrameworkFile
 import { scanFramework, type ScanReport } from "./framework-scan.js";
 import { validateFramework, type ValidationReport } from "./framework-validate.js";
 import { buildInventory, type Inventory } from "./framework-inventory.js";
+import { checkConformance, missingManifestIssue, type ConformanceReport } from "./framework-conformance.js";
+import type { PackManifest } from "./framework-pack.js";
 
 export interface ImportPreview {
   /** the in-scope files that would be imported (already anchored, path-guarded, deduped). */
@@ -19,6 +21,11 @@ export interface ImportPreview {
   skipped: string[];
   scan: ScanReport;
   validation: ValidationReport;
+  /** o que entra no escopo mas não vai funcionar (skill fora de skills/<nome>/SKILL.md, fluxo
+   *  inválido). É o aviso que faltava: antes, 103 arquivos inertes apareciam só como "103 novos". */
+  conformance: ConformanceReport;
+  /** identidade declarada pelo pacote, quando há `jarvis.pack.json`. */
+  manifest: PackManifest | null;
   /** token/size view of the incoming set (all reported `new` — it's a preview of what arrives). */
   inventory: Inventory;
   /** incoming paths that already exist in the current framework (overwritten in `overwrite` mode). */
@@ -31,7 +38,7 @@ export interface ImportPreview {
   identical: boolean;
 }
 
-export function buildImportPreview(imported: FrameworkFile[], skipped: string[], current: FrameworkFile[]): ImportPreview {
+export function buildImportPreview(imported: FrameworkFile[], skipped: string[], current: FrameworkFile[], manifest: PackManifest | null = null): ImportPreview {
   const curPaths = new Set(current.map((f) => f.path));
   const conflicts = imported.filter((f) => curPaths.has(f.path)).map((f) => f.path).sort();
   // Diff the incoming set against the CURRENT framework so a re-import ("atualização manual") shows
@@ -44,11 +51,21 @@ export function buildImportPreview(imported: FrameworkFile[], skipped: string[],
     else if (f.status === "modified") counts.modified++;
     else if (f.status === "unchanged") counts.unchanged++;
   }
+  // Sem manifesto o pacote entra do mesmo jeito (decisão: aceitar e avisar) — só ganha um aviso
+  // dizendo que a origem ficará inferida da fonte em vez de declarada pelo pacote.
+  const conformance = checkConformance(imported);
+  if (!manifest) {
+    const extra = missingManifestIssue();
+    conformance.issues = [...conformance.issues, extra];
+    conformance.warnings++;
+  }
   return {
     files: imported,
     skipped,
     scan: scanFramework(imported),
     validation: validateFramework(imported),
+    conformance,
+    manifest,
     inventory,
     conflicts,
     hash: hashFrameworkFiles(imported),

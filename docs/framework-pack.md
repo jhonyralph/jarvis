@@ -1,0 +1,191 @@
+# Pacote de framework Jarvis — o padrão
+
+Um **pacote de framework** é um conjunto de comandos, skills, fluxos e instruções que o Jarvis
+importa, versiona e publica para todas as suas máquinas e para todas as IAs.
+
+Este documento é o contrato. Ele existe porque o formato antes só vivia implícito no código
+(`assertSafeRelPath`, `toFrameworkPath`, `classifyFramework`): o importador aceitava o que
+*parecesse* certo pelo nome da pasta, e quem montava um framework por fora não tinha nada a seguir.
+
+> Não quer ler tudo? Clique em **Baixar modelo** no painel do framework. Você recebe um pacote
+> pronto, válido e comentado — copiar e editar é mais rápido que ler spec.
+
+---
+
+## 1. A forma
+
+Na **raiz** do pacote (uma pasta, um repositório ou um zip):
+
+```
+jarvis.pack.json          # identidade do pacote — opcional, recomendado
+instructions.md           # instruções universais (sempre-ligadas)
+commands/<nome>.md        # um comando "/" por arquivo
+skills/<nome>/SKILL.md    # UMA pasta por skill, com o manifesto dentro
+flows/<id>.json           # fluxos de trabalho declarados
+reference/**              # material de apoio, estrutura livre
+```
+
+**Só estes cinco topos entram.** Qualquer outra coisa (`core/`, `profiles/`, `docs/`, `README.md`,
+`.github/`) é ignorada na importação e reportada como *fora do escopo* — contada e amostrada na
+prévia, nunca descartada em silêncio.
+
+O pacote pode estar dentro de subpastas: a importação procura o primeiro segmento chamado
+`commands`, `skills`, `flows` ou `reference` e ancora ali. Uma pasta-invólucro (o `repo-<sha>/` dos
+tarballs do GitHub) é atravessada automaticamente. Pastas ocultas (começadas por `.`) nunca entram —
+sem essa regra, `.github/workflows/ci.yml` viraria definição de fluxo só pelo nome da pasta.
+
+---
+
+## 2. A regra que mais pega quem migra
+
+**Skill é pasta com `SKILL.md` dentro, um nível só.**
+
+| | |
+|---|---|
+| ✅ | `skills/entrega-com-evidencia/SKILL.md` |
+| ✅ | `skills/entrega-com-evidencia/referencia.md` — apoio ao lado do manifesto |
+| ❌ | `skills/quality/clean-code.md` — arquivo solto: entra no framework, nunca é carregado |
+| ❌ | `skills/process/writing-skills/SKILL.md` — fundo demais: a descoberta não enxerga |
+
+A descoberta de skills é `skills/<nome>/SKILL.md`, um nível, nome exato (`commands.ts`). Um arquivo
+sob `skills/` que não seja isso — nem apoio ao lado de um — é **peso morto**: viaja para todas as
+máquinas, ocupa o inventário e nenhuma IA usa.
+
+O **relatório de conformidade** da prévia acusa isso antes de você aplicar, agrupado por pasta.
+
+Se o seu material é documentação de apoio e não skill acionável, o lugar dele é `reference/`.
+
+---
+
+## 3. Os arquivos
+
+### `instructions.md` — o balde sempre-ligado
+
+Uma vez exportado para o `CLAUDE.md`/`AGENTS.md` nativo, entra em **todo turno de toda IA**.
+Orçamento: **~2000 tokens**; acima disso a atenção do modelo degrada e o inventário avisa.
+
+Processo detalhado é **skill** (carrega sob demanda), não instrução.
+
+### `commands/<nome>.md` — comandos `/`
+
+Um arquivo `.md` por comando. O nome do arquivo é o nome do comando. `$ARGUMENTS` é substituído pelo
+que você digitar depois do comando. Subpastas viram namespace (`commands/git/pr.md` → `/git:pr`).
+
+Frontmatter opcional, mas `description` é recomendado — sem ele o comando aparece sem explicação:
+
+```yaml
+---
+description: Revisa o diff atual em busca de regressões.
+---
+```
+
+### `skills/<nome>/SKILL.md` — skills
+
+Frontmatter **obrigatório**:
+
+```yaml
+---
+name: minha-skill          # minúsculas, números e hífen; até 64 chars; igual ao nome da pasta
+description: O que faz E quando usar.   # até 1024 chars
+---
+```
+
+`description` é o que faz a skill ser **acionada** — descreva o gatilho, não só a função. Sem ele a
+skill nunca é escolhida. `name` não pode conter `anthropic` nem `claude`, e não pode colidir com o
+de outra skill do pacote.
+
+Corpo acima de **500 linhas** gera aviso: quebre em arquivos de referência ao lado.
+
+### `flows/<id>.json` — fluxos declarados
+
+Fluxo de trabalho que o Jarvis acompanha passo a passo (progresso, gates, evidência):
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "entrega-com-evidencia",
+  "name": "Entrega com evidência",
+  "source": { "kind": "skill", "path": "skills/entrega-com-evidencia/SKILL.md" },
+  "steps": [
+    { "id": "1-escopo", "title": "1 — Escopo", "order": 0, "kind": "step" },
+    { "id": "2-evidencia", "title": "2 — Evidência", "order": 1, "kind": "step", "requiresEvidence": true },
+    { "id": "gate-revisao", "title": "GATE — revisão", "order": 2, "kind": "gate" }
+  ]
+}
+```
+
+- `kind: "gate"` é **ponto de conferência: sinaliza, nunca bloqueia.**
+- `requiresEvidence: true` faz o passo pedir anexo (link, print, log) para contar como completo.
+
+Um fluxo pode ser **declarado** (este arquivo, versionado junto com o pacote — autoritativo) ou
+**detectado** (o Jarvis lê os títulos numerados e os `GATE` da sua skill e *propõe* os passos, que
+você revisa antes de salvar). Declare quando o processo importa; deixe detectar quando for rascunho.
+
+A detecção reconhece três convenções: `### 0 — Título`, `## Phase 1 — Título` (e `Fase`/`Step`/
+`Etapa`) e, na ausência de numeração, os checkboxes `- [ ]` de uma seção de checklist.
+
+### `reference/**` — apoio
+
+Estrutura livre. Não é carregado por IA nenhuma automaticamente; serve para o que as skills
+referenciam e para documentação que você quer publicada junto.
+
+---
+
+## 4. `jarvis.pack.json` — identidade
+
+```json
+{
+  "schemaVersion": 1,
+  "name": "meu-framework",
+  "title": "Meu framework",
+  "version": "1.0.0",
+  "description": "Processo de engenharia da equipe.",
+  "homepage": "https://github.com/voce/meu-framework"
+}
+```
+
+Só `name` é obrigatório (minúsculas, números e hífen). É ele que faz cada skill, comando e fluxo
+mostrar **de qual framework veio** na interface.
+
+**Sem manifesto o pacote importa normalmente** — só que a origem fica *inferida* da fonte (o nome do
+zip, o repositório) em vez de declarada pelo pacote, e a prévia avisa. A atribuição é por metadado:
+o disco continua plano, e quem sabe de onde cada caminho veio é o registro de fontes. Reimportar o
+mesmo caminho de outro pacote transfere a origem para o mais recente, que é o que está no disco.
+
+---
+
+## 5. Limites
+
+| | |
+|---|---|
+| Tamanho por arquivo | 512 KB |
+| Tamanho do pacote | 8 MB |
+| Arquivos por pacote | 1000 |
+| Binários | recusados (qualquer arquivo com byte NUL) |
+
+Além disso, todo pacote passa por uma **varredura de segurança** antes de qualquer coisa ser
+escrita: execução dinâmica em contexto, `allowed-tools` amplo demais, download-e-executa. Achados de
+severidade alta bloqueiam a importação até você liberar explicitamente.
+
+---
+
+## 6. Como o Jarvis lê o seu pacote
+
+1. **Extração** — ancora os caminhos, rejeita traversal e binário, lê `jarvis.pack.json`.
+2. **Prévia** — nada tocou o disco ainda. Você vê:
+   - o que entra, o que ficou **fora do escopo** e o que foi **pulado** com o motivo;
+   - a **varredura de segurança**;
+   - a **validação** (frontmatter, limites, referências quebradas);
+   - a **conformidade** (o que entra mas não vai funcionar);
+   - o **inventário** de tokens e o diff contra o que já existe.
+3. **Aplicar** — só depois da sua confirmação. A fonte fica registrada com o hash do que entrou.
+4. **Publicar** — o framework vira um manifesto com hash e é materializado nas outras máquinas,
+   podando o que saiu da origem.
+
+---
+
+## Ver também
+
+- `docs/ARCHITECTURE.md` — onde o framework entra no Hub/runner.
+- `packages/core/src/framework-pack.ts` — o manifesto e o pacote-modelo, como dados.
+- `packages/core/src/framework-conformance.ts` — as regras da seção 2, executáveis.
