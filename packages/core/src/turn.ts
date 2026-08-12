@@ -129,7 +129,9 @@ export interface ManagedTurnInput {
 }
 
 export function isLimitError(message: string): boolean {
-  return /limit|rate|quota|exceeded|usage/i.test(message);
+  const text = String(message || "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  return /\b(rate limit|usage limit|quota|insufficient quota|credit(?:s)? (?:exhausted|limit|spent|depleted)|limit (?:reached|exceeded|hit)|(?:exceeded|reached|hit) (?:the )?(?:usage |rate |credit )?limit)\b/i.test(text);
 }
 
 export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnInput): Promise<void> {

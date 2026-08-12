@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildTurnAttachments, fileDiffFromMessages, imageDataUrl, runManagedTurn, touchedFilesFromMessages, type TurnStoredMessage } from "./index.js";
+import { buildTurnAttachments, fileDiffFromMessages, imageDataUrl, isLimitError, runManagedTurn, touchedFilesFromMessages, type TurnStoredMessage } from "./index.js";
 
 test("managed lifecycle persists the same rich user and assistant history", async () => {
   const stored: TurnStoredMessage[] = [], broadcast: unknown[] = [];
@@ -107,6 +107,21 @@ test("runManagedTurn reports a limit error when no secondary is available", asyn
   }, "s1", { showText: "oi", onError: (m, limit) => { cap.err = { m, limit }; } });
   assert.equal(cap.err?.limit, true);
   assert.match(cap.err?.m || "", /usage limit/);
+});
+
+test("limit detection ignores normal provider telemetry", () => {
+  const claudeInit = JSON.stringify({
+    type: "system",
+    subtype: "init",
+    cwd: "C:\\Users\\Jonathan\\Workspace\\repo",
+    session_id: "d4c71910-1892-4ff7-9102-8a6642615574",
+    tools: ["Task", "Bash"],
+    usage: { input_tokens: 1 },
+  });
+  assert.equal(isLimitError(claudeInit), false);
+  assert.equal(isLimitError("rate limit exceeded"), true);
+  assert.equal(isLimitError("usage limit reached"), true);
+  assert.equal(isLimitError("insufficient quota"), true);
 });
 
 test("attachment builder preserves text files and turns images into readable paths/previews", () => {
