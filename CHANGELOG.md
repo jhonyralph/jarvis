@@ -1,3 +1,10 @@
+## [0.22.2](https://github.com/jhonyralph/jarvis/compare/v0.22.1...v0.22.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* **claude:** nao fechar subagente assincrono no handshake de lancamento ([f94b36c](https://github.com/jhonyralph/jarvis/commit/f94b36cd1f708e132e27cb858b83fae3f162c444))
+
 ## [0.22.1](https://github.com/jhonyralph/jarvis/compare/v0.22.0...v0.22.1) (2026-08-12)
 
 
