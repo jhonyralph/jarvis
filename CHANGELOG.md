@@ -1,3 +1,10 @@
+## [0.23.1](https://github.com/jhonyralph/jarvis/compare/v0.23.0...v0.23.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **framework:** renomear a pasta de definicoes de fluxo para flows/ (workflows/ ja e do usuario) ([d3d2e95](https://github.com/jhonyralph/jarvis/commit/d3d2e959807d6e7996715476fea33a9b1fe6127c))
+
 # [0.23.0](https://github.com/jhonyralph/jarvis/compare/v0.22.3...v0.23.0) (2026-08-12)
 
 
