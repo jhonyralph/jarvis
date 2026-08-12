@@ -43,3 +43,6 @@ Thumbs.db
 
 # worktrees efêmeros criados por agentes em background (Agent tool isolation)
 .claude/worktrees/
+
+# log de `npm test` redirecionado para arquivo (regenerável; já vazou pro working tree uma vez)
+testout.txt
