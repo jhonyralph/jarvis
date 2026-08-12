@@ -68,6 +68,8 @@ CLI pausa pedindo permissão → Hub captura → UI do Jarvis mostra o pedido �
 
 **Mecanismo correto da Fase 3 — `--permission-prompt-tool` (ponte MCP):** o Jarvis expõe um servidor MCP com uma tool de permissão e passa `--permission-prompt-tool mcp__<server>__<tool>`. Quando o CLI precisa de permissão, ele CHAMA essa tool com `{tool_name, input}`; a implementação bloqueia, emite um evento `permission_request` para a UI, espera a decisão do usuário e retorna `{behavior:"allow", updatedInput}` ou `{behavior:"deny", message}`. Esse é o contrato do SDK (o flag não aparece no `--help`, mas o canal stream-json puro comprovadamente auto-nega, então a ponte MCP é o caminho).
 
+**CONFIRMADO empiricamente (probe 2026-08-10) que a ponte MCP funciona:** servidor MCP stdio mínimo expondo a tool `approve`, passado via `--mcp-config <ARQUIVO>` (o flag exige um caminho de arquivo, JSON inline é lido como path e falha) + `--permission-prompt-tool mcp__jarvisperm__approve`, em `--permission-mode manual`. A tool que retorna `{content:[{type:"text",text:'{"behavior":"allow","updatedInput":{...}}'}]}` faz o Claude EXECUTAR a ferramenta (arquivo criado, `permission_denials:[]`, `is_error:false`); retornar `{"behavior":"deny","message":"..."}` bloqueia. Contrato do input recebido pela tool: `{tool_name, input, tool_use_id}` (args do MCP `tools/call`). Nome da tool DEVE ser `mcp__<serverName>__<toolName>`.
+
 **Escopo real da Fase 3 (subsistema, não um patch):**
 - Servidor MCP de permissão (stdio ou via `--mcp-config`) reaproveitando a infra de MCP do core (`mcp.ts`).
 - Registro de aprovações pendentes por turno no Hub + evento `permission_request`/resposta no protocolo.
@@ -75,6 +77,15 @@ CLI pausa pedindo permissão → Hub captura → UI do Jarvis mostra o pedido �
 - Persistência opcional de "sempre permitir" (candidato a reaproveitar o padrão de escopo do `adaptive-policy`/`session-defaults`).
 - **Não** pode enfraquecer o sandbox gerenciado de subagentes (`managedAdapterSecurityArgs`).
 - Codex: verificar o análogo (`codex exec` com `-a on-request` provavelmente também exige um canal; a confirmar).
+
+**Arquitetura escolhida (stdio MCP + callback HTTP ao Hub):**
+1. Script servidor MCP stdio embarcado no Jarvis (produção do probe): em `tools/call`, faz POST autenticado ao Hub e BLOQUEIA até a decisão, então retorna allow/deny ao Claude.
+2. Hub/runner: no startup, minta token + expõe rota interna `POST /internal/perm` (registra pendência, faz broadcast `permission_request` ao(s) cliente(s) da sessão, segura a resposta até a decisão ou timeout→deny). Env `JARVIS_PERM_URL`/`JARVIS_PERM_TOKEN` no process.
+3. Adapter Claude: quando modo efetivo = `manual`, escreve um mcp-config temporário por turno com o server + `env:{JARVIS_PERM_URL,JARVIS_PERM_TOKEN,JARVIS_PERM_SESSION:<sid>}` e adiciona `--mcp-config <tmp> --permission-prompt-tool mcp__jarvisperm__approve --permission-mode manual`. (sessionId vai no env porque o Claude não o passa à tool.)
+4. Protocolo + UI: `permission_request`{id,sessionId,tool,input,cwd} → card (aceitar/negar/sempre permitir) → `permission_decision`{id,behavior}. Default seguro = deny em timeout.
+5. Habilitar `manual` (depois `auto`/`accept_edits`) em `supportedPermissionModes` do Claude SÓ quando a ponte estiver validada end-to-end.
+6. Persistência de "sempre permitir" (reaproveitar escopo de `session-defaults`/`adaptive-policy`).
+Construir ADITIVO (não muda comportamento até o passo 5 ligar `manual` no picker).
 
 ## 5. Config durável + herança (Fase 2)
 

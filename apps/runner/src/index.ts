@@ -17,7 +17,8 @@ import { hostname, homedir, platform } from "node:os";
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED,
@@ -170,6 +171,68 @@ const terminals = new TerminalManager({
   onOutput: (terminal, data) => send({ t: "terminal_output", terminalId: terminal.id, data }),
   onExit: (terminal, exitCode, signal) => send({ t: "terminal_closed", terminalId: terminal.id, exitCode, signal }),
 });
+
+// --- Manual permission mode (Fase 3) — approval bridge on THIS machine -------------------------
+// The Claude adapter spawns a stdio MCP bridge here (the turn runs on this machine), and that bridge
+// POSTs one request per tool. The Hub does this in-process against its own HTTP server; a runner has
+// no UI at all, so it holds the bridge's response open, relays the ask to the Hub over the existing
+// WS, and answers when the user decides. Guards mirror the Hub: loopback-only + a per-process token.
+// The port is ephemeral and published via env, which is exactly where the adapter reads it from.
+const PERM_TOKEN = randomBytes(24).toString("hex");
+// Same window as the Hub. Past it the request fails CLOSED (deny) so a turn can never hang forever
+// waiting on a human who is not there.
+const PERM_TIMEOUT_MS = 5 * 60 * 1000;
+interface PermissionDecision { behavior: "allow" | "deny"; updatedInput?: unknown; message?: string }
+const pendingPermissions = new Map<string, { timer: ReturnType<typeof setTimeout>; settle: (d: PermissionDecision) => void }>();
+/** Fail every in-flight approval closed. Called when the Hub link drops: nobody can answer anymore,
+ *  and silently waiting out the full timeout would just freeze the turn for five minutes. */
+function denyAllPendingPermissions(reason: string): void {
+  for (const [, p] of pendingPermissions) p.settle({ behavior: "deny", message: reason });
+}
+const permServer = createServer((req, res) => {
+  const ra = req.socket.remoteAddress || "";
+  const isLocal = ra === "127.0.0.1" || ra === "::1" || ra === "::ffff:127.0.0.1";
+  const bearerOk = String(req.headers["authorization"] || "") === "Bearer " + PERM_TOKEN;
+  if (req.method !== "POST" || (req.url || "").split("?")[0] !== "/internal/perm") { res.writeHead(404).end(); return; }
+  let body = ""; let tooBig = false;
+  req.on("data", (chunk) => { body += chunk; if (body.length > 256 * 1024) { tooBig = true; req.destroy(); } });
+  req.on("error", () => { try { res.writeHead(400).end(); } catch { /* ignore */ } });
+  req.on("end", () => {
+    if (tooBig) { try { res.writeHead(413).end(); } catch { /* ignore */ } return; }
+    let d: any; try { d = JSON.parse(body); } catch { res.writeHead(400).end(); return; }
+    if (!isLocal || !(bearerOk || d?.token === PERM_TOKEN)) { res.writeHead(401).end(); return; }
+    const sessionId = typeof d?.sessionId === "string" ? d.sessionId : "";
+    // No live Hub means no UI to ask; deny immediately instead of burning the whole timeout.
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ behavior: "deny", message: "Hub desconectado — negado por segurança" }));
+      return;
+    }
+    const id = randomUUID();
+    const settle = (decision: PermissionDecision) => {
+      const p = pendingPermissions.get(id); if (!p) return; // already answered/timed out
+      clearTimeout(p.timer); pendingPermissions.delete(id);
+      try {
+        res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        res.end(JSON.stringify(decision));
+      } catch { /* bridge gone; nothing to do */ }
+    };
+    const timer = setTimeout(() => settle({ behavior: "deny", message: "Tempo esgotado — negado por segurança" }), PERM_TIMEOUT_MS);
+    pendingPermissions.set(id, { timer, settle });
+    // A dropped bridge connection must not leak a pending entry that only a timeout would clear.
+    req.on("aborted", () => settle({ behavior: "deny", message: "Conexão encerrada" }));
+    send({ t: "permission_request", sessionId, id, tool: typeof d?.toolName === "string" ? d.toolName : "", input: d?.input ?? {}, cwd: sessCwd(sessionId) });
+  });
+});
+permServer.on("error", (e: any) => console.error("[runner] permission bridge:", String(e?.message ?? e)));
+permServer.listen(0, "127.0.0.1", () => {
+  const addr = permServer.address();
+  const port = addr && typeof addr === "object" ? addr.port : 0;
+  if (!port) return;
+  process.env.JARVIS_PERM_TOKEN = PERM_TOKEN;
+  process.env.JARVIS_PERM_URL = `http://127.0.0.1:${port}/internal/perm`;
+});
+permServer.unref(); // never keep the process alive on its own account
 
 async function maybeSelfUpdate(reason: string, forceCheck = false): Promise<void> {
   if (RUNNER_SELF_UPDATE_MS <= 0) return;
@@ -1114,6 +1177,15 @@ function connect(): void {
         return;
       }
       if (m.t === "ping") { send({ t: "pong" }); return; }
+      // Manual permission mode: the user answered a tool approval this machine is blocked on. The Hub
+      // already checked session access before forwarding; an unknown id means it was settled already.
+      if (m.t === "permission_decision" && typeof m.id === "string") {
+        const pending = pendingPermissions.get(m.id);
+        if (pending) pending.settle(m.behavior === "allow"
+          ? { behavior: "allow", updatedInput: m.updatedInput }
+          : { behavior: "deny", message: "Negado pelo usuário" });
+        return;
+      }
       if (m.t === "terminal_open") {
         if (updateInProgress) { send({ t: "terminal_error", reqId: m.reqId, message: "máquina drenando para atualização — tente novamente após ela reconectar" }); return; }
         try {
@@ -1389,6 +1461,8 @@ function connect(): void {
   });
   sock.on("close", () => {
     clearInterval(hb); ws = null;
+    // Sem Hub não há UI para responder: nega o que estava pendente em vez de segurar o turno por 5min.
+    denyAllPendingPermissions("Hub desconectado — negado por segurança");
     armOutageAbort(); // arma o corte de turnos abandonados se a queda persistir (flap reseta no reconnect)
     // #4: NÃO dispare auto-update numa queda transiente (ex.: 502 do túnel) — era o gatilho que criava
     // corrida com o update do Hub. Só considera após desconexão SUSTENTADA (backoff já cresceu); a

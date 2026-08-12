@@ -237,6 +237,10 @@ export type RunnerToHub =
   | { t: "terminal_closed"; terminalId: string; exitCode?: number; signal?: number }
   | { t: "terminal_list"; reqId?: string; terminals: TerminalInfo[] }
   | { t: "terminal_error"; reqId?: string; terminalId?: string; message: string }
+  /** Manual permission mode: a tool on THIS machine is blocked waiting for the user. The Hub owns the
+   *  UI, so the runner relays the request and waits for the matching `permission_decision`. `id` is
+   *  minted by the runner and is only meaningful for this runner's pending table. */
+  | { t: "permission_request"; sessionId: string; id: string; tool: string; input: unknown; cwd?: string }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" }
   | ExecutionRunnerToHub;
@@ -312,6 +316,9 @@ export type HubToRunner =
   | { t: "terminal_resize"; terminalId: string; cols: number; rows: number }
   | { t: "terminal_close"; terminalId: string }
   | { t: "terminal_list"; reqId?: string }
+  /** The user answered a `permission_request` this runner relayed. Unknown/expired ids are ignored
+   *  (already settled or timed out → the runner already failed it closed). */
+  | { t: "permission_decision"; sessionId: string; id: string; behavior: "allow" | "deny"; updatedInput?: unknown; message?: string }
   | { t: "ping" }
   | ExecutionHubToRunner;
 

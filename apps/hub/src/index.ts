@@ -68,10 +68,21 @@ process.env.JARVIS_PERM_URL = `http://127.0.0.1:${PORT}/internal/perm`;
 // hang forever waiting on an absent human.
 const PERM_TIMEOUT_MS = 5 * 60 * 1000;
 interface PermissionDecision { behavior: "allow" | "deny"; updatedInput?: unknown; message?: string }
-interface PendingPermission { sessionId: string; timer: ReturnType<typeof setTimeout>; settle: (d: PermissionDecision) => void; }
+// `runnerId` is the machine the blocked turn runs on: LOCAL_ID for an in-process turn (the bridge is
+// waiting on our own held HTTP response), or a remote runner (the answer travels back over its WS).
+// It is also what the access check must be scoped to — a session id only means something per machine.
+interface PendingPermission { sessionId: string; runnerId: string; timer: ReturnType<typeof setTimeout>; settle: (d: PermissionDecision) => void; }
 // In-flight approval requests keyed by a random id; each holds the HTTP response open until the user
 // decides (permission_decision ws message) or the timeout fires.
 const pendingPermissions = new Map<string, PendingPermission>();
+/** A machine that went offline can no longer receive the answer (and its own bridge is already being
+ *  failed closed there), so settle its in-flight approvals as denies instead of leaking them until
+ *  the timeout. Cheap linear scan: this map holds one entry per BLOCKED tool call, never more. */
+function denyPendingPermissionsFor(runnerId: string): void {
+  for (const [, p] of [...pendingPermissions]) {
+    if (p.runnerId === runnerId) p.settle({ behavior: "deny", message: "Máquina desconectada — negado por segurança" });
+  }
+}
 const CONTEXT_PMTILES_FILE = process.env.JARVIS_PMTILES_FILE ? normalize(process.env.JARVIS_PMTILES_FILE) : "";
 const CONTEXT_MAP_STYLE_FILE = process.env.JARVIS_MAP_STYLE_FILE ? normalize(process.env.JARVIS_MAP_STYLE_FILE) : "";
 const LOCAL_ID = "local";
@@ -556,7 +567,7 @@ const server = createServer((req, res) => {
         broadcast(sessionId, { t: "permission_resolved", sessionId, id, behavior: decision.behavior });
       };
       const timer = setTimeout(() => settle({ behavior: "deny", message: "Tempo esgotado — negado por segurança" }), PERM_TIMEOUT_MS);
-      pendingPermissions.set(id, { sessionId, timer, settle });
+      pendingPermissions.set(id, { sessionId, runnerId: LOCAL_ID, timer, settle });
       // A dropped bridge connection must not leak a pending entry (it would deny a later, unrelated turn's
       // wait only via timeout, but also holds memory). If the request aborts, resolve it as a deny.
       req.on("aborted", () => settle({ behavior: "deny", message: "Conexão encerrada" }));
@@ -2042,6 +2053,25 @@ function relayRunner(rc: RunnerConn, m: any): void {
     for (const c of clientsOn(rc.id)) if (subs.get(c) === m.sessionId && canAccessSession(c, rc.id, m.sessionId)) send(c, { t: "browser_event", runnerId: rc.id, sessionId: m.sessionId, event: m.event });
     return;
   }
+  // Manual permission mode (Fase 3), remote leg: a tool on THAT machine is blocked. The runner holds
+  // its bridge's response open; we own the UI, so register a pending whose settle ships the answer
+  // back over this runner's socket, then ask whoever is watching the session.
+  if (m.t === "permission_request" && typeof m.sessionId === "string" && typeof m.id === "string") {
+    const sessionId = m.sessionId, id = m.id;
+    if (pendingPermissions.has(id)) return; // duplicate delivery — the first one still owns the answer
+    const settle = (decision: PermissionDecision) => {
+      const p = pendingPermissions.get(id); if (!p) return;
+      clearTimeout(p.timer); pendingPermissions.delete(id);
+      if (rc.ws) send(rc.ws, { t: "permission_decision", sessionId, id, behavior: decision.behavior, updatedInput: decision.updatedInput, message: decision.message });
+      for (const c of clientsOn(rc.id)) if (subs.get(c) === sessionId && canAccessSession(c, rc.id, sessionId)) send(c, { t: "permission_resolved", sessionId, id, behavior: decision.behavior });
+    };
+    // The runner runs its own (identical) window and fails closed on its side too; ours exists so a
+    // dead runner can't leak a pending entry here forever.
+    const timer = setTimeout(() => settle({ behavior: "deny", message: "Tempo esgotado — negado por segurança" }), PERM_TIMEOUT_MS);
+    pendingPermissions.set(id, { sessionId, runnerId: rc.id, timer, settle });
+    for (const c of clientsOn(rc.id)) if (subs.get(c) === sessionId && canAccessSession(c, rc.id, sessionId)) send(c, { t: "permission_request", sessionId, id, tool: String(m.tool || ""), input: m.input ?? {}, cwd: m.cwd });
+    return;
+  }
   if (m.t === "terminal_opened" && m.terminal?.id) {
     terminalOwners.set(String(m.terminal.id), rc.id);
     const request = takePendingRequest(rc, m.reqId, ["terminal_open"]);
@@ -2277,7 +2307,7 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
   }, 20000);
   // drop runners that never register (token) within 20s
   const regTimer = setTimeout(() => { if (!rid) { try { ws.close(1008, "no register"); } catch { /* ignore */ } } }, 20000);
-  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); console.log(`[hub] runner offline: ${rid}`); noteRunnerOffline(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
+  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); denyPendingPermissionsFor(rid); console.log(`[hub] runner offline: ${rid}`); noteRunnerOffline(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
   ws.on("error", () => { /* close handles cleanup */ });
   ws.on("message", (raw) => {
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
@@ -5284,7 +5314,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "permission_decision" && typeof msg.id === "string") {
       const pending = pendingPermissions.get(msg.id);
       if (pending) {
-        if (!canAccessSession(ws, LOCAL_ID, pending.sessionId)) { send(ws, { t: "error", message: "sem acesso a esta sessão" }); return; }
+        if (!canAccessSession(ws, pending.runnerId, pending.sessionId)) { send(ws, { t: "error", message: "sem acesso a esta sessão" }); return; }
         const allow = msg.behavior === "allow";
         pending.settle(allow ? { behavior: "allow", updatedInput: msg.updatedInput } : { behavior: "deny", message: "Negado pelo usuário" });
       }

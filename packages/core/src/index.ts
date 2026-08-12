@@ -35,6 +35,7 @@ export * from "./managed-execution.js";
 export * from "./execution-usage.js";
 export * from "./adaptive-policy.js";
 export * from "./session-defaults.js";
+export * from "./permission-bridge.js";
 export * from "./context.js";
 export * from "./activity-replay.js";
 export * from "./council.js";

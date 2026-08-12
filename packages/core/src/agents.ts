@@ -33,6 +33,7 @@ import {
 } from "./agent-contract.js";
 import { codexChildRollouts } from "./codex-executions.js";
 import { BACKGROUND_JOB_STEERING } from "./background-jobs.js";
+import { ensurePermissionBridge } from "./permission-bridge.js";
 import { EXECUTION_ADAPTER_PROFILES, EXECUTION_ADAPTER_IDS, mapProviderExecutionFixture, type ExecutionAdapterId } from "./execution-adapters.js";
 
 /** Effective unattended execution policy. The historical default is full access; operators can
@@ -771,7 +772,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       id: this.name, label: "Claude Code", command: this.bin, version, support,
       reason: support === "not_installed" ? "CLI claude não encontrado" : support === "unauthenticated" ? "execute claude login nesta máquina" : undefined,
       capabilities: {
-        permissionMode: agentPermissionMode(), supportedPermissionModes: ["plan", "bypass"], stream: "delta", tools: true, thinking: true, plans: false, subagents: true,
+        permissionMode: agentPermissionMode(), supportedPermissionModes: ["manual", "plan", "bypass"], stream: "delta", tools: true, thinking: true, plans: false, subagents: true,
         nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
         cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
         commands: true, skills: true, mcp: true, oneShot: true, remote: true,
@@ -797,12 +798,27 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // silently discards, so every tool-using turn would come back empty. Stdin has neither problem,
     // and as a bonus removes the CLI's own "no stdin data received in 3s" wait on every turn.
     const args = ["-p", ...fmt];
+    // Cleanup for a per-turn temp mcp-config (manual-mode approval bridge); no-op otherwise.
+    let permCleanup: (() => void) | undefined;
     if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
     else {
       // Non-managed turns only: teach the agent to hand long tasks to Jarvis's durable background jobs
       // (the Hub parses the ```jarvis-run block from the reply). Managed/subagent turns are isolated.
       if (process.env.JARVIS_BG_JOBS !== "off") args.push("--append-system-prompt", BACKGROUND_JOB_STEERING);
-      args.push(...permissionArgs("claude-code", effectivePermissionMode(opts)));
+      const mode = effectivePermissionMode(opts);
+      args.push(...permissionArgs("claude-code", mode));
+      // Manual mode: without an approval bridge the CLI auto-denies every tool. Wire the stdio MCP
+      // permission-prompt tool + a per-turn temp mcp-config so the Hub can pause and ask the user.
+      // Only when the Hub has published the bridge endpoint (env) — otherwise fall back to current
+      // behavior. Never for managed/subagent turns (this whole branch is the non-managed one).
+      if (mode === "manual" && process.env.JARVIS_PERM_URL && process.env.JARVIS_PERM_TOKEN) {
+        const bridgePath = ensurePermissionBridge().replace(/\\/g, "/");
+        const cfg = { mcpServers: { jarvisperm: { command: "node", args: [bridgePath], env: { JARVIS_PERM_URL: process.env.JARVIS_PERM_URL, JARVIS_PERM_TOKEN: process.env.JARVIS_PERM_TOKEN, JARVIS_PERM_SESSION: sessionId } } } };
+        const cfgPath = join(tmpdir(), `jarvisperm_${randomUUID()}.json`);
+        writeFileSync(cfgPath, JSON.stringify(cfg));
+        permCleanup = () => { try { unlinkSync(cfgPath); } catch { /* already gone */ } };
+        args.push("--mcp-config", cfgPath, "--permission-prompt-tool", "mcp__jarvisperm__approve");
+      }
     }
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("--model", model);
@@ -818,6 +834,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       return n || undefined;
     };
 
+    try {
     if (onEvent) {
       // streaming: emit tool/text activity live; accumulate the final reply + usage.
       let finalText = "";
@@ -902,6 +919,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       text: json.result ?? "",
       usage: { costUsd: json.total_cost_usd, inputTokens: inputContext(json.usage), contextTokens: inputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model },
     };
+    } finally { if (permCleanup) permCleanup(); }
   }
 
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
