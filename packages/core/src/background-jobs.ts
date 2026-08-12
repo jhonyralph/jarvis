@@ -54,6 +54,10 @@ export interface BackgroundJob {
   resultSummary?: string;
   /** True once the auto-continuation turn has been injected — idempotency against double-fire. */
   continued?: boolean;
+  /** Quando o dono dispensou o job do painel. Só terminal pode ser dispensado, e dispensar é só
+   *  visual: não cancela nada, não desfaz a continuação. Existe porque um job concluído ficava na
+   *  tela até a janela de retenção expirar, sem nenhuma forma de tirá-lo da frente. */
+  dismissedAt?: number;
   /** How many auto-continuations deep this chain is — anti-loop guard, carried from the origin turn. */
   autoContinueDepth: number;
 }
@@ -62,7 +66,8 @@ type JobEvent =
   | { k: "created"; at: number; job: Omit<BackgroundJob, "updatedAt" | "continued"> }
   | { k: "pid"; at: number; jobId: string; pid: number }
   | { k: "status"; at: number; jobId: string; status: JobStatus; exitCode?: number; resultSummary?: string }
-  | { k: "continued"; at: number; jobId: string };
+  | { k: "continued"; at: number; jobId: string }
+  | { k: "dismissed"; at: number; jobId: string };
 
 export interface CreateJobInput {
   jobId?: string;
@@ -231,6 +236,9 @@ export class BackgroundJobStore {
     if (!job) return false;
     if (ev.k === "pid") { job.pid = ev.pid; job.updatedAt = ev.at; return true; }
     if (ev.k === "continued") { job.continued = true; job.updatedAt = ev.at; return true; }
+    // Sem regra de transição: dispensar é idempotente e não participa do ciclo de vida do processo.
+    // A validação ("só terminal") fica em `dismiss()`, para que um evento antigo nunca trave o replay.
+    if (ev.k === "dismissed") { job.dismissedAt = ev.at; return true; }
     if (ev.k === "status") {
       if (!TRANSITIONS[job.status]?.has(ev.status)) return false; // illegal transition — stop replay
       job.status = ev.status;
@@ -287,6 +295,16 @@ export class BackgroundJobStore {
   /** Mark that the auto-continuation turn has been injected — call BEFORE injecting so a crash can't double-fire. */
   markContinued(jobId: string): void { this.write({ k: "continued", at: this.now(), jobId }); }
 
+  /** Tira um job TERMINAL do painel. Recusa job vivo: para esse o botão certo é cancelar, e esconder
+   *  algo que ainda está rodando seria perder o processo de vista. Idempotente. */
+  dismiss(jobId: string): BackgroundJob | undefined {
+    const job = this.jobs.get(jobId);
+    if (!job) return undefined;
+    if (!isTerminalJobStatus(job.status)) throw new Error("job ainda em execução — cancele antes de dispensar");
+    if (!job.dismissedAt) this.write({ k: "dismissed", at: this.now(), jobId });
+    return this.get(jobId);
+  }
+
   get(jobId: string): BackgroundJob | undefined {
     const j = this.jobs.get(jobId);
     return j ? { ...j } : undefined;
@@ -306,6 +324,7 @@ export class BackgroundJobStore {
     const keep = [...this.jobs.values()].filter((j) => {
       if (!isTerminalJobStatus(j.status)) return true; // never drop live work
       if (!j.continued) return true; // still owes a continuation
+      if (j.dismissedAt) return false; // o dono já tirou da frente: não precisa cumprir a retenção
       return this.retainTerminalMs === 0 || at - j.updatedAt < this.retainTerminalMs;
     });
     const lines: string[] = [];

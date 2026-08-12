@@ -36,7 +36,7 @@ import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./s
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
-import { buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
+import { QueueBlockRegistry, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -3042,9 +3042,28 @@ function queueOf(runnerId: string, sid: string): QueueItem[] {
   let q = queues.get(key); if (!q) { q = []; queues.set(key, q); }
   return q;
 }
+/**
+ * POR QUE a fila não saiu. `flushQueue`/`maybeFlushQueue` têm oito saídas antecipadas, e todas
+ * retornavam em silêncio deixando a fila intacta — de fora, "o Hub tentou e desistiu" era
+ * indistinguível de "ninguém tentou", e foi por isso que a fila encalhada sobreviveu a várias
+ * investigações. Aqui cada saída passa a registrar o motivo, que viaja no frame `queue` e aparece na
+ * barra da fila. Estado em memória de propósito: descreve o AGORA; se sumir num restart, a próxima
+ * tentativa recalcula.
+ */
+const queueBlocks = new QueueBlockRegistry();
+function noteQueueBlock(runnerId: string, sid: string, code: string, reason: string): void {
+  if (!queueOf(runnerId, sid).length) { clearQueueBlock(runnerId, sid); return; }  // fila vazia não tem o que explicar
+  const { changed } = queueBlocks.note(scopedSessionKey(runnerId, sid), code, reason, Date.now());
+  if (changed) broadcastQueue(runnerId, sid);
+  if (changed) log.warn("queue_blocked", { runnerId, sid, code, reason });
+}
+function clearQueueBlock(runnerId: string, sid: string): void {
+  if (queueBlocks.clear(scopedSessionKey(runnerId, sid))) broadcastQueue(runnerId, sid);
+}
 function broadcastQueue(runnerId: string, sid: string): void {
   // msgId travels so the client can remove by STABLE id (index drifts if the queue changed).
-  broadcastOn(runnerId, sid, { t: "queue", runnerId, sessionId: sid, items: queueOf(runnerId, sid).map((q) => ({ text: q.text, atts: q.atts, msgId: q.msgId })) });
+  const block = queueBlocks.get(scopedSessionKey(runnerId, sid)) ?? null;
+  broadcastOn(runnerId, sid, { t: "queue", runnerId, sessionId: sid, items: queueOf(runnerId, sid).map((q) => ({ text: q.text, atts: q.atts, msgId: q.msgId })), blocked: block });
 }
 /** Single choke point for every "push onto a queue" call site (there are several — direct busy-session
  *  enqueues as well as the enqueueChatTurn helper) so queue depth/wait-time are ALWAYS observable, not
@@ -3246,6 +3265,7 @@ function backgroundJobsForUi(): Array<Record<string, unknown>> {
   // que houve — principalmente o que falhou. Enquanto vive, manda a cauda do log para dar progresso.
   const RECENT_MS = 60 * 60_000, now = Date.now();
   return backgroundJobs.list()
+    .filter((j) => !j.dismissedAt)
     .filter((j) => !isTerminalJobStatus(j.status) || now - j.updatedAt < RECENT_MS)
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 30)
@@ -3277,8 +3297,11 @@ function flushIdleQueues(): void {
   for (const [key, items] of queues) {
     if (!items.length) continue;
     const scope = splitScopedSessionKey(key);
-    if (scope.runnerId === LOCAL_ID && activeRuns.has(scope.sessionId)) continue;        // turno rodando
-    if (dispatchReservations.isHeld(scope.runnerId, scope.sessionId)) continue;          // despacho em voo
+    // Estes três `continue` também eram mudos, e são justamente os que reavaliam a fila encalhada a
+    // cada 15s — sem registrar o motivo, a rede de segurança rodava sem deixar rastro de por que
+    // desistiu. É a informação mais útil quando a fila está parada há horas.
+    if (scope.runnerId === LOCAL_ID && activeRuns.has(scope.sessionId)) { noteQueueBlock(scope.runnerId, scope.sessionId, "turn_running", "o turno anterior desta sessão ainda está rodando"); continue; }
+    if (dispatchReservations.isHeld(scope.runnerId, scope.sessionId)) { noteQueueBlock(scope.runnerId, scope.sessionId, "dispatch_held", "outro despacho desta sessão está em voo"); continue; }
     const oldest = items.reduce((min, it) => (it.queuedAt != null && it.queuedAt < min ? it.queuedAt : min), Infinity);
     if (Number.isFinite(oldest) && now - oldest < IDLE_QUEUE_MS) continue;               // acabou de entrar
     void maybeFlushQueue(scope.runnerId, scope.sessionId, false);
@@ -3313,11 +3336,17 @@ function loadQueues(): void {
     const now = Date.now();
     for (const persistedKey of Object.keys(obj)) {
       const e = obj[persistedKey];
-      if (!e || !Array.isArray(e.items) || !e.items.length || now - (e.ts || 0) >= QUEUE_TTL_MS) continue;
+      if (!e || !Array.isArray(e.items) || !e.items.length) continue;
+      // O TTL vale por ITEM, pela hora em que ele entrou na fila. Antes valia contra `e.ts`, que
+      // `saveQueues` reescreve com `Date.now()` a CADA gravação — então o prazo se renovava sozinho e
+      // nunca expirava: um item preso ressuscitava a cada restart, indefinidamente (havia um de 6 dias
+      // em disco). `e.ts` só é usado como base para item antigo, sem `queuedAt`.
+      const items = (e.items as QueueItem[]).filter((it) => now - (it?.queuedAt ?? e.ts ?? 0) < QUEUE_TTL_MS);
+      if (!items.length) continue;
       const parsed = splitScopedSessionKey(persistedKey);
-      const runnerId = typeof e.runnerId === "string" && e.runnerId ? e.runnerId : (e.items.find((item: QueueItem) => item?.runnerId)?.runnerId || parsed.runnerId);
+      const runnerId = typeof e.runnerId === "string" && e.runnerId ? e.runnerId : (items.find((item: QueueItem) => item?.runnerId)?.runnerId || parsed.runnerId);
       const sessionId = typeof e.sessionId === "string" && e.sessionId ? e.sessionId : parsed.sessionId;
-      queues.set(scopedSessionKey(runnerId, sessionId), e.items);
+      queues.set(scopedSessionKey(runnerId, sessionId), items);
     }
   } catch { /* ignore */ }
 }
@@ -3933,13 +3962,13 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   }
 }
 async function maybeFlushQueue(runnerId: string, sid: string, autoplay: boolean): Promise<void> {
-  if (hubUpdateInProgress) return;
-  if (dispatchReservations.isHeld(runnerId, sid)) { pendingDispatchFlush.add(scopedSessionKey(runnerId, sid)); return; }
+  if (hubUpdateInProgress) { noteQueueBlock(runnerId, sid, "hub_update", "atualização do Hub em andamento"); return; }
+  if (dispatchReservations.isHeld(runnerId, sid)) { pendingDispatchFlush.add(scopedSessionKey(runnerId, sid)); noteQueueBlock(runnerId, sid, "dispatch_held", "outro despacho desta sessão está em voo"); return; }
   if (autoplay) {
     const resolved = effectivePolicyFor(sid);
     const decision = decideAdaptiveRun(resolved.policy, { queueAutoplay: true });
     recordAdaptiveDecision({ kind: "queue_autoplay", action: decision.action, reason: decision.reason, sessionId: sid, policyId: resolved.policy.id });
-    if (decision.action !== "allow") return;
+    if (decision.action !== "allow") { noteQueueBlock(runnerId, sid, "policy", `a política automática recusou: ${decision.reason || decision.action}`); return; }
   }
   await flushQueue(runnerId, sid);
 }
@@ -3952,15 +3981,15 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
   const rid = runnerId === LOCAL_ID ? undefined : runnerId;
   let rc: RunnerConn | undefined;
   if (rid) {
-    if ((runnerActive.get(rid) || new Set()).has(sid)) return;   // runner ainda ocupado
+    if ((runnerActive.get(rid) || new Set()).has(sid)) { noteQueueBlock(runnerId, sid, "runner_busy", "a máquina ainda está ocupada com esta sessão"); return; }
     rc = runners.get(rid);
-    if (!rc?.ws) return;                                          // runner OFFLINE → mantém a fila (não perde)
-  } else if (activeRuns.has(sid)) return;                         // local ainda ocupado
+    if (!rc?.ws) { noteQueueBlock(runnerId, sid, "runner_offline", "a máquina está offline — a fila fica guardada até ela voltar"); return; } // OFFLINE → mantém a fila (não perde)
+  } else if (activeRuns.has(sid)) { noteQueueBlock(runnerId, sid, "turn_running", "o turno anterior desta sessão ainda está rodando"); return; }
   const initialOwner = captureSessionOwnerGeneration(runnerId, sid);
-  if (initialOwner.conflicted) { broadcastOn(runnerId, sid, { t: "error", message: "conflito de propriedade entre aliases da sessão" }); return; }
+  if (initialOwner.conflicted) { noteQueueBlock(runnerId, sid, "owner_conflict", "conflito de propriedade entre aliases da sessão"); broadcastOn(runnerId, sid, { t: "error", message: "conflito de propriedade entre aliases da sessão" }); return; }
   const principalId = initialOwner.principalId || queue[0]?.actor?.userId || "local";
   const lease = reserveSessionDispatch(runnerId, sid, principalId, "flush");
-  if (!lease) { pendingDispatchFlush.add(key); return; }
+  if (!lease) { pendingDispatchFlush.add(key); noteQueueBlock(runnerId, sid, "no_lease", "não foi possível reservar o despacho desta sessão"); return; }
 
   let items: QueueItem[] = [];
   if (initialOwner.principalId) {
@@ -3979,7 +4008,9 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
     if (filtered.duplicates.length) log.info("queue_dispatch_dup", { runnerId, sid, dropped: filtered.duplicates.length, msgIds: filtered.duplicates.map((d) => d.msgId) });
     items = filtered.keep;
   }
-  if (!items.length) { releaseSessionDispatch(lease); return; }
+  // Fila esvaziada aqui = itens de outro usuário, ou já entregues (idempotência). Não é "parada":
+  // não sobrou nada para despachar, então nada a explicar.
+  if (!items.length) { releaseSessionDispatch(lease); clearQueueBlock(runnerId, sid); return; }
   // How long the OLDEST item in this batch sat queued before this flush attempt — the number that
   // answers "did my message wait, or did the agent just take a while once it started?".
   const _oldestQueuedAt = items.reduce((min, it) => (it.queuedAt != null && it.queuedAt < min ? it.queuedAt : min), Infinity);
@@ -3991,10 +4022,10 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
   const restoreItems = (): void => { queues.set(key, [...items, ...queueOf(runnerId, sid)]); broadcastQueue(runnerId, sid); saveQueues(); };
   if (personalSeed) {
     try { bindPersonalSession(runnerId, sid, personalSeed.actor || { source: "queue" }); }
-    catch (error) { restoreItems(); releaseSessionDispatch(lease); broadcastOn(runnerId, sid, { t: "error", message: String((error as Error)?.message || error) }); return; }
-    if (!refreshSessionDispatchAuthorization(lease)) { restoreItems(); releaseSessionDispatch(lease); return; }
+    catch (error) { restoreItems(); releaseSessionDispatch(lease); noteQueueBlock(runnerId, sid, "personal_context", `falha ao montar o contexto pessoal: ${String((error as Error)?.message || error)}`); broadcastOn(runnerId, sid, { t: "error", message: String((error as Error)?.message || error) }); return; }
+    if (!refreshSessionDispatchAuthorization(lease)) { restoreItems(); releaseSessionDispatch(lease); noteQueueBlock(runnerId, sid, "unauthorized", "a autorização desta sessão mudou durante o preparo"); return; }
   }
-  if (!sessionDispatchAuthorized(lease, undefined, rc)) { restoreItems(); releaseSessionDispatch(lease); return; }
+  if (!sessionDispatchAuthorized(lease, undefined, rc)) { restoreItems(); releaseSessionDispatch(lease); noteQueueBlock(runnerId, sid, "unauthorized", "a autorização desta sessão mudou durante o preparo"); return; }
   const text = items.map((q) => q.text).join("\n\n");
   const atts = items.flatMap((q) => q.atts || []);
   // Queued messages are deliberately combined into one turn; the newest queued preference wins,
@@ -4062,6 +4093,10 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
     if (dispatched) for (const it of items) if (it.msgId) dispatchedTurns.add(it.msgId);
     for (const it of items) if (it.msgId) cancelledFlushMsgIds.delete(it.msgId); // these ids did their job — keep the set bounded
     if (queueOf(runnerId, sid).length) pendingDispatchFlush.add(key);
+    // Rede final: nenhuma saída daqui para baixo pode ficar muda. Despachou → o motivo antigo morre;
+    // não despachou e ainda há fila → registra um motivo genérico se nenhum específico foi anotado.
+    if (dispatched) clearQueueBlock(runnerId, sid);
+    else if (queueOf(runnerId, sid).length && !queueBlocks.has(key)) noteQueueBlock(runnerId, sid, "dispatch_failed", "a entrega ao agente não se completou");
     log.debug("queue_flush", { runnerId, sid, items: items.length, waitMs, dispatched, remote: !!rid });
     releaseSessionDispatch(lease);
   }
@@ -6497,7 +6532,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       log.debug("queue_dequeue", { runnerId: rid, sid: msg.sessionId, msgId: removedMsgId, removedFromQueue, depth: q.length });
       broadcastQueue(rid, msg.sessionId); saveQueues(); return;
     }
-    if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { const rid = activeRunner(ws); if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(scopedSessionKey(rid, msg.sessionId), []); broadcastQueue(rid, msg.sessionId); saveQueues(); return; }
+    if (msg.t === "clearqueue" && typeof msg.sessionId === "string") { const rid = activeRunner(ws); if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } queues.set(scopedSessionKey(rid, msg.sessionId), []); queueBlocks.clear(scopedSessionKey(rid, msg.sessionId)); broadcastQueue(rid, msg.sessionId); saveQueues(); return; }
     // Monitor de jobs em background (comandos ```jarvis-run```): lista para o dono, e cancelar.
     if (msg.t === "background_jobs") { if (!requireOwner(ws)) return; send(ws, { t: "background_jobs", jobs: backgroundJobsForUi() }); return; }
     if (msg.t === "background_job_cancel" && typeof msg.jobId === "string") {
@@ -6509,6 +6544,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         backgroundJobs.markContinued(job.jobId); // cancel do usuário NÃO auto-continua a sessão
         broadcastOn(job.runnerId || LOCAL_ID, job.originSessionId, { t: "notice", message: `Tarefa em segundo plano cancelada: \`${job.command.slice(0, 80)}\`.` });
       }
+      broadcastBackgroundJobs();
+      return;
+    }
+    // Tirar do painel um job que já acabou. Só visual e só terminal — não cancela nem desfaz nada.
+    // `jobId: "*"` dispensa todos os terminais de uma vez (o painel acumulava sem saída).
+    if (msg.t === "background_job_dismiss" && typeof msg.jobId === "string") {
+      if (!requireOwner(ws)) return;
+      const alvos = msg.jobId === "*"
+        ? backgroundJobs.list().filter((j) => isTerminalJobStatus(j.status) && !j.dismissedAt).map((j) => j.jobId)
+        : [msg.jobId];
+      for (const id of alvos) { try { backgroundJobs.dismiss(id); } catch (e: any) { send(ws, { t: "error", message: String(e?.message ?? e) }); } }
       broadcastBackgroundJobs();
       return;
     }

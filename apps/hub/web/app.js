@@ -4611,7 +4611,7 @@
           pendingNewSession=null;
         }
         else if(m.t==='message'){ const runner=frameRunner(m), msg=m.message||{}, sid=msg.sessionId||m.sessionId; if(msg.role==='assistant') clearRestorable(sid,runner); if(currentFrame(m,sid)){ if(msg.role==='assistant'){ clearNativeActivity(); clearPending(); if(strEl){ streamDone(msg.text||'',turnUsage,{sessionId:sid,runner}); onTurnEnd(sid,runner); return; } if(recentlyStreamedAssistant(msg.text||'',sid,runner))return; if(msg.activity&&msg.activity.length)clearLooseActivity(); } if(!(msg.role==='user'&&consumeOptimisticUser(sid,msg))) addMsg(msg); if(msg.role==='user'&&!curStarted){ curStarted=true; renderControls(); } } }
-        else if(m.t==='queue'){ const runner=m.runnerId||selectedRunner(); queueBySession[sessionStateKey(m.sessionId,runner)]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[],msgId:x.msgId})); if(m.sessionId===currentSession&&runner===currentSessionRunner) renderQueue(); }
+        else if(m.t==='queue'){ const runner=m.runnerId||selectedRunner(); const k=sessionStateKey(m.sessionId,runner); queueBySession[k]=(m.items||[]).map(x=>({text:x.text,atts:x.atts||[],msgId:x.msgId})); if(m.blocked) queueBlockBySession[k]=m.blocked; else delete queueBlockBySession[k]; if(m.sessionId===currentSession&&runner===currentSessionRunner) renderQueue(); }
         else if(m.t==='auto_route'&&currentFrame(m)){ if(m.state==='started'){ status('busy','Escolhendo IA, modelo e esforço…'); }
           else if(m.state==='cancelled'){ status(''); clearPending(); onTurnEnd(m.sessionId,frameRunner(m)); }
           else { const d=m.decision||{}; status(''); if(d.agent)currentAgent=d.agent; sessDeclModel=d.model||null; sessDeclEffort=d.effort||null; lastRouteReason=d.reason||''; syncModelEffort(); if(d.fallback)toast('⚠ Automático: '+(d.reason||'usado o padrão compatível')); } }
@@ -4884,6 +4884,9 @@
     // Fila e "ocupado" são POR SESSÃO. A verdade de quem está rodando é o servidor (activeRuns, via
     // {t:runs}); justSent cobre a janela entre eu enviar e o servidor confirmar. Enfileirar numa
     // sessão NUNCA bloqueia outra: cada uma tem sua fila e seu estado.
+    // Por que a fila não saiu, por sessão (frame `queue`.blocked). Sem isto a barra só sabia dizer
+    // "rodam automaticamente agora" — mentira sempre que o despacho estava travado por algum motivo.
+    const queueBlockBySession={};
     const queueBySession={}, justSent=new Set(), justSentTimers={}, optimisticUsers={};
     // draft do composer POR SESSÃO, persistido — sobrevive ao lock/descarte da aba no mobile (antes
     // era só em memória, então bloquear o telefone perdia o que você estava digitando).
@@ -5059,6 +5062,13 @@
       E.bgJobs.innerHTML=''; E.bgJobs.classList.toggle('hidden',!list.length); if(!list.length) return;
       const ICON={queued:'⏳',running:'⚙️',succeeded:'✓',failed:'✗',cancelled:'⛔'};
       const LABEL={queued:'na fila',running:'rodando',succeeded:'concluído',failed:'falhou',cancelled:'cancelado'};
+      // Com vários jobs terminados na tela, fechar um a um é pior que o problema original.
+      const prontos=list.filter(j=>j.status!=='running'&&j.status!=='queued').length;
+      if(prontos>1){ const hdr=document.createElement('div'); hdr.className='bgj';
+        const s=document.createElement('span'); s.className='bgj-cmd'; s.textContent=prontos+' job(s) concluído(s) no painel';
+        const all=document.createElement('button'); all.type='button'; all.className='bgj-act'; all.textContent='fechar concluídos'; all.title='Tirar do painel todos os jobs que já terminaram';
+        all.onclick=()=>tx({t:'background_job_dismiss',jobId:'*'});
+        hdr.append(s,all); E.bgJobs.appendChild(hdr); }
       list.forEach(j=>{
         const row=document.createElement('div'); row.className='bgj'+((j.status==='running'||j.status==='queued')?' run':'');
         const ic=document.createElement('span'); ic.className='bgj-ic'; ic.textContent=ICON[j.status]||'•'; if(j.status==='succeeded')ic.style.color='#4ade80'; else if(j.status==='failed')ic.style.color='#f87171'; else if(j.status==='cancelled')ic.style.color='#f0883e';
@@ -5072,8 +5082,13 @@
           s.title=j.continued?'O Jarvis abriu um turno na sessao com o resultado deste job.':'O job terminou mas nenhum turno foi aberto com o resultado. Abra a sessao e use a saida abaixo.';
           row.appendChild(s);
         }
-        const go=document.createElement('button'); go.type='button'; go.className='bgj-act'; go.textContent='ir'; go.title='Abrir a sessão dona deste job'; go.onclick=()=>{ if(j.sessionId) openSession(j.sessionId,j.runnerId); }; row.appendChild(go);
-        if(j.status==='running'||j.status==='queued'){ const x=document.createElement('button'); x.type='button'; x.className='bgj-act danger'; x.textContent='cancelar'; x.title='Cancelar este job'; x.onclick=()=>{ if(confirm('Cancelar este job em background?')) tx({t:'background_job_cancel',jobId:j.jobId}); }; row.appendChild(x); }
+        // "ir" não dizia para onde. O botão abre a SESSÃO dona do job — útil enquanto roda e depois de
+        // terminar (é lá que o resultado foi devolvido), então o rótulo passa a dizer isso.
+        const vivo=(j.status==='running'||j.status==='queued');
+        const go=document.createElement('button'); go.type='button'; go.className='bgj-act'; go.textContent='abrir sessão'; go.title='Abrir a sessão dona deste job'; go.onclick=()=>{ if(j.sessionId) openSession(j.sessionId,j.runnerId); }; row.appendChild(go);
+        if(vivo){ const x=document.createElement('button'); x.type='button'; x.className='bgj-act danger'; x.textContent='cancelar'; x.title='Cancelar este job'; x.onclick=()=>{ if(confirm('Cancelar este job em background?')) tx({t:'background_job_cancel',jobId:j.jobId}); }; row.appendChild(x); }
+        // Job terminado só sumia quando a janela de retenção expirava — não havia como tirar da frente.
+        else { const d=document.createElement('button'); d.type='button'; d.className='bgj-act'; d.textContent='fechar'; d.title='Tirar este job concluído do painel (não cancela nem desfaz nada)'; d.onclick=()=>tx({t:'background_job_dismiss',jobId:j.jobId}); row.appendChild(d); }
         E.bgJobs.appendChild(row);
         // Saida: ao vivo enquanto roda (a cauda anda a cada poll), e o resumo final depois. Colapsado
         // por padrao para nao empurrar o chat; o estado de aberto sobrevive ao re-render.
@@ -5089,8 +5104,16 @@
       });
     }
     function renderQueue(){ if(!E.queueRow)return; const q=queueOf(currentSession); E.queueRow.innerHTML=''; E.queueRow.classList.toggle('hidden',!q.length); if(!q.length)return;
+      // Motivo do travamento vindo do Hub. Enquanto ele existir, a barra diz POR QUE a fila não saiu
+      // em vez de prometer que "roda automaticamente agora" — que era falso justamente quando importava.
+      const blk=queueBlockBySession[sessionStateKey(currentSession,currentSessionRunner)];
       const waiting=busy(currentSession)?'rodam automaticamente quando este turno terminar':'rodam automaticamente agora';
-      const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span'); s.textContent='⏳ '+q.length+' na fila — '+waiting; hdr.appendChild(s);
+      const hdr=document.createElement('div'); hdr.className='qhdr'; const s=document.createElement('span');
+      if(blk&&blk.reason){ const mins=Math.max(0,Math.round((Date.now()-(blk.since||Date.now()))/60000));
+        s.textContent='⏳ '+q.length+' na fila — parada: '+blk.reason+(mins>=1?(' (há '+mins+' min')+(blk.attempts>1?', '+blk.attempts+' tentativas':'')+')':'');
+        s.title='Código: '+(blk.code||'?')+'. O Hub reavalia a cada 15s.'; hdr.classList.add('qstuck'); }
+      else s.textContent='⏳ '+q.length+' na fila — '+waiting;
+      hdr.appendChild(s);
       const acts=document.createElement('div'); acts.className='qacts';
       const clr=document.createElement('button'); clr.type='button'; clr.className='qclr'; clr.textContent='limpar fila'; clr.onclick=()=>{ queueBySession[sessionStateKey(currentSession,currentSessionRunner)]=[]; renderQueue(); tx({t:'clearqueue',sessionId:currentSession}); }; acts.appendChild(clr); hdr.appendChild(acts); E.queueRow.appendChild(hdr);
       const list=document.createElement('div'); list.className='qlist';

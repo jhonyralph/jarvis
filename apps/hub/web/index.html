@@ -359,6 +359,9 @@
     /* a fila pode crescer: cabeçalho fixo, itens rolam. Limite pensado pra mobile (vh) e desktop (px). */
     #queueRow .qlist { display:flex; flex-direction:column; gap:5px; max-height:min(42vh,280px); overflow-y:auto; padding-right:2px; }
     #queueRow .qhdr { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11.5px; color:var(--mut); }
+    /* Fila parada por um motivo conhecido: cor de alerta, porque "esperando" e "travada" não podem
+       ter a mesma aparência — foi assim que uma fila encalhada passou dias despercebida. */
+    #queueRow .qhdr.qstuck { color:#f5b544; }
     #queueRow .qacts { display:flex; align-items:center; gap:7px; flex:none; }
     #queueRow .qclr { background:none; border:0; color:#f0883e; cursor:pointer; font-size:11.5px; padding:2px 4px; }
     #queueRow .qitem { background:#ffffff0d; border:1px dashed var(--line); border-radius:9px; padding:6px 9px; }

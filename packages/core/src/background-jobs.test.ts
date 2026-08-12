@@ -115,6 +115,47 @@ test("compaction rewrites the journal, drops old continued jobs, keeps live ones
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test("dispensar tira o job concluído do painel — durável, idempotente e só para terminal", () => {
+  const d = dir();
+  try {
+    const s = new BackgroundJobStore({ dir: d, now: clock() });
+    const vivo = s.create({ originSessionId: "s1", command: "npm test", cwd: "/w" });
+    s.setStatus(vivo.jobId, "running");
+    assert.throws(() => s.dismiss(vivo.jobId), /em execução/, "esconder algo que ainda roda é perder o processo de vista");
+
+    s.setStatus(vivo.jobId, "succeeded");
+    const at = s.dismiss(vivo.jobId)!.dismissedAt;
+    assert.ok(at, "dispensado carimba o momento");
+    assert.equal(s.dismiss(vivo.jobId)!.dismissedAt, at, "dispensar de novo não muda nada");
+    assert.equal(s.dismiss("nao-existe"), undefined);
+
+    // Dispensar é só visual: NÃO desfaz nem impede a continuação automática.
+    assert.deepEqual(s.pendingContinuation().map((j) => j.jobId), [vivo.jobId], "ainda deve a continuação");
+
+    const recarregado = new BackgroundJobStore({ dir: d, now: clock() });
+    assert.ok(recarregado.get(vivo.jobId)!.dismissedAt, "sobrevive ao restart do Hub");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("job dispensado sai do journal na compactação sem esperar a retenção", () => {
+  const d = dir();
+  try {
+    // retenção alta: sem o dispensar, este job ficaria no journal.
+    const s = new BackgroundJobStore({ dir: d, now: clock(), retainTerminalMs: 60 * 60_000, compactEvery: 1000 });
+    const a = s.create({ originSessionId: "s1", command: "dispensado", cwd: "/w" });
+    s.setStatus(a.jobId, "running"); s.setStatus(a.jobId, "succeeded"); s.markContinued(a.jobId);
+    const b = s.create({ originSessionId: "s2", command: "mantido", cwd: "/w" });
+    s.setStatus(b.jobId, "running"); s.setStatus(b.jobId, "succeeded"); s.markContinued(b.jobId);
+    s.dismiss(a.jobId);
+    s.compact();
+
+    const recarregado = new BackgroundJobStore({ dir: d, now: clock() });
+    assert.equal(recarregado.get(a.jobId), undefined, "dispensado não precisa cumprir a janela de retenção");
+    assert.ok(recarregado.get(b.jobId), "o que não foi dispensado continua dentro da retenção");
+    assert.equal(readFileSync(join(d, JOURNAL), "utf8").includes(a.jobId), false);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 test("automatic compaction triggers after compactEvery events without losing state", () => {
   const d = dir();
   try {
