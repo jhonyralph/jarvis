@@ -295,6 +295,11 @@
     .fwprob-i { padding:3px 6px; border-radius:6px; cursor:pointer; font-size:12px; line-height:1.4; }
     .fwprob-i:hover, .fwprob-i:focus { background:#ffffff10; outline:none; }
     .fwprob-i code { font-size:11px; }
+    /* Fontes importadas: mesmo padrão colapsado do painel de Problemas. */
+    .fwsrc > summary { cursor:pointer; font-weight:600; font-size:12px; color:var(--mut,#8ea0b5); }
+    .fwsrc > summary::-webkit-details-marker { display:none; }
+    .fwsrc > summary::before { content:'▸ '; }
+    .fwsrc[open] > summary::before { content:'▾ '; }
     #fwInventory .fw-file .fwmark { flex:none; font-size:10.5px; padding:0 6px; border-radius:20px; cursor:pointer; }
     #fwInventory .fw-file .fwmark.hi { background:#f8717122; color:#f87171; }
     #fwInventory .fw-file .fwmark.md { background:#f5b54422; color:#f5b544; }

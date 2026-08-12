@@ -3639,6 +3639,10 @@
     if(E.fwUpdates) E.fwUpdates.addEventListener('click',e=>{ const r=e.target.closest('.fw-upd-review'); if(!r) return; fwSend('Buscando atualização',{t:'framework_update_check',id:r.dataset.id}); });
     // Framework: inventário, importação com gate de segurança (zip/GitHub) e atualização por fonte.
     let fwSourcesCache=[], fwPreviewToken='', fwPreviewBlocked=false, fwPreviewSelected=new Set(), fwWatchdog=null, fwInvTimer=null, fwLogSeeded=false;
+    // Problemas e Fontes nascem COLAPSADOS. Estes flags só guardam a expansão MANUAL do usuário, para
+    // o painel não fechar sozinho no meio da leitura quando o framework re-renderiza (inventário,
+    // refresh, publicação). Não são persistidos: recarregar a página volta ao estado colapsado.
+    let fwProbOpen=false, fwSrcOpen=false;
     // Registro visível "O que foi feito": cada ação anota início e resultado, e um watchdog avisa quando
     // o Hub não responde (Hub desatualizado — as ações novas só existem após reiniciar o Hub).
     function fwLog(html,color){ if(!E.fwLog) return; if(!fwLogSeeded){ E.fwLog.innerHTML=''; fwLogSeeded=true; } const line=document.createElement('div'); line.style.cssText='margin:2px 0'; const ts=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); line.innerHTML='<span class="mut" style="font-size:10.5px">'+ts+'</span> <span'+(color?(' style="color:'+color+'"'):'')+'>'+html+'</span>'; E.fwLog.insertBefore(line,E.fwLog.firstChild); while(E.fwLog.childNodes.length>30) E.fwLog.removeChild(E.fwLog.lastChild); }
@@ -3723,19 +3727,26 @@
         .concat(issues.map(i=>({path:i.path,line:i.line||0,label:(i.level==='error'?'<span style="color:#f87171">erro</span>':'<span style="color:#f5b544">aviso</span>'),msg:i.message})))
         .concat(bwarns.map(w=>({path:w.path||'',line:0,label:'<span style="color:#f5b544">orçamento</span>',msg:w.message})));
       let probHtml='';
-      if(probItems.length){ probHtml='<details class="fwprob"'+(sc.high?' open':'')+'><summary>⚠ Problemas ('+probItems.length+') — clique para abrir no arquivo</summary><div style="margin-top:2px">'
+      // Colapsado por padrão SEMPRE — inclusive com severidade alta, que antes abria o painel sozinho
+      // e empurrava o resto dos Ajustes para baixo. A contagem no resumo já denuncia que há problema.
+      if(probItems.length){ probHtml='<details class="fwprob"'+(fwProbOpen?' open':'')+'><summary>⚠ Problemas ('+probItems.length+') — clique para abrir no arquivo</summary><div style="margin-top:2px">'
         +probItems.slice(0,200).map(p=>'<div class="fwprob-i" role="button" tabindex="0" data-path="'+esc(p.path)+'" data-line="'+p.line+'" data-msg="'+esc(p.msg)+'">'+p.label+' <span class="mut">'+esc(p.path)+(p.line?(':'+p.line):'')+'</span> — '+esc(p.msg)+'</div>').join('')
         +'</div></details>'; }
       E.fwHealth.innerHTML=(files.length?('Sempre-ligado (instruções): <b>~'+(t.alwaysOnTokens||0)+' tk</b> · sob demanda: ~'+(t.onDemandTokens||0)+' tk · catálogo de skills: ~'+(t.metadataTokens||0)+' tk<br>'):'')+scanTxt+valTxt+probHtml;
+      // `toggle` não borbulha, então tem que ser ligado no próprio <details> a cada render.
+      const pd=E.fwHealth.querySelector('details.fwprob'); if(pd) pd.addEventListener('toggle',()=>{ fwProbOpen=pd.open; });
     }
     function renderFwSources(sources){
       fwSourcesCache=sources||[]; if(!E.fwSources) return;
       if(!fwSourcesCache.length){ E.fwSources.innerHTML=''; return; }
-      E.fwSources.innerHTML='<div class="sec" style="margin-top:0">Fontes importadas</div>'+fwSourcesCache.map(s=>{
+      // Colapsado por padrão: é lista de referência, não algo que se olhe toda hora. O resumo leva a
+      // contagem para a informação continuar disponível sem ocupar a tela.
+      E.fwSources.innerHTML='<details class="fwsrc"'+(fwSrcOpen?' open':'')+'><summary>Fontes importadas ('+fwSourcesCache.length+')</summary><div>'+fwSourcesCache.map(s=>{
         const label=s.type==='github'?(esc((s.owner||'')+'/'+(s.repo||'')+(s.subdir?'/'+s.subdir:''))+(s.commit?(' @'+esc(String(s.commit).slice(0,7))):'')):esc(s.id||'zip');
         const upd=s.type==='github'?'<button class="ghost fw-src-upd" data-id="'+esc(s.id)+'" type="button" style="font-size:11px;padding:2px 8px">Buscar atualização</button> ':'';
         return '<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin-top:4px"><span class="mut">'+label+' · '+((s.files||[]).length)+' arq.</span><span>'+upd+'<button class="ghost fw-src-del" data-id="'+esc(s.id)+'" type="button" style="font-size:11px;padding:2px 8px">Remover</button></span></div>';
-      }).join('');
+      }).join('')+'</div></details>';
+      const sd=E.fwSources.querySelector('details.fwsrc'); if(sd) sd.addEventListener('toggle',()=>{ fwSrcOpen=sd.open; });
     }
     const fwSrcLabel=(source)=>({github:'GitHub: '+esc((source.repo||''))+(source.ref?(' @'+esc(source.ref)):''),zip:'Zip: '+esc(source.name||''),starter:'Pacote base (embutido)',native:'Instruções desta máquina'})[source.type]||'Importação';
     const fwSrcShort=(source)=>({github:'GitHub',zip:'Zip',starter:'Pacote base',native:'Desta máquina'})[source.type]||'Importação';
