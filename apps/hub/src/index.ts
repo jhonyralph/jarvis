@@ -1547,6 +1547,7 @@ function previewPayload(p: ReturnType<typeof buildImportPreview>) {
     validation: { ok: p.validation.ok, errors: p.validation.errors, warnings: p.validation.warnings, issues: p.validation.issues },
     conformance: p.conformance,
     manifest: p.manifest,
+    projection: p.projection,
     inventory: p.inventory,
     conflicts: p.conflicts,
     hash: p.hash,
@@ -6041,12 +6042,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!b64) throw new Error("arquivo vazio");
         if (b64.length > MAX_IMPORT_B64) throw new Error("arquivo excede o limite permitido");
         const buf = Buffer.from(b64, "base64");
-        const { files, skipped, outOfScope, outOfScopeSample, manifest } = extractFrameworkFiles(unzip(buf));
+        const { files, skipped, outOfScope, outOfScopeSample, manifest, mapped, excluded } = extractFrameworkFiles(unzip(buf));
         // Nada de sumiço mudo: o que está fora de skills/commands/flows/reference é reportado.
         if (outOfScope) skipped.push(`${outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, flows/, reference/ ou instructions.md): ${outOfScopeSample.join(", ")}${outOfScope > outOfScopeSample.length ? ", …" : ""}`);
         if (!files.length) throw new Error("nenhum arquivo de framework encontrado (esperado commands/…, skills/… ou instructions.md)");
         const current = readCanonicalFramework(frameworkRoot()).files;
-        const preview = buildImportPreview(files, skipped, current, manifest);
+        const preview = buildImportPreview(files, skipped, current, manifest, { mapped, excluded });
         sweepPendingImports();
         const token = randomUUID();
         // O pacote que se identifica manda no id da fonte: reimportar o mesmo framework de um zip
@@ -6069,7 +6070,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const current = readCanonicalFramework(frameworkRoot()).files;
         const ghSkipped = [...fetched.skipped];
         if (fetched.outOfScope) ghSkipped.push(`${fetched.outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, flows/, reference/ ou instructions.md): ${fetched.outOfScopeSample.join(", ")}${fetched.outOfScope > fetched.outOfScopeSample.length ? ", …" : ""}`);
-        const preview = buildImportPreview(fetched.files, ghSkipped, current, fetched.manifest);
+        const preview = buildImportPreview(fetched.files, ghSkipped, current, fetched.manifest, { mapped: fetched.mapped, excluded: fetched.excluded });
         sweepPendingImports();
         const token = randomUUID();
         const src = { type: "github" as const, spec, ref: fetched.ref, commit: fetched.commit, id: githubSourceId(spec.owner, spec.repo, spec.subdir) };

@@ -8,7 +8,7 @@
  */
 import { gunzipSync, inflateRawSync } from "node:zlib";
 import { assertSafeRelPath, type FrameworkFile } from "./framework.js";
-import { isPackManifestPath, parsePackManifest, type PackManifest } from "./framework-pack.js";
+import { applyPackMap, isPackManifestPath, parsePackManifest, promoteToSkill, type PackManifest } from "./framework-pack.js";
 
 export interface ArchiveEntry { path: string; data: Buffer }
 
@@ -22,6 +22,10 @@ export interface ExtractResult {
   /** identidade declarada em `jarvis.pack.json`, quando o pacote traz uma. `null` = pacote sem
    *  identidade: importa do mesmo jeito, mas a origem dos arquivos fica inferida da fonte. */
   manifest: PackManifest | null;
+  /** arquivos cujo destino veio de uma regra de projeção (`map`) e não da ancoragem automática. */
+  mapped: number;
+  /** arquivos que uma regra EXCLUIU de propósito — diferente de "fora do escopo", que é acidente. */
+  excluded: number;
 }
 const OUT_OF_SCOPE_SAMPLE = 15;
 
@@ -148,26 +152,44 @@ export function extractFrameworkFiles(entries: ArchiveEntry[], opts: { subdir?: 
   const seen = new Set<string>();
   let outOfScope = 0;
   const outOfScopeSample: string[] = [];
-  let manifest: PackManifest | null = null;
+  let mapped = 0, excluded = 0;
+  const promoted = new Set<string>();   // slugs de skill já usados — promoção não pode colidir
   const subdir = (opts.subdir || "").replace(/^\/+|\/+$/g, "");
   let total = 0;
+
+  /** Caminho relativo à raiz do pacote, ou null quando está fora da subpasta pedida. */
+  const anchorEntry = (raw: string): string | null => {
+    const p = String(raw).replace(/\\/g, "/");
+    if (!subdir) return p;
+    // Match the subdir after any single wrapper prefix (GitHub tarball root).
+    const idx = p.indexOf(`/${subdir}/`);
+    const top = p.startsWith(`${subdir}/`) ? subdir.length + 1 : idx >= 0 ? idx + subdir.length + 2 : -1;
+    return top < 0 ? null : p.slice(top);
+  };
+
+  // PRIMEIRA PASSADA — a identidade. Tem de vir antes de qualquer extração porque o `map` dela decide
+  // o destino de cada arquivo, e o manifesto pode estar em qualquer posição do arquivo compactado.
+  // Ele NÃO é arquivo de framework: não vai para o disco nem para o manifesto de publicação.
+  let manifest: PackManifest | null = null;
   for (const e of entries) {
-    let ep = String(e.path).replace(/\\/g, "/");
-    if (subdir) {
-      // Match the subdir after any single wrapper prefix (GitHub tarball root).
-      const idx = ep.indexOf(`/${subdir}/`);
-      const top = ep.startsWith(`${subdir}/`) ? subdir.length + 1 : idx >= 0 ? idx + subdir.length + 2 : -1;
-      if (top < 0) continue;                            // outside the requested subdir → ignore silently
-      ep = ep.slice(top);
-    }
-    // A IDENTIDADE do pacote. Não é arquivo de framework (não vai para o disco nem para o manifesto
-    // de publicação): é lida aqui e devolvida à parte, para atribuir origem ao que veio junto. Sem o
-    // `continue` ela seria contada como "fora do escopo" e apareceria como ruído na prévia.
-    if (isPackManifestPath(ep)) {
-      if (!manifest && !e.data.includes(0) && e.data.length <= MAX_FILE_BYTES) manifest = parsePackManifest(e.data.toString("utf8"));
-      continue;
-    }
-    const rel = toFrameworkPath(ep);
+    const ep = anchorEntry(e.path);
+    if (!ep || !isPackManifestPath(ep)) continue;
+    if (!e.data.includes(0) && e.data.length <= MAX_FILE_BYTES) manifest = parsePackManifest(e.data.toString("utf8"));
+    if (manifest) break;
+  }
+
+  for (const e of entries) {
+    const anchored = anchorEntry(e.path);
+    if (anchored === null) continue;                    // fora da subpasta pedida → ignora em silêncio
+    const ep = anchored;
+    if (isPackManifestPath(ep)) continue;               // já lido acima
+    // PROJEÇÃO declarada tem precedência sobre a ancoragem automática — inclusive sobre a regra de
+    // pasta oculta: ali o objetivo é não CAPTURAR por acidente, e uma regra escrita à mão é o oposto
+    // de acidente. A fronteira de segurança continua sendo `assertSafeRelPath`, logo abaixo.
+    const match = applyPackMap(ep, manifest?.map);
+    if (match && match.to === null) { excluded++; continue; }   // exclusão intencional, não "fora do escopo"
+    if (match) mapped++;
+    const rel = match ? match.to : toFrameworkPath(ep);
     // FORA do escopo do framework. Antes isto era descartado em SILÊNCIO: quem importava um pacote com
     // a própria estrutura (ex.: `core/flow/*.md`) via a maior parte sumir sem explicação. Agora conta e
     // devolve uma amostra, para a prévia mostrar o que NÃO vai entrar antes de aplicar.
@@ -176,19 +198,30 @@ export function extractFrameworkFiles(entries: ArchiveEntry[], opts: { subdir?: 
       if (outOfScopeSample.length < OUT_OF_SCOPE_SAMPLE) outOfScopeSample.push(ep);
       continue;
     }
+    // Checagens que dependem só dos BYTES vêm antes da promoção: não faz sentido embrulhar numa skill
+    // um arquivo binário ou grande demais que seria recusado logo em seguida.
+    if (e.data.includes(0)) { skipped.push(`${rel} (binário ignorado)`); continue; }
+    if (e.data.length > MAX_FILE_BYTES) { skipped.push(`${rel} (excede ${MAX_FILE_BYTES} bytes)`); continue; }
+    if (total + e.data.length > MAX_TOTAL_BYTES) { skipped.push(`${rel} (excede o total permitido do pacote)`); continue; }
+    if (files.length >= MAX_FRAMEWORK_FILES) { skipped.push(`${rel} (excede o número máximo de arquivos)`); continue; }
+
+    // PROMOÇÃO: `.md` de qualquer lugar vira uma skill que as IAs carregam de fato. Só `.md` — o resto
+    // segue reposicionado como veio. `promoted` mantém os slugs únicos entre todos os arquivos do pacote.
+    let outPath = rel, outContent = e.data.toString("utf8");
+    if (match?.as === "skill" && /\.md$/i.test(rel)) {
+      const p = promoteToSkill(ep, outContent, promoted);
+      outPath = p.path; outContent = p.content;
+    }
+
     let safe: string;
-    try { safe = assertSafeRelPath(rel); } catch (err: any) { skipped.push(`${e.path} (${err?.message || "caminho inválido"})`); continue; }
+    try { safe = assertSafeRelPath(outPath); } catch (err: any) { skipped.push(`${e.path} (${err?.message || "caminho inválido"})`); continue; }
     if (seen.has(safe)) { skipped.push(`${safe} (duplicado no arquivo)`); continue; }
-    if (e.data.includes(0)) { skipped.push(`${safe} (binário ignorado)`); continue; }
-    if (e.data.length > MAX_FILE_BYTES) { skipped.push(`${safe} (excede ${MAX_FILE_BYTES} bytes)`); continue; }
-    if (total + e.data.length > MAX_TOTAL_BYTES) { skipped.push(`${safe} (excede o total permitido do pacote)`); continue; }
-    if (files.length >= MAX_FRAMEWORK_FILES) { skipped.push(`${safe} (excede o número máximo de arquivos)`); continue; }
     seen.add(safe);
     total += e.data.length;
-    files.push({ path: safe, content: e.data.toString("utf8") });
+    files.push({ path: safe, content: outContent });
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, skipped, outOfScope, outOfScopeSample, manifest };
+  return { files, skipped, outOfScope, outOfScopeSample, manifest, mapped, excluded };
 }
 
 /* ── escrita de zip ──────────────────────────────────────────────────────────────────────────────

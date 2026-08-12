@@ -152,6 +152,73 @@ zip, o repositório) em vez de declarada pelo pacote, e a prévia avisa. A atrib
 o disco continua plano, e quem sabe de onde cada caminho veio é o registro de fontes. Reimportar o
 mesmo caminho de outro pacote transfere a origem para o mais recente, que é o que está no disco.
 
+### `map` — projeção, para quem já tem uma estrutura própria
+
+Um framework de verdade raramente nasce no formato desta página. Se o seu repositório já tem uma
+organização — e principalmente se ela é consumida por outra ferramenta — **não reorganize nada**:
+declare como ele entra no padrão.
+
+```json
+{
+  "name": "meu-framework",
+  "map": {
+    "core/workflows": "commands",
+    "core/skills": "reference/skills",
+    "core/skills/process/writing-skills": "skills/writing-skills",
+    "core/rules": "reference/rules",
+    "profiles": null
+  }
+}
+```
+
+- **Chave** = prefixo no seu repositório. **Valor** = onde ele entra, dentro dos cinco topos.
+- **`null`** (ou `""`) = **não entra**. É como se exclui uma árvore inteira de propósito — e a prévia
+  conta isso separado de "ficou fora do escopo", que é acidente.
+- O casamento respeita **fronteira de segmento**: `core/skills` não pega `core/skillsets`.
+- A regra **mais específica vence**, independentemente da ordem em que você escreveu.
+- Se a origem for um **arquivo**, o destino é usado tal e qual — é assim que se promove um `.md`
+  solto a skill: `"core/skills/quality/clean-code.md": "skills/clean-code/SKILL.md"`.
+- Caminho que não casa com regra nenhuma segue a ancoragem automática de sempre.
+
+Um destino fora dos cinco topos (ou com `..`) é **recusado e mostrado na prévia** — regra ignorada em
+silêncio faria você achar que projetou quando não projetou. A fronteira de segurança continua valendo:
+projeção decide o destino, não dá permissão para escrever fora do escopo.
+
+### Promover `.md` soltos a skills
+
+Reposicionar resolve o caminho, mas não o formato: `reference/skills/clean-code.md` continua sem ser
+uma skill. Quando a árvore que você está trazendo **é** um conjunto de skills escritas de outro jeito,
+use o modo `skill`:
+
+```json
+"map": {
+  "material/skills": { "to": "skills", "as": "skill" }
+}
+```
+
+Cada `.md` daquela árvore vira `skills/<slug>/SKILL.md`, com frontmatter gerado:
+
+- **`name`** — do nome do arquivo (ou da pasta, quando o arquivo já é `SKILL.md`), normalizado para
+  minúsculas/números/hífen. Nomes repetidos em pastas diferentes ganham sufixo, nunca se sobrescrevem.
+- **`description`** — a primeira linha útil da seção *"When to use"* / *"Quando usar"*, se houver;
+  senão a primeira prosa do corpo, ignorando títulos, tabelas, citações e blocos de código.
+- **O que você já declarou vence.** Se o arquivo tem `name`/`description` no frontmatter, eles são
+  mantidos, e campos extras (`allowed-tools`, etc.) são preservados.
+
+**O corpo original vai inteiro**, byte a byte, depois do frontmatter — promover nunca descarta
+conteúdo. Arquivos que não são `.md` naquela árvore seguem apenas reposicionados.
+
+O modo exige destino em `skills/`; qualquer outro é recusado como regra inválida.
+
+> Por que não deixar simplesmente qualquer formato virar skill: a descoberta é
+> `skills/<nome>/SKILL.md` com `name` e `description`, e quem define isso é o Claude/Codex/Cursor.
+> O Jarvis não tem como afrouxar esse contrato — o que ele pode fazer é adaptar o seu material a ele
+> na importação, que é exatamente o que este modo faz.
+
+> Por que isto existe: um framework com `core/skills/<categoria>/<arquivo>.md` fazia o importador
+> ancorar 103 arquivos em `skills/` — nenhum carregável — e renomear `core/skills/` quebraria o
+> composer do próprio repositório. Com `map`, o repositório ganha **um arquivo** e nada se move.
+
 ---
 
 ## 5. Limites

@@ -97,13 +97,13 @@ export function checkConformance(files: FrameworkFile[]): ConformanceReport {
       issues.push({
         level: "error", code: "skill-profunda", path: folder,
         files: inside.length, sample: deep.slice(0, SAMPLE),
-        message: `${folder}/ tem SKILL.md em nível mais fundo (${deep[0]}). A descoberta só enxerga skills/<nome>/SKILL.md — suba a pasta um nível.`,
+        message: `${folder}/ tem SKILL.md em nível mais fundo (${deep[0]}). A descoberta só enxerga skills/<nome>/SKILL.md — suba a pasta um nível, ou projete no jarvis.pack.json sem mover nada.`,
       });
     } else {
       issues.push({
         level: "error", code: "skill-sem-manifesto", path: folder,
         files: inside.length, sample: inside.slice(0, SAMPLE),
-        message: `${folder}/ não tem SKILL.md — seus ${inside.length} arquivo(s) não serão carregados por nenhuma IA. Se é material de apoio e não skill acionável, o lugar é reference/.`,
+        message: `${folder}/ não tem SKILL.md — seus ${inside.length} arquivo(s) não serão carregados por nenhuma IA. Duas saídas no jarvis.pack.json: se são skills, projete com {"to":"skills","as":"skill"} e o Jarvis embrulha cada .md numa skill válida; se é material de apoio, mande para reference/.`,
       });
     }
   }

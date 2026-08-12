@@ -26,6 +26,9 @@ export interface ImportPreview {
   conformance: ConformanceReport;
   /** identidade declarada pelo pacote, quando há `jarvis.pack.json`. */
   manifest: PackManifest | null;
+  /** resultado da projeção declarada (`map`): quantos caminhos ela reposicionou e quantos excluiu
+   *  DE PROPÓSITO — número que separa "o pacote decidiu não trazer" de "ficou fora por acidente". */
+  projection: { mapped: number; excluded: number };
   /** token/size view of the incoming set (all reported `new` — it's a preview of what arrives). */
   inventory: Inventory;
   /** incoming paths that already exist in the current framework (overwritten in `overwrite` mode). */
@@ -38,7 +41,7 @@ export interface ImportPreview {
   identical: boolean;
 }
 
-export function buildImportPreview(imported: FrameworkFile[], skipped: string[], current: FrameworkFile[], manifest: PackManifest | null = null): ImportPreview {
+export function buildImportPreview(imported: FrameworkFile[], skipped: string[], current: FrameworkFile[], manifest: PackManifest | null = null, projection: { mapped: number; excluded: number } = { mapped: 0, excluded: 0 }): ImportPreview {
   const curPaths = new Set(current.map((f) => f.path));
   const conflicts = imported.filter((f) => curPaths.has(f.path)).map((f) => f.path).sort();
   // Diff the incoming set against the CURRENT framework so a re-import ("atualização manual") shows
@@ -66,6 +69,7 @@ export function buildImportPreview(imported: FrameworkFile[], skipped: string[],
     validation: validateFramework(imported),
     conformance,
     manifest,
+    projection,
     inventory,
     conflicts,
     hash: hashFrameworkFiles(imported),

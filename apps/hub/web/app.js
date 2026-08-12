@@ -3799,6 +3799,15 @@
       const packLine=mf
         ? '<div style="margin-top:4px">📦 <b>'+esc(mf.title||mf.name)+'</b>'+(mf.version?' <span class="mut">v'+esc(mf.version)+'</span>':'')+(mf.description?' — <span class="mut">'+esc(mf.description)+'</span>':'')+'</div>'
         : '<div class="mut" style="margin-top:4px">📦 sem <code>jarvis.pack.json</code> — importa igual, mas a origem fica inferida da fonte.</div>';
+      // Projeção declarada: separa "o pacote decidiu não trazer" de "ficou de fora por acidente".
+      const pj=p.projection||{}, mapErr=(mf&&mf.mapErrors)||[];
+      const projLine=(pj.mapped||pj.excluded)
+        ? '<div class="mut" style="margin-top:2px">🗺️ projeção declarada: <b>'+(pj.mapped||0)+'</b> arquivo(s) reposicionado(s)'
+          +(pj.excluded?', <b>'+pj.excluded+'</b> excluído(s) de propósito':'')+'</div>'
+        : '';
+      const mapErrLine=mapErr.length
+        ? '<div style="margin-top:2px;color:#f5b544">⚠ '+mapErr.length+' regra(s) de projeção recusada(s): '+mapErr.slice(0,4).map(esc).join('; ')+'</div>'
+        : '';
       // Conformidade: o que ENTRA mas não vai funcionar. Vem antes da lista de arquivos porque é a
       // informação que muda a decisão — "103 novos" sem isto parece sucesso.
       const cf=p.conformance||{}, cfIssues=(cf.issues||[]).filter(i=>i.code!=='pacote-sem-manifesto');
@@ -3815,7 +3824,7 @@
         : '';
       if(E.fwPreviewBody)E.fwPreviewBody.innerHTML=
         '<div>'+srcLabel+' · <b>'+(p.fileCount||0)+'</b> arquivo(s) · ~'+(t.tokens||0)+' tk</div>'
-        +packLine
+        +packLine+projLine+mapErrLine
         +'<div style="margin-top:4px">Mudanças: '+diffTxt+'</div>'
         +cfBanner
         +(p.identical?'<div style="margin-top:4px;color:#4ade80">✓ Idêntico ao atual — nada a aplicar.</div>':'')

@@ -20,6 +20,21 @@
 export const PACK_MANIFEST_FILE = "jarvis.pack.json";
 export const PACK_SCHEMA_VERSION = 1;
 
+/**
+ * Uma regra de projeção: o prefixo do repositório e onde ele entra no padrão (`null` = não entra).
+ *
+ * `as: "skill"` PROMOVE cada `.md` daquela árvore a uma skill de verdade (`skills/<slug>/SKILL.md`
+ * com frontmatter), em vez de só reposicionar o caminho. Existe porque a descoberta de skills é
+ * `skills/<nome>/SKILL.md` — contrato do Claude/Codex/Cursor, não do Jarvis — e sem promoção um
+ * repositório com dezenas de `.md` soltos só teria duas saídas: reorganizar tudo, ou aceitar que
+ * nenhuma das skills funcione. Com ela, material diverso vira skill utilizável em todas as máquinas
+ * sem que o autor mova um arquivo.
+ */
+export interface PackMapRule { from: string; to: string | null; as?: "skill" }
+
+/** O que uma regra decidiu para um caminho. `to: null` = não entra. */
+export interface PackMapMatch { to: string | null; as?: "skill" }
+
 export interface PackManifest {
   schemaVersion: number;
   /** slug estável — é a chave da atribuição de origem. */
@@ -29,6 +44,19 @@ export interface PackManifest {
   version?: string;
   description?: string;
   homepage?: string;
+  /**
+   * PROJEÇÃO: como a estrutura deste repositório entra nos cinco topos do padrão.
+   *
+   * Existe porque um framework de verdade raramente nasce no formato do Jarvis. O caso que motivou:
+   * um repositório com `core/skills/<categoria>/<arquivo>.md`, cujo `skills` no meio do caminho fazia
+   * o importador ancorar 103 arquivos em `skills/` — nenhum deles carregável. Reorganizar as pastas
+   * quebraria o composer do próprio repositório; então quem se adapta é o importador, e o repositório
+   * ganha UM arquivo declarando a projeção. Já ordenado do mais específico para o mais genérico.
+   */
+  map?: PackMapRule[];
+  /** Regras recusadas na leitura (alvo fora dos cinco topos, traversal). Aparecem na prévia em vez
+   *  de sumirem: uma regra ignorada em silêncio faria o dono achar que projetou e não projetou. */
+  mapErrors?: string[];
 }
 
 function text(value: unknown, max = 200): string {
@@ -45,6 +73,133 @@ export function slugifyPackName(value: string): string {
 function safeUrl(value: unknown): string | undefined {
   const raw = text(value, 300);
   return /^https?:\/\//i.test(raw) ? raw : undefined;
+}
+
+/** Topos válidos de destino de uma projeção — os mesmos do padrão, nada além. */
+const MAP_TARGET_TOPS = new Set(["commands", "skills", "flows", "reference"]);
+
+function normalizeMapPath(value: unknown): string {
+  return String(value ?? "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").trim();
+}
+
+/**
+ * Lê `map` do manifesto. Uma regra só é aceita se o destino cair dentro do padrão: um alvo livre
+ * seria um caminho para escrever fora do escopo, e é justamente a fronteira que o importador defende.
+ * Devolve as regras ordenadas da mais específica para a mais genérica, para `core/skills/process`
+ * poder sobrepor `core/skills` de forma determinística (não pela ordem em que foram escritas).
+ */
+export function parsePackMap(raw: unknown): { rules: PackMapRule[]; errors: string[] } {
+  const rules: PackMapRule[] = [];
+  const errors: string[] = [];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { rules, errors };
+  for (const [rawFrom, rawValue] of Object.entries(raw as Record<string, unknown>)) {
+    const from = normalizeMapPath(rawFrom);
+    if (!from) { errors.push(`regra com origem vazia`); continue; }
+    if (from.split("/").includes("..")) { errors.push(`${rawFrom}: origem não pode conter ".."`); continue; }
+    // Valor pode ser o destino direto ou { to, as } — a forma longa só é necessária para promover.
+    const objForm = rawValue && typeof rawValue === "object" && !Array.isArray(rawValue) ? (rawValue as Record<string, unknown>) : null;
+    const rawTo = objForm ? objForm.to : rawValue;
+    const rawAs = objForm ? normalizeMapPath(objForm.as) : "";
+    if (rawAs && rawAs !== "skill") { errors.push(`${rawFrom}: modo "${rawAs}" desconhecido (só "skill")`); continue; }
+    // `null`/`false`/"" = não entra no framework. É o que permite excluir uma árvore inteira.
+    if (rawTo === null || rawTo === false || normalizeMapPath(rawTo) === "") { rules.push({ from, to: null }); continue; }
+    const to = normalizeMapPath(rawTo);
+    if (to.split("/").includes("..")) { errors.push(`${rawFrom}: destino não pode conter ".."`); continue; }
+    if (to !== "instructions.md" && !MAP_TARGET_TOPS.has(to.split("/")[0])) {
+      errors.push(`${rawFrom} → ${to}: destino fora do padrão (esperado commands/, skills/, flows/, reference/ ou instructions.md)`);
+      continue;
+    }
+    if (rawAs === "skill" && to.split("/")[0] !== "skills") {
+      errors.push(`${rawFrom} → ${to}: promover para skill exige destino em skills/`);
+      continue;
+    }
+    rules.push(rawAs === "skill" ? { from, to, as: "skill" } : { from, to });
+  }
+  rules.sort((a, b) => b.from.length - a.from.length || a.from.localeCompare(b.from));
+  return { rules, errors };
+}
+
+/**
+ * Projeta um caminho do repositório para o padrão.
+ *   - string     → caminho projetado;
+ *   - `null`     → regra explícita de exclusão (não entra, e isso foi intencional);
+ *   - `undefined`→ nenhuma regra casou; o chamador segue com a ancoragem automática de sempre.
+ * O casamento respeita fronteira de segmento: `core/skill` NÃO pega `core/skills/…`.
+ */
+export function applyPackMap(path: string, rules: PackMapRule[] | undefined): PackMapMatch | undefined {
+  if (!rules?.length) return undefined;
+  const p = normalizeMapPath(path);
+  for (const r of rules) {
+    if (p === r.from) return { to: r.to, as: r.as };                 // origem é um ARQUIVO: destino tal e qual
+    if (p.startsWith(r.from + "/")) {
+      return r.to === null ? { to: null } : { to: `${r.to}/${p.slice(r.from.length + 1)}`, as: r.as };
+    }
+  }
+  return undefined;
+}
+
+/* ── promoção a skill ────────────────────────────────────────────────────────────────────────────
+ * Embrulhar um `.md` qualquer numa skill que as IAs realmente carregam. Regra inegociável: o CORPO
+ * original é preservado byte a byte — só ganha um frontmatter na frente. Promover não pode perder
+ * conteúdo, senão vira uma conversão destrutiva disfarçada de conveniência.
+ */
+
+/** `description` é o que faz a skill ser ACIONADA; sem ela a skill nunca é escolhida. Tiramos a
+ *  melhor frase disponível: a que o autor escreveu, ou a primeira linha de prosa útil do corpo. */
+function deriveDescription(body: string, fallback: string): string {
+  const lines = body.split(/\r?\n/);
+  let fenced = false;
+  let afterWhen = false;
+  const candidates: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (/^(```|~~~)/.test(line)) { fenced = !fenced; continue; }
+    if (fenced || !line) continue;
+    if (/^#{1,6}\s/.test(line)) { afterWhen = /when to use|quando usar|use when/i.test(line); continue; }
+    if (/^[|>]/.test(line)) continue;                                  // tabela ou citação não descreve
+    const clean = line.replace(/^[-*+]\s+/, "").replace(/[*_`]/g, "").trim();
+    if (!clean) continue;
+    if (afterWhen) return clean.slice(0, DESCRIPTION_LIMIT);           // "When to use" é a melhor fonte possível
+    candidates.push(clean);
+  }
+  return (candidates[0] || fallback).slice(0, DESCRIPTION_LIMIT);
+}
+
+const DESCRIPTION_LIMIT = 1024;   // igual ao limite do validador
+
+/** Nome de skill válido a partir de um caminho: minúsculas, números e hífen, sem palavra reservada. */
+export function skillNameFromPath(path: string): string {
+  const segs = normalizeMapPath(path).split("/");
+  const last = segs[segs.length - 1] || "";
+  const base = /^skill\.md$/i.test(last) ? (segs[segs.length - 2] || last) : last.replace(/\.md$/i, "");
+  const slug = slugifyPackName(base).replace(/\b(anthropic|claude)\b/gi, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "skill";
+}
+
+/**
+ * Converte um arquivo em `skills/<slug>/SKILL.md`. Se o arquivo JÁ tem frontmatter com `name` e
+ * `description`, nada é reescrito além do caminho — respeitar o que o autor declarou vem antes de
+ * qualquer heurística nossa. `taken` garante slug único quando dois arquivos têm o mesmo nome.
+ */
+export function promoteToSkill(path: string, content: string, taken: Set<string>): { path: string; content: string } {
+  const text = String(content ?? "");
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
+  const head = fm ? fm[1] : "";
+  const body = fm ? fm[2] : text;
+  const declaredName = /(^|\n)name:\s*(.+)/.exec(head)?.[2]?.trim();
+  const declaredDesc = /(^|\n)description:\s*(.+)/.exec(head)?.[2]?.trim();
+
+  let name = slugifyPackName(declaredName || "") || skillNameFromPath(path);
+  if (taken.has(name)) { let n = 2; while (taken.has(`${name}-${n}`)) n++; name = `${name}-${n}`; }
+  taken.add(name);
+
+  const description = (declaredDesc || deriveDescription(body, `Material de ${name} importado para o framework universal.`))
+    .replace(/\r?\n/g, " ").slice(0, DESCRIPTION_LIMIT);
+
+  // Reescreve só `name`/`description`; qualquer outro campo do frontmatter original é mantido.
+  const extras = head.split(/\r?\n/).filter((l) => l.trim() && !/^\s*(name|description)\s*:/i.test(l));
+  const front = ["---", `name: ${name}`, `description: ${description}`, ...extras, "---"].join("\n");
+  return { path: `skills/${name}/SKILL.md`, content: `${front}\n${body.startsWith("\n") ? "" : "\n"}${body}` };
 }
 
 /**
@@ -65,6 +220,9 @@ export function parsePackManifest(content: string): PackManifest | null {
   const version = text(raw.version, 40); if (version) out.version = version;
   const description = text(raw.description, 500); if (description) out.description = description;
   const homepage = safeUrl(raw.homepage); if (homepage) out.homepage = homepage;
+  const { rules, errors } = parsePackMap(raw.map);
+  if (rules.length) out.map = rules;
+  if (errors.length) out.mapErrors = errors;
   return out;
 }
 

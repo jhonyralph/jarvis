@@ -50,6 +50,193 @@ test("zip escrito aqui é lido de volta pelo leitor que já existe", () => {
   assert.equal(crc32(Buffer.from("123456789")), 0xcbf43926, "CRC32 de referência");
 });
 
+/* ── projeção (`map`) ────────────────────────────────────────────────────────────────────────────
+ * O repositório de fora não se reorganiza; ele DECLARA como entra no padrão. */
+
+import { parsePackMap, applyPackMap } from "./framework-pack.js";
+
+test("map: regras válidas entram ordenadas do mais específico para o mais genérico", () => {
+  const { rules, errors } = parsePackMap({
+    "core/skills": "reference/skills",
+    "core/skills/process/writing-skills": "skills/writing-skills",
+    "core/workflows": "commands",
+  });
+  assert.deepEqual(errors, []);
+  // A ordenação é por tamanho da origem (decrescente). O que ela precisa garantir é uma coisa só:
+  // um prefixo ANCESTRAL nunca vem antes do seu descendente — e um ancestral é sempre mais curto.
+  // Entre origens não relacionadas a ordem é irrelevante; o que não pode é depender de quem escreveu primeiro.
+  const pos = (p: string) => rules.findIndex((r) => r.from === p);
+  assert.ok(pos("core/skills/process/writing-skills") < pos("core/skills"), "o específico é avaliado antes do genérico");
+  assert.deepEqual(rules.map((r) => r.from).sort(), ["core/skills", "core/skills/process/writing-skills", "core/workflows"]);
+});
+
+test("map: destino fora dos cinco topos é RECUSADO e reportado (nunca ignorado em silêncio)", () => {
+  const { rules, errors } = parsePackMap({
+    "core/rules": "reference/rules",
+    "core/x": "qualquer/lugar",
+    "core/y": "../fuga",
+    "core/z": "reference/../../etc",
+    "": "reference/vazio",
+  });
+  assert.deepEqual(rules.map((r) => r.from), ["core/rules"], "só a boa passa");
+  assert.equal(errors.length, 4);
+  assert.ok(errors.some((e) => /fora do padrão/.test(e)));
+  assert.ok(errors.some((e) => /não pode conter/.test(e)));
+});
+
+test("map: destino nulo/vazio significa NÃO ENTRA — é como se exclui uma árvore inteira", () => {
+  const { rules } = parsePackMap({ profiles: null, docs: "", legacy: false });
+  assert.deepEqual(rules.map((r) => r.to), [null, null, null]);
+  assert.equal(applyPackMap("profiles/frontend-react/skills/x.md", rules)!.to, null);
+});
+
+test("map: casa por fronteira de segmento e projeta o resto do caminho", () => {
+  const { rules } = parsePackMap({ "core/skills": "reference/skills", "core/workflows": "commands" });
+  assert.equal(applyPackMap("core/skills/quality/clean-code.md", rules)!.to, "reference/skills/quality/clean-code.md");
+  assert.equal(applyPackMap("core/workflows/review.md", rules)!.to, "commands/review.md");
+  assert.equal(applyPackMap("core/skillsets/x.md", rules), undefined, "'core/skills' NÃO pode pegar 'core/skillsets'");
+  assert.equal(applyPackMap("outra/coisa.md", rules), undefined, "sem regra → ancoragem automática de sempre");
+  assert.equal(applyPackMap("x.md", undefined), undefined, "pacote sem map segue o comportamento antigo");
+});
+
+test("map: origem que é ARQUIVO usa o destino tal e qual (promover um arquivo a skill)", () => {
+  const { rules } = parsePackMap({ "core/skills/quality/clean-code.md": "skills/clean-code/SKILL.md" });
+  assert.equal(applyPackMap("core/skills/quality/clean-code.md", rules)!.to, "skills/clean-code/SKILL.md");
+});
+
+test("map: a regra mais específica vence a mais genérica", () => {
+  const { rules } = parsePackMap({ "core/skills": "reference/skills", "core/skills/process/writing-skills": "skills/writing-skills" });
+  assert.equal(applyPackMap("core/skills/process/writing-skills/SKILL.md", rules)!.to, "skills/writing-skills/SKILL.md");
+  assert.equal(applyPackMap("core/skills/process/outro.md", rules)!.to, "reference/skills/process/outro.md");
+});
+
+test("map: a projeção resgata o caso real que motivou tudo isto", () => {
+  // Layout do ia-framework: `core/skills/<categoria>/<arquivo>.md` fazia o importador ancorar tudo em
+  // skills/ — 103 arquivos, zero carregáveis. Com a projeção, nada se move no repositório.
+  const manifest = parsePackManifest(JSON.stringify({
+    name: "ia-framework",
+    map: {
+      "core/skills": "reference/skills",
+      "core/skills/process/writing-skills": "skills/writing-skills",
+      "core/workflows": "commands",
+      "core/rules": "reference/rules",
+      profiles: null,
+    },
+  }))!;
+  const entradas = [
+    { path: "core/skills/quality/clean-code.md", data: Buffer.from("# checklist") },
+    { path: "core/skills/process/writing-skills/SKILL.md", data: Buffer.from("---\nname: writing-skills\ndescription: como escrever skills\n---\nB") },
+    { path: "core/workflows/review.md", data: Buffer.from("---\ndescription: revisa\n---\nB") },
+    { path: "core/rules/branching.md", data: Buffer.from("# regras") },
+    { path: "profiles/frontend-react/skills/perf.md", data: Buffer.from("# react") },
+    { path: "cli/README.md", data: Buffer.from("# cli") },
+  ];
+  const zip = unzip(zipStore([
+    { path: PACK_MANIFEST_FILE, content: JSON.stringify({ name: "ia-framework", map: manifest.map!.reduce((acc, r) => ({ ...acc, [r.from]: r.to }), {} as Record<string, string | null>) }) },
+    ...entradas.map((e) => ({ path: e.path, content: e.data.toString("utf8") })),
+  ]));
+  const r = extractFrameworkFiles(zip);
+
+  assert.equal(r.manifest!.name, "ia-framework");
+  assert.deepEqual(r.files.map((f) => f.path), [
+    "commands/review.md",
+    "reference/rules/branching.md",
+    "reference/skills/quality/clean-code.md",
+    "skills/writing-skills/SKILL.md",
+  ]);
+  assert.equal(r.mapped, 4);
+  assert.equal(r.excluded, 1, "profiles/ foi excluído DE PROPÓSITO");
+  assert.equal(r.outOfScope, 1, "cli/README.md não casou com regra nenhuma — acidente, não intenção");
+
+  // e o que sobrou é conforme: uma skill carregável, zero arquivo inerte
+  const c = checkConformance(r.files);
+  assert.equal(c.loadableSkills, 1);
+  assert.equal(c.inertSkillFiles, 0, "o checklist virou referência, então não é mais peso morto em skills/");
+  assert.deepEqual(c.issues, []);
+});
+
+test("map: manifesto guarda a projeção e denuncia as regras recusadas", () => {
+  const m = parsePackManifest('{"name":"x","map":{"core/rules":"reference/rules","core/x":"fora/do/padrao"}}')!;
+  assert.deepEqual(m.map, [{ from: "core/rules", to: "reference/rules" }]);
+  assert.equal(m.mapErrors!.length, 1);
+  assert.equal(parsePackManifest('{"name":"x"}')!.map, undefined, "pacote sem map não ganha campo nenhum");
+  assert.equal(parsePackManifest('{"name":"x","map":"lixo"}')!.map, undefined, "map que não é objeto é ignorado");
+});
+
+/* ── promoção a skill ────────────────────────────────────────────────────────────────────────────
+ * Skills diversas, vindas de qualquer estrutura, têm de acabar funcionando NAS MÁQUINAS. Como a
+ * descoberta é `skills/<nome>/SKILL.md` (contrato das IAs, não nosso), a saída é embrulhar. */
+
+import { promoteToSkill, skillNameFromPath } from "./framework-pack.js";
+
+test("promoção: nome sai do arquivo, ou da pasta quando o arquivo é SKILL.md", () => {
+  assert.equal(skillNameFromPath("core/skills/quality/clean-code.md"), "clean-code");
+  assert.equal(skillNameFromPath("core/skills/process/writing-skills/SKILL.md"), "writing-skills");
+  assert.equal(skillNameFromPath("a/Revisão de Código.md"), "revisao-de-codigo");
+  assert.equal(skillNameFromPath("a/claude-helper.md"), "helper", "palavra reservada é removida do nome");
+});
+
+test("promoção: arquivo cru vira skill válida e o CORPO é preservado inteiro", () => {
+  const corpo = "# Clean Code\n\n## When to use\nAo revisar um PR com muita duplicação.\n\n## Passos\n1. Ler o diff.\n";
+  const r = promoteToSkill("core/skills/quality/clean-code.md", corpo, new Set());
+  assert.equal(r.path, "skills/clean-code/SKILL.md");
+  assert.match(r.content, /^---\nname: clean-code\ndescription: Ao revisar um PR com muita duplicação\.\n---\n/,
+    "a descrição sai do 'When to use' — é o que diz QUANDO acionar");
+  assert.ok(r.content.includes(corpo), "nada do original se perde: o corpo vai inteiro depois do frontmatter");
+
+  const v = validateFramework([{ path: r.path, content: r.content }]);
+  assert.deepEqual(v.issues.filter((i) => i.level === "error"), [], "promovida já nasce válida");
+});
+
+test("promoção: sem 'When to use', usa a primeira prosa útil e ignora título/tabela/código", () => {
+  const r = promoteToSkill("x/deploy.md", "# Deploy\n\n```sh\nnão sou descrição\n```\n\n| a | b |\n\n> citação\n\nRotina de publicação em produção.\n", new Set());
+  assert.match(r.content, /description: Rotina de publicação em produção\./);
+});
+
+test("promoção: o que o autor declarou vence a heurística", () => {
+  const r = promoteToSkill("x/qualquer.md", "---\nname: nome-do-autor\ndescription: descrição do autor\nallowed-tools: Read\n---\nCorpo.", new Set());
+  assert.equal(r.path, "skills/nome-do-autor/SKILL.md");
+  assert.match(r.content, /description: descrição do autor/);
+  assert.match(r.content, /allowed-tools: Read/, "campos extras do frontmatter original são mantidos");
+  assert.ok(!/name: qualquer/.test(r.content));
+});
+
+test("promoção: nomes iguais em pastas diferentes não colidem", () => {
+  const taken = new Set<string>();
+  assert.equal(promoteToSkill("a/review.md", "x", taken).path, "skills/review/SKILL.md");
+  assert.equal(promoteToSkill("b/review.md", "y", taken).path, "skills/review-2/SKILL.md");
+  assert.equal(promoteToSkill("c/review.md", "z", taken).path, "skills/review-3/SKILL.md");
+});
+
+test("promoção: uma árvore inteira de .md soltos vira skills que as IAs carregam", () => {
+  const zip = unzip(zipStore([
+    { path: PACK_MANIFEST_FILE, content: JSON.stringify({ name: "diverso", map: { "material/skills": { to: "skills", as: "skill" }, "material/docs": "reference/docs" } }) },
+    { path: "material/skills/quality/clean-code.md", content: "# Clean Code\n\nRevisar duplicação em PRs.\n" },
+    { path: "material/skills/deploy/rollback.md", content: "# Rollback\n\nReverter uma publicação com problema.\n" },
+    { path: "material/docs/adr.md", content: "# ADR" },
+    { path: "material/skills/deploy/diagrama.png", content: "não é md" },
+  ]));
+  const r = extractFrameworkFiles(zip);
+  assert.deepEqual(r.files.map((f) => f.path).sort(), [
+    "reference/docs/adr.md",
+    "skills/clean-code/SKILL.md",
+    "skills/deploy/diagrama.png",   // não-.md segue reposicionado, sem virar skill
+    "skills/rollback/SKILL.md",
+  ]);
+  const c = checkConformance(r.files);
+  assert.equal(c.loadableSkills, 2, "as duas carregam de verdade — era zero antes da promoção");
+  const v = validateFramework(r.files.filter((f) => f.path.endsWith("SKILL.md")));
+  assert.equal(v.errors, 0);
+});
+
+test("promoção: destino fora de skills/ é recusado como regra inválida", () => {
+  const { rules, errors } = parsePackMap({ "material/x": { to: "reference/x", as: "skill" }, "material/y": { to: "skills", as: "comando" } });
+  assert.deepEqual(rules, []);
+  assert.equal(errors.length, 2);
+  assert.ok(errors.some((e) => /exige destino em skills\//.test(e)));
+  assert.ok(errors.some((e) => /modo "comando" desconhecido/.test(e)));
+});
+
 test("o pacote-modelo é um pacote válido — importável sem um único problema", () => {
   const template = packTemplateFiles();
   assert.ok(template.some((f) => f.path === PACK_MANIFEST_FILE), "traz a própria identidade");
