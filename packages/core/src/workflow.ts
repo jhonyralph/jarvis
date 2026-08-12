@@ -180,7 +180,7 @@ export function normalizeWorkflowDefinition(input: unknown, fallbackId = "fluxo"
 
 /** Caminho canônico do fluxo dentro do framework (publicado junto com skills/commands). */
 export function workflowPath(id: string): string {
-  return `workflows/${slugifyStep(id)}.json`;
+  return `flows/${slugifyStep(id)}.json`;
 }
 
 /** Serializa para arquivo de framework (JSON estável e legível — o humano pode editar à mão). */

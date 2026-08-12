@@ -133,38 +133,38 @@ test("deleteFrameworkFolder recusa caminho fora do escopo, traversal e pasta ine
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("workflows/ é um topo válido do framework: lido, publicado e podável como os demais", () => {
+test("flows/ é um topo válido do framework: lido, publicado e podável como os demais", () => {
   const src = mkdtempSync(join(tmpdir(), "jf-wf-src-"));
   const dst = mkdtempSync(join(tmpdir(), "jf-wf-dst-"));
   try {
     seedCanonical(src);
-    mkdirSync(join(src, "workflows"), { recursive: true });
-    writeFileSync(join(src, "workflows", "entrega.json"), '{"schemaVersion":1,"id":"entrega","name":"Entrega","source":{"kind":"manual"},"steps":[]}\n');
+    mkdirSync(join(src, "flows"), { recursive: true });
+    writeFileSync(join(src, "flows", "entrega.json"), '{"schemaVersion":1,"id":"entrega","name":"Entrega","source":{"kind":"manual"},"steps":[]}\n');
 
     const m = readCanonicalFramework(src, 1);
-    assert.ok(m.files.some((f) => f.path === "workflows/entrega.json"), "o fluxo entra no manifesto");
+    assert.ok(m.files.some((f) => f.path === "flows/entrega.json"), "o fluxo entra no manifesto");
 
     // publica numa segunda máquina: o fluxo viaja junto (é isso que faz o acompanhamento ser igual em todas)
     materializeFramework(m, { machineRoot: dst });
-    assert.equal(existsSync(join(dst, "workflows", "entrega.json")), true);
+    assert.equal(existsSync(join(dst, "flows", "entrega.json")), true);
 
     // e é podado quando some da origem, como qualquer arquivo do framework
-    rmSync(join(src, "workflows", "entrega.json"));
+    rmSync(join(src, "flows", "entrega.json"));
     const r = materializeFramework(readCanonicalFramework(src, 2), { machineRoot: dst });
     assert.equal(r.removed, 1);
-    assert.equal(existsSync(join(dst, "workflows", "entrega.json")), false);
+    assert.equal(existsSync(join(dst, "flows", "entrega.json")), false);
   } finally { rmSync(src, { recursive: true, force: true }); rmSync(dst, { recursive: true, force: true }); }
 });
 
 test("a fronteira de segurança continua valendo para workflows/", () => {
   const dst = mkdtempSync(join(tmpdir(), "jf-wf-sec-"));
   try {
-    assert.throws(() => materializeFramework({ version: 1, hash: "x", files: [{ path: "workflows/../evil.json", content: "{}" }] }, { machineRoot: dst }), /inválido/);
+    assert.throws(() => materializeFramework({ version: 1, hash: "x", files: [{ path: "flows/../evil.json", content: "{}" }] }, { machineRoot: dst }), /inválido/);
     assert.throws(() => materializeFramework({ version: 1, hash: "x", files: [{ path: "fluxos/x.json", content: "{}" }] }, { machineRoot: dst }), /fora do escopo/, "um topo parecido mas não previsto continua barrado");
     // e a pasta de fluxos é gerenciável como as outras (remover pelo inventário)
-    mkdirSync(join(dst, "workflows"), { recursive: true });
-    writeFileSync(join(dst, "workflows", "x.json"), "{}");
-    assert.deepEqual(deleteFrameworkFolder("workflows", dst).removed, ["workflows/x.json"]);
-    assert.equal(existsSync(join(dst, "workflows")), false);
+    mkdirSync(join(dst, "flows"), { recursive: true });
+    writeFileSync(join(dst, "flows", "x.json"), "{}");
+    assert.deepEqual(deleteFrameworkFolder("flows", dst).removed, ["flows/x.json"]);
+    assert.equal(existsSync(join(dst, "flows")), false);
   } finally { rmSync(dst, { recursive: true, force: true }); }
 });

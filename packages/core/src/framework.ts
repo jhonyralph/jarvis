@@ -80,9 +80,10 @@ export function assertSafeRelPath(rel: string): string {
   if (!posix || posix.startsWith("/") || /^[A-Za-z]:/.test(posix) || segs.some((s) => s === ".." || s === "." || s === "")) {
     throw new Error(`caminho de framework inválido: ${rel}`);
   }
-  // `workflows/` guarda a DEFINIÇÃO dos fluxos de trabalho (passos/gates), publicada junto com o resto
-  // para que o acompanhamento seja o mesmo em todas as máquinas. Mesma fronteira dos demais topos.
-  if (!(posix === "instructions.md" || segs[0] === "commands" || segs[0] === "skills" || segs[0] === "workflows" || segs[0] === "reference")) {
+  // `flows/` guarda a DEFINIÇÃO dos fluxos de trabalho (passos/gates), publicada junto com o resto. NÃO se
+  // chama `workflows/` porque essa pasta já é usada por frameworks do usuário para fluxos EM PROSA.
+  // Mesma fronteira de segurança dos demais topos; publicada junto para valer em todas as máquinas.
+  if (!(posix === "instructions.md" || segs[0] === "commands" || segs[0] === "skills" || segs[0] === "flows" || segs[0] === "reference")) {
     throw new Error(`caminho de framework fora do escopo: ${rel}`);
   }
   return posix;
@@ -113,7 +114,7 @@ export function readCanonicalFramework(root = frameworkRoot(), version = 0): Fra
   const files: FrameworkFile[] = [];
   collectDir(join(root, "commands"), root, files);
   collectDir(join(root, "skills"), root, files);
-  collectDir(join(root, "workflows"), root, files);
+  collectDir(join(root, "flows"), root, files);
   collectDir(join(root, "reference"), root, files);
   const instr = join(root, "instructions.md");
   if (existsSync(instr)) { try { files.push({ path: "instructions.md", content: readFileSync(instr, "utf8") }); } catch { /* unreadable */ } }
@@ -134,7 +135,7 @@ function existingRelPaths(root: string): string[] {
   const out: FrameworkFile[] = [];
   collectDir(join(root, "commands"), root, out);
   collectDir(join(root, "skills"), root, out);
-  collectDir(join(root, "workflows"), root, out);
+  collectDir(join(root, "flows"), root, out);
   collectDir(join(root, "reference"), root, out);
   const rels = out.map((f) => f.path);
   if (existsSync(join(root, "instructions.md"))) rels.push("instructions.md");
@@ -219,7 +220,7 @@ export function assertSafeFolderPath(rel: string): string {
   if (!posix || posix.startsWith("/") || /^[A-Za-z]:/.test(posix) || segs.some((s) => s === ".." || s === "." || s === "")) {
     throw new Error(`caminho de pasta inválido: ${rel}`);
   }
-  if (segs[0] !== "commands" && segs[0] !== "skills" && segs[0] !== "workflows" && segs[0] !== "reference") throw new Error(`pasta fora do escopo do framework: ${rel}`);
+  if (segs[0] !== "commands" && segs[0] !== "skills" && segs[0] !== "flows" && segs[0] !== "reference") throw new Error(`pasta fora do escopo do framework: ${rel}`);
   return posix;
 }
 

@@ -114,8 +114,8 @@ test("normalize saneia a edição humana: ordem recalculada, ids únicos, títul
 test("ida e volta para arquivo do framework", () => {
   const wf = parseWorkflowFromSkill(PHASE_GATE_STYLE, { path: "skills/discovery-breakdown/SKILL.md" });
   const file = workflowToFile(wf);
-  assert.equal(file.path, "workflows/discovery-breakdown.json");
-  assert.equal(workflowPath("Discovery Breakdown"), "workflows/discovery-breakdown.json");
+  assert.equal(file.path, "flows/discovery-breakdown.json");
+  assert.equal(workflowPath("Discovery Breakdown"), "flows/discovery-breakdown.json");
   const back = workflowFromFile(file.content);
   assert.deepEqual(back, wf);
   assert.equal(workflowFromFile("{lixo"), null, "conteúdo inválido não derruba nada");

@@ -22,7 +22,7 @@ export function classifyFramework(path: string): FrameworkFileKind {
   if (path === "instructions.md") return "instructions";
   if (path.startsWith("skills/")) return "skill";
   if (path.startsWith("commands/")) return "command";
-  if (path.startsWith("workflows/")) return "workflow";
+  if (path.startsWith("flows/")) return "workflow";
   if (path.startsWith("reference/")) return "reference";
   return "other";
 }

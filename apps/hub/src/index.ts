@@ -3186,7 +3186,7 @@ function pollBackgroundJobs(): void {
 function loadWorkflowDefinitions(): ReturnType<typeof workflowFromFile>[] {
   try {
     return readCanonicalFramework(frameworkRoot()).files
-      .filter((f) => f.path.startsWith("workflows/"))
+      .filter((f) => f.path.startsWith("flows/"))
       .map((f) => workflowFromFile(f.content))
       .filter(Boolean);
   } catch { return []; }
@@ -5824,13 +5824,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       return;
     }
     // ── Fluxos de trabalho (F1): propor a estrutura a partir de uma skill, revisar e salvar.
-    // A definição vive em workflows/<id>.json DENTRO do framework, então publica junto e o
+    // A definição vive em flows/<id>.json DENTRO do framework, então publica junto e o
     // acompanhamento fica igual em todas as máquinas.
     if (msg.t === "workflow_list") {
       if (!requireOwner(ws)) return;
       try {
         const files = readCanonicalFramework(frameworkRoot()).files;
-        const defs = files.filter((f) => f.path.startsWith("workflows/")).map((f) => workflowFromFile(f.content)).filter(Boolean);
+        const defs = files.filter((f) => f.path.startsWith("flows/")).map((f) => workflowFromFile(f.content)).filter(Boolean);
         // Skills que ainda não viraram fluxo — candidatas a detectar.
         const have = new Set(defs.map((d) => d!.id));
         const candidates = files.filter((f) => f.path.startsWith("skills/") && f.path.endsWith("/SKILL.md"))
@@ -5978,8 +5978,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (b64.length > MAX_IMPORT_B64) throw new Error("arquivo excede o limite permitido");
         const buf = Buffer.from(b64, "base64");
         const { files, skipped, outOfScope, outOfScopeSample } = extractFrameworkFiles(unzip(buf));
-        // Nada de sumiço mudo: o que está fora de skills/commands/workflows/reference é reportado.
-        if (outOfScope) skipped.push(`${outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, workflows/, reference/ ou instructions.md): ${outOfScopeSample.join(", ")}${outOfScope > outOfScopeSample.length ? ", …" : ""}`);
+        // Nada de sumiço mudo: o que está fora de skills/commands/flows/reference é reportado.
+        if (outOfScope) skipped.push(`${outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, flows/, reference/ ou instructions.md): ${outOfScopeSample.join(", ")}${outOfScope > outOfScopeSample.length ? ", …" : ""}`);
         if (!files.length) throw new Error("nenhum arquivo de framework encontrado (esperado commands/…, skills/… ou instructions.md)");
         const current = readCanonicalFramework(frameworkRoot()).files;
         const preview = buildImportPreview(files, skipped, current);
@@ -6001,7 +6001,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!fetched.files.length) throw new Error("nenhum arquivo de framework encontrado no repositório (esperado commands/…, skills/… ou instructions.md)");
         const current = readCanonicalFramework(frameworkRoot()).files;
         const ghSkipped = [...fetched.skipped];
-        if (fetched.outOfScope) ghSkipped.push(`${fetched.outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, workflows/, reference/ ou instructions.md): ${fetched.outOfScopeSample.join(", ")}${fetched.outOfScope > fetched.outOfScopeSample.length ? ", …" : ""}`);
+        if (fetched.outOfScope) ghSkipped.push(`${fetched.outOfScope} arquivo(s) fora do escopo do framework (esperado skills/, commands/, flows/, reference/ ou instructions.md): ${fetched.outOfScopeSample.join(", ")}${fetched.outOfScope > fetched.outOfScopeSample.length ? ", …" : ""}`);
         const preview = buildImportPreview(fetched.files, ghSkipped, current);
         sweepPendingImports();
         const token = randomUUID();

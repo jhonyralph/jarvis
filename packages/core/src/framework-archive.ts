@@ -14,7 +14,7 @@ export interface ArchiveEntry { path: string; data: Buffer }
 export interface ExtractResult {
   files: FrameworkFile[];
   skipped: string[];
-  /** quantos arquivos do pacote ficaram FORA do escopo do framework (nem skills/commands/workflows/reference). */
+  /** quantos arquivos do pacote ficaram FORA do escopo do framework (nem skills/commands/flows/reference). */
   outOfScope: number;
   /** amostra desses caminhos, para a prévia explicar o que não vai entrar. */
   outOfScopeSample: string[];
@@ -127,7 +127,7 @@ export function toFrameworkPath(entryPath: string): string | null {
   // de escapar do escopo — engoli-los silenciosamente esconderia justamente o caso perigoso.
   if (segs.some((s) => s.startsWith(".") && s !== "." && s !== "..")) return null;
   for (let i = 0; i < segs.length; i++) {
-    if (segs[i] === "commands" || segs[i] === "skills" || segs[i] === "workflows" || segs[i] === "reference") return segs.slice(i).join("/");
+    if (segs[i] === "commands" || segs[i] === "skills" || segs[i] === "flows" || segs[i] === "reference") return segs.slice(i).join("/");
     if (segs[i] === "instructions.md") return "instructions.md";
   }
   return null;
