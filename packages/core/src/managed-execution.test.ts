@@ -7,7 +7,7 @@ import { AgentRegistry, type AgentAdapter, type AgentReply, type OnEvent } from 
 import { ExecutionStore } from "./execution-store.js";
 import type { ManagedExecutionPlan } from "./execution-orchestrator.js";
 import type { ManagedWorkspaceLease } from "./execution-worktree.js";
-import { ManagedExecutionService, managedChildExecutionId, type ManagedHiddenSessionGateway } from "./managed-execution.js";
+import { ManagedExecutionService, managedChildExecutionId, managedPhaseExecutionId, type ManagedHiddenSessionGateway } from "./managed-execution.js";
 
 // Caminhos da fixture precisam ser ABSOLUTOS na plataforma atual: "C:\..." literal so e absoluto no
 // Windows — no Linux era tratado como relativo e o caminho do artefato nunca virava relativo ao
@@ -208,5 +208,58 @@ test("managed artifacts never expose a path outside the leased workspace", async
     await f.service.run(plan());
     assert.equal(f.store.snapshot("workflow-1")?.artifacts.length, 0);
     assert.equal(JSON.stringify(f.store.events("workflow-1").events).includes("outside"), false);
+  } finally { f.cleanup(); }
+});
+
+// Um fluxo iterativo (rodadas de debate) não conhece a próxima onda antes de ler a anterior. A raiz
+// aberta existe para que isso continue sendo UM trabalho principal, com as rodadas como subnível.
+const wave = (round: number): ManagedExecutionPlan => ({
+  rootExecutionId: "debate-1", runnerId: "local",
+  tasks: [{ id: `r${round}-p1`, title: `Claude · rodada ${round}`, prompt: "Debata o tema", agent: "codex", cwd: REPO_ROOT, model: "gpt", effort: "high", depth: 1, write: false }],
+});
+
+test("open root groups waves as phases under a single main job and only ends when the owner closes it", async () => {
+  const f = fixture();
+  try {
+    await f.service.openRoot({ rootExecutionId: "debate-1", runnerId: "local", title: "Debate", cwd: REPO_ROOT });
+    assert.equal(f.store.findNode("debate-1")!.node.state, "running");
+
+    for (const round of [1, 2]) {
+      const report = await f.service.run(wave(round), { continueRoot: true, phase: { id: `r${round}`, title: `Rodada ${round}/2` } });
+      assert.equal(report.state, "succeeded");
+      assert.equal(f.store.findNode("debate-1")!.node.state, "running", "a raiz sobrevive entre as rodadas");
+    }
+
+    assert.equal(f.store.manifest().length, 1, "duas rodadas continuam sendo um único trabalho");
+    const phase = f.store.findNode(managedPhaseExecutionId("debate-1", "r2"))!.node;
+    assert.equal(phase.kind, "phase");
+    assert.equal(phase.parentExecutionId, "debate-1");
+    assert.equal(phase.state, "succeeded", "a fase encerra com a onda, a raiz não");
+    const task = f.store.findNode(managedChildExecutionId("debate-1", "r2-p1"))!.node;
+    assert.equal(task.parentExecutionId, phase.executionId, "a tarefa da rodada pendura na fase");
+    assert.equal(task.depth, 2, "a profundidade registrada acompanha o degrau da fase");
+    assert.equal(f.sessions.created.filter((s) => s.agent === "jarvis-managed").length, 1, "uma sessão de raiz para o fluxo inteiro");
+
+    f.service.publishSummary("debate-1", phase.executionId, "Juiz: consenso");
+    assert.equal(f.store.findNode(phase.executionId)!.node.summary, "Juiz: consenso");
+
+    f.service.closeRoot("debate-1", "succeeded", "Consenso em 2 rodada(s)");
+    assert.equal(f.store.findNode("debate-1")!.node.state, "succeeded");
+    assert.equal(f.store.findNode("debate-1")!.node.summary, "Consenso em 2 rodada(s)");
+    await assert.rejects(() => f.service.run(wave(3), { continueRoot: true, phase: { id: "r3", title: "Rodada 3" } }), /já foi encerrada/);
+  } finally { f.cleanup(); }
+});
+
+test("an attached wave refuses an absent root and a task id already journaled", async () => {
+  const f = fixture();
+  try {
+    await assert.rejects(() => f.service.run(wave(1), { continueRoot: true }), /não está aberta/);
+    assert.equal(f.sessions.created.length, 0, "recusa antes de qualquer efeito colateral");
+
+    await f.service.openRoot({ rootExecutionId: "debate-1", runnerId: "local", title: "Debate", cwd: REPO_ROOT });
+    await f.service.run(wave(1), { continueRoot: true, phase: { id: "r1", title: "Rodada 1/2" } });
+    // Sem esta recusa a projeção absorveria o nó repetido em silêncio e a tarefa nunca apareceria.
+    await assert.rejects(() => f.service.run(wave(1), { continueRoot: true, phase: { id: "r1", title: "Rodada 1/2" } }), /já existe em debate-1/);
+    await assert.rejects(() => f.service.openRoot({ rootExecutionId: "debate-1", runnerId: "local", title: "Debate", cwd: REPO_ROOT }), /já existe/);
   } finally { f.cleanup(); }
 });

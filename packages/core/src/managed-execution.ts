@@ -74,6 +74,17 @@ export interface ManagedExecutionStartOptions {
   policy?: ManagedExecutionPolicyInput;
   /** Fires only after preflight, hidden-session binding and the durable running root succeed. */
   onAccepted?(rootExecutionId: string): void;
+  /**
+   * Anexa esta execução a uma raiz já ABERTA (`openRoot`) em vez de criar outra.
+   *
+   * Existe porque um fluxo iterativo (rodadas de debate) só conhece a próxima onda depois de ler a
+   * anterior — o DAG inteiro não pode ser declarado de antemão. Sem isso, cada onda virava uma raiz
+   * solta e o painel mostrava N "trabalhos principais" para o que é UM trabalho só. Aqui a onda entra
+   * na mesma raiz e o terminal dela continua sendo de quem abriu (`closeRoot`).
+   */
+  continueRoot?: boolean;
+  /** Agrupa as tarefas desta onda sob um nó de FASE (o subnível "rodada" no painel). */
+  phase?: { id: string; title: string };
 }
 
 interface PreparedTask {
@@ -86,6 +97,9 @@ interface PreparedTask {
 
 const hashId = (prefix: string, value: string): string => `${prefix}:${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
 export const managedChildExecutionId = (rootExecutionId: string, taskId: string): string => hashId("managed", `${rootExecutionId}\0${taskId}`);
+/** Id do nó de FASE (o subnível "rodada/etapa" entre a raiz e as tarefas). Namespace próprio para nunca
+ *  colidir com uma tarefa de mesmo id. */
+export const managedPhaseExecutionId = (rootExecutionId: string, phaseId: string): string => hashId("managed", `${rootExecutionId}\0phase\0${phaseId}`);
 const managedProviderExecutionId = (rootExecutionId: string, taskId: string, providerId: string): string => hashId("native", `${rootExecutionId}\0${taskId}\0${providerId}`);
 
 const MANAGED_ROOT_CAPABILITIES: ExecutionCapabilities = Object.freeze({
@@ -179,13 +193,19 @@ export class ManagedExecutionService {
     this.append(rootId, executionId, { kind: "state_changed", from: node.state, to, reason: journalText(reason) });
   }
 
-  private async preflight(plan: ManagedExecutionPlan, policy?: ManagedExecutionPolicyInput): Promise<Map<string, PreparedTask>> {
+  private async preflight(plan: ManagedExecutionPlan, policy?: ManagedExecutionPolicyInput, continueRoot?: boolean): Promise<Map<string, PreparedTask>> {
     if (plan.runnerId !== this.deps.runnerId) throw new Error(`máquina fixa inválida: solicitado ${plan.runnerId}, serviço local ${this.deps.runnerId}`);
     const machine = await this.deps.validateMachine?.(plan.runnerId);
     if (machine === false) throw new Error(`máquina ${plan.runnerId} indisponível para execução gerenciada`);
     const normalizedPolicy = createManagedExecutionPolicy(policy);
     validateManagedExecutionPlan(plan, normalizedPolicy);
-    if (this.deps.store.snapshot(plan.rootExecutionId)) throw new Error(`execução ${plan.rootExecutionId} já existe`);
+    const snapshot = this.deps.store.snapshot(plan.rootExecutionId);
+    if (continueRoot) {
+      const root = snapshot?.nodes.find((node) => node.executionId === plan.rootExecutionId);
+      if (!root) throw new Error(`execução ${plan.rootExecutionId} não está aberta`);
+      if (TERMINAL.has(root.state)) throw new Error(`execução ${plan.rootExecutionId} já foi encerrada`);
+    } else if (snapshot) throw new Error(`execução ${plan.rootExecutionId} já existe`);
+    const existing = new Set((snapshot?.nodes || []).map((node) => node.executionId));
 
     const prepared = new Map<string, PreparedTask>();
     const agentCache = new Map<string, { adapter: AgentAdapter; caps: AgentCaps; profile?: ExecutionAdapterProfile }>();
@@ -208,19 +228,46 @@ export class ManagedExecutionService {
       const security = await this.deps.securityFor(task, adapter);
       if (!security?.commitPrevention) throw new Error(`execução gerenciada de ${task.agent} sem prevenção real de commits`);
       if (!task.write && !security.readOnlyEnforcement) throw new Error(`tarefa somente leitura ${task.id} sem sandbox real declarado`);
-      prepared.set(task.id, { task, adapter, profile, security, executionId: managedChildExecutionId(plan.rootExecutionId, task.id) });
+      const executionId = managedChildExecutionId(plan.rootExecutionId, task.id);
+      // Numa onda anexada, um id repetido seria absorvido em silêncio pela projeção (nó já existe) e a
+      // tarefa nunca apareceria. Falha antes de qualquer efeito colateral.
+      if (existing.has(executionId)) throw new Error(`tarefa ${task.id} já existe em ${plan.rootExecutionId}`);
+      prepared.set(task.id, { task, adapter, profile, security, executionId });
     }
     return prepared;
   }
 
-  private createNodes(plan: ManagedExecutionPlan, prepared: Map<string, PreparedTask>, rootTurnId: string, sessionId: string, taskSessions: Map<string, string>, title?: string): void {
-    const root: Omit<ExecutionNode, "schemaVersion" | "journalId"> = {
-      executionId: plan.rootExecutionId, rootExecutionId: plan.rootExecutionId, rootTurnId, sessionId,
-      runnerId: plan.runnerId, dependsOn: [], depth: 0, kind: "workflow", origin: "jarvis_managed",
+  private rootNodeInput(rootExecutionId: string, runnerId: string, rootTurnId: string, sessionId: string, title?: string): Omit<ExecutionNode, "schemaVersion" | "journalId"> {
+    return {
+      executionId: rootExecutionId, rootExecutionId, rootTurnId, sessionId,
+      runnerId, dependsOn: [], depth: 0, kind: "workflow", origin: "jarvis_managed",
       certification: "verified", state: "queued", title: journalText(title, 200) || "Workflow gerenciado", queuedAt: this.now(),
       capabilities: { ...MANAGED_ROOT_CAPABILITIES }, metrics: { self: {}, subtree: {} },
     };
-    this.emit(this.deps.store.create(root));
+  }
+
+  /** Cria os nós desta execução e devolve o id da fase, quando as tarefas foram agrupadas em uma. */
+  private createNodes(plan: ManagedExecutionPlan, prepared: Map<string, PreparedTask>, rootTurnId: string, sessionId: string, taskSessions: Map<string, string>, title: string | undefined, opts: { createRoot: boolean; phase?: { id: string; title: string } }): string | undefined {
+    if (opts.createRoot) this.emit(this.deps.store.create(this.rootNodeInput(plan.rootExecutionId, plan.runnerId, rootTurnId, sessionId, title)));
+
+    let phaseExecutionId: string | undefined;
+    if (opts.phase) {
+      phaseExecutionId = managedPhaseExecutionId(plan.rootExecutionId, opts.phase.id);
+      if (!this.deps.store.findNode(phaseExecutionId)) {
+        this.emit(this.deps.store.appendNode(plan.rootExecutionId, {
+          executionId: phaseExecutionId, rootExecutionId: plan.rootExecutionId, rootTurnId, sessionId,
+          runnerId: plan.runnerId, parentExecutionId: plan.rootExecutionId, dependsOn: [], depth: 1,
+          kind: "phase", origin: "jarvis_managed", certification: "verified", state: "queued",
+          title: journalText(opts.phase.title, 200) || "Etapa", queuedAt: this.now(),
+          capabilities: { ...MANAGED_ROOT_CAPABILITIES, reason: "etapa de um workflow gerenciado pelo Jarvis" },
+          metrics: { self: {} },
+        }));
+      }
+      this.transition(plan.rootExecutionId, phaseExecutionId, "running");
+    }
+    // Com fase, a árvore ganha um degrau: a profundidade REGISTRADA das tarefas sobe 1. A do PLANO
+    // continua intacta (é ela que a política limita) — aqui só se descreve a hierarquia auditada.
+    const phaseOffset = phaseExecutionId ? 1 : 0;
 
     const pending = new Map(plan.tasks.map((task) => [task.id, task]));
     const created = new Set<string>();
@@ -233,8 +280,8 @@ export class ManagedExecutionService {
         const item = prepared.get(taskId)!;
         const node: Omit<ExecutionNode, "schemaVersion" | "journalId"> = {
           executionId: item.executionId, rootExecutionId: plan.rootExecutionId, rootTurnId, sessionId: taskSessions.get(taskId)!,
-          runnerId: plan.runnerId, parentExecutionId: parentTaskId ? prepared.get(parentTaskId)!.executionId : plan.rootExecutionId,
-          dependsOn: (task.dependsOn || []).map((dependency) => prepared.get(dependency)!.executionId), depth: task.depth,
+          runnerId: plan.runnerId, parentExecutionId: parentTaskId ? prepared.get(parentTaskId)!.executionId : (phaseExecutionId || plan.rootExecutionId),
+          dependsOn: (task.dependsOn || []).map((dependency) => prepared.get(dependency)!.executionId), depth: task.depth + phaseOffset,
           kind: "agent", origin: "jarvis_managed", certification: item.profile?.certification || "unverified",
           state: "queued", title: journalText(task.title, 200) || "Tarefa", prompt: journalText(task.prompt), agent: task.agent, model: task.model,
           effort: task.effort, cwd: task.cwd, queuedAt: this.now(), capabilities: capabilities(item.profile, task), metrics: { self: {} },
@@ -244,6 +291,7 @@ export class ManagedExecutionService {
       }
       if (!progress) throw new Error("não foi possível ordenar os nós do workflow validado");
     }
+    return phaseExecutionId;
   }
 
   private providerSink(plan: ManagedExecutionPlan, item: PreparedTask, cwd: string): OnEvent {
@@ -316,18 +364,57 @@ export class ManagedExecutionService {
     return rows.length ? rows.join("\n\n") : undefined;
   }
 
-  async run(plan: ManagedExecutionPlan, options: ManagedExecutionStartOptions = {}): Promise<ManagedExecutionReport> {
-    const prepared = await this.preflight(plan, options.policy);
-    const rootTurnId = options.rootTurnId || hashId("turn", plan.rootExecutionId);
-    const rootSessionId = hashId("session", plan.rootExecutionId);
+  /**
+   * Abre uma raiz gerenciada SEM tarefas. As ondas entram depois com `run({ continueRoot: true })` e o
+   * terminal é de quem abriu (`closeRoot`) — é assim que um fluxo iterativo aparece como um trabalho só.
+   */
+  async openRoot(input: { rootExecutionId: string; runnerId: string; title: string; cwd: string; rootTurnId?: string }): Promise<{ rootExecutionId: string; sessionId: string }> {
+    if (input.runnerId !== this.deps.runnerId) throw new Error(`máquina fixa inválida: solicitado ${input.runnerId}, serviço local ${this.deps.runnerId}`);
+    const machine = await this.deps.validateMachine?.(input.runnerId);
+    if (machine === false) throw new Error(`máquina ${input.runnerId} indisponível para execução gerenciada`);
+    if (this.deps.store.snapshot(input.rootExecutionId)) throw new Error(`execução ${input.rootExecutionId} já existe`);
+    const rootTurnId = input.rootTurnId || hashId("turn", input.rootExecutionId);
+    const rootSessionId = hashId("session", input.rootExecutionId);
     const rootSession = await this.deps.hiddenSessions.create({
-      idHint: rootSessionId, title: options.title || "Workflow gerenciado",
-      agent: "jarvis-managed", cwd: plan.tasks[0].cwd, rootExecutionId: plan.rootExecutionId, executionId: plan.rootExecutionId,
+      idHint: rootSessionId, title: input.title, agent: "jarvis-managed", cwd: input.cwd,
+      rootExecutionId: input.rootExecutionId, executionId: input.rootExecutionId,
     });
     if (rootSession.sessionId !== rootSessionId) throw new Error("gateway de sessão oculta não preservou o idHint do workflow");
+    this.emit(this.deps.store.create(this.rootNodeInput(input.rootExecutionId, input.runnerId, rootTurnId, rootSession.sessionId, input.title)));
+    this.transition(input.rootExecutionId, input.rootExecutionId, "running");
+    return { rootExecutionId: input.rootExecutionId, sessionId: rootSession.sessionId };
+  }
+
+  /** Encerra uma raiz aberta. Idempotente: uma raiz já terminal é preservada como está. */
+  closeRoot(rootExecutionId: string, state: "succeeded" | "failed" | "cancelled", summary?: string): void {
+    this.transition(rootExecutionId, rootExecutionId, state, summary);
+  }
+
+  /** Publica um resumo em um nó da raiz (ex.: o veredito do juiz na fase da rodada). */
+  publishSummary(rootExecutionId: string, executionId: string, text: string): void {
+    const value = journalText(text);
+    if (!value || !this.deps.store.findNode(executionId)) return;
+    this.append(rootExecutionId, executionId, { kind: "summary", text: value });
+  }
+
+  async run(plan: ManagedExecutionPlan, options: ManagedExecutionStartOptions = {}): Promise<ManagedExecutionReport> {
+    const prepared = await this.preflight(plan, options.policy, options.continueRoot);
+    const open = options.continueRoot ? this.deps.store.snapshot(plan.rootExecutionId) : undefined;
+    const openRoot = open?.nodes.find((node) => node.executionId === plan.rootExecutionId);
+    const rootTurnId = open?.rootTurnId || options.rootTurnId || hashId("turn", plan.rootExecutionId);
+    let sessionId = openRoot?.sessionId;
+    if (!sessionId) {
+      const rootSessionId = hashId("session", plan.rootExecutionId);
+      const rootSession = await this.deps.hiddenSessions.create({
+        idHint: rootSessionId, title: options.title || "Workflow gerenciado",
+        agent: "jarvis-managed", cwd: plan.tasks[0].cwd, rootExecutionId: plan.rootExecutionId, executionId: plan.rootExecutionId,
+      });
+      if (rootSession.sessionId !== rootSessionId) throw new Error("gateway de sessão oculta não preservou o idHint do workflow");
+      sessionId = rootSession.sessionId;
+    }
     const taskSessions = new Map(plan.tasks.map((task) => [task.id, hashId("session", prepared.get(task.id)!.executionId)]));
-    this.createNodes(plan, prepared, rootTurnId, rootSession.sessionId, taskSessions, options.title);
-    this.transition(plan.rootExecutionId, plan.rootExecutionId, "running");
+    const phaseExecutionId = this.createNodes(plan, prepared, rootTurnId, sessionId, taskSessions, options.title, { createRoot: !openRoot, phase: options.phase });
+    if (!openRoot) this.transition(plan.rootExecutionId, plan.rootExecutionId, "running");
     options.onAccepted?.(plan.rootExecutionId);
     const leases = new Map<string, ManagedWorkspaceLease>();
     const reportedUsage = new Map<string, { usage: UsageRecord; scope: "self" | "subtree" }>();
@@ -403,11 +490,17 @@ export class ManagedExecutionService {
           }
         },
       }, { policy: options.policy, signal: options.signal, onTransition: transition, now: this.now });
+      const done = `${report.tasks.filter((task) => task.state === "succeeded").length}/${report.tasks.length} tarefas concluídas`;
+      if (phaseExecutionId) this.transition(plan.rootExecutionId, phaseExecutionId, report.state, done);
+      if (options.continueRoot) return report; // o terminal da raiz é de quem a abriu.
       this.transition(plan.rootExecutionId, plan.rootExecutionId, report.state, report.state === "succeeded" ? "Workflow concluído" : "Workflow encerrado com falhas");
-      this.append(plan.rootExecutionId, plan.rootExecutionId, { kind: "summary", text: `Workflow ${report.state}: ${report.tasks.filter((task) => task.state === "succeeded").length}/${report.tasks.length} tarefas concluídas` });
+      this.append(plan.rootExecutionId, plan.rootExecutionId, { kind: "summary", text: `Workflow ${report.state}: ${done}` });
       return report;
     } catch (error) {
-      this.transition(plan.rootExecutionId, plan.rootExecutionId, options.signal?.aborted ? "cancelled" : "failed", String((error as Error)?.message || error));
+      const state = options.signal?.aborted ? "cancelled" : "failed";
+      const reason = String((error as Error)?.message || error);
+      if (phaseExecutionId) this.transition(plan.rootExecutionId, phaseExecutionId, state, reason);
+      if (!options.continueRoot) this.transition(plan.rootExecutionId, plan.rootExecutionId, state, reason);
       throw error;
     }
   }

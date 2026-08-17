@@ -4305,6 +4305,10 @@
     const WORK_TERMINAL=new Set(['succeeded','failed','cancelled']);
     const WORK_STATE_LABEL={queued:'Na fila',running:'Em execução',waiting_input:'Precisa de você',succeeded:'Concluído',failed:'Falhou',cancelled:'Cancelado',orphaned:'Órfão',unknown:'Estado desconhecido'};
     const workStateLabel=s=>WORK_STATE_LABEL[s]||'Estado desconhecido';
+    // `kind` é do protocolo (inglês) e vira meta visível quando o nó não tem agente/modelo — caso do nó
+    // de etapa que agrupa uma rodada dentro do trabalho principal.
+    const WORK_KIND_LABEL={turn:'turno',workflow:'fluxo',phase:'etapa',agent:'agente',process:'processo'};
+    const workKindLabel=k=>WORK_KIND_LABEL[k]||k||'trabalho';
     const workNodeStatusText=n=>`${n.archivedAt?'Arquivado · ':''}${workStateLabel(n.state)} · ${n.origin==='native'?'nativo':'gerenciado pelo Jarvis'} · ${workDuration(n)}${n.currentStep?' · '+n.currentStep:''}`;
     const workNum=n=>Number.isFinite(Number(n))?Number(n):0;
     function workDuration(n){ const a=workNum(n&&n.startedAt)||workNum(n&&n.queuedAt), b=workNum(n&&n.endedAt)||(Date.now()); if(!a||b<a)return'—'; const s=Math.floor((b-a)/1000); return s<60?s+'s':s<3600?Math.floor(s/60)+'m '+s%60+'s':Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'; }
@@ -4357,7 +4361,7 @@
     function renderWorkTree(preserveFocus){ workDefaultCollapse(); const active=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('.worknode'), focusId=preserveFocus&&active&&active.dataset.id; E.workTree.innerHTML=''; const rows=workTreeRows();
       if(!rows.length){ const loading=!workLoaded&&!workLoadError, offline=!workConnected&&!workLoaded, icon=loading?'◔':workLoadError?'⚠':offline?'⌁':'🫙', title=loading?'Carregando trabalhos…':workLoadError?'Não foi possível carregar':offline?'Sem conexão com o Hub':'Nenhum trabalho nesta visão', detail=workLoadError|| (offline?'Conecte-se novamente para buscar a primeira visão.':'Os trabalhos aparecem aqui quando uma IA delega ou o Jarvis inicia um processo acompanhável.'); E.workTree.innerHTML=`<div class="workempty"><span class="weicon">${icon}</span><b>${esc(title)}</b><span>${esc(detail)}</span></div>`; return; }
       rows.forEach(({n,level})=>{ const kids=workChildren(n.executionId).length, root=!n.parentExecutionId, b=document.createElement('button'); b.type='button'; b.className='worknode'; b.dataset.id=n.executionId; b.dataset.state=n.state||'unknown'; b.setAttribute('role','treeitem'); b.setAttribute('aria-level',String(level)); b.setAttribute('aria-selected',String(n.executionId===workSelected)); if(kids)b.setAttribute('aria-expanded',String(!workCollapsed.has(n.executionId))); b.style.paddingLeft=(8+(level-1)*15)+'px';
-        const role=root&&kids?'orquestrador':n.agent, srcTitle=String(n.title||n.summary||n.executionId), displayTitle=root?'Trabalho principal':srcTitle, meta=[role,n.model,n.effort].filter(Boolean).join(' · ')||n.kind||'trabalho', metaFull=(root&&srcTitle&&srcTitle!==n.executionId)?(meta+' · '+srcTitle):meta, state=(n.archivedAt?'Arquivado · ':'')+workStateLabel(n.state); b.title=root?srcTitle:''; b.innerHTML=`<span class="wbranch" title="${kids?'Expandir/recolher':''}">${kids?(workCollapsed.has(n.executionId)?'▸':'▾'):''}</span><span class="wnmain"><span class="wntitle">${esc(displayTitle)}</span><span class="wnmeta">${esc(metaFull)} · ${workDuration(n)}</span></span><span class="wnstate">${state}</span>`;
+        const role=root&&kids?'orquestrador':n.kind==='phase'?'etapa':n.agent, srcTitle=String(n.title||n.summary||n.executionId), displayTitle=root?'Trabalho principal':srcTitle, meta=[role,n.model,n.effort].filter(Boolean).join(' · ')||workKindLabel(n.kind), metaFull=(root&&srcTitle&&srcTitle!==n.executionId)?(meta+' · '+srcTitle):meta, state=(n.archivedAt?'Arquivado · ':'')+workStateLabel(n.state); b.title=root?srcTitle:''; b.innerHTML=`<span class="wbranch" title="${kids?'Expandir/recolher':''}">${kids?(workCollapsed.has(n.executionId)?'▸':'▾'):''}</span><span class="wnmain"><span class="wntitle">${esc(displayTitle)}</span><span class="wnmeta">${esc(metaFull)} · ${workDuration(n)}</span></span><span class="wnstate">${state}</span>`;
         const branch=b.querySelector('.wbranch'); if(kids&&branch)branch.onclick=e=>{ e.stopPropagation(); workCollapsed.has(n.executionId)?workCollapsed.delete(n.executionId):workCollapsed.add(n.executionId); renderWorkTree(true); };
         b.onclick=()=>openWorkNode(n.executionId); b.onkeydown=workTreeKeydown; E.workTree.appendChild(b); });
       if(focusId){ const f=E.workTree.querySelector(`.worknode[data-id="${CSS.escape(focusId)}"]`); if(f)f.focus(); }
@@ -4461,8 +4465,9 @@
       const ico=s=> s==='done'?'✓':s==='failed'?'⚠':'⏳';
       const ias=(m.debaters||[]).map(d=>`<span style="white-space:nowrap">${ico(d.state)} ${esc(d.label)}</span>`).join(' &nbsp;·&nbsp; ');
       const phase = m.phase==='judging'?'juiz avaliando…':m.phase==='synthesizing'?'sintetizando resultado…':'debatendo…';
-      // Quando a rodada roda como execução gerenciada, o frame traz `rootExecutionId` → botão pra abrir
-      // os subagentes/ferramentas ao vivo no painel Trabalhos (aponta pro root da rodada atual).
+      // Com execução gerenciada o frame traz `rootExecutionId` → botão pra abrir os subagentes/ferramentas
+      // ao vivo no painel Trabalhos. Aponta pro TRABALHO PRINCIPAL do debate (as rodadas são etapas dele),
+      // não pra rodada da vez: é o mesmo id do começo ao fim, então o link não muda debaixo do usuário.
       const work = m.rootExecutionId ? `<button type="button" class="dbg-work ghost" data-root="${esc(m.rootExecutionId)}" style="border:0;background:none;cursor:pointer;color:var(--accent,#6ea8fe);font-size:12px;padding:0 4px">↗ ver em Trabalhos</button>` : '';
       debateProgressEl.innerHTML=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="font-weight:600;flex:1;min-width:0">🗣️ Debate — rodada ${m.round||1}/${m.maxRounds||'?'} <span class="mut" style="font-weight:400">· ${phase}</span></span>${work}</div>`+(ias?`<div style="display:flex;gap:6px;flex-wrap:wrap;font-size:12.5px;opacity:.95">${ias}</div>`:'');
       E.log.appendChild(debateProgressEl); autoScroll();

@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -3710,13 +3710,29 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
 
   let responses: DebaterResponse[] = [];
   let converged = false, failed = false, roundsDone = 0;
-  // Progresso ao vivo. Com Trabalhos habilitado, cada rodada roda os debatentes como uma EXECUÇÃO
-  // gerenciada (read-only): suas ferramentas/subagentes streamam pro painel Trabalhos (um root por
-  // rodada — o run() proíbe reusar rootExecutionId) e o texto integral volta em report.tasks[].summary
-  // (= reply.text). Sem Trabalhos, cai no one-shot anterior (progresso por IA no card). O juiz e a
-  // síntese seguem one-shot (são meta-chamadas de resumo, não produzem subagentes). `phase:'done'`
-  // no finally remove o card. `rootExecutionId` no frame liga o botão "ver em Trabalhos" do card.
-  const useManaged = executionCfg.enabled;
+  // Progresso ao vivo. Com Trabalhos habilitado, o DEBATE INTEIRO é um único trabalho principal (raiz
+  // aberta antes da 1ª rodada) e cada rodada entra nele como uma FASE, com os debatentes pendurados
+  // nela: quem gerencia é o trabalho, as rodadas e suas sessões são o subnível. Antes cada rodada
+  // abria uma raiz própria e o painel mostrava N "trabalhos principais" soltos para um debate só —
+  // e nenhum deles era cancelável, porque o abort estava registrado no id do debate, que não existia
+  // como raiz. As ferramentas/subagentes seguem streamando e o texto integral volta em
+  // report.tasks[].summary (= reply.text). Sem Trabalhos (ou se a raiz não abrir), cai no one-shot
+  // anterior (progresso por IA no card). O juiz e a síntese seguem one-shot (são meta-chamadas de
+  // resumo, não produzem subagentes) — o veredito de cada rodada é publicado no nó da fase.
+  // `phase:'done'` no finally remove o card; `rootExecutionId` liga o botão "ver em Trabalhos".
+  let useManaged = false;
+  if (executionCfg.enabled) {
+    try {
+      executionOwnership.claim(LOCAL_ID, debateId, socketPrincipalId(ws));
+      await localManagedExecution.openRoot({ rootExecutionId: debateId, runnerId: LOCAL_ID, cwd, title: `🗣️ Debate · ${input.topic.split(/\r?\n/)[0].slice(0, 120)}` });
+      useManaged = true;
+    } catch (error) {
+      // Sem painel o debate ainda roda (todo debatente tem one-shot); perder o agrupamento não vale
+      // matar a corrida — mas o motivo precisa ficar no log, não sumir.
+      console.error(`[hub] debate ${debateId} sem trabalho gerenciado: ${String((error as Error)?.message || error)}`);
+      try { executionOwnership.remove(LOCAL_ID, debateId); } catch { /* nada reivindicado */ }
+    }
+  }
   const emitDebateProgress = (round: number, phase: string, states: Array<{ label: string; state: string }>, rootExecutionId?: string): void =>
     broadcast(input.sessionId, { t: "debate_progress", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, round, maxRounds, phase, rootExecutionId, debaters: states });
   try {
@@ -3729,23 +3745,20 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
         ? buildDebateOpeningPrompt(topic)
         : buildDebateRebuttalPrompt(topic, round, prev.get(d.id) || "", prevResponses.filter((r) => r.id !== d.id));
       if (useManaged) {
-        const roundRoot = `${debateId}-r${round}`;
-        emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })), roundRoot);
-        executionOwnership.claim(LOCAL_ID, roundRoot, socketPrincipalId(ws));
-        localManagedRuns.add(roundRoot);
-        const plan: ManagedExecutionPlan = { rootExecutionId: roundRoot, runnerId: LOCAL_ID, tasks: debaters.map((d) => ({ id: d.id, title: `${d.label} · rodada ${round}`, prompt: promptFor(d), agent: d.agent, cwd, depth: 1, write: false, model: d.model, effort: d.effort })) };
-        try {
-          const report = await localManagedExecution.run(plan, {
-            title: `🗣️ Debate · rodada ${round}/${maxRounds}`,
-            policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy({ maxConcurrency: debaters.length, maxDepth: 2, maxTasks: debaters.length }, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd }).policy)),
-            signal: ctrl.signal,
-            onAccepted: (root) => emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })), root),
-          });
-          const byId = new Map(report.tasks.map((rec) => [rec.task.id, rec]));
-          report.tasks.forEach((rec) => addUsage(usageKey, rec.task.agent, rec.usage));
-          responses = debaters.map((d, i) => { const rec = byId.get(d.id); const ok = rec?.state === "succeeded"; const text = (rec?.summary || "").trim(); if (!ok) failed = true; roundState[i].state = ok ? "done" : "failed"; return { id: d.id, label: d.label, text: ok && text ? text : `(falha: ${rec?.error || rec?.state || "sem resposta"})` }; });
-        } finally { localManagedRuns.delete(roundRoot); }
-        emitDebateProgress(round, "judging", roundState.map((p) => ({ ...p })), roundRoot);
+        emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })), debateId);
+        // Ids de tarefa carregam a rodada: a raiz é a mesma o debate inteiro, e ids repetidos seriam
+        // recusados no preflight (mesmo executionId derivado).
+        const plan: ManagedExecutionPlan = { rootExecutionId: debateId, runnerId: LOCAL_ID, tasks: debaters.map((d) => ({ id: `r${round}-${d.id}`, title: `${d.label} · rodada ${round}`, prompt: promptFor(d), agent: d.agent, cwd, depth: 1, write: false, model: d.model, effort: d.effort })) };
+        const report = await localManagedExecution.run(plan, {
+          continueRoot: true,
+          phase: { id: `r${round}`, title: `Rodada ${round}/${maxRounds}` },
+          policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy({ maxConcurrency: debaters.length, maxDepth: 2, maxTasks: debaters.length }, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd }).policy)),
+          signal: ctrl.signal,
+        });
+        const byId = new Map(report.tasks.map((rec) => [rec.task.id, rec]));
+        report.tasks.forEach((rec) => addUsage(usageKey, rec.task.agent, rec.usage));
+        responses = debaters.map((d, i) => { const rec = byId.get(`r${round}-${d.id}`); const ok = rec?.state === "succeeded"; const text = (rec?.summary || "").trim(); if (!ok) failed = true; roundState[i].state = ok ? "done" : "failed"; return { id: d.id, label: d.label, text: ok && text ? text : `(falha: ${rec?.error || rec?.state || "sem resposta"})` }; });
+        emitDebateProgress(round, "judging", roundState.map((p) => ({ ...p })), debateId);
       } else {
         emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })));
         responses = await Promise.all(debaters.map(async (d, i) => {
@@ -3759,6 +3772,9 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
       let verdict: DebateVerdict = { converged: false, confidence: 0, reason: "" };
       try { const judge = summaryAgent(); const jr = await oneShotAdapter(judge, buildDebateJudgePrompt(topic, round, responses)); addUsage(usageKey, judge.name, jr.usage); verdict = parseDebateVerdict(jr.text); }
       catch { verdict = { converged: false, confidence: 0, reason: "juiz indisponível" }; }
+      // O juiz é one-shot (não vira execução), então o parecer dele só existiria no chat. Publicado na
+      // fase, cada rodada do painel diz por que o debate parou ali — ou por que continuou.
+      if (useManaged) localManagedExecution.publishSummary(debateId, managedPhaseExecutionId(debateId, `r${round}`), `Juiz: ${verdict.converged ? "consenso" : "ainda diverge"} (confiança ${(verdict.confidence * 100).toFixed(0)}%) — ${verdict.reason}`);
       postAssistant(formatDebateRoundMessage(round, responses, verdict));
       if (verdict.converged) { converged = true; break; }
     }
@@ -3770,9 +3786,17 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
     }
     postAssistant(formatDebateFinalMessage({ rounds: roundsDone, maxRounds, converged, debaters: debaters.map((d) => d.label), summary, failed: failed || ctrl.signal.aborted }));
   } catch (error: any) {
+    failed = true;
     send(ws, { t: "error", message: "Debate: " + String(error?.message ?? error) });
   } finally {
     emitDebateProgress(roundsDone, "done", []);
+    // O terminal da raiz é de quem a abriu: as ondas só encerram a própria fase.
+    if (useManaged) {
+      const state = ctrl.signal.aborted ? "cancelled" : failed ? "failed" : "succeeded";
+      const outcome = converged ? `Consenso em ${roundsDone} rodada(s)` : `Sem consenso em ${roundsDone} rodada(s)`;
+      try { localManagedExecution.closeRoot(debateId, state, `${outcome} · ${debaters.length} IAs`); }
+      catch (error) { console.error(`[hub] debate ${debateId} não encerrou o trabalho: ${String((error as Error)?.message || error)}`); }
+    }
     localManagedRuns.delete(debateId);
     if (localExecutionAborts.get(debateId) === ctrl) localExecutionAborts.delete(debateId);
     broadcastRuns();
