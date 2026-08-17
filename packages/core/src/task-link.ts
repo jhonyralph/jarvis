@@ -1,0 +1,254 @@
+/**
+ * Vínculo do fluxo com TAREFAS de verdade (F1/F2 do plano "fluxo por tarefa").
+ *
+ * Três peças, todas agnósticas de provedor (decisão de projeto — o rastreador é texto livre):
+ *  - `parseTaskInput`: o que o usuário COLA (chave, URL de Jira/GitHub/Linear, "linear PRI-824")
+ *    vira uma TaskRef sem rede nenhuma;
+ *  - `parseFeatureTask`: um arquivo local de feature (`docs/features/*.md`) vira tarefa para quem
+ *    não usa gerenciador — frontmatter dá título/descrição, o caminho é a chave;
+ *  - `ProjectTaskBindingStore` + `TaskMetaStore`: memória POR PASTA de qual fonte o projeto usa
+ *    (projeto x = jira, y = github, z = nada) e cache leve de título/descrição/link/resumo por
+ *    tarefa, para a UI não depender de rede a cada abertura.
+ *
+ * Segredo NUNCA aparece aqui: conexão de provedor (F2) guarda só nome de env var (`secretRef`),
+ * seguindo o padrão já provado das fontes pessoais.
+ */
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { writeJsonAtomic } from "./persist.js";
+import { normalizeTaskRef, type TaskRef, type WorkflowRun } from "./workflow-run.js";
+
+/** Fontes com atalho na UI. O modelo continua aceitando qualquer slug — isto é sugestão, não cerca. */
+export const KNOWN_TASK_TRACKERS = ["local", "github", "jira", "linear", "gitlab", "azure"] as const;
+
+const clean = (v: unknown, cap = 200): string => String(v ?? "").trim().slice(0, cap);
+const slug = (v: unknown): string => clean(v, 40).toLowerCase().replace(/[^a-z0-9_-]+/g, "");
+
+/* ── colar uma referência ─────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Interpreta o que foi colado/digitado como referência de tarefa. Sem rede: só reconhecimento de
+ * forma. `defaultTracker` (o vínculo da pasta) preenche o rastreador quando o texto não o diz —
+ * "PRI-824" num projeto vinculado ao Linear é do Linear sem o usuário repetir isso.
+ */
+export function parseTaskInput(text: string, opts: { defaultTracker?: string } = {}): TaskRef | null {
+  const raw = clean(text, 500);
+  if (!raw) return null;
+  const fallback = slug(opts.defaultTracker);
+
+  // URLs conhecidas primeiro — são o caso mais comum de "copiei do navegador".
+  const url = /^https?:\/\/\S+$/i.test(raw) ? raw : undefined;
+  if (url) {
+    let m = /^https?:\/\/(?:www\.)?github\.com\/([^/\s]+)\/([^/\s]+)\/(?:issues|pull)\/(\d+)/i.exec(raw);
+    if (m) return normalizeTaskRef({ tracker: "github", key: `${m[1]}/${m[2]}#${m[3]}`, url: raw });
+    m = /^https?:\/\/(?:www\.)?linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)/i.exec(raw);
+    if (m) return normalizeTaskRef({ tracker: "linear", key: m[1].toUpperCase(), url: raw });
+    m = /^https?:\/\/[^/\s]*atlassian\.net\/(?:browse|jira\/[^\s]*?selectedIssue=)\/?([A-Za-z][A-Za-z0-9_]*-\d+)/i.exec(raw);
+    if (m) return normalizeTaskRef({ tracker: "jira", key: m[1].toUpperCase(), url: raw });
+    m = /^https?:\/\/(?:www\.)?gitlab\.com\/(.+?)\/-\/issues\/(\d+)/i.exec(raw);
+    if (m) return normalizeTaskRef({ tracker: "gitlab", key: `${m[1]}#${m[2]}`, url: raw });
+    // URL desconhecida: preserva o link; a chave vira o último pedaço legível do caminho.
+    const tail = raw.replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop() || raw;
+    return normalizeTaskRef({ tracker: fallback, key: tail, url: raw });
+  }
+
+  // Convenção já usada no diálogo antigo: "linear PRI-824", "github #42".
+  const spaced = /^([a-z][a-z0-9_-]{1,20})\s+(.+)$/i.exec(raw);
+  if (spaced && KNOWN_TASK_TRACKERS.includes(slug(spaced[1]) as any)) {
+    return normalizeTaskRef({ tracker: slug(spaced[1]), key: clean(spaced[2], 120) });
+  }
+
+  // "owner/repo#123" é inequivocamente GitHub.
+  if (/^[\w.-]+\/[\w.-]+#\d+$/.test(raw)) return normalizeTaskRef({ tracker: "github", key: raw });
+
+  // Chave nua ("ABC-123", "#42"): o vínculo da pasta decide de quem ela é.
+  return normalizeTaskRef({ tracker: fallback, key: raw });
+}
+
+/* ── arquivo local de feature ─────────────────────────────────────────────────────────────────── */
+
+export interface FeatureTask {
+  /** TaskRef pronta: tracker "local", key = caminho relativo do arquivo. */
+  task: TaskRef;
+  title: string;
+  description?: string;
+}
+
+/**
+ * Um `.md` de feature vira tarefa. Título: frontmatter (`title:`/`name:`) ou o primeiro `# h1`;
+ * descrição: `description:` do frontmatter ou o primeiro parágrafo útil. Nada é inventado — sem
+ * título real, o nome do arquivo responde.
+ */
+export function parseFeatureTask(content: string, relPath: string): FeatureTask {
+  const text = String(content || "");
+  const path = clean(relPath, 300).replace(/\\/g, "/");
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  const fmField = (name: string): string => {
+    if (!fm) return "";
+    const m = new RegExp(`(^|\\n)${name}:\\s*(.+)`, "i").exec(fm[1]);
+    return m ? clean(m[2].replace(/^["']|["']$/g, ""), 300) : "";
+  };
+  const body = fm ? text.slice(fm[0].length) : text;
+  const h1 = /^#\s+(.+?)\s*$/m.exec(body);
+  const title = fmField("title") || fmField("name") || (h1 ? clean(h1[1], 300) : "") || (path.split("/").pop() || path).replace(/\.md$/i, "");
+  let description = fmField("description");
+  if (!description) {
+    const lines = body.split(/\r?\n/);
+    const start = h1 ? lines.findIndex((l) => l.trim() === h1[0].trim()) + 1 : 0;
+    const para: string[] = [];
+    for (let i = Math.max(0, start); i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (!t) { if (para.length) break; continue; }
+      if (/^#{1,6}\s|^```/.test(t)) { if (para.length) break; continue; }
+      para.push(t);
+    }
+    description = clean(para.join(" "), 500);
+  }
+  return { task: normalizeTaskRef({ tracker: "local", key: path, title }), title, description: description || undefined };
+}
+
+/* ── memória por pasta: qual fonte de tarefas este projeto usa ────────────────────────────────── */
+
+export interface ProjectTaskBinding {
+  /** slug da fonte ("jira", "github", "linear", "local"); vazio = este projeto não usa nenhuma. */
+  tracker: string;
+  /** pasta dos arquivos de feature, relativa ao projeto (só faz sentido com tracker "local"). */
+  featuresDir?: string;
+  updatedAt: number;
+}
+
+/**
+ * Caminho → chave estável. Barras normalizadas; no Windows o caminho é case-insensitive, então a
+ * chave desce para minúsculas lá (e só lá — em FS sensível a caso, "Api" e "api" são projetos
+ * diferentes de verdade).
+ */
+export function projectKeyFor(cwd: string, platform: NodeJS.Platform = process.platform): string {
+  const norm = clean(cwd, 500).replace(/\\/g, "/").replace(/\/+$/, "");
+  return platform === "win32" ? norm.toLowerCase() : norm;
+}
+
+const JARVIS_HOME = process.env.JARVIS_HOME || homedir();
+
+interface BindingFile { version: 1; projects: Record<string, ProjectTaskBinding> }
+
+export class ProjectTaskBindingStore {
+  private readonly file: string;
+  private readonly now: () => number;
+  private readonly platform: NodeJS.Platform;
+  private data: BindingFile = { version: 1, projects: {} };
+
+  constructor(opts: { dir?: string; now?: () => number; platform?: NodeJS.Platform } = {}) {
+    const dir = opts.dir || join(JARVIS_HOME, ".jarvis", "hub");
+    this.file = join(dir, "project-tasks.json");
+    this.now = opts.now || (() => Date.now());
+    this.platform = opts.platform || process.platform;
+    mkdirSync(dir, { recursive: true });
+    if (existsSync(this.file)) {
+      try {
+        const raw = JSON.parse(readFileSync(this.file, "utf8"));
+        if (raw?.version === 1 && raw.projects && typeof raw.projects === "object") this.data = { version: 1, projects: raw.projects };
+      } catch { /* arquivo torto: recomeça vazio, nada além de preferências se perde */ }
+    }
+  }
+
+  get(cwd: string): ProjectTaskBinding | undefined {
+    const b = this.data.projects[projectKeyFor(cwd, this.platform)];
+    return b ? { ...b } : undefined;
+  }
+
+  set(cwd: string, binding: { tracker: string; featuresDir?: string }): ProjectTaskBinding {
+    const key = projectKeyFor(cwd, this.platform);
+    if (!key) throw new Error("projeto sem caminho");
+    const featuresDir = clean(binding.featuresDir, 200).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    // `..` aqui viraria leitura fora do projeto no listar de features — recusado na borda.
+    if (featuresDir.split("/").includes("..")) throw new Error("pasta de features não pode sair do projeto");
+    const row: ProjectTaskBinding = { tracker: slug(binding.tracker), updatedAt: this.now() };
+    if (featuresDir) row.featuresDir = featuresDir;
+    this.data.projects[key] = row;
+    writeJsonAtomic(this.file, this.data, { pretty: true });
+    return { ...row };
+  }
+
+  list(): Array<{ project: string; binding: ProjectTaskBinding }> {
+    return Object.entries(this.data.projects).map(([project, binding]) => ({ project, binding: { ...binding } }));
+  }
+}
+
+/* ── cache de metadados por tarefa ────────────────────────────────────────────────────────────── */
+
+export interface TaskMeta {
+  title?: string;
+  description?: string;
+  url?: string;
+  /** resumo produzido sob demanda (botão "Resumir"); cacheado para não pagar duas vezes. */
+  summary?: string;
+  updatedAt: number;
+}
+
+const META_CAP = 300;
+const metaKey = (tracker: string, key: string): string => `${slug(tracker)} ${clean(key, 300)}`;
+
+export class TaskMetaStore {
+  private readonly file: string;
+  private readonly now: () => number;
+  private data: { version: 1; tasks: Record<string, TaskMeta> } = { version: 1, tasks: {} };
+
+  constructor(opts: { dir?: string; now?: () => number } = {}) {
+    const dir = opts.dir || join(JARVIS_HOME, ".jarvis", "hub");
+    this.file = join(dir, "task-meta.json");
+    this.now = opts.now || (() => Date.now());
+    mkdirSync(dir, { recursive: true });
+    if (existsSync(this.file)) {
+      try {
+        const raw = JSON.parse(readFileSync(this.file, "utf8"));
+        if (raw?.version === 1 && raw.tasks && typeof raw.tasks === "object") this.data = { version: 1, tasks: raw.tasks };
+      } catch { /* cache é descartável por definição */ }
+    }
+  }
+
+  get(tracker: string, key: string): TaskMeta | undefined {
+    const m = this.data.tasks[metaKey(tracker, key)];
+    return m ? { ...m } : undefined;
+  }
+
+  /** Mescla campos novos por cima do cache (campo ausente não apaga o que já se sabia). */
+  merge(tracker: string, key: string, patch: Partial<Omit<TaskMeta, "updatedAt">>): TaskMeta | undefined {
+    const k = metaKey(tracker, key);
+    if (!clean(key)) return undefined;
+    const prev = this.data.tasks[k] || { updatedAt: 0 };
+    const next: TaskMeta = { ...prev, updatedAt: this.now() };
+    if (clean(patch.title)) next.title = clean(patch.title, 300);
+    if (clean(patch.description)) next.description = clean(patch.description, 4000);
+    if (clean(patch.url)) next.url = clean(patch.url, 500);
+    if (clean(patch.summary)) next.summary = clean(patch.summary, 4000);
+    this.data.tasks[k] = next;
+    // Cache com teto: os mais antigos saem primeiro. Perder cache não perde verdade — só re-busca.
+    const entries = Object.entries(this.data.tasks);
+    if (entries.length > META_CAP) {
+      entries.sort((a, b) => b[1].updatedAt - a[1].updatedAt);
+      this.data.tasks = Object.fromEntries(entries.slice(0, META_CAP));
+    }
+    writeJsonAtomic(this.file, this.data, { pretty: true });
+    return { ...next };
+  }
+}
+
+/* ── multi-tarefa: a linha de status das OUTRAS tarefas da sessão ─────────────────────────────── */
+
+/**
+ * Uma linha curta sobre as tarefas que NÃO estão em foco. O steering completo é só do foco — injetar
+ * N fluxos inteiros por turno poluiria a sessão principal exatamente com o que a delegação existe
+ * para evitar. Vazio quando não há outras.
+ */
+export function formatParallelRunsLine(runs: Array<Pick<WorkflowRun, "workflowName" | "task" | "steps" | "currentStepId">>): string {
+  if (!runs.length) return "";
+  const bits = runs.slice(0, 6).map((r) => {
+    const cur = r.steps.find((s) => s.id === r.currentStepId);
+    const done = r.steps.filter((s) => s.state === "done" || s.state === "skipped").length;
+    const label = r.task.key || r.task.title || r.workflowName;
+    return `${label} (${cur ? cur.title : "concluído"}, ${done}/${r.steps.length})`;
+  });
+  const extra = runs.length > 6 ? ` e mais ${runs.length - 6}` : "";
+  return `Outras tarefas acompanhadas nesta sessão (não são o assunto deste turno): ${bits.join("; ")}${extra}.`;
+}

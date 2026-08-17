@@ -15,7 +15,9 @@ import type { WorkflowRun } from "./workflow-run.js";
 
 type RunEvent =
   | { k: "put"; at: number; run: WorkflowRun }
-  | { k: "del"; at: number; runId: string };
+  | { k: "del"; at: number; runId: string }
+  /** foco por SESSÃO (multi-tarefa): qual run esta sessão está olhando; null limpa. */
+  | { k: "focus"; at: number; sessionId: string; runId: string | null };
 
 export interface WorkflowRunStoreOptions {
   dir?: string;
@@ -33,6 +35,7 @@ export class WorkflowRunStore {
   private readonly retainClosedMs: number;
   private readonly compactEvery: number;
   private readonly runs = new Map<string, WorkflowRun>();
+  private readonly focus = new Map<string, string>();
   private appended = 0;
 
   constructor(opts: WorkflowRunStoreOptions = {}) {
@@ -65,6 +68,11 @@ export class WorkflowRunStore {
       return true;
     }
     if (ev.k === "del") { this.runs.delete(ev.runId); return true; }
+    if (ev.k === "focus") {
+      if (!ev.sessionId) return false;
+      if (ev.runId) this.focus.set(ev.sessionId, ev.runId); else this.focus.delete(ev.sessionId);
+      return true;
+    }
     return false;
   }
 
@@ -107,6 +115,38 @@ export class WorkflowRunStore {
     return this.list().find((r) => r.status === "active" && r.sessions.includes(sessionId));
   }
 
+  /** TODOS os runs ativos da sessão (multi-tarefa): a sessão gerencia uma lista, não um único fluxo. */
+  activeForSession(sessionId: string): WorkflowRun[] {
+    return this.list().filter((r) => r.status === "active" && r.sessions.includes(sessionId));
+  }
+
+  /**
+   * Foco por sessão: com N tarefas acompanhadas, qual delas é o assunto dos turnos. Cai para o run
+   * mais recente quando o foco aponta para algo encerrado/desvinculado — nunca devolve run inválido.
+   */
+  focusedFor(sessionId: string): WorkflowRun | undefined {
+    const id = this.focus.get(sessionId);
+    if (id) {
+      const run = this.runs.get(id);
+      if (run && run.status === "active" && run.sessions.includes(sessionId)) return structuredClone(run);
+    }
+    return this.forSession(sessionId);
+  }
+
+  setFocus(sessionId: string, runId: string | null): void {
+    if (!sessionId) return;
+    if (runId && !this.runs.has(runId)) return;
+    if ((this.focus.get(sessionId) || null) === runId) return;
+    this.write({ k: "focus", at: this.now(), sessionId, runId });
+  }
+
+  /** Um run encerrado não pode continuar sendo o foco de ninguém. */
+  clearFocusOfRun(runId: string): void {
+    for (const [sessionId, focused] of [...this.focus]) {
+      if (focused === runId) this.write({ k: "focus", at: this.now(), sessionId, runId: null });
+    }
+  }
+
   /** Run já existente para a mesma tarefa — evita abrir dois acompanhamentos do mesmo ticket. */
   /** Esta sessão JÁ teve algum acompanhamento — inclusive concluído ou abandonado. É o que impede o
    *  início automático de ressuscitar, no turno seguinte, um fluxo que você acabou de abandonar. */
@@ -123,10 +163,15 @@ export class WorkflowRunStore {
   compact(): void {
     const at = this.now();
     const keep = [...this.runs.values()].filter((r) => r.status === "active" || at - r.updatedAt < this.retainClosedMs);
-    const lines = keep.map((r) => JSON.stringify({ k: "put", at: r.updatedAt, run: r } satisfies RunEvent));
+    const keptIds = new Set(keep.map((r) => r.runId));
+    const focusLines = [...this.focus].filter(([, runId]) => keptIds.has(runId))
+      .map(([sessionId, runId]) => JSON.stringify({ k: "focus", at, sessionId, runId } satisfies RunEvent));
+    const lines = [...keep.map((r) => JSON.stringify({ k: "put", at: r.updatedAt, run: r } satisfies RunEvent)), ...focusLines];
     writeTextAtomic(this.file, lines.length ? lines.join("\n") + "\n" : "");
     this.runs.clear();
+    this.focus.clear();
     for (const r of keep) this.runs.set(r.runId, r);
+    for (const line of focusLines) { const ev = JSON.parse(line) as RunEvent; this.apply(ev); }
     this.appended = 0;
   }
 }

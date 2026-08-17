@@ -17,7 +17,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { join, normalize, dirname, basename } from "node:path";
+import { join, normalize, dirname, basename, resolve, sep } from "node:path";
 import QRCode from "qrcode";
 import { PushCenter, type PushActor } from "./push.js";
 import { RunnerListWaiters } from "./runnerListWaiters.js";
@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, formatParallelRunsLine, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -336,6 +336,10 @@ const localExecutionStore = new ExecutionStore({ root: LOCAL_EXECUTION_DIR, maxE
 const backgroundJobs = new BackgroundJobStore({ dir: join(JARVIS_DIR, "hub") });
 // Acompanhamento de fluxos: o estado é do Hub para valer em qualquer máquina (decisão da descoberta).
 const workflowRuns = new WorkflowRunStore({ dir: join(JARVIS_DIR, "hub") });
+// Fluxo por tarefa (F1): memória POR PASTA de qual fonte de tarefas cada projeto usa e cache leve de
+// título/descrição/link/resumo por tarefa — a UI mostra a tarefa sem depender de rede.
+const projectTasks = new ProjectTaskBindingStore({ dir: join(JARVIS_DIR, "hub") });
+const taskMeta = new TaskMetaStore({ dir: join(JARVIS_DIR, "hub") });
 const compactedExecutions = localExecutionStore.compactBefore(Date.now() - executionCfg.retentionDays * 86_400_000);
 if (compactedExecutions.roots) console.log(`[hub] retenção de trabalhos: ${compactedExecutions.roots} diário(s) compactado(s), ${compactedExecutions.droppedEvents} evento(s) detalhado(s) removido(s)`);
 for (const snapshot of localExecutionStore.rootsForSession()) for (const node of snapshot.nodes) {
@@ -3233,12 +3237,12 @@ function workflowRunPayload(run: WorkflowRun): Record<string, unknown> {
 function broadcastWorkflowRuns(sessionId?: string): void {
   const payload = { t: "workflow_runs" as const, runs: workflowRuns.list().slice(0, 50).map(workflowRunPayload) };
   for (const c of wss.clients) { const w = c as WebSocket; if (w.readyState === WebSocket.OPEN && !runnerSockets.has(w) && isOwnerSocket(w)) { try { send(w, payload); } catch { /* skip */ } } }
-  if (sessionId) { const run = workflowRuns.forSession(sessionId); if (run) broadcastOn(LOCAL_ID, sessionId, { t: "workflow_run", sessionId, run: workflowRunPayload(run) }); }
+  if (sessionId) { const run = workflowRuns.focusedFor(sessionId); if (run) broadcastOn(LOCAL_ID, sessionId, { t: "workflow_run", sessionId, run: workflowRunPayload(run) }); }
 }
 /** Aplica o que a IA declarou no texto do turno (F4) e os sinais locais (F7). Nunca quebra o turno. */
 function applyWorkflowFromReply(sessionId: string, replyText: string): void {
   try {
-    const run = workflowRuns.forSession(sessionId);
+    const run = workflowRuns.focusedFor(sessionId);   // multi-tarefa: a IA declara avanço na tarefa em foco
     if (!run) return;
     const directives = parseStepDirectives(replyText || "");
     if (!directives.length) { suggestWorkflowSignals(sessionId, run, replyText || ""); return; }
@@ -3929,10 +3933,17 @@ function autoStartWorkflow(sid: string): WorkflowRun | undefined {
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply & { activity?: any[] }> {
   // F4 — a IA conduz: quando há fluxo ativo nesta sessão, o turno leva junto onde estamos e como
   // declarar avanço. Só custa tokens enquanto existe acompanhamento em andamento.
+  // Multi-tarefa (F3): o steering COMPLETO é só da tarefa em FOCO. As demais entram como uma linha de
+  // status — injetar N fluxos inteiros por turno poluiria a sessão principal exatamente com o que a
+  // separação por tarefa existe para evitar.
   if (!opts.managed) {
     try {
-      const activeRun = workflowRuns.forSession(sid) ?? autoStartWorkflow(sid);
-      if (activeRun) agentText = `${buildWorkflowSteering(activeRun)}\n\n---\n\n${agentText}`;
+      const activeRun = workflowRuns.focusedFor(sid) ?? autoStartWorkflow(sid);
+      if (activeRun) {
+        const others = workflowRuns.activeForSession(sid).filter((r) => r.runId !== activeRun.runId);
+        const parallel = formatParallelRunsLine(others);
+        agentText = `${buildWorkflowSteering(activeRun)}${parallel ? `\n${parallel}` : ""}\n\n---\n\n${agentText}`;
+      }
     } catch { /* nunca impedir o turno por causa do acompanhamento */ }
   }
   const ctrl = new AbortController();
@@ -6030,8 +6041,16 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       try {
         const def = loadWorkflowDefinitions().find((d) => d!.id === msg.workflowId);
         if (!def) throw new Error("fluxo não encontrado (publique/salve o fluxo primeiro)");
-        const task = normalizeTaskRef(msg.task);
+        let task = normalizeTaskRef(msg.task);
         const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : "";
+        // F1 — tarefa de verdade: aceita texto COLADO (chave "PRI-824", URL de Jira/GitHub/Linear) e
+        // completa o rastreador pelo vínculo da pasta; título/descrição/link conhecidos entram no
+        // cache — é o que alimenta a UI e o botão Resumir sem rede.
+        const projectCwd = store.get(sessionId)?.cwd || CWD;
+        if (!task.key && typeof msg.taskInput === "string") task = parseTaskInput(msg.taskInput, { defaultTracker: projectTasks.get(projectCwd)?.tracker }) || task;
+        else if (task.key && !task.tracker) task = { ...task, tracker: projectTasks.get(projectCwd)?.tracker || "" };
+        const pastedMeta = (msg.taskMeta && typeof msg.taskMeta === "object" ? msg.taskMeta : {}) as Record<string, unknown>;
+        if (task.key) taskMeta.merge(task.tracker, task.key, { title: task.title || String(pastedMeta.title || ""), description: String(pastedMeta.description || ""), url: task.url || String(pastedMeta.url || "") });
         const existing = task.key ? workflowRuns.forTask(task.tracker, task.key) : undefined;
         if (existing) {                                   // mesma tarefa já acompanhada: apenas liga a sessão
           const linked = linkSession(existing, sessionId, Date.now());
@@ -6042,6 +6061,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           workflowRuns.put(run);
           send(ws, { t: "workflow_run", sessionId, run: workflowRunPayload(run) });
         }
+        // A tarefa recém-iniciada vira o FOCO da sessão (multi-tarefa): é dela que os turnos falam.
+        const startedRun = task.key ? workflowRuns.forTask(task.tracker, task.key) : workflowRuns.forSession(sessionId);
+        if (sessionId && startedRun) workflowRuns.setFocus(sessionId, startedRun.runId);
         broadcastWorkflowRuns(sessionId);
       } catch (e: any) { send(ws, { t: "error", message: "Fluxo: " + String(e?.message ?? e) }); }
       return;
@@ -6051,7 +6073,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       const sessionId = typeof msg.sessionId === "string" ? msg.sessionId : "";
       send(ws, { t: "workflow_runs", runs: workflowRuns.list().slice(0, 50).map(workflowRunPayload) });
-      if (sessionId) { const run = workflowRuns.forSession(sessionId); send(ws, { t: "workflow_run", sessionId, run: run ? workflowRunPayload(run) : null }); }
+      if (sessionId) { const run = workflowRuns.focusedFor(sessionId); send(ws, { t: "workflow_run", sessionId, run: run ? workflowRunPayload(run) : null }); }
+      return;
+    }
+    // Multi-tarefa (F3): a sessão troca a tarefa em FOCO — o steering e o chip passam a falar dela.
+    if (msg.t === "workflow_run_focus" && typeof msg.runId === "string" && typeof msg.sessionId === "string") {
+      if (!requireOwner(ws)) return;
+      const target = workflowRuns.get(msg.runId);
+      if (!target || target.status !== "active") { send(ws, { t: "error", message: "Fluxo: acompanhamento não está ativo" }); return; }
+      // Focar uma tarefa que ainda não passou por esta sessão também a VINCULA — focar é participar.
+      if (!target.sessions.includes(msg.sessionId)) workflowRuns.put(linkSession(target, msg.sessionId, Date.now()));
+      workflowRuns.setFocus(msg.sessionId, msg.runId);
+      const run = workflowRuns.focusedFor(msg.sessionId);
+      send(ws, { t: "workflow_run", sessionId: msg.sessionId, run: run ? workflowRunPayload(run) : null });
+      broadcastWorkflowRuns(msg.sessionId);
       return;
     }
     // F3/F5 — marcar, avançar, pular (com o pulo REGISTRADO) e anexar evidência. Gates só sinalizam.
@@ -6072,6 +6107,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         else if (op === "abandon") next = { ...run, status: "abandoned", updatedAt: now };
         else throw new Error("operação desconhecida");
         workflowRuns.put(next);
+        // Encerrar/abandonar não pode deixar sessões olhando para um run morto (multi-tarefa).
+        if (op === "finish" || op === "abandon") workflowRuns.clearFocusOfRun(next.runId);
         const sid = typeof msg.sessionId === "string" ? msg.sessionId : (next.sessions[0] || "");
         send(ws, { t: "workflow_run", sessionId: sid, run: workflowRunPayload(next) });
         broadcastWorkflowRuns(sid);
@@ -6100,6 +6137,68 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         writeFrameworkFile(file.path, file.content);
         send(ws, { t: "workflow_saved", ok: true, id: def.id, path: file.path, steps: def.steps.length });
       } catch (e: any) { send(ws, { t: "workflow_saved", ok: false, error: String(e?.message ?? e) }); }
+      return;
+    }
+    // ── Fluxo por tarefa (F1/F2): vínculo por pasta, arquivos locais de feature e meta da tarefa ──
+    // O vínculo diz de onde vêm as tarefas DESTE projeto (jira/github/linear/local/nada) e fica
+    // lembrado por diretório — projetos diferentes usam fontes diferentes sem reconfigurar nada.
+    if (msg.t === "task_binding_get" && typeof msg.sessionId === "string") {
+      if (!requireOwner(ws)) return;
+      const cwd = store.get(msg.sessionId)?.cwd || CWD;
+      send(ws, { t: "task_binding", sessionId: msg.sessionId, cwd, binding: projectTasks.get(cwd) || null });
+      return;
+    }
+    if (msg.t === "task_binding_set" && typeof msg.sessionId === "string" && typeof msg.tracker === "string") {
+      if (!requireOwner(ws)) return;
+      try {
+        const cwd = store.get(msg.sessionId)?.cwd || CWD;
+        const binding = projectTasks.set(cwd, { tracker: msg.tracker, featuresDir: typeof msg.featuresDir === "string" ? msg.featuresDir : undefined });
+        send(ws, { t: "task_binding", sessionId: msg.sessionId, cwd, binding });
+      } catch (e: any) { send(ws, { t: "error", message: "Vínculo de tarefas: " + String(e?.message ?? e) }); }
+      return;
+    }
+    // Arquivos locais de feature (`docs/features/*.md` por padrão): a tarefa de quem não usa
+    // gerenciador. Lista rasa e limitada; caminho preso dentro do projeto.
+    if (msg.t === "task_local_list" && typeof msg.sessionId === "string") {
+      if (!requireOwner(ws)) return;
+      try {
+        const cwd = store.get(msg.sessionId)?.cwd || CWD;
+        const rel = (projectTasks.get(cwd)?.featuresDir || "docs/features").replace(/\\/g, "/");
+        const root = resolve(cwd, rel);
+        if (root !== resolve(cwd) && !root.startsWith(resolve(cwd) + sep)) throw new Error("pasta de features fora do projeto");
+        const files: Array<{ key: string; title: string; description?: string }> = [];
+        if (existsSync(root)) {
+          for (const f of readdirSync(root).filter((n) => n.toLowerCase().endsWith(".md")).sort().slice(0, 100)) {
+            try { const parsed = parseFeatureTask(readFileSync(join(root, f), "utf8"), `${rel}/${f}`); files.push({ key: parsed.task.key, title: parsed.title, description: parsed.description }); }
+            catch { /* um arquivo ilegível não derruba a lista */ }
+          }
+        }
+        send(ws, { t: "task_local_list", sessionId: msg.sessionId, dir: rel, files });
+      } catch (e: any) { send(ws, { t: "error", message: "Tarefas locais: " + String(e?.message ?? e) }); }
+      return;
+    }
+    if (msg.t === "task_meta_get" && typeof msg.tracker === "string" && typeof msg.key === "string") {
+      if (!requireOwner(ws)) return;
+      send(ws, { t: "task_meta", tracker: msg.tracker, key: msg.key, meta: taskMeta.get(msg.tracker, msg.key) || null });
+      return;
+    }
+    // Resumir a tarefa para o dev (uma chamada ao agente de resumo; o resultado fica em cache).
+    if (msg.t === "task_summarize" && typeof msg.tracker === "string" && typeof msg.key === "string") {
+      if (!requireOwner(ws)) return;
+      const known = taskMeta.get(msg.tracker, msg.key);
+      const body = [known?.title, known?.description].filter(Boolean).join("\n\n");
+      if (!body.trim()) { send(ws, { t: "error", message: "Resumir: a tarefa não tem descrição carregada" }); return; }
+      try {
+        const a = summaryAgent();
+        const opts = await compatibleAgentOpts(a, summaryCfg.model, summaryCfg.effort);
+        const prompt = `Resuma a tarefa a seguir para quem vai trabalhar nela agora: objetivo, critérios de aceite (explícitos ou implícitos) e riscos/armadilhas. No máximo 8 linhas, em português.\n\n${body.slice(0, 6000)}`;
+        const r = (a.oneShot ? await a.oneShot(prompt, opts) : await a.send("__tasksum__", prompt, CWD, opts)) as { text?: string; usage?: any };
+        addUsage(`__tasksum__:${msg.tracker}:${msg.key}`, a.name, r.usage);
+        const summary = String(r?.text || "").trim();
+        if (!summary) throw new Error("o agente de resumo não devolveu texto");
+        const saved = taskMeta.merge(msg.tracker, msg.key, { summary });
+        send(ws, { t: "task_meta", tracker: msg.tracker, key: msg.key, meta: saved || null });
+      } catch (e: any) { send(ws, { t: "error", message: "Resumir: " + String(e?.message ?? e) }); }
       return;
     }
     // The current "update available" alerts raised by the daily drift job (the client asks on panel open).

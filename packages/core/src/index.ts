@@ -45,6 +45,7 @@ export * from "./effort.js";
 export * from "./workflow.js";
 export * from "./workflow-run.js";
 export * from "./workflow-run-store.js";
+export * from "./task-link.js";
 export * from "./framework.js";
 export * from "./framework-frontmatter.js";
 export * from "./framework-inventory.js";

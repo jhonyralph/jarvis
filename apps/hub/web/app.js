@@ -1151,7 +1151,7 @@
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
-    function openSession(id,runnerId){ if(!id)return; wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} setTimeout(()=>{ if(authUser&&authUser.role==='owner') tx({t:'workflow_runs',sessionId:id}); tx({t:'workflow_list'}); },60);
+    function openSession(id,runnerId){ if(!id)return; wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfLocalFiles=null; wfLocalShow=false; setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
       if(typeof findState!=='undefined'&&findState)closeFind(); if(typeof findRegion!=='undefined')findRegion='chat';  // abriu sessão → foco no chat; fecha barra órfã
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
@@ -4577,7 +4577,12 @@
         else if(m.t==='notice'){ if(m.message)toast(m.message); if(E.fallbackSettings&&!E.fallbackSettings.classList.contains('hidden'))tx({t:'fallback_cfg'}); }
         else if(m.t==='background_jobs'){ renderBgJobs(m.jobs); }
         else if(m.t==='workflow_run'){ if(!m.sessionId||m.sessionId===currentSession){ wfRun=m.run||null; renderWfRun(); if(m.reused) toast('Já havia um acompanhamento para essa tarefa — sessão vinculada.'); } }
-        else if(m.t==='workflow_runs'){ wfRunsAll=m.runs||[]; if(currentSession){ const mine=wfRunsAll.find(r=>r.status==='active'&&(r.sessions||[]).includes(currentSession)); if(mine){ wfRun=mine; renderWfRun(); } } }
+        // Multi-tarefa: a lista atualiza o run em foco pelos DADOS, mas não rouba o foco — quem troca
+        // o foco é o frame workflow_run (que o servidor emite ao focar/iniciar).
+        else if(m.t==='workflow_runs'){ wfRunsAll=m.runs||[]; if(currentSession){ if(wfRun){ const upd=wfRunsAll.find(r=>r.runId===wfRun.runId); if(upd) wfRun=upd.status==='active'?upd:null; } if(!wfRun){ const mine=wfSessionRuns()[0]; if(mine) wfRun=mine; } renderWfRun(); } }
+        else if(m.t==='task_binding'){ if(m.sessionId===currentSession) wfTaskBinding=m.binding||null; }
+        else if(m.t==='task_local_list'){ if(m.sessionId===currentSession){ wfLocalFiles=m.files||[]; wfLocalDir=m.dir||'docs/features'; if(wfLocalShow){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } } }
+        else if(m.t==='task_meta'){ wfTaskMeta[wfMetaKey({tracker:m.tracker,key:m.key})]=m.meta||null; renderWfRun(); }
         else if(m.t==='framework_status'){ fwArrived(); if(m.error){ E.fwStatus.textContent=''; fwLog('✖ publicar: '+esc(m.error),'#f87171'); toast('Publicar: '+m.error); return; }
           if(Array.isArray(m.results)){ m.results.forEach(r=>{ fwMachineStatus[r.runnerId]={label:r.label||r.runnerId,state:r.state}; }); if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version; renderFwStatus(); tx({t:'framework_inventory'}); fwLog('✓ publicado v'+m.version+' — '+m.results.map(r=>esc(r.label||r.runnerId)+': '+esc(fwStateLabel(r.state))).join(' · '),'#4ade80'); }
           else if(m.runnerId){ fwMachineStatus[m.runnerId]={label:m.machine||m.runnerId,state:m.state}; renderFwStatus(); fwLog(esc(m.machine||m.runnerId)+': '+esc(fwStateLabel(m.state))); } }
@@ -5033,6 +5038,15 @@
     // Regra combinada: NÃO se avança enquanto há turno em execução; pular fases pede confirmação aqui
     // na UI (pelo chat, a IA faz bypass e a gente só acompanha).
     let wfRun=null, wfOpen=false, wfDefs=[], wfRunsAll=[], wfHideSuggest=false;
+    // Fluxo por tarefa (F1/F3): vínculo do projeto, arquivos locais de feature, cache de meta e a
+    // tarefa ARMADA (vale para o próximo fluxo iniciado nesta sessão; persiste por sessão).
+    let wfTaskBinding=null, wfLocalFiles=null, wfLocalDir='docs/features', wfLocalShow=false;
+    const wfTaskMeta={};
+    function wfMetaKey(t){ return (t.tracker||'')+' '+t.key; }
+    function wfTaskArmKey(){ return (currentSessionRunner||'local')+' '+(currentSession||''); }
+    function wfTaskArmGet(){ try{ const all=JSON.parse(localStorage.getItem('jarvis_task_arm')||'{}'); return all[wfTaskArmKey()]||null; }catch(e){ return null; } }
+    function wfTaskArmSet(v){ try{ const all=JSON.parse(localStorage.getItem('jarvis_task_arm')||'{}'); if(v)all[wfTaskArmKey()]=v; else delete all[wfTaskArmKey()]; localStorage.setItem('jarvis_task_arm',JSON.stringify(all)); }catch(e){} }
+    function wfSessionRuns(){ return (wfRunsAll||[]).filter(r=>r.status==='active'&&(r.sessions||[]).includes(currentSession)); }
     const WF_ICON={pending:'○',done:'✓',skipped:'⤼'};
     // Rótulo curto para a trilha ("0 — Escopo" → ESCOPO, "GATE — revisão" → GATE). O título inteiro fica
     // no tooltip: abreviar é para caber, não para esconder.
@@ -5063,6 +5077,9 @@
         return;
       }
       const s=wfRun.summary||{}, steps=wfRun.steps||[];
+      // Meta da tarefa (título/link/descrição/resumo) vem do cache do Hub; pede uma única vez.
+      if(wfRun.task&&wfRun.task.key&&authUser&&authUser.role==='owner'){ const mk=wfMetaKey(wfRun.task); if(wfTaskMeta[mk]===undefined){ wfTaskMeta[mk]=null; tx({t:'task_meta_get',tracker:wfRun.task.tracker||'',key:wfRun.task.key}); } }
+      const wfOthers=wfSessionRuns().filter(r=>r.runId!==wfRun.runId);
       E.wfRun.classList.remove('hidden'); E.wfRun.classList.toggle('open',wfOpen);
       const cur=steps.find(x=>x.id===wfRun.currentStepId), curIdx=steps.findIndex(x=>x.id===wfRun.currentStepId);
       const falta=(s.missingEvidence||[]).length;
@@ -5072,6 +5089,7 @@
       E.wfRun.innerHTML='<div class="wfhdr"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🧭 <b>'+esc(wfRun.workflowName||wfRun.workflowId)+'</b>'+wfFrom
         +(wfRun.taskLabel?' <span class="mut">· '+esc(wfRun.taskLabel)+'</span>':'')
         +' <span class="wfbadge">'+(curIdx>=0?('fase '+(curIdx+1)+' de '+steps.length):((s.done||0)+'/'+(s.total||0)))+'</span>'
+        +(wfOthers.length?' <span class="mut" title="Outras tarefas acompanhadas nesta sessão — troque o foco pelo chip 🧭">· +'+wfOthers.length+' tarefa'+(wfOthers.length===1?'':'s')+'</span>':'')
         +(cur?' <span class="mut">→ '+esc(cur.title)+'</span>':' <span style="color:#4ade80">concluído</span>')
         +(falta?' <span style="color:#f5b544" title="passos concluídos que pediam evidência">⚠ '+falta+' sem evidência</span>':'')
         +'</span><span class="row" style="gap:4px;flex:none">'
@@ -5082,7 +5100,21 @@
         +'<div class="wftrack">'+steps.map((st,i)=>'<button type="button" class="wfph '+st.state+(st.id===wfRun.currentStepId?' cur':'')+(wfStepPending(st)?' evid':'')+'" data-id="'+esc(st.id)+'"'
           +' title="'+esc((i+1)+'. '+st.title+(st.kind==='gate'?' (gate)':'')+(st.requiresEvidence?' · pede evidência':'')+' — clique para focar')+'">'
           +'<span class="rail"></span><span class="d"></span><span class="l">'+esc(wfShort(st.title))+'</span></button>').join('')+'</div>'
-        +'<div class="wfsteps">'+steps.map((st,i)=>'<div class="wfs '+st.state+(st.id===wfRun.currentStepId?' cur':'')+'" data-id="'+esc(st.id)+'">'
+        +'<div class="wfsteps">'
+        // A TAREFA do fluxo, com link e Resumir — o dev vê o que é sem sair do Jarvis (F1/F2).
+        +(function(){ if(!(wfRun.task&&wfRun.task.key)) return '';
+          const tm=wfTaskMeta[wfMetaKey(wfRun.task)]||null;
+          const title=(tm&&tm.title)||wfRun.taskLabel||wfRun.task.key;
+          const head=tm&&tm.url?('<a href="'+esc(tm.url)+'" target="_blank" rel="noopener">'+esc(title)+' ↗</a>'):esc(title);
+          const body=tm&&tm.summary?('<div class="mut" style="white-space:pre-wrap;margin-top:4px;font-size:12px">'+esc(tm.summary)+'</div>')
+            :(tm&&tm.description?('<div class="mut" style="margin-top:4px;font-size:12px">'+esc(tm.description.slice(0,280))+(tm.description.length>280?'…':'')+'</div>'):'');
+          const canSum=!!(tm&&(tm.description||tm.title));
+          return '<div class="wftaskinfo" style="padding:4px 4px 8px;margin-bottom:4px;border-bottom:1px solid rgba(127,127,127,.25);font-size:12.5px">🎯 '+head
+            +(canSum?' <button class="wfact wf-sum" type="button" title="Resumir a tarefa (objetivo, critérios, riscos)">'+(tm&&tm.summary?'Re-resumir':'Resumir')+'</button>':'')
+            +body+'</div>'; })()
+        // Outras tarefas da sessão: uma linha cada, com troca de foco em um clique (F3).
+        +(wfOthers.length?wfOthers.map(r=>{ const os=r.summary||{}; return '<div class="wfs" style="opacity:.85"><span class="wfst">↔</span><span class="wft" title="'+esc(r.workflowName||'')+'">'+esc(r.taskLabel||r.workflowName)+' <span class="mut">'+(os.current?esc(os.current.title):'concluído')+' · '+(os.done||0)+'/'+(os.total||0)+'</span></span><button class="wfact wf-focus" data-run="'+esc(r.runId)+'" type="button" title="Tornar esta a tarefa em foco da sessão">focar</button></div>'; }).join(''):'')
+        +steps.map((st,i)=>'<div class="wfs '+st.state+(st.id===wfRun.currentStepId?' cur':'')+'" data-id="'+esc(st.id)+'">'
           +'<span class="wfst">'+(WF_ICON[st.state]||'○')+'</span>'
           +'<span class="wft" title="'+esc(st.title)+'">'+(i+1)+'. '+esc(st.title)+'</span>'
           +(st.kind==='gate'?'<span class="wfbadge">gate</span>':'')
@@ -5122,11 +5154,63 @@
     function wfPickStep(defId,stepId){
       closePop();
       if(!currentSession){ toast(t('tOpenFirst')); return; }
-      // Mesmo fluxo já acompanhado: só move o foco. Fluxo diferente (ou nenhum): nasce um run já no passo.
+      // Mesmo fluxo já acompanhado: só move o foco. Fluxo diferente (ou nenhum): nasce um run já no
+      // passo — e leva a tarefa ARMADA (colada ou arquivo de feature), que é consumida no início.
       if(wfRun&&wfRun.workflowId===defId) tx({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op:'focus',stepId});
-      else tx({t:'workflow_run_start',workflowId:defId,sessionId:currentSession,stepId,task:{tracker:'',key:''}});
+      else { const arm=wfTaskArmGet()||{}; tx({t:'workflow_run_start',workflowId:defId,sessionId:currentSession,stepId,task:arm.task||{tracker:'',key:''},taskInput:arm.input||undefined,taskMeta:arm.meta||undefined}); wfTaskArmSet(null); }
+    }
+    // ── Tarefa no fluxo (F1): colar chave/URL, escolher arquivo local de feature, e a fonte do
+    // projeto (lembrada por pasta). A tarefa ARMADA vale para o próximo fluxo iniciado na sessão.
+    function buildWfTaskSection(p){
+      p.appendChild(ph('Tarefa'));
+      const arm=wfTaskArmGet();
+      const info=document.createElement('div'); info.className='mut'; info.style.cssText='font-size:11.5px;padding:2px 2px 6px;max-width:280px';
+      info.textContent=arm?('Armada: '+(arm.label||arm.input||'')+' — vale para o próximo fluxo iniciado'):(wfRun&&wfRun.task&&wfRun.task.key?('Atual: '+(wfRun.taskLabel||wfRun.task.key)):'Cole uma chave/URL ou escolha um arquivo de feature.');
+      p.appendChild(info);
+      const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;padding:0 2px 6px';
+      const inp=document.createElement('input'); inp.type='text'; inp.placeholder='PRI-824 · URL do Jira/GitHub/Linear'; inp.style.cssText='flex:1;min-width:120px'; if(arm&&arm.input)inp.value=arm.input;
+      const ok=document.createElement('button'); ok.type='button'; ok.className='wfact'; ok.textContent=arm?'Rearmar':'Armar';
+      ok.onclick=()=>{ const v=inp.value.trim(); wfTaskArmSet(v?{input:v,label:v}:null); closePop(); toast(v?'Tarefa armada para o próximo fluxo.':'Tarefa desarmada.'); };
+      inp.onkeydown=(ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); ok.onclick(); } };
+      row.appendChild(inp); row.appendChild(ok); p.appendChild(row);
+      const lf=document.createElement('button'); lf.type='button'; lf.className='opt';
+      lf.innerHTML='📄 Arquivos de feature <span class="r">'+esc(wfLocalDir)+'</span>';
+      lf.onclick=()=>{ wfLocalShow=true; tx({t:'task_local_list',sessionId:currentSession}); };
+      p.appendChild(lf);
+      if(wfLocalShow&&wfLocalFiles){
+        if(!wfLocalFiles.length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent='Nenhum .md em '+wfLocalDir+'.'; p.appendChild(d); }
+        wfLocalFiles.slice(0,30).forEach(f=>{
+          const b=document.createElement('button'); b.type='button'; b.className='opt';
+          b.innerHTML='• '+esc(f.title)+' <span class="r mono" style="font-size:10px">'+esc(f.key.split('/').pop())+'</span>';
+          b.onclick=()=>{ wfLocalShow=false; wfTaskArmSet({task:{tracker:'local',key:f.key,title:f.title},meta:{description:f.description||''},label:f.title}); closePop(); toast('Tarefa armada: '+f.title); };
+          p.appendChild(b);
+        });
+      }
+      p.appendChild(ph('Fonte do projeto'));
+      const srcRow=document.createElement('div'); srcRow.style.cssText='display:flex;gap:4px;flex-wrap:wrap;padding:2px 2px 8px';
+      ['local','github','jira','linear',''].forEach(src=>{
+        const b=document.createElement('button'); b.type='button'; b.className='wfact';
+        const on=((wfTaskBinding&&wfTaskBinding.tracker)||'')===src;
+        if(on) b.style.cssText='outline:1px solid var(--accent,#6ea8fe)';
+        b.textContent=src||'nenhuma'; b.title='Fonte de tarefas deste projeto — lembrada por pasta (ex.: projeto X usa Jira, Y usa GitHub)';
+        b.onclick=()=>{ wfTaskBinding={tracker:src,featuresDir:wfTaskBinding&&wfTaskBinding.featuresDir}; tx({t:'task_binding_set',sessionId:currentSession,tracker:src,featuresDir:wfTaskBinding.featuresDir||undefined}); toast('Fonte do projeto: '+(src||'nenhuma')); };
+        srcRow.appendChild(b);
+      });
+      p.appendChild(srcRow);
+      const mine=wfSessionRuns();
+      if(mine.length>1){
+        p.appendChild(ph('Tarefas desta sessão'));
+        mine.forEach(r=>{
+          const sel=wfRun&&wfRun.runId===r.runId, s=r.summary||{};
+          const b=document.createElement('button'); b.type='button'; b.className='opt'+(sel?' sel':''); b.setAttribute('aria-pressed',String(sel));
+          b.innerHTML=esc(r.taskLabel||r.workflowName)+' <span class="r">'+(sel?'em foco':((s.done||0)+'/'+(s.total||0)))+'</span>';
+          b.onclick=()=>{ if(!sel) tx({t:'workflow_run_focus',runId:r.runId,sessionId:currentSession}); closePop(); };
+          p.appendChild(b);
+        });
+      }
     }
     function buildWfStepPop(p){
+      buildWfTaskSection(p);
       p.appendChild(ph('Passo do fluxo'));
       const defs=wfDefs||[];
       if(!defs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='Nenhum fluxo salvo.'; p.appendChild(d); return; }
@@ -5160,13 +5244,13 @@
         if(escolha==null) return;
         const i=parseInt(escolha,10)-1; if(!(i>=0&&i<wfDefs.length)){ toast('Opção inválida'); return; } def=wfDefs[i];
       }
-      const ref=await dialog({title:'Tarefa (opcional). Ex.: "linear PRI-824", "github #42", "jira ABC-1" — ou deixe vazio:',input:true,placeholder:'linear PRI-824',okText:'Iniciar'});
+      const armed=wfTaskArmGet();
+      const ref=await dialog({title:'Tarefa (opcional). Cole a chave ("PRI-824") ou a URL do Jira/GitHub/Linear — ou deixe vazio:',input:true,placeholder:'PRI-824 · https://…',value:(armed&&armed.input)||'',okText:'Iniciar'});
       if(ref==null) return;
-      const parts=String(ref).trim().split(/\s+/);
-      const known=['linear','github','jira','gitlab','asana','notion','trello','azure','clickup'];
-      let tracker='',key=String(ref).trim();
-      if(parts.length>1&&known.includes(parts[0].toLowerCase())){ tracker=parts[0].toLowerCase(); key=parts.slice(1).join(' '); }
-      tx({t:'workflow_run_start',workflowId:def.id,sessionId:currentSession,task:{tracker,key}});
+      // O parse (URL→rastreador, vínculo da pasta completando a chave nua) é do SERVIDOR — um só parser, testado.
+      const arm=armed||{};
+      tx({t:'workflow_run_start',workflowId:def.id,sessionId:currentSession,task:arm.task||{tracker:'',key:''},taskInput:String(ref).trim()||arm.input||undefined,taskMeta:arm.meta||undefined});
+      wfTaskArmSet(null);
     }
     if(E.wfRun) E.wfRun.addEventListener('click',async e=>{
       if(e.target.closest('.wf-start')){ wfStartFlow(); return; }
@@ -5174,6 +5258,8 @@
       if(e.target.closest('.wf-restore')){ wfHideSuggest=false; renderWfRun(); return; }
       if(!wfRun) return;
       if(e.target.closest('.wf-tog')){ wfOpen=!wfOpen; renderWfRun(); return; }
+      const foc=e.target.closest('.wf-focus'); if(foc){ tx({t:'workflow_run_focus',runId:foc.dataset.run,sessionId:currentSession}); return; }
+      if(e.target.closest('.wf-sum')){ if(wfRun.task&&wfRun.task.key){ tx({t:'task_summarize',tracker:wfRun.task.tracker||'',key:wfRun.task.key}); toast('Resumindo a tarefa…'); } return; }
       const upd=(op,extra)=>tx(Object.assign({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op},extra||{}));
       // Ponto da trilha: foca a fase. Não pede confirmação porque não destrói nada — nenhum passo muda
       // de estado, e um clique errado se desfaz com outro clique.
