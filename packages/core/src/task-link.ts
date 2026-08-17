@@ -115,6 +115,15 @@ export interface ProjectTaskBinding {
   tracker: string;
   /** pasta dos arquivos de feature, relativa ao projeto (só faz sentido com tracker "local"). */
   featuresDir?: string;
+  /** C2: a CONEXÃO (conta) vinculada — com várias contas do mesmo provedor, é ela que decide. */
+  connectionId?: string;
+  /** C2: allowlist de conexões que este projeto aceita; vazia/ausente = sem restrição extra. */
+  allowed?: string[];
+  /** C4: destino de ESCRITA no provedor (owner/repo, chave do projeto Jira, chave do time Linear). */
+  target?: string;
+  /** C4: ações de escrita liberadas SEM aprovação neste projeto (ex.: ["create"]) — a "política
+   *  adaptativa" por projeto+conexão+ação. Ausente = toda escrita pede aprovação. */
+  autoApprove?: string[];
   updatedAt: number;
 }
 
@@ -157,7 +166,7 @@ export class ProjectTaskBindingStore {
     return b ? { ...b } : undefined;
   }
 
-  set(cwd: string, binding: { tracker: string; featuresDir?: string }): ProjectTaskBinding {
+  set(cwd: string, binding: { tracker: string; featuresDir?: string; connectionId?: string; allowed?: string[]; target?: string; autoApprove?: string[] }): ProjectTaskBinding {
     const key = projectKeyFor(cwd, this.platform);
     if (!key) throw new Error("projeto sem caminho");
     const featuresDir = clean(binding.featuresDir, 200).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
@@ -165,6 +174,16 @@ export class ProjectTaskBindingStore {
     if (featuresDir.split("/").includes("..")) throw new Error("pasta de features não pode sair do projeto");
     const row: ProjectTaskBinding = { tracker: slug(binding.tracker), updatedAt: this.now() };
     if (featuresDir) row.featuresDir = featuresDir;
+    const connectionId = clean(binding.connectionId, 80);
+    if (connectionId) row.connectionId = connectionId;
+    const allowed = (binding.allowed || []).map((v) => clean(v, 80)).filter(Boolean).slice(0, 20);
+    if (allowed.length) row.allowed = [...new Set(allowed)];
+    // A conexão vinculada fora da própria allowlist seria uma contradição armada esperando a escrita.
+    if (row.connectionId && row.allowed && !row.allowed.includes(row.connectionId)) throw new Error("a conexão vinculada precisa estar na lista de permitidas");
+    const target = clean(binding.target, 200);
+    if (target) row.target = target;
+    const autoApprove = (binding.autoApprove || []).map((v) => slug(v)).filter(Boolean).slice(0, 10);
+    if (autoApprove.length) row.autoApprove = [...new Set(autoApprove)];
     this.data.projects[key] = row;
     writeJsonAtomic(this.file, this.data, { pretty: true });
     return { ...row };

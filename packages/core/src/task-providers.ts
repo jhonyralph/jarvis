@@ -1,0 +1,262 @@
+/**
+ * Catálogo de provedores de tarefas (C1/C4 do plano de conexões) — ORIENTADO A DADOS.
+ *
+ * Cada provedor declara: campos de configuração, forma de autenticação (bearer/basic/chave+token) e
+ * como perguntar "quem sou eu". Adicionar provedor é acrescentar uma entrada + teste — não é
+ * arquitetura nova. Operações de TAREFA (buscar/carregar/criar) existem no tier 1 (GitHub, GitLab,
+ * Jira, Linear — os com conta real para validar); os demais nascem "identidade só" e são promovidos
+ * quando um token real os exercitar.
+ *
+ * Regras duras deste módulo:
+ *  - o SEGREDO nunca entra em objeto persistido; chega como valor já resolvido do env e sai de
+ *    qualquer mensagem de erro (sanitize) — token vazado em log foi projetado para ser impossível;
+ *  - todo HTTP é injetável (`FetchLike`) — os testes exercitam URL/headers/corpo sem rede.
+ */
+
+export interface TaskProviderField { key: string; label: string; required?: boolean; hint?: string }
+
+export interface TaskProviderSpec {
+  id: string;
+  label: string;
+  /** campos de config além dos segredos (baseUrl do Jira, e-mail, org…). */
+  fields: TaskProviderField[];
+  /** segredos exigidos (Trello usa dois: chave + token). Sempre por secretRef (nome de env var). */
+  secrets: Array<{ key: "secretRef" | "secretRef2"; label: string }>;
+  /** 1 = operações de tarefa implementadas; 2 = por enquanto só identidade verificada. */
+  tier: 1 | 2;
+  /** o que o vínculo do projeto precisa apontar para ESCRITA (ex.: owner/repo, chave do projeto). */
+  targetHint?: string;
+}
+
+export const TASK_PROVIDERS: readonly TaskProviderSpec[] = Object.freeze([
+  { id: "github", label: "GitHub", tier: 1, fields: [{ key: "org", label: "Organização (opcional, restringe busca e valida remote)" }], secrets: [{ key: "secretRef", label: "Token (PAT)" }], targetHint: "owner/repo" },
+  { id: "gitlab", label: "GitLab", tier: 1, fields: [{ key: "baseUrl", label: "Base URL (vazio = gitlab.com)" }], secrets: [{ key: "secretRef", label: "Token" }], targetHint: "grupo/projeto" },
+  { id: "jira", label: "Jira", tier: 1, fields: [{ key: "baseUrl", label: "Base URL (https://sua-org.atlassian.net)", required: true }, { key: "email", label: "E-mail da conta", required: true }], secrets: [{ key: "secretRef", label: "API token" }], targetHint: "chave do projeto (ex.: ABC)" },
+  { id: "linear", label: "Linear", tier: 1, fields: [], secrets: [{ key: "secretRef", label: "API key" }], targetHint: "chave do time (ex.: PRI)" },
+  { id: "azure-devops", label: "Azure DevOps", tier: 2, fields: [{ key: "org", label: "Organização", required: true }], secrets: [{ key: "secretRef", label: "PAT" }] },
+  { id: "asana", label: "Asana", tier: 2, fields: [], secrets: [{ key: "secretRef", label: "Personal access token" }] },
+  { id: "trello", label: "Trello", tier: 2, fields: [], secrets: [{ key: "secretRef", label: "API key" }, { key: "secretRef2", label: "Token" }] },
+  { id: "notion", label: "Notion", tier: 2, fields: [], secrets: [{ key: "secretRef", label: "Integration token" }] },
+  { id: "clickup", label: "ClickUp", tier: 2, fields: [], secrets: [{ key: "secretRef", label: "API token" }] },
+  { id: "monday", label: "Monday", tier: 2, fields: [], secrets: [{ key: "secretRef", label: "API token" }] },
+]);
+
+export const taskProviderSpec = (id: string): TaskProviderSpec | undefined => TASK_PROVIDERS.find((p) => p.id === id);
+
+/* ── HTTP injetável ───────────────────────────────────────────────────────────────────────────── */
+
+export interface FetchLikeResponse { ok: boolean; status: number; text(): Promise<string> }
+export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<FetchLikeResponse>;
+
+const defaultFetch: FetchLike = (url, init) => fetch(url, init) as unknown as Promise<FetchLikeResponse>;
+
+/** Erros saem SEM os segredos, aconteça o que acontecer. */
+export function sanitizeSecrets(text: string, secrets: string[]): string {
+  let out = String(text ?? "");
+  for (const s of secrets.filter((v) => v && v.length >= 4).sort((a, b) => b.length - a.length)) out = out.split(s).join("[REDACTED]");
+  return out;
+}
+
+async function call(fetchFn: FetchLike, secrets: string[], url: string, init: Parameters<FetchLike>[1]): Promise<any> {
+  let res: FetchLikeResponse;
+  try { res = await fetchFn(url, init); }
+  catch (e: any) { throw new Error(sanitizeSecrets(`falha de rede: ${String(e?.message ?? e)}`, secrets)); }
+  const body = await res.text().catch(() => "");
+  if (!res.ok) throw new Error(sanitizeSecrets(`HTTP ${res.status}: ${body.slice(0, 300)}`, secrets));
+  try { return body ? JSON.parse(body) : {}; }
+  catch { throw new Error(sanitizeSecrets(`resposta não-JSON: ${body.slice(0, 120)}`, secrets)); }
+}
+
+const b64 = (v: string): string => Buffer.from(v, "utf8").toString("base64");
+const gitlabBase = (cfg: Record<string, string>): string => (cfg.baseUrl || "https://gitlab.com").replace(/\/+$/, "");
+const jiraBase = (cfg: Record<string, string>): string => String(cfg.baseUrl || "").replace(/\/+$/, "");
+
+interface ProviderCallInput { config: Record<string, string>; secret: string; secret2?: string; fetchFn?: FetchLike; signal?: AbortSignal }
+
+/* ── identidade: "quem sou eu" por provedor ───────────────────────────────────────────────────── */
+
+export interface TaskIdentity { id: string; login: string; name?: string }
+
+/**
+ * Chama o endpoint de identidade do provedor e devolve QUEM é esta credencial de verdade. O rótulo
+ * da conexão nunca é a fonte da verdade — isto aqui é.
+ */
+export async function fetchProviderIdentity(providerId: string, input: ProviderCallInput): Promise<TaskIdentity> {
+  const f = input.fetchFn || defaultFetch;
+  const secrets = [input.secret, input.secret2 || ""].filter(Boolean);
+  const cfg = input.config || {};
+  const j = (url: string, init?: Parameters<FetchLike>[1]) => call(f, secrets, url, { ...init, signal: input.signal });
+  switch (providerId) {
+    case "github": {
+      const u = await j("https://api.github.com/user", { headers: { authorization: `Bearer ${input.secret}`, "user-agent": "jarvis", accept: "application/vnd.github+json" } });
+      return { id: String(u.id ?? u.login), login: String(u.login || ""), name: u.name || undefined };
+    }
+    case "gitlab": {
+      const u = await j(`${gitlabBase(cfg)}/api/v4/user`, { headers: { authorization: `Bearer ${input.secret}` } });
+      return { id: String(u.id ?? u.username), login: String(u.username || ""), name: u.name || undefined };
+    }
+    case "jira": {
+      if (!jiraBase(cfg) || !cfg.email) throw new Error("Jira exige baseUrl e e-mail");
+      const u = await j(`${jiraBase(cfg)}/rest/api/3/myself`, { headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, accept: "application/json" } });
+      return { id: String(u.accountId || ""), login: String(u.emailAddress || cfg.email), name: u.displayName || undefined };
+    }
+    case "linear": {
+      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "{ viewer { id name email } }" }) });
+      const v = r?.data?.viewer || {};
+      if (!v.id) throw new Error("Linear não devolveu viewer (token inválido?)");
+      return { id: String(v.id), login: String(v.email || v.name || ""), name: v.name || undefined };
+    }
+    case "azure-devops": {
+      if (!cfg.org) throw new Error("Azure DevOps exige a organização");
+      const u = await j(`https://dev.azure.com/${encodeURIComponent(cfg.org)}/_apis/connectionData?api-version=7.0`, { headers: { authorization: `Basic ${b64(`:${input.secret}`)}` } });
+      const au = u?.authenticatedUser || {};
+      return { id: String(au.id || ""), login: String(au.providerDisplayName || au.customDisplayName || ""), name: au.customDisplayName || undefined };
+    }
+    case "asana": {
+      const u = await j("https://app.asana.com/api/1.0/users/me", { headers: { authorization: `Bearer ${input.secret}` } });
+      return { id: String(u?.data?.gid || ""), login: String(u?.data?.email || u?.data?.name || ""), name: u?.data?.name || undefined };
+    }
+    case "trello": {
+      if (!input.secret2) throw new Error("Trello exige chave + token");
+      const u = await j(`https://api.trello.com/1/members/me?key=${encodeURIComponent(input.secret)}&token=${encodeURIComponent(input.secret2)}`);
+      return { id: String(u.id || ""), login: String(u.username || ""), name: u.fullName || undefined };
+    }
+    case "notion": {
+      const u = await j("https://api.notion.com/v1/users/me", { headers: { authorization: `Bearer ${input.secret}`, "notion-version": "2022-06-28" } });
+      return { id: String(u.id || ""), login: String(u?.bot?.owner?.user?.person?.email || u.name || ""), name: u.name || undefined };
+    }
+    case "clickup": {
+      const u = await j("https://api.clickup.com/api/v2/user", { headers: { authorization: input.secret } });
+      return { id: String(u?.user?.id || ""), login: String(u?.user?.email || u?.user?.username || ""), name: u?.user?.username || undefined };
+    }
+    case "monday": {
+      const r = await j("https://api.monday.com/v2", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "{ me { id name email } }" }) });
+      const me = r?.data?.me || {};
+      if (!me.id) throw new Error("Monday não devolveu identidade (token inválido?)");
+      return { id: String(me.id), login: String(me.email || me.name || ""), name: me.name || undefined };
+    }
+    default: throw new Error(`provedor desconhecido: ${providerId}`);
+  }
+}
+
+/* ── operações de tarefa (tier 1) ─────────────────────────────────────────────────────────────── */
+
+export interface TaskItem { tracker: string; key: string; title: string; description?: string; url?: string; state?: string }
+
+/** Texto plano de um documento ADF do Jira (best-effort: só nós de texto, na ordem). */
+export function adfToText(node: unknown, cap = 4000): string {
+  const parts: string[] = [];
+  const walk = (n: any): void => {
+    if (!n || typeof n !== "object") return;
+    if (typeof n.text === "string") parts.push(n.text);
+    if (Array.isArray(n.content)) { n.content.forEach(walk); if (n.type === "paragraph") parts.push("\n"); }
+  };
+  walk(node);
+  return parts.join("").replace(/\n{2,}/g, "\n").trim().slice(0, cap);
+}
+
+const ghHeaders = (secret: string): Record<string, string> => ({ authorization: `Bearer ${secret}`, "user-agent": "jarvis", accept: "application/vnd.github+json" });
+
+/** Busca por texto no provedor da conexão. Tier 2 → erro claro, nunca resultado vazio mentiroso. */
+export async function searchProviderTasks(providerId: string, query: string, input: ProviderCallInput): Promise<TaskItem[]> {
+  const f = input.fetchFn || defaultFetch;
+  const secrets = [input.secret, input.secret2 || ""].filter(Boolean);
+  const cfg = input.config || {};
+  const q = String(query || "").trim().slice(0, 200);
+  if (!q) return [];
+  const j = (url: string, init?: Parameters<FetchLike>[1]) => call(f, secrets, url, { ...init, signal: input.signal });
+  switch (providerId) {
+    case "github": {
+      const scope = cfg.org ? ` org:${cfg.org}` : "";
+      const r = await j(`https://api.github.com/search/issues?q=${encodeURIComponent(`${q} is:issue${scope}`)}&per_page=10`, { headers: ghHeaders(input.secret) });
+      return (r.items || []).map((it: any) => {
+        const m = /repos\/([^/]+\/[^/]+)\/issues/.exec(String(it.repository_url || "")) || /github\.com\/([^/]+\/[^/]+)\//.exec(String(it.html_url || ""));
+        return { tracker: "github", key: `${m ? m[1] : "?"}#${it.number}`, title: String(it.title || ""), description: (it.body || undefined) as string | undefined, url: it.html_url, state: it.state };
+      });
+    }
+    case "gitlab": {
+      const r = await j(`${gitlabBase(cfg)}/api/v4/issues?search=${encodeURIComponent(q)}&per_page=10&scope=all`, { headers: { authorization: `Bearer ${input.secret}` } });
+      return (Array.isArray(r) ? r : []).map((it: any) => ({ tracker: "gitlab", key: `${String(it?.references?.full || "").replace(/#\d+$/, "") || it.project_id}#${it.iid}`, title: String(it.title || ""), description: it.description || undefined, url: it.web_url, state: it.state }));
+    }
+    case "jira": {
+      const r = await j(`${jiraBase(cfg)}/rest/api/3/search`, { method: "POST", headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, "content-type": "application/json" }, body: JSON.stringify({ jql: `text ~ ${JSON.stringify(q)} ORDER BY updated DESC`, maxResults: 10, fields: ["summary", "description", "status"] }) });
+      return (r.issues || []).map((it: any) => ({ tracker: "jira", key: String(it.key || ""), title: String(it?.fields?.summary || ""), description: adfToText(it?.fields?.description) || undefined, url: `${jiraBase(cfg)}/browse/${it.key}`, state: it?.fields?.status?.name }));
+    }
+    case "linear": {
+      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "query($q:String!){ searchIssues(term:$q, first:10){ nodes { identifier title description url state { name } } } }", variables: { q } }) });
+      const nodes = r?.data?.searchIssues?.nodes || [];
+      return nodes.map((it: any) => ({ tracker: "linear", key: String(it.identifier || ""), title: String(it.title || ""), description: it.description || undefined, url: it.url, state: it?.state?.name }));
+    }
+    default: throw new Error(`busca ainda não implementada para ${providerId} (tier 2 — identidade só)`);
+  }
+}
+
+/** Carrega UMA tarefa pela chave normalizada do Jarvis ("owner/repo#12", "ABC-1", "PRI-824"). */
+export async function getProviderTask(providerId: string, key: string, input: ProviderCallInput): Promise<TaskItem | null> {
+  const f = input.fetchFn || defaultFetch;
+  const secrets = [input.secret, input.secret2 || ""].filter(Boolean);
+  const cfg = input.config || {};
+  const k = String(key || "").trim();
+  if (!k) return null;
+  const j = (url: string, init?: Parameters<FetchLike>[1]) => call(f, secrets, url, { ...init, signal: input.signal });
+  switch (providerId) {
+    case "github": {
+      const m = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(k);
+      if (!m) throw new Error(`chave GitHub deve ser owner/repo#numero (veio: ${k})`);
+      const it = await j(`https://api.github.com/repos/${m[1]}/issues/${m[2]}`, { headers: ghHeaders(input.secret) });
+      return { tracker: "github", key: k, title: String(it.title || ""), description: it.body || undefined, url: it.html_url, state: it.state };
+    }
+    case "gitlab": {
+      const m = /^(.+)#(\d+)$/.exec(k);
+      if (!m) throw new Error(`chave GitLab deve ser grupo/projeto#iid (veio: ${k})`);
+      const it = await j(`${gitlabBase(cfg)}/api/v4/projects/${encodeURIComponent(m[1])}/issues/${m[2]}`, { headers: { authorization: `Bearer ${input.secret}` } });
+      return { tracker: "gitlab", key: k, title: String(it.title || ""), description: it.description || undefined, url: it.web_url, state: it.state };
+    }
+    case "jira": {
+      const it = await j(`${jiraBase(cfg)}/rest/api/3/issue/${encodeURIComponent(k)}?fields=summary,description,status`, { headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, accept: "application/json" } });
+      return { tracker: "jira", key: String(it.key || k), title: String(it?.fields?.summary || ""), description: adfToText(it?.fields?.description) || undefined, url: `${jiraBase(cfg)}/browse/${it.key || k}`, state: it?.fields?.status?.name };
+    }
+    case "linear": {
+      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "query($q:String!){ searchIssues(term:$q, first:5){ nodes { identifier title description url state { name } } } }", variables: { q: k } }) });
+      const hit = (r?.data?.searchIssues?.nodes || []).find((n: any) => String(n.identifier).toUpperCase() === k.toUpperCase());
+      return hit ? { tracker: "linear", key: String(hit.identifier), title: String(hit.title || ""), description: hit.description || undefined, url: hit.url, state: hit?.state?.name } : null;
+    }
+    default: throw new Error(`carregar tarefa ainda não implementado para ${providerId} (tier 2)`);
+  }
+}
+
+/** Cria uma tarefa. `target` vem do VÍNCULO do projeto (owner/repo, chave Jira, chave do time Linear). */
+export async function createProviderTask(providerId: string, target: string, task: { title: string; description?: string }, input: ProviderCallInput): Promise<{ key: string; url?: string }> {
+  const f = input.fetchFn || defaultFetch;
+  const secrets = [input.secret, input.secret2 || ""].filter(Boolean);
+  const cfg = input.config || {};
+  const title = String(task.title || "").trim().slice(0, 300);
+  if (!title) throw new Error("a tarefa precisa de título");
+  if (!String(target || "").trim()) throw new Error("o vínculo do projeto não define o destino (repo/projeto/time)");
+  const j = (url: string, init?: Parameters<FetchLike>[1]) => call(f, secrets, url, { ...init, signal: input.signal });
+  switch (providerId) {
+    case "github": {
+      const it = await j(`https://api.github.com/repos/${target}/issues`, { method: "POST", headers: { ...ghHeaders(input.secret), "content-type": "application/json" }, body: JSON.stringify({ title, body: task.description || "" }) });
+      return { key: `${target}#${it.number}`, url: it.html_url };
+    }
+    case "gitlab": {
+      const it = await j(`${gitlabBase(cfg)}/api/v4/projects/${encodeURIComponent(target)}/issues`, { method: "POST", headers: { authorization: `Bearer ${input.secret}`, "content-type": "application/json" }, body: JSON.stringify({ title, description: task.description || "" }) });
+      return { key: `${target}#${it.iid}`, url: it.web_url };
+    }
+    case "jira": {
+      const description = task.description ? { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: task.description.slice(0, 4000) }] }] } : undefined;
+      const it = await j(`${jiraBase(cfg)}/rest/api/3/issue`, { method: "POST", headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, "content-type": "application/json" }, body: JSON.stringify({ fields: { project: { key: target }, issuetype: { name: "Task" }, summary: title, ...(description ? { description } : {}) } }) });
+      return { key: String(it.key || ""), url: `${jiraBase(cfg)}/browse/${it.key}` };
+    }
+    case "linear": {
+      const teams = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "query($k:String!){ teams(filter:{ key:{ eq:$k } }){ nodes { id } } }", variables: { k: target.toUpperCase() } }) });
+      const teamId = teams?.data?.teams?.nodes?.[0]?.id;
+      if (!teamId) throw new Error(`time Linear não encontrado pela chave ${target}`);
+      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "mutation($input:IssueCreateInput!){ issueCreate(input:$input){ issue { identifier url } } }", variables: { input: { teamId, title, description: task.description || undefined } } }) });
+      const issue = r?.data?.issueCreate?.issue;
+      if (!issue?.identifier) throw new Error("Linear não confirmou a criação");
+      return { key: String(issue.identifier), url: issue.url };
+    }
+    default: throw new Error(`criar tarefa ainda não implementado para ${providerId} (tier 2)`);
+  }
+}

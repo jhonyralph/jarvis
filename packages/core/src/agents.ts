@@ -35,6 +35,7 @@ import {
 import { codexChildRollouts } from "./codex-executions.js";
 import { BACKGROUND_JOB_STEERING } from "./background-jobs.js";
 import { ensurePermissionBridge } from "./permission-bridge.js";
+import { ensureTaskBridge } from "./task-bridge.js";
 import { EXECUTION_ADAPTER_PROFILES, EXECUTION_ADAPTER_IDS, mapProviderExecutionFixture, type ExecutionAdapterId } from "./execution-adapters.js";
 
 /** Effective unattended execution policy. The historical default is full access; operators can
@@ -857,17 +858,25 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       if (process.env.JARVIS_BG_JOBS !== "off") args.push("--append-system-prompt", BACKGROUND_JOB_STEERING);
       const mode = effectivePermissionMode(opts);
       args.push(...permissionArgs("claude-code", mode));
-      // Manual mode: without an approval bridge the CLI auto-denies every tool. Wire the stdio MCP
-      // permission-prompt tool + a per-turn temp mcp-config so the Hub can pause and ask the user.
-      // Only when the Hub has published the bridge endpoint (env) — otherwise fall back to current
-      // behavior. Never for managed/subagent turns (this whole branch is the non-managed one).
+      // Pontes MCP por sessão — a "configuração zero por IA" do plano de conexões: TAREFAS
+      // (jarvis_task_search/get/create → cofre de conexões do Hub) sempre que o Hub publicar o
+      // endpoint; aprovação manual só no modo manual (sem a ponte o CLI auto-nega todo tool). Um
+      // único mcp-config temporário por turno serve as duas; nunca em turnos managed/subagente.
+      const mcpServers: Record<string, unknown> = {};
+      if (process.env.JARVIS_TASK_URL && process.env.JARVIS_TASK_TOKEN) {
+        const taskBridgePath = ensureTaskBridge().replace(/\\/g, "/");
+        mcpServers.jarvistask = { command: "node", args: [taskBridgePath], env: { JARVIS_TASK_URL: process.env.JARVIS_TASK_URL, JARVIS_TASK_TOKEN: process.env.JARVIS_TASK_TOKEN, JARVIS_TASK_SESSION: sessionId } };
+      }
       if (mode === "manual" && process.env.JARVIS_PERM_URL && process.env.JARVIS_PERM_TOKEN) {
         const bridgePath = ensurePermissionBridge().replace(/\\/g, "/");
-        const cfg = { mcpServers: { jarvisperm: { command: "node", args: [bridgePath], env: { JARVIS_PERM_URL: process.env.JARVIS_PERM_URL, JARVIS_PERM_TOKEN: process.env.JARVIS_PERM_TOKEN, JARVIS_PERM_SESSION: sessionId } } } };
-        const cfgPath = join(tmpdir(), `jarvisperm_${randomUUID()}.json`);
-        writeFileSync(cfgPath, JSON.stringify(cfg));
+        mcpServers.jarvisperm = { command: "node", args: [bridgePath], env: { JARVIS_PERM_URL: process.env.JARVIS_PERM_URL, JARVIS_PERM_TOKEN: process.env.JARVIS_PERM_TOKEN, JARVIS_PERM_SESSION: sessionId } };
+      }
+      if (Object.keys(mcpServers).length) {
+        const cfgPath = join(tmpdir(), `jarvismcp_${randomUUID()}.json`);
+        writeFileSync(cfgPath, JSON.stringify({ mcpServers }));
         permCleanup = () => { try { unlinkSync(cfgPath); } catch { /* already gone */ } };
-        args.push("--mcp-config", cfgPath, "--permission-prompt-tool", "mcp__jarvisperm__approve");
+        args.push("--mcp-config", cfgPath);
+        if (mcpServers.jarvisperm) args.push("--permission-prompt-tool", "mcp__jarvisperm__approve");
       }
     }
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);

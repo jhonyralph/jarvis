@@ -4583,6 +4583,10 @@
         else if(m.t==='task_binding'){ if(m.sessionId===currentSession) wfTaskBinding=m.binding||null; }
         else if(m.t==='task_local_list'){ if(m.sessionId===currentSession){ wfLocalFiles=m.files||[]; wfLocalDir=m.dir||'docs/features'; if(wfLocalShow){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } } }
         else if(m.t==='task_meta'){ wfTaskMeta[wfMetaKey({tracker:m.tracker,key:m.key})]=m.meta||null; renderWfRun(); }
+        else if(m.t==='task_connections'){ wfConnections=m.connections||[]; wfProviders=m.providers||[]; if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
+        else if(m.t==='task_search_results'){ wfSearchResults=m; if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
+        else if(m.t==='task_create_pending'){ toast('Criação aguardando sua aprovação: '+(m.preview||'')); }
+        else if(m.t==='task_create_result'){ toast(m.ok?('Tarefa criada: '+(m.key||'')):('Criar tarefa: '+(m.error||'falhou'))); }
         else if(m.t==='framework_status'){ fwArrived(); if(m.error){ E.fwStatus.textContent=''; fwLog('✖ publicar: '+esc(m.error),'#f87171'); toast('Publicar: '+m.error); return; }
           if(Array.isArray(m.results)){ m.results.forEach(r=>{ fwMachineStatus[r.runnerId]={label:r.label||r.runnerId,state:r.state}; }); if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version; renderFwStatus(); tx({t:'framework_inventory'}); fwLog('✓ publicado v'+m.version+' — '+m.results.map(r=>esc(r.label||r.runnerId)+': '+esc(fwStateLabel(r.state))).join(' · '),'#4ade80'); }
           else if(m.runnerId){ fwMachineStatus[m.runnerId]={label:m.machine||m.runnerId,state:m.state}; renderFwStatus(); fwLog(esc(m.machine||m.runnerId)+': '+esc(fwStateLabel(m.state))); } }
@@ -5041,6 +5045,9 @@
     // Fluxo por tarefa (F1/F3): vínculo do projeto, arquivos locais de feature, cache de meta e a
     // tarefa ARMADA (vale para o próximo fluxo iniciado nesta sessão; persiste por sessão).
     let wfTaskBinding=null, wfLocalFiles=null, wfLocalDir='docs/features', wfLocalShow=false;
+    // Cofre de conexões (C1/C2): lista vinda do Hub (sem NENHUM segredo — só envOk booleano),
+    // catálogo de provedores, resultados de busca e o modo "gerenciar" do popup.
+    let wfConnections=null, wfProviders=[], wfSearchResults=null, wfConnManage=false;
     const wfTaskMeta={};
     function wfMetaKey(t){ return (t.tracker||'')+' '+t.key; }
     function wfTaskArmKey(){ return (currentSessionRunner||'local')+' '+(currentSession||''); }
@@ -5159,9 +5166,51 @@
       if(wfRun&&wfRun.workflowId===defId) tx({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op:'focus',stepId});
       else { const arm=wfTaskArmGet()||{}; tx({t:'workflow_run_start',workflowId:defId,sessionId:currentSession,stepId,task:arm.task||{tracker:'',key:''},taskInput:arm.input||undefined,taskMeta:arm.meta||undefined}); wfTaskArmSet(null); }
     }
+    function wfPopIsOpen(){ return !!document.querySelector('.pop .wftask-anchor'); }
+    // ── Gerenciar conexões (C1): listar/verificar/apagar/adicionar — segredo NUNCA passa por aqui,
+    // só o NOME da env var. A identidade verificada é o que diz DE QUEM é cada conexão.
+    function buildWfConnManage(p){
+      p.appendChild(ph('Conexões (cofre)'));
+      const back=document.createElement('button'); back.type='button'; back.className='opt'; back.textContent='← voltar';
+      back.onclick=()=>{ wfConnManage=false; closePop(); togglePop(E.wfStepBtn,buildWfStepPop); };
+      p.appendChild(back);
+      (wfConnections||[]).forEach(c=>{
+        const row=document.createElement('div'); row.style.cssText='padding:4px 2px 6px;border-bottom:1px solid rgba(127,127,127,.2);font-size:12px;max-width:300px';
+        const who=c.identity?('@'+(c.identity.login||c.identity.id)):'não verificada';
+        row.innerHTML='<b>'+esc(c.label)+'</b> <span class="mut">('+esc(c.provider)+' · '+esc(who)+')</span>'
+          +(c.envOk?'':' <span style="color:#f5b544" title="a env var do segredo não está no ambiente do Hub">⚠ env</span>')
+          +(c.lastError?'<div class="mut" style="color:#f87171;font-size:11px">'+esc(String(c.lastError).slice(0,90))+'</div>':'')
+          +'<div class="row" style="gap:4px;margin-top:3px"><button class="wfact wfc-verify" data-id="'+esc(c.id)+'" type="button">Verificar</button><button class="wfact wfc-del" data-id="'+esc(c.id)+'" type="button">Apagar</button></div>';
+        p.appendChild(row);
+      });
+      if(!(wfConnections||[]).length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:2px'; d.textContent='Nenhuma conexão no cofre.'; p.appendChild(d); }
+      const add=document.createElement('button'); add.type='button'; add.className='opt'; add.textContent='+ adicionar conexão';
+      add.onclick=async()=>{
+        closePop();
+        const provs=wfProviders||[];
+        const pick=await dialog({title:'Provedor:\n\n'+provs.map((x,i)=>(i+1)+'. '+x.label+(x.tier===2?' (identidade só, por enquanto)':'')).join('\n'),input:true,placeholder:'número',okText:'Continuar'});
+        if(pick==null) return; const spec=provs[parseInt(pick,10)-1]; if(!spec){ toast('Opção inválida'); return; }
+        const label=await dialog({title:'Rótulo da conexão (ex.: "GitHub ACME", "Linear pessoal"):',input:true,okText:'Continuar'});
+        if(label==null||!label.trim()) return;
+        const config={};
+        for(const f of (spec.fields||[])){ const v=await dialog({title:spec.label+' — '+f.label+(f.required?'':' (opcional)')+':',input:true,okText:'Continuar'}); if(v==null&&f.required) return; if(v&&v.trim()) config[f.key]=v.trim(); }
+        const refs={};
+        for(const s of (spec.secrets||[])){ const v=await dialog({title:spec.label+' — NOME da env var com "'+s.label+'" (o valor fica só no ambiente do Hub):',input:true,placeholder:'EX.: GH_ACME_TOKEN',okText:'Salvar'}); if(v==null||!v.trim()) return; refs[s.key]=v.trim(); }
+        tx({t:'task_connection_save',connection:{provider:spec.id,label:label.trim(),config,secretRef:refs.secretRef,secretRef2:refs.secretRef2}});
+        toast('Conexão salva — use "Verificar" para confirmar a identidade.');
+      };
+      p.appendChild(add);
+      p.addEventListener('click',(e)=>{
+        const v=e.target.closest&&e.target.closest('.wfc-verify'); if(v){ tx({t:'task_connection_verify',id:v.dataset.id}); toast('Verificando identidade…'); return; }
+        const del=e.target.closest&&e.target.closest('.wfc-del'); if(del){ tx({t:'task_connection_delete',id:del.dataset.id}); return; }
+      });
+    }
     // ── Tarefa no fluxo (F1): colar chave/URL, escolher arquivo local de feature, e a fonte do
     // projeto (lembrada por pasta). A tarefa ARMADA vale para o próximo fluxo iniciado na sessão.
     function buildWfTaskSection(p){
+      const anchor=document.createElement('span'); anchor.className='wftask-anchor'; anchor.style.display='none'; p.appendChild(anchor);
+      if(authUser&&authUser.role==='owner'&&wfConnections===null){ wfConnections=[]; tx({t:'task_connections'}); }
+      if(wfConnManage){ buildWfConnManage(p); return; }
       p.appendChild(ph('Tarefa'));
       const arm=wfTaskArmGet();
       const info=document.createElement('div'); info.className='mut'; info.style.cssText='font-size:11.5px;padding:2px 2px 6px;max-width:280px';
@@ -5197,6 +5246,56 @@
         srcRow.appendChild(b);
       });
       p.appendChild(srcRow);
+      // Conexão do projeto (C2) + busca no provedor (C4). Só aparece quando a fonte é um provedor.
+      const trackerNow=(wfTaskBinding&&wfTaskBinding.tracker)||'';
+      if(trackerNow&&trackerNow!=='local'){
+        const conn=(wfConnections||[]).find(c=>c.id===(wfTaskBinding&&wfTaskBinding.connectionId));
+        const cRow=document.createElement('div'); cRow.style.cssText='padding:2px 2px 6px;font-size:12px;max-width:300px';
+        cRow.innerHTML='🔐 '+(conn?('<b>'+esc(conn.label)+'</b> <span class="mut">'+esc(conn.identity?('@'+conn.identity.login):'não verificada')+(conn.envOk?'':' · ⚠ env')+'</span>'):'<span style="color:#f5b544">sem conexão vinculada — escolha a conta</span>');
+        p.appendChild(cRow);
+        const bRow=document.createElement('div'); bRow.style.cssText='display:flex;gap:4px;flex-wrap:wrap;padding:0 2px 6px';
+        const mkb=(txt,fn,title)=>{ const b=document.createElement('button'); b.type='button'; b.className='wfact'; b.textContent=txt; if(title)b.title=title; b.onclick=fn; bRow.appendChild(b); };
+        const candidates=(wfConnections||[]).filter(c=>c.provider===trackerNow);
+        mkb(conn?'trocar conexão':'vincular conexão',async()=>{
+          if(!candidates.length){ toast('Nenhuma conexão de '+trackerNow+' no cofre — adicione em ⚙.'); return; }
+          closePop();
+          const pick=await dialog({title:'Qual conexão para ESTE projeto?\n\n'+candidates.map((c,i)=>(i+1)+'. '+c.label+' ('+(c.identity?('@'+c.identity.login):'não verificada')+')').join('\n'),input:true,placeholder:'número',okText:'Vincular'});
+          if(pick==null) return; const chosen=candidates[parseInt(pick,10)-1]; if(!chosen){ toast('Opção inválida'); return; }
+          tx({t:'task_binding_set',sessionId:currentSession,tracker:trackerNow,connectionId:chosen.id,featuresDir:(wfTaskBinding&&wfTaskBinding.featuresDir)||undefined,target:(wfTaskBinding&&wfTaskBinding.target)||undefined,autoApprove:(wfTaskBinding&&wfTaskBinding.autoApprove)||undefined});
+        },'A conta que ESTE projeto usa (regra de ouro: sem vínculo, nada de escrita)');
+        mkb('destino: '+((wfTaskBinding&&wfTaskBinding.target)||'—'),async()=>{
+          closePop();
+          const spec=(wfProviders||[]).find(x=>x.id===trackerNow);
+          const v=await dialog({title:'Destino de ESCRITA neste projeto ('+((spec&&spec.targetHint)||'destino')+'):',input:true,value:(wfTaskBinding&&wfTaskBinding.target)||'',okText:'Salvar'});
+          if(v==null) return;
+          tx({t:'task_binding_set',sessionId:currentSession,tracker:trackerNow,connectionId:(wfTaskBinding&&wfTaskBinding.connectionId)||undefined,featuresDir:(wfTaskBinding&&wfTaskBinding.featuresDir)||undefined,target:v.trim()||undefined,autoApprove:(wfTaskBinding&&wfTaskBinding.autoApprove)||undefined});
+        },'Onde criar tarefas (owner/repo, chave do projeto Jira, chave do time Linear)');
+        const auto=!!(wfTaskBinding&&wfTaskBinding.autoApprove&&wfTaskBinding.autoApprove.includes('create'));
+        mkb('criar sem aprovar: '+(auto?'ON':'off'),()=>{
+          tx({t:'task_binding_set',sessionId:currentSession,tracker:trackerNow,connectionId:(wfTaskBinding&&wfTaskBinding.connectionId)||undefined,featuresDir:(wfTaskBinding&&wfTaskBinding.featuresDir)||undefined,target:(wfTaskBinding&&wfTaskBinding.target)||undefined,autoApprove:auto?[]:['create']});
+          toast(auto?'Criação volta a pedir aprovação neste projeto.':'Criação liberada NESTE projeto (divergência de conta ainda pede aprovação).');
+        },'Política adaptativa por projeto+ação: libera criar tarefa sem aprovação AQUI');
+        mkb('⚙',()=>{ wfConnManage=true; closePop(); togglePop(E.wfStepBtn,buildWfStepPop); },'Gerenciar o cofre de conexões');
+        p.appendChild(bRow);
+        if(conn){
+          const sRow=document.createElement('div'); sRow.style.cssText='display:flex;gap:6px;padding:0 2px 6px';
+          const sInp=document.createElement('input'); sInp.type='text'; sInp.placeholder='🔎 buscar em '+esc(conn.label); sInp.style.cssText='flex:1;min-width:120px';
+          const sBtn=document.createElement('button'); sBtn.type='button'; sBtn.className='wfact'; sBtn.textContent='Buscar';
+          sBtn.onclick=()=>{ const q=sInp.value.trim(); if(!q) return; wfSearchResults={busy:true}; tx({t:'task_search',sessionId:currentSession,query:q}); toast('Buscando em '+conn.label+'…'); };
+          sInp.onkeydown=(ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); sBtn.onclick(); } };
+          sRow.appendChild(sInp); sRow.appendChild(sBtn); p.appendChild(sRow);
+          const sr=wfSearchResults;
+          if(sr&&!sr.busy&&sr.sessionId===currentSession){
+            if(sr.error){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px;color:#f5b544'; d.textContent=sr.error; p.appendChild(d); }
+            (sr.results||[]).slice(0,8).forEach(it=>{
+              const b=document.createElement('button'); b.type='button'; b.className='opt';
+              b.innerHTML=esc(it.key)+' · '+esc(String(it.title||'').slice(0,60))+(it.state?' <span class="r">'+esc(it.state)+'</span>':'');
+              b.onclick=()=>{ wfSearchResults=null; wfTaskArmSet({task:{tracker:it.tracker,key:it.key,title:it.title,url:it.url},meta:{title:it.title,description:it.description||'',url:it.url||''},label:it.key+' · '+it.title}); closePop(); toast('Tarefa armada: '+it.key); };
+              p.appendChild(b);
+            });
+          }
+        }
+      }
       const mine=wfSessionRuns();
       if(mine.length>1){
         p.appendChild(ph('Tarefas desta sessão'));
@@ -5211,6 +5310,7 @@
     }
     function buildWfStepPop(p){
       buildWfTaskSection(p);
+      if(wfConnManage) return;          // no modo gerenciar, o popup é só o cofre
       p.appendChild(ph('Passo do fluxo'));
       const defs=wfDefs||[];
       if(!defs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='Nenhum fluxo salvo.'; p.appendChild(d); return; }

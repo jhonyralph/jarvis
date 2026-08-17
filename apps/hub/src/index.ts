@@ -12,7 +12,7 @@
  *   JARVIS_AGENT_PERMISSION_MODE  full-access | provider-default
  */
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, formatParallelRunsLine, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -64,6 +64,11 @@ const CWD = process.env.JARVIS_CWD || process.cwd();
 const PERM_TOKEN = randomBytes(24).toString("hex");
 process.env.JARVIS_PERM_TOKEN = PERM_TOKEN;
 process.env.JARVIS_PERM_URL = `http://127.0.0.1:${PORT}/internal/perm`;
+// Ponte de TAREFAS (C3): mesmo desenho da de permissão — token por processo + endpoint interno em
+// loopback. É por aqui que jarvis_task_search/get/create de QUALQUER IA chega ao cofre de conexões.
+const TASK_BRIDGE_TOKEN = randomBytes(24).toString("hex");
+process.env.JARVIS_TASK_TOKEN = TASK_BRIDGE_TOKEN;
+process.env.JARVIS_TASK_URL = `http://127.0.0.1:${PORT}/internal/task`;
 // A user must answer within this window; past it the request fails closed (deny) so a turn can never
 // hang forever waiting on an absent human.
 const PERM_TIMEOUT_MS = 5 * 60 * 1000;
@@ -262,7 +267,9 @@ function adaptivePolicyPayload(sessionId?: string, saved = false): unknown {
   const effective = effectivePolicyFor(sessionId);
   return { t: "adaptive_policy", doc: adaptivePolicyDoc, effective: { ...effective, explanation: explainAdaptivePolicy(effective) }, sessionId, saved };
 }
-interface PendingAdaptiveApproval { approval: AdaptiveApprovalRequest; routineId: string; }
+/** `routineId` roda uma rotina ao aprovar; `resolve` generaliza para qualquer operação que espera o
+ *  dono (ex.: escrita em provedor de tarefas) — exatamente UM dos dois está presente. */
+interface PendingAdaptiveApproval { approval: AdaptiveApprovalRequest; routineId?: string; resolve?: (approved: boolean) => void; }
 const pendingAdaptiveApprovals = new Map<string, PendingAdaptiveApproval>();
 function adaptiveApprovalList(): AdaptiveApprovalRequest[] {
   const now = Date.now();
@@ -296,10 +303,11 @@ function completeAdaptiveApproval(id: string, action: "approve" | "reject", audi
   if (!pending) return undefined;
   pendingAdaptiveApprovals.delete(id);
   if (action === "approve") {
-    const routine = routines.get(pending.routineId);
-    if (routine) void runRoutine(routine, true);
+    if (pending.resolve) pending.resolve(true);
+    else if (pending.routineId) { const routine = routines.get(pending.routineId); if (routine) void runRoutine(routine, true); }
     auth.audit("adaptive_approval", { ...audit, detail: `${pending.approval.id}: approved` });
   } else {
+    pending.resolve?.(false);
     notifyEvent("machine", "Aprovação recusada", pending.approval.title, pending.approval.sessionId);
     auth.audit("adaptive_approval", { ...audit, detail: `${pending.approval.id}: rejected` });
   }
@@ -340,6 +348,37 @@ const workflowRuns = new WorkflowRunStore({ dir: join(JARVIS_DIR, "hub") });
 // título/descrição/link/resumo por tarefa — a UI mostra a tarefa sem depender de rede.
 const projectTasks = new ProjectTaskBindingStore({ dir: join(JARVIS_DIR, "hub") });
 const taskMeta = new TaskMetaStore({ dir: join(JARVIS_DIR, "hub") });
+// Cofre de conexões (C1): contas por provedor com identidade VERIFICADA; segredo só por secretRef.
+const taskConnections = new TaskConnectionStore({ dir: join(JARVIS_DIR, "hub") });
+/** Conexões para a UI: presença do segredo no ambiente (booleano) — NUNCA o valor. */
+function taskConnectionsFrame(): Record<string, unknown> {
+  return {
+    t: "task_connections",
+    connections: taskConnections.list().map((c) => ({ ...c, envOk: !!process.env[c.secretRef] && (!c.secretRef2 || !!process.env[c.secretRef2]) })),
+    providers: TASK_PROVIDERS,
+  };
+}
+/** Remote do repositório do projeto (best-effort, 1.5s): alimenta o aviso remote×conexão. */
+function gitRemoteUrl(cwd: string): Promise<string | undefined> {
+  return new Promise((done) => {
+    try { execFile("git", ["-C", cwd, "remote", "get-url", "origin"], { timeout: 1_500, windowsHide: true }, (err, stdout) => done(err ? undefined : String(stdout || "").trim() || undefined)); }
+    catch { done(undefined); }
+  });
+}
+/** Timeout duro para chamadas de provedor: uma API pendurada não pode prender um handler do Hub. */
+function providerSignal(ms = 10_000): { signal: AbortSignal; finish: () => void } {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  (timer as { unref?: () => void }).unref?.();
+  return { signal: ctrl.signal, finish: () => clearTimeout(timer) };
+}
+/** Resolução da regra de ouro para UMA sessão: cwd → vínculo → conexão (nunca conta padrão). */
+function resolveSessionTaskConnection(sessionId: string, requireVerified: boolean) {
+  const cwd = store.get(sessionId)?.cwd || CWD;
+  const binding = projectTasks.get(cwd);
+  const resolved = resolveTaskConnection({ binding: binding || null, store: taskConnections, env: process.env, requireVerified });
+  return { cwd, binding, resolved };
+}
 const compactedExecutions = localExecutionStore.compactBefore(Date.now() - executionCfg.retentionDays * 86_400_000);
 if (compactedExecutions.roots) console.log(`[hub] retenção de trabalhos: ${compactedExecutions.roots} diário(s) compactado(s), ${compactedExecutions.droppedEvents} evento(s) detalhado(s) removido(s)`);
 for (const snapshot of localExecutionStore.rootsForSession()) for (const node of snapshot.nodes) {
@@ -545,6 +584,88 @@ const server = createServer((req, res) => {
     let online = 0; for (const r of runners.values()) if (r.ws) online++;
     res.writeHead(200, { ...secHeaders(), "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify({ ok: true, version: VERSION, build: hubBuild || undefined, commit: hubCommit || undefined, uptime: Math.round(process.uptime()), runners: online }));
+    return;
+  }
+  // Ponte de tarefas (C3) — jarvis_task_* de qualquer IA cai aqui: o Hub resolve sessão → projeto →
+  // conexão do COFRE e executa com a conta certa. A IA nunca vê credencial nem escolhe conta.
+  // `create` segura a resposta até a aprovação do dono (ou autoApprove do projeto, sem divergência).
+  if (urlPath === "/internal/task" && req.method === "POST") {
+    const ra = req.socket.remoteAddress || "";
+    const isLocal = ra === "127.0.0.1" || ra === "::1" || ra === "::ffff:127.0.0.1";
+    const bearerOk = String(req.headers["authorization"] || "") === "Bearer " + TASK_BRIDGE_TOKEN;
+    let body = ""; let tooBig = false;
+    req.on("data", (chunk) => { body += chunk; if (body.length > 128 * 1024) { tooBig = true; req.destroy(); } });
+    req.on("error", () => { try { res.writeHead(400, secHeaders()).end(); } catch { /* ignore */ } });
+    req.on("end", () => {
+      void (async () => {
+        if (tooBig) { try { res.writeHead(413, secHeaders()).end(); } catch { /* ignore */ } return; }
+        let d: any; try { d = JSON.parse(body); } catch { res.writeHead(400, secHeaders()).end(); return; }
+        if (!isLocal || !bearerOk) { res.writeHead(401, secHeaders()).end(); return; }
+        const reply = (payload: unknown): void => {
+          try { res.writeHead(200, { ...secHeaders(), "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify(payload)); }
+          catch { /* a ponte já se foi; nada a fazer */ }
+        };
+        const sessionId = typeof d?.sessionId === "string" ? d.sessionId : "";
+        const op = String(d?.op || "");
+        const args = (d?.args && typeof d.args === "object" ? d.args : {}) as Record<string, unknown>;
+        try {
+          if (op === "search" || op === "get") {
+            const { resolved } = resolveSessionTaskConnection(sessionId, false);
+            if ("refusal" in resolved) { reply({ ok: false, code: resolved.refusal.code, error: resolved.refusal.message }); return; }
+            const t = providerSignal();
+            try {
+              if (op === "search") {
+                const results = await searchProviderTasks(resolved.connection.provider, String(args.query || ""), { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
+                reply({ ok: true, connection: resolved.connection.label, results: results.slice(0, 10) });
+              } else {
+                const item = await getProviderTask(resolved.connection.provider, String(args.key || ""), { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
+                if (item) taskMeta.merge(item.tracker, item.key, { title: item.title, description: item.description, url: item.url });
+                reply(item ? { ok: true, connection: resolved.connection.label, task: item } : { ok: false, error: "tarefa não encontrada" });
+              }
+            } finally { t.finish(); }
+            return;
+          }
+          if (op === "create") {
+            const { cwd, binding, resolved } = resolveSessionTaskConnection(sessionId, true);
+            if ("refusal" in resolved) { reply({ ok: false, code: resolved.refusal.code, error: resolved.refusal.message }); return; }
+            const target = String(binding?.target || "");
+            const title = String(args.title || "").trim().slice(0, 300);
+            const description = typeof args.description === "string" ? args.description.slice(0, 4000) : undefined;
+            if (!target) { reply({ ok: false, code: "NO_TARGET", error: "o vínculo do projeto não define o destino da escrita (repo/projeto/time)" }); return; }
+            if (!title) { reply({ ok: false, error: "a tarefa precisa de título" }); return; }
+            const warning = remoteMismatchWarning(await gitRemoteUrl(cwd), resolved.connection);
+            const who = resolved.connection.identity?.login || resolved.connection.label;
+            const preview = `Criar "${title}" em ${resolved.connection.label} · ${target} como ${who}${warning ? ` — ⚠ ${warning}` : ""}`;
+            const execute = async (): Promise<void> => {
+              const pt = providerSignal(15_000);
+              try {
+                const created = await createProviderTask(resolved.connection.provider, target, { title, description }, { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: pt.signal });
+                taskMeta.merge(resolved.connection.provider, created.key, { title, description, url: created.url });
+                auth.audit("task_write", { runnerId: LOCAL_ID, detail: `create(ia) ${resolved.connection.id} → ${created.key}` });
+                broadcastOn(LOCAL_ID, sessionId, { t: "notice", message: `Tarefa criada pela IA: ${created.key}${created.url ? ` — ${created.url}` : ""} (${resolved.connection.label})` });
+                reply({ ok: true, key: created.key, url: created.url, connection: resolved.connection.label });
+              } catch (e: any) { reply({ ok: false, error: String(e?.message ?? e) }); }
+              finally { pt.finish(); }
+            };
+            // Divergência remote×conexão NUNCA é auto-aprovável — é o acidente da conta errada.
+            if (binding?.autoApprove?.includes("create") && !warning) { await execute(); return; }
+            const resolvedPolicy = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd, sessionId });
+            const approval = createAdaptiveApprovalRequest({
+              id: `task:create:${Date.now()}:${randomUUID().slice(0, 8)}`, action: "task_write",
+              title: `🧭 ${preview}`, reason: description ? description.slice(0, 200) : "pedida pela IA da sessão",
+              policy: resolvedPolicy.policy, sessionId, ttlMs: 30 * 60 * 1000,
+            });
+            const expire = setTimeout(() => { if (pendingAdaptiveApprovals.delete(approval.id)) { broadcastAdaptiveApprovals(); reply({ ok: false, error: "aprovação expirou sem decisão" }); } }, 30 * 60 * 1000);
+            (expire as { unref?: () => void }).unref?.();
+            pendingAdaptiveApprovals.set(approval.id, { approval, resolve: (approved) => { clearTimeout(expire); if (approved) void execute(); else reply({ ok: false, error: "criação recusada pelo dono" }); } });
+            broadcastAdaptiveApprovals();
+            notifyEvent("machine", "Tarefa aguardando aprovação", preview, sessionId);
+            return;
+          }
+          reply({ ok: false, error: `operação desconhecida: ${op}` });
+        } catch (e: any) { reply({ ok: false, error: String(e?.message ?? e) }); }
+      })();
+    });
     return;
   }
   // Manual permission mode (Fase 3) — the Claude adapter's stdio MCP approval bridge calls here for
@@ -6152,7 +6273,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!requireOwner(ws)) return;
       try {
         const cwd = store.get(msg.sessionId)?.cwd || CWD;
-        const binding = projectTasks.set(cwd, { tracker: msg.tracker, featuresDir: typeof msg.featuresDir === "string" ? msg.featuresDir : undefined });
+        const binding = projectTasks.set(cwd, {
+          tracker: msg.tracker,
+          featuresDir: typeof msg.featuresDir === "string" ? msg.featuresDir : undefined,
+          connectionId: typeof msg.connectionId === "string" ? msg.connectionId : undefined,
+          allowed: Array.isArray(msg.allowed) ? msg.allowed.map(String) : undefined,
+          target: typeof msg.target === "string" ? msg.target : undefined,
+          autoApprove: Array.isArray(msg.autoApprove) ? msg.autoApprove.map(String) : undefined,
+        });
+        auth.audit("task_binding", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${cwd}: ${binding.tracker || "nenhuma"}${binding.connectionId ? ` · ${binding.connectionId}` : ""}` });
         send(ws, { t: "task_binding", sessionId: msg.sessionId, cwd, binding });
       } catch (e: any) { send(ws, { t: "error", message: "Vínculo de tarefas: " + String(e?.message ?? e) }); }
       return;
@@ -6199,6 +6328,127 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const saved = taskMeta.merge(msg.tracker, msg.key, { summary });
         send(ws, { t: "task_meta", tracker: msg.tracker, key: msg.key, meta: saved || null });
       } catch (e: any) { send(ws, { t: "error", message: "Resumir: " + String(e?.message ?? e) }); }
+      return;
+    }
+    // ── Cofre de conexões (C1) e operações de provedor (C4) ──────────────────────────────────────
+    if (msg.t === "task_connections") {
+      if (!requireOwner(ws)) return;
+      send(ws, taskConnectionsFrame());
+      return;
+    }
+    if (msg.t === "task_connection_save" && msg.connection && typeof msg.connection === "object") {
+      if (!requireOwner(ws)) return;
+      try {
+        const c = msg.connection as Record<string, unknown>;
+        const saved = taskConnections.save({
+          id: typeof c.id === "string" ? c.id : undefined,
+          provider: String(c.provider || ""), label: String(c.label || ""),
+          config: (c.config && typeof c.config === "object" ? c.config : {}) as Record<string, string>,
+          secretRef: String(c.secretRef || ""), secretRef2: typeof c.secretRef2 === "string" ? c.secretRef2 : undefined,
+        });
+        auth.audit("task_connection", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `save ${saved.id}` });
+        send(ws, taskConnectionsFrame());
+      } catch (e: any) { send(ws, { t: "error", message: "Conexão: " + String(e?.message ?? e) }); }
+      return;
+    }
+    if (msg.t === "task_connection_delete" && typeof msg.id === "string") {
+      if (!requireOwner(ws)) return;
+      if (taskConnections.remove(msg.id)) auth.audit("task_connection", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `delete ${msg.id}` });
+      send(ws, taskConnectionsFrame());
+      return;
+    }
+    // Verificar = perguntar ao provedor QUEM é esta credencial e gravar a resposta (ou a falha).
+    if (msg.t === "task_connection_verify" && typeof msg.id === "string") {
+      if (!requireOwner(ws)) return;
+      const conn = taskConnections.get(msg.id);
+      if (!conn) { send(ws, { t: "error", message: "Conexão não encontrada" }); return; }
+      const secret = process.env[conn.secretRef], secret2 = conn.secretRef2 ? process.env[conn.secretRef2] : undefined;
+      if (!secret || (conn.secretRef2 && !secret2)) {
+        taskConnections.recordVerification(conn.id, { error: `env var ${!secret ? conn.secretRef : conn.secretRef2} ausente no ambiente do Hub` });
+        send(ws, taskConnectionsFrame());
+        return;
+      }
+      const t = providerSignal();
+      try {
+        const identity = await fetchProviderIdentity(conn.provider, { config: conn.config, secret, secret2, signal: t.signal });
+        taskConnections.recordVerification(conn.id, { identity });
+        auth.audit("task_connection", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `verify ${conn.id}: ${identity.login}` });
+      } catch (e: any) {
+        taskConnections.recordVerification(conn.id, { error: String(e?.message ?? e) });
+      } finally { t.finish(); }
+      send(ws, taskConnectionsFrame());
+      return;
+    }
+    // Busca no provedor do PROJETO (regra de ouro: sem vínculo → recusa acionável, nunca conta padrão).
+    if (msg.t === "task_search" && typeof msg.sessionId === "string" && typeof msg.query === "string") {
+      if (!requireOwner(ws)) return;
+      const { resolved } = resolveSessionTaskConnection(msg.sessionId, false);
+      if ("refusal" in resolved) { send(ws, { t: "task_search_results", sessionId: msg.sessionId, results: [], error: resolved.refusal.message, code: resolved.refusal.code }); return; }
+      const t = providerSignal();
+      try {
+        const results = await searchProviderTasks(resolved.connection.provider, msg.query, { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
+        send(ws, { t: "task_search_results", sessionId: msg.sessionId, results: results.slice(0, 10), connection: { id: resolved.connection.id, label: resolved.connection.label, identity: resolved.connection.identity || null } });
+      } catch (e: any) { send(ws, { t: "task_search_results", sessionId: msg.sessionId, results: [], error: String(e?.message ?? e) }); }
+      finally { t.finish(); }
+      return;
+    }
+    // Carrega/atualiza UMA tarefa do provedor para o cache (alimenta a faixa e o Resumir).
+    if (msg.t === "task_load" && typeof msg.sessionId === "string" && typeof msg.key === "string") {
+      if (!requireOwner(ws)) return;
+      const { resolved } = resolveSessionTaskConnection(msg.sessionId, false);
+      if ("refusal" in resolved) { send(ws, { t: "error", message: "Tarefa: " + resolved.refusal.message }); return; }
+      const t = providerSignal();
+      try {
+        const item = await getProviderTask(resolved.connection.provider, msg.key, { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
+        if (!item) { send(ws, { t: "error", message: `Tarefa ${msg.key} não encontrada em ${resolved.connection.label}` }); return; }
+        const saved = taskMeta.merge(item.tracker, item.key, { title: item.title, description: item.description, url: item.url });
+        send(ws, { t: "task_meta", tracker: item.tracker, key: item.key, meta: saved || null });
+      } catch (e: any) { send(ws, { t: "error", message: "Tarefa: " + String(e?.message ?? e) }); }
+      finally { t.finish(); }
+      return;
+    }
+    // Escrita (C4): criar tarefa SEMPRE com identidade verificada + preview nominal. Aprovação pelo
+    // painel adaptativo, a menos que o projeto tenha liberado a ação explicitamente (autoApprove).
+    if (msg.t === "task_create" && typeof msg.sessionId === "string" && typeof msg.title === "string") {
+      if (!requireOwner(ws)) return;
+      const sessionId = msg.sessionId;
+      const { cwd, binding, resolved } = resolveSessionTaskConnection(sessionId, true);
+      if ("refusal" in resolved) { send(ws, { t: "task_create_result", sessionId, ok: false, error: resolved.refusal.message, code: resolved.refusal.code }); return; }
+      const target = String(binding?.target || "");
+      if (!target) { send(ws, { t: "task_create_result", sessionId, ok: false, error: "o vínculo do projeto não define o DESTINO da escrita (repo/projeto/time) — configure antes de criar", code: "NO_TARGET" }); return; }
+      const title = String(msg.title).trim().slice(0, 300);
+      const description = typeof msg.description === "string" ? msg.description.slice(0, 4000) : undefined;
+      if (!title) { send(ws, { t: "task_create_result", sessionId, ok: false, error: "a tarefa precisa de título" }); return; }
+      const warning = remoteMismatchWarning(await gitRemoteUrl(cwd), resolved.connection);
+      const who = resolved.connection.identity?.login || resolved.connection.label;
+      const preview = `Criar "${title}" em ${resolved.connection.label} · ${target} como ${who}${warning ? ` — ⚠ ${warning}` : ""}`;
+      const execute = async (): Promise<void> => {
+        const t = providerSignal(15_000);
+        try {
+          const created = await createProviderTask(resolved.connection.provider, target, { title, description }, { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
+          taskMeta.merge(resolved.connection.provider, created.key, { title, description, url: created.url });
+          auth.audit("task_write", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `create ${resolved.connection.id} → ${created.key}` });
+          broadcastOn(LOCAL_ID, sessionId, { t: "notice", message: `Tarefa criada: ${created.key}${created.url ? ` — ${created.url}` : ""} (${resolved.connection.label})` });
+          send(ws, { t: "task_create_result", sessionId, ok: true, key: created.key, url: created.url });
+        } catch (e: any) {
+          send(ws, { t: "task_create_result", sessionId, ok: false, error: String(e?.message ?? e) });
+        } finally { t.finish(); }
+      };
+      // ⚠ de divergência remote×conexão NUNCA é auto-aprovável: é exatamente o acidente da conta errada.
+      if (binding?.autoApprove?.includes("create") && !warning) { await execute(); return; }
+      const resolvedPolicy = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd, sessionId });
+      const approval = createAdaptiveApprovalRequest({
+        id: `task:create:${Date.now()}`,
+        action: "task_write",
+        title: `🧭 ${preview}`,
+        reason: description ? description.slice(0, 200) : "sem descrição",
+        policy: resolvedPolicy.policy,
+        sessionId,
+        ttlMs: 30 * 60 * 1000,
+      });
+      pendingAdaptiveApprovals.set(approval.id, { approval, resolve: (approved) => { if (approved) void execute(); else send(ws, { t: "task_create_result", sessionId, ok: false, error: "criação recusada pelo dono" }); } });
+      broadcastAdaptiveApprovals();
+      send(ws, { t: "task_create_pending", sessionId, approvalId: approval.id, preview });
       return;
     }
     // The current "update available" alerts raised by the daily drift job (the client asks on panel open).

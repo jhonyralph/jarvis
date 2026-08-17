@@ -89,7 +89,8 @@ export interface AdaptiveRunDecision {
 
 export type AdaptiveManagedUnknownEstimatePolicy = "allow" | "reject";
 export type AdaptiveControlState = "allow" | "ask" | "reject";
-export type AdaptiveApprovalAction = "routine_background" | "risk" | "budget";
+/** `task_write` (C4): escrita em provedor de tarefas (criar/comentar) aguardando o dono aprovar. */
+export type AdaptiveApprovalAction = "routine_background" | "risk" | "budget" | "task_write";
 export type AdaptiveApprovalStatus = "pending" | "approved" | "rejected";
 
 export interface AdaptiveControlStatus {
