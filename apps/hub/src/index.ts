@@ -4020,32 +4020,35 @@ function reconcileNativeExecutions(sid: string): number {
   return changed;
 }
 /** Arquivos de instrução NATIVOS que a IA em questão já carrega sozinha nesta máquina. É o que
- *  permite não repetir: o Claude Code lê `~/.claude/CLAUDE.md` em todo turno por conta própria. */
-function nativeInstructionContents(agentName: string): string[] {
-  const n = String(agentName || "").toLowerCase();
+ *  permite não repetir: o Claude Code lê `~/.claude/CLAUDE.md` em todo turno por conta própria.
+ *
+ *  São TODOS os arquivos da máquina, não só o da IA da vez. O `instructions.md` costuma ser um
+ *  snapshot desses mesmos arquivos ("importar desta máquina" o semeia assim), então qualquer bloco
+ *  idêntico a um deles já é a linha de base local — reinjetá-lo só gasta contexto. Era o que fazia o
+ *  AGENTS.md do Codex (espelho declarado do CLAUDE.md) vazar para dentro do Claude. Em OUTRA máquina,
+ *  que não tem esses arquivos, nada casa e o conteúdo vai inteiro — que é o ponto. */
+function nativeInstructionContents(): string[] {
   const home = homedir();
-  const candidatos = n.includes("claude") ? [join(home, ".claude", "CLAUDE.md")]
-    : n.includes("gemini") ? [join(home, ".gemini", "GEMINI.md")]
-    : n.includes("codex") ? [join(home, ".codex", "AGENTS.md")]
-    : [];
   const out: string[] = [];
-  for (const p of candidatos) { try { const c = readFileSync(p, "utf8").trim(); if (c) out.push(c); } catch { /* ausente */ } }
+  for (const p of [join(home, ".claude", "CLAUDE.md"), join(home, ".codex", "AGENTS.md"), join(home, ".gemini", "GEMINI.md")]) {
+    try { const c = readFileSync(p, "utf8").trim(); if (c) out.push(c); } catch { /* ausente */ }
+  }
   return out;
 }
 
 /**
- * O trecho do `instructions.md` do framework que ESTA IA ainda não vê — pronto para entrar no turno.
+ * O trecho do `instructions.md` do framework que esta MÁQUINA ainda não declara — pronto para o turno.
  *
  * Fecha o buraco de o arquivo ser publicado para a frota e aplicado em lugar nenhum. Descontar o
  * nativo não é otimização: o arquivo nasce da concatenação dos próprios CLAUDE.md/AGENTS.md da
  * máquina, então injetá-lo inteiro mandaria o mesmo texto duas vezes no mesmo prompt.
  */
-function frameworkInstructionsFor(agentName: string): string {
+function frameworkInstructionsFor(): string {
   if (!frameworkCfg.applyInstructions) return "";
   let bruto = "";
   try { bruto = readFileSync(join(frameworkRoot(), "instructions.md"), "utf8"); } catch { return ""; }
   if (!bruto.trim()) return "";
-  const pendente = pendingInstructions(bruto, nativeInstructionContents(agentName));
+  const pendente = pendingInstructions(bruto, nativeInstructionContents());
   return buildInstructionsSteering(pendente);
 }
 
@@ -4099,7 +4102,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     // As instruções universais do framework. Vão DEPOIS do fluxo no código e ANTES dele no prompt:
     // regra geral primeiro, o passo do momento por último (mais perto do pedido, que é onde pesa).
     try {
-      const universais = frameworkInstructionsFor(agent.name);
+      const universais = frameworkInstructionsFor();
       if (universais) agentText = `${universais}
 
 ---

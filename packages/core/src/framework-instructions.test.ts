@@ -41,6 +41,17 @@ test("tudo já é nativo → não injeta NADA (nem a moldura de cabeçalhos)", (
   assert.equal(pendingInstructions("   \n\n  "), "");
 });
 
+test("descontar TODOS os arquivos da máquina zera a injeção na máquina de origem", () => {
+  // O instructions.md costuma ser um snapshot dos proprios arquivos nativos ("importar desta
+  // maquina" o semeia assim). Descontando so o da IA da vez, o AGENTS.md do Codex — espelho
+  // declarado do CLAUDE.md — vazava para dentro do Claude, ~1.7k tokens em TODO turno.
+  assert.equal(pendingInstructions(FRAMEWORK, [CLAUDE_NATIVO, AGENTS_NATIVO]), "",
+    "na máquina que gerou o arquivo, nada de novo resta para dizer");
+  // Já em outra máquina, que não tem esses arquivos, o conteúdo vai inteiro — é o ponto de existir.
+  const outra = pendingInstructions(FRAMEWORK, []);
+  assert.ok(outra.includes("Responda em português") && outra.includes("Evidência antes de concluir"));
+});
+
 test("trecho nativo curto demais não é usado para casar (evita corte por coincidência)", () => {
   const fw = "Regra importante que deve continuar valendo no turno inteiro.";
   assert.equal(pendingInstructions(fw, ["ok"]), fw, "um 'ok' solto não pode recortar o texto");
