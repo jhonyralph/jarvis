@@ -1,3 +1,25 @@
+# [0.24.0](https://github.com/jhonyralph/jarvis/compare/v0.23.1...v0.24.0) (2026-08-17)
+
+
+### Bug Fixes
+
+* **fila:** fechar job concluido, TTL que nunca expirava e motivo visivel do encalhe ([9e23707](https://github.com/jhonyralph/jarvis/commit/9e237073a52eb3967a4c674d1c63571f844874bd))
+* **framework:** descontar as instrucoes que a MAQUINA ja declara, nao so a IA da vez ([8c12dda](https://github.com/jhonyralph/jarvis/commit/8c12dda545b18c8743c9fafda1fdc65c31313224))
+* **solucoes:** nao chamar o juiz do debate depois do cancelamento ([c6d439e](https://github.com/jhonyralph/jarvis/commit/c6d439e464c240af45be957aee15aca91e56efa5))
+
+
+### Features
+
+* **conexoes:** cofre multi-conta com regra de ouro e ponte MCP por sessao ([86cf0a4](https://github.com/jhonyralph/jarvis/commit/86cf0a4a620f6c9d9eb7ce8e11343cf910fdf401))
+* **fluxo:** tarefa de verdade no acompanhamento e multi-tarefa com foco por sessao ([800d903](https://github.com/jhonyralph/jarvis/commit/800d903bcba011fcbe4f4352d7c21232f3858af7))
+* **framework:** aplicar instructions.md no turno, descontando o que a IA ja le ([cb62c71](https://github.com/jhonyralph/jarvis/commit/cb62c71534b0f32c997189d6be5a01230ff3241b))
+* **framework:** importar de pasta, limpar tudo e fluxo padrao que inicia sozinho ([159cf4d](https://github.com/jhonyralph/jarvis/commit/159cf4d902339bab5e7b721d2361584503eb121f))
+* **framework:** padrao de pacote, identidade por metadado e relatorio de conformidade ([c96e73f](https://github.com/jhonyralph/jarvis/commit/c96e73f2a4742c3a8640e81f700f5257880decc0))
+* **framework:** projecao declarada e promocao de .md solto a skill ([bd0f06b](https://github.com/jhonyralph/jarvis/commit/bd0f06bede865f3754cb1e2d8b3d132ec8c84e5e))
+* **solucoes:** agrupar o debate em um trabalho principal com as rodadas como etapas ([5ce0081](https://github.com/jhonyralph/jarvis/commit/5ce00811cc47a3987d305539bd06d83b4d13f5ee))
+* **solucoes:** armar rodada pelo composer e remover o campo de criterios ([6b72f77](https://github.com/jhonyralph/jarvis/commit/6b72f7707d98de7a66e43716bccdd8f5f62cbec1))
+* **solucoes:** esconder IA/modelo/esforco com rodada armada e isolar o Conselho ([651b39d](https://github.com/jhonyralph/jarvis/commit/651b39ddab49599cd282455594d0c9e84acd33a6)), closes [councilBtn/#tourneyBtn](https://github.com/jhonyralph/jarvis/issues/tourneyBtn)
+
 ## [0.23.1](https://github.com/jhonyralph/jarvis/compare/v0.23.0...v0.23.1) (2026-08-12)
 
 
