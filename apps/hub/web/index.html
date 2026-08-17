@@ -2048,6 +2048,8 @@
                   <option value="jarvis">Sempre o universal do Framework</option>
                 </select>
               </label>
+              <label style="font-size:12px;line-height:1.5;display:block;cursor:pointer;margin-top:6px"><input type="checkbox" id="setFwApplyInstr" style="vertical-align:-2px;margin-right:6px">Aplicar as <b>instruções universais</b> (<code>instructions.md</code>) em todo turno</label>
+              <div class="mut" style="font-size:11.5px;margin-top:2px">Injeta só o que a IA <b>não</b> carrega sozinha: o Claude já lê o seu <code>~/.claude/CLAUDE.md</code>, então essa parte não vai duas vezes. Vale para as outras IAs e as outras máquinas.</div>
               <label style="font-size:12px;line-height:1.5;display:block;cursor:pointer;margin-top:6px"><input type="checkbox" id="setFwAutoFlow" style="vertical-align:-2px;margin-right:6px">Iniciar automaticamente o fluxo <b>padrão</b> em cada sessão nova</label>
               <div class="mut" style="font-size:11.5px;margin-top:2px">Vale para o fluxo que se declarou padrão (<code>"autoStart": true</code> no <code>flows/&lt;id&gt;.json</code>). Só entra em sessão que ainda não teve fluxo — abandonar um não faz ele voltar.</div>
               <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">

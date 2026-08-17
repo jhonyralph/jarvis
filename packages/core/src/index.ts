@@ -60,6 +60,7 @@ export * from "./framework-github.js";
 export * from "./framework-sources.js";
 export * from "./queue-block.js";
 export * from "./framework-pack.js";
+export * from "./framework-instructions.js";
 export * from "./framework-dir.js";
 export * from "./framework-conformance.js";
 export * from "./agent-availability.js";

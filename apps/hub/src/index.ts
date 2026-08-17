@@ -36,7 +36,7 @@ import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./s
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
-import { QueueBlockRegistry, readPackDir, packDirLabel, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
+import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
@@ -436,12 +436,12 @@ function saveVoiceCfg(): void { try { writeJsonAtomic(VOICE_CFG_FILE, voiceCfg, 
 // (~/.jarvis/framework) on this Hub machine. `preference` decides how a native-vs-universal "/name"
 // homonym resolves; `version` is the monotonic publish counter carried to every machine.
 const FRAMEWORK_CFG_FILE = join(JARVIS_DIR, "framework-config.json");
-const frameworkCfg: { preference: FrameworkPreference; version: number; autoStartFlows: boolean } = (() => {
+const frameworkCfg: { preference: FrameworkPreference; version: number; autoStartFlows: boolean; applyInstructions: boolean } = (() => {
   // `autoStartFlows` é a chave de desligar do DONO da máquina: o fluxo declara `autoStart` no pacote,
   // mas quem sofre com um pacote de terceiro afobado é quem está na frente do chat. Liga por padrão —
   // um fluxo que se declarou padrão pediu para valer; quem não quiser, desliga em um clique.
-  try { const raw = JSON.parse(readFileSync(FRAMEWORK_CFG_FILE, "utf8")); return { preference: normalizeFrameworkPreference(raw?.preference), version: Math.max(0, Number(raw?.version) || 0), autoStartFlows: raw?.autoStartFlows !== false }; }
-  catch { return { preference: "ask" as FrameworkPreference, version: 0, autoStartFlows: true }; }
+  try { const raw = JSON.parse(readFileSync(FRAMEWORK_CFG_FILE, "utf8")); return { preference: normalizeFrameworkPreference(raw?.preference), version: Math.max(0, Number(raw?.version) || 0), autoStartFlows: raw?.autoStartFlows !== false, applyInstructions: raw?.applyInstructions !== false }; }
+  catch { return { preference: "ask" as FrameworkPreference, version: 0, autoStartFlows: true, applyInstructions: true }; }
 })();
 function saveFrameworkCfg(): void { try { writeJsonAtomic(FRAMEWORK_CFG_FILE, frameworkCfg, { pretty: true }); } catch { /* ignore */ } }
 const frameworkProvenance = new FrameworkProvenanceStore(JARVIS_DIR);
@@ -4019,6 +4019,36 @@ function reconcileNativeExecutions(sid: string): number {
   }
   return changed;
 }
+/** Arquivos de instrução NATIVOS que a IA em questão já carrega sozinha nesta máquina. É o que
+ *  permite não repetir: o Claude Code lê `~/.claude/CLAUDE.md` em todo turno por conta própria. */
+function nativeInstructionContents(agentName: string): string[] {
+  const n = String(agentName || "").toLowerCase();
+  const home = homedir();
+  const candidatos = n.includes("claude") ? [join(home, ".claude", "CLAUDE.md")]
+    : n.includes("gemini") ? [join(home, ".gemini", "GEMINI.md")]
+    : n.includes("codex") ? [join(home, ".codex", "AGENTS.md")]
+    : [];
+  const out: string[] = [];
+  for (const p of candidatos) { try { const c = readFileSync(p, "utf8").trim(); if (c) out.push(c); } catch { /* ausente */ } }
+  return out;
+}
+
+/**
+ * O trecho do `instructions.md` do framework que ESTA IA ainda não vê — pronto para entrar no turno.
+ *
+ * Fecha o buraco de o arquivo ser publicado para a frota e aplicado em lugar nenhum. Descontar o
+ * nativo não é otimização: o arquivo nasce da concatenação dos próprios CLAUDE.md/AGENTS.md da
+ * máquina, então injetá-lo inteiro mandaria o mesmo texto duas vezes no mesmo prompt.
+ */
+function frameworkInstructionsFor(agentName: string): string {
+  if (!frameworkCfg.applyInstructions) return "";
+  let bruto = "";
+  try { bruto = readFileSync(join(frameworkRoot(), "instructions.md"), "utf8"); } catch { return ""; }
+  if (!bruto.trim()) return "";
+  const pendente = pendingInstructions(bruto, nativeInstructionContents(agentName));
+  return buildInstructionsSteering(pendente);
+}
+
 /** O fluxo que se declarou padrão (`autoStart` no `flows/<id>.json`). Se mais de um se declarar, vence
  *  o menor id — determinístico — e o restante é registrado: dois pacotes brigando pelo padrão é
  *  configuração a resolver, não sorteio a esconder. */
@@ -4066,6 +4096,16 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
         agentText = `${buildWorkflowSteering(activeRun)}${parallel ? `\n${parallel}` : ""}\n\n---\n\n${agentText}`;
       }
     } catch { /* nunca impedir o turno por causa do acompanhamento */ }
+    // As instruções universais do framework. Vão DEPOIS do fluxo no código e ANTES dele no prompt:
+    // regra geral primeiro, o passo do momento por último (mais perto do pedido, que é onde pesa).
+    try {
+      const universais = frameworkInstructionsFor(agent.name);
+      if (universais) agentText = `${universais}
+
+---
+
+${agentText}`;
+    } catch { /* instrução é acessório do turno; nunca pode derrubá-lo */ }
   }
   const ctrl = new AbortController();
   localAborts.set(sid, ctrl);
@@ -5956,7 +5996,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "framework_cfg") {
       if (!requireOwner(ws)) return;
       const manifest = currentFrameworkManifest();
-      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, autoStartFlows: frameworkCfg.autoStartFlows, root: frameworkRoot(),
+      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, autoStartFlows: frameworkCfg.autoStartFlows, applyInstructions: frameworkCfg.applyInstructions, root: frameworkRoot(),
         files: manifest.files.map((f) => ({ path: f.path })),
         machines: allowedRunnerIds(ws).map((id) => ({ runnerId: id, label: id === LOCAL_ID ? (runnerLabels[LOCAL_ID] || "esta máquina") : (runnerLabels[id] || runners.get(id)?.info.host || id),
           local: id === LOCAL_ID, online: id === LOCAL_ID || !!runners.get(id)?.ws, protocolVersion: runners.get(id)?.info.protocolVersion || (id === LOCAL_ID ? RUNNER_PROTOCOL_VERSION : 1), queued: !!pendingFrameworkPublish[id] })) });
@@ -5968,8 +6008,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // Só muda quando o cliente mandou o campo: um payload antigo (ou parcial) não pode religar
       // silenciosamente um início automático que o dono desligou de propósito.
       if (typeof msg.autoStartFlows === "boolean") frameworkCfg.autoStartFlows = msg.autoStartFlows;
+      if (typeof msg.applyInstructions === "boolean") frameworkCfg.applyInstructions = msg.applyInstructions;
       saveFrameworkCfg();
-      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, autoStartFlows: frameworkCfg.autoStartFlows, saved: true });
+      send(ws, { t: "framework_cfg", preference: frameworkCfg.preference, version: frameworkCfg.version, autoStartFlows: frameworkCfg.autoStartFlows, applyInstructions: frameworkCfg.applyInstructions, saved: true });
       return;
     }
     if (msg.t === "framework_read") {
