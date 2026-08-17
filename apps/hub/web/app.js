@@ -144,6 +144,9 @@
     const agentIcon = a => ({'claude-code':'🟣',codex:'🟢',gemini:'🔵',cursor:'⚫',copilot:'🟪',opencode:'🟠',cline:'🔴',qwen:'🔷',continue:'🟡',kiro:'🟤',antigravity:'🛸',aider:'🔹',mock:'⚪'})[a]||'🔹';
     let activeRuns=[]; const activeRunsByRunner={}; const unread=new Set(); // painel "rodando agora / precisa de você"
     const askingSids=new Set();  // machine+session keys still being analyzed for optional HITL
+    // Debate vivo por sessão (interjeição) — declarado JUNTO do resto do estado por sessão, e não perto
+    // do card que o desenha, porque `refreshComposer` o consulta e roda antes daquele trecho do arquivo.
+    const debateBySession={};
     // ---- config (persisted; refresh não perde estado) ----
     const cfg = Object.assign({ voice:false, continue:false, continueSec:30, silenceSec:1.8, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec', treeOpen:false, fileLayout:'side' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     // Location is never appended to chat frames. It is collected only after a per-purpose consent
@@ -4460,6 +4463,12 @@
     // Card ÚNICO de progresso do Debate, atualizado em lugar (a IA é one-shot: feedback por IA concluída
     // na rodada, não token-a-token). Fica fixo no rodapé do log e some quando chega `phase:'done'`.
     let debateProgressEl=null, debateProgressId=null;
+    // Enquanto um debate roda, o envio do chat é um RECADO para a próxima rodada (interjeição), não um
+    // turno. Quem decide é o servidor de qualquer forma — `debateBySession` existe para o composer não
+    // mentir: sem bolha otimista, sem "enviando…", e com o placeholder dizendo a verdade.
+    // `canSay:false` = o debate entrou na síntese e não há mais rodada para receber recado.
+    function debateFrameKey(m){ return sessionStateKey(m.sessionId,frameRunner(m)); }
+    function debateLive(sid,runner){ if(!sid)return null; const d=debateBySession[sessionStateKey(sid,runner||sessionRunner())]; return (d&&d.canSay)?d:null; }
     function renderDebateProgress(m){
       if(m.phase==='done'){ if(debateProgressEl){ try{debateProgressEl.remove();}catch(e){} } debateProgressEl=null; debateProgressId=null; return; }
       if(!debateProgressEl || debateProgressId!==m.debateId){ if(debateProgressEl){ try{debateProgressEl.remove();}catch(e){} } debateProgressEl=document.createElement('div'); debateProgressEl.className='msg bot debate-progress'; debateProgressId=m.debateId; }
@@ -4470,7 +4479,13 @@
       // ao vivo no painel Trabalhos. Aponta pro TRABALHO PRINCIPAL do debate (as rodadas são etapas dele),
       // não pra rodada da vez: é o mesmo id do começo ao fim, então o link não muda debaixo do usuário.
       const work = m.rootExecutionId ? `<button type="button" class="dbg-work ghost" data-root="${esc(m.rootExecutionId)}" style="border:0;background:none;cursor:pointer;color:var(--accent,#6ea8fe);font-size:12px;padding:0 4px">↗ ver em Trabalhos</button>` : '';
-      debateProgressEl.innerHTML=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="font-weight:600;flex:1;min-width:0">🗣️ Debate — rodada ${m.round||1}/${m.maxRounds||'?'} <span class="mut" style="font-weight:400">· ${phase}</span></span>${work}</div>`+(ias?`<div style="display:flex;gap:6px;flex-wrap:wrap;font-size:12.5px;opacity:.95">${ias}</div>`:'');
+      // Interjeição: enquanto dá para mandar recado, o card diz isso — a alternativa era o usuário
+      // descobrir sozinho que o chat mudou de destino. Quantos recados entraram nesta rodada é a
+      // prova de que o recado virou prompt, e não um "ok" solto.
+      const recados = m.interjected>0 ? `<span style="color:#f5b544">💬 ${m.interjected} recado${m.interjected===1?'':'s'} nesta rodada</span>` : '';
+      const convite = m.canSay!==false ? `<span class="mut">💬 escreva no chat para orientar a próxima rodada</span>` : '';
+      const rodape = [recados,convite].filter(Boolean).join(' &nbsp;·&nbsp; ');
+      debateProgressEl.innerHTML=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="font-weight:600;flex:1;min-width:0">🗣️ Debate — rodada ${m.round||1}/${m.maxRounds||'?'} <span class="mut" style="font-weight:400">· ${phase}</span></span>${work}</div>`+(ias?`<div style="display:flex;gap:6px;flex-wrap:wrap;font-size:12.5px;opacity:.95">${ias}</div>`:'')+(rodape?`<div style="margin-top:4px;font-size:11.5px">${rodape}</div>`:'');
       E.log.appendChild(debateProgressEl); autoScroll();
     }
     // deep-link: preserves both the conversation and the selected work. Old #<sessionId> links stay valid.
@@ -4577,7 +4592,10 @@
         else if(m.t==='log_cfg'){ renderLog(m); if(m.saved)toast('Logs salvos'); }
         else if(m.t==='notice'){ if(m.message)toast(m.message); if(E.fallbackSettings&&!E.fallbackSettings.classList.contains('hidden'))tx({t:'fallback_cfg'}); }
         else if(m.t==='background_jobs'){ renderBgJobs(m.jobs); }
-        else if(m.t==='workflow_run'){ if(!m.sessionId||m.sessionId===currentSession){ wfRun=m.run||null; renderWfRun(); if(m.reused) toast('Já havia um acompanhamento para essa tarefa — sessão vinculada.'); } }
+        // Só run ATIVO vira acompanhamento na tela. O servidor devolve o run atualizado também ao
+        // concluir/abandonar — aceitá-lo de olhos fechados deixava a faixa mostrando um fluxo morto até
+        // chegar o `workflow_runs` seguinte, que é justamente quem fazia a limpeza por acidente.
+        else if(m.t==='workflow_run'){ if(!m.sessionId||m.sessionId===currentSession){ wfRun=(m.run&&m.run.status==='active')?m.run:null; renderWfRun(); if(m.reused) toast('Já havia um acompanhamento para essa tarefa — sessão vinculada.'); } }
         // Multi-tarefa: a lista atualiza o run em foco pelos DADOS, mas não rouba o foco — quem troca
         // o foco é o frame workflow_run (que o servidor emite ao focar/iniciar).
         else if(m.t==='workflow_runs'){ wfRunsAll=m.runs||[]; if(currentSession){ if(wfRun){ const upd=wfRunsAll.find(r=>r.runId===wfRun.runId); if(upd) wfRun=upd.status==='active'?upd:null; } if(!wfRun){ const mine=wfSessionRuns()[0]; if(mine) wfRun=mine; } renderWfRun(); } }
@@ -4607,8 +4625,22 @@
         else if(m.t==='execution_connection'){ if(m.runnerId)workConnections.set(m.runnerId,m.state);renderWorkConnection();if(workSelected&&(workNodes.get(workSelected)||{}).runnerId===m.runnerId)renderWorkDetail(); }
         else if(m.t==='council_started'){ toast('Conselho em andamento em Trabalhos.'); if(m.rootExecutionId){ workSelected=m.rootExecutionId; tx({t:'executions_list',scope:'all',rootExecutionId:m.rootExecutionId,runnerId:m.runnerId,limit:500}); } }
         else if(m.t==='tournament_started'){ const lbl=m.mode==='review'?'Revisão paralela':m.mode==='audit'?'Auditoria':'Benchmark'; toast(lbl+' em andamento em Trabalhos.'); if(m.rootExecutionId){ workSelected=m.rootExecutionId; tx({t:'executions_list',scope:'all',rootExecutionId:m.rootExecutionId,runnerId:m.runnerId,limit:500}); } }
-        else if(m.t==='debate_started'){ toast('Debate iniciado ('+((m.debaters||[]).length)+' IAs, até '+(m.maxRounds||'?')+' rodadas) — as rodadas aparecem na conversa.'); }
-        else if(m.t==='debate_progress'){ if(currentFrame(m)) renderDebateProgress(m); }
+        else if(m.t==='debate_started'){ debateBySession[debateFrameKey(m)]={debateId:m.debateId,round:1,maxRounds:m.maxRounds,phase:'debating',canSay:true}; refreshComposer();
+          toast('Debate iniciado ('+((m.debaters||[]).length)+' IAs, até '+(m.maxRounds||'?')+' rodadas) — as rodadas aparecem na conversa, e o que você escrever entra na próxima rodada.'); }
+        // O estado do debate é atualizado SEMPRE, mesmo com a sessão em segundo plano: o card é só o
+        // desenho, mas o roteamento do composer depende de saber que ela tem debate vivo ao voltar.
+        else if(m.t==='debate_progress'){
+          const key=debateFrameKey(m);
+          if(m.phase==='done') delete debateBySession[key];
+          else debateBySession[key]={debateId:m.debateId,round:m.round,maxRounds:m.maxRounds,phase:m.phase,canSay:m.canSay!==false};
+          if(currentFrame(m)){ renderDebateProgress(m); refreshComposer(); } }
+        // Recado ao debate: confirmado (some o "enviando…" que um cliente desatualizado tenha marcado)
+        // ou recusado porque o debate fechou entre o envio e a chegada — aí a mensagem NÃO se perde,
+        // vira o turno normal que ela teria sido.
+        else if(m.t==='debate_said'){
+          const key=debateFrameKey(m);
+          if(m.ok){ justSent.delete(key); if(m.msgId) dropOptimisticUser(m.sessionId,frameRunner(m),m.msgId); refreshComposer(); if(currentFrame(m)) toast('💬 '+(m.message||'Recado anotado.')); }
+          else { delete debateBySession[key]; refreshComposer(); if(m.text) sendMsgTo(m.sessionId,m.text); else toast('⚠ '+(m.message||'Recado não entregue.')); } }
         else if(m.t==='execution_control_result'||m.t==='execution_input_result'||m.t==='execution_archive_result'){
           const unsupported=Array.isArray(m.unsupportedIds)?m.unsupportedIds.length:0; toast(m.ok?(unsupported?`⚠ Atualizado parcialmente · ${unsupported} sem suporte`:'✓ Trabalho atualizado'):('⚠ '+(m.error||'Não foi possível atualizar o trabalho.')));
           if(m.executionId)tx({t:'execution_open',executionId:m.executionId,limit:500});
@@ -4664,6 +4696,10 @@
           else if(currentMachine==='local' && !hashSession()) E.newSess.onclick(); } }
         else if(m.t==='history'){
           const historyRunner=m.runnerId||(pendingNewSession&&pendingNewSession.runnerId)||selectedRunner(), historyKey=sessionStateKey(m.sessionId,historyRunner); cacheHist({...m,runnerId:historyRunner});
+          // Verdade nova sobre a sessão: esquece o debate que o cliente achava que estava vivo. Se ele
+          // ainda estiver, o servidor manda o progresso logo depois deste history e o estado renasce —
+          // sem isso, um debate que terminou com a aba fechada deixaria o composer roteando para o nada.
+          delete debateBySession[historyKey];
           if(historyRunner!==selectedRunner()&&historyKey!==openingSession)return;
           if(openingSession&&historyKey!==openingSession)return;
           if(currentSession && (m.sessionId!==currentSession||historyRunner!==currentSessionRunner)) return;
@@ -4993,6 +5029,10 @@
       const anchor=pendingEl||strEl; if(anchor)E.log.insertBefore(el,anchor); else E.log.appendChild(el);
       optimisticList(sid,currentSessionRunner).push({msgId,text:text||'(anexo)',el}); autoScroll();
     }
+    // A bolha otimista foi criada para um TURNO que não vai acontecer (o servidor desviou o texto para
+    // um debate). Some por msgId — casar por texto falharia, já que o servidor republica o recado com
+    // prefixo, e a bolha crua ficaria duplicada na conversa.
+    function dropOptimisticUser(sid,runner,msgId){ const list=optimisticList(sid,runner); const i=list.findIndex(x=>x.msgId===msgId); if(i<0)return; const [hit]=list.splice(i,1); try{ hit.el.remove(); }catch(e){} }
     function consumeOptimisticUser(sid,message){
       const list=optimisticList(sid,currentSessionRunner);
       while(list.length&&!list[0].el.isConnected) list.shift();
@@ -5014,7 +5054,8 @@
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!curBusy);
       E.input.disabled=block; E.sendBtn.disabled=block; if(E.mic)E.mic.disabled=block;
       renderSolutionPill();   // sessão trocou/virou nativa → a pill e a barra do Espaço de Soluções acompanham
-      E.input.placeholder=running?'Turno em andamento — enviar adiciona à fila automática':t('composerPh');
+      E.input.placeholder=running?'Turno em andamento — enviar adiciona à fila automática'
+        :(debateLive(currentSession)?'🗣️ Debate em andamento — o que você escrever entra na próxima rodada':t('composerPh'));
       syncComposerActions(); renderQueue(); updateStopStatus(); maybeReload(); }
     // id de mensagem p/ idempotência: o runner executa um turnId no máximo uma vez (re-entrega do
     // MESMO frame reusa o id e é ignorada). Cada submit gera um id novo (dois envios = dois turnos).
@@ -5085,6 +5126,15 @@
         return;
       }
       const s=wfRun.summary||{}, steps=wfRun.steps||[];
+      // Encolhido COM fluxo ativo: a alça mostra o passo em foco, não um "fluxo" genérico. Esconder a
+      // faixa não pode virar esconder que existe um fluxo entrando em todo turno da IA — some o painel,
+      // fica o rótulo. Quem quer encerrar de verdade usa "Parar de acompanhar".
+      if(wfHideSuggest){
+        const curStep=steps.find(x=>x.id===wfRun.currentStepId);
+        E.wfRun.classList.remove('hidden'); E.wfRun.classList.remove('open');
+        E.wfRun.innerHTML='<div class="wfhdr"><button class="wfact wf-restore" type="button" title="Reabrir a faixa do fluxo">🧭 '+esc(curStep?curStep.title:(wfRun.workflowName||'fluxo'))+'</button></div>';
+        return;
+      }
       // Meta da tarefa (título/link/descrição/resumo) vem do cache do Hub; pede uma única vez.
       if(wfRun.task&&wfRun.task.key&&authUser&&authUser.role==='owner'){ const mk=wfMetaKey(wfRun.task); if(wfTaskMeta[mk]===undefined){ wfTaskMeta[mk]=null; tx({t:'task_meta_get',tracker:wfRun.task.tracker||'',key:wfRun.task.key}); } }
       const wfOthers=wfSessionRuns().filter(r=>r.runId!==wfRun.runId);
@@ -5102,7 +5152,12 @@
         +(falta?' <span style="color:#f5b544" title="passos concluídos que pediam evidência">⚠ '+falta+' sem evidência</span>':'')
         +'</span><span class="row" style="gap:4px;flex:none">'
         +(cur?'<button class="wfact wf-adv" type="button" title="Concluir o passo atual e ir para o próximo">Avançar</button>':'')
-        +'<button class="wfact wf-tog" type="button">'+(wfOpen?'ocultar':'passos')+'</button></span></div>'
+        +'<button class="wfact wf-tog" type="button">'+(wfOpen?'ocultar':'passos')+'</button>'
+        // Dois gestos DIFERENTES, dois botões: encolher (⌄) só esconde a faixa e o fluxo continua no
+        // turno; parar (✕) encerra. Um ✕ que apenas encolhe é a armadilha — quem clica nele quer sair,
+        // e no celular não existe tooltip para explicar que não saiu.
+        +'<button class="wfact wf-dismiss" type="button" title="Encolher a faixa — o fluxo CONTINUA acompanhando e entrando no turno da IA">⌄</button>'
+        +'<button class="wfact wf-stop" type="button" title="Parar de acompanhar este fluxo (pede confirmação)">✕</button></span></div>'
         // Trilha: clicar num ponto FOCA aquela fase (sem marcar nada como pulado) — mesma semântica do
         // seletor do composer. Pular de propósito continua sendo o clique na lista detalhada, que avisa.
         +'<div class="wftrack">'+steps.map((st,i)=>'<button type="button" class="wfph '+st.state+(st.id===wfRun.currentStepId?' cur':'')+(wfStepPending(st)?' evid':'')+'" data-id="'+esc(st.id)+'"'
@@ -5129,7 +5184,14 @@
           +(st.requiresEvidence?('<span class="wfbadge" style="'+((st.evidence||[]).length?'color:#4ade80':'color:#f5b544')+'" title="'+((st.evidence||[]).length?'evidência anexada':'pede evidência')+'">evid'+((st.evidence||[]).length?' ✓':'')+'</span>'):'')
           +'<button class="wfact wf-ev" data-id="'+esc(st.id)+'" type="button" title="Anexar evidência">📎</button>'
           +'<button class="wfact wf-mark" data-id="'+esc(st.id)+'" type="button" title="'+(st.state==='done'?'Desmarcar':'Marcar como feito')+'">'+(st.state==='done'?'↺':'✓')+'</button>'
-          +'</div>').join('')+'</div>';
+          +'</div>').join('')
+        // A porta de saída. Fora da classe `.wfs` de propósito: aquela linha é clicável e significa
+        // "pular para este passo" — um rodapé com o mesmo nome herdaria o clique errado.
+        +'<div class="wffoot" style="display:flex;align-items:center;gap:6px;margin-top:5px;padding-top:6px;border-top:1px solid rgba(127,127,127,.25)">'
+          +'<span class="mut" style="flex:1;min-width:0;font-size:11px">Encerrar este acompanhamento</span>'
+          +'<button class="wfact wf-finish" type="button" title="O fluxo chegou ao fim: registra como concluído e sai do turno da IA">✓ Concluir</button>'
+          +'<button class="wfact wf-stop" type="button" title="Não quero mais este fluxo aqui: sai da faixa e do turno da IA">✕ Parar</button>'
+        +'</div></div>';
       // Fluxo longo (o Forge mostra 14 fases) nasce rolado no começo e esconde justamente onde você está.
       try{ const c=E.wfRun.querySelector('.wfph.cur'); if(c) c.scrollIntoView({block:'nearest',inline:'center'}); }catch(e){}
     }
@@ -5157,7 +5219,9 @@
       if(E.sendBtn) E.sendBtn.title=st?('Enviar → '+st.title):'Enviar';
       // O hint do passo é o que ele espera de você — vale mais como placeholder do que "Fale ou digite…".
       const hint=wfStepHint(st);
-      if(hint && E.input && !busy(currentSession)) E.input.placeholder='🧭 '+st.title+' — '+hint;
+      // Com debate vivo o placeholder pertence ao debate: ele diz para onde a mensagem VAI, e o hint do
+      // passo diz só o que o passo espera. Errar o destino é pior do que perder a dica.
+      if(hint && E.input && !busy(currentSession) && !debateLive(currentSession)) E.input.placeholder='🧭 '+st.title+' — '+hint;
     }
     function wfPickStep(defId,stepId){
       closePop();
@@ -5178,10 +5242,12 @@
       (wfConnections||[]).forEach(c=>{
         const row=document.createElement('div'); row.style.cssText='padding:4px 2px 6px;border-bottom:1px solid rgba(127,127,127,.2);font-size:12px;max-width:300px';
         const who=c.identity?('@'+(c.identity.login||c.identity.id)):'não verificada';
-        row.innerHTML='<b>'+esc(c.label)+'</b> <span class="mut">('+esc(c.provider)+' · '+esc(who)+')</span>'
-          +(c.envOk?'':' <span style="color:#f5b544" title="a env var do segredo não está no ambiente do Hub">⚠ env</span>')
+        const srcBadge=c.secretSource==='cofre'?' <span class="mut" title="o valor está no cofre local do Jarvis">🔒 cofre</span>'
+          :c.secretSource==='ambiente'?' <span class="mut" title="o valor vem do ambiente externo do Hub (vence o cofre)">🌐 ambiente</span>'
+          :' <span style="color:#f5b544" title="nenhum valor: cole o segredo em ⧉">⚠ sem segredo</span>';
+        row.innerHTML='<b>'+esc(c.label)+'</b> <span class="mut">('+esc(c.provider)+' · '+esc(who)+')</span>'+srcBadge
           +(c.lastError?'<div class="mut" style="color:#f87171;font-size:11px">'+esc(String(c.lastError).slice(0,90))+'</div>':'')
-          +'<div class="row" style="gap:4px;margin-top:3px"><button class="wfact wfc-verify" data-id="'+esc(c.id)+'" type="button">Verificar</button><button class="wfact wfc-del" data-id="'+esc(c.id)+'" type="button">Apagar</button></div>';
+          +'<div class="row" style="gap:4px;margin-top:3px"><button class="wfact wfc-secret" data-id="'+esc(c.id)+'" type="button" title="Colar/trocar o segredo desta conexão">⧉ Segredo</button><button class="wfact wfc-verify" data-id="'+esc(c.id)+'" type="button">Verificar</button><button class="wfact wfc-del" data-id="'+esc(c.id)+'" type="button">Apagar</button></div>';
         p.appendChild(row);
       });
       if(!(wfConnections||[]).length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:2px'; d.textContent='Nenhuma conexão no cofre.'; p.appendChild(d); }
@@ -5195,13 +5261,31 @@
         if(label==null||!label.trim()) return;
         const config={};
         for(const f of (spec.fields||[])){ const v=await dialog({title:spec.label+' — '+f.label+(f.required?'':' (opcional)')+':',input:true,okText:'Continuar'}); if(v==null&&f.required) return; if(v&&v.trim()) config[f.key]=v.trim(); }
-        const refs={};
-        for(const s of (spec.secrets||[])){ const v=await dialog({title:spec.label+' — NOME da env var com "'+s.label+'" (o valor fica só no ambiente do Hub):',input:true,placeholder:'EX.: GH_ACME_TOKEN',okText:'Salvar'}); if(v==null||!v.trim()) return; refs[s.key]=v.trim(); }
+        // Segredo: COLA O VALOR aqui e o Jarvis guarda no cofre local (fora de git) e injeta no
+        // ambiente na hora — sem caçar .env. Deixar vazio é o caminho avançado: apontar env var própria.
+        const refs={}, pending=[];
+        const mkName=(suffix)=>('JARVIS_SECRET_'+spec.id+'_'+label+(suffix?'_'+suffix:'')).toUpperCase().replace(/[^A-Z0-9_]+/g,'_').replace(/^_+|_+$/g,'').slice(0,80);
+        for(let i=0;i<(spec.secrets||[]).length;i++){ const s=spec.secrets[i];
+          const v=await dialog({title:spec.label+' — cole o valor de "'+s.label+'" (fica no cofre local do Jarvis; vazio = usar uma env var existente):',input:true,placeholder:'cole o token…',okText:'Continuar'});
+          if(v==null) return;
+          if(v.trim()){ const name=mkName(i?String(i+1):''); refs[s.key]=name; pending.push({name,value:v.trim()}); }
+          else { const ref=await dialog({title:spec.label+' — NOME da env var já existente com "'+s.label+'":',input:true,placeholder:'EX.: GH_ACME_TOKEN',okText:'Salvar'}); if(ref==null||!ref.trim()) return; refs[s.key]=ref.trim(); }
+        }
+        pending.forEach(sec=>tx({t:'secret_set',name:sec.name,value:sec.value}));
         tx({t:'task_connection_save',connection:{provider:spec.id,label:label.trim(),config,secretRef:refs.secretRef,secretRef2:refs.secretRef2}});
         toast('Conexão salva — use "Verificar" para confirmar a identidade.');
       };
       p.appendChild(add);
-      p.addEventListener('click',(e)=>{
+      p.addEventListener('click',async(e)=>{
+        const sec=e.target.closest&&e.target.closest('.wfc-secret');
+        if(sec){
+          const c=(wfConnections||[]).find(x=>x.id===sec.dataset.id); if(!c) return;
+          closePop();
+          const v=await dialog({title:'Cole o segredo de "'+c.label+'" ('+c.secretRef+'). Vai para o cofre local e vale na hora — sem restart:',input:true,placeholder:'cole o token…',okText:'Salvar'});
+          if(v!=null&&v.trim()){ tx({t:'secret_set',name:c.secretRef,value:v.trim()}); toast('Segredo salvo no cofre — verifique a identidade.'); }
+          if(c.secretRef2){ const v2=await dialog({title:'Segundo segredo ('+c.secretRef2+') — vazio mantém o atual:',input:true,okText:'Salvar'}); if(v2!=null&&v2.trim()) tx({t:'secret_set',name:c.secretRef2,value:v2.trim()}); }
+          return;
+        }
         const v=e.target.closest&&e.target.closest('.wfc-verify'); if(v){ tx({t:'task_connection_verify',id:v.dataset.id}); toast('Verificando identidade…'); return; }
         const del=e.target.closest&&e.target.closest('.wfc-del'); if(del){ tx({t:'task_connection_delete',id:del.dataset.id}); return; }
       });
@@ -5316,6 +5400,15 @@
       const defs=wfDefs||[];
       if(!defs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='Nenhum fluxo salvo.'; p.appendChild(d); return; }
       const curId=wfRun&&wfRun.currentStepId, curWf=wfRun&&wfRun.workflowId;
+      // Sair é uma opção do MESMO menu em que se entra. Escolher um passo era um caminho só de ida: o
+      // acompanhamento colava na sessão (e no prompt de todo turno) sem nenhuma porta de saída à vista.
+      if(wfRun){
+        const off=document.createElement('button'); off.type='button'; off.className='opt';
+        off.innerHTML='✖ Parar de acompanhar <span class="r">'+esc(wfRun.workflowName||wfRun.workflowId)+'</span>';
+        off.title='Encerra o acompanhamento: a faixa some e o fluxo deixa de entrar no turno da IA.';
+        off.onclick=()=>{ closePop(); wfStopRun('abandon'); };
+        p.appendChild(off);
+      }
       // TODOS os fluxos salvos, agrupados: dá para escolher "TDD" sem antes ter escolhido o fluxo dele.
       defs.forEach(def=>{
         if(defs.length>1||!curWf) p.appendChild(ph(def.name||def.id));
@@ -5332,6 +5425,24 @@
     }
     if(E.wfStepBtn) E.wfStepBtn.onclick=()=>togglePop(E.wfStepBtn,buildWfStepPop);
     function wfBusyNow(){ return busy(currentSession); }
+    // Encerrar o acompanhamento — a saída que faltava. `finish` = o fluxo chegou ao fim; `abandon` =
+    // não quero este fluxo nesta sessão. O efeito imediato é o mesmo (sai da faixa e para de entrar no
+    // turno da IA); a diferença fica registrada no run. Confirma porque iniciar de novo nasce do zero:
+    // um run encerrado não volta a ser o acompanhamento da sessão.
+    async function wfStopRun(op){
+      if(!wfRun) return;
+      const nome=wfRun.workflowName||wfRun.workflowId;
+      // O run é do FLUXO, não da sessão: encerrar vale para toda sessão vinculada a ele (multi-tarefa).
+      // Prometer "só aqui" seria mentira na única situação em que a diferença importa.
+      const outras=Math.max(0,((wfRun.sessions||[]).length)-1);
+      const alcance=outras?(' Ele está vinculado a mais '+outras+' sessão(ões) — encerra em todas.'):'';
+      const ok=await dialog(op==='finish'
+        ? {title:'Concluir o fluxo “'+nome+'”?\n\nEle sai da faixa e deixa de entrar no turno da IA. Os passos ficam registrados como estão.'+alcance,okText:'Concluir'}
+        : {title:'Parar de acompanhar o fluxo “'+nome+'”?\n\nEle sai da faixa e deixa de entrar no turno da IA. Dá para iniciar de novo depois, mas o acompanhamento nasce do zero.'+alcance,okText:'Parar',danger:true});
+      if(!ok) return;
+      tx({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op});
+      toast(op==='finish'?'Fluxo concluído.':'Fluxo encerrado.');
+    }
     // Início do acompanhamento (F2): escolhe o fluxo salvo e a tarefa — referência AGNÓSTICA
     // (linear, github, jira, o que for; pode até ficar sem rastreador).
     // ATENÇÃO: nada de prompt()/confirm() nativos aqui — no shell desktop (Electron) eles não existem
@@ -5361,6 +5472,8 @@
       if(e.target.closest('.wf-tog')){ wfOpen=!wfOpen; renderWfRun(); return; }
       const foc=e.target.closest('.wf-focus'); if(foc){ tx({t:'workflow_run_focus',runId:foc.dataset.run,sessionId:currentSession}); return; }
       if(e.target.closest('.wf-sum')){ if(wfRun.task&&wfRun.task.key){ tx({t:'task_summarize',tracker:wfRun.task.tracker||'',key:wfRun.task.key}); toast('Resumindo a tarefa…'); } return; }
+      if(e.target.closest('.wf-stop')){ wfStopRun('abandon'); return; }
+      if(e.target.closest('.wf-finish')){ wfStopRun('finish'); return; }
       const upd=(op,extra)=>tx(Object.assign({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op},extra||{}));
       // Ponto da trilha: foca a fase. Não pede confirmação porque não destrói nada — nenhum passo muda
       // de estado, e um clique errado se desfaz com outro clique.
@@ -5476,6 +5589,20 @@
         // no composer e a rodada avisa que foram deixados de fora.
         if(attachments.length) toast('Anexos não entram numa rodada de Soluções — ficaram no composer.');
         startSolutionRound(text); syncComposerActions();
+        return; }
+      // Debate em andamento nesta sessão: o envio é um RECADO para a próxima rodada, não um turno novo.
+      // Vem DEPOIS do Espaço de Soluções (armar uma rodada é um ato explícito e ganha) e ANTES da fila:
+      // recado não espera o turno atual terminar — ele é para o debate, que roda em paralelo.
+      // "!" fica de fora: executa shell, e engolir isso como recado seria perder o comando em silêncio.
+      if(debateLive(currentSession)&&!text.startsWith('!')){ closeTrig();
+        // Só anexo, sem texto: um recado é texto. Melhor recusar dizendo o motivo do que mandar
+        // "(anexo)" como recado e descartar o arquivo sem avisar.
+        if(!text){ toast('Debate em andamento — um recado precisa de texto (anexos não entram numa rodada).'); return; }
+        E.input.value=''; E.input.style.height='auto';
+        if(currentSession){ delete draftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveDrafts(); }
+        if(attachments.length) toast('Anexos não entram num recado ao debate — ficaram no composer.');
+        tx({t:'debate_say',sessionId:currentSession,text});
+        syncComposerActions();
         return; }
       if(text.startsWith('!')) pushBang(text.slice(1).split('\n')[0].trim());   // guarda no histórico do "!"
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; if(currentSession) delete attachmentsBySession[sessionStateKey(currentSession,currentSessionRunner)]; renderAttach();

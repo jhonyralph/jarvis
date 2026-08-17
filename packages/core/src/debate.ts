@@ -13,6 +13,11 @@
 export const DEBATE_DEFAULT_MAX_ROUNDS = 3;
 export const DEBATE_MIN_ROUNDS = 1;
 export const DEBATE_MAX_ROUNDS_CAP = 6;
+/** Teto por recado do usuário. O debate já corta o tema em 20k; um recado é um bilhete, não um tema. */
+export const DEBATE_INTERJECTION_MAX_CHARS = 2000;
+/** Quantos recados cabem num prompt. Acima disso vencem os MAIS RECENTES — e o bloco diz quantos
+ *  ficaram de fora, porque um prompt que engole recado em silêncio é o bug que isto veio corrigir. */
+export const DEBATE_INTERJECTION_MAX_KEPT = 20;
 
 export interface DebateDebater {
   /** id estável do participante nesta corrida (ex.: "p1"). */
@@ -39,13 +44,39 @@ export function clampDebateRounds(value: unknown): number {
 
 const READ_ONLY_RULE = "- Não edite arquivos. Esta tarefa é somente leitura.";
 
+/**
+ * Recados que o USUÁRIO mandou pelo chat enquanto o debate rodava (interjeição).
+ *
+ * Vem de quem organizou o debate, não de um participante: por isso é instrução, e não mais uma
+ * "posição" a rebater — ao contrário do texto dos debatentes, que o juiz trata como dado. Devolve
+ * string vazia quando não houve recado, para o chamador concatenar sem condicional.
+ */
+export function buildDebateInterjectionBlock(messages: string[], scope: "round" | "final" = "round"): string {
+  const recados = messages
+    .map((m) => String(m ?? "").trim())
+    .filter(Boolean)
+    .map((m) => m.slice(0, DEBATE_INTERJECTION_MAX_CHARS));
+  if (!recados.length) return "";
+  const omitidos = Math.max(0, recados.length - DEBATE_INTERJECTION_MAX_KEPT);
+  return [
+    scope === "final"
+      ? "RECADOS DO ORGANIZADOR (o usuário humano) durante o debate — o veredito precisa respondê-los:"
+      : "RECADOS DO ORGANIZADOR (o usuário humano), chegaram desde a rodada anterior:",
+    ...(omitidos ? [`(${omitidos} recado(s) mais antigo(s) omitido(s) por volume — os mais recentes valem)`] : []),
+    ...recados.slice(-DEBATE_INTERJECTION_MAX_KEPT).map((m) => `- ${m}`),
+    "Valem como instrução, acima das posições dos participantes. Se contradisserem a sua posição, ajuste e diga o que mudou; se pedirem algo que ninguém sustentou, diga que não há base em vez de inventar.",
+  ].join("\n");
+}
+
 /** Rodada 1: o MESMO tema vai isolado para cada participante. */
-export function buildDebateOpeningPrompt(topic: string): string {
+export function buildDebateOpeningPrompt(topic: string, interjections: string[] = []): string {
+  const recados = buildDebateInterjectionBlock(interjections);
   return [
     `Debate do Jarvis — tema:\n${topic.trim()}`,
     "",
     "Você é um dos participantes do debate. Nesta primeira rodada trabalhe de forma independente.",
     "Apresente sua melhor posição sobre o tema: raciocínio, evidências e uma recomendação clara.",
+    ...(recados ? ["", recados] : []),
     "Regras:",
     "- Seja concreto; marque incertezas como incerteza.",
     READ_ONLY_RULE,
@@ -59,7 +90,8 @@ function othersBlock(others: DebaterResponse[]): string {
 }
 
 /** Rodadas > 1: cada participante vê a PRÓPRIA resposta anterior e a das OUTRAS e revisa/rebate. */
-export function buildDebateRebuttalPrompt(topic: string, round: number, own: string, others: DebaterResponse[]): string {
+export function buildDebateRebuttalPrompt(topic: string, round: number, own: string, others: DebaterResponse[], interjections: string[] = []): string {
+  const recados = buildDebateInterjectionBlock(interjections);
   return [
     `Debate do Jarvis — tema:\n${topic.trim()}`,
     "",
@@ -73,9 +105,13 @@ export function buildDebateRebuttalPrompt(topic: string, round: number, own: str
     "- Incorpore o que for válido nos outros argumentos e reconheça explicitamente.",
     "- Rebata, com argumento, o que você discorda — não abandone um ponto correto só para concordar.",
     "- Convirja onde fizer sentido; deixe claro onde ainda diverge e por quê.",
+    // Depois da revisão e colado nas regras: é a última coisa que o participante lê antes de responder,
+    // que é onde uma instrução do organizador precisa estar para não ser abafada pelas N posições acima.
+    ...(recados ? [recados] : []),
     "Regras:",
     READ_ONLY_RULE,
     "- Termine com: sua posição atual, o que mudou desde a rodada anterior, e seu nível de concordância com os demais (baixo/médio/alto).",
+    ...(recados ? ["- Diga explicitamente como você atendeu (ou por que não atendeu) cada recado do organizador."] : []),
   ].join("\n");
 }
 
@@ -93,8 +129,11 @@ export function buildDebateJudgePrompt(topic: string, round: number, responses: 
   ].join("\n");
 }
 
-/** Sintetizador final: consolida o veredito ao convergir OU ao atingir o teto de rodadas. */
-export function buildDebateSynthesisPrompt(topic: string, responses: DebaterResponse[], input: { converged: boolean; rounds: number }): string {
+/** Sintetizador final: consolida o veredito ao convergir OU ao atingir o teto de rodadas.
+ *  Recebe TODOS os recados do usuário (não só os da última rodada): um recado que chegou tarde demais
+ *  para virar rodada ainda tem que ser respondido em algum lugar, e o veredito é esse lugar. */
+export function buildDebateSynthesisPrompt(topic: string, responses: DebaterResponse[], input: { converged: boolean; rounds: number; interjections?: string[] }): string {
+  const recados = buildDebateInterjectionBlock(input.interjections || [], "final");
   return [
     "Você sintetiza o resultado final de um debate entre IAs do Jarvis.",
     `Tema:\n${topic.trim()}`,
@@ -103,11 +142,13 @@ export function buildDebateSynthesisPrompt(topic: string, responses: DebaterResp
     "",
     "Posições finais dos participantes:",
     othersBlock(responses),
+    ...(recados ? ["", recados] : []),
     "",
     "Produza o veredito final do debate em Markdown:",
     "- **Consenso**: a posição comum alcançada (ou a melhor decisão possível, se não houve consenso).",
     "- **Convergências**: em que os participantes concordaram.",
     "- **Dissensos remanescentes**: o que ficou em aberto e por quê.",
+    ...(recados ? ["- **Recados do organizador**: responda cada um, dizendo se o debate resolveu, resolveu em parte ou não chegou a tratar."] : []),
     "- **Confiança** e **próximo passo** recomendado.",
   ].join("\n");
 }

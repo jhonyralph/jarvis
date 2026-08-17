@@ -41,6 +41,12 @@ interface ClientHandle {
   updateSolutionCount(): void;
   appendFlowText(container: any, st: any, text: string): void;
   closeFlowText(st: any): void;
+  // Interjeição no debate: para onde o composer manda o texto enquanto um debate roda.
+  submitComposer(text: string): void;
+  debateLive(sid: string, runner?: string): boolean;
+  // Acompanhamento de fluxo: a faixa e a porta de saída.
+  wfCollapse(v: boolean): void;
+  wfRunActive(): boolean;
 }
 
 /** One permissive fake element: every property access the client makes resolves to something inert. */
@@ -139,6 +145,10 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   updateSolutionCount: ()=>updateSolutionCount(),
   appendFlowText: (c,s,t)=>appendFlowText(c,s,t),
   closeFlowText: (s)=>closeFlowText(s),
+  submitComposer: (text)=>{ E.input.value=text; E.composer.onsubmit({preventDefault(){}}); },
+  debateLive: (sid,r)=>!!debateLive(sid,r),
+  wfCollapse: (v)=>{ wfHideSuggest=v; renderWfRun(); },
+  wfRunActive: ()=>!!wfRun,
 };`;
 
   const factory = new Function(
@@ -457,4 +467,147 @@ test("o postfix do pós-resultado entra uma única vez, sem campo de critérios"
   assert.equal(frame.criteria, undefined, "não existe mais campo de critérios no protocolo do cliente");
   const hits = frame.task.match(/plano de execucao/g) || [];
   assert.equal(hits.length, 1, "a instrução de plano aparece uma vez só, na tarefa");
+});
+
+// ---- Acompanhamento de fluxo: entrar não pode ser caminho só de ida ----
+// A dor original: "depois que eu escolho um fluxo não tem opção de ignorar e cancelar depois". O
+// servidor já sabia encerrar (`finish`/`abandon`); a UI não expunha nem um nem outro.
+const wfRunFrame = (over: any = {}) => ({
+  t: "workflow_run", sessionId: "s-wf",
+  run: {
+    runId: "r1", workflowId: "pipeline-sdlc", workflowName: "Pipeline de engenharia (F1–F14)",
+    task: { tracker: "", key: "" }, status: "active", currentStepId: "f1",
+    steps: [
+      { id: "f1", title: "F1 — Discovery", kind: "step", state: "pending" },
+      { id: "f2", title: "F2 — Spec", kind: "step", state: "pending" },
+    ],
+    summary: { done: 0, total: 2, missingEvidence: [] },
+    ...over,
+  },
+});
+
+test("a faixa do fluxo ativo oferece saída: concluir, parar e encolher", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  client.socket().deliver(wfRunFrame());
+
+  assert.equal(client.wfRunActive(), true, "o run chegou e está acompanhando");
+  const html = String(client.el("wfRun").innerHTML);
+  assert.match(html, /wf-stop/, "existe 'parar de acompanhar'");
+  assert.match(html, /wf-finish/, "existe 'concluir'");
+  assert.match(html, /wf-dismiss/, "existe 'encolher'");
+  // Encolher e encerrar são coisas diferentes, e a faixa precisa dizer isso — senão some da tela um
+  // fluxo que continua entrando em todo turno da IA.
+  assert.match(html, /CONTINUA acompanhando/, "encolher avisa que o fluxo segue no turno");
+});
+
+test("encolhido, o rótulo mostra o passo — esconder não é esconder que existe fluxo", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  client.socket().deliver(wfRunFrame());
+
+  client.wfCollapse(true);
+  const html = String(client.el("wfRun").innerHTML);
+  assert.match(html, /F1 — Discovery/, "a alça diz em que passo o fluxo está");
+  assert.match(html, /wf-restore/, "e dá para reabrir");
+  assert.ok(!/wf-adv/.test(html), "encolhido não mostra os controles da faixa inteira");
+});
+
+test("run encerrado sai da faixa no primeiro frame, sem depender do workflow_runs seguinte", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  const sock = client.socket();
+  sock.deliver(wfRunFrame());
+  assert.equal(client.wfRunActive(), true);
+
+  // É o mesmo frame que o Hub devolve ao abandonar: o run atualizado, agora sem status ativo.
+  sock.deliver(wfRunFrame({ status: "abandoned" }));
+  assert.equal(client.wfRunActive(), false, "fluxo abandonado não continua acompanhando a sessão");
+});
+
+// ---- Interjeição: com um debate rodando, o chat fala com o DEBATE ----
+// A dor original: começar um debate e não conseguir mais falar com ele. O envio virava um turno
+// paralelo, que o debate ignorava — e a IA da sessão respondia sem nunca ter visto o debate.
+const debateFrame = (over: any = {}) => ({
+  t: "debate_progress", runnerId: "local", sessionId: "s-deb", debateId: "d1",
+  round: 1, maxRounds: 3, phase: "debating", canSay: true, debaters: [], ...over,
+});
+
+test("com debate vivo o envio vira recado (debate_say), não um turno", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-deb", "local");
+
+  const sock = client.socket();
+  sock.deliver(debateFrame());
+  assert.equal(client.debateLive("s-deb", "local"), true, "o frame de progresso marca a sessão como em debate");
+
+  sock.sent.length = 0;
+  client.submitComposer("foca no custo de operação");
+  const say = sock.sent.filter((f: any) => f.t === "debate_say");
+  assert.equal(say.length, 1, "o texto foi para o debate");
+  assert.equal(say[0].text, "foca no custo de operação");
+  assert.equal(say[0].sessionId, "s-deb");
+  assert.equal(sock.sent.filter((f: any) => f.t === "send").length, 0, "e NÃO abriu um turno paralelo");
+});
+
+test("a janela de recado fecha na síntese e some quando o debate termina", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-deb", "local");
+  const sock = client.socket();
+
+  // Síntese: não existe mais rodada para receber o recado, então o chat volta a ser turno normal —
+  // melhor um turno do que um "anotado" que não vai a lugar nenhum.
+  sock.deliver(debateFrame({ phase: "synthesizing", canSay: false }));
+  assert.equal(client.debateLive("s-deb", "local"), false);
+  sock.sent.length = 0;
+  client.submitComposer("e o custo?");
+  assert.equal(sock.sent.filter((f: any) => f.t === "debate_say").length, 0);
+  assert.equal(sock.sent.filter((f: any) => f.t === "send").length, 1, "sem janela de recado, é turno normal");
+
+  sock.deliver(debateFrame({ phase: "debating", canSay: true }));
+  assert.equal(client.debateLive("s-deb", "local"), true);
+  sock.deliver(debateFrame({ phase: "done" }));
+  assert.equal(client.debateLive("s-deb", "local"), false, "debate encerrado devolve o chat à IA da sessão");
+});
+
+// "!" executa shell no Hub (expandBang). Engolir isso como recado perderia o comando em silêncio —
+// que é a classe de bug que a interjeição existe para MATAR, não para criar em outro lugar.
+test("'!comando' não vira recado nem com debate vivo", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-deb", "local");
+  const sock = client.socket();
+  sock.deliver(debateFrame());
+
+  sock.sent.length = 0;
+  client.submitComposer("!git status");
+  assert.equal(sock.sent.filter((f: any) => f.t === "debate_say").length, 0, "shell não é recado");
+  const turno = sock.sent.filter((f: any) => f.t === "send");
+  assert.equal(turno.length, 1, "continua sendo o turno que sempre foi");
+  assert.equal(turno[0].text, "!git status");
+});
+
+test("recado recusado vira turno normal em vez de sumir", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-deb", "local");
+  const sock = client.socket();
+  sock.deliver(debateFrame());
+
+  sock.sent.length = 0;
+  client.submitComposer("considere o plano B");
+  assert.equal(sock.sent.filter((f: any) => f.t === "debate_say").length, 1);
+
+  // O debate fechou entre o envio e a chegada. O composer já foi limpo, então engolir a recusa
+  // perderia a mensagem: o servidor devolve o texto e o cliente a manda como o turno que ela seria.
+  sock.deliver({ t: "debate_said", ok: false, runnerId: "local", sessionId: "s-deb", text: "considere o plano B", message: "Nenhum debate aceitando recado nesta sessão." });
+  const turno = sock.sent.filter((f: any) => f.t === "send");
+  assert.equal(turno.length, 1, "a mensagem recusada foi reenviada como turno");
+  assert.equal(turno[0].text, "considere o plano B");
+  assert.equal(client.debateLive("s-deb", "local"), false, "a recusa também corrige o estado local");
 });

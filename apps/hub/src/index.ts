@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -350,11 +350,32 @@ const projectTasks = new ProjectTaskBindingStore({ dir: join(JARVIS_DIR, "hub") 
 const taskMeta = new TaskMetaStore({ dir: join(JARVIS_DIR, "hub") });
 // Cofre de conexões (C1): contas por provedor com identidade VERIFICADA; segredo só por secretRef.
 const taskConnections = new TaskConnectionStore({ dir: join(JARVIS_DIR, "hub") });
-/** Conexões para a UI: presença do segredo no ambiente (booleano) — NUNCA o valor. */
+// Cofre de SEGREDOS: cola o token na configuração e o Hub injeta no próprio env — sem caçar .env.
+// Ambiente explícito vence o cofre; a carga acontece AGORA, antes de qualquer uso de conexão.
+const secretVault = new SecretVault({ dir: join(JARVIS_DIR, "hub") });
+/** Nomes cujo valor NO ENV veio do cofre — é o que separa "cofre" de "ambiente externo vence". */
+const vaultEnvOwned = new Set<string>();
+{
+  const seeded = secretVault.loadIntoEnv(process.env);
+  for (const name of seeded.loaded) vaultEnvOwned.add(name);
+  if (seeded.loaded.length || seeded.skipped.length) console.log(`[hub] cofre de segredos: ${seeded.loaded.length} injetado(s) no ambiente${seeded.skipped.length ? `; ${seeded.skipped.length} definido(s) fora (ambiente vence)` : ""}`);
+}
+/** De onde o segredo desta env var vem HOJE: cofre, ambiente externo, ou de lugar nenhum. */
+function secretSourceOf(name: string | undefined): "cofre" | "ambiente" | "ausente" {
+  if (!name) return "ausente";
+  if (process.env[name]) return vaultEnvOwned.has(name) ? "cofre" : "ambiente";
+  return secretVault.has(name) ? "cofre" : "ausente";
+}
+/** Conexões para a UI: presença e ORIGEM do segredo (cofre/ambiente/ausente) — NUNCA o valor. */
 function taskConnectionsFrame(): Record<string, unknown> {
   return {
     t: "task_connections",
-    connections: taskConnections.list().map((c) => ({ ...c, envOk: !!process.env[c.secretRef] && (!c.secretRef2 || !!process.env[c.secretRef2]) })),
+    connections: taskConnections.list().map((c) => ({
+      ...c,
+      envOk: !!process.env[c.secretRef] && (!c.secretRef2 || !!process.env[c.secretRef2]),
+      secretSource: secretSourceOf(c.secretRef),
+      secretSource2: c.secretRef2 ? secretSourceOf(c.secretRef2) : undefined,
+    })),
     providers: TASK_PROVIDERS,
   };
 }
@@ -1422,7 +1443,7 @@ const LOCAL_OPS = new Set(["sendTo", "sendNew", "search"]);
 // Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
-const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "council_start", "tournament_start", "debate_start", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
+const ACTIVE_OPS = new Set(["enqueue", "dequeue", "clearqueue", "flushqueue", "cancel", "summarize", "voice", "council_start", "tournament_start", "debate_start", "debate_say", "memory_preview", "stage_voice", "stage_text", "stage_confirm", "stage_cancel", "stage_state", "stage_escalate_ok", "stage_escalate_no"]);
 const UPDATE_BLOCKED_OPS = new Set(["send", "sendTo", "sendNew", "voice", "new", "configure", "enqueue", "flushqueue", "execution_delegate", "council_start", "tournament_start", "debate_start", "summarize", "digest", "routine_run", "terminal_open"]);
 function holdForHubUpdate(ws: WebSocket, msg: any): boolean {
   if (!hubUpdateInProgress || !UPDATE_BLOCKED_OPS.has(msg.t)) return false;
@@ -3707,6 +3728,8 @@ async function startLocalCouncil(ws: WebSocket, input: {
     store.add(input.sessionId, { role: "assistant", text, ts: at, agent: "jarvis" });
     broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "assistant", text, ts: at, agent: "jarvis" } });
     pushSessions();
+    // Mesmo buraco do Debate: o Conselho roda como execução gerenciada, fora da sessão da IA.
+    addSessionBriefing(input.sessionId, `🧠 Conselho · ${input.topic.split(/\r?\n/)[0].slice(0, 120)}`, text);
   }).catch((error) => {
     const message = "Conselho: " + String((error as Error)?.message || error);
     send(ws, { t: "error", message });
@@ -3765,6 +3788,8 @@ async function startLocalTournament(ws: WebSocket, input: { sessionId: string; t
     store.add(input.sessionId, { role: "assistant", text, ts: at, agent: "jarvis" });
     broadcast(input.sessionId, { t: "message", message: { sessionId: input.sessionId, role: "assistant", text, ts: at, agent: "jarvis" } });
     pushSessions();
+    // Idem para Benchmark/Revisão/Auditoria: o veredito do juiz existe no chat e não na IA da sessão.
+    addSessionBriefing(input.sessionId, `${flowLabel} · ${input.task.split(/\r?\n/)[0].slice(0, 120)}`, text);
   }).catch((error) => {
     send(ws, { t: "error", message: `${flowLabel}: ` + String((error as Error)?.message || error) });
   }).finally(() => {
@@ -3772,6 +3797,110 @@ async function startLocalTournament(ws: WebSocket, input: { sessionId: string; t
     if (localExecutionAborts.get(built.rootExecutionId) === ctrl) localExecutionAborts.delete(built.rootExecutionId);
     broadcastRuns();
   });
+}
+
+/**
+ * Fila de resultados que o Jarvis publicou na conversa SEM passar pela IA da sessão (Debate, Conselho,
+ * Torneio). Entregue uma vez, no próximo turno, como contexto — ver `session-briefing.ts`.
+ *
+ * DURÁVEL, e o protocolo é este: um debate que levou minutos e custou N chamadas não pode virar nada
+ * porque o Hub reiniciou no intervalo entre o resultado e a sua próxima mensagem — que é justamente
+ * quando um update roda. O que segura o arquivo é TETO, não sorte: corpo cortado no mesmo limite que a
+ * renderização usa, 5 resultados por sessão e 50 sessões, as mais recentes. Um JSON sem teto já custou
+ * caro neste projeto. O TTL descarta o briefing que ninguém foi buscar — contexto velho é ruído.
+ */
+const SESSION_BRIEFINGS_FILE = join(JARVIS_DIR, "session-briefings.json");
+const sessionBriefings = new Map<string, StoredSessionBriefing[]>(
+  Object.entries(pruneStoredBriefings(readJson<unknown>(SESSION_BRIEFINGS_FILE, {}), Date.now())),
+);
+function saveSessionBriefings(): void {
+  // Persistir é melhoria do turno seguinte; nunca pode derrubar o debate que acabou de terminar.
+  try { writeJsonAtomic(SESSION_BRIEFINGS_FILE, pruneStoredBriefings(Object.fromEntries(sessionBriefings), Date.now())); }
+  catch (error) { log.warn("session_briefing_persist_failed", { error: String((error as Error)?.message || error) }); }
+}
+function addSessionBriefing(sessionId: string, kind: string, body: string): void {
+  const texto = String(body || "").trim();
+  if (!sessionId || !texto) return;
+  const list = sessionBriefings.get(sessionId) || [];
+  // Corta no mesmo teto da renderização: guardar mais do que a IA jamais vai ler só engorda o arquivo.
+  list.push({ kind, body: texto.slice(0, SESSION_BRIEFING_MAX_CHARS), at: Date.now() });
+  sessionBriefings.set(sessionId, list.slice(-SESSION_BRIEFING_MAX_PER_SESSION));
+  saveSessionBriefings();
+}
+/** Retira os pendentes válidos. `restoreSessionBriefings` devolve quando o turno não chegou a acontecer. */
+function takeSessionBriefings(sessionId: string): StoredSessionBriefing[] {
+  const list = sessionBriefings.get(sessionId);
+  if (!list?.length) return [];                 // caso comum (turno sem nada pendente): não toca o disco
+  sessionBriefings.delete(sessionId);
+  saveSessionBriefings();
+  const now = Date.now();
+  return list.filter((i) => now - i.at < SESSION_BRIEFING_TTL_MS);
+}
+function restoreSessionBriefings(sessionId: string, items: StoredSessionBriefing[]): void {
+  if (!items.length) return;
+  const list = sessionBriefings.get(sessionId) || [];
+  sessionBriefings.set(sessionId, [...items, ...list].slice(-SESSION_BRIEFING_MAX_PER_SESSION));
+  saveSessionBriefings();
+}
+
+/**
+ * Debates VIVOS, por debateId — o registro que torna a INTERJEIÇÃO possível.
+ *
+ * Enquanto um debate roda, o chat daquela sessão fala com o DEBATE, não com a IA da sessão: antes, a
+ * mensagem virava um turno paralelo que o debate ignorava (e a IA da sessão respondia sem nunca ter
+ * visto o debate, porque as rodadas são one-shot fora do transcript nativo dela). O recado entra no
+ * prompt de TODOS os participantes na rodada seguinte.
+ *
+ * `pending` é o que ainda não entrou numa rodada; `all` é tudo que o usuário disse no debate e vai
+ * para a síntese — assim um recado que chegou depois da última rodada ainda é respondido no veredito,
+ * em vez de sumir. `closed` marca o ponto em que não existe mais rodada para receber recado (síntese
+ * em diante): dali em diante o chat volta a ser turno normal, sem ack mentiroso.
+ */
+interface LiveDebate {
+  debateId: string;
+  sessionId: string;
+  pending: string[];
+  all: string[];
+  /** último frame `debate_progress` — hidrata um cliente que abriu a sessão no meio do debate. */
+  lastProgress?: Record<string, unknown>;
+  closed: boolean;
+}
+const liveDebates = new Map<string, LiveDebate>();
+/** O debate vivo desta sessão (o mais recente, se por algum motivo houver mais de um). */
+function liveDebateForSession(sessionId: string): LiveDebate | undefined {
+  let found: LiveDebate | undefined;
+  for (const d of liveDebates.values()) if (d.sessionId === sessionId) found = d;
+  return found;
+}
+/** ...e que ainda aceita recado. Depois da síntese não há rodada para recebê-lo. */
+function debateOpenForInterjection(sessionId: string): LiveDebate | undefined {
+  const d = liveDebateForSession(sessionId);
+  return d && !d.closed ? d : undefined;
+}
+/**
+ * Recado do usuário para um debate em andamento: publica na conversa (o chat é o registro do debate),
+ * enfileira para a próxima rodada e confirma para quem mandou. O ack NÃO promete rodada: se o juiz
+ * fechar o debate antes, o recado ainda é respondido na síntese — e é isso que a frase diz.
+ */
+async function acceptDebateInterjection(live: LiveDebate, ws: WebSocket, text: string, speak: boolean, msgId?: string): Promise<void> {
+  const recado = text.trim().slice(0, DEBATE_INTERJECTION_MAX_CHARS);
+  live.pending.push(recado);
+  live.all.push(recado);
+  const ts = Date.now();
+  const shown = `💬 Recado ao debate: ${recado}`;
+  store.add(live.sessionId, { role: "user", text: shown, ts, agent: "jarvis" });
+  broadcast(live.sessionId, { t: "message", message: { sessionId: live.sessionId, role: "user", text: shown, ts, agent: "jarvis" } });
+  pushSessions();
+  const aviso = "Recado anotado — entra na próxima etapa do debate (a rodada seguinte, ou o veredito final se o debate fechar antes).";
+  // `msgId` volta para o cliente que mandou um `send` normal (não sabia do debate): é por ele que a
+  // bolha otimista dele é removida, senão a mensagem apareceria duas vezes — a otimista crua e a que
+  // o servidor publicou como "💬 Recado ao debate".
+  send(ws, { t: "debate_said", ok: true, runnerId: LOCAL_ID, sessionId: live.sessionId, debateId: live.debateId, pending: live.pending.length, msgId, message: aviso });
+  auth.audit("debate_say", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${live.debateId}: ${recado.slice(0, 80)}` });
+  if (speak) {
+    try { const wav = await synthesize(aviso, VOICE); send(ws, { t: "tts", sessionId: live.sessionId, audio: wav.toString("base64"), text: aviso }); }
+    catch { /* o ack falado é acessório; o recado já está anotado */ }
+  }
 }
 
 /** Debate iterativo local: rodadas de resposta + réplica cruzada entre 2+ IAs, com um JUIZ decidindo a
@@ -3821,6 +3950,10 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
   const debateId = "debate:" + randomUUID();
   const ctrl = new AbortController();
   localManagedRuns.add(debateId); localExecutionAborts.set(debateId, ctrl); broadcastRuns();
+  // A partir daqui a sessão tem um debate vivo: o chat dela vira a porta de entrada de recados
+  // (interjeição), até a síntese fechar a janela. Removido no `finally`, inclusive em erro/cancelamento.
+  const live: LiveDebate = { debateId, sessionId: input.sessionId, pending: [], all: [], closed: false };
+  liveDebates.set(debateId, live);
   send(ws, { t: "debate_started", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, debaters: debaters.map((d) => d.label), maxRounds });
 
   const oneShotBy = async (agentName: string, prompt: string, model?: string, effort?: string): Promise<{ text: string; usage?: any }> => {
@@ -3858,17 +3991,28 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
       try { executionOwnership.remove(LOCAL_ID, debateId); } catch { /* nada reivindicado */ }
     }
   }
-  const emitDebateProgress = (round: number, phase: string, states: Array<{ label: string; state: string }>, rootExecutionId?: string): void =>
-    broadcast(input.sessionId, { t: "debate_progress", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, round, maxRounds, phase, rootExecutionId, debaters: states });
+  // `interjected` viaja no frame de progresso para o card do chat dizer "2 recados nesta rodada" —
+  // confirmação de que o recado virou prompt, sem poluir a conversa com mais uma mensagem.
+  let interjected = 0;
+  const emitDebateProgress = (round: number, phase: string, states: Array<{ label: string; state: string }>, rootExecutionId?: string): void => {
+    const frame = { t: "debate_progress", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, round, maxRounds, phase, rootExecutionId, debaters: states, interjected, canSay: !live.closed };
+    live.lastProgress = frame;
+    broadcast(input.sessionId, frame);
+  };
   try {
     for (let round = 1; round <= maxRounds; round++) {
       if (ctrl.signal.aborted) { failed = true; break; }
       const prev = new Map(responses.map((r) => [r.id, r.text]));
       const prevResponses = responses;
       const roundState = debaters.map((d) => ({ label: d.label, state: "running" as string }));
+      // Interjeição: o que o usuário mandou desde a rodada anterior entra AGORA, no prompt de todos os
+      // participantes. Drenar aqui (e não durante a rodada) é o que garante que todo mundo debata o
+      // MESMO material — injetar no meio deixaria uma IA com o recado e as outras sem.
+      const recados = live.pending.splice(0);
+      interjected = recados.length;
       const promptFor = (d: DebateDebater): string => round === 1
-        ? buildDebateOpeningPrompt(topic)
-        : buildDebateRebuttalPrompt(topic, round, prev.get(d.id) || "", prevResponses.filter((r) => r.id !== d.id));
+        ? buildDebateOpeningPrompt(topic, recados)
+        : buildDebateRebuttalPrompt(topic, round, prev.get(d.id) || "", prevResponses.filter((r) => r.id !== d.id), recados);
       if (useManaged) {
         emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })), debateId);
         // Ids de tarefa carregam a rodada: a raiz é a mesma o debate inteiro, e ids repetidos seriam
@@ -3908,13 +4052,27 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
       postAssistant(formatDebateRoundMessage(round, responses, verdict));
       if (verdict.converged) { converged = true; break; }
     }
+    // Acabaram as rodadas: não há mais onde encaixar um recado novo, então a janela de interjeição
+    // fecha AQUI e o chat volta a ser turno normal. Fechar antes de montar a síntese evita o ack
+    // mentiroso ("entra na próxima etapa") para quem escrever enquanto o sintetizador já está rodando.
+    live.closed = true;
     let summary: string | undefined;
     if (!ctrl.signal.aborted) {
       emitDebateProgress(roundsDone, "synthesizing", []);
-      try { const synth = summaryAgent(); const sr = await oneShotAdapter(synth, buildDebateSynthesisPrompt(topic, responses, { converged, rounds: roundsDone })); addUsage(usageKey, synth.name, sr.usage); summary = sr.text; }
+      // A síntese recebe TODOS os recados (não só os da última rodada): é o único lugar onde um recado
+      // que chegou tarde demais para virar rodada ainda é respondido.
+      try { const synth = summaryAgent(); const sr = await oneShotAdapter(synth, buildDebateSynthesisPrompt(topic, responses, { converged, rounds: roundsDone, interjections: live.all })); addUsage(usageKey, synth.name, sr.usage); summary = sr.text; }
       catch { summary = undefined; }
     }
-    postAssistant(formatDebateFinalMessage({ rounds: roundsDone, maxRounds, converged, debaters: debaters.map((d) => d.label), summary, failed: failed || ctrl.signal.aborted }));
+    const finalText = formatDebateFinalMessage({ rounds: roundsDone, maxRounds, converged, debaters: debaters.map((d) => d.label), summary, failed: failed || ctrl.signal.aborted });
+    postAssistant(finalText);
+    // A IA da sessão não viu NADA disto (as rodadas são one-shot fora do transcript nativo dela). Sem
+    // esta linha, o debate acaba e a conversa seguinte começa do zero: "que debate?". Só quando houve
+    // rodada — um debate que morreu antes de produzir posição não é contexto, é ruído.
+    if (roundsDone > 0) addSessionBriefing(input.sessionId, `🗣️ Debate · tema: ${input.topic.split(/\r?\n/)[0].slice(0, 120)}`, finalText);
+    // Cancelado com recado ainda na fila: ele não virou rodada e não houve síntese para respondê-lo.
+    // Dizer isso é obrigação — sumir em silêncio é exatamente o bug que a interjeição veio corrigir.
+    if (ctrl.signal.aborted && live.pending.length) postAssistant(`_Observação: ${live.pending.length} recado(s) enviado(s) durante o debate não foram usados — o debate foi cancelado antes da rodada seguinte._`);
   } catch (error: any) {
     failed = true;
     send(ws, { t: "error", message: "Debate: " + String(error?.message ?? error) });
@@ -3927,6 +4085,7 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
       try { localManagedExecution.closeRoot(debateId, state, `${outcome} · ${debaters.length} IAs`); }
       catch (error) { console.error(`[hub] debate ${debateId} não encerrou o trabalho: ${String((error as Error)?.message || error)}`); }
     }
+    liveDebates.delete(debateId);
     localManagedRuns.delete(debateId);
     if (localExecutionAborts.get(debateId) === ctrl) localExecutionAborts.delete(debateId);
     broadcastRuns();
@@ -4023,10 +4182,10 @@ function reconcileNativeExecutions(sid: string): number {
  *  permite não repetir: o Claude Code lê `~/.claude/CLAUDE.md` em todo turno por conta própria.
  *
  *  São TODOS os arquivos da máquina, não só o da IA da vez. O `instructions.md` costuma ser um
- *  snapshot desses mesmos arquivos ("importar desta máquina" o semeia assim), então qualquer bloco
- *  idêntico a um deles já é a linha de base local — reinjetá-lo só gasta contexto. Era o que fazia o
- *  AGENTS.md do Codex (espelho declarado do CLAUDE.md) vazar para dentro do Claude. Em OUTRA máquina,
- *  que não tem esses arquivos, nada casa e o conteúdo vai inteiro — que é o ponto. */
+ *  snapshot desses mesmos arquivos ("importar desta máquina" o semeia assim), então aqui qualquer
+ *  bloco identico a um deles ja e a linha de base local — reinjeta-lo so gasta contexto. Foi o que
+ *  fazia o AGENTS.md do Codex (espelho declarado do CLAUDE.md) vazar para dentro do Claude. Em OUTRA
+ *  maquina, que nao tem esses arquivos, nada casa e o conteudo vai inteiro — que e o ponto. */
 function nativeInstructionContents(): string[] {
   const home = homedir();
   const out: string[] = [];
@@ -4090,7 +4249,17 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   // Multi-tarefa (F3): o steering COMPLETO é só da tarefa em FOCO. As demais entram como uma linha de
   // status — injetar N fluxos inteiros por turno poluiria a sessão principal exatamente com o que a
   // separação por tarefa existe para evitar.
+  // Ponte de contexto: Debate/Conselho/Torneio rodaram FORA desta sessão e a IA nunca viu o resultado.
+  // Entra primeiro no código para acabar por ÚLTIMO no prompt (colado no pedido): das três injeções,
+  // é a única que responde "de que conversa estamos falando". Retirado da fila aqui e devolvido no
+  // catch — um turno que nem chegou a rodar não pode consumir o briefing.
+  let takenBriefings: StoredSessionBriefing[] = [];
   if (!opts.managed) {
+    try {
+      takenBriefings = takeSessionBriefings(sid);
+      const bridge = buildSessionBriefingBlock(takenBriefings);
+      if (bridge) agentText = `${bridge}\n\n---\n\n${agentText}`;
+    } catch { /* contexto é acessório do turno; nunca pode derrubá-lo */ }
     try {
       const activeRun = workflowRuns.focusedFor(sid) ?? autoStartWorkflow(sid);
       if (activeRun) {
@@ -4103,11 +4272,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     // regra geral primeiro, o passo do momento por último (mais perto do pedido, que é onde pesa).
     try {
       const universais = frameworkInstructionsFor();
-      if (universais) agentText = `${universais}
-
----
-
-${agentText}`;
+      if (universais) agentText = `${universais}\n\n---\n\n${agentText}`;
     } catch { /* instrução é acessório do turno; nunca pode derrubá-lo */ }
   }
   const ctrl = new AbortController();
@@ -4192,6 +4357,9 @@ ${agentText}`;
     if (!opts.managed) applyWorkflowFromReply(sid, reply.text || "");   // F4: registra o que a IA declarou
     return { ...reply, activity: buf.slice() };
   } catch (e) {
+    // O turno não entregou: o resultado que a IA precisava conhecer volta para a fila, senão um erro
+    // de provedor apagaria o debate da memória da conversa para sempre.
+    restoreSessionBriefings(sid, takenBriefings);
     // A user-initiated cancel is not a failure: tell the UI it stopped, and don't notify an error.
     if (ctrl.signal.aborted || String((e as any)?.message) === ABORTED) {
       const requestedAt = cancelRequestedAt.get(sid);
@@ -5777,6 +5945,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       replayRoute(ws, LOCAL_ID, s.id);
       sendPendingAsk(ws, LOCAL_ID, s.id);
       send(ws, { t: "queue", runnerId: LOCAL_ID, sessionId: s.id, items: queueOf(LOCAL_ID, s.id).map((q) => ({ text: q.text, atts: q.atts, msgId: q.msgId })) });
+      // Debate em andamento nesta sessão: reenvia o último progresso para quem está ABRINDO agora. Sem
+      // isso, um cliente que entrou no meio (outro aparelho, recarregou a página) ficaria cego até a
+      // próxima troca de fase — que pode levar minutos — e sem saber que o chat fala com o debate.
+      { const live = liveDebateForSession(s.id); if (live?.lastProgress) send(ws, live.lastProgress); }
       return;
     }
     if (msg.t === "new") {
@@ -5892,6 +6064,21 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         agents: Array.isArray(msg.agents) ? msg.agents.filter((x: any) => typeof x === "string").slice(0, 12) : undefined,
         maxRounds: typeof msg.maxRounds === "number" ? msg.maxRounds : undefined,
       });
+      return;
+    }
+    // Interjeição: recado do usuário para o debate em andamento (rota EXPLÍCITA do cliente, que já sabe
+    // do debate pelos frames de progresso). O caminho implícito — um `send` normal enquanto o debate
+    // roda — é interceptado mais abaixo, no bloco de conversa, e cobre cliente desatualizado e voz.
+    // Falha devolve o texto: o cliente já limpou o composer, então engolir aqui perderia a mensagem.
+    if (msg.t === "debate_say" && typeof msg.text === "string") {
+      const sid = (typeof msg.sessionId === "string" && msg.sessionId) || subs.get(ws) || "";
+      const recado = msg.text.trim();
+      const live = sid && activeRunner(ws) === LOCAL_ID ? debateOpenForInterjection(sid) : undefined;
+      if (!live || !recado) {
+        send(ws, { t: "debate_said", ok: false, runnerId: LOCAL_ID, sessionId: sid, text: msg.text, message: "Nenhum debate aceitando recado nesta sessão." });
+        return;
+      }
+      await acceptDebateInterjection(live, ws, recado, msg.speak === true);
       return;
     }
     // Espaço de Soluções: Benchmark/Revisão/Auditoria local com N candidatos + consolidador.
@@ -6216,13 +6403,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         else if (task.key && !task.tracker) task = { ...task, tracker: projectTasks.get(projectCwd)?.tracker || "" };
         const pastedMeta = (msg.taskMeta && typeof msg.taskMeta === "object" ? msg.taskMeta : {}) as Record<string, unknown>;
         if (task.key) taskMeta.merge(task.tracker, task.key, { title: task.title || String(pastedMeta.title || ""), description: String(pastedMeta.description || ""), url: task.url || String(pastedMeta.url || "") });
+        // Ponto de entrada opcional: o seletor do composer manda o passo escolhido ("quero TDD").
+        const startAtStepId = typeof msg.stepId === "string" && msg.stepId ? msg.stepId : undefined;
         const existing = task.key ? workflowRuns.forTask(task.tracker, task.key) : undefined;
         if (existing) {                                   // mesma tarefa já acompanhada: apenas liga a sessão
-          const linked = linkSession(existing, sessionId, Date.now());
+          let linked = linkSession(existing, sessionId, Date.now());
+          // Reusar o acompanhamento não pode ignorar o passo que a pessoa acabou de escolher.
+          if (startAtStepId) linked = focusStep(linked, startAtStepId, { now: Date.now() });
           workflowRuns.put(linked);
           send(ws, { t: "workflow_run", sessionId, run: workflowRunPayload(linked), reused: true });
         } else {
-          const run = createRun(def, task, { runId: "wfr-" + randomUUID(), now: Date.now(), sessionId });
+          const run = createRun(def, task, { runId: "wfr-" + randomUUID(), now: Date.now(), sessionId, startAtStepId });
           workflowRuns.put(run);
           send(ws, { t: "workflow_run", sessionId, run: workflowRunPayload(run) });
         }
@@ -6267,6 +6458,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (op === "mark") next = markStep(run, String(msg.stepId || ""), (["pending", "done", "skipped"].includes(msg.state) ? msg.state : "done") as RunStepState, { by, now });
         else if (op === "advance") next = advanceRun(run, { by, now });
         else if (op === "jump") next = jumpToStep(run, String(msg.stepId || ""), { by, now });
+        else if (op === "focus") next = focusStep(run, String(msg.stepId || ""), { now });
         else if (op === "evidence") next = attachEvidence(run, String(msg.stepId || ""), { kind: msg.kind === "link" ? "link" : "text", value: String(msg.value || "") }, { by, now });
         else if (op === "finish") next = { ...run, status: "done", updatedAt: now };
         else if (op === "abandon") next = { ...run, status: "abandoned", updatedAt: now };
@@ -6372,6 +6564,30 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const saved = taskMeta.merge(msg.tracker, msg.key, { summary });
         send(ws, { t: "task_meta", tracker: msg.tracker, key: msg.key, meta: saved || null });
       } catch (e: any) { send(ws, { t: "error", message: "Resumir: " + String(e?.message ?? e) }); }
+      return;
+    }
+    // Cofre de SEGREDOS: grava o valor colado e injeta no env NA HORA (rotação sem restart). O valor
+    // chega uma única vez neste frame e nunca volta em nenhum outro; em disco fica fora de git, com
+    // chmod restrito. Se o mesmo nome existir no ambiente EXTERNO, o externo continua vencendo.
+    if (msg.t === "secret_set" && typeof msg.name === "string" && typeof msg.value === "string") {
+      if (!requireOwner(ws)) return;
+      try {
+        secretVault.set(msg.name, msg.value);
+        // O env só é atualizado quando o valor atual NÃO veio de fora (ambiente externo sempre vence).
+        const externallySet = process.env[msg.name] !== undefined && !vaultEnvOwned.has(msg.name);
+        if (!externallySet) { process.env[msg.name] = msg.value; vaultEnvOwned.add(msg.name); }
+        auth.audit("secret_set", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: msg.name });
+        send(ws, taskConnectionsFrame());
+      } catch (e: any) { send(ws, { t: "error", message: "Segredo: " + String(e?.message ?? e) }); }
+      return;
+    }
+    if (msg.t === "secret_delete" && typeof msg.name === "string") {
+      if (!requireOwner(ws)) return;
+      if (secretVault.remove(msg.name)) {
+        if (vaultEnvOwned.delete(msg.name)) delete process.env[msg.name];   // nunca apaga env de fora
+        auth.audit("secret_set", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `delete ${msg.name}` });
+      }
+      send(ws, taskConnectionsFrame());
       return;
     }
     // ── Cofre de conexões (C1) e operações de provedor (C4) ──────────────────────────────────────
@@ -7192,6 +7408,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // Legacy `geo` fields are intentionally ignored so raw coordinates never enter prompts,
     // pending-turn files, transcripts, semantic memory or the audit log.
     if (msg.t === "send" && typeof msg.msgId === "string" && !incomingTurns.add(msg.msgId)) return;
+    // INTERJEIÇÃO — com um debate vivo nesta sessão, o chat fala com o DEBATE. A decisão é do SERVIDOR,
+    // e não do cliente, de propósito: um celular que abriu a sessão no meio do debate, um cliente que
+    // perdeu o frame de progresso ou uma fala pelo microfone acertam do mesmo jeito. Fica ANTES de
+    // `recordPendingInboundTurn` porque um pendente é durável e seria repetido como TURNO depois de um
+    // restart — só que o debate não sobrevive ao restart, e aí a mensagem viraria outra coisa.
+    // `!comando` fica de fora: ele EXECUTA um shell (expandBang) e virar recado o engoliria em silêncio.
+    // Vira o turno normal que sempre foi — o debate segue rodando em paralelo.
+    if (activeRunner(ws) === LOCAL_ID && text.trim() && !text.trimStart().startsWith("!")) {
+      const live = debateOpenForInterjection(sid);
+      if (live) { await acceptDebateInterjection(live, ws, text, msg.speak === true, typeof msg.msgId === "string" ? msg.msgId : undefined); return; }
+    }
     const inboundActor = actorOf(ws);
     const inboundKey = recordPendingInboundTurn(activeRunner(ws), sid, msg, text, inboundActor);
     { const _p = principalOf(ws); auth.audit("send", { userId: _p?.userId, deviceId: _p?.deviceId, detail: `${sid}: ${String(text).slice(0, 80)}` }); }

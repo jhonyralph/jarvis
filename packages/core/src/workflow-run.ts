@@ -30,6 +30,8 @@ export interface RunStep {
   title: string;
   kind: "step" | "gate";
   requiresEvidence?: boolean;
+  /** copiado da definição no início do run: é o que o passo espera de você, mostrado no composer. */
+  hint?: string;
   state: RunStepState;
   at?: number;
   by?: MarkedBy;
@@ -76,17 +78,25 @@ export function taskLabel(task: TaskRef): string {
   return task.tracker ? `${task.tracker}: ${base}` : base;
 }
 
-export function createRun(def: WorkflowDefinition, task: TaskRef, opts: { runId: string; now: number; sessionId?: string }): WorkflowRun {
+/**
+ * `startAtStepId` é o ponto de ENTRADA: você escolhe "TDD" e o acompanhamento nasce ali.
+ *
+ * Os passos anteriores continuam `pending` — de propósito. Entrar no meio não é "pular" o começo, é só
+ * não estar nele; marcar `skipped` aqui mentiria no relatório do que foi executado. `skipped` fica
+ * reservado ao gesto explícito de pular (jumpToStep), que é onde ele significa alguma coisa.
+ */
+export function createRun(def: WorkflowDefinition, task: TaskRef, opts: { runId: string; now: number; sessionId?: string; startAtStepId?: string }): WorkflowRun {
   const steps: RunStep[] = def.steps.map((s) => ({
-    id: s.id, title: s.title, kind: s.kind, requiresEvidence: s.requiresEvidence, state: "pending" as RunStepState,
+    id: s.id, title: s.title, kind: s.kind, requiresEvidence: s.requiresEvidence, hint: s.hint, state: "pending" as RunStepState,
   }));
+  const entry = opts.startAtStepId && steps.some((s) => s.id === opts.startAtStepId) ? opts.startAtStepId : steps[0]?.id;
   return {
     runId: opts.runId,
     workflowId: def.id,
     workflowName: def.name,
     task: normalizeTaskRef(task),
     steps,
-    currentStepId: steps[0]?.id,
+    currentStepId: entry,
     status: steps.length ? "active" : "done",
     sessions: opts.sessionId ? [opts.sessionId] : [],
     createdAt: opts.now,
@@ -118,11 +128,33 @@ export function stepsSkippedBy(run: WorkflowRun, stepId: string): RunStep[] {
   return run.steps.slice(0, target).filter((s) => s.state === "pending");
 }
 
+/**
+ * O foco SOBREVIVE a marcações em outros passos. Antes daqui o current era sempre "o primeiro
+ * pendente", o que funciona num fluxo caminhado em linha reta mas destrói a escolha de quem entrou
+ * direto no meio: focar "TDD" e marcar qualquer outro passo jogava o foco de volta para o passo 1.
+ * Regra: mantém o foco enquanto ele ainda estiver pendente; só então cai para o próximo pendente.
+ */
 function refreshStatus(run: WorkflowRun): void {
   const next = nextPendingStep(run);
-  run.currentStepId = next?.id;
+  const cur = run.steps.find((s) => s.id === run.currentStepId);
+  run.currentStepId = cur && cur.state === "pending" ? cur.id : next?.id;
   if (!next && run.status === "active") run.status = "done";
   if (next && run.status === "done") run.status = "active";
+}
+
+/**
+ * Move só o FOCO para um passo, sem mudar o estado de ninguém — é o que o seletor do composer usa.
+ * Diferente de `jumpToStep`, que é o gesto de PULAR e por isso registra os anteriores como `skipped`.
+ */
+export function focusStep(run: WorkflowRun, stepId: string, opts: { now: number }): WorkflowRun {
+  const out = clone(run);
+  const target = out.steps.find((s) => s.id === stepId);
+  if (!target) return out;
+  if (target.state !== "pending") { target.state = "pending"; delete target.at; delete target.by; }
+  out.currentStepId = stepId;
+  if (out.status === "done") out.status = "active";
+  out.updatedAt = opts.now;
+  return out;
 }
 
 export interface MarkOptions {
@@ -261,21 +293,35 @@ export function applyStepDirectives(run: WorkflowRun, directives: StepDirective[
     if (!step) continue;
     if (d.action === "done") out = markStep(out, step.id, "done", { by: "ai", now });
     else if (d.action === "skip") out = markStep(out, step.id, "skipped", { by: "ai", now });
-    else out = jumpToStep(out, step.id, { by: "ai", now });
+    // `current` MOVE O FOCO — e só. Antes caía em jumpToStep, que marcava tudo que ficou para trás como
+    // `skipped`: a própria instrução do steering diz "para pular use skip / para mudar o foco use
+    // current", então pular como efeito colateral de mudar o foco contrariava o que a IA foi mandada
+    // fazer, e enchia o relatório de passos "pulados" que ninguém pulou.
+    else out = focusStep(out, step.id, { now });
     applied.push({ action: d.action, stepId: step.id, title: step.title });
   }
   return { run: out, applied };
 }
 
-/** Instrução injetada no turno quando há fluxo ativo — curta, porque custa tokens em todo turno. */
+/**
+ * Instrução injetada no turno quando há fluxo ativo — curta, porque custa tokens em TODO turno.
+ *
+ * O passo em foco vem PRIMEIRO e com o seu `hint`: despejar a lista inteira e deixar a IA adivinhar
+ * qual linha importa era caro e impreciso. Os demais passos continuam listados, em uma linha compacta,
+ * porque sem eles a IA não sabe para onde pode mover o foco.
+ */
 export function buildWorkflowSteering(run: WorkflowRun): string {
   const s = summarizeRun(run);
-  const list = run.steps.map((st, i) => `${i + 1}. [${st.state === "done" ? "x" : st.state === "skipped" ? "-" : " "}] ${st.title}${st.kind === "gate" ? " (gate: só conferência)" : ""}${st.requiresEvidence ? " (pede evidência)" : ""}`).join("\n");
+  const cur = run.steps.find((st) => st.id === run.currentStepId);
+  const mark = (st: RunStep): string => (st.state === "done" ? "x" : st.state === "skipped" ? "-" : " ");
+  const list = run.steps.map((st, i) => `${i + 1}. [${mark(st)}] ${st.title}${st.kind === "gate" ? " (gate: só conferência)" : ""}${st.requiresEvidence ? " (pede evidência)" : ""}`).join("\n");
   return [
     `Fluxo de trabalho ativo: "${run.workflowName}" — tarefa ${taskLabel(run.task)}.`,
-    `Passo atual: ${s.current ? s.current.title : "(nenhum — fluxo concluído)"}.`,
+    `Passo em foco: ${s.current ? s.current.title : "(nenhum — fluxo concluído)"}.`,
+    cur?.hint ? `O que este passo espera: ${cur.hint}` : "",
+    "Passos do fluxo (os não marcados podem simplesmente ainda não ter sido alcançados):",
     list,
     "Ao concluir um passo, emita numa linha própria: `jarvis-step: done <número>`. Para pular: `jarvis-step: skip <número>`. Para mudar o foco: `jarvis-step: current <número>`.",
     "Gates são só conferência: sinalize e siga; nunca trave por causa deles. Passos que pedem evidência devem citar a evidência (link ou descrição) na resposta.",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }

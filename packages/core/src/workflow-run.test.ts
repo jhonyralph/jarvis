@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun,
-  isSkipAhead, stepsSkippedBy, parseStepDirectives, resolveStepRef, applyStepDirectives,
+  isSkipAhead, stepsSkippedBy, focusStep, parseStepDirectives, resolveStepRef, applyStepDirectives,
   buildWorkflowSteering, normalizeTaskRef, taskLabel,
 } from "./workflow-run.js";
 import type { WorkflowDefinition } from "./workflow.js";
@@ -85,7 +85,39 @@ test("desmarcar volta o passo para pendente e limpa a autoria", () => {
   run = markStep(run, "escopo", "pending", { by: "user", now: 6100 });
   assert.equal(run.steps[0].state, "pending");
   assert.equal(run.steps[0].by, undefined);
-  assert.equal(run.currentStepId, "escopo");
+  // O FOCO não volta sozinho para trás: corrigir o registro de um passo anterior não é dizer "quero
+  // voltar para lá". Para voltar existe o gesto explícito (focusStep / seletor do composer).
+  assert.equal(run.currentStepId, "diagnose");
+});
+
+test("focusStep move só o foco — não marca ninguém como pulado", () => {
+  const run = focusStep(mk(), "pr", { now: 6200 });
+  assert.equal(run.currentStepId, "pr");
+  assert.deepEqual(run.steps.map((s) => s.state), ["pending", "pending", "pending", "pending", "pending"],
+    "entrar no meio não é ter pulado o começo");
+  assert.equal(summarizeRun(run).skipped, 0);
+});
+
+test("o foco sobrevive a marcações em outros passos", () => {
+  let run = focusStep(mk(), "pr", { now: 6300 });
+  run = markStep(run, "escopo", "done", { by: "ai", now: 6400 });
+  assert.equal(run.currentStepId, "pr", "marcar outro passo não puxa o foco para o começo");
+  run = markStep(run, "pr", "done", { by: "user", now: 6500 });
+  assert.equal(run.currentStepId, "diagnose", "concluído o passo em foco, cai para o próximo pendente");
+});
+
+test("entrar direto num passo: createRun com startAtStepId", () => {
+  const run = createRun(DEF, { tracker: "", key: "" }, { runId: "r-entry", now: 6600, startAtStepId: "evidencia" });
+  assert.equal(run.currentStepId, "evidencia");
+  assert.equal(run.steps.filter((s) => s.state !== "pending").length, 0);
+  const invalido = createRun(DEF, { tracker: "", key: "" }, { runId: "r-x", now: 6700, startAtStepId: "nao-existe" });
+  assert.equal(invalido.currentStepId, "escopo", "id desconhecido cai no primeiro passo, não em undefined");
+});
+
+test("a IA mudando o foco (`current`) não marca os anteriores como pulados", () => {
+  const { run } = applyStepDirectives(mk(), parseStepDirectives("jarvis-step: current 4"), 6800);
+  assert.equal(run.currentStepId, "gate-review");
+  assert.equal(summarizeRun(run).skipped, 0);
 });
 
 test("o run atravessa sessões (mesma tarefa, outra sessão/máquina)", () => {
@@ -150,11 +182,19 @@ test("F4 — a instrução do turno mostra onde está e como declarar avanço", 
   const steer = buildWorkflowSteering(run);
   assert.match(steer, /Entrega com evidência/);
   assert.match(steer, /linear: PRI-824/);
-  assert.match(steer, /Passo atual: 1 — Diagnosticar/);
+  assert.match(steer, /Passo em foco: 1 — Diagnosticar/);
   assert.match(steer, /jarvis-step: done/);
   assert.match(steer, /\[x\] 0 — Escopo/, "mostra o que já foi feito");
   assert.match(steer, /gate: só conferência/);
   assert.match(steer, /pede evidência/);
+});
+
+test("F4 — o hint do passo em foco vai junto (é o que o passo espera de você)", () => {
+  const comHint: WorkflowDefinition = { ...DEF, steps: DEF.steps.map((s) => (s.id === "diagnose" ? { ...s, hint: "reproduza contra o sistema real" } : s)) };
+  const run = createRun(comHint, TASK, { runId: "run-h", now: 11_000, startAtStepId: "diagnose" });
+  assert.match(buildWorkflowSteering(run), /O que este passo espera: reproduza contra o sistema real/);
+  // sem hint, a linha simplesmente não existe (nada de rótulo órfão)
+  assert.doesNotMatch(buildWorkflowSteering(mk()), /O que este passo espera/);
 });
 
 /* ── store durável ───────────────────────────────────────────────────────────────────────────── */
