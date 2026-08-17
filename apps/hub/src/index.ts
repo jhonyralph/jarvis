@@ -3769,6 +3769,11 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
         emitDebateProgress(round, "judging", roundState.map((p) => ({ ...p })));
       }
       roundsDone = round;
+      // Cancelou no meio da rodada: chamar o juiz aqui é uma chamada paga para avaliar respostas que
+      // são "(falha: cancelado)" — e o parecer ainda acabaria publicado numa etapa já cancelada. O
+      // laço só reavaliava o abort no topo, então isso acontecia toda vez. Registra o que a rodada
+      // produziu (sem veredito, que `formatDebateRoundMessage` trata como opcional) e encerra.
+      if (ctrl.signal.aborted) { failed = true; postAssistant(formatDebateRoundMessage(round, responses)); break; }
       let verdict: DebateVerdict = { converged: false, confidence: 0, reason: "" };
       try { const judge = summaryAgent(); const jr = await oneShotAdapter(judge, buildDebateJudgePrompt(topic, round, responses)); addUsage(usageKey, judge.name, jr.usage); verdict = parseDebateVerdict(jr.text); }
       catch { verdict = { converged: false, confidence: 0, reason: "juiz indisponível" }; }
