@@ -585,6 +585,10 @@
     .modal label > input:not([type=checkbox]):focus, .modal label > select:focus, #gate .gatebox input:focus { outline:none; border-color:var(--me); box-shadow:0 0 0 3px #2563eb33; }
     /* Espaço de Soluções armado: a pill e a barra do composer precisam gritar que o PRÓXIMO envio
        não é um turno normal — é uma rodada de N execuções paralelas. Daí o azul preenchido, não só borda. */
+    /* Rodada armada: IA, modelo e esforço saem do composer. Quem define isso é a config da rodada
+       (IAs e Esforço no popover) — deixar as pills à mostra prometeria um controle que não vale mais.
+       2 IDs + classe vence o `#aiBtn{display:inline-flex}` do media query de celular. */
+    #composer.sol-armed #agentBtn, #composer.sol-armed #modelBtn, #composer.sol-armed #effortBtn, #composer.sol-armed #aiBtn { display:none; }
     .pill.on { background:#2563eb2e; border-color:#2563eb99; color:#dbeafe; }
     .pill.on:hover { background:#2563eb3d; border-color:#2563ebcc; }
     .solbar { display:flex; align-items:center; gap:9px; margin:0 0 7px; padding:7px 11px; border:1px solid #2563eb77; border-left:3px solid var(--me); border-radius:9px; background:#2563eb1c; }
@@ -1107,16 +1111,13 @@
       #agentBtn, #modelBtn, #effortBtn { display:none; }
       #aiBtn { display:inline-flex; }
       #cwdBtn .cap { display:none; }
-      #designBtn, #councilBtn, #tourneyBtn, #aiBtn, #cwdBtn, #speak {
+      #designBtn, #solutionBtn, #aiBtn, #cwdBtn, #speak {
         flex:1 1 44px; width:auto; min-width:44px; max-width:none; min-height:46px; padding:0; justify-content:center;
       }
-      #councilBtn { font-size:0; }
-      #councilBtn::before { content:'◇'; font-size:18px; line-height:1; }
-      #tourneyBtn { font-size:0; }
-      #tourneyBtn::before { content:'▣'; font-size:17px; line-height:1; }
+      #solutionBtn .cap { display:none; }   /* só o ícone: o nome do modo já está na barra acima */
       /* no celular todos os controles ficam fora do menu, em ordem fixa e compacta */
       #aiBtn { order:1; } #cwdBtn { order:2; }
-      #designBtn { order:5; } #councilBtn { order:6; } #tourneyBtn { order:7; } #speak { order:8; } #usageBtn { order:9; }
+      #designBtn { order:5; } #solutionBtn { order:6; } #speak { order:8; } #usageBtn { order:9; }
       #stopBtn { order:10; } #sendBtn { order:11; }
       /* alvo de toque: vale pro mic (agora fora de .controls, ao lado do input) e pros botoes de
          voz do header — sem isso eles ficariam com o tamanho de desktop justo no mobile. */
@@ -1135,7 +1136,7 @@
       #composer.has-draft .controls { flex-wrap:nowrap; gap:5px; max-height:42px; overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
       #composer.has-draft .controls::-webkit-scrollbar { display:none; }
       #composer.has-draft #agentBtn, #composer.has-draft #modelBtn, #composer.has-draft #effortBtn { display:none; }
-      #composer.has-draft #aiBtn, #composer.has-draft #cwdBtn, #composer.has-draft #designBtn, #composer.has-draft #councilBtn, #composer.has-draft #tourneyBtn, #composer.has-draft #speak { flex:1 0 42px; width:auto; min-width:42px; max-width:none; min-height:40px; padding:0; justify-content:center; }
+      #composer.has-draft #aiBtn, #composer.has-draft #cwdBtn, #composer.has-draft #designBtn, #composer.has-draft #solutionBtn, #composer.has-draft #speak { flex:1 0 42px; width:auto; min-width:42px; max-width:none; min-height:40px; padding:0; justify-content:center; }
       #composer.has-draft #usageBtn { flex:1 0 42px; width:auto; min-width:42px; max-width:none; min-height:40px; padding:0; }
       #composer.has-draft #usageBtn .cap { display:none; }
       #composer.has-draft #stopBtn { flex:1 0 42px; min-width:42px; min-height:40px; }

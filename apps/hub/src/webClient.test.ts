@@ -420,6 +420,28 @@ test("persist 'once' desarma ao enviar e 'always' continua armado", async () => 
   assert.equal(client.solutionArm().mode, "council");
 });
 
+// O Conselho ficou autossuficiente: com a rodada armada, as pills de IA/modelo/esforço somem do
+// composer, então o frame não pode continuar obedecendo a elas. `model` saiu de vez (era preferência
+// que só casava com uma das IAs; as outras caíam no próprio padrão) e o esforço vem da config.
+test("council_start não carrega model e tira o esforço da config da rodada", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-council", "local");
+
+  client.setSolutionArm({ mode: "council", persist: "always" });
+  client.startSolutionRound("como estruturar o rollout");
+  let frame = client.socket().sent.filter((f: any) => f.t === "council_start").pop() as any;
+  assert.ok(frame, "a rodada foi disparada");
+  assert.equal(frame.model, undefined, "modelo não vem mais do composer");
+  assert.equal(frame.effort, undefined, "padrão automático: cada IA usa o esforço do próprio modelo");
+
+  client.setSolutionArm({ councilEffort: "max" });
+  client.startSolutionRound("segunda rodada");
+  frame = client.socket().sent.filter((f: any) => f.t === "council_start").pop() as any;
+  assert.equal(frame.effort, "max", "o esforço escolhido na config da rodada viaja no frame");
+  assert.equal(frame.model, undefined, "e o modelo segue fora");
+});
+
 // Regressão: o postfix de "gerar plano/encaminhamento" era concatenado no tema E num campo `criteria`,
 // então o juiz recebia a mesma instrução duas vezes — e, com Critérios vazio, recebia SÓ o postfix
 // como se fosse critério de julgamento. O campo saiu; o postfix agora entra uma vez só, na tarefa.

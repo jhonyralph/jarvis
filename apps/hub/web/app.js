@@ -2107,7 +2107,9 @@
     // rodada roda — o objetivo vem do próprio chat, não de um campo separado. `mode:null` = desligado.
     // `persist` decide o que acontece depois do envio: 'once' desarma sozinho (protege contra disparar
     // 2-6 execuções paralelas sem querer na mensagem seguinte); 'always' fica ligado até você desligar.
-    const SOLUTION_DEFAULTS={mode:null,persist:'once',councilMode:'auto',context:true,agentsMode:'auto',agents:[],count:3,rounds:3,effort:'high',write:true,postAction:'none'};
+    // councilEffort é separado de `effort` (do Debate): o Conselho antes herdava o esforço da pill do
+    // composer, que agora fica escondida — '' mantém o automático de hoje em vez de forçar um nível.
+    const SOLUTION_DEFAULTS={mode:null,persist:'once',councilMode:'auto',context:true,agentsMode:'auto',agents:[],count:3,rounds:3,effort:'high',councilEffort:'',write:true,postAction:'none'};
     const solutionArmBySession=(()=>{ try{ return JSON.parse(localStorage.getItem('jarvis_solution_arm')||'{}'); }catch(e){ return {}; } })();
     function saveSolutionArms(){ try{ localStorage.setItem('jarvis_solution_arm', JSON.stringify(solutionArmBySession)); }catch(e){} }
     function solutionArm(){ return Object.assign({},SOLUTION_DEFAULTS,sessionValue(solutionArmBySession,currentSession,currentSessionRunner)||{}); }
@@ -2183,6 +2185,7 @@
       }
       if(E.solutionName)E.solutionName.textContent=on?solutionModeLabel(c.mode):'—';
       if(E.solutionBar)E.solutionBar.classList.toggle('hidden',!on);
+      if(E.composer)E.composer.classList.toggle('sol-armed',on);   // esconde agente/modelo/esforço: quem manda é a config da rodada
       if(on){
         if(E.solBarMode)E.solBarMode.textContent=solutionModeLabel(c.mode);
         if(E.solBarMeta)E.solBarMeta.textContent=solutionSummary();
@@ -2234,6 +2237,8 @@
       if(isCouncil||isDebate) row(runWell,'Contexto recente',sw(c.context,v=>setSolutionArm({context:v})),'Inclui as últimas mensagens da sessão no material da rodada.');
       if(!isCouncil&&!isDebate) row(runWell,'Execuções paralelas',num(c.count,2,6,v=>setSolutionArm({count:v})));
       if(isDebate){ row(runWell,'Rodadas (teto)',num(c.rounds,1,6,v=>setSolutionArm({rounds:v}))); row(runWell,'Esforço das IAs',sel([['medium','Médio'],['high','Alto'],['max','Máximo']],c.effort,v=>setSolutionArm({effort:v}))); }
+      if(isCouncil) row(runWell,'Esforço das IAs',sel([['','Automático'],['medium','Médio'],['high','Alto'],['max','Máximo']],c.councilEffort||'',v=>setSolutionArm({councilEffort:v})),
+        'Automático: cada IA usa o esforço padrão do próprio modelo.');
       if(isBenchmark) row(runWell,'Worktrees isoladas',sw(c.write,v=>setSolutionArm({write:v})),'Cada candidato escreve numa cópia isolada do repo para produzir um diff real.');
       row(runWell,'Ao terminar',sel([['none','Só publicar'],['plan','Gerar plano'],['handoff','Encaminhamento']],c.postAction,v=>setSolutionArm({postAction:v})),
         'O que a rodada entrega além da conclusão.');
@@ -2258,7 +2263,10 @@
     function startSolutionRound(topic){
       const c=solutionArm(), fullTopic=topic+solutionPostfix(), selected=selectedSolutionDescriptors().map(d=>d.name);
       if(c.mode==='council'){
-        tx({t:'council_start',sessionId:currentSession,topic:fullTopic,mode:c.councilMode,includeContext:c.context!==false,model:curModel,effort:curEffort,agents:selected});
+        // Sem `model`: era uma preferência do composer que cada IA resolvia contra o próprio catálogo
+        // (council.ts optionFor), então valia para uma e caía no default das outras. Cada membro usa
+        // o modelo padrão dele; o esforço vem da config da rodada.
+        tx({t:'council_start',sessionId:currentSession,topic:fullTopic,mode:c.councilMode,includeContext:c.context!==false,effort:c.councilEffort||undefined,agents:selected});
       }else if(c.mode==='debate'){
         tx({t:'debate_start',sessionId:currentSession,topic:fullTopic,includeContext:c.context!==false,agents:selected,
           maxRounds:Math.min(6,Math.max(1,Number(c.rounds)||3)),
