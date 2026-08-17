@@ -34,9 +34,10 @@ interface ClientHandle {
   el(k: string): any;
   makeEl(tag: string): any;
   setSession(id: string | null, runner: string): void;
-  solutionSnapshot(): any;
-  saveSolutionState(): void;
-  applySolutionDraft(d: any): void;
+  solutionArm(): any;
+  setSolutionArm(patch: any): void;
+  solutionArmed(): boolean;
+  startSolutionRound(topic: string): void;
   updateSolutionCount(): void;
   appendFlowText(container: any, st: any, text: string): void;
   closeFlowText(st: any): void;
@@ -131,9 +132,10 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   el: (k)=>E[k],
   makeEl: (t)=>document.createElement(t),
   setSession: (id,r)=>{ currentSession=id; currentSessionRunner=r; },
-  solutionSnapshot: ()=>solutionSnapshot(),
-  saveSolutionState: ()=>saveSolutionState(),
-  applySolutionDraft: (d)=>applySolutionDraft(d),
+  solutionArm: ()=>solutionArm(),
+  setSolutionArm: (patch)=>setSolutionArm(patch),
+  solutionArmed: ()=>solutionArmed(),
+  startSolutionRound: (topic)=>startSolutionRound(topic),
   updateSolutionCount: ()=>updateSolutionCount(),
   appendFlowText: (c,s,t)=>appendFlowText(c,s,t),
   closeFlowText: (s)=>closeFlowText(s),
@@ -339,16 +341,22 @@ test("organizeSessions: grouped caps EACH group at perGroupLimit and 'expanded' 
   assert.equal(apiX.hidden, 0); assert.equal(apiX.expanded, true);
 });
 
-// ---- Espaço de Soluções: contador visível do limite do Objetivo (não truncar em silêncio) ----
-test("contador do Objetivo avisa o corte do servidor (20k) em vez de truncar em silêncio", async () => {
+// ---- Espaço de Soluções: contador visível do limite do envio (não truncar em silêncio) ----
+test("contador avisa o corte do servidor (20k) em vez de truncar em silêncio", async () => {
   const client = loadClient();
   await authenticate(client, MACHINES);
-  const topic = client.el("councilTopic"), count = client.el("councilTopicCount");
-  topic.value = "x".repeat(19000);
+  client.setSession("s-count", "local");
+  const input = client.el("input"), count = client.el("solutionChars");
+
+  // Desarmado o teto não existe: um turno normal de chat não passa pelo corte de 20k do servidor.
+  input.value = "x".repeat(19000);
   client.updateSolutionCount();
-  assert.match(count.textContent, /19000 \/ 20000/, "mostra quanto foi usado do teto");
+  assert.equal(count.textContent, "", "sem rodada armada não mostra contador");
+
+  client.setSolutionArm({ mode: "benchmark" });
+  assert.match(count.textContent, /19000 \/ 20000/, "armado, mostra quanto foi usado do teto");
   assert.doesNotMatch(count.textContent, /será cortado/, "abaixo do teto não avisa corte");
-  topic.value = "y".repeat(20001);
+  input.value = "y".repeat(20001);
   client.updateSolutionCount();
   assert.match(count.textContent, /20001 \/ 20000/);
   assert.match(count.textContent, /será cortado em 20000/, "acima do teto avisa que o servidor vai cortar");
@@ -369,44 +377,62 @@ test("appendFlowText acumula texto contíguo e closeFlowText abre bloco novo ap�
   assert.equal(container.children.length, 2, "texto após uma ferramenta abre um bloco NOVO (interleaving)");
 });
 
-// ---- Espaço de Soluções: rascunho por sessão sobrevive a reload (roundtrip salva→restaura) ----
-test("rascunho do Espaço de Soluções persiste por sessão e é restaurado ao reabrir", async () => {
+// ---- Espaço de Soluções: a config armada é por sessão e sobrevive a reload ----
+test("a rodada armada persiste por sessão e não vaza para outra sessão", async () => {
   const client = loadClient();
   await authenticate(client, MACHINES);
   client.setSession("s-debate", "local");
-  client.el("councilTopic").value = "Investigar por que o build quebra";
-  client.el("councilMode").value = "deep";
-  client.el("solutionEffort").value = "max";
-  client.el("solutionRounds").value = "5";
-  client.saveSolutionState();
+  client.setSolutionArm({ mode: "debate", rounds: 5, effort: "max", persist: "always" });
 
-  const drafts = JSON.parse(client.store["jarvis_solution_drafts"] || "{}");
-  const saved = Object.values(drafts)[0] as any;
-  assert.ok(saved, "algo foi persistido em localStorage");
-  assert.equal(saved.topic, "Investigar por que o build quebra");
-  assert.equal(saved.councilMode, "deep");
+  const saved = Object.values(JSON.parse(client.store["jarvis_solution_arm"] || "{}"))[0] as any;
+  assert.ok(saved, "a config armada foi persistida em localStorage");
+  assert.equal(saved.mode, "debate");
+  assert.equal(saved.rounds, 5);
   assert.equal(saved.effort, "max");
-  assert.equal(saved.rounds, "5");
+  assert.equal(saved.persist, "always");
 
-  // simula reload: some com os valores em memória e restaura a partir do que ficou salvo.
-  client.el("councilTopic").value = "";
-  client.el("councilMode").value = "auto";
-  client.applySolutionDraft(saved);
-  assert.equal(client.el("councilTopic").value, "Investigar por que o build quebra", "texto restaurado ao reabrir");
-  assert.equal(client.el("councilMode").value, "deep", "modo restaurado");
-  assert.equal(client.el("solutionEffort").value, "max", "esforço restaurado");
-  assert.equal(client.el("solutionRounds").value, "5", "rodadas restauradas");
+  // Armar é por sessão, igual às pills de modelo/esforço: outra sessão nasce desarmada.
+  client.setSession("s-outra", "local");
+  assert.equal(client.solutionArmed(), false, "sessão diferente não herda a rodada armada");
+  client.setSession("s-debate", "local");
+  assert.equal(client.solutionArm().mode, "debate", "voltar para a sessão restaura o que estava armado");
+  assert.equal(client.solutionArm().rounds, 5);
 });
 
-// draft só persiste quando há conteúdo: esvaziar o Objetivo apaga o rascunho (paridade com o composer).
-test("esvaziar o Objetivo remove o rascunho salvo da sessão", async () => {
+// A decisão de projeto: 'once' protege contra disparar 2-6 execuções paralelas sem querer na
+// mensagem seguinte; 'always' é para quem quer a sessão inteira rodando em modo Soluções.
+test("persist 'once' desarma ao enviar e 'always' continua armado", async () => {
   const client = loadClient();
   await authenticate(client, MACHINES);
-  client.setSession("s-vazia", "local");
-  client.el("councilTopic").value = "algum tema";
-  client.saveSolutionState();
-  assert.equal(Object.keys(JSON.parse(client.store["jarvis_solution_drafts"] || "{}")).length, 1);
-  client.el("councilTopic").value = "";
-  client.saveSolutionState();
-  assert.equal(Object.keys(JSON.parse(client.store["jarvis_solution_drafts"] || "{}")).length, 0, "sem conteúdo, não sobra rascunho");
+  client.setSession("s-once", "local");
+
+  client.setSolutionArm({ mode: "benchmark", persist: "once" });
+  assert.equal(client.solutionArmed(), true);
+  client.startSolutionRound("comparar duas abordagens de cache");
+  assert.equal(client.solutionArmed(), false, "execução única desarma sozinha depois de disparar");
+  const sent = client.socket().sent.filter((f: any) => f.t === "tournament_start");
+  assert.equal(sent.length, 1, "a rodada foi disparada");
+  assert.equal(sent[0].mode, "benchmark");
+
+  client.setSolutionArm({ mode: "council", persist: "always" });
+  client.startSolutionRound("como estruturar o rollout");
+  assert.equal(client.solutionArmed(), true, "sempre ativa continua armada após enviar");
+  assert.equal(client.solutionArm().mode, "council");
+});
+
+// Regressão: o postfix de "gerar plano/encaminhamento" era concatenado no tema E num campo `criteria`,
+// então o juiz recebia a mesma instrução duas vezes — e, com Critérios vazio, recebia SÓ o postfix
+// como se fosse critério de julgamento. O campo saiu; o postfix agora entra uma vez só, na tarefa.
+test("o postfix do pós-resultado entra uma única vez, sem campo de critérios", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-postfix", "local");
+  client.setSolutionArm({ mode: "review", postAction: "plan" });
+  client.startSolutionRound("revisar o diff do PR 42");
+
+  const frame = client.socket().sent.filter((f: any) => f.t === "tournament_start").pop() as any;
+  assert.ok(frame, "a rodada foi disparada");
+  assert.equal(frame.criteria, undefined, "não existe mais campo de critérios no protocolo do cliente");
+  const hits = frame.task.match(/plano de execucao/g) || [];
+  assert.equal(hits.length, 1, "a instrução de plano aparece uma vez só, na tarefa");
 });

@@ -17,8 +17,8 @@
     } catch {}
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','aiBtn','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','councilBtn','tourneyBtn','councilModal','councilClose','solutionHelpBtn','solutionTitle','solutionHelp','solutionAgentsMode','solutionAgentList','solutionCount','solutionCriteriaWrap','solutionCriteria','solutionWrite','solutionPostAction','councilTopic','councilTopicCount','councilMode','councilContext','councilNote','councilCancel','councilGo','solutionRounds','solutionEffort','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
-      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','setFwAutoFlow','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwDir','fwDirBtn','fwTplBtn','fwReset','fwUpdates','fwCatBtn','fwCatalog','fwWfBtn','fwWorkflows','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','wfRun','bgJobs','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','solutionBtn','solutionName','solutionBar','solBarMode','solBarMeta','solBarOff','solutionChars','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','setFwAutoFlow','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwDir','fwDirBtn','fwTplBtn','fwReset','fwUpdates','fwCatBtn','fwCatalog','fwWfBtn','fwWorkflows','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','wfRun','wfStepBtn','wfStepName','bgJobs','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
@@ -116,6 +116,9 @@
       E.composer.classList.toggle('has-draft',hasDraft);
       E.sendBtn.classList.toggle('hidden',mobile&&!hasDraft);
       E.mic.classList.toggle('hidden',mobile&&hasDraft&&!micActive);
+      // Ponto único onde o chip 🧭 se atualiza: cobre digitação, anexo (muda "pede evidência") e troca
+      // de layout. Roda depois do placeholder de refreshComposer, então o hint do passo prevalece.
+      try{ renderWfStep(); }catch(e){}
       setTimeout(syncComposerMetrics,0);
     }
     try{ if(composerMobileMq) composerMobileMq.addEventListener('change',syncComposerActions); }catch(e){ try{ composerMobileMq.addListener(syncComposerActions); }catch(_e){} }
@@ -161,9 +164,9 @@
     I18N.en.lblSlash='Autocomplete and suggestions when typing “/”, “@”, “#” and “!”';
     I18N.es.lblSlash='Autocompletado y sugerencias al escribir “/”, “@”, “#” y “!”';
     I18N.pt.secDefaults='Chat'; I18N.en.secDefaults='Chat'; I18N.es.secDefaults='Chat';
-    Object.assign(I18N.pt,{swShort:'Soluções',swName:'Espaço de Soluções',swNameAlt:'Solution Workspace',swModeCouncil:'Conselho',swModeBenchmark:'Benchmark',swModeReview:'Revisão',swModeAudit:'Auditoria',swHelpCouncil:'Delibera com várias lentes e publica uma síntese com veredito, dissensos, riscos e próximo passo.',swHelpBenchmark:'Compara soluções concorrentes para a mesma tarefa. Pode escrever em worktrees isoladas e promove a melhor.',swHelpReview:'Roda revisores independentes em paralelo para encontrar achados complementares. Não edita arquivos.',swHelpAudit:'Revisão formal com foco em severidade, evidências, risco e plano de ação. Não edita arquivos.',swNative:'Espaço de Soluções ainda não grava resultado em sessão nativa.',swTitle:'Espaço de Soluções: Conselho, Benchmark, Revisão paralela e Auditoria',swStarted:'Rodada iniciada — acompanhe em Trabalhos.'});
-    Object.assign(I18N.en,{swShort:'Solutions',swName:'Solution Workspace',swNameAlt:'Espaço de Soluções',swModeCouncil:'Council',swModeBenchmark:'Benchmark',swModeReview:'Review',swModeAudit:'Audit',swHelpCouncil:'Deliberates through multiple lenses and publishes a synthesis with verdict, dissent, risks and next step.',swHelpBenchmark:'Compares competing solutions for the same task. Can write in isolated worktrees and promote the best result.',swHelpReview:'Runs independent reviewers in parallel to find complementary findings. Does not edit files.',swHelpAudit:'Formal review focused on severity, evidence, risk and action plan. Does not edit files.',swNative:'Solution Workspace cannot write back to native sessions yet.',swTitle:'Solution Workspace: Council, Benchmark, Parallel Review and Audit',swStarted:'Workspace run started — follow it in Work.'});
-    Object.assign(I18N.es,{swShort:'Soluciones',swName:'Espacio de Soluciones',swNameAlt:'Solution Workspace',swModeCouncil:'Consejo',swModeBenchmark:'Benchmark',swModeReview:'Revisión',swModeAudit:'Auditoría',swHelpCouncil:'Delibera con varias lentes y publica una síntesis con veredicto, disensos, riesgos y próximo paso.',swHelpBenchmark:'Compara soluciones competidoras para la misma tarea. Puede escribir en worktrees aisladas y promover el mejor resultado.',swHelpReview:'Ejecuta revisores independientes en paralelo para encontrar hallazgos complementarios. No edita archivos.',swHelpAudit:'Revisión formal enfocada en severidad, evidencias, riesgo y plan de acción. No edita archivos.',swNative:'El Espacio de Soluciones aún no escribe resultados en sesiones nativas.',swTitle:'Espacio de Soluciones: Consejo, Benchmark, Revisión paralela y Auditoría',swStarted:'Ronda iniciada — síguela en Trabajos.'});
+    Object.assign(I18N.pt,{swShort:'Soluções',swName:'Espaço de Soluções',swNameAlt:'Solution Workspace',swModeCouncil:'Conselho',swModeBenchmark:'Benchmark',swModeReview:'Revisão',swModeAudit:'Auditoria',swModeDebate:'Debate',swHelpCouncil:'Delibera com várias lentes e publica uma síntese com veredito, dissensos, riscos e próximo passo.',swHelpBenchmark:'Compara soluções concorrentes para a mesma tarefa. Pode escrever em worktrees isoladas e promove a melhor.',swHelpReview:'Roda revisores independentes em paralelo para encontrar achados complementares. Não edita arquivos.',swHelpAudit:'Revisão formal com foco em severidade, evidências, risco e plano de ação. Não edita arquivos.',swHelpDebate:'Discussão iterativa entre 2+ IAs, com réplicas cruzadas, até um juiz declarar consenso ou atingir o teto de rodadas.',swNative:'Espaço de Soluções ainda não grava resultado em sessão nativa.',swTitle:'Espaço de Soluções: Conselho, Benchmark, Revisão paralela, Auditoria e Debate',swStarted:'Rodada iniciada — acompanhe em Trabalhos.'});
+    Object.assign(I18N.en,{swShort:'Solutions',swName:'Solution Workspace',swNameAlt:'Espaço de Soluções',swModeCouncil:'Council',swModeBenchmark:'Benchmark',swModeReview:'Review',swModeAudit:'Audit',swModeDebate:'Debate',swHelpCouncil:'Deliberates through multiple lenses and publishes a synthesis with verdict, dissent, risks and next step.',swHelpBenchmark:'Compares competing solutions for the same task. Can write in isolated worktrees and promote the best result.',swHelpReview:'Runs independent reviewers in parallel to find complementary findings. Does not edit files.',swHelpAudit:'Formal review focused on severity, evidence, risk and action plan. Does not edit files.',swHelpDebate:'Iterative discussion between 2+ AIs with cross rebuttals, until a judge declares consensus or the round cap is reached.',swNative:'Solution Workspace cannot write back to native sessions yet.',swTitle:'Solution Workspace: Council, Benchmark, Parallel Review, Audit and Debate',swStarted:'Workspace run started — follow it in Work.'});
+    Object.assign(I18N.es,{swShort:'Soluciones',swName:'Espacio de Soluciones',swNameAlt:'Solution Workspace',swModeCouncil:'Consejo',swModeBenchmark:'Benchmark',swModeReview:'Revisión',swModeAudit:'Auditoría',swModeDebate:'Debate',swHelpCouncil:'Delibera con varias lentes y publica una síntesis con veredicto, disensos, riesgos y próximo paso.',swHelpBenchmark:'Compara soluciones competidoras para la misma tarea. Puede escribir en worktrees aisladas y promover el mejor resultado.',swHelpReview:'Ejecuta revisores independientes en paralelo para encontrar hallazgos complementarios. No edita archivos.',swHelpAudit:'Revisión formal enfocada en severidad, evidencias, riesgo y plan de acción. No edita archivos.',swHelpDebate:'Discusión iterativa entre 2+ IAs con réplicas cruzadas, hasta que un juez declare consenso o se alcance el tope de rondas.',swNative:'El Espacio de Soluciones aún no escribe resultados en sesiones nativas.',swTitle:'Espacio de Soluciones: Consejo, Benchmark, Revisión paralela, Auditoría y Debate',swStarted:'Ronda iniciada — síguela en Trabajos.'});
     Object.assign(I18N.pt,{sendTitle:'Enviar mensagem',hSettings:'Abre as configurações do Jarvis.',hGeneral:'Idioma, padrões de agente/modelo e atalhos globais.',hVoicePanel:'Voz, wake word, timbre, identificação e escuta contínua.',hNotifPanel:'Push, biometria, localização e preferências de entrega.',hAutomationPanel:'Rotinas, políticas adaptativas, trabalhos e subagentes.',hFrameworkPanel:'Framework universal, comandos e instruções compartilhadas entre IAs.',hUsagePanel:'Uso, custo, modelos e consumo por sessão/máquina.',hMobilePanel:'Link e QR para abrir esta instância no telefone.',hDevicePanel:'Dispositivos autorizados, convites e credenciais.',hUpdatePanel:'Atualizações do Hub, runners e verificação de versão.',hNewSess:'Cria uma nova conversa com agente, modelo e pasta atuais.',hSearch:'Busca mensagens e sessões por texto ou memória semântica.',hDigest:'Gera um panorama falado do que está acontecendo entre sessões.',hWork:'Mostra trabalhos, subagentes, tarefas em background e estados pendentes.',hUsage:'Mostra consumo, contexto e limites estimados da sessão.',hMobile:'Mostra QR/URL para abrir o Jarvis no telefone.',hDevices:'Gerencia dispositivos, convites e permissões.',hUpdate:'Verifica e aplica atualizações do Hub e runners.',hSummary:'Resume esta conversa e fala o resumo.',hTerminal:'Abre terminais na máquina selecionada.',hFiles:'Abre a árvore de arquivos da pasta da sessão.',hOptions:'Mostra opções extras do composer em telas compactas.',hAttach:'Anexa imagens, textos e arquivos para a próxima mensagem.',hDesign:'Abre o Design Mode para navegar, selecionar elementos e enviar feedback visual.',hSolutions:'Executa Conselho, Benchmark, Revisão paralela ou Auditoria com múltiplas IAs.',hAgent:'Escolhe a IA usada em novas mensagens desta sessão.',hCwd:'Escolhe a pasta de trabalho da sessão.',hModel:'Escolhe o modelo usado nesta sessão quando o agente permite.',hEffort:'Escolhe o nível de esforço/capacidade quando disponível.',hSpeak:'Liga ou desliga leitura falada das respostas.',hStop:'Para a execução atual e libera a fila quando possível.',hSend:'Envia o texto, voz ou anexos atuais.',hLang:'Define o idioma da interface e filtra opções dependentes de idioma.',hDefaultAgent:'IA padrão para novas sessões.',hDefaultModel:'Modelo padrão usado quando a sessão não define outro.',hDefaultEffort:'Esforço padrão usado quando o modelo suporta esse controle.',hSlash:'Ativa sugestões rápidas para comandos, arquivos, memória e shell.',hVoiceAgent:'IA usada para interpretar comandos iniciados por voz.',hVoiceTimbre:'Escolhe a voz falada; opções cloud exigem chave configurada.',hWake:'Escuta “Hey Jarvis” no listener local ou APK Android.',hNoise:'Reduz ruído e detecta fala antes de enviar áudio.',hVoiceGate:'Bloqueia comandos de voz de pessoas não cadastradas.',hPush:'Notifica este aparelho sobre conclusões, falhas e máquinas offline.',hBio:'Protege o app com biometria quando disponível.',hGeo:'Compartilha a localização deste aparelho para pedidos dependentes de lugar.',hRoutine:'Agenda prompts recorrentes por frase simples ou cron.',hRoutineRun:'Executa a rotina agora, sem esperar a agenda.',hPolicy:'Controla autonomia, escrita no repo, aprovações e limites de custo/tokens.',hFramework:'Configura comandos e instruções universais publicados para todas as IAs.'});
     Object.assign(I18N.en,{sendTitle:'Send message',hNewSess:'Creates a new conversation using the current agent, model and folder.',hSearch:'Searches messages and sessions by text or semantic memory.',hDigest:'Generates a spoken overview of what is happening across sessions.',hWork:'Shows work items, subagents, background tasks and pending states.',hUsage:'Shows estimated usage, context and session limits.',hMobile:'Shows the QR/URL to open Jarvis on your phone.',hDevices:'Manages devices, invites and permissions.',hUpdate:'Checks and applies Hub and runner updates.',hSummary:'Summarizes this conversation and speaks the summary.',hTerminal:'Opens terminals on the selected machine.',hFiles:'Opens the file tree for the session folder.',hOptions:'Shows extra composer options on compact screens.',hAttach:'Attaches images, text and files to the next message.',hDesign:'Opens Design Mode to browse, select elements and send visual feedback.',hSolutions:'Runs Council, Benchmark, Parallel Review or Audit with multiple AIs.',hAgent:'Chooses the AI used for new messages in this session.',hCwd:'Chooses the working folder for the session.',hModel:'Chooses the model when the agent supports per-turn selection.',hEffort:'Chooses effort/capability level when available.',hSpeak:'Turns spoken replies on or off.',hStop:'Stops the current execution and frees the queue when possible.',hSend:'Sends the current text, voice or attachments.',hLang:'Sets the interface language and filters language-specific options.',hDefaultAgent:'Default AI for new sessions.',hDefaultModel:'Default model when the session does not override it.',hDefaultEffort:'Default effort when the model supports that control.',hSlash:'Enables quick suggestions for commands, files, memory and shell.',hVoiceAgent:'AI used to interpret voice-started commands.',hVoiceTimbre:'Chooses the spoken voice; cloud options require a configured key.',hWake:'Listens for “Hey Jarvis” through the local listener or Android APK.',hNoise:'Reduces noise and detects speech before sending audio.',hVoiceGate:'Blocks voice commands from unenrolled speakers.',hPush:'Notifies this device about completions, failures and offline machines.',hBio:'Protects the app with biometrics when available.',hGeo:'Shares this device location for location-aware requests.',hRoutine:'Schedules recurring prompts using simple phrases or cron.',hRoutineRun:'Runs the routine now without waiting for the schedule.',hPolicy:'Controls autonomy, repo writes, approvals and cost/token limits.',hFramework:'Configures universal commands and instructions published to every AI.'});
     Object.assign(I18N.es,{sendTitle:'Enviar mensaje',hNewSess:'Crea una nueva conversación con la IA, modelo y carpeta actuales.',hSearch:'Busca mensajes y sesiones por texto o memoria semántica.',hDigest:'Genera un panorama hablado de lo que ocurre entre sesiones.',hWork:'Muestra trabajos, subagentes, tareas en segundo plano y estados pendientes.',hUsage:'Muestra consumo estimado, contexto y límites de la sesión.',hMobile:'Muestra el QR/URL para abrir Jarvis en el teléfono.',hDevices:'Gestiona dispositivos, invitaciones y permisos.',hUpdate:'Verifica y aplica actualizaciones del Hub y runners.',hSummary:'Resume esta conversación y lee el resumen.',hTerminal:'Abre terminales en la máquina seleccionada.',hFiles:'Abre el árbol de archivos de la carpeta de la sesión.',hOptions:'Muestra opciones extra del composer en pantallas compactas.',hAttach:'Adjunta imágenes, textos y archivos al próximo mensaje.',hDesign:'Abre Design Mode para navegar, seleccionar elementos y enviar feedback visual.',hSolutions:'Ejecuta Consejo, Benchmark, Revisión paralela o Auditoría con varias IAs.',hAgent:'Elige la IA usada en nuevos mensajes de esta sesión.',hCwd:'Elige la carpeta de trabajo de la sesión.',hModel:'Elige el modelo cuando la IA permite selección por turno.',hEffort:'Elige el nivel de esfuerzo/capacidad cuando está disponible.',hSpeak:'Activa o desactiva respuestas habladas.',hStop:'Detiene la ejecución actual y libera la cola cuando sea posible.',hSend:'Envía el texto, voz o adjuntos actuales.',hLang:'Define el idioma de la interfaz y filtra opciones por idioma.',hDefaultAgent:'IA predeterminada para nuevas sesiones.',hDefaultModel:'Modelo predeterminado cuando la sesión no define otro.',hDefaultEffort:'Esfuerzo predeterminado cuando el modelo lo soporta.',hSlash:'Activa sugerencias rápidas para comandos, archivos, memoria y shell.',hVoiceAgent:'IA usada para interpretar comandos iniciados por voz.',hVoiceTimbre:'Elige la voz hablada; opciones cloud requieren clave configurada.',hWake:'Escucha “Hey Jarvis” con el listener local o APK Android.',hNoise:'Reduce ruido y detecta habla antes de enviar audio.',hVoiceGate:'Bloquea comandos de voz de hablantes no registrados.',hPush:'Notifica este dispositivo sobre finalizaciones, fallos y máquinas offline.',hBio:'Protege la app con biometría cuando esté disponible.',hGeo:'Comparte la ubicación de este dispositivo para pedidos con ubicación.',hRoutine:'Agenda prompts recurrentes con frases simples o cron.',hRoutineRun:'Ejecuta la rutina ahora sin esperar la agenda.',hPolicy:'Controla autonomía, escritura en repo, aprobaciones y límites de costo/tokens.',hFramework:'Configura comandos e instrucciones universales publicadas para todas las IAs.'});
@@ -601,7 +604,7 @@
     Object.assign(I18N.pt,{hAi:'Agrupa agente, modelo e esforço da IA para a próxima mensagem.'});
     Object.assign(I18N.en,{hAi:'Groups AI agent, model and effort for the next message.'});
     Object.assign(I18N.es,{hAi:'Agrupa IA, modelo y esfuerzo para el próximo mensaje.'});
-    const HELP_TARGETS={newSess:'hNewSess',settingsBtn:'hSettings',searchBtn:'hSearch',digestBtn:'hDigest',workBtn:'hWork',personalBtn:'hPersonal',termMenuBtn:'hTerminal',usageBtn:'hUsage',qrUrl:'hMobile',secDevices:'hDevices',updCheck:'hUpdate',sumHdr:'hSummary',termBtn:'hTerminal',treeBtn:'hFiles',optsBtn:'hOptions',attach:'hAttach',designBtn:'hDesign',councilBtn:'hSolutions',tourneyBtn:'hSolutions',solutionHelpBtn:'hSolutionsUse',settingsHelpBtn:'settingsHelpBtnTitle',aiBtn:'hAi',agentBtn:'hAgent',cwdBtn:'hCwd',modelBtn:'hModel',effortBtn:'hEffort',speak:'hSpeak',stopBtn:'hStop',sendBtn:'hSend',setLang:'hLang',setAgent:'hDefaultAgent',setModel:'hDefaultModel',setEffort:'hDefaultEffort',setSlash:'hSlash',setVoiceAgent:'hVoiceAgent',setVoiceModel:'hVoiceAgent',setVoiceEffort:'hVoiceAgent',voiceCatalog:'hVoiceTimbre',setVoice:'hSpeak',setContinue:'lblContinue',setWake:'hWakeLocked',setNoise:'hNoise',setGate:'hVoiceGate',setPush:'hNotifPlatforms',setBioLock:'hBio',routinesSection:'hRoutineUse',rtCron:'hRoutineUse',rtAdd:'hRoutineUse',setPolicyMode:'hPolicy',setPolicyPersonalContext:'hPolicyPersonalContext',policySettings:'hPolicy',frameworkSettings:'hFramework'};
+    const HELP_TARGETS={newSess:'hNewSess',settingsBtn:'hSettings',searchBtn:'hSearch',digestBtn:'hDigest',workBtn:'hWork',personalBtn:'hPersonal',termMenuBtn:'hTerminal',usageBtn:'hUsage',qrUrl:'hMobile',secDevices:'hDevices',updCheck:'hUpdate',sumHdr:'hSummary',termBtn:'hTerminal',treeBtn:'hFiles',optsBtn:'hOptions',attach:'hAttach',designBtn:'hDesign',solutionBtn:'hSolutions',settingsHelpBtn:'settingsHelpBtnTitle',aiBtn:'hAi',agentBtn:'hAgent',cwdBtn:'hCwd',modelBtn:'hModel',effortBtn:'hEffort',speak:'hSpeak',stopBtn:'hStop',sendBtn:'hSend',setLang:'hLang',setAgent:'hDefaultAgent',setModel:'hDefaultModel',setEffort:'hDefaultEffort',setSlash:'hSlash',setVoiceAgent:'hVoiceAgent',setVoiceModel:'hVoiceAgent',setVoiceEffort:'hVoiceAgent',voiceCatalog:'hVoiceTimbre',setVoice:'hSpeak',setContinue:'lblContinue',setWake:'hWakeLocked',setNoise:'hNoise',setGate:'hVoiceGate',setPush:'hNotifPlatforms',setBioLock:'hBio',routinesSection:'hRoutineUse',rtCron:'hRoutineUse',rtAdd:'hRoutineUse',setPolicyMode:'hPolicy',setPolicyPersonalContext:'hPolicyPersonalContext',policySettings:'hPolicy',frameworkSettings:'hFramework'};
     const HELP_ICON_IDS=new Set();
     const SETTINGS_PANEL_HELP={
       geral:{title:'settingsHelpGeneralTitle',body:'hGeneral',items:['language','hDefaultAgent','hDefaultModel','hDefaultEffort','hSlash']},
@@ -661,7 +664,7 @@
     function closeHelpSheet(){ if(E.helpSheet) E.helpSheet.classList.add('hidden'); }
     function openSolutionHelp(){
       if(openHelpSheet(['solutions'], t('helpSolutionsTitle'), '🧠')) return;
-      helpDialog('helpSolutionsTitle',SOLUTION_HELP[solutionMode]||'hSolutionsUse',['hSolutionsUse']);
+      helpDialog('helpSolutionsTitle',SOLUTION_HELP[solutionArm().mode]||'hSolutionsUse',['hSolutionsUse']);
     }
     function installHelp(){ Object.entries(HELP_TARGETS).forEach(([id,key])=>{ const el=helpElement(id); if(!el)return; el.classList.toggle('helpable',HELP_ICON_IDS.has(id)); el.title=t(key); if(id==='sendBtn'){ el.setAttribute('aria-label',t('sendTitle')); el.title=t('sendTitle'); } });
       const panelHelp={geral:'hGeneral',voz:'hVoicePanel',notif:'hNotifPanel',automacao:'hAutomationPanel',framework:'hFrameworkPanel',rota:'descAutoRoute',uso:'hUsagePanel',celular:'hMobilePanel',dispositivos:'hDevicePanel',update:'hUpdatePanel'};
@@ -1148,7 +1151,7 @@
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
-    function openSession(id,runnerId){ if(!id)return; wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} setTimeout(()=>{ if(authUser&&authUser.role==='owner') tx({t:'workflow_runs',sessionId:id}); tx({t:'workflow_list'}); },60);
+    function openSession(id,runnerId){ if(!id)return; wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} setTimeout(()=>{ if(authUser&&authUser.role==='owner') tx({t:'workflow_runs',sessionId:id}); tx({t:'workflow_list'}); },60);
       if(typeof findState!=='undefined'&&findState)closeFind(); if(typeof findRegion!=='undefined')findRegion='chat';  // abriu sessão → foco no chat; fecha barra órfã
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
@@ -2096,93 +2099,42 @@
     E.tabFiles.onclick=()=>selectTab('files');
     selectTab(cfg.tab);
     E.digestBtn.onclick=()=>{ if(!startVoiceOp('digest',E.digestBtn,'⏳ gerando…'))return; status('speaking',t('stAnalyzing')); tx({t:'digest',speak:true}); };
-    const SOLUTION_HELP={council:'swHelpCouncil',benchmark:'swHelpBenchmark',review:'swHelpReview',audit:'swHelpAudit'};
+    const SOLUTION_MODES=['council','benchmark','review','audit','debate'];
+    const SOLUTION_HELP={council:'swHelpCouncil',benchmark:'swHelpBenchmark',review:'swHelpReview',audit:'swHelpAudit',debate:'swHelpDebate'};
+    const SOLUTION_LABEL={council:'swModeCouncil',benchmark:'swModeBenchmark',review:'swModeReview',audit:'swModeAudit',debate:'swModeDebate'};
     const SOLUTION_MAX_CHARS=20000;   // espelha o corte do servidor (index.ts: msg.topic/task.slice(0,20_000)) — feedback pra não truncar em silêncio
-    let solutionMode='council';
-    // Rascunho do Espaço de Soluções POR SESSÃO, persistido — igual ao composer do chat: sobrevive a
-    // reload/atualização/lock da página. Guarda TODOS os campos (modo, tema, critérios, IAs
-    // selecionadas, etc.), não só o texto, e restaura a seleção anterior ao reabrir. Limpo no envio.
-    const solutionDraftBySession=(()=>{ try{ return JSON.parse(localStorage.getItem('jarvis_solution_drafts')||'{}'); }catch(e){ return {}; } })();
-    function saveSolutionDrafts(){ try{ localStorage.setItem('jarvis_solution_drafts', JSON.stringify(solutionDraftBySession)); }catch(e){} }
-    function solutionSnapshot(){
-      return { mode:solutionMode,
-        topic:E.councilTopic?E.councilTopic.value:'',
-        councilMode:E.councilMode?E.councilMode.value:'auto',
-        context:E.councilContext?E.councilContext.checked:true,
-        agentsMode:E.solutionAgentsMode?E.solutionAgentsMode.value:'auto',
-        count:E.solutionCount?E.solutionCount.value:'3',
-        rounds:E.solutionRounds?E.solutionRounds.value:'3',
-        effort:E.solutionEffort?E.solutionEffort.value:'high',
-        criteria:E.solutionCriteria?E.solutionCriteria.value:'',
-        write:E.solutionWrite?E.solutionWrite.checked:true,
-        postAction:E.solutionPostAction?E.solutionPostAction.value:'none',
-        agents:E.solutionAgentList?[...E.solutionAgentList.querySelectorAll('input:checked')].map(x=>x.value):[] };
+    // Espaço de Soluções ARMADO por sessão, igual às pills de modelo/esforço: o que persiste é só COMO a
+    // rodada roda — o objetivo vem do próprio chat, não de um campo separado. `mode:null` = desligado.
+    // `persist` decide o que acontece depois do envio: 'once' desarma sozinho (protege contra disparar
+    // 2-6 execuções paralelas sem querer na mensagem seguinte); 'always' fica ligado até você desligar.
+    const SOLUTION_DEFAULTS={mode:null,persist:'once',councilMode:'auto',context:true,agentsMode:'auto',agents:[],count:3,rounds:3,effort:'high',write:true,postAction:'none'};
+    const solutionArmBySession=(()=>{ try{ return JSON.parse(localStorage.getItem('jarvis_solution_arm')||'{}'); }catch(e){ return {}; } })();
+    function saveSolutionArms(){ try{ localStorage.setItem('jarvis_solution_arm', JSON.stringify(solutionArmBySession)); }catch(e){} }
+    function solutionArm(){ return Object.assign({},SOLUTION_DEFAULTS,sessionValue(solutionArmBySession,currentSession,currentSessionRunner)||{}); }
+    function solutionArmed(){ return SOLUTION_MODES.includes(solutionArm().mode); }
+    function solutionUsable(){ return !!currentSession&&!curNative; }
+    function setSolutionArm(patch){
+      if(currentSession==null)return;
+      const key=sessionStateKey(currentSession,currentSessionRunner), next=Object.assign(solutionArm(),patch||{});
+      if(!SOLUTION_MODES.includes(next.mode)) delete solutionArmBySession[key]; else solutionArmBySession[key]=next;
+      saveSolutionArms(); renderSolutionPill();
     }
-    // Só persiste quando há CONTEÚDO de verdade (tema ou critérios) — settings sozinhos não são "mensagem".
-    function saveSolutionState(){ if(currentSession==null)return; const key=sessionStateKey(currentSession,currentSessionRunner), s=solutionSnapshot();
-      if((s.topic&&s.topic.trim())||(s.criteria&&s.criteria.trim())) solutionDraftBySession[key]=s; else delete solutionDraftBySession[key];
-      saveSolutionDrafts(); }
-    function clearSolutionState(){ if(currentSession==null)return; delete solutionDraftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveSolutionDrafts(); }
-    function stashSolutionDraft(){ if(E.councilModal&&!E.councilModal.classList.contains('hidden')) saveSolutionState(); }   // salva antes de um descarte de aba, só se o modal estiver aberto
-    function applySolutionDraft(d){
-      E.councilTopic.value=d.topic||'';
-      E.councilMode.value=d.councilMode||'auto';
-      E.councilContext.checked=d.context!==false;
-      if(E.solutionCount)E.solutionCount.value=d.count||'3';
-      if(E.solutionRounds)E.solutionRounds.value=d.rounds||'3';
-      if(E.solutionEffort)E.solutionEffort.value=['medium','high','max'].includes(d.effort)?d.effort:'high';
-      if(E.solutionCriteria)E.solutionCriteria.value=d.criteria||'';
-      if(E.solutionWrite)E.solutionWrite.checked=d.write!==false;
-      if(E.solutionPostAction)E.solutionPostAction.value=d.postAction||'none';
-      if(E.solutionAgentsMode)E.solutionAgentsMode.value=['auto','all','manual'].includes(d.agentsMode)?d.agentsMode:'auto';
-      setSolutionMode(d.mode||'council');   // reconstrói a lista de IAs conforme modo/agentsMode
-      if(E.solutionAgentList&&Array.isArray(d.agents)){ const set=new Set(d.agents); E.solutionAgentList.querySelectorAll('input[type=checkbox]').forEach(chk=>{ chk.checked=set.has(chk.value); }); }
-    }
-    function applySolutionDefaults(){
-      const draft=(E.input.value||'').trim();
-      E.councilTopic.value=draft||'';
-      E.councilMode.value='auto';
-      E.councilContext.checked=true;
-      if(E.solutionCount)E.solutionCount.value='3';
-      if(E.solutionRounds){ let r=3; try{ r=Number(localStorage.getItem('debateRounds'))||3; }catch(_){} E.solutionRounds.value=String(Math.min(6,Math.max(1,r))); }
-      if(E.solutionEffort){ let ef='high'; try{ ef=localStorage.getItem('debateEffort')||'high'; }catch(_){} E.solutionEffort.value=['medium','high','max'].includes(ef)?ef:'high'; }
-      if(E.solutionCriteria)E.solutionCriteria.value='';
-      if(E.solutionAgentsMode)E.solutionAgentsMode.value='auto';
-      if(E.solutionPostAction)E.solutionPostAction.value='none';
-      setSolutionMode('council');
-    }
+    function disarmSolution(){ setSolutionArm({mode:null}); }
     function solutionDescriptors(){
       return availableMachineCaps().filter(c=>c&&c.name&&!['not_installed','unauthenticated'].includes(c.support||''));
     }
-    function renderSolutionAgents(){
-      if(!E.solutionAgentList)return;
-      const mode=E.solutionAgentsMode?E.solutionAgentsMode.value:'auto';
-      const list=solutionDescriptors();
-      E.solutionAgentList.innerHTML='';
-      E.solutionAgentList.classList.toggle('hidden',mode!=='manual');
-      if(mode!=='manual')return;
-      list.forEach((d,i)=>{
-        const lab=document.createElement('label'); lab.className='row';
-        const chk=document.createElement('input'); chk.type='checkbox'; chk.value=d.name; chk.checked=i<Math.max(1,Math.min(3,list.length)); chk.onchange=saveSolutionState;
-        const text=document.createElement('span'); text.className='adesc';
-        const b=document.createElement('b'); b.textContent=(d.label||d.name);
-        const s=document.createElement('span'); const ms=selectableModels(d); s.textContent=(ms.length?ms.length+' modelos':'modelo automático')+' · '+(d.name||'');
-        text.appendChild(b); text.appendChild(s); lab.appendChild(chk); lab.appendChild(text); E.solutionAgentList.appendChild(lab);
-      });
-    }
     function selectedSolutionDescriptors(){
-      const all=solutionDescriptors(), mode=E.solutionAgentsMode?E.solutionAgentsMode.value:'auto';
-      if(mode==='all')return all;
-      if(mode==='manual'){
-        const picked=[...E.solutionAgentList.querySelectorAll('input:checked')].map(x=>x.value);
-        return all.filter(d=>picked.includes(d.name));
+      const all=solutionDescriptors(), c=solutionArm();
+      if(c.agentsMode==='all')return all;
+      if(c.agentsMode==='manual'){
+        const picked=Array.isArray(c.agents)?c.agents:[], chosen=all.filter(d=>picked.includes(d.name));
+        if(chosen.length)return chosen;   // seleção vazia cai no automático em vez de rodar sem IA nenhuma
       }
       const preferred=all.find(d=>d.name===currentAgent)||all[0];
       return preferred?[preferred,...all.filter(d=>d.name!==preferred.name)]:all;
     }
     function solutionCompetitors(){
-      const descs=selectedSolutionDescriptors();
-      const count=Math.min(6,Math.max(2,Number(E.solutionCount&&E.solutionCount.value)||3));
+      const descs=selectedSolutionDescriptors(), count=Math.min(6,Math.max(2,Number(solutionArm().count)||3));
       const pool=[];
       descs.forEach(d=>{
         const ms=selectableModels(d);
@@ -2193,86 +2145,137 @@
       return Array.from({length:count},(_v,i)=>Object.assign({},src[i%src.length],{label:(src[i%src.length].label||src[i%src.length].agent)+(i>=src.length?' #'+(i+1):'')}));
     }
     function solutionPostfix(){
-      const v=E.solutionPostAction&&E.solutionPostAction.value;
+      const v=solutionArm().postAction;
       if(v==='plan')return '\n\nResultado esperado: alem da conclusao, gere um plano de execucao claro, ordenado e acionavel.';
       if(v==='handoff')return '\n\nResultado esperado: prepare um encaminhamento pronto para uma IA executar depois, com objetivo, contexto, passos, criterios de aceite e riscos.';
       return '';
     }
-    // Contador visível do Objetivo: o servidor corta o texto (tema+postfix) em SOLUTION_MAX_CHARS. Em vez
-    // de truncar em silêncio, mostra quanto falta e avisa que vai cortar se passar. O postfix (plano/
-    // encaminhamento) também conta no limite do servidor, então entra na contagem.
+    // Contador do teto: o servidor corta (texto+postfix) em SOLUTION_MAX_CHARS. Em vez de truncar em
+    // silêncio, mostra o quanto foi usado e avisa do corte. Só aparece com uma rodada armada — turno
+    // normal de chat não tem esse limite.
     function updateSolutionCount(){
-      if(!E.councilTopicCount)return;
-      const len=((E.councilTopic&&E.councilTopic.value)||'').length+solutionPostfix().length;
+      if(!E.solutionChars)return;
+      if(!solutionArmed()){ E.solutionChars.textContent=''; return; }
+      const len=((E.input&&E.input.value)||'').length+solutionPostfix().length;
       const over=len>SOLUTION_MAX_CHARS;
-      E.councilTopicCount.textContent=`${len} / ${SOLUTION_MAX_CHARS}`+(over?` · será cortado em ${SOLUTION_MAX_CHARS} ao enviar`:'');
-      E.councilTopicCount.classList.toggle('over',over);
-      E.councilTopicCount.classList.toggle('warn',!over&&len>SOLUTION_MAX_CHARS*0.9);
+      E.solutionChars.textContent=`${len} / ${SOLUTION_MAX_CHARS}`+(over?` · será cortado em ${SOLUTION_MAX_CHARS} ao enviar`:'');
+      E.solutionChars.classList.toggle('over',over);
+      E.solutionChars.classList.toggle('warn',!over&&len>SOLUTION_MAX_CHARS*0.9);
     }
-    function setSolutionMode(mode){
-      solutionMode=mode||'council';
-      document.querySelectorAll('.sworkmode').forEach(b=>b.classList.toggle('on',b.dataset.mode===solutionMode));
-      if(E.solutionHelp)E.solutionHelp.textContent=t(SOLUTION_HELP[solutionMode]||'swHelpCouncil');
-      const isCouncil=solutionMode==='council', isBenchmark=solutionMode==='benchmark', isDebate=solutionMode==='debate';
-      const cm=E.councilMode&&E.councilMode.closest('label'), cc=E.councilContext&&E.councilContext.closest('.cswitchfield'), sw=E.solutionWrite&&E.solutionWrite.closest('.solutionWrite'), sp=E.solutionCount&&E.solutionCount.closest('.solutionParallel'), sr=E.solutionRounds&&E.solutionRounds.closest('.cfield'), sef=E.solutionEffort&&E.solutionEffort.closest('.cfield');
-      if(cm)cm.classList.toggle('hidden',!isCouncil);                 // lentes/papéis: só Conselho
-      if(cc)cc.classList.toggle('hidden',!(isCouncil||isDebate));     // contexto recente: Conselho e Debate
-      if(sw)sw.classList.toggle('hidden',!isBenchmark);
-      if(sp)sp.classList.toggle('hidden',isCouncil||isDebate);        // execuções paralelas: nem Conselho nem Debate
-      if(sr)sr.classList.toggle('hidden',!isDebate);                  // teto de rodadas: só Debate
-      if(sef)sef.classList.toggle('hidden',!isDebate);                // esforço das IAs: só Debate
-      if(E.solutionTitle)E.solutionTitle.textContent=t('swName');
-      if(E.councilGo)E.councilGo.textContent=isCouncil?'Convocar':isDebate?'Debater':'Iniciar';
-      if(E.councilTopic)E.councilTopic.placeholder=isCouncil?'O que o Conselho deve discutir?':isDebate?'Sobre o que as IAs devem debater até chegar a um consenso?':'Descreva a tarefa, PR, diff ou cenário para esta rodada.';
-      renderSolutionAgents();
+    function solutionModeLabel(mode){ return t(SOLUTION_LABEL[mode]||'swModeCouncil'); }
+    function solutionSummary(){
+      const c=solutionArm(); if(!SOLUTION_MODES.includes(c.mode))return '';
+      const parts=[];
+      if(c.mode==='debate') parts.push(c.rounds+(Number(c.rounds)===1?' rodada':' rodadas'));
+      else if(c.mode!=='council') parts.push(c.count+' execuções');
+      parts.push(c.persist==='always'?'sempre ativo':'só o próximo envio');
+      return parts.join(' · ');
     }
-    document.querySelectorAll('.sworkmode').forEach(b=>b.onclick=()=>{ setSolutionMode(b.dataset.mode); saveSolutionState(); });
-    if(E.solutionHelpBtn)E.solutionHelpBtn.onclick=openSolutionHelp;
-    if(E.solutionAgentsMode)E.solutionAgentsMode.onchange=()=>{ renderSolutionAgents(); saveSolutionState(); };
-    // Persistência ao vivo do rascunho por sessão (todos os campos do Espaço de Soluções).
-    if(E.councilTopic)E.councilTopic.addEventListener('input',()=>{ saveSolutionState(); updateSolutionCount(); });
-    if(E.solutionCriteria)E.solutionCriteria.addEventListener('input',saveSolutionState);
-    [E.councilMode,E.councilContext,E.solutionCount,E.solutionRounds,E.solutionEffort,E.solutionWrite,E.solutionPostAction].forEach(el=>{ if(el)el.addEventListener('change',saveSolutionState); });
-    if(E.solutionPostAction)E.solutionPostAction.addEventListener('change',updateSolutionCount);   // muda o postfix → recontar
-    function openCouncil(){
+    // A pill fica azul preenchida e a barra aparece sobre o composer: com uma rodada armada o próximo
+    // envio não é um turno normal, e isso precisa estar visível ANTES de apertar enviar.
+    function renderSolutionPill(){
+      const c=solutionArm(), usable=solutionUsable(), on=SOLUTION_MODES.includes(c.mode)&&usable;
+      if(E.solutionBtn){
+        E.solutionBtn.classList.toggle('on',on);
+        E.solutionBtn.classList.toggle('lock',!usable);
+        E.solutionBtn.disabled=!usable;
+        E.solutionBtn.title=!currentSession?t('tOpenFirst'):(curNative?t('swNative'):(on?(solutionModeLabel(c.mode)+' — '+solutionSummary()):t('swTitle')));
+      }
+      if(E.solutionName)E.solutionName.textContent=on?solutionModeLabel(c.mode):'—';
+      if(E.solutionBar)E.solutionBar.classList.toggle('hidden',!on);
+      if(on){
+        if(E.solBarMode)E.solBarMode.textContent=solutionModeLabel(c.mode);
+        if(E.solBarMeta)E.solBarMeta.textContent=solutionSummary();
+      }
+      updateSolutionCount();
+    }
+    function buildSolutionPop(p){
+      p.appendChild(ph(t('swName')));
+      if(currentSession==null||curNative){
+        const n=document.createElement('div'); n.className='mut'; n.style.cssText='padding:0 2px 4px;font-size:11.5px';
+        n.textContent=currentSession==null?'Abra uma sessão para armar uma rodada.':t('swNative'); p.appendChild(n); return;
+      }
+      const c=solutionArm(), armed=SOLUTION_MODES.includes(c.mode);
+      const reopen=()=>replaceOpenPop(E.solutionBtn,buildSolutionPop);
+      const off=document.createElement('div'); off.className='opt'+(armed?'':' sel');
+      off.innerHTML='✖ Desligado'+(armed?'':'<span class="r">atual</span>');
+      off.onclick=()=>{ closePop(); disarmSolution(); };
+      p.appendChild(off);
+      SOLUTION_MODES.forEach(m=>{
+        const o=document.createElement('div'); o.className='opt'+(c.mode===m?' sel':'');
+        o.innerHTML=esc(solutionModeLabel(m))+(c.mode===m?'<span class="r">atual</span>':'');
+        o.title=t(SOLUTION_HELP[m]||'swHelpCouncil');
+        o.onclick=()=>{ setSolutionArm({mode:m}); reopen(); };
+        p.appendChild(o);
+      });
+      if(!armed)return;
+      // Ajuda de UM modo só, o escolhido: descrever os cinco de uma vez fazia o popover passar da
+      // altura da tela no celular e colava rótulo e descrição na mesma linha.
+      const help=document.createElement('div'); help.className='solutionhelp'; help.textContent=t(SOLUTION_HELP[c.mode]||'swHelpCouncil'); p.appendChild(help);
+      // Cada seção = uma decisão de tipo diferente, com régua no cabeçalho e os parâmetros num poço
+      // recuado; as escolhas (modos) ficam soltas sobre o painel. A separação carrega informação.
+      const sec=(title)=>{ const h=document.createElement('div'); h.className='solsec'; h.textContent=title; p.appendChild(h);
+        const w=document.createElement('div'); w.className='solwell'; p.appendChild(w); return w; };
+      const row=(host,label,ctl,title)=>{ const d=document.createElement('div'); d.className='solrow'; if(title)d.title=title; const s=document.createElement('span'); s.textContent=label; d.appendChild(s); d.appendChild(ctl); host.appendChild(d); return d; };
+      // Switch em vez de checkbox: liga/desliga binário lê melhor numa linha de ajuste. Não remonta o
+      // popover ao alternar — só grava e atualiza a pill/barra, então o toque responde na hora.
+      const sw=(val,fn)=>{ const b=document.createElement('button'); b.type='button'; b.className='sw'; b.setAttribute('role','switch');
+        b.setAttribute('aria-checked',String(val!==false)); b.appendChild(document.createElement('span'));
+        b.onclick=()=>{ const next=b.getAttribute('aria-checked')!=='true'; b.setAttribute('aria-checked',String(next)); fn(next); };
+        return b; };
+      const keepWell=sec('Depois do envio');
+      row(keepWell,'Manter ligado',sw(c.persist==='always',v=>setSolutionArm({persist:v?'always':'once'})),
+        'Ligado: todo envio vira uma rodada. Desligado: desarma sozinho ao disparar.');
+      const runWell=sec('Como rodar');
+      const sel=(opts,val,fn)=>{ const s=document.createElement('select'); opts.forEach(([v,l])=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; s.appendChild(o); }); s.value=val; s.onchange=()=>fn(s.value); return s; };
+      const num=(val,min,max,fn)=>{ const i=document.createElement('input'); i.type='number'; i.min=String(min); i.max=String(max); i.value=String(val); i.onchange=()=>fn(Math.min(max,Math.max(min,Number(i.value)||min))); return i; };
+      const isCouncil=c.mode==='council', isDebate=c.mode==='debate', isBenchmark=c.mode==='benchmark';
+      if(isCouncil) row(runWell,'Lentes',sel([['auto','Auto'],['quick','Rápido'],['technical','Técnico'],['critical','Crítico'],['deep','Profundo']],c.councilMode,v=>setSolutionArm({councilMode:v})));
+      if(isCouncil||isDebate) row(runWell,'Contexto recente',sw(c.context,v=>setSolutionArm({context:v})),'Inclui as últimas mensagens da sessão no material da rodada.');
+      if(!isCouncil&&!isDebate) row(runWell,'Execuções paralelas',num(c.count,2,6,v=>setSolutionArm({count:v})));
+      if(isDebate){ row(runWell,'Rodadas (teto)',num(c.rounds,1,6,v=>setSolutionArm({rounds:v}))); row(runWell,'Esforço das IAs',sel([['medium','Médio'],['high','Alto'],['max','Máximo']],c.effort,v=>setSolutionArm({effort:v}))); }
+      if(isBenchmark) row(runWell,'Worktrees isoladas',sw(c.write,v=>setSolutionArm({write:v})),'Cada candidato escreve numa cópia isolada do repo para produzir um diff real.');
+      row(runWell,'Ao terminar',sel([['none','Só publicar'],['plan','Gerar plano'],['handoff','Encaminhamento']],c.postAction,v=>setSolutionArm({postAction:v})),
+        'O que a rodada entrega além da conclusão.');
+      row(runWell,'IAs',sel([['auto','Automático'],['all','Todas'],['manual','Selecionar']],c.agentsMode,v=>{ setSolutionArm({agentsMode:v}); reopen(); }));
+      if(c.agentsMode==='manual'){
+        const list=solutionDescriptors(), picked=new Set(Array.isArray(c.agents)?c.agents:[]);
+        const box=document.createElement('div'); box.className='agentlist';
+        list.forEach(d=>{
+          const lab=document.createElement('label'); lab.className='row';
+          const i=document.createElement('input'); i.type='checkbox'; i.value=d.name; i.checked=picked.has(d.name);
+          i.onchange=()=>{ if(i.checked)picked.add(d.name); else picked.delete(d.name); setSolutionArm({agents:[...picked]}); };
+          const text=document.createElement('span'); text.className='adesc';
+          const b=document.createElement('b'); b.textContent=(d.label||d.name);
+          const s=document.createElement('span'); const ms=selectableModels(d); s.textContent=(ms.length?ms.length+' modelos':'modelo automático')+' · '+(d.name||'');
+          text.appendChild(b); text.appendChild(s); lab.appendChild(i); lab.appendChild(text); box.appendChild(lab);
+        });
+        if(!list.length){ const n=document.createElement('div'); n.className='mut'; n.style.fontSize='12px'; n.textContent='nenhuma IA disponível'; box.appendChild(n); }
+        runWell.appendChild(box);
+      }
+    }
+    // O chat É o objetivo: com uma rodada armada, enviar dispara council/debate/tournament no lugar do turno.
+    function startSolutionRound(topic){
+      const c=solutionArm(), fullTopic=topic+solutionPostfix(), selected=selectedSolutionDescriptors().map(d=>d.name);
+      if(c.mode==='council'){
+        tx({t:'council_start',sessionId:currentSession,topic:fullTopic,mode:c.councilMode,includeContext:c.context!==false,model:curModel,effort:curEffort,agents:selected});
+      }else if(c.mode==='debate'){
+        tx({t:'debate_start',sessionId:currentSession,topic:fullTopic,includeContext:c.context!==false,agents:selected,
+          maxRounds:Math.min(6,Math.max(1,Number(c.rounds)||3)),
+          effortLevel:['medium','high','max'].includes(c.effort)?c.effort:'high'});
+      }else{
+        tx({t:'tournament_start',sessionId:currentSession,task:fullTopic,mode:c.mode,competitors:solutionCompetitors(),write:c.mode==='benchmark'&&c.write!==false});
+      }
+      if(c.persist!=='always') disarmSolution(); else renderSolutionPill();
+      toast(c.mode==='council'?'Conselho convocado.':c.mode==='debate'?'Debate iniciado.':t('swStarted'));
+    }
+    if(E.solutionBtn) E.solutionBtn.onclick=()=>{
       if(!currentSession){ toast(t('tOpenFirst')); return; }
       if(curNative){ toast(t('swNative')); return; }
-      // Reabrir com o que ficou preenchido antes (tema, modo, IAs, critérios…); senão, defaults.
-      const saved=sessionValue(solutionDraftBySession,currentSession,currentSessionRunner);
-      if(saved&&typeof saved==='object') applySolutionDraft(saved); else applySolutionDefaults();
-      updateSolutionCount();
-      E.councilNote.textContent='';
-      E.councilModal.classList.remove('hidden');
-      setTimeout(()=>E.councilTopic.focus(),20);
-    }
-    function closeCouncil(){ E.councilModal.classList.add('hidden'); E.councilGo.disabled=false; E.councilNote.textContent=''; restoreFocusAfterModal(E.councilModal); }
-    E.councilBtn.onclick=openCouncil;
-    if(E.tourneyBtn) E.tourneyBtn.onclick=async()=>{
-      openCouncil();
-      setSolutionMode('benchmark');
+      togglePop(E.solutionBtn,buildSolutionPop);
     };
-    E.councilClose.onclick=closeCouncil; E.councilCancel.onclick=closeCouncil;
-    E.councilModal.onclick=(e)=>{ if(e.target===E.councilModal) closeCouncil(); };
-    E.councilGo.onclick=()=>{
-      const topic=(E.councilTopic.value||'').trim();
-      if(!topic){ E.councilNote.textContent='Informe o tema.'; return; }
-      if(!currentSession){ closeCouncil(); toast(t('tOpenFirst')); return; }
-      E.councilGo.disabled=true; E.councilNote.textContent=solutionMode==='council'?'Convocando...':solutionMode==='debate'?'Iniciando debate...':'Iniciando...';
-      const fullTopic=topic+solutionPostfix();
-      const selected=selectedSolutionDescriptors().map(d=>d.name);
-      if(solutionMode==='council'){
-        tx({t:'council_start',sessionId:currentSession,topic:fullTopic,mode:E.councilMode.value,includeContext:E.councilContext.checked,model:curModel,effort:curEffort,agents:selected});
-      }else if(solutionMode==='debate'){
-        const rounds=Math.min(6,Math.max(1,Number(E.solutionRounds&&E.solutionRounds.value)||3));
-        const effortLevel=['medium','high','max'].includes(E.solutionEffort&&E.solutionEffort.value)?E.solutionEffort.value:'high';
-        try{ localStorage.setItem('debateRounds',String(rounds)); localStorage.setItem('debateEffort',effortLevel); }catch(_){}
-        tx({t:'debate_start',sessionId:currentSession,topic:fullTopic,includeContext:E.councilContext.checked,agents:selected,maxRounds:rounds,effortLevel:effortLevel});
-      }else{
-        const criteria=(E.solutionCriteria&&E.solutionCriteria.value||'').trim()+solutionPostfix();
-        tx({t:'tournament_start',sessionId:currentSession,task:fullTopic,mode:solutionMode,competitors:solutionCompetitors(),criteria:criteria||undefined,write:solutionMode==='benchmark'&&(!E.solutionWrite||E.solutionWrite.checked)});
-      }
-      clearSolutionState(); closeCouncil(); closeSide(); toast(solutionMode==='council'?'Conselho convocado.':solutionMode==='debate'?'Debate iniciado.':t('swStarted'));
-    };
+    if(E.solBarOff) E.solBarOff.onclick=()=>disarmSolution();
+    renderSolutionPill();
     // Resumir a sessão ATUAL exigia abrir a barra lateral e achar a sessão na lista — no celular,
     // onde a lateral é overlay, isso é o caminho todo. O panorama (🎧) fica só na lateral: dois
     // ícones de áudio lado a lado não diziam qual era o escopo de cada um.
@@ -4987,8 +4990,7 @@
       const running=busy(currentSession), block=false;
       if(E.stopBtn) E.stopBtn.classList.toggle('hidden',!curBusy);
       E.input.disabled=block; E.sendBtn.disabled=block; if(E.mic)E.mic.disabled=block;
-      if(E.councilBtn){ E.councilBtn.disabled=!currentSession||curNative; E.councilBtn.title=curNative?t('swNative'):t('swTitle'); }
-      if(E.tourneyBtn){ E.tourneyBtn.disabled=!currentSession||curNative; E.tourneyBtn.title=curNative?'Benchmark ainda não grava resultado em sessão nativa':'Benchmark'; }
+      renderSolutionPill();   // sessão trocou/virou nativa → a pill e a barra do Espaço de Soluções acompanham
       E.input.placeholder=running?'Turno em andamento — enviar adiciona à fila automática':t('composerPh');
       syncComposerActions(); renderQueue(); updateStopStatus(); maybeReload(); }
     // id de mensagem p/ idempotência: o runner executa um turnId no máximo uma vez (re-entrega do
@@ -5019,7 +5021,17 @@
     // na UI (pelo chat, a IA faz bypass e a gente só acompanha).
     let wfRun=null, wfOpen=false, wfDefs=[], wfRunsAll=[], wfHideSuggest=false;
     const WF_ICON={pending:'○',done:'✓',skipped:'⤼'};
+    // Rótulo curto para a trilha ("0 — Escopo" → ESCOPO, "GATE — revisão" → GATE). O título inteiro fica
+    // no tooltip: abreviar é para caber, não para esconder.
+    function wfShort(title){
+      const t=String(title||'').replace(/^\s*(?:fase|phase|step|etapa)?\s*\d{1,2}\s*[—–\-.:)]\s*/i,'').trim()||String(title||'');
+      const w=t.split(/[\s—–\-:/_]+/).filter(Boolean)[0]||t;
+      return w.length>7?w.slice(0,7):w;
+    }
+    // Um passo ainda "devendo" evidência — marca o pontinho âmbar na trilha. Só sinaliza.
+    function wfStepPending(st){ return !!(st&&st.requiresEvidence&&!((st.evidence||[]).length)); }
     function renderWfRun(){
+      renderWfStep();                 // o chip do composer segue o mesmo estado da faixa
       if(!E.wfRun) return;
       // F6 — sem acompanhamento nesta sessão: SUGERE iniciar (discreto e dispensável, nunca obriga).
       if(!wfRun){
@@ -5039,19 +5051,24 @@
       }
       const s=wfRun.summary||{}, steps=wfRun.steps||[];
       E.wfRun.classList.remove('hidden'); E.wfRun.classList.toggle('open',wfOpen);
-      const cur=steps.find(x=>x.id===wfRun.currentStepId);
+      const cur=steps.find(x=>x.id===wfRun.currentStepId), curIdx=steps.findIndex(x=>x.id===wfRun.currentStepId);
       const falta=(s.missingEvidence||[]).length;
       // De onde este fluxo veio (qual skill) — a dúvida "qual é esse fluxo mesmo?" tem que morrer aqui.
       const wfSrc=(wfDefs||[]).find(d=>d.id===wfRun.workflowId), wfPath=wfSrc&&wfSrc.source&&wfSrc.source.path;
       const wfFrom=wfPath?(' <span class="mut" title="'+esc(wfPath)+'">· 📄 '+esc((/^skills\/([^/]+)\//.exec(wfPath)||[,wfPath])[1])+'</span>'):'';
       E.wfRun.innerHTML='<div class="wfhdr"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🧭 <b>'+esc(wfRun.workflowName||wfRun.workflowId)+'</b>'+wfFrom
         +(wfRun.taskLabel?' <span class="mut">· '+esc(wfRun.taskLabel)+'</span>':'')
-        +' <span class="wfbadge">'+(s.done||0)+'/'+(s.total||0)+'</span>'
+        +' <span class="wfbadge">'+(curIdx>=0?('fase '+(curIdx+1)+' de '+steps.length):((s.done||0)+'/'+(s.total||0)))+'</span>'
         +(cur?' <span class="mut">→ '+esc(cur.title)+'</span>':' <span style="color:#4ade80">concluído</span>')
         +(falta?' <span style="color:#f5b544" title="passos concluídos que pediam evidência">⚠ '+falta+' sem evidência</span>':'')
         +'</span><span class="row" style="gap:4px;flex:none">'
         +(cur?'<button class="wfact wf-adv" type="button" title="Concluir o passo atual e ir para o próximo">Avançar</button>':'')
         +'<button class="wfact wf-tog" type="button">'+(wfOpen?'ocultar':'passos')+'</button></span></div>'
+        // Trilha: clicar num ponto FOCA aquela fase (sem marcar nada como pulado) — mesma semântica do
+        // seletor do composer. Pular de propósito continua sendo o clique na lista detalhada, que avisa.
+        +'<div class="wftrack">'+steps.map((st,i)=>'<button type="button" class="wfph '+st.state+(st.id===wfRun.currentStepId?' cur':'')+(wfStepPending(st)?' evid':'')+'" data-id="'+esc(st.id)+'"'
+          +' title="'+esc((i+1)+'. '+st.title+(st.kind==='gate'?' (gate)':'')+(st.requiresEvidence?' · pede evidência':'')+' — clique para focar')+'">'
+          +'<span class="rail"></span><span class="d"></span><span class="l">'+esc(wfShort(st.title))+'</span></button>').join('')+'</div>'
         +'<div class="wfsteps">'+steps.map((st,i)=>'<div class="wfs '+st.state+(st.id===wfRun.currentStepId?' cur':'')+'" data-id="'+esc(st.id)+'">'
           +'<span class="wfst">'+(WF_ICON[st.state]||'○')+'</span>'
           +'<span class="wft" title="'+esc(st.title)+'">'+(i+1)+'. '+esc(st.title)+'</span>'
@@ -5060,20 +5077,77 @@
           +'<button class="wfact wf-ev" data-id="'+esc(st.id)+'" type="button" title="Anexar evidência">📎</button>'
           +'<button class="wfact wf-mark" data-id="'+esc(st.id)+'" type="button" title="'+(st.state==='done'?'Desmarcar':'Marcar como feito')+'">'+(st.state==='done'?'↺':'✓')+'</button>'
           +'</div>').join('')+'</div>';
+      // Fluxo longo (o Forge mostra 14 fases) nasce rolado no começo e esconde justamente onde você está.
+      try{ const c=E.wfRun.querySelector('.wfph.cur'); if(c) c.scrollIntoView({block:'nearest',inline:'center'}); }catch(e){}
     }
+    // ── Seletor de PASSO no composer (🧭). O jeito do dia a dia: você não "caminha um fluxo", você diz
+    // "agora é TDD" e manda. Escolher um passo é o próprio ato de iniciar — não existe formulário antes.
+    // Os passos anteriores continuam pendentes de propósito (entrar no meio não é ter pulado o começo).
+    function wfCurStep(){ if(!wfRun||!wfRun.currentStepId) return null; return (wfRun.steps||[]).find(s=>s.id===wfRun.currentStepId)||null; }
+    function wfStepHint(st){ if(!st) return ''; if(st.hint) return st.hint;
+      const def=(wfDefs||[]).find(d=>d.id===(wfRun&&wfRun.workflowId));   // runs antigos não guardam hint
+      const ds=def&&(def.steps||[]).find(s=>s.id===st.id); return (ds&&ds.hint)||''; }
+    // Evidência pendente SINALIZA (chip âmbar) e nunca trava o envio: é a mesma regra dos gates, e uma
+    // trava aqui seria contornada no terceiro dia de uso.
+    function wfNeedsEvidence(st){ return !!(st&&st.requiresEvidence&&!((st.evidence||[]).length)&&!attachments.length); }
+    function renderWfStep(){
+      if(!E.wfStepBtn) return;
+      const on=!!(currentSession&&(wfDefs||[]).length);
+      E.wfStepBtn.classList.toggle('hidden',!on);
+      if(!on) return;
+      const st=wfCurStep();
+      if(E.wfStepName) E.wfStepName.textContent=st?st.title:'—';
+      E.wfStepBtn.classList.toggle('needs-ev',wfNeedsEvidence(st));
+      E.wfStepBtn.title=st?('Passo em foco: '+st.title+(wfNeedsEvidence(st)?' — pede evidência (não bloqueia o envio)':'')+'\nClique para trocar de passo ou de fluxo.')
+        :'Escolher o passo do fluxo que este envio ataca';
+      // O alvo aparece no botão de enviar: evita mandar para a fase errada por distração, sem travar nada.
+      if(E.sendBtn) E.sendBtn.title=st?('Enviar → '+st.title):'Enviar';
+      // O hint do passo é o que ele espera de você — vale mais como placeholder do que "Fale ou digite…".
+      const hint=wfStepHint(st);
+      if(hint && E.input && !busy(currentSession)) E.input.placeholder='🧭 '+st.title+' — '+hint;
+    }
+    function wfPickStep(defId,stepId){
+      closePop();
+      if(!currentSession){ toast(t('tOpenFirst')); return; }
+      // Mesmo fluxo já acompanhado: só move o foco. Fluxo diferente (ou nenhum): nasce um run já no passo.
+      if(wfRun&&wfRun.workflowId===defId) tx({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op:'focus',stepId});
+      else tx({t:'workflow_run_start',workflowId:defId,sessionId:currentSession,stepId,task:{tracker:'',key:''}});
+    }
+    function buildWfStepPop(p){
+      p.appendChild(ph('Passo do fluxo'));
+      const defs=wfDefs||[];
+      if(!defs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='Nenhum fluxo salvo.'; p.appendChild(d); return; }
+      const curId=wfRun&&wfRun.currentStepId, curWf=wfRun&&wfRun.workflowId;
+      // TODOS os fluxos salvos, agrupados: dá para escolher "TDD" sem antes ter escolhido o fluxo dele.
+      defs.forEach(def=>{
+        if(defs.length>1||!curWf) p.appendChild(ph(def.name||def.id));
+        (def.steps||[]).forEach((s,i)=>{
+          const sel=curWf===def.id&&curId===s.id;
+          const b=document.createElement('button'); b.type='button'; b.className='opt'+(sel?' sel':''); b.setAttribute('aria-pressed',String(sel));
+          const done=sel?null:(curWf===def.id&&((wfRun.steps||[]).find(x=>x.id===s.id)||{}).state);
+          b.innerHTML=(i+1)+'. '+esc(s.title)+(s.kind==='gate'?' <span class="wfbadge">gate</span>':'')+(s.requiresEvidence?' <span class="wfbadge">evid</span>':'')
+            +(sel?'<span class="r">em foco</span>':done==='done'?'<span class="r">✓</span>':done==='skipped'?'<span class="r">⤼</span>':'');
+          b.onclick=()=>wfPickStep(def.id,s.id);
+          p.appendChild(b);
+        });
+      });
+    }
+    if(E.wfStepBtn) E.wfStepBtn.onclick=()=>togglePop(E.wfStepBtn,buildWfStepPop);
     function wfBusyNow(){ return busy(currentSession); }
     // Início do acompanhamento (F2): escolhe o fluxo salvo e a tarefa — referência AGNÓSTICA
     // (linear, github, jira, o que for; pode até ficar sem rastreador).
-    function wfStartFlow(){
+    // ATENÇÃO: nada de prompt()/confirm() nativos aqui — no shell desktop (Electron) eles não existem
+    // e o clique morre em silêncio. Usar sempre o dialog() do app.
+    async function wfStartFlow(){
       if(!currentSession){ toast(t('tOpenFirst')); return; }
       if(!wfDefs.length){ toast('Nenhum fluxo salvo. Crie um em Configurações → Framework → Fluxos.'); return; }
       let def=wfDefs[0];
       if(wfDefs.length>1){
-        const escolha=prompt('Qual fluxo?\n\n'+wfDefs.map((d,i)=>(i+1)+'. '+(d.name||d.id)+' ('+((d.steps||[]).length)+' passos)').join('\n'),'1');
+        const escolha=await dialog({title:'Qual fluxo?\n\n'+wfDefs.map((d,i)=>(i+1)+'. '+(d.name||d.id)+' ('+((d.steps||[]).length)+' passos)').join('\n'),input:true,placeholder:'número do fluxo',value:'1',okText:'Iniciar'});
         if(escolha==null) return;
         const i=parseInt(escolha,10)-1; if(!(i>=0&&i<wfDefs.length)){ toast('Opção inválida'); return; } def=wfDefs[i];
       }
-      const ref=prompt('Tarefa (opcional). Ex.: "linear PRI-824", "github #42", "jira ABC-1" — ou deixe vazio:','');
+      const ref=await dialog({title:'Tarefa (opcional). Ex.: "linear PRI-824", "github #42", "jira ABC-1" — ou deixe vazio:',input:true,placeholder:'linear PRI-824',okText:'Iniciar'});
       if(ref==null) return;
       const parts=String(ref).trim().split(/\s+/);
       const known=['linear','github','jira','gitlab','asana','notion','trello','azure','clickup'];
@@ -5081,22 +5155,25 @@
       if(parts.length>1&&known.includes(parts[0].toLowerCase())){ tracker=parts[0].toLowerCase(); key=parts.slice(1).join(' '); }
       tx({t:'workflow_run_start',workflowId:def.id,sessionId:currentSession,task:{tracker,key}});
     }
-    if(E.wfRun) E.wfRun.addEventListener('click',e=>{
+    if(E.wfRun) E.wfRun.addEventListener('click',async e=>{
       if(e.target.closest('.wf-start')){ wfStartFlow(); return; }
       if(e.target.closest('.wf-dismiss')){ wfHideSuggest=true; renderWfRun(); return; }
       if(e.target.closest('.wf-restore')){ wfHideSuggest=false; renderWfRun(); return; }
       if(!wfRun) return;
       if(e.target.closest('.wf-tog')){ wfOpen=!wfOpen; renderWfRun(); return; }
       const upd=(op,extra)=>tx(Object.assign({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op},extra||{}));
+      // Ponto da trilha: foca a fase. Não pede confirmação porque não destrói nada — nenhum passo muda
+      // de estado, e um clique errado se desfaz com outro clique.
+      const dot=e.target.closest('.wfph'); if(dot){ upd('focus',{stepId:dot.dataset.id}); return; }
       if(e.target.closest('.wf-adv')){ if(wfBusyNow()){ toast('Aguarde o turno terminar para avançar.'); return; } upd('advance'); return; }
-      const ev=e.target.closest('.wf-ev'); if(ev){ const v=prompt('Evidência (link ou descrição) para este passo:'); if(v&&v.trim()) upd('evidence',{stepId:ev.dataset.id,kind:/^https?:\/\//i.test(v.trim())?'link':'text',value:v.trim()}); return; }
+      const ev=e.target.closest('.wf-ev'); if(ev){ const v=await dialog({title:'Evidência (link ou descrição) para este passo:',input:true,placeholder:'https://… ou uma descrição',okText:'Anexar'}); if(v&&String(v).trim()) upd('evidence',{stepId:ev.dataset.id,kind:/^https?:\/\//i.test(String(v).trim())?'link':'text',value:String(v).trim()}); return; }
       const mk=e.target.closest('.wf-mark'); if(mk){ const st=(wfRun.steps||[]).find(x=>x.id===mk.dataset.id); upd('mark',{stepId:mk.dataset.id,state:st&&st.state==='done'?'pending':'done'}); return; }
       const row=e.target.closest('.wfs'); if(row){
         if(wfBusyNow()){ toast('Não dá para mudar de fase com um turno em execução.'); return; }
         const steps=wfRun.steps||[], target=steps.findIndex(x=>x.id===row.dataset.id);
         const nextIdx=steps.findIndex(x=>x.state==='pending');
         const pulados=nextIdx>=0&&target>nextIdx?steps.slice(0,target).filter(x=>x.state==='pending').length:0;
-        if(pulados && !confirm('Isso pula '+pulados+' passo(s) que ficarão registrados como PULADOS (não como feitos). Continuar?')) return;
+        if(pulados && !(await dialog({title:'Isso pula '+pulados+' passo(s) que ficarão registrados como PULADOS (não como feitos). Continuar?',okText:'Pular',cancelText:'Cancelar'}))) return;
         upd('jump',{stepId:row.dataset.id});
       }
     });
@@ -5189,6 +5266,16 @@
       // "#note" → append to the project memory file (CLAUDE.md/AGENTS.md), confirmed. Not a turn.
       if(text.startsWith('#')){ const note=text.replace(/^#+\s*/,'').trim(); if(!note) return; closeTrig();
         tx({t:'memory_preview',text:note,sessionId:currentSession}); status('busy','Preparando prévia da memória…');
+        return; }
+      // Espaço de Soluções armado: o envio do chat É o objetivo da rodada, não um turno normal. Sai antes
+      // do "!" (comando) e da fila — uma rodada não entra na fila do turno, ela abre execuções próprias.
+      if(solutionArmed()&&text&&solutionUsable()){ closeTrig();
+        E.input.value=''; E.input.style.height='auto';
+        if(currentSession){ delete draftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveDrafts(); }
+        // council_start/tournament_start não carregam anexo: em vez de sumir com eles em silêncio, ficam
+        // no composer e a rodada avisa que foram deixados de fora.
+        if(attachments.length) toast('Anexos não entram numa rodada de Soluções — ficaram no composer.');
+        startSolutionRound(text); syncComposerActions();
         return; }
       if(text.startsWith('!')) pushBang(text.slice(1).split('\n')[0].trim());   // guarda no histórico do "!"
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; if(currentSession) delete attachmentsBySession[sessionStateKey(currentSession,currentSessionRunner)]; renderAttach();
@@ -5285,7 +5372,7 @@
       const token=homonym?((it.agent==='jarvis'?'jarvis:':'native:')+it.name):it.name;
       E.input.value=v.slice(0,at.start)+'/'+token+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} }
 
-    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; syncComposerActions(); if(currentSession) draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; updateTrig(); };
+    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; syncComposerActions(); if(currentSession) draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; updateTrig(); updateSolutionCount(); };
     E.input.onkeydown=(e)=>{
       if(trigOpen()){
         if(e.key==='ArrowDown'){ e.preventDefault(); moveTrig(1); return; }
@@ -5297,7 +5384,7 @@
       }
       if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); E.composer.requestSubmit(); } };
     // mobile: o WS costuma cair em background — ao voltar pra aba, reconecta (onopen re-inscreve + recupera)
-    document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ stashDraft(); stashSolutionDraft(); return; }   // vai esconder (lock/background) → salva os drafts ANTES de um possível descarte da aba
+    document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ stashDraft(); return; }   // vai esconder (lock/background) → salva o draft ANTES de um possível descarte da aba
       if(document.visibilityState==='visible' && (!ws||ws.readyState>1)){ if(reconnectT){clearTimeout(reconnectT);reconnectT=null;} connect(); } });
-    window.addEventListener('pagehide', ()=>{ stashDraft(); stashSolutionDraft(); });   // último recurso antes do unload/descarte
+    window.addEventListener('pagehide', ()=>{ stashDraft(); });   // último recurso antes do unload/descarte
     setSpeakBtn(); connect();

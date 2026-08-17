@@ -338,6 +338,25 @@
     #wfRun .wfs.done .wft { color:var(--mut,#8ea0b5); text-decoration:line-through; }
     #wfRun .wfs.skipped .wft { color:#f0883e; }
     #wfRun .wfbadge { flex:none; font-size:10px; padding:0 6px; border-radius:20px; background:#ffffff12; color:var(--mut,#8ea0b5); }
+    /* Trilha de fases: o processo inteiro de relance, no lugar do antigo contador "2/7". Fica sempre
+       visível (a lista detalhada continua atrás do botão "passos"). Rola na horizontal quando o fluxo
+       é longo — um fluxo de 14 fases não pode espremer os rótulos até virarem ilegíveis. */
+    #wfRun .wftrack { display:flex; gap:0; margin-top:7px; overflow-x:auto; overflow-y:hidden; padding-bottom:2px; scrollbar-width:thin; }
+    #wfRun .wfph { flex:0 0 auto; position:relative; display:flex; flex-direction:column; align-items:center; gap:4px; min-width:52px; padding:2px 3px 0; background:none; border:0; cursor:pointer; }
+    #wfRun .wfph .rail { position:absolute; top:9px; left:0; right:0; height:2px; background:#ffffff1f; z-index:0; }
+    #wfRun .wfph:first-child .rail { left:50%; }
+    #wfRun .wfph:last-child .rail { right:50%; }
+    #wfRun .wfph .d { position:relative; z-index:1; width:13px; height:13px; border-radius:50%; border:2px solid #6b7a8d; background:#0e141c; }
+    #wfRun .wfph .l { font-size:9.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--mut,#8ea0b5); max-width:62px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #wfRun .wfph.done .d { background:#4ade80; border-color:#4ade80; }
+    #wfRun .wfph.done .rail { background:#4ade8055; }
+    #wfRun .wfph.skipped .d { background:#f0883e; border-color:#f0883e; }
+    #wfRun .wfph.cur .d { background:#4aa3ff; border-color:#4aa3ff; box-shadow:0 0 0 3px #4aa3ff33; }
+    #wfRun .wfph.cur .l { color:var(--text,#e6edf3); font-weight:600; }
+    #wfRun .wfph:hover .l { color:var(--text,#e6edf3); }
+    #wfRun .wfph.evid .d::after { content:''; position:absolute; top:-4px; right:-4px; width:5px; height:5px; border-radius:50%; background:#f5b544; }
+    /* passo pedindo evidência ainda não anexada: sinaliza, nunca bloqueia o envio */
+    #wfStepBtn.needs-ev { color:#f5b544; border-color:#f5b54455; }
     #wfRun .wfact { flex:none; background:none; border:0; cursor:pointer; font-size:11px; color:var(--mut,#8ea0b5); padding:2px 6px; border-radius:6px; }
     #wfRun .wfact:hover { background:#ffffff12; color:var(--text,#e6edf3); }
     #bgJobs { display:flex; flex-direction:column; gap:4px; margin-bottom:6px; }
@@ -564,21 +583,37 @@
     .modal label > input:not([type=checkbox]), .modal label > select, #gate .gatebox input { width:100%; background:var(--bg); color:var(--text); border:1px solid #ffffff26; border-radius:10px; padding:11px 13px; font:inherit; font-size:14px; box-sizing:border-box; transition:border-color .15s, box-shadow .15s; }
     .modal label > select { appearance:none; -webkit-appearance:none; cursor:pointer; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2394a3b8' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>"); background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; }
     .modal label > input:not([type=checkbox]):focus, .modal label > select:focus, #gate .gatebox input:focus { outline:none; border-color:var(--me); box-shadow:0 0 0 3px #2563eb33; }
-    .councilcard { width:min(680px,100%); border-radius:8px; }
-    .councilcard .ctop { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-    .councilcard .ctop > div { display:flex; flex-direction:column; gap:2px; min-width:0; }
-    .councilcard .ctop b { font-size:16px; }
-    .councilcard .ctop span { color:var(--mut); font-size:12px; }
-    .councilcard textarea { min-height:112px; font-family:inherit; font-size:14px; line-height:1.4; }
-    .councilcard .cgrid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; align-items:end; }
-    .councilcard .cfield { min-width:0; }
-    .councilcard .clabel { display:block; color:var(--mut); font-size:13px; }
-    .councilcard .cswitchfield { display:flex; flex-direction:column; gap:5px; min-width:0; }
-    .councilcard label.row.cswitchrow { min-height:43px; box-sizing:border-box; margin:0; padding:9px 11px; border:1px solid #ffffff26; border-radius:10px; background:var(--bg); align-items:center; justify-content:flex-start; }
-    .councilcard .cactions { justify-content:flex-end; align-items:center; }
-    .modegrid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
-    .modegrid button { min-height:40px; padding:7px 8px; border-radius:8px; background:#ffffff08; border:1px solid var(--line); color:var(--text); font-size:12.5px; }
-    .modegrid button.on { background:#2563eb26; border-color:#2563eb88; color:#dbeafe; }
+    /* Espaço de Soluções armado: a pill e a barra do composer precisam gritar que o PRÓXIMO envio
+       não é um turno normal — é uma rodada de N execuções paralelas. Daí o azul preenchido, não só borda. */
+    .pill.on { background:#2563eb2e; border-color:#2563eb99; color:#dbeafe; }
+    .pill.on:hover { background:#2563eb3d; border-color:#2563ebcc; }
+    .solbar { display:flex; align-items:center; gap:9px; margin:0 0 7px; padding:7px 11px; border:1px solid #2563eb77; border-left:3px solid var(--me); border-radius:9px; background:#2563eb1c; }
+    .solbar-ic { font-size:14px; flex:none; }
+    .solbar-txt { display:flex; align-items:baseline; gap:7px; min-width:0; flex:1; font-size:12.5px; }
+    .solbar-txt b { color:#dbeafe; white-space:nowrap; }
+    .solbar-txt span { color:#9fb6d4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; }
+    .solbar .charcount { margin:0; flex:none; }
+    .solbar button { flex:none; min-height:26px; padding:3px 9px; font-size:11.5px; border-radius:7px; }
+    /* Controles do Espaço de Soluções no popover. A régua + cabeçalho marca troca de TIPO de decisão
+       (o que rodar → quanto tempo fica armado → como roda); o poço recuado agrupa parâmetros e os
+       separa das escolhas, que ficam soltas sobre o painel. */
+    .pop .solsec { margin:13px 2px 7px; padding-top:12px; border-top:1px solid #ffffff1f; color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+    .pop .solwell { background:var(--bg); border:1px solid var(--line); border-radius:9px; padding:1px 9px; }
+    .pop .solwell .solrow + .solrow { border-top:1px solid var(--line); }
+    .pop .solwell .agentlist { margin:2px 0 8px; }
+    .pop .solrow { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 2px; font-size:12.5px; color:var(--text); }
+    .pop .solrow > span { color:var(--mut); min-width:0; }
+    .pop .solrow select, .pop .solrow input[type=number] { flex:none; width:118px; box-sizing:border-box; background:#0d1117; color:var(--text); border:1px solid #ffffff2b; border-radius:7px; padding:4px 7px; font:inherit; font-size:12px; }
+    .pop .solrow input[type=number] { width:64px; }
+    /* switch: liga/desliga binário lê melhor que checkbox numa linha de ajuste */
+    .sw { position:relative; box-sizing:border-box; flex:none; width:36px; height:20px; padding:0; border-radius:999px; border:1px solid #ffffff2b; background:#0d1117; cursor:pointer; transition:background .15s, border-color .15s; }
+    .sw > span { position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#8b98a8; transition:transform .15s, background .15s; }
+    .sw:hover { border-color:#ffffff55; }
+    .sw[aria-checked="true"] { background:var(--me); border-color:var(--me); }
+    .sw[aria-checked="true"] > span { transform:translateX(16px); background:#fff; }
+    .sw:focus-visible { outline:2px solid #7aa2f7; outline-offset:2px; }
+    .pop .agentlist { grid-template-columns:1fr; max-height:150px; margin:4px 0 2px; }
+    .pop .solutionhelp { margin:5px 0 2px; font-size:11.5px; padding:7px 9px; }
     .solutionhelp { border:1px solid var(--line); background:#ffffff07; border-radius:8px; padding:8px 10px; color:#aeb9c8; font-size:12.5px; line-height:1.4; }
     .charcount { font-size:11px; color:var(--mut); text-align:right; margin-top:-4px; }
     .charcount.warn { color:#f5b544; }
@@ -589,7 +624,6 @@
     .agentlist .adesc { display:flex; flex-direction:column; min-width:0; }
     .agentlist .adesc b, .agentlist .adesc span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .agentlist .adesc span { color:var(--mut); font-size:11.5px; }
-    #solutionCriteria { min-height:72px; }
     .helpable::after { content:'?'; display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; margin-left:6px; border-radius:50%; border:1px solid #ffffff35; color:#aeb9c8; font-size:10px; font-weight:700; flex:none; }
     .helpable:hover::after { color:#fff; border-color:#7aa2f7aa; background:#7aa2f71a; }
     button.helpable::after, .link.helpable::after, .snav.helpable::after { display:none; }
@@ -600,7 +634,7 @@
     .hitem { border:1px solid var(--line); background:#ffffff05; border-radius:8px; padding:10px 12px; }
     .hitem b { display:block; font-size:13px; margin-bottom:3px; }
     .hitem span { color:var(--mut); font-size:12.5px; line-height:1.45; }
-    @media (max-width:560px){ .councilcard .cgrid, .modegrid, .agentlist { grid-template-columns:1fr; } }
+    @media (max-width:560px){ .agentlist { grid-template-columns:1fr; } }
     .machinepick { width:min(420px,calc(100vw - 28px)); padding:16px; border-radius:8px; }
     .machinepick .mph { display:flex; flex-direction:column; gap:3px; margin-bottom:12px; }
     .machinepick .mph b { font-size:15px; }
@@ -1378,6 +1412,12 @@
         <div id="bgJobs" class="hidden"></div>
         <div id="queueRow" class="hidden"></div>
         <div id="attachRow"></div>
+        <div id="solutionBar" class="solbar hidden" aria-live="polite">
+          <span class="solbar-ic" aria-hidden="true">🧠</span>
+          <span class="solbar-txt"><b id="solBarMode"></b><span id="solBarMeta"></span></span>
+          <span id="solutionChars" class="charcount"></span>
+          <button type="button" id="solBarOff" class="ghost" title="Desligar o Espaço de Soluções">Desligar</button>
+        </div>
         <div id="cmdPop" class="cmdpop hidden"></div>
         <div class="inputrow">
           <textarea id="input" rows="1" placeholder="Fale ou digite…" autocomplete="off"></textarea>
@@ -1390,8 +1430,6 @@
           <div class="ctlpills">
             <button type="button" id="attach" class="ghost" title="Anexar">＋</button>
             <button type="button" id="designBtn" class="ghost hidden" title="Design Mode — apontar num elemento do preview">🎯</button>
-            <button type="button" id="councilBtn" class="ghost" data-i18n="swShort" title="Espaço de Soluções: conselho, benchmark, revisão paralela e auditoria">Soluções</button>
-            <button type="button" id="tourneyBtn" class="ghost hidden" title="Benchmark">Benchmark</button>
             <span id="status"></span>
             <span class="spacer"></span>
             <button type="button" id="aiBtn" class="pill" title="IA: agente, modelo e esforço" aria-label="IA: agente, modelo e esforço">🤖</button>
@@ -1399,6 +1437,8 @@
             <button type="button" id="cwdBtn" class="pill" title="Pasta de trabalho">📁 <span class="cap" id="cwdName">—</span></button>
             <button type="button" id="modelBtn" class="pill" title="Modelo"><span class="mi" aria-hidden="true">◈</span><span class="cap" id="modelName">—</span></button>
             <button type="button" id="effortBtn" class="pill" title="Esforço / capacidade">⚡ <span class="cap" id="effortName">—</span></button>
+            <button type="button" id="solutionBtn" class="pill" title="Espaço de Soluções: conselho, benchmark, revisão paralela, auditoria e debate">🧠 <span class="cap" id="solutionName">—</span></button>
+            <button type="button" id="wfStepBtn" class="pill hidden" title="Passo do fluxo que este envio ataca">🧭 <span class="cap" id="wfStepName">—</span></button>
             <button type="button" id="speak" class="ghost" title="Falar respostas (voz)">🔇</button>
           </div>
           <button type="button" id="usageBtn" class="pill" title="Uso: contexto + limites do plano">◔ <span class="cap" id="usageName">—</span></button>
@@ -1532,51 +1572,6 @@
     </div>
     <div id="siRows" class="sirows"></div>
     <div class="row" id="siActions" style="justify-content:flex-end"><button id="siCopy" class="ghost" type="button">📋 Copiar ID</button></div>
-  </div></div>
-
-  <div id="councilModal" class="modal hidden"><div class="card councilcard">
-    <div class="ctop"><div><b id="solutionTitle">Espaço de Soluções</b><span>Solution Workspace</span></div><div class="row" style="gap:6px;align-items:center;flex:none"><button id="solutionHelpBtn" class="ghost helpicon" type="button" title="Ajuda">?</button><button id="councilClose" class="ghost helpicon" type="button" title="Fechar" aria-label="Fechar">✕</button></div></div>
-    <div class="modegrid" role="tablist" aria-label="Tipo de rodada">
-      <button type="button" class="sworkmode on" data-mode="council" data-i18n="swModeCouncil" title="Delibera, confronta perspectivas e gera uma síntese com plano.">Conselho</button>
-      <button type="button" class="sworkmode" data-mode="benchmark" data-i18n="swModeBenchmark" title="Compara soluções concorrentes e escolhe a melhor.">Benchmark</button>
-      <button type="button" class="sworkmode" data-mode="review" data-i18n="swModeReview" title="Roda várias revisões independentes para achar problemas complementares.">Revisão</button>
-      <button type="button" class="sworkmode" data-mode="audit" data-i18n="swModeAudit" title="Revisão formal com severidade, evidências e plano de ação.">Auditoria</button>
-      <button type="button" class="sworkmode" data-mode="debate" title="Discussão iterativa entre 2+ IAs, com réplicas cruzadas, até um juiz declarar consenso (ou atingir o teto de rodadas).">Debate</button>
-    </div>
-    <div id="solutionHelp" class="solutionhelp"></div>
-    <label>Objetivo<textarea id="councilTopic" placeholder="O que o Espaço de Soluções deve analisar, comparar, revisar ou auditar?"></textarea></label>
-    <div id="councilTopicCount" class="charcount" aria-live="polite"></div>
-    <div class="cgrid">
-      <label class="cfield">Modo<select id="councilMode">
-        <option value="auto">Auto</option>
-        <option value="quick">Rápido</option>
-        <option value="technical">Técnico</option>
-        <option value="critical">Crítico</option>
-        <option value="deep">Profundo</option>
-      </select></label>
-      <div class="cswitchfield"><span class="clabel">Contexto</span><label class="row cswitchrow"><input id="councilContext" type="checkbox" checked>Usar contexto recente</label></div>
-    </div>
-    <div class="cgrid">
-      <label class="cfield">IAs<select id="solutionAgentsMode">
-        <option value="auto">Automático</option>
-        <option value="all">Todas disponíveis</option>
-        <option value="manual">Selecionar manualmente</option>
-      </select></label>
-      <label class="cfield solutionParallel">Execuções paralelas<input id="solutionCount" type="number" min="2" max="6" value="3"></label>
-      <label class="cfield solutionRounds hidden">Rodadas (teto)<input id="solutionRounds" type="number" min="1" max="6" value="3" title="Máximo de rodadas do debate; para antes se as IAs chegarem a consenso."></label>
-      <label class="cfield solutionEffortField hidden">Esforço das IAs<select id="solutionEffort" title="Nível de esforço; mapeado para a escala real de cada IA na hora de executar."><option value="medium">Médio</option><option value="high">Alto</option><option value="max">Máximo</option></select></label>
-    </div>
-    <div id="solutionAgentList" class="agentlist hidden"></div>
-    <label id="solutionCriteriaWrap">Critérios<textarea id="solutionCriteria" placeholder="Opcional: critérios de julgamento, foco da revisão ou severidade esperada."></textarea></label>
-    <div class="cgrid">
-      <div class="cswitchfield solutionWrite"><span class="clabel">Escrita</span><label class="row cswitchrow"><input id="solutionWrite" type="checkbox" checked>Permitir worktrees isoladas no Benchmark</label></div>
-      <label class="cfield">Depois do resultado<select id="solutionPostAction">
-        <option value="none">Só publicar na sessão</option>
-        <option value="plan">Gerar plano de execução na síntese</option>
-        <option value="handoff">Preparar encaminhamento para uma IA executar</option>
-      </select></label>
-    </div>
-    <div class="row cactions"><span id="councilNote" class="mut" style="font-size:12px;flex:1"></span><button id="councilCancel" class="ghost" type="button">Cancelar</button><button id="councilGo" type="button">Convocar</button></div>
   </div></div>
 
 
