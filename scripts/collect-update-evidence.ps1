@@ -26,6 +26,7 @@ Dump-File 'runner-update.log (rabo)'  (Join-Path $jdir 'runner-update.log')  200
 Dump-File 'update-result.json'        (Join-Path $jdir 'update-result.json') 200
 Dump-File 'update-receipt.json'       (Join-Path $jdir 'update-receipt.json') 200
 Dump-File 'runner-update.lock'        (Join-Path $jdir 'runner-update.lock')  50
+Dump-File 'update-attempts.json'      (Join-Path $jdir 'update-attempts.json') 20
 Dump-File 'runner.log (rabo)'         (Join-Path $jdir 'runner.log')          120
 Dump-File 'hub.log (rabo)'            (Join-Path $jdir 'hub.log')             120
 

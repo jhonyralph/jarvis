@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
-  updateCheck, updateApply, restartService, runnerSelfUpdateDecision, readProjectFile, repoCommit, repoVersion, createSeenSet, VERSION, Outbox,
+  updateCheck, updateApply, restartService, runnerSelfUpdateDecision, updatePreflight, autonomousUpdateAttempt, resolveCommit, readProjectFile, repoCommit, repoVersion, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, detectPreviewCandidates,
   previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest,
   materializeFramework, FrameworkProvenanceStore,
@@ -34,13 +34,14 @@ import {
   TerminalManager,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
   LocalTaskCache, resolveFeaturesRoot, parseFeatureTask,
-  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
+  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type UpdateStatus, type UpdateAttemptRecord, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
 
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
 import { RUNNER_PROTOCOL_VERSION, type ContextActor, type HubToRunner, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
 import { confirmBoot, writeBootState } from "./boot-health.js";
+import { detachedWindowsRunnerUpdateScript } from "./windows-updater-script.js";
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/+$/, "");
 const HUB_URL = HUB + "/runner";
@@ -56,6 +57,7 @@ const ID_FILE = join(JDIR, "runner-id");
 const UPDATE_RECEIPT_FILE = join(JDIR, "update-receipt.json");
 const UPDATE_RESULT_FILE = join(JDIR, "update-result.json");
 const UPDATE_LOCK_FILE = join(JDIR, "runner-update.lock");
+const UPDATE_ATTEMPTS_FILE = join(JDIR, "update-attempts.json");
 
 function runnerId(): string {
   try { const v = readFileSync(ID_FILE, "utf8").trim(); if (v) return v; } catch { /* new */ }
@@ -76,6 +78,23 @@ function readUpdateResult(): RunnerInfo["updateResult"] | undefined {
 }
 function clearUpdateResult(): void {
   try { unlinkSync(UPDATE_RESULT_FILE); } catch { /* ignore */ }
+}
+/** Contador de tentativas AUTÔNOMAS por alvo (disjuntor do auto-update — autonomousUpdateAttempt).
+ *  Fora do update-result.json de propósito: aquele é apagado assim que o Hub recebe o registro, e o
+ *  disjuntor precisa sobreviver justamente ao ciclo "morri atualizando, voltei no código velho". */
+function readUpdateAttempts(): UpdateAttemptRecord | undefined {
+  try { const value = JSON.parse(readFileSync(UPDATE_ATTEMPTS_FILE, "utf8")); return value && typeof value === "object" && !Array.isArray(value) ? value : undefined; }
+  catch { return undefined; }
+}
+function writeUpdateAttempts(record: UpdateAttemptRecord): void {
+  try { writeJsonAtomic(UPDATE_ATTEMPTS_FILE, record); } catch { /* best-effort: sem o contador, volta a política antiga */ }
+}
+/** O runner subiu e alcançou o Hub NO alvo que estava tentando → o update funcionou, zera o contador. */
+function clearUpdateAttemptsIfLanded(current: string): void {
+  const record = readUpdateAttempts();
+  if (!record?.target || !current) return;
+  const target = record.target.replace("+dirty", "");
+  if (target.startsWith(current) || current.startsWith(target)) { try { unlinkSync(UPDATE_ATTEMPTS_FILE); } catch { /* ignore */ } }
 }
 function cleanupRunnerUpdateScripts(): void {
   try {
@@ -270,9 +289,17 @@ async function maybeSelfUpdate(reason: string, forceCheck = false): Promise<void
   // primeiro, libera o lock, SÓ DEPOIS roda git+npm ci num processo externo) é o único caminho
   // seguro nessa plataforma — NUNCA cair para updateApply in-process aqui no Windows.
   if (process.platform === "win32") {
-    const handed = await handoffWindowsRunnerUpdate({ requestId, targetCommit: decision.targetCommit, force: false });
-    if (handed) return; // handoff mata este processo (process.exit) — não há mais "depois" neste caminho
-    console.warn(`[runner] auto-update (${reason}): handoff Windows indisponível — adiando (não aplico npm ci in-process nesta plataforma)`);
+    // Disjuntor: cada tentativa autônoma custa uma queda (o updater mata o runner). Não insistir
+    // sozinho no mesmo alvo evita a máquina se derrubar em loop — ver autonomousUpdateAttempt.
+    const attempt = autonomousUpdateAttempt(readUpdateAttempts(), decision.targetCommit!);
+    if (!attempt.allow) { console.warn(`[runner] auto-update (${reason}): ${attempt.reason}`); updateInProgress = false; return; }
+    writeUpdateAttempts({ target: decision.targetCommit, failures: attempt.failures, at: Date.now() });
+    const handoff = await handoffWindowsRunnerUpdate({ requestId, targetCommit: decision.targetCommit, force: false }, status);
+    if (handoff.handed) return; // handoff mata este processo (process.exit) — não há mais "depois" neste caminho
+    // Nada foi tocado: o runner segue de pé no código velho. Devolve a tentativa ao contador para
+    // que uma recusa de preflight (que não custou queda) não gaste o crédito do disjuntor.
+    writeUpdateAttempts({ target: decision.targetCommit, failures: attempt.failures - 1, at: Date.now() });
+    console.warn(`[runner] auto-update (${reason}): ${handoff.reason}`);
     updateInProgress = false;
     return;
   }
@@ -296,195 +323,29 @@ async function maybeSelfUpdate(reason: string, forceCheck = false): Promise<void
   else updateInProgress = false;
 }
 
-function psQuote(value: string): string {
-  return "'" + value.replace(/'/g, "''") + "'";
-}
+/** `handed:true` → este processo vai morrer em ~500ms (o updater externo assumiu). Caso contrário,
+ *  NADA foi tocado e o runner segue de pé: `reason` é o que dizer ao Hub/dono. */
+type HandoffOutcome = { handed: true } | { handed: false; reason: string; retryable: boolean };
 
-function detachedWindowsRunnerUpdateScript(input: { requestId: string; targetCommit: string; root: string; resultFile: string; receiptFile: string; logFile: string; pid: number; force: boolean; reportUrl: string; runnerId: string; token: string }): string {
-  return `
-$ErrorActionPreference = 'Stop'
-$Root = ${psQuote(input.root)}
-$RequestId = ${psQuote(input.requestId)}
-$Target = ${psQuote(input.targetCommit)}
-$ResultFile = ${psQuote(input.resultFile)}
-$ReceiptFile = ${psQuote(input.receiptFile)}
-$RunnerLogFile = ${psQuote(input.logFile)}
-$LockFile = ${psQuote(UPDATE_LOCK_FILE)}
-$RunnerPid = ${input.pid}
-$Force = ${input.force ? "$true" : "$false"}
-$ReportUrl = ${psQuote(input.reportUrl)}
-$RunnerId = ${psQuote(input.runnerId)}
-$Token = ${psQuote(input.token)}
-$TaskName = 'JarvisRunner'
-$Log = New-Object System.Collections.Generic.List[string]
-
-function Add-Log([string]$Text) { $script:Log.Add($Text) }
-function Add-Progress([string]$Text) {
-  Add-Log $Text
-  try { Add-Content -Path $RunnerLogFile -Value ("[updater] {0} {1}" -f (Get-Date -Format o), $Text) } catch {}
-}
-# UPD-01 Fase 2: dispara o desfecho de cada fase para o Hub por HTTP, FORA do WebSocket do runner —
-# assim, mesmo que este updater derrube o runner e ele nunca reconecte para mandar update_done, o
-# dono fica sabendo ONDE e POR QUE falhou. Best-effort e com timeout curto: NUNCA trava o update
-# (se o Hub estiver inalcançável, o próprio update é a prioridade).
-function Report([string]$Phase, [bool]$Ok, [string]$ErrText) {
-  if (-not $ReportUrl) { return }
-  try {
-    $tail = (@($Log.ToArray() | Select-Object -Last 25) -join "\`n")
-    $payload = @{ runnerId = $RunnerId; requestId = $RequestId; token = $Token; targetCommit = $Target; phase = $Phase; ok = $Ok; error = $ErrText; logTail = $tail } | ConvertTo-Json -Depth 3 -Compress
-    Invoke-RestMethod -Uri $ReportUrl -Method Post -Body $payload -ContentType 'application/json' -TimeoutSec 4 | Out-Null
-  } catch {}
-}
-function Run-Step([string]$Exe, [string[]]$Args) {
-  $cmd = $Exe + " " + ($Args -join " ")
-  Add-Progress ("> " + $cmd)
-  $out = & $Exe @Args 2>&1
-  $code = $LASTEXITCODE
-  foreach ($line in $out) { Add-Log ([string]$line) }
-  if ($code -ne 0) {
-    Add-Progress ("falhou: " + $cmd + " (codigo " + $code + ")")
-    throw ($Exe + " saiu com código " + $code)
-  }
-  Add-Progress ("ok: " + $cmd)
-}
-# NÃO nomear esta função "Git": no PowerShell a resolução de comando é Alias>Função>Cmdlet>Aplicação,
-# então uma função chamada Git SOMBREIA o git.exe. Run-Step faz "& \$Exe" com \$Exe="git" → cairia na
-# própria função → recursão infinita → ScriptCallDepthException ("estouro de profundidade da chamada"),
-# que foi o que derrubou o update do runner. Com o nome Invoke-Git, "git"/"& git" resolvem o executável.
-function Invoke-Git([string[]]$Args) { Run-Step "git" $Args }
-function Npm([string[]]$Args) { Run-Step "npm.cmd" $Args }
-function Git-Out([string[]]$Args) {
-  $out = & git @Args 2>&1
-  $code = $LASTEXITCODE
-  if ($code -ne 0) { foreach ($line in $out) { Add-Log ([string]$line) }; throw ("git " + ($Args -join " ") + " saiu com código " + $code) }
-  return (($out | Out-String).Trim())
-}
-function Dependency-Manifests-Changed([string]$From, [string]$To) {
-  $files = & git diff --name-only $From $To -- package.json package-lock.json npm-shrinkwrap.json 'apps/*/package.json' 'packages/*/package.json'
-  if ($LASTEXITCODE -ne 0) { return $true }
-  return [bool]($files | Where-Object { $_ })
-}
-function Verify-Or-Repair([bool]$DepsChanged) {
-  if (-not $DepsChanged) {
-    try { Npm @("run", "update:verify", "--if-present"); return } catch { Add-Log ("verificação inicial falhou; tentando npm ci: " + $_) }
-  }
-  Npm @("ci")
-  Npm @("run", "update:verify", "--if-present")
-}
-function Write-Result([bool]$Ok, [bool]$RolledBack, [string]$Current) {
-  $lines = @($Log.ToArray())
-  if ($lines.Count -gt 240) {
-    $head = @($lines | Select-Object -First 80)
-    $tail = @($lines | Select-Object -Last 160)
-    $lines = @($head + ("... log truncado: " + $lines.Count + " linhas; mantendo início e fim ...") + $tail)
-  }
-  $obj = [ordered]@{
-    requestId = $RequestId
-    ok = $Ok
-    rolledBack = $RolledBack
-    current = $Current
-    targetCommit = $Target
-    restartRequired = $true
-    preparedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    log = ($lines -join "\`n")
-  }
-  $dir = Split-Path -Parent $ResultFile
-  if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-  $obj | ConvertTo-Json -Depth 5 | Set-Content -Path $ResultFile -Encoding UTF8
-}
-function Start-Runner() {
-  try {
-    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-    if ($task.State -eq "Running") {
-      Add-Progress ("scheduled task ja esta em execucao: " + $TaskName)
-      return
-    }
-  } catch {
-    Add-Progress ("consulta da scheduled task falhou; tentando iniciar: " + $_)
-  }
-  try {
-    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-    Add-Progress ("scheduled task iniciado: " + $TaskName)
-  } catch {
-    Add-Progress ("Start-ScheduledTask falhou; fallback npm start: " + $_)
-    Start-Process -FilePath "npm.cmd" -ArgumentList "start" -WorkingDirectory (Join-Path $Root "apps\\runner") -WindowStyle Hidden | Out-Null
-  }
-}
-
-$previous = ""
-$current = ""
-$rolledBack = $false
-try {
-  # Registra o PID REAL deste script (não o pid que o Node capturou do spawn, que se torna
-  # incorreto assim que trocamos para "cmd /c start /b" — cmd.exe encerra quase na hora,
-  # deixando o launcher achar o updater morto e destravar o lock com o update ainda rodando).
-  # Best-effort: se falhar, o Node já escreveu um pid provisório antes de spawnar.
-  try { [ordered]@{ requestId = $RequestId; targetCommit = $Target; pid = $PID; provisional = $false; phase = "running"; at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } | ConvertTo-Json | Set-Content -Path $LockFile -Encoding UTF8 } catch {}
-  Report "applying" $true ""
-  Add-Progress "parando runner antes do upgrade"
-  # The launcher is the scheduled task. Keep it alive: the update lock makes it wait while this
-  # detached updater owns the checkout. Stopping the task here can also terminate this script and
-  # leave a stale runner-update.lock behind.
-  try { Stop-Process -Id $RunnerPid -Force -ErrorAction SilentlyContinue } catch {}
-  Start-Sleep -Seconds 2
-  Set-Location $Root
-  try { & git config --global --add safe.directory $Root 2>$null } catch {}
-  $branch = Git-Out @("rev-parse", "--abbrev-ref", "HEAD")
-  Invoke-Git @("fetch", "--quiet", "--tags", "origin", $branch)
-  $desired = Git-Out @("rev-parse", ($Target + "^{commit}"))
-  $previous = Git-Out @("rev-parse", "HEAD")
-  $depsChanged = Dependency-Manifests-Changed $previous $desired
-  if ($Force) {
-    Invoke-Git @("reset", "--hard", $desired)
-    Invoke-Git @("clean", "-fd")
-  } else {
-    $dirty = Git-Out @("status", "--porcelain")
-    if ($dirty) { throw "checkout com alterações locais; update sem force recusado" }
-    $counts = Git-Out @("rev-list", "--left-right", "--count", ("HEAD..." + $desired))
-    $ahead = [int](($counts -split "\\s+")[0])
-    if ($ahead -gt 0) { throw ("checkout possui " + $ahead + " commit(s) locais fora do alvo") }
-    Invoke-Git @("merge", "--ff-only", $desired)
-  }
-  Verify-Or-Repair $depsChanged
-  $current = Git-Out @("rev-parse", "--short", "HEAD")
-  $receipt = [ordered]@{ requestId = $RequestId; targetCommit = $Target; current = $current; preparedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
-  $receipt | ConvertTo-Json -Depth 5 | Set-Content -Path $ReceiptFile -Encoding UTF8
-  Write-Result $true $false $current
-  Report "prepared" $true ""
-} catch {
-  $errText = "$_"
-  Add-Progress ("ERRO na preparação: " + $errText)
-  Report "error" $false $errText
-  if ($previous) {
-    try {
-      Set-Location $Root
-      Invoke-Git @("reset", "--hard", $previous)
-      Invoke-Git @("clean", "-fd")
-      Npm @("ci")
-      Npm @("run", "update:verify", "--if-present")
-      $rolledBack = $true
-      Add-Progress "rollback automático concluído"
-      Report "rolled_back" $false $errText
-    } catch {
-      Add-Progress ("ERRO também no rollback: " + $_)
-      Report "rollback_failed" $false ("prep: " + $errText + " | rollback: " + $_)
-    }
-  }
-  try { $current = Git-Out @("rev-parse", "--short", "HEAD") } catch { $current = "" }
-  Write-Result $false $rolledBack $current
-} finally {
-  try { Remove-Item -LiteralPath $LockFile -Force -ErrorAction SilentlyContinue } catch {}
-  Report "restarting" $true ""
-  Start-Runner
-  try { if ($PSCommandPath) { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } } catch {}
-}
-`;
-}
-
-async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
-  if (process.platform !== "win32") return false;
+async function handoffWindowsRunnerUpdate(m: any, known?: UpdateStatus): Promise<HandoffOutcome> {
+  if (process.platform !== "win32") return { handed: false, reason: "handoff externo existe só no Windows", retryable: false };
   const requestId = typeof m.requestId === "string" && m.requestId ? m.requestId : `update:${Date.now()}`;
   const targetCommit = typeof m.targetCommit === "string" && m.targetCommit ? m.targetCommit.replace("+dirty", "") : (await repoCommit(RUNNER_ROOT)).replace("+dirty", "");
+  // PREFLIGHT com o runner VIVO. O updater externo mata este processo para poder mexer no checkout,
+  // então tudo que dá para conferir antes (é git clone? o fetch funciona? o alvo existe aqui? a
+  // árvore está limpa?) tem de ser conferido ANTES — senão uma recusa banal custa a máquina fora do
+  // ar até o launcher ressuscitar, e volta a custar na tentativa seguinte, para sempre.
+  let status = known;
+  if (!status) {
+    try { status = await updateCheck(RUNNER_ROOT, true); }
+    catch (error: any) { return { handed: false, retryable: true, reason: "não consegui inspecionar o checkout antes de atualizar: " + String(error?.message ?? error).slice(0, 200) }; }
+  }
+  const targetResolved = !!(await resolveCommit(RUNNER_ROOT, targetCommit));
+  const preflight = updatePreflight({ status, targetResolved, targetCommit, force: !!m.force });
+  if (!preflight.proceed) {
+    console.warn(`[runner] update ${targetCommit.slice(0, 12)} recusado no preflight (runner intacto): ${preflight.reason}`);
+    return { handed: false, reason: preflight.reason, retryable: preflight.retryable !== false };
+  }
   const scriptPath = join(JDIR, `runner-update-${Date.now()}.ps1`);
   cleanupRunnerUpdateScripts();
   try {
@@ -494,7 +355,7 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
     // BOM UTF-8 (﻿): o script tem comentários acentuados e é rodado por `powershell.exe` (PS 5.1),
     // que, sem BOM, decodifica como CP1252 e transforma chars de 3 bytes (— …) em aspas fantasma que
     // quebram o parser — o updater morreria "antes da 1ª linha". Mesmo motivo do fix dos launchers.
-    writeFileSync(scriptPath, "﻿" + detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), pid: process.pid, force: !!m.force, reportUrl: UPDATE_REPORT_URL, runnerId: RUNNER_ID, token: TOKEN }), "utf8");
+    writeFileSync(scriptPath, "﻿" + detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), lockFile: UPDATE_LOCK_FILE, pid: process.pid, force: !!m.force, reportUrl: UPDATE_REPORT_URL, runnerId: RUNNER_ID, token: TOKEN }), "utf8");
     // Spawnar "powershell.exe" direto com detached:true não sobrevive de forma confiável à saída
     // do processo pai no Windows (PS 5.1) — o updater podia morrer em silêncio antes da 1ª linha
     // (era a causa do incidente anterior: lock órfão, notebook offline ~30min). Rotear por
@@ -509,12 +370,13 @@ async function handoffWindowsRunnerUpdate(m: any): Promise<boolean> {
     // launcher detectar corretamente se o updater morreu (start-runner.ps1).
   } catch (error: any) {
     try { unlinkSync(UPDATE_LOCK_FILE); } catch { /* ignore */ }
-    console.warn("[runner] update externo Windows indisponível:", String(error?.message ?? error).slice(0, 160));
-    return false;
+    const reason = "update externo Windows indisponível: " + String(error?.message ?? error).slice(0, 160);
+    console.warn("[runner] " + reason);
+    return { handed: false, reason, retryable: true };
   }
   console.log("[runner] update entregue ao script externo; encerrando processo para liberar node_modules");
   setTimeout(() => process.exit(0), 500).unref();
-  return true;
+  return { handed: true };
 }
 
 // --- live mirror of native CLI sessions: tail the jsonl and push new turns as an
@@ -1172,7 +1034,7 @@ function connect(): void {
         console.log(`[runner] registered as ${RUNNER_ID} (${hostname()})`);
         // UPD-01 Fase 1: booting AND reaching the Hub proves the running commit works — mark it as the
         // known-good rollback point, so start-runner.ps1 can roll a LATER bad commit back to this one.
-        void repoCommit(RUNNER_ROOT).then((c) => { const cur = c.replace("+dirty", ""); if (cur) writeBootState(confirmBoot(cur, Date.now())); }).catch(() => { /* best-effort */ });
+        void repoCommit(RUNNER_ROOT).then((c) => { const cur = c.replace("+dirty", ""); if (cur) { writeBootState(confirmBoot(cur, Date.now())); clearUpdateAttemptsIfLanded(cur); } }).catch(() => { /* best-effort */ });
         clearUpdateResult();
         flushOutbox();
         pushExecutionManifest(`welcome:${RUNNER_ID}`);
@@ -1446,13 +1308,15 @@ function connect(): void {
           const log = `não foi possível drenar ${activeRuns.size + managedRuns.size} trabalho(s) em 120s; nenhum arquivo foi alterado`;
           send({ t: "update_done", requestId: m.requestId, ok: false, log }); updateInProgress = false; return;
         }
-        if (await handoffWindowsRunnerUpdate(m)) return;
+        const handoff = await handoffWindowsRunnerUpdate(m);
+        if (handoff.handed) return;
         // Cinto de segurança: no Windows, se o handoff (que mata este processo primeiro) não pôde
         // ser entregue, NÃO cair para `updateApply` in-process — é exatamente o `npm ci` correndo
         // com o próprio esbuild.exe travado que corrompeu o node_modules no incidente anterior.
+        // O motivo vai inteiro para o Hub: recusa de preflight aqui significa máquina INTACTA, e o
+        // dono precisa ler o motivo (ex.: árvore suja) em vez de ver a máquina "atualizando" sempre.
         if (process.platform === "win32") {
-          const log = "handoff Windows indisponível — recuso aplicar in-process (destruiria node_modules com o runner ainda vivo); tente novamente";
-          send({ t: "update_done", requestId: m.requestId, ok: false, retryable: true, log });
+          send({ t: "update_done", requestId: m.requestId, ok: false, retryable: handoff.retryable, log: handoff.reason });
           updateInProgress = false;
           return;
         }

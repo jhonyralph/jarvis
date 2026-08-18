@@ -45,6 +45,19 @@ it, optionally to **all machines** at once.
 - The queued target remains exact even if `origin` receives newer commits while a
   machine is offline. A later deployment may advance it again; one deployment is
   never silently changed underneath the runner.
+- **Preflight before the process dies** (`updatePreflight`, `packages/core/src/update.ts`).
+  On Windows the update is applied by a **detached** updater that must **kill the runner**
+  first, so every failed attempt used to cost an outage — and an *impossible* update
+  (no `.git`, broken `fetch`, target commit absent, dirty tree without force) cost one
+  on every retry, forever. The runner now checks all of that **while still alive**
+  (fetch + `rev-parse`, read-only) and refuses with a reason instead of dying. The
+  detached script keeps its own checks as a backstop.
+- **Autonomous retries have a breaker** (`autonomousUpdateAttempt`). The runner's own
+  update (the one it fires when it loses the Hub) stops insisting on the *same* target
+  after 2 attempts that never landed — a machine can no longer knock itself offline in a
+  loop. State: `~/.jarvis/update-attempts.json`, cleared when the runner boots on the
+  target; a new target (new release) restores the credit. An update requested by the
+  **Hub/owner is never blocked** by the breaker — that is an explicit decision.
 - **Safety net**: each checkout records its own full pre-update commit under
   `~/.jarvis/updates/`. If dependency install or validation fails after the pull,
   Git and the previous dependencies are restored automatically. Manual rollback

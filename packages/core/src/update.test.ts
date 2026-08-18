@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runnerSelfUpdateDecision, updateApply, updateCheck, updateRollback } from "./update.js";
+import { autonomousUpdateAttempt, gitErrorDetail, resolveCommit, runnerSelfUpdateDecision, updateApply, updateCheck, updatePreflight, updateRollback } from "./update.js";
 
 const run = (cwd: string, command: string, args: string[] = []): string => String(execFileSync(command, args, { cwd, windowsHide: true, encoding: "utf8" })).trim();
 const git = (cwd: string, ...args: string[]): string => run(cwd, "git", args);
@@ -20,6 +20,55 @@ test("runnerSelfUpdateDecision only auto-updates clean idle runners behind origi
   assert.equal(runnerSelfUpdateDecision({ ...base, behind: 0 }).update, false);
   assert.deepEqual(runnerSelfUpdateDecision({ ...base, latest: undefined }), { update: false, reason: "origin tem atualização, mas o commit alvo não foi resolvido", retryable: true });
   assert.deepEqual(runnerSelfUpdateDecision({ ...base, error: "fetch falhou" }), { update: false, reason: "fetch falhou", retryable: true });
+});
+
+test("updatePreflight só derruba o processo quando o update tem chance de dar certo", () => {
+  const ok = { status: { supported: true, clean: true, ahead: 0 }, targetResolved: true, targetCommit: "abc1234567890" };
+
+  assert.equal(updatePreflight(ok).proceed, true);
+  // Instalação sem git: insistir é inútil — e cada tentativa custava a máquina fora do ar.
+  assert.deepEqual(updatePreflight({ ...ok, status: { supported: false, clean: true, ahead: 0, error: "não é um repositório git" } }),
+    { proceed: false, retryable: false, reason: "não é um repositório git" });
+  // Fetch quebrado: recusa ANTES de matar o runner, e devolve o motivo real para o dono.
+  assert.deepEqual(updatePreflight({ ...ok, status: { supported: true, clean: true, ahead: 0, error: "git fetch falhou: ref rejeitada" } }),
+    { proceed: false, retryable: true, reason: "git fetch falhou: ref rejeitada" });
+  const missing = updatePreflight({ ...ok, targetResolved: false });
+  assert.equal(missing.proceed, false); assert.equal(missing.retryable, true); assert.match(missing.reason, /abc123456789.*não existe neste checkout/);
+  assert.equal(updatePreflight({ ...ok, status: { supported: true, clean: false, ahead: 0 } }).proceed, false);
+  assert.equal(updatePreflight({ ...ok, status: { supported: true, clean: false, ahead: 0 }, force: true }).proceed, true, "force é o consentimento explícito do dono");
+  assert.equal(updatePreflight({ ...ok, status: { supported: true, clean: true, ahead: 2 } }).proceed, false);
+  assert.equal(updatePreflight({ ...ok, status: { supported: true, clean: true, ahead: 2 }, force: true }).proceed, true);
+});
+
+test("updatePreflight NÃO recusa um runner limpo já no alvo (o force do Hub existe para reiniciar)", () => {
+  // Invariante do handshake: git no alvo não prova que o PROCESSO subiu no código novo, então o Hub
+  // re-entrega com force. Recusar aqui deixaria a máquina presa em quarentena de protocolo.
+  assert.equal(updatePreflight({ status: { supported: true, clean: true, ahead: 0 }, targetResolved: true, targetCommit: "abc1234", force: true }).proceed, true);
+});
+
+test("autonomousUpdateAttempt para de insistir sozinho no mesmo alvo, e reabre em alvo novo", () => {
+  const first = autonomousUpdateAttempt(undefined, "abc1234");
+  assert.equal(first.allow, true); assert.equal(first.failures, 1);
+
+  const second = autonomousUpdateAttempt({ target: "abc1234", failures: 1 }, "abc1234");
+  assert.equal(second.allow, true); assert.equal(second.failures, 2);
+
+  const blocked = autonomousUpdateAttempt({ target: "abc1234", failures: 2 }, "abc1234");
+  assert.equal(blocked.allow, false); assert.match(blocked.reason, /já tentei 2x/);
+
+  // Release nova = alvo novo: crédito renovado (o problema pode ter sido justamente o commit velho).
+  const newTarget = autonomousUpdateAttempt({ target: "abc1234", failures: 9 }, "def5678");
+  assert.equal(newTarget.allow, true); assert.equal(newTarget.failures, 1);
+  // Registro corrompido/parcial não pode travar a máquina para sempre.
+  assert.equal(autonomousUpdateAttempt({ failures: 99 } as any, "abc1234").allow, true);
+});
+
+test("gitErrorDetail prefere o stderr do git à mensagem genérica do execFile", () => {
+  assert.equal(gitErrorDetail({ message: "Command failed: git fetch", stderr: "  error: cannot lock ref\n  fatal: bad\n" }),
+    "error: cannot lock ref fatal: bad");
+  assert.equal(gitErrorDetail({ message: "spawn git ENOENT" }), "spawn git ENOENT");
+  assert.equal(gitErrorDetail(new Error("boom")), "boom");
+  assert.equal(gitErrorDetail("string solta"), "string solta");
 });
 
 function writeFixture(root: string, verifyOk: boolean, marker: string): void {
@@ -41,6 +90,9 @@ test("git updater is repeatable, transactional and detects dirty/divergent check
     writeFixture(seed, true, "v1"); git(seed, "add", "."); git(seed, "commit", "-m", "v1"); git(seed, "remote", "add", "origin", remote); git(seed, "push", "-u", "origin", "main");
     git(base, "clone", "--branch", "main", remote, checkout); git(checkout, "config", "user.name", "Jarvis Test"); git(checkout, "config", "user.email", "jarvis@example.invalid");
     const v1 = git(checkout, "rev-parse", "HEAD");
+    // É disto que o preflight depende para não matar o runner por um alvo que não chegou no fetch.
+    assert.equal(await resolveCommit(checkout, v1.slice(0, 7)), v1, "sha curto resolve para o completo");
+    assert.equal(await resolveCommit(checkout, "0000000"), "", "commit ausente resolve vazio em vez de explodir");
 
     writeFixture(seed, false, "broken-v2"); git(seed, "add", "."); git(seed, "commit", "-m", "broken v2"); git(seed, "push");
     const failed = await updateApply(checkout);

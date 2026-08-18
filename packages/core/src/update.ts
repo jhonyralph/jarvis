@@ -71,6 +71,20 @@ async function git(root: string, args: string[], timeoutMs = 20000): Promise<str
   return String(stdout).trim();
 }
 
+/** Por que o git falhou, em uma linha: stderr é onde o git escreve o motivo (`message` só diz
+ *  "Command failed"). Sem isso, um erro de ref/credencial chega ao dono como "código 1". */
+export function gitErrorDetail(e: any): string {
+  const stderr = String(e?.stderr ?? "").trim();
+  const base = stderr || String(e?.message ?? e);
+  return base.replace(/\s+/g, " ").trim().slice(0, 400);
+}
+
+/** Full sha de uma ref/commit neste checkout, ou "" se ela não existe aqui. */
+export async function resolveCommit(root: string, ref: string): Promise<string> {
+  try { return await git(root, ["rev-parse", `${ref.replace("+dirty", "")}^{commit}`]); }
+  catch { return ""; }
+}
+
 async function dependencyManifestsChanged(root: string, from: string, to: string): Promise<boolean> {
   const files = await git(root, [
     "diff", "--name-only", from, to, "--",
@@ -149,6 +163,68 @@ export function runnerSelfUpdateDecision(
   return { update: true, reason: `${status.behind} commit(s) atrás de origin`, targetCommit };
 }
 
+/** Tentativas de auto-update por alvo, persistidas pelo runner (~/.jarvis/update-attempts.json). */
+export interface UpdateAttemptRecord { target?: string; failures?: number; at?: number }
+
+/**
+ * Disjuntor do auto-update AUTÔNOMO (o que o runner dispara sozinho quando perde o Hub).
+ *
+ * Cada tentativa no Windows custa uma queda: o updater mata o runner para aplicar. Uma máquina que
+ * falha sempre no mesmo alvo ficava se derrubando indefinidamente (foi o padrão observado: centenas
+ * de ciclos online/offline). Aqui a máquina para de insistir SOZINHA no mesmo alvo depois de
+ * `maxFailures` tentativas — e volta a tentar quando o alvo muda (release nova) ou quando um update
+ * conclui. Update pedido pelo Hub/dono NÃO passa por este disjuntor: aquilo é decisão explícita.
+ */
+export function autonomousUpdateAttempt(
+  record: UpdateAttemptRecord | undefined,
+  target: string,
+  maxFailures = 2,
+): { allow: boolean; failures: number; reason: string } {
+  const sameTarget = !!record?.target && record.target === target;
+  const failures = sameTarget ? Math.max(0, Number(record?.failures) || 0) : 0;
+  if (sameTarget && failures >= maxFailures) {
+    return { allow: false, failures, reason: `já tentei ${failures}x sozinho aplicar ${target.slice(0, 12)} e a máquina não voltou nele; aguardando alvo novo ou pedido do Hub` };
+  }
+  return { allow: true, failures: failures + 1, reason: failures ? `nova tentativa (${failures + 1}) para ${target.slice(0, 12)}` : `1ª tentativa para ${target.slice(0, 12)}` };
+}
+
+export interface UpdatePreflightDecision {
+  proceed: boolean;
+  reason: string;
+  retryable?: boolean;
+}
+
+/**
+ * Vale derrubar o processo para aplicar este update?
+ *
+ * No Windows o updater é um script DESTACADO: para aplicar, ele MATA o runner primeiro. Isso torna
+ * cada tentativa fracassada uma queda da máquina — e um update impossível (fetch quebrado, alvo que
+ * não existe no checkout, árvore suja sem force) virava um ciclo infinito de "morre, falha, volta no
+ * código velho, tenta de novo". Era literalmente "atualizar = a máquina cai".
+ *
+ * Este preflight roda ANTES do handoff, com o runner VIVO, usando só leitura (fetch + rev-parse):
+ * o que não tem chance de dar certo é recusado sem custar um segundo de indisponibilidade.
+ *
+ * Só recusa o que é fatal de antemão. Em particular NÃO recusa "já está no alvo": um runner limpo no
+ * commit-alvo ainda pode estar rodando o processo velho, e esse é justamente o caso em que o Hub
+ * força o update para obter o restart (invariante coberto em update-handshake.e2e.test.ts).
+ */
+export function updatePreflight(input: {
+  status: Pick<UpdateStatus, "supported" | "error" | "clean" | "ahead">;
+  targetResolved: boolean;
+  targetCommit?: string;
+  force?: boolean;
+}): UpdatePreflightDecision {
+  const { status, targetResolved, force } = input;
+  const target = (input.targetCommit || "").slice(0, 12);
+  if (!status.supported) return { proceed: false, retryable: false, reason: status.error || "auto-update não suportado neste install" };
+  if (status.error) return { proceed: false, retryable: true, reason: status.error };
+  if (!targetResolved) return { proceed: false, retryable: true, reason: `o commit alvo${target ? ` (${target})` : ""} não existe neste checkout mesmo depois do fetch` };
+  if (!status.clean && !force) return { proceed: false, retryable: false, reason: "checkout com alterações locais — force somente se esta máquina for descartável" };
+  if ((status.ahead || 0) > 0 && !force) return { proceed: false, retryable: false, reason: `checkout possui ${status.ahead} commit(s) locais fora do origin` };
+  return { proceed: true, reason: `alvo ${target || "resolvido"} pronto para aplicar` };
+}
+
 export async function updateCheck(root: string, fetch = true): Promise<UpdateStatus> {
   let branch = "?", current = "?", currentFull = "";
   try {
@@ -161,8 +237,11 @@ export async function updateCheck(root: string, fetch = true): Promise<UpdateSta
   try { await git(root, ["remote", "get-url", "origin"]); }
   catch { return { supported: false, current, currentFull, branch, behind: 0, ahead: 0, clean: true, checkedAt: Date.now(), error: "sem remote git (instale via git clone para auto-update)" }; }
   if (fetch) {
+    // O motivo REAL do fetch vai inteiro na mensagem (stderr incluído). "falhou (rede?)" com 120
+    // chars escondia coisas que não são rede nenhuma (tag divergente, ref rejeitada, credencial) e
+    // custou semanas de diagnóstico cego numa máquina que não atualizava.
     try { await git(root, ["fetch", "--quiet", "--tags", "origin", branch], 30000); }
-    catch (e: any) { return { supported: true, current, currentFull, branch, behind: 0, ahead: 0, clean: true, checkedAt: Date.now(), error: "fetch falhou (rede?): " + String(e?.message ?? e).slice(0, 120) }; }
+    catch (e: any) { return { supported: true, current, currentFull, branch, behind: 0, ahead: 0, clean: true, checkedAt: Date.now(), error: "git fetch falhou: " + gitErrorDetail(e) }; }
   }
   let behind = 0, ahead = 0, clean = true, latest: UpdateStatus["latest"];
   try { const [a, b] = (await git(root, ["rev-list", "--left-right", "--count", `HEAD...origin/${branch}`])).split(/\s+/).map(Number); ahead = a || 0; behind = b || 0; }

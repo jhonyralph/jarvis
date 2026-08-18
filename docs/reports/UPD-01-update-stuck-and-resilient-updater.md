@@ -62,3 +62,81 @@ powershell -ExecutionPolicy Bypass -File scripts\collect-update-evidence.ps1
 ```
 
 Ele junta, num único arquivo (`~/.jarvis/update-evidence.txt`) + stdout: `runner-update.log`, `update-result.json`, `update-receipt.json`, `runner-update.lock` (+ qualquer coisa em `~/.jarvis/updates/`), estado das scheduled tasks `JarvisRunner`/`JarvisHub`, processos node/tsx vivos, `git HEAD`/`status` no checkout do runner, e o rabo do `runner.log`. Com isso eu aponto **qual dos 7 modos** derrubou aquela máquina e o **conserto imediato** (destravar o lock, forçar o start, ou limpar o `node_modules`).
+
+---
+
+## 7. CAUSA-RAIZ ENCONTRADA (2026-08-18) — `$Args` como nome de parâmetro no updater destacado
+
+O updater destacado do Windows **nunca executou um único comando git corretamente**. Não era rede,
+não era tag, não era credencial, não era o `.git` ausente: era o **nome de um parâmetro**.
+
+`Run-Step`, `Invoke-Git`, `Npm` e `Git-Out` (no script gerado por `apps/runner/src/index.ts`)
+declaravam `[string[]]$Args`. **`$args` é variável AUTOMÁTICA do PowerShell** (os argumentos não
+ligados a parâmetros): declarar um parâmetro com esse nome é sintaticamente válido, passa em qualquer
+checagem de parse — e **o valor passado é descartado em silêncio**. Dentro da função, `$Args` chega
+VAZIO. Portanto `& $Exe @Args` virava um **`git` pelado**, que imprime o uso e sai com **código 1**.
+
+Reproduzido nas duas edições (não é peculiaridade do PS 5.1):
+
+```
+function Run-Step([string]$Exe, [string[]]$Args) { "ArgsCount=$($Args.Count)" }
+function Invoke-Git([string[]]$Args) { Run-Step "git" $Args }
+Invoke-Git @("fetch","--quiet","--tags","origin","main")
+→ powershell.exe (5.1): ArgsCount=0
+→ pwsh (7):             ArgsCount=0
+```
+
+Rodando o prelúdio ANTIGO com um `git fetch` real, a mensagem produzida é, byte a byte, a que o Hub
+registrou ~50 vezes desde 2026-08-05: **`git saiu com código 1`**.
+
+### Cadeia de evidência (como fechou)
+
+1. `~/.jarvis/logs/jarvis-*.jsonl`, `ev:"update_report"`: em TODAS as tentativas desde
+   2026-08-05T01:05Z, a sequência é `applying` → `error: "git saiu com código 1"` → `restarting`.
+   Nunca `prepared`, nunca `rolled_back`.
+2. Sem `rolled_back` ⇒ `$previous` estava vazio ⇒ a falha foi **antes** de `$previous = Git-Out
+   rev-parse HEAD`, isto é, no **primeiro comando git do script**.
+3. A mensagem **não tem os argumentos** — `Run-Step` fazia `throw ($Exe + " saiu com código " ...)`,
+   sem `$cmd`; `Git-Out` incluía os args, e com args vazios produz `"git  saiu com código 1"`, que o
+   Hub normaliza (`\s+`→` `) para exatamente a linha observada. Os dois caminhos apontam para args
+   vazios.
+4. Assimetria decisiva: o `git fetch` **in-process** (`updateCheck`, Node/`execFile`) FUNCIONAVA — é
+   pré-requisito para o auto-update autônomo sequer disparar o handoff. Só o caminho PowerShell
+   falhava ⇒ o problema estava no PowerShell, não no git/rede/repo.
+5. `git` sem argumentos → `exit 1` (confirmado: `git version 2.55.0.windows.4`). Bate com o código e
+   com a rapidez (~1s, sem I/O de rede).
+
+**Efeito operacional observado (máquina `Luby`, id `29e046ba-…`, a mesma da "Notebook" dos incidentes
+1/2):** ~30 min a ~90 min de intervalo, o runner perdia o Hub, disparava auto-update, **matava o
+runner**, o updater morria no 1º git, o launcher ressuscitava no código velho, e o ciclo repetia —
+**393 `runner online` / 344 `runner offline`** no `hub.log`. Do lado do dono: "é só atualizar para a
+máquina ficar offline". Como o caminho in-process é recusado de propósito no Windows (protege o
+`node_modules`), **não havia nenhuma via de atualização funcional nessa plataforma**.
+
+### O que mudou
+
+- `apps/runner/src/windows-updater-script.ts` (**novo módulo, extraído de index.ts para poder ter
+  teste**): parâmetros renomeados para `$CmdArgs`; **guarda** que lança se a lista de argumentos vier
+  vazia (um executável pelado nunca mais passa como "código 1"); erro passa a carregar **o comando e
+  as últimas linhas da saída** (`Detail-Of`).
+- `apps/runner/src/windows-updater-script.test.ts` (**novo**): proíbe nome de variável automática em
+  parâmetro do script gerado, exige o splat, e — no Windows — **executa o prelúdio real no
+  powershell.exe** e prova que os argumentos chegam. Parse-check não pegaria: a sintaxe era válida.
+- `updatePreflight` + `resolveCommit` + `gitErrorDetail` (`packages/core/src/update.ts`) e o handoff
+  em `apps/runner/src/index.ts`: o que pode ser verificado com o runner **VIVO** é verificado antes;
+  recusa não custa mais indisponibilidade. `updateCheck` reporta o **stderr** do git (antes: "fetch
+  falhou (rede?)" com 120 chars, que escondia justamente o motivo).
+- `autonomousUpdateAttempt` + `~/.jarvis/update-attempts.json`: disjuntor do auto-update autônomo
+  (2 tentativas por alvo). Update pedido pelo Hub/dono não passa pelo disjuntor.
+- `apps/hub/src/index.ts` (`recordRunnerUpdateReport`): passa a **persistir o `logTail`**
+  (`lastLogTail`) e a logá-lo. Antes, `error` eclipsava o rastro e o único registro que sobrava era
+  a linha inútil — foi o que impediu o diagnóstico por semanas apesar da telemetria da Fase 2 existir.
+
+### Ainda aberto
+
+- **Fase 3** (updater como unidade de SO supervisionada) segue não feita. Com o preflight, a janela
+  de risco diminuiu, mas a aplicação em si continua sendo um `.ps1` de uma vez só.
+- **Bootstrap manual em máquinas que ficaram atrás:** o script é gerado pelo runner a partir do
+  PRÓPRIO checkout, então uma máquina em código velho continua gerando o script quebrado — ela não
+  consegue se auto-curar. É preciso UMA atualização manual (git fetch/reset + `npm ci` + reiniciar a
+  task) por máquina; depois disso o caminho automático funciona.
