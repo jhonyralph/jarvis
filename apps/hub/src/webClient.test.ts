@@ -48,6 +48,11 @@ interface ClientHandle {
   wfCollapse(v: boolean): void;
   wfRunActive(): boolean;
   wfSetDefs(defs: any[]): void;
+  // TSK-01: o chip 🧭 abre a faixa em vez do seletor quando há fluxo ativo.
+  wfSetRun(run: any): void;
+  wfClickChip(): void;
+  wfExpanded(): boolean;
+  popAnchor(): any;
 }
 
 /** One permissive fake element: every property access the client makes resolves to something inert. */
@@ -151,12 +156,19 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   wfCollapse: (v)=>{ wfHideSuggest=v; renderWfRun(); },
   wfRunActive: ()=>!!wfRun,
   wfSetDefs: (defs)=>{ wfDefs=defs; renderWfRun(); },
+  wfSetRun: (run)=>{ wfRun=run; wfOpen=false; renderWfRun(); },
+  wfClickChip: ()=>E.wfStepBtn.onclick({preventDefault(){},stopPropagation(){}}),
+  wfExpanded: ()=>wfOpen,
+  popAnchor: ()=>E.pop._anchor||null,
 };`;
 
   const factory = new Function(
     "window", "document", "localStorage", "navigator", "location", "WebSocket", "history",
     "matchMedia", "fetch", "Notification", "requestAnimationFrame", "cancelAnimationFrame", "alert", "self",
     "addEventListener", "removeEventListener", "setInterval", "setTimeout",
+    // Posicionamento do popover: `placePop` lê variáveis CSS e o tamanho da viewport como globais
+    // nuas. Sem elas, abrir QUALQUER popup estoura ReferenceError dentro do teste.
+    "getComputedStyle", "innerWidth", "innerHeight",
     src,
   );
   // app.js installs pollers/pagers that would hold the event loop open forever and hang the runner.
@@ -174,6 +186,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
     window.matchMedia, async () => ({ ok: false, json: async () => ({}) }), undefined,
     (cb: any) => unrefTimer(cb, 0), () => {}, () => {}, window,
     () => {}, () => {}, unrefInterval, unrefTimer,
+    () => ({ getPropertyValue: () => "0" }), window.innerWidth, window.innerHeight,
   );
   return Object.assign(api, { store, socket: () => sockets[sockets.length - 1] }) as ClientHandle;
 }
@@ -625,4 +638,90 @@ test("recado recusado vira turno normal em vez de sumir", async () => {
   assert.equal(turno.length, 1, "a mensagem recusada foi reenviada como turno");
   assert.equal(turno[0].text, "considere o plano B");
   assert.equal(client.debateLive("s-deb", "local"), false, "a recusa também corrige o estado local");
+});
+
+// ── TSK-01: com fluxo ativo, o chip 🧭 abre a FAIXA (onde já estão trilha, passos e tarefa) em vez
+// de empilhar um seletor por cima. Sem fluxo ele continua sendo a única porta de entrada.
+const WF_DEFS = [{ id: "pipeline-sdlc", name: "Pipeline", steps: [{ id: "f1", title: "F1 — Discovery", kind: "step" }, { id: "f2", title: "F2 — Spec", kind: "step" }] }];
+function wfRunFixture(over: any = {}): any {
+  return {
+    runId: "run-1", workflowId: "pipeline-sdlc", workflowName: "Pipeline", status: "active",
+    sessions: ["s-wf"], currentStepId: "f1",
+    steps: [{ id: "f1", title: "F1 — Discovery", state: "pending", kind: "step" }, { id: "f2", title: "F2 — Spec", state: "pending", kind: "step" }],
+    summary: { done: 0, total: 2 },
+    ...over,
+  };
+}
+function bandHtml(client: any): string { return String(client.el("wfRun").innerHTML || ""); }
+
+test("TSK-01: com fluxo ativo o chip expande a faixa, sem abrir seletor", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  client.wfSetDefs(WF_DEFS);
+  client.wfSetRun(wfRunFixture());
+
+  assert.equal(client.wfExpanded(), false, "a faixa começa recolhida");
+  client.wfClickChip();
+
+  assert.equal(client.wfExpanded(), true, "o clique expandiu a faixa");
+  assert.match(bandHtml(client), />ocultar</, "a faixa expandida oferece 'ocultar'");
+  assert.equal(client.popAnchor(), null, "nenhum popup foi aberto por cima");
+});
+
+test("TSK-01: o chip é alternância — o segundo clique recolhe", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  client.wfSetDefs(WF_DEFS);
+  client.wfSetRun(wfRunFixture());
+
+  client.wfClickChip();
+  client.wfClickChip();
+
+  assert.equal(client.wfExpanded(), false, "voltou a recolher");
+  assert.match(bandHtml(client), />passos</, "e volta a oferecer 'passos'");
+  assert.equal(client.popAnchor(), null);
+});
+
+test("TSK-01: sem fluxo ativo o chip continua sendo a porta de entrada", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  client.wfSetDefs(WF_DEFS);
+
+  client.wfClickChip();
+
+  assert.equal(client.popAnchor(), client.el("wfStepBtn"), "o seletor de fluxos abriu");
+  assert.equal(client.wfRunActive(), false, "e clicar NÃO cria acompanhamento");
+});
+
+test("TSK-01: faixa encolhida em alça volta inteira num clique", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  client.wfSetDefs(WF_DEFS);
+  client.wfSetRun(wfRunFixture());
+  client.wfCollapse(true);
+  assert.match(bandHtml(client), /wf-restore/, "está na alça mínima");
+
+  client.wfClickChip();
+
+  assert.equal(client.wfExpanded(), true, "um clique só: restaurou E expandiu");
+  assert.doesNotMatch(bandHtml(client), /wf-restore/, "não é mais alça");
+  assert.match(bandHtml(client), />ocultar</);
+});
+
+// A gaveta de Tarefa (armar tarefa / cofre de conexões) só existia dentro do seletor. Se o chip para
+// de abri-lo com fluxo ativo, ela precisa de porta na faixa — senão a fatia troca um clique por uma
+// função perdida.
+test("TSK-01: a faixa oferece porta para a gaveta de Tarefa", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  client.wfSetDefs(WF_DEFS);
+  client.wfSetRun(wfRunFixture());
+  client.wfClickChip();
+
+  assert.match(bandHtml(client), /wf-task/, "a faixa expandida tem o acesso à tarefa");
 });

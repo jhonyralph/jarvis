@@ -5162,7 +5162,9 @@
           +'<span class="rail"></span><span class="d"></span><span class="l">'+esc(wfShort(st.title))+'</span></button>').join('')+'</div>'
         +'<div class="wfsteps">'
         // A TAREFA do fluxo, com link e Resumir — o dev vê o que é sem sair do Jarvis (F1/F2).
-        +(function(){ if(!(wfRun.task&&wfRun.task.key)) return '';
+        // A gaveta de Tarefa (armar tarefa, cofre de conexões) mora no seletor 🧭, que com fluxo ativo
+        // deixou de abrir no clique do chip. Sem esta porta, trocar de tarefa viraria função perdida.
+        +(function(){ if(!(wfRun.task&&wfRun.task.key)) return '<div class="wftaskinfo" style="padding:4px 4px 8px;margin-bottom:4px;border-bottom:1px solid rgba(127,127,127,.25);font-size:12.5px"><span class="mut">🎯 sem tarefa vinculada</span> <button class="wfact wf-task" type="button" title="Escolher a tarefa deste fluxo">vincular tarefa</button></div>';
           const tm=wfTaskMeta[wfMetaKey(wfRun.task)]||null;
           const title=(tm&&tm.title)||wfRun.taskLabel||wfRun.task.key;
           const head=tm&&tm.url?('<a href="'+esc(tm.url)+'" target="_blank" rel="noopener">'+esc(title)+' ↗</a>'):esc(title);
@@ -5171,6 +5173,7 @@
           const canSum=!!(tm&&(tm.description||tm.title));
           return '<div class="wftaskinfo" style="padding:4px 4px 8px;margin-bottom:4px;border-bottom:1px solid rgba(127,127,127,.25);font-size:12.5px">🎯 '+head
             +(canSum?' <button class="wfact wf-sum" type="button" title="Resumir a tarefa (objetivo, critérios, riscos)">'+(tm&&tm.summary?'Re-resumir':'Resumir')+'</button>':'')
+            +' <button class="wfact wf-task" type="button" title="Trocar a tarefa / abrir o cofre de conexões">trocar</button>'
             +body+'</div>'; })()
         // Outras tarefas da sessão: uma linha cada, com troca de foco em um clique (F3).
         +(wfOthers.length?wfOthers.map(r=>{ const os=r.summary||{}; return '<div class="wfs" style="opacity:.85"><span class="wfst">↔</span><span class="wft" title="'+esc(r.workflowName||'')+'">'+esc(r.taskLabel||r.workflowName)+' <span class="mut">'+(os.current?esc(os.current.title):'concluído')+' · '+(os.done||0)+'/'+(os.total||0)+'</span></span><button class="wfact wf-focus" data-run="'+esc(r.runId)+'" type="button" title="Tornar esta a tarefa em foco da sessão">focar</button></div>'; }).join(''):'')
@@ -5492,7 +5495,16 @@
       if(wfRun) buildWfRunPop(p,defs); else buildWfStartPop(p,defs);
       buildWfTaskDisclosure(p);
     }
-    if(E.wfStepBtn) E.wfStepBtn.onclick=()=>togglePop(E.wfStepBtn,buildWfStepPop);
+    // Com fluxo ativo o chip abre a FAIXA: trilha, passos, tarefa e evidência já moram lá, e empilhar
+    // o seletor por cima era um clique a mais para chegar na mesma informação. É ALTERNÂNCIA — um chip
+    // que só expande vira porta de mão única, e ele é o único gesto disponível ali. SEM fluxo ele
+    // continua abrindo o seletor, porque desde `4d467ff` é a única porta de entrada que existe.
+    if(E.wfStepBtn) E.wfStepBtn.onclick=()=>{
+      if(!wfRun){ togglePop(E.wfStepBtn,buildWfStepPop); return; }
+      closePop();
+      if(wfHideSuggest){ wfHideSuggest=false; wfOpen=true; } else wfOpen=!wfOpen;
+      renderWfRun();
+    };
     function wfBusyNow(){ return busy(currentSession); }
     // Encerrar o acompanhamento — a saída que faltava. `finish` = o fluxo chegou ao fim; `abandon` =
     // não quero este fluxo nesta sessão. O efeito imediato é o mesmo (sai da faixa e para de entrar no
@@ -5521,6 +5533,8 @@
       if(e.target.closest('.wf-restore')){ wfHideSuggest=false; renderWfRun(); return; }
       if(!wfRun) return;
       if(e.target.closest('.wf-tog')){ wfOpen=!wfOpen; renderWfRun(); return; }
+      // Porta para a gaveta de Tarefa a partir da faixa (o chip agora abre a faixa, não o seletor).
+      if(e.target.closest('.wf-task')){ wfTaskOpen=true; openPop(E.wfStepBtn,buildWfStepPop); return; }
       const foc=e.target.closest('.wf-focus'); if(foc){ tx({t:'workflow_run_focus',runId:foc.dataset.run,sessionId:currentSession}); return; }
       if(e.target.closest('.wf-sum')){ if(wfRun.task&&wfRun.task.key){ tx({t:'task_summarize',tracker:wfRun.task.tracker||'',key:wfRun.task.key}); toast('Resumindo a tarefa…'); } return; }
       if(e.target.closest('.wf-stop')){ wfStopRun('abandon'); return; }
