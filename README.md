@@ -485,7 +485,7 @@ service restart (tsx does not hot-reload).
 | `apps/runner/` | Headless runner |
 | `services/voice/` | Python: local Piper TTS |
 | `scripts/` | Installers, launchers, `jarvis` admin CLI |
-| `docs/` | [architecture](docs/ARCHITECTURE.md) · [setup](docs/setup.md) · [security](docs/security.md) · [runners](docs/runner-install.md) · [multi-runner](docs/multi-runner.md) · [sandbox](docs/runner-sandbox.md) · [updates](docs/updates.md) |
+| `docs/` | [architecture](docs/ARCHITECTURE.md) · [setup](docs/setup.md) · [security](docs/security.md) · [runners](docs/runner-install.md) · [multi-runner](docs/multi-runner.md) · [sandbox](docs/runner-sandbox.md) · [updates](docs/updates.md) · [task sources](docs/task-sources.md) |
 
 ## Security
 

@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, LocalTaskCache, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, LocalTaskCache, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -425,10 +425,25 @@ function providerSignal(ms = 10_000): { signal: AbortSignal; finish: () => void 
   (timer as { unref?: () => void }).unref?.();
   return { signal: ctrl.signal, finish: () => clearTimeout(timer) };
 }
-/** Resolução da regra de ouro para UMA sessão: cwd → vínculo → conexão (nunca conta padrão). */
-function resolveSessionTaskConnection(sessionId: string, requireVerified: boolean) {
-  const cwd = store.get(sessionId)?.cwd || CWD;
-  const binding = projectTasks.get(cwd);
+/** A pasta do projeto de uma sessão NA MÁQUINA onde ela roda. "" quando ainda não se sabe — e "" NUNCA
+ *  vira o cwd do Hub: um vínculo (ou uma lista) resolvido no projeto errado é resposta plausível e
+ *  falsa, o mesmo engano que a fatia C tirou da listagem de tarefas locais. */
+function sessionProjectDir(runnerId: string, sessionId: string): string {
+  if (runnerId === LOCAL_ID) return store.get(sessionId)?.cwd || CWD;
+  return sessionCwdOn(runnerId, sessionId);
+}
+/** Fonte ÚNICA declarada pelo projeto desta sessão (D): pasta local, provedor, ou nada declarado. */
+function sessionTaskSource(runnerId: string, sessionId: string) {
+  const cwd = sessionProjectDir(runnerId, sessionId);
+  const binding = cwd ? projectTasks.get(cwd) : undefined;
+  return { cwd, binding, source: resolveTaskSource({ projectDir: cwd, binding: binding || null, connections: taskConnections.list() }) };
+}
+/** Resolução da regra de ouro para UMA sessão: cwd → vínculo → conexão (nunca conta padrão).
+ *  `runnerId` é a máquina onde a sessão roda: sem ele, uma sessão remota resolveria o vínculo pela
+ *  pasta do HUB e poderia escrever no board de outro projeto. */
+function resolveSessionTaskConnection(sessionId: string, requireVerified: boolean, runnerId: string = LOCAL_ID) {
+  const cwd = sessionProjectDir(runnerId, sessionId);
+  const binding = cwd ? projectTasks.get(cwd) : undefined;
   const resolved = resolveTaskConnection({ binding: binding || null, store: taskConnections, env: process.env, requireVerified });
   return { cwd, binding, resolved };
 }
@@ -1161,7 +1176,7 @@ const runnerLabels: Record<string, string> = (() => { try { return JSON.parse(re
 for (const runnerId of Object.keys(runnerLabels)) if (runnerId !== "local") mirrorExecutionStore(runnerId);
 function saveRunnerLabels(): void { try { writeJsonAtomic(RUNNERS_FILE, runnerLabels, { pretty: true }); } catch { /* ignore */ } }
 interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastSeen: number; local: boolean; }
-interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; awaitingSince?: number; stalled?: boolean; stalledNotifiedAt?: number; /** Last out-of-band phase the runner's detached updater phoned home (Fase 2 UPD-01): even when the runner process dies mid-update and never sends update_done, this records WHERE it died. */ lastPhase?: string; lastReportAt?: number; }
+interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; awaitingSince?: number; stalled?: boolean; stalledNotifiedAt?: number; /** Last out-of-band phase the runner's detached updater phoned home (Fase 2 UPD-01): even when the runner process dies mid-update and never sends update_done, this records WHERE it died. */ lastPhase?: string; lastReportAt?: number; /** Últimas linhas do log do updater na falha — o rastro que diz QUAL comando quebrou, não só que algo quebrou. */ lastLogTail?: string; }
 const UPDATE_RETRY_MS = Math.max(30_000, Number(process.env.JARVIS_UPDATE_RETRY_SEC || 300) * 1000);
 // A machine that applied an update and reported ok goes to "awaiting_restart" and should reconnect on
 // the new commit within a normal restart window. Offline PAST this = the restart/updater hung (an
@@ -1180,7 +1195,8 @@ const pendingRunnerUpdates: Record<string, PendingRunnerUpdate> = (() => {
       out[id] = { requestId: value.requestId, targetCommit: value.targetCommit, requestedAt: Number(value.requestedAt) || Date.now(), state, force: value.force === true,
         fromCommit: typeof value.fromCommit === "string" ? value.fromCommit : undefined, lastAttemptAt: Number.isFinite(value.lastAttemptAt) ? Number(value.lastAttemptAt) : undefined, lastError: typeof value.lastError === "string" ? value.lastError : undefined,
         awaitingSince: Number.isFinite(value.awaitingSince) ? Number(value.awaitingSince) : undefined, stalled: value.stalled === true, stalledNotifiedAt: Number.isFinite(value.stalledNotifiedAt) ? Number(value.stalledNotifiedAt) : undefined,
-        lastPhase: typeof value.lastPhase === "string" ? value.lastPhase : undefined, lastReportAt: Number.isFinite(value.lastReportAt) ? Number(value.lastReportAt) : undefined };
+        lastPhase: typeof value.lastPhase === "string" ? value.lastPhase : undefined, lastReportAt: Number.isFinite(value.lastReportAt) ? Number(value.lastReportAt) : undefined,
+        lastLogTail: typeof value.lastLogTail === "string" ? value.lastLogTail : undefined };
     }
     return out;
   } catch { return {}; }
@@ -1702,12 +1718,18 @@ function recordRunnerUpdateReport(runnerId: string, r: { requestId?: string; pha
   const phase = String(r.phase || "?").slice(0, 40);
   const failed = r.ok === false || phase === "error";
   const detail = String(r.error || r.logTail || "").replace(/\s+/g, " ").trim().slice(0, 500);
-  log[failed ? "warn" : "info"]("update_report", { runnerId, label, phase, ok: r.ok !== false, targetCommit: r.targetCommit, error: failed ? detail : undefined });
+  // O RASTRO do updater (últimas linhas do log) vai junto, e não só a mensagem: quando as duas
+  // coisas existem, `error` eclipsava o `logTail` e o único registro que sobrava era uma linha do
+  // tipo "git saiu com código 1" — que não diz nem qual comando falhou. Foi exatamente o que
+  // manteve uma máquina sem atualizar por semanas sem ninguém conseguir apontar a causa.
+  const tail = String(r.logTail || "").replace(/\s+/g, " ").trim().slice(0, 1500);
+  log[failed ? "warn" : "info"]("update_report", { runnerId, label, phase, ok: r.ok !== false, targetCommit: r.targetCommit, error: failed ? detail : undefined, tail: failed && tail && tail !== detail ? tail : undefined });
   const pending = pendingRunnerUpdates[runnerId];
   const prevPhase = pending?.lastPhase;
   if (pending && (!r.requestId || r.requestId === pending.requestId)) {
     pending.lastPhase = phase; pending.lastReportAt = Date.now();
     if (failed && detail) pending.lastError = `[${phase}] ${detail}`.slice(0, 3000);
+    if (failed && tail) pending.lastLogTail = tail;
     savePendingRunnerUpdates();
   }
   updateMachineNotice(runnerId, { state: pending?.state, phase, ok: r.ok !== false, log: failed ? detail : `updater: ${phase}` });
@@ -2094,6 +2116,14 @@ function relayRunner(rc: RunnerConn, m: any): void {
   if (m.t === "execution_control_result") {
     executionUiState.commands[m.requestId] = m; saveExecutionUiState();
     const request = takePendingRequest(rc, m.requestId, ["execution_control"]); if (request) send(request.socket, m);
+    return;
+  }
+  // E — a máquina do projeto respondeu pela fonte MCP dela. Chega ao cliente no MESMO formato da
+  // lista local (o painel tem uma porta só); `kind` diz de qual fonte veio, e `dir` traz o rótulo
+  // do servidor. Nenhum comando/segredo trafega: só as tarefas.
+  if (m.t === "task_mcp_list") {
+    const request = takePendingRequest(rc, m.reqId, ["task_mcp_list"], typeof m.sessionId === "string" ? m.sessionId : undefined);
+    if (request) send(request.socket, { t: "task_local_list", kind: "mcp", runnerId: rc.id, sessionId: m.sessionId, dir: String(m.server || ""), files: Array.isArray(m.files) ? m.files : [], cached: false, scannedAt: Number(m.scannedAt) || Date.now(), ...(m.error ? { error: String(m.error) } : {}) });
     return;
   }
   if (m.t === "task_local_list") {
@@ -6490,7 +6520,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         // F1 — tarefa de verdade: aceita texto COLADO (chave "PRI-824", URL de Jira/GitHub/Linear) e
         // completa o rastreador pelo vínculo da pasta; título/descrição/link conhecidos entram no
         // cache — é o que alimenta a UI e o botão Resumir sem rede.
-        const projectCwd = store.get(sessionId)?.cwd || CWD;
+        // A pasta é a da MÁQUINA da sessão: com o cwd do Hub, uma chave nua colada numa sessão remota
+        // herdaria o rastreador de OUTRO projeto — a mesma ambiguidade que a fonte declarada mata.
+        const projectCwd = sessionProjectDir(activeRunner(ws), sessionId);
         if (!task.key && typeof msg.taskInput === "string") task = parseTaskInput(msg.taskInput, { defaultTracker: projectTasks.get(projectCwd)?.tracker }) || task;
         else if (task.key && !task.tracker) task = { ...task, tracker: projectTasks.get(projectCwd)?.tracker || "" };
         const pastedMeta = (msg.taskMeta && typeof msg.taskMeta === "object" ? msg.taskMeta : {}) as Record<string, unknown>;
@@ -6593,24 +6625,31 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // lembrado por diretório — projetos diferentes usam fontes diferentes sem reconfigurar nada.
     if (msg.t === "task_binding_get" && typeof msg.sessionId === "string") {
       if (!requireOwner(ws)) return;
-      const cwd = store.get(msg.sessionId)?.cwd || CWD;
-      send(ws, { t: "task_binding", sessionId: msg.sessionId, cwd, binding: projectTasks.get(cwd) || null });
+      const { cwd, binding, source } = sessionTaskSource(activeRunner(ws), msg.sessionId);
+      send(ws, { t: "task_binding", sessionId: msg.sessionId, cwd, binding: binding || null, source });
       return;
     }
     if (msg.t === "task_binding_set" && typeof msg.sessionId === "string" && typeof msg.tracker === "string") {
       if (!requireOwner(ws)) return;
       try {
-        const cwd = store.get(msg.sessionId)?.cwd || CWD;
+        // O vínculo é DO PROJETO, e o projeto vive na máquina da sessão: gravar pela pasta do Hub
+        // declararia a fonte de outro projeto (e escrita vai para board errado a partir daí).
+        const taskRunnerId = activeRunner(ws);
+        const cwd = sessionProjectDir(taskRunnerId, msg.sessionId);
+        if (!cwd) { send(ws, { t: "error", message: "Vínculo de tarefas: ainda não sei em que pasta esta sessão está na máquina dela — abra a sessão nela primeiro" }); return; }
         const binding = projectTasks.set(cwd, {
           tracker: msg.tracker,
           featuresDir: typeof msg.featuresDir === "string" ? msg.featuresDir : undefined,
+          mcpServer: typeof msg.mcpServer === "string" ? msg.mcpServer : undefined,
           connectionId: typeof msg.connectionId === "string" ? msg.connectionId : undefined,
           allowed: Array.isArray(msg.allowed) ? msg.allowed.map(String) : undefined,
           target: typeof msg.target === "string" ? msg.target : undefined,
           autoApprove: Array.isArray(msg.autoApprove) ? msg.autoApprove.map(String) : undefined,
         });
-        auth.audit("task_binding", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${cwd}: ${binding.tracker || "nenhuma"}${binding.connectionId ? ` · ${binding.connectionId}` : ""}` });
-        send(ws, { t: "task_binding", sessionId: msg.sessionId, cwd, binding });
+        auth.audit("task_binding", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: taskRunnerId, detail: `${cwd}: ${binding.tracker || "nenhuma"}${binding.connectionId ? ` · ${binding.connectionId}` : ""}` });
+        // A decisão de fonte volta JUNTO: é ela que faz a lista mudar na hora, sem restart e sem o
+        // cliente reimplementar a regra (uma fonte só, e o motivo quando ela não pode servir).
+        send(ws, { t: "task_binding", sessionId: msg.sessionId, cwd, binding, source: resolveTaskSource({ projectDir: cwd, binding, connections: taskConnections.list() }) });
       } catch (e: any) { send(ws, { t: "error", message: "Vínculo de tarefas: " + String(e?.message ?? e) }); }
       return;
     }
@@ -6622,24 +6661,47 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // sessão remota devolvia, em silêncio, as features de outro projeto — pior que erro: resposta
       // plausível e errada. Fora do local, ou a máquina responde, ou o pedido é recusado.
       const taskRunnerId = activeRunner(ws);
+      const refuse = (error: string, code?: string): void => send(ws, { t: "task_local_list", runnerId: taskRunnerId, sessionId: msg.sessionId, dir: "", files: [], cached: false, scannedAt: Date.now(), error, ...(code ? { code } : {}) });
+      // D — fonte ÚNICA declarada: arquivos de feature só respondem em projeto que DECLARA a pasta
+      // como sua fonte. Sem isso, um projeto de Jira listava .md do disco junto: duas fontes na
+      // mesma lista, e ninguém sabe de onde a tarefa veio. Sem fonte declarada também não há default
+      // silencioso — a recusa diz o que fazer.
+      const { cwd, source } = sessionTaskSource(taskRunnerId, msg.sessionId);
+      if (source.kind === "mcp") {
+        // Fonte MCP: quem executa é a máquina do projeto — o Hub só encaminha o NOME do servidor.
+        // Para uma sessão local, a máquina do projeto é este Hub, então ele mesmo executa.
+        if (taskRunnerId !== LOCAL_ID) {
+          const rc = runners.get(taskRunnerId);
+          if (!rc?.ws) { refuse("a máquina está offline — o servidor MCP de tarefas vive nela"); return; }
+          if ((rc.info.protocolVersion || 1) < 11) { refuse("esta máquina está desatualizada e não sabe listar tarefas por MCP — atualize-a"); return; }
+          const reqId = registerPendingRequest({ ws, runnerId: taskRunnerId, operation: "task_mcp_list", sessionIds: [msg.sessionId] });
+          if (!sendToRunner(rc, { t: "task_mcp_list", reqId, sessionId: msg.sessionId, server: source.mcpServer, refresh: msg.refresh === true })) refuse("não foi possível falar com a máquina agora");
+          return;
+        }
+        void (async () => {
+          try {
+            const listing = await listTasksFromMcp({ wanted: source.mcpServer, refresh: msg.refresh === true });
+            if ("error" in listing) { refuse(listing.error); return; }
+            send(ws, { t: "task_local_list", kind: "mcp", sessionId: msg.sessionId, dir: listing.label, files: listing.files, cached: listing.cached, scannedAt: listing.scannedAt });
+          } catch (e: any) { refuse(String(e?.message ?? e).slice(0, 400)); }
+        })();
+        return;
+      }
+      if (source.kind !== "local" || !source.ready) { refuse(source.reason || "este projeto não usa arquivos de feature como fonte de tarefas", source.code); return; }
       if (taskRunnerId !== LOCAL_ID) {
-        const refuse = (error: string): void => send(ws, { t: "task_local_list", runnerId: taskRunnerId, sessionId: msg.sessionId, dir: "", files: [], cached: false, scannedAt: Date.now(), error });
         const rc = runners.get(taskRunnerId);
         if (!rc?.ws) { refuse("a máquina está offline — a lista de tarefas vive no disco dela"); return; }
         if ((rc.info.protocolVersion || 1) < 10) { refuse("esta máquina está desatualizada e não sabe listar as tarefas locais dela — atualize-a"); return; }
-        const remoteCwd = sessionCwdOn(taskRunnerId, msg.sessionId);
         const reqId = registerPendingRequest({ ws, runnerId: taskRunnerId, operation: "task_local_list", sessionIds: [msg.sessionId] });
-        if (!sendToRunner(rc, { t: "task_local_list", reqId, sessionId: msg.sessionId, featuresDir: (remoteCwd && projectTasks.get(remoteCwd)?.featuresDir) || undefined, refresh: msg.refresh === true })) refuse("não foi possível falar com a máquina agora");
+        if (!sendToRunner(rc, { t: "task_local_list", reqId, sessionId: msg.sessionId, featuresDir: source.featuresDir, refresh: msg.refresh === true })) refuse("não foi possível falar com a máquina agora");
         return;
       }
       try {
-        const cwd = store.get(msg.sessionId)?.cwd || CWD;
-        const rel = (projectTasks.get(cwd)?.featuresDir || "docs/features").replace(/\\/g, "/");
-        const root = resolve(cwd, rel);
-        // A contenção de caminho vem ANTES de qualquer leitura ou consulta ao cache.
-        if (root !== resolve(cwd) && !root.startsWith(resolve(cwd) + sep)) throw new Error("pasta de features fora do projeto");
-        // Chave inclui a máquina: a mesma pasta relativa em outra máquina é OUTRO projeto. Este
-        // handler ainda lê o disco do próprio Hub — a fonte na máquina do projeto é a fatia TSK-03.
+        // Mesma função que o runner usa (`resolveFeaturesRoot`, no core): a contenção de caminho vem
+        // ANTES de qualquer leitura, e existe UMA cópia dela — duas foi como o Hub ficou para trás.
+        const { rel, root } = resolveFeaturesRoot(cwd, source.featuresDir);
+        // Chave inclui a máquina: a mesma pasta relativa em outra máquina é OUTRO projeto. Aqui é o
+        // caminho LOCAL (a máquina do projeto é este Hub); sessão remota já saiu pelo runner acima.
         const listing = localTaskCache.list(
           `${LOCAL_ID}\u0000${root}`,
           root,
@@ -6751,7 +6813,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // Busca no provedor do PROJETO (regra de ouro: sem vínculo → recusa acionável, nunca conta padrão).
     if (msg.t === "task_search" && typeof msg.sessionId === "string" && typeof msg.query === "string") {
       if (!requireOwner(ws)) return;
-      const { resolved } = resolveSessionTaskConnection(msg.sessionId, false);
+      const taskRunnerId = activeRunner(ws);
+      // D — o outro lado do portão: projeto que declara pasta local não busca em provedor. Sem isto,
+      // a mesma lista podia receber resultado de Jira num projeto cuja fonte é o disco.
+      const { source } = sessionTaskSource(taskRunnerId, msg.sessionId);
+      if (source.kind !== "provider" || !source.ready) {
+        send(ws, { t: "task_search_results", sessionId: msg.sessionId, results: [], error: source.reason || "este projeto não usa provedor como fonte de tarefas", code: source.code });
+        return;
+      }
+      const { resolved } = resolveSessionTaskConnection(msg.sessionId, false, taskRunnerId);
       if ("refusal" in resolved) { send(ws, { t: "task_search_results", sessionId: msg.sessionId, results: [], error: resolved.refusal.message, code: resolved.refusal.code }); return; }
       const t = providerSignal();
       try {
@@ -6764,7 +6834,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // Carrega/atualiza UMA tarefa do provedor para o cache (alimenta a faixa e o Resumir).
     if (msg.t === "task_load" && typeof msg.sessionId === "string" && typeof msg.key === "string") {
       if (!requireOwner(ws)) return;
-      const { resolved } = resolveSessionTaskConnection(msg.sessionId, false);
+      const { resolved } = resolveSessionTaskConnection(msg.sessionId, false, activeRunner(ws));
       if ("refusal" in resolved) { send(ws, { t: "error", message: "Tarefa: " + resolved.refusal.message }); return; }
       const t = providerSignal();
       try {

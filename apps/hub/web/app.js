@@ -1157,7 +1157,7 @@
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
-    function openSession(id,runnerId){ if(!id)return; wfLocalErr=''; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfLocalFiles=null; wfLocalShow=false; setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
+    function openSession(id,runnerId){ if(!id)return; wfLocalErr=''; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfTaskSource=null; wfLocalFiles=null; wfLocalShow=false; setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
       if(typeof findState!=='undefined'&&findState)closeFind(); if(typeof findRegion!=='undefined')findRegion='chat';  // abriu sessão → foco no chat; fecha barra órfã
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
@@ -4603,7 +4603,21 @@
         // Multi-tarefa: a lista atualiza o run em foco pelos DADOS, mas não rouba o foco — quem troca
         // o foco é o frame workflow_run (que o servidor emite ao focar/iniciar).
         else if(m.t==='workflow_runs'){ wfRunsAll=m.runs||[]; if(currentSession){ if(wfRun){ const upd=wfRunsAll.find(r=>r.runId===wfRun.runId); if(upd) wfRun=upd.status==='active'?upd:null; } if(!wfRun){ const mine=wfSessionRuns()[0]; if(mine) wfRun=mine; } renderWfRun(); } }
-        else if(m.t==='task_binding'){ if(m.sessionId===currentSession) wfTaskBinding=m.binding||null; }
+        else if(m.t==='task_binding'){ if(m.sessionId===currentSession){
+          // "mesma fonte" inclui QUAL pasta e QUAL servidor: trocar o servidor MCP muda a lista tanto
+          // quanto trocar de fonte, e a lista velha na tela seria de outro lugar.
+          const before=wfTaskSource&&wfTaskSource.kind, beforeDir=wfTaskSource&&(wfTaskSource.featuresDir||wfTaskSource.mcpServer);
+          wfTaskBinding=m.binding||null; wfTaskSource=m.source||null;
+          // Trocar a fonte muda a LISTA na hora: o que estava na tela era da fonte antiga. Zera o
+          // cache local (senão .md de um projeto de pasta sobreviveriam num projeto de provedor) e,
+          // se o painel está aberto na nova fonte, pede a lista dela.
+          const changed=!before||before!==(wfTaskSource&&wfTaskSource.kind)||beforeDir!==(wfTaskSource&&(wfTaskSource.featuresDir||wfTaskSource.mcpServer));
+          if(changed){ wfLocalFiles=null; wfLocalErr=''; wfSearchResults=null;
+            if(wfTaskSource&&wfTaskSource.featuresDir) wfLocalDir=wfTaskSource.featuresDir;
+            if(wfLocalShow&&wfTaskSource&&wfTaskSource.kind==='local'&&wfTaskSource.ready) tx({t:'task_local_list',sessionId:currentSession});
+          }
+          if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); }
+        } }
         else if(m.t==='task_local_list'){ if(m.sessionId===currentSession){ wfLocalErr=String(m.error||''); wfLocalFiles=m.files||[]; wfLocalDir=m.dir||wfLocalDir; if(wfLocalShow){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } } }
         else if(m.t==='task_meta'){ wfTaskMeta[wfMetaKey({tracker:m.tracker,key:m.key})]=m.meta||null; renderWfRun(); }
         else if(m.t==='task_connections'){ wfConnections=m.connections||[]; wfProviders=m.providers||[]; if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
@@ -5100,6 +5114,10 @@
     // Fluxo por tarefa (F1/F3): vínculo do projeto, arquivos locais de feature, cache de meta e a
     // tarefa ARMADA (vale para o próximo fluxo iniciado nesta sessão; persiste por sessão).
     let wfTaskBinding=null, wfLocalFiles=null, wfLocalDir='docs/features', wfLocalShow=false;
+    // D — a FONTE resolvida pelo Hub (uma só por projeto): {kind:'none'|'local'|'provider', ready,
+    // code, reason, featuresDir}. O cliente NÃO reimplementa a regra: só desenha a fonte que veio e,
+    // quando ela não pode servir, mostra o motivo com o conserto a um clique.
+    let wfTaskSource=null;
     // Motivo da recusa quando quem lista é a máquina do projeto (offline, desatualizada, pasta fora).
     let wfLocalErr='';
     // Cofre de conexões (C1/C2): lista vinda do Hub (sem NENHUM segredo — só envOk booleano),
@@ -5321,40 +5339,76 @@
       ok.onclick=()=>{ const v=inp.value.trim(); wfTaskArmSet(v?{input:v,label:v}:null); closePop(); toast(v?'Tarefa armada para o próximo fluxo.':'Tarefa desarmada.'); };
       inp.onkeydown=(ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); ok.onclick(); } };
       row.appendChild(inp); row.appendChild(ok); p.appendChild(row);
-      const lf=document.createElement('button'); lf.type='button'; lf.className='opt';
-      lf.innerHTML='📄 Arquivos de feature <span class="r">'+esc(wfLocalDir)+'</span>';
-      lf.onclick=()=>{ wfLocalShow=true; tx({t:'task_local_list',sessionId:currentSession}); };
-      p.appendChild(lf);
-      // Atualizar: o Hub serve a lista de um cache invalidado por assinatura da pasta, e existe caso
-      // em que o mtime nao basta (drive de rede, dois writes no mesmo tick). O pedido explicito e a saida.
-      if(wfLocalShow){ const rf=document.createElement('button'); rf.type='button'; rf.className='wfact'; rf.style.cssText='margin:0 2px 6px';
-        rf.textContent='Atualizar lista'; rf.title='Reler os arquivos de feature agora, ignorando o cache';
-        rf.onclick=(ev)=>{ ev.stopPropagation(); tx({t:'task_local_list',sessionId:currentSession,refresh:true}); };
-        p.appendChild(rf); }
-      if(wfLocalShow&&wfLocalFiles){
-        if(wfLocalErr){ const e=document.createElement('div'); e.className='mut'; e.style.cssText='font-size:11.5px;padding:0 2px 6px;color:#f5b544'; e.textContent='\u26A0 '+wfLocalErr; p.appendChild(e); }
-        else if(!wfLocalFiles.length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent='Nenhum .md em '+wfLocalDir+'.'; p.appendChild(d); }
-        wfLocalFiles.slice(0,30).forEach(f=>{
-          const b=document.createElement('button'); b.type='button'; b.className='opt';
-          b.innerHTML='• '+esc(f.title)+' <span class="r mono" style="font-size:10px">'+esc(f.key.split('/').pop())+'</span>';
-          b.onclick=()=>{ wfLocalShow=false; wfTaskArmSet({task:{tracker:'local',key:f.key,title:f.title},meta:{description:f.description||''},label:f.title}); closePop(); toast('Tarefa armada: '+f.title); };
-          p.appendChild(b);
-        });
-      }
       p.appendChild(ph('Fonte do projeto'));
       const srcRow=document.createElement('div'); srcRow.style.cssText='display:flex;gap:4px;flex-wrap:wrap;padding:2px 2px 8px';
-      ['local','github','jira','linear',''].forEach(src=>{
+      ['local','mcp','github','jira','linear',''].forEach(src=>{
         const b=document.createElement('button'); b.type='button'; b.className='wfact';
         const on=((wfTaskBinding&&wfTaskBinding.tracker)||'')===src;
         if(on) b.style.cssText='outline:1px solid var(--accent,#6ea8fe)';
         b.textContent=src||'nenhuma'; b.title='Fonte de tarefas deste projeto — lembrada por pasta (ex.: projeto X usa Jira, Y usa GitHub)';
-        b.onclick=()=>{ wfTaskBinding={tracker:src,featuresDir:wfTaskBinding&&wfTaskBinding.featuresDir}; tx({t:'task_binding_set',sessionId:currentSession,tracker:src,featuresDir:wfTaskBinding.featuresDir||undefined}); toast('Fonte do projeto: '+(src||'nenhuma')); };
+        // Sem estado otimista: quem manda é a fonte que o Hub confirmar (ele pode recusar — sessão
+        // cuja pasta ainda não se sabe não declara fonte de projeto nenhum).
+        b.onclick=()=>{ tx({t:'task_binding_set',sessionId:currentSession,tracker:src,featuresDir:(wfTaskBinding&&wfTaskBinding.featuresDir)||undefined}); toast('Fonte do projeto: '+(src||'nenhuma')); };
         srcRow.appendChild(b);
       });
       p.appendChild(srcRow);
-      // Conexão do projeto (C2) + busca no provedor (C4). Só aparece quando a fonte é um provedor.
-      const trackerNow=(wfTaskBinding&&wfTaskBinding.tracker)||'';
-      if(trackerNow&&trackerNow!=='local'){
+      // Fonte que não pode servir NÃO devolve lista vazia: diz o motivo e o que fazer (declarar a
+      // fonte, vincular a conta). Lista vazia calada é indistinguível de "não tem tarefa".
+      if(wfTaskSource&&!wfTaskSource.ready&&wfTaskSource.reason){
+        const w=document.createElement('div'); w.className='mut';
+        w.style.cssText='font-size:11.5px;padding:0 2px 8px;max-width:300px;color:#f5b544';
+        w.textContent='⚠ '+wfTaskSource.reason; p.appendChild(w);
+      }
+      // D — UMA fonte na tela: a lista de arquivos de feature só existe em projeto que DECLARA a
+      // pasta como sua fonte. Antes ela aparecia em qualquer projeto e podia conviver com resultado
+      // de provedor na mesma lista — ninguém sabia de onde a tarefa tinha vindo.
+      // A lista tem UMA porta (o mesmo pedido e o mesmo frame de volta) para as duas fontes que
+      // moram na máquina do projeto: pasta de features e servidor MCP. O que muda é o rótulo.
+      const listaDaMaquina=wfTaskSource&&wfTaskSource.ready&&(wfTaskSource.kind==='local'||wfTaskSource.kind==='mcp');
+      if(listaDaMaquina){
+        const viaMcp=wfTaskSource.kind==='mcp';
+        const lf=document.createElement('button'); lf.type='button'; lf.className='opt';
+        lf.innerHTML=(viaMcp?'🔌 Tarefas por MCP ':'📄 Arquivos de feature ')+'<span class="r">'+esc(viaMcp?(wfLocalDir||wfTaskSource.mcpServer||'servidor da máquina'):wfLocalDir)+'</span>';
+        lf.onclick=()=>{ wfLocalShow=true; tx({t:'task_local_list',sessionId:currentSession}); };
+        p.appendChild(lf);
+        // Atualizar: o Hub serve a lista de um cache invalidado por assinatura da pasta, e existe caso
+        // em que o mtime nao basta (drive de rede, dois writes no mesmo tick). O pedido explicito e a saida.
+        if(wfLocalShow){ const rf=document.createElement('button'); rf.type='button'; rf.className='wfact'; rf.style.cssText='margin:0 2px 6px';
+          rf.textContent='Atualizar lista'; rf.title=viaMcp?'Perguntar de novo ao servidor MCP da máquina, ignorando o cache':'Reler os arquivos de feature agora, ignorando o cache';
+          rf.onclick=(ev)=>{ ev.stopPropagation(); tx({t:'task_local_list',sessionId:currentSession,refresh:true}); };
+          p.appendChild(rf); }
+        if(wfLocalShow&&wfLocalFiles){
+          if(wfLocalErr){ const e=document.createElement('div'); e.className='mut'; e.style.cssText='font-size:11.5px;padding:0 2px 6px;color:#f5b544'; e.textContent='\u26A0 '+wfLocalErr; p.appendChild(e); }
+          else if(!wfLocalFiles.length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent=viaMcp?('O servidor '+(wfLocalDir||'MCP')+' não devolveu tarefas.'):('Nenhum .md em '+wfLocalDir+'.'); p.appendChild(d); }
+          wfLocalFiles.slice(0,30).forEach(f=>{
+            const b=document.createElement('button'); b.type='button'; b.className='opt';
+            b.innerHTML='• '+esc(f.title)+' <span class="r mono" style="font-size:10px">'+esc(viaMcp?f.key:f.key.split('/').pop())+'</span>';
+            // O rastreador da tarefa é a fonte de onde ela veio: "local" para arquivo, "mcp" para
+            // servidor. Carimbar tudo como local faria a tarefa mentir a própria origem.
+            b.onclick=()=>{ wfLocalShow=false; wfTaskArmSet({task:{tracker:viaMcp?'mcp':'local',key:f.key,title:f.title},meta:{description:f.description||''},label:f.title}); closePop(); toast('Tarefa armada: '+f.title); };
+            p.appendChild(b);
+          });
+        }
+      }
+      // Qual servidor MCP da máquina responde por este projeto. O Hub guarda só o NOME; a receita
+      // (comando, env, segredo) vive no arquivo daquela máquina e nunca chega aqui.
+      if(wfTaskSource&&wfTaskSource.kind==='mcp'){
+        const sRow=document.createElement('div'); sRow.style.cssText='display:flex;gap:4px;flex-wrap:wrap;padding:0 2px 6px';
+        const sb=document.createElement('button'); sb.type='button'; sb.className='wfact';
+        sb.textContent='servidor: '+(wfTaskSource.mcpServer||'o único da máquina');
+        sb.title='Nome do servidor MCP na allowlist da máquina do projeto (~/.jarvis/task-mcp.json). Vazio = use o único configurado lá.';
+        sb.onclick=async()=>{
+          closePop();
+          const v=await dialog({title:'Nome do servidor MCP desta máquina (vazio = o único configurado lá):',input:true,value:wfTaskSource.mcpServer||'',okText:'Salvar'});
+          if(v==null) return;
+          tx({t:'task_binding_set',sessionId:currentSession,tracker:'mcp',mcpServer:v.trim()||undefined});
+        };
+        sRow.appendChild(sb); p.appendChild(sRow);
+      }
+      // Conexão do projeto (C2) + busca no provedor (C4). Só aparece quando a fonte DECLARADA é um
+      // provedor — e aparece mesmo sem estar pronta, porque é aqui que se vincula a conta que falta.
+      const trackerNow=(wfTaskSource&&wfTaskSource.kind==='provider')?wfTaskSource.tracker:'';
+      if(trackerNow){
         const conn=(wfConnections||[]).find(c=>c.id===(wfTaskBinding&&wfTaskBinding.connectionId));
         const cRow=document.createElement('div'); cRow.style.cssText='padding:2px 2px 6px;font-size:12px;max-width:300px';
         cRow.innerHTML='🔐 '+(conn?('<b>'+esc(conn.label)+'</b> <span class="mut">'+esc(conn.identity?('@'+conn.identity.login):'não verificada')+(conn.envOk?'':' · ⚠ env')+'</span>'):'<span style="color:#f5b544">sem conexão vinculada — escolha a conta</span>');
@@ -5482,8 +5536,15 @@
     // formulário de ticket, conexões e cofre. Agora é uma gaveta fechada, com o estado atual no rótulo.
     function buildWfTaskDisclosure(p){
       const arm=wfTaskArmGet();
+      // Sem tarefa em jogo, o rótulo mostra a FONTE do projeto ("aqui é Jira", "aqui é pasta"): é o
+      // ponto da fatia D — saber de onde vêm as tarefas sem abrir a gaveta. ⚠ quando ela não serve.
+      const s=wfTaskSource;
+      const fonte=!s?'':s.kind==='local'?('pasta '+(s.featuresDir||''))
+        :s.kind==='mcp'?('mcp'+(s.mcpServer?' · '+s.mcpServer:''))
+        :s.kind==='provider'?s.tracker:'sem fonte';
       const resumo=arm?('armada: '+(arm.label||arm.input||''))
-        :(wfRun&&wfRun.task&&wfRun.task.key?('atual: '+(wfRun.taskLabel||wfRun.task.key)):'nenhuma');
+        :(wfRun&&wfRun.task&&wfRun.task.key?('atual: '+(wfRun.taskLabel||wfRun.task.key))
+        :((fonte?fonte:'nenhuma')+(s&&!s.ready?' ⚠':'')));
       const b=document.createElement('button'); b.type='button'; b.className='opt';
       b.style.cssText='border-top:1px solid rgba(127,127,127,.25);margin-top:6px;padding-top:8px;font-size:12px';
       b.innerHTML=(wfTaskOpen?'▾':'▸')+' 🎯 Tarefa <span class="r">'+esc(resumo)+'</span>';

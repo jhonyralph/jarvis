@@ -17,10 +17,12 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeJsonAtomic } from "./persist.js";
+// A pasta padrão de features é UMA: quem resolve/contém o caminho (Hub e runner) já vem daqui.
+import { DEFAULT_FEATURES_DIR } from "./task-local-cache.js";
 import { normalizeTaskRef, type TaskRef, type WorkflowRun } from "./workflow-run.js";
 
 /** Fontes com atalho na UI. O modelo continua aceitando qualquer slug — isto é sugestão, não cerca. */
-export const KNOWN_TASK_TRACKERS = ["local", "github", "jira", "linear", "gitlab", "azure"] as const;
+export const KNOWN_TASK_TRACKERS = ["local", "mcp", "github", "jira", "linear", "gitlab", "azure"] as const;
 
 const clean = (v: unknown, cap = 200): string => String(v ?? "").trim().slice(0, cap);
 const slug = (v: unknown): string => clean(v, 40).toLowerCase().replace(/[^a-z0-9_-]+/g, "");
@@ -115,6 +117,9 @@ export interface ProjectTaskBinding {
   tracker: string;
   /** pasta dos arquivos de feature, relativa ao projeto (só faz sentido com tracker "local"). */
   featuresDir?: string;
+  /** E: NOME do servidor MCP na allowlist da máquina do projeto (só com tracker "mcp"). O Hub nunca
+   *  guarda comando nem segredo — só o nome; quem tem a receita é o disco daquela máquina. */
+  mcpServer?: string;
   /** C2: a CONEXÃO (conta) vinculada — com várias contas do mesmo provedor, é ela que decide. */
   connectionId?: string;
   /** C2: allowlist de conexões que este projeto aceita; vazia/ausente = sem restrição extra. */
@@ -166,7 +171,7 @@ export class ProjectTaskBindingStore {
     return b ? { ...b } : undefined;
   }
 
-  set(cwd: string, binding: { tracker: string; featuresDir?: string; connectionId?: string; allowed?: string[]; target?: string; autoApprove?: string[] }): ProjectTaskBinding {
+  set(cwd: string, binding: { tracker: string; featuresDir?: string; mcpServer?: string; connectionId?: string; allowed?: string[]; target?: string; autoApprove?: string[] }): ProjectTaskBinding {
     const key = projectKeyFor(cwd, this.platform);
     if (!key) throw new Error("projeto sem caminho");
     const featuresDir = clean(binding.featuresDir, 200).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
@@ -174,6 +179,8 @@ export class ProjectTaskBindingStore {
     if (featuresDir.split("/").includes("..")) throw new Error("pasta de features não pode sair do projeto");
     const row: ProjectTaskBinding = { tracker: slug(binding.tracker), updatedAt: this.now() };
     if (featuresDir) row.featuresDir = featuresDir;
+    const mcpServer = clean(binding.mcpServer, 60);
+    if (mcpServer) row.mcpServer = mcpServer;
     const connectionId = clean(binding.connectionId, 80);
     if (connectionId) row.connectionId = connectionId;
     const allowed = (binding.allowed || []).map((v) => clean(v, 80)).filter(Boolean).slice(0, 20);
@@ -192,6 +199,85 @@ export class ProjectTaskBindingStore {
   list(): Array<{ project: string; binding: ProjectTaskBinding }> {
     return Object.entries(this.data.projects).map(([project, binding]) => ({ project, binding: { ...binding } }));
   }
+}
+
+/* ── fonte ÚNICA declarada por projeto (D) ────────────────────────────────────────────────────── */
+
+export type TaskSourceKind = "none" | "local" | "mcp" | "provider";
+
+export interface TaskSourceDecision {
+  kind: TaskSourceKind;
+  /** slug declarado no vínculo ("" quando o projeto não declarou nada). */
+  tracker: string;
+  /** `true` = esta fonte pode servir a lista AGORA. `false` = há um motivo acionável em `reason`. */
+  ready: boolean;
+  /** só em `local`: pasta relativa das features (já com o default aplicado). */
+  featuresDir?: string;
+  /** só em `mcp`: nome do servidor na allowlist da máquina ("" = a máquina decide, se tiver um só). */
+  mcpServer?: string;
+  /** só em `provider`: conexão vinculada, quando existe. */
+  connectionId?: string;
+  code?: "UNKNOWN_PROJECT" | "NO_SOURCE" | "NO_CONNECTION" | "CONNECTION_MISSING" | "PROVIDER_MISMATCH";
+  /** frase para o dono, no imperativo: sempre diz o que FAZER, não só o que faltou. */
+  reason?: string;
+}
+
+/**
+ * De onde vêm as tarefas DESTE projeto — uma fonte, declarada, sem ambiguidade.
+ *
+ * O problema que isto resolve: a mesma lista podia misturar arquivos de feature do disco com
+ * tarefas de um provedor, e "nenhuma fonte declarada" se comportava como "pasta local por padrão".
+ * Duas fontes na mesma lista significam que ninguém sabe de onde a tarefa veio — e um default
+ * implícito faz o projeto "funcionar" pela fonte errada, calado. Aqui a resposta é sempre uma só, e
+ * quando não dá para servir, o motivo diz o que fazer (declarar a fonte / vincular a conta).
+ *
+ * NÃO conhece o cofre de propósito (`task-connections.ts` é que importa este módulo, não o
+ * contrário): recebe as conexões existentes como dado e só confere presença/provedor.
+ */
+export function resolveTaskSource(input: {
+  /** Pasta do projeto NA MÁQUINA onde a sessão roda. Passe `""` quando ainda não se sabe qual é —
+   *  responder pela pasta de outra máquina é o engano que a fatia C tirou da listagem. Omitir o
+   *  campo (undefined) significa "não me pergunte isso", para quem só quer avaliar o vínculo. */
+  projectDir?: string;
+  binding?: Pick<ProjectTaskBinding, "tracker" | "featuresDir" | "mcpServer" | "connectionId"> | null;
+  connections?: Array<{ id: string; provider: string; label?: string }>;
+}): TaskSourceDecision {
+  if (input.projectDir !== undefined && !clean(input.projectDir, 500)) {
+    return { kind: "none", tracker: "", ready: false, code: "UNKNOWN_PROJECT",
+      reason: "ainda não sei em que pasta esta sessão está na máquina dela — abra a sessão na máquina para o Jarvis saber o projeto" };
+  }
+  const tracker = slug(input.binding?.tracker);
+  if (!tracker) {
+    return { kind: "none", tracker: "", ready: false, code: "NO_SOURCE",
+      reason: "este projeto ainda não declarou de onde vêm as tarefas — escolha a fonte (pasta local ou um provedor)" };
+  }
+  if (tracker === "local") {
+    const featuresDir = clean(input.binding?.featuresDir, 200).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") || DEFAULT_FEATURES_DIR;
+    return { kind: "local", tracker, ready: true, featuresDir };
+  }
+  // E — MCP: quem sabe se o servidor existe é a MÁQUINA do projeto (o Hub guarda só o nome). Por
+  // isso a fonte sai daqui "pronta para perguntar": a recusa acionável ("esta máquina não tem esse
+  // servidor") nasce lá, com a lista do que existe — informação que o Hub não tem para inventar.
+  if (tracker === "mcp") {
+    const mcpServer = clean(input.binding?.mcpServer, 60);
+    return { kind: "mcp", tracker, ready: true, ...(mcpServer ? { mcpServer } : {}) };
+  }
+  const connectionId = clean(input.binding?.connectionId, 80);
+  if (!connectionId) {
+    return { kind: "provider", tracker, ready: false, code: "NO_CONNECTION",
+      reason: `este projeto declara ${tracker} como fonte, mas nenhuma conta está vinculada — vincule a conexão` };
+  }
+  const connection = (input.connections || []).find((c) => c.id === connectionId);
+  if (!connection) {
+    return { kind: "provider", tracker, connectionId, ready: false, code: "CONNECTION_MISSING",
+      reason: `a conexão vinculada (${connectionId}) não existe mais no cofre — vincule outra conta de ${tracker}` };
+  }
+  // Vínculo apontando para conta de outro provedor: listar por ele contradiz o que o projeto declara.
+  if (slug(connection.provider) !== tracker) {
+    return { kind: "provider", tracker, connectionId, ready: false, code: "PROVIDER_MISMATCH",
+      reason: `a conexão vinculada é de ${connection.provider}, mas este projeto declara ${tracker} — vincule uma conta de ${tracker} ou troque a fonte` };
+  }
+  return { kind: "provider", tracker, connectionId, ready: true };
 }
 
 /* ── cache de metadados por tarefa ────────────────────────────────────────────────────────────── */

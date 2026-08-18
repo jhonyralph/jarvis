@@ -54,6 +54,9 @@ interface ClientHandle {
   wfExpanded(): boolean;
   askPendingCount(sessionId: string, runnerId?: string): number;
   localTaskError(): string;
+  taskSource(): any;
+  localTaskFiles(): any;
+  searchResults(): any;
   readonly recentsHtml: string[];
   popAnchor(): any;
 }
@@ -165,6 +168,9 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   askPendingCount: (sid,rid)=>(askPending.get(sessionStateKey(sid,rid||"local"))||{count:0}).count,
   get recentsHtml(){ return E.recents.children.map(c=>String(c.innerHTML||'')); },
   localTaskError: ()=>wfLocalErr,
+  taskSource: ()=>wfTaskSource,
+  localTaskFiles: ()=>wfLocalFiles,
+  searchResults: ()=>wfSearchResults,
   popAnchor: ()=>E.pop._anchor||null,
 };`;
 
@@ -815,4 +821,89 @@ test("TSK-03: uma listagem boa limpa o motivo anterior", async () => {
   client.socket().deliver({ t: "task_local_list", runnerId: "runner-b", sessionId: "s-remota", dir: "docs/features", files: [{ key: "docs/features/a.md", title: "A" }], cached: false, scannedAt: 2 });
 
   assert.equal(client.localTaskError(), "", "resposta boa não pode deixar aviso velho na tela");
+});
+
+// TSK-04 (fatia D): fonte ÚNICA declarada por projeto. O cliente não reimplementa a regra — ele
+// desenha a fonte que o Hub resolveu, e trocar de fonte tem que trocar a LISTA na hora.
+test("TSK-04: trocar a fonte do projeto descarta a lista da fonte antiga", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-1", "local");
+
+  client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "local", featuresDir: "docs/features" }, source: { kind: "local", tracker: "local", ready: true, featuresDir: "docs/features" } });
+  client.socket().deliver({ t: "task_local_list", sessionId: "s-1", dir: "docs/features", files: [{ key: "docs/features/a.md", title: "A" }], cached: false, scannedAt: 1 });
+  assert.equal(client.localTaskFiles().length, 1);
+
+  // Projeto passa a declarar Jira: os .md que estavam na tela são de OUTRA fonte.
+  client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "jira", connectionId: "jira:acme" }, source: { kind: "provider", tracker: "jira", ready: true, connectionId: "jira:acme" } });
+
+  assert.equal(client.localTaskFiles(), null, "lista da fonte antiga não sobrevive à troca — seriam duas fontes na mesma tela");
+  assert.equal(client.taskSource().kind, "provider");
+});
+
+test("TSK-04: voltar para a pasta descarta o resultado do provedor", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-1", "local");
+  client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "jira", connectionId: "jira:acme" }, source: { kind: "provider", tracker: "jira", ready: true, connectionId: "jira:acme" } });
+  client.socket().deliver({ t: "task_search_results", sessionId: "s-1", results: [{ tracker: "jira", key: "ABC-1", title: "Uma tarefa" }] });
+  assert.ok(client.searchResults());
+
+  client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "local" }, source: { kind: "local", tracker: "local", ready: true, featuresDir: "docs/features" } });
+
+  assert.equal(client.searchResults(), null, "resultado do provedor não pode sobrar num projeto que agora é pasta local");
+  assert.equal(client.localTaskError(), "");
+});
+
+test("TSK-04: fonte que não pode servir chega com motivo — e o cliente o guarda em vez de lista vazia", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-1", "local");
+
+  const reason = "este projeto declara jira como fonte, mas nenhuma conta está vinculada — vincule a conexão";
+  client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "jira" }, source: { kind: "provider", tracker: "jira", ready: false, code: "NO_CONNECTION", reason } });
+
+  const source = client.taskSource();
+  assert.equal(source.ready, false);
+  assert.equal(source.code, "NO_CONNECTION");
+  assert.equal(source.reason, reason, "é este texto que o painel mostra: sem ele, o usuário vê só uma lista vazia");
+});
+
+// TSK-05 (fatia E): a fonte MCP entra pela MESMA porta da lista local — o cliente não ganha um
+// segundo caminho, só um rótulo diferente e a origem certa na tarefa armada.
+test("TSK-05: lista vinda do MCP chega pelo frame da lista e traz o rótulo do servidor", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-1", "local");
+
+  client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "mcp", mcpServer: "linear-local" }, source: { kind: "mcp", tracker: "mcp", ready: true, mcpServer: "linear-local" } });
+  client.socket().deliver({ t: "task_local_list", kind: "mcp", sessionId: "s-1", dir: "Linear local", files: [{ key: "PRI-1", title: "Uma tarefa" }], cached: false, scannedAt: 1 });
+
+  assert.equal(client.taskSource().kind, "mcp");
+  assert.equal(client.localTaskFiles().length, 1);
+  assert.equal(client.localTaskError(), "");
+});
+
+test("TSK-05: recusa da máquina (servidor MCP ausente) vira motivo visível, não lista vazia", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-1", "local");
+  client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "mcp", mcpServer: "sumiu" }, source: { kind: "mcp", tracker: "mcp", ready: true, mcpServer: "sumiu" } });
+
+  client.socket().deliver({ t: "task_local_list", kind: "mcp", sessionId: "s-1", dir: "", files: [], cached: false, scannedAt: 1, error: 'esta máquina não tem servidor MCP de tarefas chamado "sumiu"' });
+
+  assert.match(client.localTaskError(), /não tem servidor MCP de tarefas chamado "sumiu"/);
+});
+
+test("TSK-05: trocar o servidor MCP descarta a lista do servidor anterior", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-1", "local");
+  client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "mcp", mcpServer: "a" }, source: { kind: "mcp", tracker: "mcp", ready: true, mcpServer: "a" } });
+  client.socket().deliver({ t: "task_local_list", kind: "mcp", sessionId: "s-1", dir: "A", files: [{ key: "A-1", title: "de A" }], cached: false, scannedAt: 1 });
+  assert.equal(client.localTaskFiles().length, 1);
+
+  client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "mcp", mcpServer: "b" }, source: { kind: "mcp", tracker: "mcp", ready: true, mcpServer: "b" } });
+
+  assert.equal(client.localTaskFiles(), null, "outro servidor é outra fonte: a lista de A não pode ficar na tela de B");
 });

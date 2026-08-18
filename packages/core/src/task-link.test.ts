@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseTaskInput, parseFeatureTask, projectKeyFor, ProjectTaskBindingStore, TaskMetaStore, formatParallelRunsLine } from "./task-link.js";
+import { parseTaskInput, parseFeatureTask, projectKeyFor, ProjectTaskBindingStore, TaskMetaStore, formatParallelRunsLine, resolveTaskSource } from "./task-link.js";
+import { DEFAULT_FEATURES_DIR } from "./task-local-cache.js";
 
 test("parseTaskInput reconhece URLs de GitHub, Linear, Jira e GitLab sem rede", () => {
   assert.deepEqual(parseTaskInput("https://github.com/acme/api/issues/123"), { tracker: "github", key: "acme/api#123", url: "https://github.com/acme/api/issues/123", title: undefined });
@@ -94,4 +95,79 @@ test("formatParallelRunsLine resume as outras tarefas em uma linha e some quando
   ] as any);
   assert.match(line, /acme\/api#12 \(TDD, 1\/2\)/);
   assert.match(line, /não são o assunto deste turno/);
+});
+
+/* ── D: fonte única declarada por projeto ─────────────────────────────────────────────────────── */
+
+const conns = [{ id: "jira:acme", provider: "jira", label: "Jira ACME" }, { id: "github:pessoal", provider: "github" }];
+
+test("fonte única: projeto sem declaração NÃO cai em pasta local por padrão — pede para declarar", () => {
+  for (const binding of [undefined, null, { tracker: "" }]) {
+    const d = resolveTaskSource({ binding: binding as any, connections: conns });
+    assert.equal(d.kind, "none");
+    assert.equal(d.ready, false);
+    assert.equal(d.code, "NO_SOURCE");
+    assert.match(d.reason!, /escolha a fonte/);
+    // Um default silencioso aqui é o bug: a lista viria da pasta sem ninguém ter dito que é dela.
+    assert.equal(d.featuresDir, undefined);
+  }
+});
+
+test("fonte única: `local` está pronta e aplica a pasta padrão; pasta declarada é normalizada", () => {
+  assert.deepEqual(resolveTaskSource({ binding: { tracker: "local" } }),
+    { kind: "local", tracker: "local", ready: true, featuresDir: DEFAULT_FEATURES_DIR });
+  assert.equal(resolveTaskSource({ binding: { tracker: "local", featuresDir: "/specs\\tarefas/" } }).featuresDir, "specs/tarefas");
+});
+
+test("fonte única: provedor sem conta vinculada dá erro acionável, não lista vazia", () => {
+  const d = resolveTaskSource({ binding: { tracker: "jira" }, connections: conns });
+  assert.equal(d.kind, "provider");
+  assert.equal(d.ready, false);
+  assert.equal(d.code, "NO_CONNECTION");
+  assert.match(d.reason!, /declara jira.*vincule a conexão/);
+});
+
+test("fonte única: conexão que sumiu do cofre e conexão de OUTRO provedor são recusadas com o motivo certo", () => {
+  const gone = resolveTaskSource({ binding: { tracker: "jira", connectionId: "jira:antiga" }, connections: conns });
+  assert.equal(gone.code, "CONNECTION_MISSING");
+  assert.match(gone.reason!, /não existe mais no cofre/);
+
+  // Vínculo apontando para conta de outro provedor: listar por ela contradiz o que o projeto declara.
+  const mismatch = resolveTaskSource({ binding: { tracker: "jira", connectionId: "github:pessoal" }, connections: conns });
+  assert.equal(mismatch.code, "PROVIDER_MISMATCH");
+  assert.match(mismatch.reason!, /é de github.*declara jira/);
+  assert.equal(mismatch.ready, false);
+});
+
+test("fonte única: provedor com conta vinculada e presente está pronto — e nunca traz pasta local junto", () => {
+  const d = resolveTaskSource({ binding: { tracker: "jira", connectionId: "jira:acme", featuresDir: "docs/features" }, connections: conns });
+  assert.deepEqual(d, { kind: "provider", tracker: "jira", connectionId: "jira:acme", ready: true });
+  assert.equal(d.featuresDir, undefined, "featuresDir num projeto de provedor seria a segunda fonte entrando pela porta de trás");
+});
+
+test("fonte única: tracker é normalizado (maiúsculas/espaço não criam fonte diferente)", () => {
+  assert.equal(resolveTaskSource({ binding: { tracker: " LOCAL " } }).kind, "local");
+  assert.equal(resolveTaskSource({ binding: { tracker: "Jira", connectionId: "jira:acme" }, connections: conns }).ready, true);
+});
+
+test("fonte única: projeto desconhecido é recusado — nunca resolvido pela pasta de outra máquina", () => {
+  const d = resolveTaskSource({ projectDir: "", binding: { tracker: "local" }, connections: conns });
+  assert.equal(d.code, "UNKNOWN_PROJECT");
+  assert.equal(d.ready, false);
+  assert.match(d.reason!, /em que pasta esta sessão está/);
+  // Com a pasta conhecida, a mesma entrada resolve normalmente.
+  assert.equal(resolveTaskSource({ projectDir: "C:/proj", binding: { tracker: "local" } }).ready, true);
+  // Campo ausente = "não me pergunte isso" (avaliar só o vínculo), e não "pasta vazia".
+  assert.equal(resolveTaskSource({ binding: { tracker: "local" } }).ready, true);
+});
+
+test("fonte única: `mcp` sai pronta para perguntar à máquina — quem valida o servidor é ela", () => {
+  const semNome = resolveTaskSource({ binding: { tracker: "mcp" } });
+  assert.equal(semNome.kind, "mcp");
+  assert.equal(semNome.ready, true, "o Hub não sabe o que existe na máquina; recusar aqui inventaria um erro");
+  assert.equal(semNome.mcpServer, undefined, "sem nome, a máquina decide (se tiver um só)");
+
+  const comNome = resolveTaskSource({ binding: { tracker: "mcp", mcpServer: "linear-local" } });
+  assert.equal(comNome.mcpServer, "linear-local");
+  assert.equal(comNome.featuresDir, undefined, "fonte mcp não carrega pasta junto — seriam duas fontes");
 });

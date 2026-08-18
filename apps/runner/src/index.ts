@@ -33,7 +33,7 @@ import {
   formatCouncilFinalMessage, managedChildExecutionId,
   TerminalManager,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
-  LocalTaskCache, resolveFeaturesRoot, parseFeatureTask,
+  LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, listTasksFromMcp,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type UpdateStatus, type UpdateAttemptRecord, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
@@ -1132,6 +1132,22 @@ function connect(): void {
           send({ t: "task_local_list", reqId, sessionId, dir: rel, files: listing.files, cached: listing.cached, scannedAt: listing.scannedAt });
         } catch (error) {
           send({ t: "task_local_list", reqId, sessionId, dir: "", files: [], cached: false, scannedAt: Date.now(), error: String((error as Error)?.message || error) });
+        }
+        return;
+      }
+      // E — fonte MCP: o servidor roda AQUI, porque é aqui que existem binário, credencial e rede
+      // dele. O Hub manda só o NOME; a receita vem da allowlist do disco desta máquina, e o segredo
+      // é resolvido neste processo — nunca sobe para o Hub nem para o cliente.
+      if (m.t === "task_mcp_list" && typeof m.reqId === "string" && typeof m.sessionId === "string") {
+        const reqId = m.reqId, sessionId = m.sessionId;
+        const wanted = typeof m.server === "string" ? m.server : undefined;
+        const refuse = (error: string): void => send({ t: "task_mcp_list", reqId, sessionId, server: wanted || "", files: [], scannedAt: Date.now(), error });
+        try {
+          const listing = await listTasksFromMcp({ wanted, refresh: m.refresh === true });
+          if ("error" in listing) { refuse(listing.error); return; }
+          send({ t: "task_mcp_list", reqId, sessionId, server: listing.label, files: listing.files, scannedAt: listing.scannedAt });
+        } catch (error: any) {
+          refuse(String(error?.message ?? error).slice(0, 400));
         }
         return;
       }
