@@ -17,7 +17,7 @@
     } catch {}
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','aiBtn','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','solutionBtn','solutionName','solutionBar','solBarMode','solBarMeta','solBarOff','solutionChars','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','tskConns','tskBindings','tskMcp','tskAddConn','solutionBtn','solutionName','solutionBar','solBarMode','solBarMeta','solBarOff','solutionChars','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','setFwAutoFlow','setFwApplyInstr','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwDir','fwDirBtn','fwTplBtn','fwReset','fwUpdates','fwCatBtn','fwCatalog','fwWfBtn','fwWorkflows','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','wfRun','wfStepBtn','wfStepName','bgJobs','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -3470,6 +3470,7 @@
       // imagem para não piscar o alt quebrado a cada reentrada.
       else if(name==='celular'&&!isNativeShell()){ if(!E.qrImg.getAttribute('src')) E.qrUrl.textContent='Gerando QR…'; tx({t:'qr',url:location.origin}); }
       else if(name==='dispositivos'&&authUser&&authUser.role==='owner'){ E.secOut.classList.add('hidden'); tx({t:'sec_state'}); }
+      else if(name==='tarefas'&&authUser&&authUser.role==='owner'){ renderTaskSettings(); tx({t:'task_connections'}); }
       else if(['assistente','fontes','dados'].includes(name)){ requestPersonalState(); if(name==='assistente'&&authUser&&authUser.role==='owner')tx({t:'policy_state',sessionId:currentSession}); }
     }
     // Só a visibilidade owner-only — separado de settingsSetupNav porque uma troca de papel com a tela
@@ -3477,8 +3478,8 @@
     function settingsOwnerVisibility(isOwner){ const root=E.settings; if(!root) return;
       // itens exclusivos do dono sÃo escondidos da barra; os painéis mostram aviso se abertos por link/busca
       root.querySelectorAll('.snav-owner').forEach(b=>b.classList.toggle('hidden',!isOwner));
-      if(E.setSection){Array.from(E.setSection.options).forEach(o=>{if(['automacao','framework','dispositivos'].includes(o.value))o.hidden=!isOwner;if(o.value==='celular')o.hidden=isNativeShell();});}
-      [['autoOwnerHint',null],['fwOwnerHint',null],['secOwnerHint','secSettings']].forEach(([hintId,bodyId])=>{
+      if(E.setSection){Array.from(E.setSection.options).forEach(o=>{if(['automacao','framework','tarefas','dispositivos'].includes(o.value))o.hidden=!isOwner;if(o.value==='celular')o.hidden=isNativeShell();});}
+      [['autoOwnerHint',null],['fwOwnerHint',null],['tskOwnerHint',null],['secOwnerHint','secSettings']].forEach(([hintId,bodyId])=>{
         const hint=document.getElementById(hintId); if(hint) hint.classList.toggle('hidden',!!isOwner);
         if(bodyId){ const body=document.getElementById(bodyId); if(body) body.classList.toggle('hidden',!isOwner); }
       });
@@ -4620,7 +4621,12 @@
         } }
         else if(m.t==='task_local_list'){ if(m.sessionId===currentSession){ wfLocalErr=String(m.error||''); wfLocalFiles=m.files||[]; wfLocalDir=m.dir||wfLocalDir; if(wfLocalShow){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } } }
         else if(m.t==='task_meta'){ wfTaskMeta[wfMetaKey({tracker:m.tracker,key:m.key})]=m.meta||null; renderWfRun(); }
-        else if(m.t==='task_connections'){ wfConnections=m.connections||[]; wfProviders=m.providers||[]; if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
+        else if(m.t==='task_connections'){ wfConnections=m.connections||[]; wfProviders=m.providers||[];
+          tskBindings=m.bindings||[]; tskMcpMachines=m.mcpMachines||[];
+          // F: o frame agora é DIFUNDIDO a cada mudança — o painel do fluxo e a tela de
+          // Configurações repintam sozinhos, inclusive quando quem mexeu foi o outro aparelho.
+          if(settingsPanelOpen('tarefas')) renderTaskSettings();
+          if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
         else if(m.t==='task_search_results'){ wfSearchResults=m; if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
         else if(m.t==='task_create_pending'){ toast('Criação aguardando sua aprovação: '+(m.preview||'')); }
         else if(m.t==='task_create_result'){ toast(m.ok?('Tarefa criada: '+(m.key||'')):('Criar tarefa: '+(m.error||'falhou'))); }
@@ -5123,6 +5129,9 @@
     // Cofre de conexões (C1/C2): lista vinda do Hub (sem NENHUM segredo — só envOk booleano),
     // catálogo de provedores, resultados de busca e o modo "gerenciar" do popup.
     let wfConnections=null, wfProviders=[], wfSearchResults=null, wfConnManage=false;
+    // F: o que a tela de Configurações mostra além das conexões — vínculo por projeto e os
+    // servidores MCP de cada máquina (só nomes; a receita vive no disco de cada uma).
+    let tskBindings=[], tskMcpMachines=[];
     const wfTaskMeta={};
     function wfMetaKey(t){ return (t.tracker||'')+' '+t.key; }
     function wfTaskArmKey(){ return (currentSessionRunner||'local')+' '+(currentSession||''); }
@@ -5266,28 +5275,99 @@
     function wfPopIsOpen(){ return !!document.querySelector('.pop .wftask-anchor'); }
     // ── Gerenciar conexões (C1): listar/verificar/apagar/adicionar — segredo NUNCA passa por aqui,
     // só o NOME da env var. A identidade verificada é o que diz DE QUEM é cada conexão.
-    function buildWfConnManage(p){
-      p.appendChild(ph('Conexões (cofre)'));
-      const back=document.createElement('button'); back.type='button'; back.className='opt'; back.textContent='← voltar';
-      // Volta para a gaveta de Tarefa ABERTA: foi de lá que se entrou no cofre, e reabrir fechado
-      // devolveria o usuário para um menu que não parece o que ele estava usando.
-      back.onclick=()=>{ wfConnManage=false; wfTaskOpen=true; closePop(); togglePop(E.wfStepBtn,buildWfStepPop); };
-      p.appendChild(back);
-      (wfConnections||[]).forEach(c=>{
-        const row=document.createElement('div'); row.style.cssText='padding:4px 2px 6px;border-bottom:1px solid rgba(127,127,127,.2);font-size:12px;max-width:300px';
-        const who=c.identity?('@'+(c.identity.login||c.identity.id)):'não verificada';
-        const srcBadge=c.secretSource==='cofre'?' <span class="mut" title="o valor está no cofre local do Jarvis">🔒 cofre</span>'
-          :c.secretSource==='ambiente'?' <span class="mut" title="o valor vem do ambiente externo do Hub (vence o cofre)">🌐 ambiente</span>'
-          :' <span style="color:#f5b544" title="nenhum valor: cole o segredo em ⧉">⚠ sem segredo</span>';
-        row.innerHTML='<b>'+esc(c.label)+'</b> <span class="mut">('+esc(c.provider)+' · '+esc(who)+')</span>'+srcBadge
-          +(c.lastError?'<div class="mut" style="color:#f87171;font-size:11px">'+esc(String(c.lastError).slice(0,90))+'</div>':'')
-          +'<div class="row" style="gap:4px;margin-top:3px"><button class="wfact wfc-secret" data-id="'+esc(c.id)+'" type="button" title="Colar/trocar o segredo desta conexão">⧉ Segredo</button><button class="wfact wfc-verify" data-id="'+esc(c.id)+'" type="button">Verificar</button><button class="wfact wfc-del" data-id="'+esc(c.id)+'" type="button">Apagar</button></div>';
-        p.appendChild(row);
+    /* ── F: Configurações → Tarefas ────────────────────────────────────────────────────────────
+       Um lugar para enxergar TUDO que está ligado em tarefas. Antes isso só existia dentro do popup
+       do fluxo (e só para o projeto da sessão aberta), então "quais contas eu tenho?" e "qual
+       projeto usa o quê?" só se respondia abrindo sessão em cada pasta. */
+    function renderTaskSettings(){
+      if(!E.tskConns) return;
+      const conns=wfConnections||[];
+      E.tskConns.innerHTML='';
+      if(!conns.length) E.tskConns.innerHTML='<div class="mut">Nenhuma conexão no cofre.</div>';
+      conns.forEach(c=>{
+        // Estado de verificação é o dado que importa aqui: conta não verificada é conta que pode ser
+        // outra pessoa, e foi isso que já criou tarefa no board errado.
+        const who=c.identity?('@'+esc(c.identity.login||c.identity.id||'')):'<span style="color:#f5b544">nunca verificada</span>';
+        const quando=c.lastVerifiedAt?(' · verificada '+new Date(c.lastVerifiedAt).toLocaleString()):'';
+        const seg=c.secretSource==='cofre'?'🔒 cofre':c.secretSource==='ambiente'?'🌐 ambiente':'<span style="color:#f5b544">⚠ sem valor</span>';
+        const row=document.createElement('div');
+        row.style.cssText='padding:6px 2px;border-bottom:1px solid rgba(127,127,127,.2)';
+        row.innerHTML='<b>'+esc(c.label)+'</b> <span class="mut">'+esc(c.provider)+' · '+who+esc(quando)+'</span>'
+          +'<div class="mut" style="font-size:11.5px">segredo: '+seg+' <code>'+esc(c.secretRef||'')+'</code>'+(c.envOk?'':' <span style="color:#f5b544">(ausente no ambiente do Hub)</span>')+'</div>'
+          +(c.lastError?'<div style="color:#f87171;font-size:11.5px">'+esc(String(c.lastError).slice(0,160))+'</div>':'')
+          +'<div class="row" style="gap:4px;margin-top:4px"><button class="wfact tsk-secret" data-id="'+esc(c.id)+'" type="button">⧉ Segredo</button>'
+          +'<button class="wfact tsk-verify" data-id="'+esc(c.id)+'" type="button">Verificar</button>'
+          +'<button class="wfact tsk-del" data-id="'+esc(c.id)+'" type="button">Apagar</button></div>';
+        E.tskConns.appendChild(row);
       });
-      if(!(wfConnections||[]).length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:2px'; d.textContent='Nenhuma conexão no cofre.'; p.appendChild(d); }
-      const add=document.createElement('button'); add.type='button'; add.className='opt'; add.textContent='+ adicionar conexão';
-      add.onclick=async()=>{
-        closePop();
+
+      E.tskBindings.innerHTML='';
+      if(!tskBindings.length) E.tskBindings.innerHTML='<div class="mut">Nenhum projeto declarou fonte ainda.</div>';
+      tskBindings.forEach(row=>{
+        const b=row.binding||{};
+        const fonte=b.tracker==='local'?('pasta '+(b.featuresDir||'docs/features'))
+          :b.tracker==='mcp'?('mcp'+(b.mcpServer?' · '+b.mcpServer:' · servidor único da máquina'))
+          :b.tracker?(b.tracker+(b.connectionId?(' · '+b.connectionId):' · <span style="color:#f5b544">sem conexão</span>')):'—';
+        const d=document.createElement('div');
+        d.style.cssText='padding:6px 2px;border-bottom:1px solid rgba(127,127,127,.2)';
+        d.innerHTML='<code style="font-size:11.5px">'+esc(row.project)+'</code><div class="mut" style="font-size:12px">fonte: '+fonte+'</div>'
+          +'<div class="row" style="gap:4px;margin-top:4px"><button class="wfact tsk-rebind" data-project="'+esc(row.project)+'" type="button" title="Trocar a fonte deste projeto sem abrir uma sessão nele">Trocar fonte</button>'
+          +'<button class="wfact tsk-unbind" data-project="'+esc(row.project)+'" type="button" title="Desliga a fonte deste projeto (ele volta a não ter fonte declarada)">Desvincular</button></div>';
+        E.tskBindings.appendChild(d);
+      });
+
+      E.tskMcp.innerHTML='';
+      if(!tskMcpMachines.length) E.tskMcp.innerHTML='<div class="mut">Nenhuma máquina conectada.</div>';
+      tskMcpMachines.forEach(m=>{
+        // Máquina em código antigo NÃO reporta a allowlist. Dizer "nenhum servidor" ali seria mentir
+        // com cara de resposta — o mesmo engano que a fatia C matou.
+        const lista=!m.known?'<span class="mut">— (máquina desatualizada: não reporta a lista)</span>'
+          :(m.servers||[]).length?(m.servers||[]).map(x=>'<code>'+esc(x)+'</code>').join(', ')
+          :'<span class="mut">nenhum servidor configurado</span>';
+        const d=document.createElement('div');
+        d.style.cssText='padding:6px 2px;border-bottom:1px solid rgba(127,127,127,.2)';
+        d.innerHTML='<b>'+esc(m.label||m.runnerId)+'</b><div class="mut" style="font-size:12px">'+lista+'</div>'
+          +'<div class="mut" style="font-size:11px">configurado em <code>'+esc(m.configFile||'~/.jarvis/task-mcp.json')+'</code> na própria máquina</div>';
+        E.tskMcp.appendChild(d);
+      });
+    }
+    if(E.tskAddConn) E.tskAddConn.onclick=()=>{ void taskConnAddFlow(); };
+    document.addEventListener('click',async(e)=>{
+      const t=e.target&&e.target.closest?e.target.closest('#tskConns button, #tskBindings button'):null;
+      if(!t) return;
+      const id=t.dataset.id;
+      if(t.classList.contains('tsk-verify')){ tx({t:'task_connection_verify',id}); toast('Verificando identidade…'); return; }
+      if(t.classList.contains('tsk-del')){ const c=(wfConnections||[]).find(x=>x.id===id);
+        const ok=await dialog({title:'Apagar a conexão "'+((c&&c.label)||id)+'"? Projetos vinculados a ela ficam sem conta.',okText:'Apagar'});
+        if(ok!=null) tx({t:'task_connection_delete',id}); return; }
+      if(t.classList.contains('tsk-secret')){ const c=(wfConnections||[]).find(x=>x.id===id); if(!c) return;
+        const v=await dialog({title:'Cole o segredo de "'+c.label+'" ('+c.secretRef+'). Vai para o cofre local e vale na hora — sem restart:',input:true,placeholder:'cole o token…',okText:'Salvar'});
+        if(v!=null&&v.trim()) tx({t:'secret_set',name:c.secretRef,value:v.trim()});
+        if(c.secretRef2){ const v2=await dialog({title:'Segundo segredo ('+c.secretRef2+') — vazio mantém o atual:',input:true,okText:'Salvar'}); if(v2!=null&&v2.trim()) tx({t:'secret_set',name:c.secretRef2,value:v2.trim()}); }
+        return; }
+      if(t.classList.contains('tsk-rebind')){ const project=t.dataset.project;
+        const opcoes=['local','mcp','github','jira','linear'];
+        const pick=await dialog({title:'Fonte de tarefas de\n'+project+'\n\n'+opcoes.map((o,i)=>(i+1)+'. '+o).join('\n'),input:true,placeholder:'número',okText:'Continuar'});
+        if(pick==null) return; const tracker=opcoes[parseInt(pick,10)-1]; if(!tracker){ toast('Opção inválida'); return; }
+        // Cada fonte precisa de UMA informação a mais para servir: qual pasta, qual servidor da
+        // máquina, qual conta. Perguntar aqui evita salvar um vínculo que já nasce sem poder listar.
+        if(tracker==='local'){ const dir=await dialog({title:'Pasta de features (vazio = docs/features):',input:true,okText:'Salvar'}); if(dir==null) return; tx({t:'task_binding_project',project,tracker,featuresDir:dir.trim()||undefined}); }
+        else if(tracker==='mcp'){ const srv=await dialog({title:'Nome do servidor MCP na máquina do projeto (vazio = o único configurado lá):',input:true,okText:'Salvar'}); if(srv==null) return; tx({t:'task_binding_project',project,tracker,mcpServer:srv.trim()||undefined}); }
+        else { const cands=(wfConnections||[]).filter(c=>c.provider===tracker);
+          if(!cands.length){ toast('Nenhuma conexão de '+tracker+' no cofre — adicione acima.'); return; }
+          const q=await dialog({title:'Qual conta este projeto usa?\n\n'+cands.map((c,i)=>(i+1)+'. '+c.label+' ('+(c.identity?('@'+c.identity.login):'não verificada')+')').join('\n'),input:true,placeholder:'número',okText:'Salvar'});
+          if(q==null) return; const chosen=cands[parseInt(q,10)-1]; if(!chosen){ toast('Opção inválida'); return; }
+          tx({t:'task_binding_project',project,tracker,connectionId:chosen.id}); }
+        return; }
+      if(t.classList.contains('tsk-unbind')){ const project=t.dataset.project;
+        const ok=await dialog({title:'Desvincular a fonte de tarefas de\n'+project+'?\n\nO projeto volta a não ter fonte declarada.',okText:'Desvincular'});
+        if(ok!=null) tx({t:'task_binding_project',project,remove:true});
+        return; }
+    });
+
+    // O fluxo de ADICIONAR conexão é o mesmo no cofre do painel e na tela de Configurações — uma
+    // cópia em cada lugar divergiria no primeiro provedor novo.
+    async function taskConnAddFlow(){
         const provs=wfProviders||[];
         const pick=await dialog({title:'Provedor:\n\n'+provs.map((x,i)=>(i+1)+'. '+x.label+(x.tier===2?' (identidade só, por enquanto)':'')).join('\n'),input:true,placeholder:'número',okText:'Continuar'});
         if(pick==null) return; const spec=provs[parseInt(pick,10)-1]; if(!spec){ toast('Opção inválida'); return; }
@@ -5308,7 +5388,29 @@
         pending.forEach(sec=>tx({t:'secret_set',name:sec.name,value:sec.value}));
         tx({t:'task_connection_save',connection:{provider:spec.id,label:label.trim(),config,secretRef:refs.secretRef,secretRef2:refs.secretRef2}});
         toast('Conexão salva — use "Verificar" para confirmar a identidade.');
-      };
+    }
+
+    function buildWfConnManage(p){
+      p.appendChild(ph('Conexões (cofre)'));
+      const back=document.createElement('button'); back.type='button'; back.className='opt'; back.textContent='← voltar';
+      // Volta para a gaveta de Tarefa ABERTA: foi de lá que se entrou no cofre, e reabrir fechado
+      // devolveria o usuário para um menu que não parece o que ele estava usando.
+      back.onclick=()=>{ wfConnManage=false; wfTaskOpen=true; closePop(); togglePop(E.wfStepBtn,buildWfStepPop); };
+      p.appendChild(back);
+      (wfConnections||[]).forEach(c=>{
+        const row=document.createElement('div'); row.style.cssText='padding:4px 2px 6px;border-bottom:1px solid rgba(127,127,127,.2);font-size:12px;max-width:300px';
+        const who=c.identity?('@'+(c.identity.login||c.identity.id)):'não verificada';
+        const srcBadge=c.secretSource==='cofre'?' <span class="mut" title="o valor está no cofre local do Jarvis">🔒 cofre</span>'
+          :c.secretSource==='ambiente'?' <span class="mut" title="o valor vem do ambiente externo do Hub (vence o cofre)">🌐 ambiente</span>'
+          :' <span style="color:#f5b544" title="nenhum valor: cole o segredo em ⧉">⚠ sem segredo</span>';
+        row.innerHTML='<b>'+esc(c.label)+'</b> <span class="mut">('+esc(c.provider)+' · '+esc(who)+')</span>'+srcBadge
+          +(c.lastError?'<div class="mut" style="color:#f87171;font-size:11px">'+esc(String(c.lastError).slice(0,90))+'</div>':'')
+          +'<div class="row" style="gap:4px;margin-top:3px"><button class="wfact wfc-secret" data-id="'+esc(c.id)+'" type="button" title="Colar/trocar o segredo desta conexão">⧉ Segredo</button><button class="wfact wfc-verify" data-id="'+esc(c.id)+'" type="button">Verificar</button><button class="wfact wfc-del" data-id="'+esc(c.id)+'" type="button">Apagar</button></div>';
+        p.appendChild(row);
+      });
+      if(!(wfConnections||[]).length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:2px'; d.textContent='Nenhuma conexão no cofre.'; p.appendChild(d); }
+      const add=document.createElement('button'); add.type='button'; add.className='opt'; add.textContent='+ adicionar conexão';
+      add.onclick=()=>{ closePop(); void taskConnAddFlow(); };
       p.appendChild(add);
       p.addEventListener('click',async(e)=>{
         const sec=e.target.closest&&e.target.closest('.wfc-secret');

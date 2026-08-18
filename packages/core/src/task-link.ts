@@ -196,6 +196,17 @@ export class ProjectTaskBindingStore {
     return { ...row };
   }
 
+  /** F: desfaz o vínculo de um projeto (a tela de gerenciar precisa desligar, não só trocar).
+   *  Sem vínculo, o projeto volta a "não declarou fonte" — que é um estado honesto e visível, não
+   *  um projeto órfão apontando para conexão que não existe mais. */
+  remove(cwd: string): boolean {
+    const key = projectKeyFor(cwd, this.platform);
+    if (!this.data.projects[key]) return false;
+    delete this.data.projects[key];
+    writeJsonAtomic(this.file, this.data, { pretty: true });
+    return true;
+  }
+
   list(): Array<{ project: string; binding: ProjectTaskBinding }> {
     return Object.entries(this.data.projects).map(([project, binding]) => ({ project, binding: { ...binding } }));
   }

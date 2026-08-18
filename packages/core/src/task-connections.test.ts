@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning } from "./task-connections.js";
+import { TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, publicTaskConnections } from "./task-connections.js";
 import { fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, sanitizeSecrets, adfToText, TASK_PROVIDERS, type FetchLike } from "./task-providers.js";
 
 const fake = (routes: Record<string, unknown | ((init?: any) => unknown)>): { fetchFn: FetchLike; calls: Array<{ url: string; init?: any }> } => {
@@ -154,4 +154,28 @@ test("divergência remote×conexão avisa antes da escrita errada", () => {
   assert.equal(remoteMismatchWarning("https://github.com/acme/api.git", conn), undefined);
   assert.equal(remoteMismatchWarning(undefined, conn), undefined, "sem remote, sem alarme falso");
   assert.equal(remoteMismatchWarning("git@github.com:x/y.git", { ...conn, config: {} }), undefined, "sem org declarada, sem palpite");
+});
+
+/* ── F: o que sai para o cliente ──────────────────────────────────────────────────────────────── */
+
+test("payload público: nome de env var vai, VALOR de segredo nunca — nem escondido no config", () => {
+  const env = { TOK: "sk-super-secreto-123", TOK2: "segundo-segredo-456" };
+  const conexoes: any[] = [
+    { id: "jira:acme", provider: "jira", label: "Jira ACME", secretRef: "TOK", secretRef2: "TOK2",
+      config: { baseUrl: "https://acme.atlassian.net", email: "eu@acme.com" }, createdAt: 1, updatedAt: 2, identity: { login: "jon" } },
+    // Token colado no campo errado do formulário: "config é não-sensível" é promessa, não garantia.
+    { id: "gh:pessoal", provider: "github", label: "GitHub", secretRef: "TOK",
+      config: { org: "acme", note: "usar sk-super-secreto-123 aqui" }, createdAt: 1, updatedAt: 2 },
+    { id: "sem-env", provider: "linear", label: "Linear", secretRef: "AUSENTE", config: {}, createdAt: 1, updatedAt: 2 },
+  ];
+
+  const publico = publicTaskConnections(conexoes, env);
+  const json = JSON.stringify(publico);
+
+  for (const valor of Object.values(env)) assert.ok(!json.includes(valor), `o segredo ${valor.slice(0, 6)}… não pode aparecer no payload`);
+  assert.equal(publico[0].secretRef, "TOK", "o NOME da variável continua indo — é ele que permite pedir 'cole o segredo de TOK'");
+  assert.equal(publico[0].config.baseUrl, "https://acme.atlassian.net", "config legítimo passa intacto");
+  assert.equal(publico[1].config.note, "[REDIGIDO]");
+  assert.equal(publico[0].envOk, true);
+  assert.equal(publico[2].envOk, false, "segredo ausente vira booleano, não silêncio");
 });

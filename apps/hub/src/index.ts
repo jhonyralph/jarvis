@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, LocalTaskCache, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -399,17 +399,50 @@ function secretSourceOf(name: string | undefined): "cofre" | "ambiente" | "ausen
   return secretVault.has(name) ? "cofre" : "ausente";
 }
 /** Conexões para a UI: presença e ORIGEM do segredo (cofre/ambiente/ausente) — NUNCA o valor. */
+/**
+ * Tudo que está LIGADO em tarefas, num frame só (F): conexões com estado de verificação, o vínculo
+ * de cada projeto e os servidores MCP por máquina.
+ *
+ * O recorte do que pode sair vive no core (`publicTaskConnections`): valor de segredo nunca sai, e
+ * config que por acidente contenha um segredo é redigido — "config é não-sensível" é promessa de
+ * quem preencheu o formulário, não garantia.
+ */
 function taskConnectionsFrame(): Record<string, unknown> {
   return {
     t: "task_connections",
-    connections: taskConnections.list().map((c) => ({
+    connections: publicTaskConnections(taskConnections.list(), process.env).map((c) => ({
       ...c,
-      envOk: !!process.env[c.secretRef] && (!c.secretRef2 || !!process.env[c.secretRef2]),
       secretSource: secretSourceOf(c.secretRef),
       secretSource2: c.secretRef2 ? secretSourceOf(c.secretRef2) : undefined,
     })),
     providers: TASK_PROVIDERS,
+    // Vínculos: qual projeto usa qual fonte. É a resposta para "o que está ligado onde" sem abrir
+    // uma sessão em cada pasta.
+    bindings: projectTasks.list(),
+    // Servidores MCP por máquina — só nomes. A máquina local é este Hub; as demais reportam no
+    // registro (runner antigo não manda, e a tela mostra "—" em vez de mentir "nenhum").
+    mcpMachines: [
+      { runnerId: LOCAL_ID, label: runnerLabels[LOCAL_ID] || runners.get(LOCAL_ID)?.info.host || "Servidor", servers: Object.keys(loadTaskMcpConfig().servers), configFile: taskMcpConfigFile(), known: true },
+      ...[...runners.values()].map((rc) => ({
+        runnerId: rc.id,
+        label: rc.info.label || rc.info.host || rc.id,
+        servers: Array.isArray(rc.info.taskMcpServers) ? rc.info.taskMcpServers : [],
+        configFile: taskMcpConfigFile(),
+        known: Array.isArray(rc.info.taskMcpServers),
+      })),
+    ],
   };
+}
+/** F: a mudança feita numa tela precisa aparecer nas outras (celular e desktop abertos ao mesmo
+ *  tempo é o caso normal aqui) — sem reload, que é o critério da fatia. Só para o DONO: o frame
+ *  lista contas, projetos e máquinas, que não são assunto de membro convidado. */
+function broadcastTaskConnections(): void {
+  const frame = taskConnectionsFrame();
+  const payload = JSON.stringify(frame);
+  for (const c of wss.clients) {
+    const w = c as WebSocket;
+    if (w.readyState === w.OPEN && !runnerSockets.has(w) && principalOf(w)?.role === "owner") w.send(payload);
+  }
 }
 /** Remote do repositório do projeto (best-effort, 1.5s): alimenta o aviso remote×conexão. */
 function gitRemoteUrl(cwd: string): Promise<string | undefined> {
@@ -6650,6 +6683,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         // A decisão de fonte volta JUNTO: é ela que faz a lista mudar na hora, sem restart e sem o
         // cliente reimplementar a regra (uma fonte só, e o motivo quando ela não pode servir).
         send(ws, { t: "task_binding", sessionId: msg.sessionId, cwd, binding, source: resolveTaskSource({ projectDir: cwd, binding, connections: taskConnections.list() }) });
+        // F: a tela de Configurações lista os vínculos — mudar a fonte aqui tem que aparecer lá.
+        broadcastTaskConnections();
       } catch (e: any) { send(ws, { t: "error", message: "Vínculo de tarefas: " + String(e?.message ?? e) }); }
       return;
     }
@@ -6748,7 +6783,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const externallySet = process.env[msg.name] !== undefined && !vaultEnvOwned.has(msg.name);
         if (!externallySet) { process.env[msg.name] = msg.value; vaultEnvOwned.add(msg.name); }
         auth.audit("secret_set", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: msg.name });
-        send(ws, taskConnectionsFrame());
+        broadcastTaskConnections();
       } catch (e: any) { send(ws, { t: "error", message: "Segredo: " + String(e?.message ?? e) }); }
       return;
     }
@@ -6758,7 +6793,32 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (vaultEnvOwned.delete(msg.name)) delete process.env[msg.name];   // nunca apaga env de fora
         auth.audit("secret_set", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `delete ${msg.name}` });
       }
-      send(ws, taskConnectionsFrame());
+      broadcastTaskConnections();
+      return;
+    }
+    // F — gerenciar pela tela de Configurações, sem precisar abrir uma sessão naquela pasta. Só
+    // mexe em projeto que JÁ TEM vínculo: a tela lista o que existe, não inventa caminho novo
+    // (declarar fonte para uma pasta às cegas é como se cria vínculo para projeto que não existe).
+    if (msg.t === "task_binding_project" && typeof msg.project === "string") {
+      if (!requireOwner(ws)) return;
+      const known = projectTasks.list().find((row) => row.project === projectKeyFor(msg.project, process.platform));
+      if (!known) { send(ws, { t: "error", message: "Vínculo de tarefas: este projeto não está na lista" }); return; }
+      try {
+        if (msg.remove === true) {
+          projectTasks.remove(known.project);
+          auth.audit("task_binding", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${known.project}: removido` });
+        } else if (typeof msg.tracker === "string") {
+          const binding = projectTasks.set(known.project, {
+            tracker: msg.tracker,
+            featuresDir: typeof msg.featuresDir === "string" ? msg.featuresDir : known.binding.featuresDir,
+            mcpServer: typeof msg.mcpServer === "string" ? msg.mcpServer : known.binding.mcpServer,
+            connectionId: typeof msg.connectionId === "string" ? msg.connectionId : known.binding.connectionId,
+            allowed: known.binding.allowed, target: known.binding.target, autoApprove: known.binding.autoApprove,
+          });
+          auth.audit("task_binding", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${known.project}: ${binding.tracker || "nenhuma"}` });
+        }
+        broadcastTaskConnections();
+      } catch (e: any) { send(ws, { t: "error", message: "Vínculo de tarefas: " + String(e?.message ?? e) }); }
       return;
     }
     // ── Cofre de conexões (C1) e operações de provedor (C4) ──────────────────────────────────────
@@ -6778,14 +6838,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           secretRef: String(c.secretRef || ""), secretRef2: typeof c.secretRef2 === "string" ? c.secretRef2 : undefined,
         });
         auth.audit("task_connection", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `save ${saved.id}` });
-        send(ws, taskConnectionsFrame());
+        broadcastTaskConnections();
       } catch (e: any) { send(ws, { t: "error", message: "Conexão: " + String(e?.message ?? e) }); }
       return;
     }
     if (msg.t === "task_connection_delete" && typeof msg.id === "string") {
       if (!requireOwner(ws)) return;
       if (taskConnections.remove(msg.id)) auth.audit("task_connection", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `delete ${msg.id}` });
-      send(ws, taskConnectionsFrame());
+      broadcastTaskConnections();
       return;
     }
     // Verificar = perguntar ao provedor QUEM é esta credencial e gravar a resposta (ou a falha).
@@ -6796,7 +6856,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const secret = process.env[conn.secretRef], secret2 = conn.secretRef2 ? process.env[conn.secretRef2] : undefined;
       if (!secret || (conn.secretRef2 && !secret2)) {
         taskConnections.recordVerification(conn.id, { error: `env var ${!secret ? conn.secretRef : conn.secretRef2} ausente no ambiente do Hub` });
-        send(ws, taskConnectionsFrame());
+        broadcastTaskConnections();
         return;
       }
       const t = providerSignal();
@@ -6807,7 +6867,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       } catch (e: any) {
         taskConnections.recordVerification(conn.id, { error: String(e?.message ?? e) });
       } finally { t.finish(); }
-      send(ws, taskConnectionsFrame());
+      broadcastTaskConnections();
       return;
     }
     // Busca no provedor do PROJETO (regra de ouro: sem vínculo → recusa acionável, nunca conta padrão).

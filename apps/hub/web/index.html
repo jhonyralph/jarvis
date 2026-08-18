@@ -1730,7 +1730,7 @@
         <button type="button" id="setSearchToggle" class="settings-search-toggle" aria-label="Procurar"><span aria-hidden="true">🔍</span> <span>Procurar</span></button>
         <div class="settings-search"><input id="setSearch" type="search" placeholder="Procurar" autocomplete="off" spellcheck="false"></div>
         <select id="setSection" class="settings-section-select" aria-label="Seção de configurações">
-          <option value="geral">Geral</option><option value="assistente">Assistente</option><option value="fontes">Fontes</option><option value="dados">Dados</option><option value="voz">Voz</option><option value="notif">Notificações</option><option value="automacao">Automação</option><option value="framework">Framework</option><option value="rota">Roteamento</option><option value="uso">Uso &amp; custo</option><option value="celular">Abrir no celular</option><option value="dispositivos">Dispositivos</option><option value="update">Atualização</option>
+          <option value="geral">Geral</option><option value="assistente">Assistente</option><option value="fontes">Fontes</option><option value="dados">Dados</option><option value="voz">Voz</option><option value="notif">Notificações</option><option value="automacao">Automação</option><option value="framework">Framework</option><option value="tarefas">Tarefas</option><option value="rota">Roteamento</option><option value="uso">Uso &amp; custo</option><option value="celular">Abrir no celular</option><option value="dispositivos">Dispositivos</option><option value="update">Atualização</option>
         </select>
         <button type="button" class="snav on" data-goto="geral">⚙ Geral</button>
         <button type="button" class="snav" data-goto="assistente">⌖ Assistente</button>
@@ -1740,6 +1740,7 @@
         <button type="button" class="snav" data-goto="notif">🔔 Notificações</button>
         <button type="button" class="snav snav-owner" data-goto="automacao">🤖 Automação</button>
         <button type="button" class="snav snav-owner" data-goto="framework">🧩 Framework</button>
+        <button type="button" class="snav snav-owner" data-goto="tarefas">🎯 Tarefas</button>
         <button type="button" class="snav" data-goto="rota">🧭 Roteamento</button>
         <button type="button" class="snav" data-goto="uso">📊 Uso &amp; custo</button>
         <button type="button" class="snav" data-goto="celular">📱 Abrir no celular</button>
@@ -2130,6 +2131,19 @@
             </details>
           </div>
           <div id="fwOwnerHint" class="mut" style="font-size:12px">Esta seção é exclusiva do dono.</div>
+        </section>
+
+        <section class="spanel hidden" data-panel="tarefas">
+          <div class="sec">🎯 Tarefas: conexões e fontes</div>
+          <div class="mut" style="font-size:12px;margin-bottom:6px">Tudo que está ligado em tarefas: as contas do cofre com o estado de verificação, qual fonte cada projeto declarou, e os servidores MCP de cada máquina. Segredo nunca aparece aqui — só o <b>nome</b> da variável de ambiente.</div>
+          <div id="tskOwnerHint" class="mut hidden" style="font-size:12px">Só o dono vê e gerencia conexões de tarefa.</div>
+          <div class="sec" style="margin-top:10px">Conexões</div>
+          <div id="tskConns" class="mut" style="font-size:13px">Carregando…</div>
+          <div class="row" style="justify-content:flex-end;margin-top:4px"><button id="tskAddConn" type="button">Adicionar conexão</button></div>
+          <div class="sec" style="margin-top:10px">Fonte por projeto</div>
+          <div id="tskBindings" class="mut" style="font-size:13px">Carregando…</div>
+          <div class="sec" style="margin-top:10px">Servidores MCP por máquina</div>
+          <div id="tskMcp" class="mut" style="font-size:13px">Carregando…</div>
         </section>
 
         <section class="spanel hidden" data-panel="rota">

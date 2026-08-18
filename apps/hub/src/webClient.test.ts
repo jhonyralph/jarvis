@@ -55,6 +55,8 @@ interface ClientHandle {
   askPendingCount(sessionId: string, runnerId?: string): number;
   localTaskError(): string;
   taskSource(): any;
+  taskBindings(): any;
+  taskMcpMachines(): any;
   localTaskFiles(): any;
   searchResults(): any;
   readonly recentsHtml: string[];
@@ -169,6 +171,8 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   get recentsHtml(){ return E.recents.children.map(c=>String(c.innerHTML||'')); },
   localTaskError: ()=>wfLocalErr,
   taskSource: ()=>wfTaskSource,
+  taskBindings: ()=>tskBindings,
+  taskMcpMachines: ()=>tskMcpMachines,
   localTaskFiles: ()=>wfLocalFiles,
   searchResults: ()=>wfSearchResults,
   popAnchor: ()=>E.pop._anchor||null,
@@ -906,4 +910,34 @@ test("TSK-05: trocar o servidor MCP descarta a lista do servidor anterior", asyn
   client.socket().deliver({ t: "task_binding", sessionId: "s-1", cwd: "C:/proj", binding: { tracker: "mcp", mcpServer: "b" }, source: { kind: "mcp", tracker: "mcp", ready: true, mcpServer: "b" } });
 
   assert.equal(client.localTaskFiles(), null, "outro servidor é outra fonte: a lista de A não pode ficar na tela de B");
+});
+
+// TSK-06 (fatia F): o frame de conexões é DIFUNDIDO a cada mudança. O cliente precisa absorver o
+// que vem sem ter pedido — é isso que faz a tela de Configurações refletir o que outro aparelho fez.
+test("TSK-06: frame difundido atualiza vínculos e máquinas sem nenhum pedido do cliente", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+
+  client.socket().deliver({
+    t: "task_connections",
+    connections: [{ id: "jira:acme", provider: "jira", label: "Jira ACME", secretRef: "JIRA_TOKEN", envOk: true, identity: { login: "jon" } }],
+    providers: [],
+    bindings: [{ project: "c:/proj", binding: { tracker: "mcp", mcpServer: "linear-local", updatedAt: 1 } }],
+    mcpMachines: [{ runnerId: "luby", label: "Luby", servers: ["linear-local"], known: true }],
+  });
+
+  assert.equal(client.taskBindings().length, 1);
+  assert.equal(client.taskBindings()[0].binding.mcpServer, "linear-local");
+  assert.equal(client.taskMcpMachines()[0].servers[0], "linear-local");
+});
+
+test("TSK-06: máquina que não reporta a allowlist não vira 'nenhum servidor'", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+
+  client.socket().deliver({ t: "task_connections", connections: [], providers: [], bindings: [],
+    mcpMachines: [{ runnerId: "antiga", label: "Antiga", servers: [], known: false }] });
+
+  // `known:false` é o que separa "não sei" de "não tem" — a tela mostra "—", não "nenhum".
+  assert.equal(client.taskMcpMachines()[0].known, false);
 });

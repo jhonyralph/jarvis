@@ -171,3 +171,17 @@ test("fonte única: `mcp` sai pronta para perguntar à máquina — quem valida 
   assert.equal(comNome.mcpServer, "linear-local");
   assert.equal(comNome.featuresDir, undefined, "fonte mcp não carrega pasta junto — seriam duas fontes");
 });
+
+test("vínculo por pasta: remover desliga o projeto (e some da listagem de gerenciar)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-task-unbind-"));
+  try {
+    const store = new ProjectTaskBindingStore({ dir, platform: "win32" });
+    store.set("C:/proj/a", { tracker: "jira", connectionId: "jira:acme" });
+    store.set("C:/proj/b", { tracker: "local" });
+    assert.equal(store.remove("C:/PROJ/A"), true, "a chave é normalizada como no resto do store");
+    assert.equal(store.get("C:/proj/a"), undefined);
+    assert.deepEqual(store.list().map((r) => r.project), ["c:/proj/b"]);
+    assert.equal(store.remove("C:/proj/inexistente"), false);
+    assert.equal(new ProjectTaskBindingStore({ dir, platform: "win32" }).get("C:/proj/a"), undefined, "a remoção sobrevive a restart");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

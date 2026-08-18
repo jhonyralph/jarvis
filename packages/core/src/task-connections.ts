@@ -125,6 +125,32 @@ export class TaskConnectionStore {
   }
 }
 
+/* ── o que pode sair para o cliente (F) ───────────────────────────────────────────────────────── */
+
+export interface PublicTaskConnection extends Omit<TaskConnection, "config"> {
+  config: Record<string, string>;
+  /** o segredo referido existe no ambiente do Hub? (booleano — nunca o valor) */
+  envOk: boolean;
+}
+
+/**
+ * Conexão → o que o navegador pode ver. `secretRef` é NOME de variável e continua indo (é o que
+ * permite a UI dizer "cole o segredo de X"); VALOR nunca vai.
+ *
+ * A varredura defensiva do `config` existe porque o contrato "config é não-sensível" é uma promessa
+ * de quem preencheu o formulário, não uma garantia: um token colado no campo errado viraria payload
+ * para todo cliente conectado. Qualquer valor de config idêntico a um segredo do ambiente é redigido
+ * — e o teste desta fatia é exatamente esse ("nenhum segredo sai no payload").
+ */
+export function publicTaskConnections(connections: TaskConnection[], env: Record<string, string | undefined>): PublicTaskConnection[] {
+  return connections.map((c) => {
+    const secrets = [env[c.secretRef], c.secretRef2 ? env[c.secretRef2] : undefined].filter((v): v is string => !!v && v.length >= 4);
+    const config: Record<string, string> = {};
+    for (const [k, v] of Object.entries(c.config || {})) config[k] = secrets.some((s) => v === s || v.includes(s)) ? "[REDIGIDO]" : v;
+    return { ...c, config, envOk: !!env[c.secretRef] && (!c.secretRef2 || !!env[c.secretRef2]) };
+  });
+}
+
 /* ── resolução com regra de ouro ──────────────────────────────────────────────────────────────── */
 
 export interface TaskConnectionRefusal {

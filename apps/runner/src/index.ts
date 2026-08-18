@@ -33,7 +33,7 @@ import {
   formatCouncilFinalMessage, managedChildExecutionId,
   TerminalManager,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
-  LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, listTasksFromMcp,
+  LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, listTasksFromMcp, loadTaskMcpConfig,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type UpdateStatus, type UpdateAttemptRecord, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
@@ -1021,6 +1021,9 @@ function connect(): void {
       runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: availableAgentsSnapshot(),
       agentDescriptors: agents.describeSnapshot(), agentUsage: {}, protocolVersion: RUNNER_PROTOCOL_VERSION,
       version: VERSION, build: await repoVersion(RUNNER_ROOT), commit: await repoCommit(RUNNER_ROOT), updateReceipt: updateReceipt(), updateResult: readUpdateResult(), label: process.env.JARVIS_LABEL || undefined,
+      // Só os NOMES da allowlist de MCP desta máquina: é o que a tela de Configurações precisa para
+      // mostrar o que está ligado aqui. Comando, env e segredo não saem do disco local.
+      taskMcpServers: Object.keys(loadTaskMcpConfig().servers),
     };
     send({ t: "register", token: TOKEN, info });
     void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));

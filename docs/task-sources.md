@@ -16,6 +16,13 @@ o vínculo da Luby, não o do Desktop).
 Troque a fonte no chip 🧭 → **🎯 Tarefa** → **Fonte do projeto**. A lista muda na hora; o que estava
 na tela era da fonte antiga e é descartado.
 
+Para ver **tudo que está ligado** de uma vez — sem abrir uma sessão em cada pasta — use
+**Configurações → 🎯 Tarefas**: as conexões do cofre com o estado de verificação (quem é a conta,
+quando foi verificada, se o segredo existe no ambiente), a fonte declarada por cada projeto (com
+**Desvincular**) e os servidores MCP de cada máquina. A tela é do dono, e qualquer mudança feita ali
+— ou em outro aparelho — aparece nas demais telas abertas sem recarregar. Máquina em código antigo
+aparece como "—" em vez de "nenhum servidor": não saber é diferente de não ter.
+
 Quando uma fonte não pode servir, o painel diz **o motivo e o que fazer** (declarar a fonte, vincular
 a conta, configurar o servidor) — nunca uma lista vazia, que é indistinguível de "não há tarefas".
 

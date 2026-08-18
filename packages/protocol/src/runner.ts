@@ -41,6 +41,10 @@ export interface RunnerInfo {
   /** short git HEAD sha of the runner's checkout ("+dirty" suffix if uncommitted) — lets the Hub
    *  spot a runner drifting behind (or ahead of) the Hub's own build. */
   commit?: string;
+  /** F: NOMES dos servidores MCP de tarefa na allowlist desta máquina (nunca comando/segredo) — é o
+   *  que a tela de Configurações mostra para você saber o que está ligado em cada máquina sem abrir
+   *  sessão nela. Aditivo: runner antigo simplesmente não manda, e a tela diz "—". */
+  taskMcpServers?: string[];
   /** Durable proof that dependencies/validation completed for a correlated update before restart. */
   updateReceipt?: { requestId: string; targetCommit: string; current: string; preparedAt: number };
   /** Durable failure/success log produced by an external updater before the runner restarted. */
