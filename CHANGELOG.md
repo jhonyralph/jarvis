@@ -1,3 +1,18 @@
+# [0.25.0](https://github.com/jhonyralph/jarvis/compare/v0.24.0...v0.25.0) (2026-08-18)
+
+
+### Bug Fixes
+
+* **identidade:** o dono é uma pessoa, não um login por aparelho ([ec81a1f](https://github.com/jhonyralph/jarvis/commit/ec81a1f367b67cd0541cc11f65524b8381b1ab38))
+
+
+### Features
+
+* **fluxo:** o chip 🧭 abre a faixa quando já existe fluxo ativo ([1756954](https://github.com/jhonyralph/jarvis/commit/17569544e3da63db42ac10b38e0fbbbf1f68c1ac))
+* **fluxo:** o chip 🧭 vira a única porta de entrada do fluxo ([4af5388](https://github.com/jhonyralph/jarvis/commit/4af5388e7acf4aa8b8487f235d8a2519b4b10ec2))
+* **solucoes:** conversar com o debate em andamento e levar o resultado para a IA da sessao ([bca6482](https://github.com/jhonyralph/jarvis/commit/bca648248247b952a2f3e518461356ea7032426d))
+* **tarefas:** varredura local vira cache invalidado por assinatura de pasta ([da02240](https://github.com/jhonyralph/jarvis/commit/da02240f7e9859800b96bb92fb05e80ea1f44d64))
+
 # [0.24.0](https://github.com/jhonyralph/jarvis/compare/v0.23.1...v0.24.0) (2026-08-17)
 
 
