@@ -52,6 +52,8 @@ interface ClientHandle {
   wfSetRun(run: any): void;
   wfClickChip(): void;
   wfExpanded(): boolean;
+  askPendingCount(sessionId: string, runnerId?: string): number;
+  readonly recentsHtml: string[];
   popAnchor(): any;
 }
 
@@ -159,6 +161,8 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   wfSetRun: (run)=>{ wfRun=run; wfOpen=false; renderWfRun(); },
   wfClickChip: ()=>E.wfStepBtn.onclick({preventDefault(){},stopPropagation(){}}),
   wfExpanded: ()=>wfOpen,
+  askPendingCount: (sid,rid)=>(askPending.get(sessionStateKey(sid,rid||"local"))||{count:0}).count,
+  get recentsHtml(){ return E.recents.children.map(c=>String(c.innerHTML||'')); },
   popAnchor: ()=>E.pop._anchor||null,
 };`;
 
@@ -724,4 +728,65 @@ test("TSK-01: a faixa oferece porta para a gaveta de Tarefa", async () => {
   client.wfClickChip();
 
   assert.match(bandHtml(client), /wf-task/, "a faixa expandida tem o acesso à tarefa");
+});
+
+// ── TSK-10: a decisão pendente precisa aparecer para quem NÃO está na sessão. Antes, o frame nem
+// chegava (o servidor filtrava por inscrição) e, quando chegava, virava o mesmo pontinho de não-lida
+// de qualquer resposta — indistinguível de "chegou mensagem".
+function askPending(sessionId: string, count = 2, runnerId = "local"): any {
+  return { t: "ask_pending", runnerId, sessionId, count, at: 1_700_000_000_000 };
+}
+
+test("TSK-10: decisão pendente em outra sessão marca a conversa na lista", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-atual", "local");
+  client.socket().deliver({ t: "sessions", runnerId: "local", sessions: [{ id: "s-outra", title: "Refatorar cofre", agent: "claude-code", updatedAt: 2 }, { id: "s-atual", title: "Aqui", agent: "claude-code", updatedAt: 1 }] });
+
+  client.socket().deliver(askPending("s-outra"));
+
+  assert.equal(client.askPendingCount("s-outra", "local"), 2, "o cliente guardou a pendência da outra sessão");
+  const linha = client.recentsHtml.find((r) => r.includes("Refatorar cofre")) || "";
+  assert.match(linha, /⏳/, "a linha ganha marca própria de decisão esperando");
+});
+
+test("TSK-10: a marca é distinta de não-lida comum", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-atual", "local");
+  client.socket().deliver({ t: "sessions", runnerId: "local", sessions: [{ id: "s-msg", title: "So mensagem", agent: "claude-code", updatedAt: 2 }] });
+
+  // uma resposta comum chegando fora da sessão não pode pintar a marca de decisão
+  client.socket().deliver({ t: "message", runnerId: "local", sessionId: "s-msg", message: { sessionId: "s-msg", role: "assistant", text: "oi", ts: 1 } });
+
+  const linha = client.recentsHtml.find((r) => r.includes("So mensagem")) || "";
+  assert.notEqual(linha, "", "a linha existe na lista (senão o teste passaria por vacuidade)");
+  assert.doesNotMatch(linha, /⏳/, "mensagem comum não é decisão pendente");
+});
+
+test("TSK-10: responder em outro aparelho limpa a marca aqui", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-atual", "local");
+  client.socket().deliver({ t: "sessions", runnerId: "local", sessions: [{ id: "s-outra", title: "Refatorar cofre", agent: "claude-code", updatedAt: 2 }] });
+  client.socket().deliver(askPending("s-outra"));
+  assert.equal(client.askPendingCount("s-outra", "local"), 2);
+
+  client.socket().deliver({ t: "ask_cleared", runnerId: "local", sessionId: "s-outra" });
+
+  assert.equal(client.askPendingCount("s-outra", "local"), 0, "a marca some sem eu tocar nela");
+  const linha = client.recentsHtml.find((r) => r.includes("Refatorar cofre")) || "";
+  assert.doesNotMatch(linha, /⏳/);
+});
+
+test("TSK-10: abrir a sessão pendente limpa a marca da lista", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-atual", "local");
+  client.socket().deliver({ t: "sessions", runnerId: "local", sessions: [{ id: "s-outra", title: "Refatorar cofre", agent: "claude-code", updatedAt: 2 }] });
+  client.socket().deliver(askPending("s-outra"));
+
+  client.openSession("s-outra", "local");
+
+  assert.equal(client.askPendingCount("s-outra", "local"), 0, "estou olhando a decisão: a marca cumpriu o papel");
 });

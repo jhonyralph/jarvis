@@ -5085,6 +5085,13 @@ async function sendInitialState(ws: WebSocket): Promise<void> {
   // (mirrors the per-runner drive gate; the client then selects a machine it may access).
   if (canUseRunner(ws, LOCAL_ID)) { sendSessions(ws); send(ws, { t: "runs", runnerId: LOCAL_ID, active: [...activeRuns].filter((sid) => canAccessSession(ws, LOCAL_ID, sid)) }); }
   else send(ws, { t: "sessions", sessions: [], recentDirs: [] });
+  // Decisões que já estavam esperando ANTES deste aparelho conectar: sem isto, o celular que acorda
+  // só descobriria a pendência se o turno acontecesse com ele aberto — que é justamente o caso que
+  // não acontece. Vai o resumo (sessão + contagem), nunca o conteúdo.
+  for (const row of pendingAsks.list()) {
+    if (!canUseRunner(ws, row.runnerId) || !canAccessSession(ws, row.runnerId, row.sessionId)) continue;
+    send(ws, { t: "ask_pending", runnerId: row.runnerId, sessionId: row.sessionId, count: row.questions.length, at: row.at });
+  }
   // Reidrata os runs ATIVOS dos runners REMOTOS no connect (o Hub já os rastreia em runnerActive).
   // Sem isto, um reload / abrir em outro computador vendo uma sessão remota perdia o selo "em execução"
   // na sidebar e o botão de parar — o stream do chat volta via turn-resume, mas o estado "ocupado" não.

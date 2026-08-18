@@ -144,6 +144,9 @@
     const agentIcon = a => ({'claude-code':'🟣',codex:'🟢',gemini:'🔵',cursor:'⚫',copilot:'🟪',opencode:'🟠',cline:'🔴',qwen:'🔷',continue:'🟡',kiro:'🟤',antigravity:'🛸',aider:'🔹',mock:'⚪'})[a]||'🔹';
     let activeRuns=[]; const activeRunsByRunner={}; const unread=new Set(); // painel "rodando agora / precisa de você"
     const askingSids=new Set();  // machine+session keys still being analyzed for optional HITL
+    // TSK-10: decisões esperando resposta em QUALQUER sessão desta máquina — inclusive as que eu não
+    // estou olhando. Guarda o aviso enxuto do Hub (sessão + contagem); o conteúdo só vem ao abrir.
+    const askPending=new Map();
     // Debate vivo por sessão (interjeição) — declarado JUNTO do resto do estado por sessão, e não perto
     // do card que o desenha, porque `refreshComposer` o consulta e roda antes daquele trecho do arquivo.
     const debateBySession={};
@@ -1154,7 +1157,7 @@
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
-    function openSession(id,runnerId){ if(!id)return; wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfLocalFiles=null; wfLocalShow=false; setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
+    function openSession(id,runnerId){ if(!id)return; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfLocalFiles=null; wfLocalShow=false; setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
       if(typeof findState!=='undefined'&&findState)closeFind(); if(typeof findRegion!=='undefined')findRegion='chat';  // abriu sessão → foco no chat; fecha barra órfã
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
@@ -1878,7 +1881,8 @@
       // "nativo" NÃO vai mais na listagem (encurtava o nome da sessão); a marca de nativo continua no tooltip (title) do item.
       const mb=(currentMachine==='all'&&s.machine)?`<span class="rmachine" style="--mh:${machineHue(s.machine)}" title="Máquina: ${esc(s.machine)}">${esc(s.machine)}</span>`:'';
       const personalHint=personalTurnSuggestions&&personalTurnSuggestions.has(sessionStateKey(s.id,runner));
-      d.innerHTML=`<span class="rdot"></span><span class="rbadge" title="${esc(s.agent||'')}">${agentIcon(s.agent)}</span><span class="rtitle">${esc(s.title||'Sessão')}</span>${personalHint?`<span class="rpersonal" title="${esc(t('personalSuggestionsAvailable'))}">⌖</span>`:''}${mb}`;
+      const askWait=askPending.get(sessionStateKey(s.id,runner));
+      d.innerHTML=`<span class="rdot"></span><span class="rbadge" title="${esc(s.agent||'')}">${agentIcon(s.agent)}</span><span class="rtitle">${esc(s.title||'Sessão')}</span>${personalHint?`<span class="rpersonal" title="${esc(t('personalSuggestionsAvailable'))}">⌖</span>`:''}${askWait?`<span class="rask" title="${askWait.count===1?'Uma decisão esperando você':askWait.count+' decisões esperando você'}">⏳</span>`:''}${mb}`;
       const more=document.createElement('button'); more.type='button'; more.className='rmore'; more.title='Ações'; more.textContent='⋯';
       const busySum=voiceOp==='summarize'&&voiceOpSid===s.id; if(busySum){ more.textContent='⏳'; more.classList.add('busy'); voiceOpBtn=more; }
       more.onclick=(e)=>{ e.stopPropagation(); openPop(more,(p)=>buildRowMenu(p,s,more,runner,nat)); };
@@ -4717,7 +4721,13 @@
           else { const d=m.decision||{}; status(''); if(d.agent)currentAgent=d.agent; sessDeclModel=d.model||null; sessDeclEffort=d.effort||null; lastRouteReason=d.reason||''; syncModelEffort(); if(d.fallback)toast('⚠ Automático: '+(d.reason||'usado o padrão compatível')); } }
         else if(m.t==='asking'){ const k=askStateKey(m.sessionId,m.runnerId); if(m.on) askingSids.add(k); else askingSids.delete(k); if(currentFrame(m)){ if(m.on&&!busy(currentSession)) status('busy','Consolidando o resultado…'); else if(!askActive) status(''); refreshComposer(); } renderRecents(); }
         else if(m.t==='ask'){ askingSids.delete(askStateKey(m.sessionId,m.runnerId)); saveAsk(m.sessionId,m.questions||[],m.runnerId); if(m.sessionId===currentSession&&(m.runnerId||selectedRunner())===currentSessionRunner){ status(''); renderAskCard(m.questions||[],m.runnerId); refreshComposer(); } else { unread.add(sessionStateKey(m.sessionId,m.runnerId)); renderRecents(); } }
-        else if(m.t==='ask_cleared'){ askingSids.delete(askStateKey(m.sessionId,m.runnerId)); clearAsk(m.sessionId,m.runnerId); if(currentFrame(m)){ if(askActive){try{askActive.card.remove();}catch(e){} askActive=null;askVoice=false;} status('');refreshComposer(); } }
+        else if(m.t==='ask_pending'){ const k=sessionStateKey(m.sessionId,m.runnerId||'local');
+          if(m.sessionId===currentSession&&(m.runnerId||'local')===currentSessionRunner) askPending.delete(k);
+          else { askPending.set(k,{count:Math.max(1,Number(m.count)||1),at:Number(m.at)||Date.now()});
+            const s=sessions.find(x=>x.id===m.sessionId&&(x.runnerId||selectedRunner())===(m.runnerId||'local'));
+            toast('\u23F3 Decisão esperando'+(s&&s.title?' · '+s.title:''),{onClick:()=>openSession(m.sessionId,m.runnerId||'local')}); }
+          renderRecents(); }
+        else if(m.t==='ask_cleared'){ askPending.delete(sessionStateKey(m.sessionId,m.runnerId||'local')); renderRecents(); askingSids.delete(askStateKey(m.sessionId,m.runnerId)); clearAsk(m.sessionId,m.runnerId); if(currentFrame(m)){ if(askActive){try{askActive.card.remove();}catch(e){} askActive=null;askVoice=false;} status('');refreshComposer(); } }
         else if(m.t==='permission_request'){ if(currentFrame(m)) renderPermissionCard(m); }
         else if(m.t==='permission_resolved'){ if(currentFrame(m)) removePermissionCard(m.id); }
         else if(m.t==='agent_event'){ if(!currentFrame(m))return; const ev=m.event||{};
