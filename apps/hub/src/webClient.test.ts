@@ -53,6 +53,7 @@ interface ClientHandle {
   wfClickChip(): void;
   wfExpanded(): boolean;
   askPendingCount(sessionId: string, runnerId?: string): number;
+  localTaskError(): string;
   readonly recentsHtml: string[];
   popAnchor(): any;
 }
@@ -163,6 +164,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   wfExpanded: ()=>wfOpen,
   askPendingCount: (sid,rid)=>(askPending.get(sessionStateKey(sid,rid||"local"))||{count:0}).count,
   get recentsHtml(){ return E.recents.children.map(c=>String(c.innerHTML||'')); },
+  localTaskError: ()=>wfLocalErr,
   popAnchor: ()=>E.pop._anchor||null,
 };`;
 
@@ -789,4 +791,28 @@ test("TSK-10: abrir a sessão pendente limpa a marca da lista", async () => {
   client.openSession("s-outra", "local");
 
   assert.equal(client.askPendingCount("s-outra", "local"), 0, "estou olhando a decisão: a marca cumpriu o papel");
+});
+
+// TSK-03 (fatia C): quem lista é a máquina do projeto. Se ela não pode responder, o motivo tem que
+// chegar — lista vazia calada é indistinguível de "esse projeto não tem features".
+test("TSK-03: recusa da máquina vira motivo visível, não lista vazia", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-remota", "local");
+
+  client.socket().deliver({ t: "task_local_list", runnerId: "runner-b", sessionId: "s-remota", dir: "", files: [], cached: false, scannedAt: 1, error: "a máquina está offline — a lista de tarefas vive no disco dela" });
+
+  assert.match(client.localTaskError(), /offline/, "o cliente guardou o motivo da recusa");
+});
+
+test("TSK-03: uma listagem boa limpa o motivo anterior", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-remota", "local");
+  client.socket().deliver({ t: "task_local_list", runnerId: "runner-b", sessionId: "s-remota", dir: "", files: [], cached: false, scannedAt: 1, error: "desatualizada" });
+  assert.notEqual(client.localTaskError(), "");
+
+  client.socket().deliver({ t: "task_local_list", runnerId: "runner-b", sessionId: "s-remota", dir: "docs/features", files: [{ key: "docs/features/a.md", title: "A" }], cached: false, scannedAt: 2 });
+
+  assert.equal(client.localTaskError(), "", "resposta boa não pode deixar aviso velho na tela");
 });

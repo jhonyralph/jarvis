@@ -33,6 +33,7 @@ import {
   formatCouncilFinalMessage, managedChildExecutionId,
   TerminalManager,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
+  LocalTaskCache, resolveFeaturesRoot, parseFeatureTask,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
@@ -108,6 +109,14 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new AntigravityCliAdapter())
   .register(new MockAgentAdapter());
 const store = new Store({ agent: DEFAULT_AGENT, cwd: CWD });
+// Mesma varredura com cache do Hub (assinatura de pasta, sem LLM) — agora do lado de cá.
+const localTaskCache = new LocalTaskCache();
+const localTaskFs = {
+  existsSync,
+  readdirSync: (dir: string) => readdirSync(dir),
+  statSync: (path: string) => { const stat = statSync(path); return { mtimeMs: stat.mtimeMs, size: stat.size }; },
+  readFileSync: (path: string) => readFileSync(path, "utf8"),
+};
 // Permission-mode defaults + inheritance, mirroring the Hub (each machine has its own config/store).
 let sessionDefaultsDoc: SessionDefaultsDocument = loadSessionDefaults();
 const nativeSessionPermissionModes = new Map<string, PermissionMode>();
@@ -1245,6 +1254,25 @@ function connect(): void {
         return;
       }
       if (m.t === "list") { pushSessions(); return; }
+      // A pasta de features é do DISCO DESTA MÁQUINA. O Hub manda a pasta configurada; a contenção
+      // e o cache são os mesmos do core, para os dois lados não divergirem.
+      if (m.t === "task_local_list" && typeof m.reqId === "string" && typeof m.sessionId === "string") {
+        const reqId = m.reqId, sessionId = m.sessionId;
+        try {
+          const { rel, root } = resolveFeaturesRoot(sessCwd(sessionId), typeof m.featuresDir === "string" ? m.featuresDir : undefined);
+          const listing = localTaskCache.list(
+            `runner ${root}`,
+            root,
+            (content, relPath) => { const parsed = parseFeatureTask(content, relPath); return { key: parsed.task.key, title: parsed.title, description: parsed.description }; },
+            localTaskFs,
+            { refresh: m.refresh === true, relPrefix: rel },
+          );
+          send({ t: "task_local_list", reqId, sessionId, dir: rel, files: listing.files, cached: listing.cached, scannedAt: listing.scannedAt });
+        } catch (error) {
+          send({ t: "task_local_list", reqId, sessionId, dir: "", files: [], cached: false, scannedAt: Date.now(), error: String((error as Error)?.message || error) });
+        }
+        return;
+      }
       if (m.t === "new") {
         const cwd = (typeof m.cwd === "string" && m.cwd && existsSync(m.cwd)) ? m.cwd : CWD;
         // Seed like the Hub: existing project inherits from its last started session; a new project

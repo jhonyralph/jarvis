@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { join } from "node:path";
-import { LocalTaskCache, localTaskSignature, type LocalTaskFsLike } from "./task-local-cache.js";
+import { join, resolve } from "node:path";
+import { LocalTaskCache, localTaskSignature, resolveFeaturesRoot, DEFAULT_FEATURES_DIR, type LocalTaskFsLike } from "./task-local-cache.js";
 
 /** fs falso que CONTA leituras: o valor da feature é não abrir arquivo com cache quente, então a
  *  contagem é o critério de aceite, não um detalhe de implementação. */
@@ -155,4 +155,29 @@ test("localTaskSignature não abre arquivo nenhum", () => {
   const sig = localTaskSignature(ROOT, fs, 100);
   assert.equal(reads.length, 0, "assinatura é readdir + stat, nunca leitura");
   assert.equal(localTaskSignature(ROOT, fs, 100), sig, "estável entre chamadas sem mudança");
+});
+
+// ── TSK-03 (fatia C): a resolução da pasta passa a ser UMA função usada pelo Hub e pelo runner.
+// Duplicar a contenção de caminho nos dois lados é como o buraco nasce: um lado corrige, o outro não.
+test("resolveFeaturesRoot usa docs/features por padrão", () => {
+  const { rel, root } = resolveFeaturesRoot(join("/proj"));
+  assert.equal(rel, DEFAULT_FEATURES_DIR);
+  assert.equal(root, resolve(join("/proj", "docs", "features")));
+});
+
+test("resolveFeaturesRoot aceita pasta customizada e normaliza a barra", () => {
+  const { rel, root } = resolveFeaturesRoot(join("/proj"), "tarefas\\abertas");
+  assert.equal(rel, "tarefas/abertas", "a barra invertida do Windows some do rótulo");
+  assert.equal(root, resolve(join("/proj", "tarefas", "abertas")));
+});
+
+test("resolveFeaturesRoot recusa sair do projeto", () => {
+  assert.throws(() => resolveFeaturesRoot(join("/proj"), "../fora"), /fora do projeto/);
+  assert.throws(() => resolveFeaturesRoot(join("/proj"), "docs/../../fora"), /fora do projeto/);
+  assert.throws(() => resolveFeaturesRoot(join("/proj"), join("/outro", "lugar")), /fora do projeto/, "caminho absoluto também é fuga");
+});
+
+test("resolveFeaturesRoot aceita a raiz do próprio projeto", () => {
+  const { root } = resolveFeaturesRoot(join("/proj"), ".");
+  assert.equal(root, resolve(join("/proj")), "a própria pasta do projeto é limite válido, não fuga");
 });

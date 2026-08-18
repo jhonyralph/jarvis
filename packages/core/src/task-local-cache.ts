@@ -14,7 +14,24 @@
  * Nenhum agente/LLM participa deste caminho, por decisão de produto: listar tarefa não pode consumir
  * crédito. O `fs` é injetável para o teste conseguir CONTAR leituras — a contagem é o critério.
  */
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
+
+/** Pasta padrão de tarefas locais de quem não usa gerenciador. */
+export const DEFAULT_FEATURES_DIR = "docs/features";
+
+/** Resolve a pasta de features de um projeto e CONTÉM o caminho dentro dele.
+ *
+ *  Vive no core porque Hub e runner precisam da mesma decisão: quando cada lado carregava a sua
+ *  cópia, um deles ficava para trás — foi assim que a listagem remota passou a ler o disco do Hub e
+ *  devolver as features do projeto errado, em silêncio. Uma função, os dois chamadores.
+ *  Lança quando a pasta escapa do projeto (`..`, caminho absoluto de outro lugar). */
+export function resolveFeaturesRoot(cwd: string, featuresDir?: string): { rel: string; root: string } {
+  const rel = String(featuresDir || DEFAULT_FEATURES_DIR).replace(/\\/g, "/").replace(/\/+$/, "") || DEFAULT_FEATURES_DIR;
+  const base = resolve(cwd);
+  const root = resolve(base, rel);
+  if (root !== base && !root.startsWith(base + sep)) throw new Error("pasta de features fora do projeto");
+  return { rel, root };
+}
 
 export interface LocalTaskFsLike {
   existsSync(path: string): boolean;

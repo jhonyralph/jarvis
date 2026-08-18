@@ -20,7 +20,7 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
  *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
  *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
  *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
-export const RUNNER_PROTOCOL_VERSION = 9;
+export const RUNNER_PROTOCOL_VERSION = 10;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
@@ -168,6 +168,7 @@ export type RunnerToHub =
   | { t: "update_done"; requestId?: string; ok: boolean; dirty?: boolean; behind?: number; log?: string; current?: string; restartRequired?: boolean; rolledBack?: boolean; retryable?: boolean }
   | { t: "busy"; message: string } // recusa de turno concorrente na mesma sessão
   | { t: "sessions"; sessions: RunnerSession[]; recentDirs?: string[] }
+  | { t: "task_local_list"; reqId: string; sessionId: string; dir: string; files: Array<{ key: string; title: string; description?: string }>; cached: boolean; scannedAt: number; error?: string }
   | { t: "caps"; agent: string; caps: unknown; agents?: string[]; agentUsage?: Record<string, unknown | null> }
   | {
       t: "history";
@@ -271,6 +272,9 @@ export type HubToRunner =
       actor?: ContextActor;
     }
   | { t: "list" }
+  /** Tarefas locais (`docs/features/*.md`) do projeto DESTA máquina. v10: antes o Hub varria o
+   *  próprio disco e, para uma sessão remota, devolvia as features do projeto errado. */
+  | { t: "task_local_list"; reqId: string; sessionId: string; featuresDir?: string; refresh?: boolean }
   /** create a fresh managed session on the runner (reply: history with the new id) */
   | { t: "new"; reqId: string; agent?: string; cwd?: string; permissionMode?: PermissionMode }
   /** folder browser for the "new conversation" dialog (reply: dirs) */

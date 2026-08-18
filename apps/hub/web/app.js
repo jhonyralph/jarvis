@@ -1157,7 +1157,7 @@
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
-    function openSession(id,runnerId){ if(!id)return; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfLocalFiles=null; wfLocalShow=false; setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
+    function openSession(id,runnerId){ if(!id)return; wfLocalErr=''; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfLocalFiles=null; wfLocalShow=false; setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
       if(typeof findState!=='undefined'&&findState)closeFind(); if(typeof findRegion!=='undefined')findRegion='chat';  // abriu sessão → foco no chat; fecha barra órfã
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
@@ -4604,7 +4604,7 @@
         // o foco é o frame workflow_run (que o servidor emite ao focar/iniciar).
         else if(m.t==='workflow_runs'){ wfRunsAll=m.runs||[]; if(currentSession){ if(wfRun){ const upd=wfRunsAll.find(r=>r.runId===wfRun.runId); if(upd) wfRun=upd.status==='active'?upd:null; } if(!wfRun){ const mine=wfSessionRuns()[0]; if(mine) wfRun=mine; } renderWfRun(); } }
         else if(m.t==='task_binding'){ if(m.sessionId===currentSession) wfTaskBinding=m.binding||null; }
-        else if(m.t==='task_local_list'){ if(m.sessionId===currentSession){ wfLocalFiles=m.files||[]; wfLocalDir=m.dir||'docs/features'; if(wfLocalShow){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } } }
+        else if(m.t==='task_local_list'){ if(m.sessionId===currentSession){ wfLocalErr=String(m.error||''); wfLocalFiles=m.files||[]; wfLocalDir=m.dir||wfLocalDir; if(wfLocalShow){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } } }
         else if(m.t==='task_meta'){ wfTaskMeta[wfMetaKey({tracker:m.tracker,key:m.key})]=m.meta||null; renderWfRun(); }
         else if(m.t==='task_connections'){ wfConnections=m.connections||[]; wfProviders=m.providers||[]; if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
         else if(m.t==='task_search_results'){ wfSearchResults=m; if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
@@ -5100,6 +5100,8 @@
     // Fluxo por tarefa (F1/F3): vínculo do projeto, arquivos locais de feature, cache de meta e a
     // tarefa ARMADA (vale para o próximo fluxo iniciado nesta sessão; persiste por sessão).
     let wfTaskBinding=null, wfLocalFiles=null, wfLocalDir='docs/features', wfLocalShow=false;
+    // Motivo da recusa quando quem lista é a máquina do projeto (offline, desatualizada, pasta fora).
+    let wfLocalErr='';
     // Cofre de conexões (C1/C2): lista vinda do Hub (sem NENHUM segredo — só envOk booleano),
     // catálogo de provedores, resultados de busca e o modo "gerenciar" do popup.
     let wfConnections=null, wfProviders=[], wfSearchResults=null, wfConnManage=false;
@@ -5330,7 +5332,8 @@
         rf.onclick=(ev)=>{ ev.stopPropagation(); tx({t:'task_local_list',sessionId:currentSession,refresh:true}); };
         p.appendChild(rf); }
       if(wfLocalShow&&wfLocalFiles){
-        if(!wfLocalFiles.length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent='Nenhum .md em '+wfLocalDir+'.'; p.appendChild(d); }
+        if(wfLocalErr){ const e=document.createElement('div'); e.className='mut'; e.style.cssText='font-size:11.5px;padding:0 2px 6px;color:#f5b544'; e.textContent='\u26A0 '+wfLocalErr; p.appendChild(e); }
+        else if(!wfLocalFiles.length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent='Nenhum .md em '+wfLocalDir+'.'; p.appendChild(d); }
         wfLocalFiles.slice(0,30).forEach(f=>{
           const b=document.createElement('button'); b.type='button'; b.className='opt';
           b.innerHTML='• '+esc(f.title)+' <span class="r mono" style="font-size:10px">'+esc(f.key.split('/').pop())+'</span>';

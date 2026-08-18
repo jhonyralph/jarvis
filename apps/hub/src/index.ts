@@ -2096,6 +2096,11 @@ function relayRunner(rc: RunnerConn, m: any): void {
     const request = takePendingRequest(rc, m.requestId, ["execution_control"]); if (request) send(request.socket, m);
     return;
   }
+  if (m.t === "task_local_list") {
+    const request = takePendingRequest(rc, m.reqId, ["task_local_list"], typeof m.sessionId === "string" ? m.sessionId : undefined);
+    if (request) send(request.socket, { t: "task_local_list", runnerId: rc.id, sessionId: m.sessionId, dir: m.dir || "", files: Array.isArray(m.files) ? m.files : [], cached: m.cached === true, scannedAt: Number(m.scannedAt) || Date.now(), ...(m.error ? { error: String(m.error) } : {}) });
+    return;
+  }
   if (m.t === "sessions") {
     const raw = Array.isArray(m.sessions) ? m.sessions : [];
     mergeRunnerSessionState(rc.id, raw);
@@ -6613,6 +6618,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // gerenciador. Lista rasa e limitada; caminho preso dentro do projeto.
     if (msg.t === "task_local_list" && typeof msg.sessionId === "string") {
       if (!requireOwner(ws)) return;
+      // A pasta de features vive no disco da MÁQUINA DO PROJETO. Varrer o disco do Hub para uma
+      // sessão remota devolvia, em silêncio, as features de outro projeto — pior que erro: resposta
+      // plausível e errada. Fora do local, ou a máquina responde, ou o pedido é recusado.
+      const taskRunnerId = activeRunner(ws);
+      if (taskRunnerId !== LOCAL_ID) {
+        const refuse = (error: string): void => send(ws, { t: "task_local_list", runnerId: taskRunnerId, sessionId: msg.sessionId, dir: "", files: [], cached: false, scannedAt: Date.now(), error });
+        const rc = runners.get(taskRunnerId);
+        if (!rc?.ws) { refuse("a máquina está offline — a lista de tarefas vive no disco dela"); return; }
+        if ((rc.info.protocolVersion || 1) < 10) { refuse("esta máquina está desatualizada e não sabe listar as tarefas locais dela — atualize-a"); return; }
+        const remoteCwd = sessionCwdOn(taskRunnerId, msg.sessionId);
+        const reqId = registerPendingRequest({ ws, runnerId: taskRunnerId, operation: "task_local_list", sessionIds: [msg.sessionId] });
+        if (!sendToRunner(rc, { t: "task_local_list", reqId, sessionId: msg.sessionId, featuresDir: (remoteCwd && projectTasks.get(remoteCwd)?.featuresDir) || undefined, refresh: msg.refresh === true })) refuse("não foi possível falar com a máquina agora");
+        return;
+      }
       try {
         const cwd = store.get(msg.sessionId)?.cwd || CWD;
         const rel = (projectTasks.get(cwd)?.featuresDir || "docs/features").replace(/\\/g, "/");
