@@ -5084,6 +5084,9 @@
     // Regra combinada: NÃO se avança enquanto há turno em execução; pular fases pede confirmação aqui
     // na UI (pelo chat, a IA faz bypass e a gente só acompanha).
     let wfRun=null, wfOpen=false, wfDefs=[], wfRunsAll=[], wfHideSuggest=false;
+    // Seletor 🧭: qual fluxo teve os passos abertos para entrada direta (`null` = padrão, que abre
+    // sozinho quando só existe um fluxo) e se a gaveta opcional de Tarefa está aberta.
+    let wfPickOpen=null, wfTaskOpen=false;
     // Fluxo por tarefa (F1/F3): vínculo do projeto, arquivos locais de feature, cache de meta e a
     // tarefa ARMADA (vale para o próximo fluxo iniciado nesta sessão; persiste por sessão).
     let wfTaskBinding=null, wfLocalFiles=null, wfLocalDir='docs/features', wfLocalShow=false;
@@ -5109,22 +5112,10 @@
     function renderWfRun(){
       renderWfStep();                 // o chip do composer segue o mesmo estado da faixa
       if(!E.wfRun) return;
-      // F6 — sem acompanhamento nesta sessão: SUGERE iniciar (discreto e dispensável, nunca obriga).
-      if(!wfRun){
-        if(!wfDefs.length){ E.wfRun.classList.add('hidden'); E.wfRun.innerHTML=''; return; }
-        E.wfRun.classList.remove('hidden'); E.wfRun.classList.remove('open');
-        // Dispensar NÃO pode ser porta sem volta: esta faixa é o único lugar de onde se inicia um
-        // fluxo, e o ✕ fazia ela sumir por completo — sem nenhuma forma de voltar até recarregar a
-        // página. Agora encolhe para uma alça mínima, que devolve a sugestão com um clique.
-        if(wfHideSuggest){
-          E.wfRun.innerHTML='<div class="wfhdr"><button class="wfact wf-restore" type="button" title="Iniciar um fluxo de trabalho nesta sessão">🧭 fluxo</button></div>';
-          return;
-        }
-        const unico=wfDefs.length===1?(' <b>'+esc(wfDefs[0].name||wfDefs[0].id)+'</b>'):'';
-        E.wfRun.innerHTML='<div class="wfhdr"><span class="mut" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🧭 Nenhum fluxo acompanhando esta sessão'+(unico?' — disponível:'+unico:'')+'.</span>'
-          +'<span class="row" style="gap:4px;flex:none"><button class="wfact wf-start" type="button">Iniciar fluxo</button><button class="wfact wf-dismiss" type="button" title="Encolher (dá para reabrir depois)">✕</button></span></div>';
-        return;
-      }
+      // SEM fluxo ativo a faixa não existe. Ela ocupava uma linha inteira acima do composer para dizer
+      // que não havia nada acontecendo, e o botão que oferecia levava a um diálogo pedindo o NÚMERO do
+      // fluxo. Iniciar agora é o chip 🧭 do composer, que já lista os fluxos e os passos com nome.
+      if(!wfRun){ E.wfRun.classList.add('hidden'); E.wfRun.innerHTML=''; return; }
       const s=wfRun.summary||{}, steps=wfRun.steps||[];
       // Encolhido COM fluxo ativo: a alça mostra o passo em foco, não um "fluxo" genérico. Esconder a
       // faixa não pode virar esconder que existe um fluxo entrando em todo turno da IA — some o painel,
@@ -5143,9 +5134,15 @@
       const falta=(s.missingEvidence||[]).length;
       // De onde este fluxo veio (qual skill) — a dúvida "qual é esse fluxo mesmo?" tem que morrer aqui.
       const wfSrc=(wfDefs||[]).find(d=>d.id===wfRun.workflowId), wfPath=wfSrc&&wfSrc.source&&wfSrc.source.path;
-      const wfFrom=wfPath?(' <span class="mut" title="'+esc(wfPath)+'">· 📄 '+esc((/^skills\/([^/]+)\//.exec(wfPath)||[,wfPath])[1])+'</span>'):'';
+      // A origem é uma PISTA, não um caminho: a regra antiga só encurtava `skills/<nome>/…` e despejava
+      // o caminho inteiro para qualquer outra pasta (`reference/flow/00-header.md` ocupava meia faixa).
+      // Pasta-mãe do arquivo serve aos dois casos — o caminho completo continua no title.
+      const wfSeg=wfPath?wfPath.split('/').filter(Boolean).slice(-2,-1)[0]||wfPath:'';
+      const wfFrom=wfPath?(' <span class="mut" title="'+esc(wfPath)+'">· 📄 '+esc(wfSeg)+'</span>'):'';
       E.wfRun.innerHTML='<div class="wfhdr"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🧭 <b>'+esc(wfRun.workflowName||wfRun.workflowId)+'</b>'+wfFrom
-        +(wfRun.taskLabel?' <span class="mut">· '+esc(wfRun.taskLabel)+'</span>':'')
+        // Sem tarefa vinculada, `taskLabel` devolve o literal "(sem tarefa)" — que é verdadeiro e por
+        // isso era impresso na faixa. Dizer "não tem" ocupa espaço para não informar nada.
+        +((wfRun.task&&wfRun.task.key)?' <span class="mut">· '+esc(wfRun.taskLabel||wfRun.task.key)+'</span>':'')
         +' <span class="wfbadge">'+(curIdx>=0?('fase '+(curIdx+1)+' de '+steps.length):((s.done||0)+'/'+(s.total||0)))+'</span>'
         +(wfOthers.length?' <span class="mut" title="Outras tarefas acompanhadas nesta sessão — troque o foco pelo chip 🧭">· +'+wfOthers.length+' tarefa'+(wfOthers.length===1?'':'s')+'</span>':'')
         +(cur?' <span class="mut">→ '+esc(cur.title)+'</span>':' <span style="color:#4ade80">concluído</span>')
@@ -5211,10 +5208,12 @@
       E.wfStepBtn.classList.toggle('hidden',!on);
       if(!on) return;
       const st=wfCurStep();
-      if(E.wfStepName) E.wfStepName.textContent=st?st.title:'—';
+      // Sem fluxo o chip é a ÚNICA porta de entrada (a faixa de sugestão morreu), então ele não pode
+      // mostrar "—": diz o que faz. Com fluxo, mostra o passo em foco.
+      if(E.wfStepName) E.wfStepName.textContent=st?st.title:(wfRun?'—':'Fluxo');
       E.wfStepBtn.classList.toggle('needs-ev',wfNeedsEvidence(st));
       E.wfStepBtn.title=st?('Passo em foco: '+st.title+(wfNeedsEvidence(st)?' — pede evidência (não bloqueia o envio)':'')+'\nClique para trocar de passo ou de fluxo.')
-        :'Escolher o passo do fluxo que este envio ataca';
+        :'Iniciar um fluxo de trabalho nesta sessão';
       // O alvo aparece no botão de enviar: evita mandar para a fase errada por distração, sem travar nada.
       if(E.sendBtn) E.sendBtn.title=st?('Enviar → '+st.title):'Enviar';
       // O hint do passo é o que ele espera de você — vale mais como placeholder do que "Fale ou digite…".
@@ -5237,7 +5236,9 @@
     function buildWfConnManage(p){
       p.appendChild(ph('Conexões (cofre)'));
       const back=document.createElement('button'); back.type='button'; back.className='opt'; back.textContent='← voltar';
-      back.onclick=()=>{ wfConnManage=false; closePop(); togglePop(E.wfStepBtn,buildWfStepPop); };
+      // Volta para a gaveta de Tarefa ABERTA: foi de lá que se entrou no cofre, e reabrir fechado
+      // devolveria o usuário para um menu que não parece o que ele estava usando.
+      back.onclick=()=>{ wfConnManage=false; wfTaskOpen=true; closePop(); togglePop(E.wfStepBtn,buildWfStepPop); };
       p.appendChild(back);
       (wfConnections||[]).forEach(c=>{
         const row=document.createElement('div'); row.style.cssText='padding:4px 2px 6px;border-bottom:1px solid rgba(127,127,127,.2);font-size:12px;max-width:300px';
@@ -5293,9 +5294,7 @@
     // ── Tarefa no fluxo (F1): colar chave/URL, escolher arquivo local de feature, e a fonte do
     // projeto (lembrada por pasta). A tarefa ARMADA vale para o próximo fluxo iniciado na sessão.
     function buildWfTaskSection(p){
-      const anchor=document.createElement('span'); anchor.className='wftask-anchor'; anchor.style.display='none'; p.appendChild(anchor);
       if(authUser&&authUser.role==='owner'&&wfConnections===null){ wfConnections=[]; tx({t:'task_connections'}); }
-      if(wfConnManage){ buildWfConnManage(p); return; }
       p.appendChild(ph('Tarefa'));
       const arm=wfTaskArmGet();
       const info=document.createElement('div'); info.className='mut'; info.style.cssText='font-size:11.5px;padding:2px 2px 6px;max-width:280px';
@@ -5393,35 +5392,99 @@
         });
       }
     }
-    function buildWfStepPop(p){
-      buildWfTaskSection(p);
-      if(wfConnManage) return;          // no modo gerenciar, o popup é só o cofre
-      p.appendChild(ph('Passo do fluxo'));
-      const defs=wfDefs||[];
-      if(!defs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='Nenhum fluxo salvo.'; p.appendChild(d); return; }
-      const curId=wfRun&&wfRun.currentStepId, curWf=wfRun&&wfRun.workflowId;
-      // Sair é uma opção do MESMO menu em que se entra. Escolher um passo era um caminho só de ida: o
-      // acompanhamento colava na sessão (e no prompt de todo turno) sem nenhuma porta de saída à vista.
-      if(wfRun){
-        const off=document.createElement('button'); off.type='button'; off.className='opt';
-        off.innerHTML='✖ Parar de acompanhar <span class="r">'+esc(wfRun.workflowName||wfRun.workflowId)+'</span>';
-        off.title='Encerra o acompanhamento: a faixa some e o fluxo deixa de entrar no turno da IA.';
-        off.onclick=()=>{ closePop(); wfStopRun('abandon'); };
-        p.appendChild(off);
-      }
-      // TODOS os fluxos salvos, agrupados: dá para escolher "TDD" sem antes ter escolhido o fluxo dele.
+    // Uma linha de passo. Mesma peça nos dois modos (escolher onde entrar × ver onde estou), porque é a
+    // mesma decisão: "o que este envio ataca". O estado só aparece quando existe run.
+    function wfStepOption(def,s,i){
+      const noRun=wfRun&&wfRun.workflowId===def.id;
+      const sel=noRun&&wfRun.currentStepId===s.id;
+      const estado=noRun?(((wfRun.steps||[]).find(x=>x.id===s.id)||{}).state||''):'';
+      const b=document.createElement('button'); b.type='button'; b.className='opt'+(sel?' sel':''); b.setAttribute('aria-pressed',String(sel));
+      b.innerHTML='<span class="mut" style="flex:none;width:16px;text-align:right;font-size:11px">'+(i+1)+'</span>'
+        +'<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.title)+'</span>'
+        +(s.kind==='gate'?'<span class="wfbadge">gate</span>':'')
+        +(s.requiresEvidence?'<span class="wfbadge">evid</span>':'')
+        +(sel?'<span class="r">em foco</span>':estado==='done'?'<span class="r">✓ feito</span>':estado==='skipped'?'<span class="r">⤼ pulado</span>':'');
+      // O hint é o que o passo espera de você — no seletor ele vale mais como tooltip do que o id.
+      b.title=(s.hint?s.hint+'\n\n':'')+(wfRun?'Passar o foco para este passo':'Iniciar o fluxo já neste passo');
+      b.onclick=()=>wfPickStep(def.id,s.id);
+      return b;
+    }
+    // Sem fluxo: ESCOLHER um. Antes isto era um diálogo pedindo o número do fluxo por teclado, e o
+    // seletor despejava todos os passos de todos os fluxos numa lista só, sem dizer de quem era cada um.
+    function buildWfStartPop(p,defs){
+      p.appendChild(ph('Iniciar um fluxo'));
       defs.forEach(def=>{
-        if(defs.length>1||!curWf) p.appendChild(ph(def.name||def.id));
-        (def.steps||[]).forEach((s,i)=>{
-          const sel=curWf===def.id&&curId===s.id;
-          const b=document.createElement('button'); b.type='button'; b.className='opt'+(sel?' sel':''); b.setAttribute('aria-pressed',String(sel));
-          const done=sel?null:(curWf===def.id&&((wfRun.steps||[]).find(x=>x.id===s.id)||{}).state);
-          b.innerHTML=(i+1)+'. '+esc(s.title)+(s.kind==='gate'?' <span class="wfbadge">gate</span>':'')+(s.requiresEvidence?' <span class="wfbadge">evid</span>':'')
-            +(sel?'<span class="r">em foco</span>':done==='done'?'<span class="r">✓</span>':done==='skipped'?'<span class="r">⤼</span>':'');
-          b.onclick=()=>wfPickStep(def.id,s.id);
+        const steps=def.steps||[];
+        const aberto=wfPickOpen===null?defs.length===1:wfPickOpen===def.id;
+        const head=document.createElement('button'); head.type='button'; head.className='opt';
+        head.innerHTML='<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(def.name||def.id)+'</b></span>'
+          +'<span class="r">'+steps.length+' passos</span>';
+        head.title='Iniciar este fluxo no primeiro passo';
+        head.onclick=()=>wfPickStep(def.id,(steps[0]||{}).id);
+        p.appendChild(head);
+        const more=document.createElement('button'); more.type='button'; more.className='opt';
+        more.style.cssText='font-size:11.5px;padding:2px 9px 6px;color:var(--mut,#8ea0b5)';
+        more.textContent=(aberto?'▾':'▸')+' entrar direto num passo';
+        more.title='Você já está no meio do trabalho: comece o acompanhamento no passo certo';
+        more.onclick=()=>{ wfPickOpen=aberto?'':def.id; replaceOpenPop(E.wfStepBtn,buildWfStepPop); };
+        p.appendChild(more);
+        if(aberto) steps.forEach((s,i)=>p.appendChild(wfStepOption(def,s,i)));
+      });
+    }
+    // Com fluxo: ONDE ESTOU. Só os passos DESTE fluxo, com estado; os outros fluxos viram uma linha cada.
+    function buildWfRunPop(p,defs){
+      const def=defs.find(d=>d.id===wfRun.workflowId)||{id:wfRun.workflowId,steps:wfRun.steps||[]};
+      p.appendChild(ph(wfRun.workflowName||wfRun.workflowId));
+      (def.steps||[]).forEach((s,i)=>p.appendChild(wfStepOption(def,s,i)));
+      // Sair é opção do MESMO menu em que se entra. Escolher um passo era caminho só de ida: o
+      // acompanhamento colava na sessão (e no prompt de todo turno) sem porta de saída à vista.
+      const off=document.createElement('button'); off.type='button'; off.className='opt';
+      off.style.cssText='border-top:1px solid rgba(127,127,127,.25);margin-top:4px;padding-top:8px';
+      off.innerHTML='✖ Parar de acompanhar';
+      off.title='Encerra o acompanhamento: a faixa some e o fluxo deixa de entrar no turno da IA.';
+      off.onclick=()=>{ closePop(); wfStopRun('abandon'); };
+      p.appendChild(off);
+      const outros=defs.filter(d=>d.id!==wfRun.workflowId);
+      if(outros.length){
+        p.appendChild(ph('Outros fluxos'));
+        outros.forEach(d=>{
+          const b=document.createElement('button'); b.type='button'; b.className='opt';
+          b.innerHTML='<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(d.name||d.id)+'</span><span class="r">'+((d.steps||[]).length)+' passos</span>';
+          b.title='Iniciar este outro fluxo (abre um acompanhamento novo nesta sessão)';
+          b.onclick=()=>wfPickStep(d.id,((d.steps||[])[0]||{}).id);
           p.appendChild(b);
         });
-      });
+      }
+    }
+    // A tarefa é OPCIONAL e vinha primeiro, empurrando o fluxo (o assunto do menu) para baixo de um
+    // formulário de ticket, conexões e cofre. Agora é uma gaveta fechada, com o estado atual no rótulo.
+    function buildWfTaskDisclosure(p){
+      const arm=wfTaskArmGet();
+      const resumo=arm?('armada: '+(arm.label||arm.input||''))
+        :(wfRun&&wfRun.task&&wfRun.task.key?('atual: '+(wfRun.taskLabel||wfRun.task.key)):'nenhuma');
+      const b=document.createElement('button'); b.type='button'; b.className='opt';
+      b.style.cssText='border-top:1px solid rgba(127,127,127,.25);margin-top:6px;padding-top:8px;font-size:12px';
+      b.innerHTML=(wfTaskOpen?'▾':'▸')+' 🎯 Tarefa <span class="r">'+esc(resumo)+'</span>';
+      b.title='Vincular este fluxo a um ticket ou arquivo de feature — opcional';
+      b.onclick=()=>{ wfTaskOpen=!wfTaskOpen; replaceOpenPop(E.wfStepBtn,buildWfStepPop); };
+      p.appendChild(b);
+      if(wfTaskOpen) buildWfTaskSection(p);
+    }
+    function buildWfStepPop(p){
+      // A âncora existe SEMPRE (é por ela que o popup se redesenha quando chegam as conexões), mesmo
+      // com a gaveta de tarefa fechada.
+      const anchor=document.createElement('span'); anchor.className='wftask-anchor'; anchor.style.display='none'; p.appendChild(anchor);
+      if(wfConnManage){ buildWfConnManage(p); return; }   // no modo gerenciar, o popup é só o cofre
+      if(!currentSession){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:2px'; d.textContent='Abra uma sessão para acompanhar um fluxo.'; p.appendChild(d); return; }
+      const defs=wfDefs||[];
+      if(!defs.length){
+        p.appendChild(ph('Fluxo'));
+        const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:2px;max-width:280px';
+        d.textContent='Nenhum fluxo salvo. Crie um em Configurações → Framework → Fluxos.';
+        p.appendChild(d); return;
+      }
+      if(wfRun) buildWfRunPop(p,defs); else buildWfStartPop(p,defs);
+      buildWfTaskDisclosure(p);
     }
     if(E.wfStepBtn) E.wfStepBtn.onclick=()=>togglePop(E.wfStepBtn,buildWfStepPop);
     function wfBusyNow(){ return busy(currentSession); }
@@ -5447,25 +5510,7 @@
     // (linear, github, jira, o que for; pode até ficar sem rastreador).
     // ATENÇÃO: nada de prompt()/confirm() nativos aqui — no shell desktop (Electron) eles não existem
     // e o clique morre em silêncio. Usar sempre o dialog() do app.
-    async function wfStartFlow(){
-      if(!currentSession){ toast(t('tOpenFirst')); return; }
-      if(!wfDefs.length){ toast('Nenhum fluxo salvo. Crie um em Configurações → Framework → Fluxos.'); return; }
-      let def=wfDefs[0];
-      if(wfDefs.length>1){
-        const escolha=await dialog({title:'Qual fluxo?\n\n'+wfDefs.map((d,i)=>(i+1)+'. '+(d.name||d.id)+' ('+((d.steps||[]).length)+' passos)').join('\n'),input:true,placeholder:'número do fluxo',value:'1',okText:'Iniciar'});
-        if(escolha==null) return;
-        const i=parseInt(escolha,10)-1; if(!(i>=0&&i<wfDefs.length)){ toast('Opção inválida'); return; } def=wfDefs[i];
-      }
-      const armed=wfTaskArmGet();
-      const ref=await dialog({title:'Tarefa (opcional). Cole a chave ("PRI-824") ou a URL do Jira/GitHub/Linear — ou deixe vazio:',input:true,placeholder:'PRI-824 · https://…',value:(armed&&armed.input)||'',okText:'Iniciar'});
-      if(ref==null) return;
-      // O parse (URL→rastreador, vínculo da pasta completando a chave nua) é do SERVIDOR — um só parser, testado.
-      const arm=armed||{};
-      tx({t:'workflow_run_start',workflowId:def.id,sessionId:currentSession,task:arm.task||{tracker:'',key:''},taskInput:String(ref).trim()||arm.input||undefined,taskMeta:arm.meta||undefined});
-      wfTaskArmSet(null);
-    }
     if(E.wfRun) E.wfRun.addEventListener('click',async e=>{
-      if(e.target.closest('.wf-start')){ wfStartFlow(); return; }
       if(e.target.closest('.wf-dismiss')){ wfHideSuggest=true; renderWfRun(); return; }
       if(e.target.closest('.wf-restore')){ wfHideSuggest=false; renderWfRun(); return; }
       if(!wfRun) return;

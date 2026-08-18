@@ -47,6 +47,7 @@ interface ClientHandle {
   // Acompanhamento de fluxo: a faixa e a porta de saída.
   wfCollapse(v: boolean): void;
   wfRunActive(): boolean;
+  wfSetDefs(defs: any[]): void;
 }
 
 /** One permissive fake element: every property access the client makes resolves to something inert. */
@@ -149,6 +150,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   debateLive: (sid,r)=>!!debateLive(sid,r),
   wfCollapse: (v)=>{ wfHideSuggest=v; renderWfRun(); },
   wfRunActive: ()=>!!wfRun,
+  wfSetDefs: (defs)=>{ wfDefs=defs; renderWfRun(); },
 };`;
 
   const factory = new Function(
@@ -484,6 +486,19 @@ const wfRunFrame = (over: any = {}) => ({
     summary: { done: 0, total: 2, missingEvidence: [] },
     ...over,
   },
+});
+
+// Sem fluxo, a faixa ocupava uma linha inteira acima do composer para anunciar que não havia nada, e
+// o botão que oferecia abria um diálogo pedindo o NÚMERO do fluxo. Sumiu: quem inicia é o chip 🧭.
+test("sem fluxo não existe faixa — e o chip diz o que faz, em vez de '—'", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  client.wfSetDefs([{ id: "pipeline-sdlc", name: "Pipeline", steps: [{ id: "f1", title: "F1", kind: "step" }] }]);
+
+  assert.equal(client.wfRunActive(), false);
+  assert.equal(String(client.el("wfRun").innerHTML), "", "a faixa não renderiza nada sem fluxo");
+  assert.equal(String(client.el("wfStepName").textContent), "Fluxo", "o chip é a porta de entrada e precisa se nomear");
 });
 
 test("a faixa do fluxo ativo oferece saída: concluir, parar e encolher", async () => {
