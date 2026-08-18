@@ -42,6 +42,8 @@ export interface SessionMeta {
   lastMessage: string;
   count: number;
   archived?: boolean;
+  /** Sessão que ABRIU esta (fan-out de tarefas). Ver `SessionData.parentSessionId`. */
+  parentSessionId?: string;
   /** Sum of every message's recorded usage.costUsd — lets the client offer a "sort by cost" view. 0 when nothing was billed/estimated. */
   cost: number;
   /** Last permission mode chosen for this session (durable, mutable, inheritable). */
@@ -61,6 +63,13 @@ interface SessionData {
   archived?: boolean;
   rootExecutionId?: string;
   executionId?: string;
+  /**
+   * Sessão MÃE que abriu esta subsessão (fan-out de tarefas). Durável de propósito: antes disso o
+   * único vínculo era o campo `ref` ecoado em UM frame de resposta — bastava recarregar a página, ou
+   * reiniciar o Hub, para as filhas virarem N conversas órfãs sem nada que dissesse de onde vieram.
+   * Imutável na prática: é a certidão de nascimento da sessão, não um estado que muda depois.
+   */
+  parentSessionId?: string;
   /** Permission mode chosen for this session. Unlike agent/cwd this is NOT locked — the user can
    *  switch it mid-conversation via the picker; the latest value is what new sessions inherit. */
   permissionMode?: PermissionMode;
@@ -112,6 +121,7 @@ export class Store {
         archived: s.archived === true,
         rootExecutionId: typeof s.rootExecutionId === "string" ? s.rootExecutionId : undefined,
         executionId: typeof s.executionId === "string" ? s.executionId : undefined,
+        parentSessionId: typeof s.parentSessionId === "string" ? s.parentSessionId : undefined,
         permissionMode: typeof s.permissionMode === "string" ? (s.permissionMode as PermissionMode) : undefined,
       };
       if (inline && inline.length) { this.rewriteMessages(id, messages); migrated = true; }
@@ -157,7 +167,7 @@ export class Store {
   }
 
   /** Create if missing. agent + cwd are set here and never change afterwards. */
-  ensure(id: string, opts?: { title?: string; agent?: string; cwd?: string; hidden?: boolean; rootExecutionId?: string; executionId?: string; permissionMode?: PermissionMode }): SessionData {
+  ensure(id: string, opts?: { title?: string; agent?: string; cwd?: string; hidden?: boolean; rootExecutionId?: string; executionId?: string; parentSessionId?: string; permissionMode?: PermissionMode }): SessionData {
     let s = this.data[id];
     if (!s) {
       s = this.data[id] = {
@@ -171,11 +181,22 @@ export class Store {
         hidden: opts?.hidden === true,
         rootExecutionId: opts?.rootExecutionId,
         executionId: opts?.executionId,
+        // Só na criação: uma sessão não "passa a ser filha" depois. `ensure` é idempotente, então
+        // re-chamar com outra mãe NÃO reescreve o vínculo — reescrever apagaria a origem real.
+        parentSessionId: opts?.parentSessionId,
         permissionMode: opts?.permissionMode,
       };
       this.flush();
     }
     return s;
+  }
+
+  /** Subsessões abertas por uma sessão mãe, da mais recente para a mais antiga. */
+  childrenOf(parentSessionId: string): SessionData[] {
+    if (!parentSessionId) return [];
+    return Object.values(this.data)
+      .filter((s) => s.parentSessionId === parentSessionId)
+      .sort((a, b) => b.createdAt - a.createdAt);
   }
 
   /** Set the session's permission mode. Mutable at any time (the picker can switch mid-conversation),
@@ -307,6 +328,7 @@ export class Store {
         lastMessage: s.messages.at(-1)?.text.slice(0, 60) ?? "",
         count: s.messages.length,
         archived: s.archived === true,
+        parentSessionId: s.parentSessionId,
         cost: s.messages.reduce((sum, m) => sum + (m.usage?.costUsd ?? 0), 0),
         permissionMode: s.permissionMode,
       }));

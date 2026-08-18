@@ -12,12 +12,17 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+// TSK-07: o teste da fatia G monta os frames com o MESMO código do Hub, para não haver a chance de
+// a asserção passar sobre um payload inventado que o servidor nunca produziria.
+import { ProjectTaskBindingStore, resolveTaskSource, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation } from "@jarvis/core";
 
 const APP_JS = fileURLToPath(new URL("../web/app.js", import.meta.url));
 
-interface FakeSocket { sent: any[]; deliver(frame: unknown): void; }
+interface FakeSocket { sent: any[]; deliver(frame: unknown): void; drop(): void; }
 interface ClientHandle {
   readonly currentMachine: string;
   readonly routedMachine: string;
@@ -61,6 +66,19 @@ interface ClientHandle {
   searchResults(): any;
   readonly recentsHtml: string[];
   popAnchor(): any;
+  // TSK-I (fatia I): marcar N tarefas → abrir N subsessões.
+  fanoutMarks(): any[];
+  fanoutToggle(task: any): void;
+  fanoutAsk(phrase?: string): void;
+  fanoutPlan(): any;
+  dlgConfirm(): void;
+  dlgCancel(): void;
+  taskArmFor(runnerId: string, sessionId: string): any;
+  buildTaskDrawer(): any;
+  // TSK-08 (fatia H): a fila de itens DENTRO de uma execução.
+  openWork(id: string): void;
+  workQueueHtml(): string;
+  workQueue(): Array<{ id: string; title: string; bucket: string; label: string; why: string }>;
 }
 
 /** One permissive fake element: every property access the client makes resolves to something inert. */
@@ -74,6 +92,12 @@ function fakeEl(tag = "div"): any {
     appendChild(c: any) { el.children.push(c); if (c) c.parentNode = el; return c; },
     removeChild(c: any) { el.children = el.children.filter((x: any) => x !== c); return c; },
     insertBefore(c: any) { el.children.push(c); return c; },
+    // O detalhe do trabalho monta a tela em duas etapas: `innerHTML=` e depois `insertAdjacentHTML`.
+    // Sem isso o stub perde a segunda metade do que a tela mostra.
+    insertAdjacentHTML(position: string, markup: string) {
+      const value = String(markup ?? "");
+      el.innerHTML = position === "afterbegin" ? value + el.innerHTML : el.innerHTML + value;
+    },
     append() {}, remove() {}, focus() {}, blur() {}, click() {}, scrollIntoView() {},
     setAttribute() {}, removeAttribute() {}, getAttribute: () => null, hasAttribute: () => false,
     addEventListener() {}, removeEventListener() {}, requestSubmit() {}, closest: () => null,
@@ -109,6 +133,8 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
       sockets.push({
         sent: this.sent,
         deliver: (frame: unknown) => this.onmessage?.({ data: JSON.stringify(frame) }),
+        // Queda do socket: é o que separa "o painel está ao vivo" de "isto é a última visão".
+        drop: () => { this.readyState = 3; this.onclose?.(); },
       });
       // openSession() and friends run synchronously off onopen; fire it on the next tick like a real WS.
       queueMicrotask(() => this.onopen?.());
@@ -176,6 +202,17 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   localTaskFiles: ()=>wfLocalFiles,
   searchResults: ()=>wfSearchResults,
   popAnchor: ()=>E.pop._anchor||null,
+  fanoutMarks: ()=>wfFanoutList(),
+  fanoutToggle: (t)=>wfFanoutToggle(t),
+  fanoutAsk: (phrase)=>wfFanoutAsk(phrase),
+  fanoutPlan: ()=>wfFanoutPlan,
+  dlgConfirm: ()=>dlgClose(true),
+  dlgCancel: ()=>dlgClose(null),
+  taskArmFor: (rid,sid)=>{ try{ return JSON.parse(localStorage.getItem('jarvis_task_arm')||'{}')[rid+' '+sid]||null; }catch(e){ return null; } },
+  buildTaskDrawer: ()=>{ const p=document.createElement('div'); buildWfTaskSection(p); return p; },
+  openWork: (id)=>{ openWorkPanel(); openWorkNode(id); },
+  workQueueHtml: ()=>String(E.workQueue.innerHTML||''),
+  workQueue: ()=>workQueueItems(workSelected).map(it=>({id:it.node.executionId,title:String(it.node.title||''),bucket:it.bucket,label:it.label,why:it.why})),
 };`;
 
   const factory = new Function(
@@ -185,6 +222,9 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
     // Posicionamento do popover: `placePop` lê variáveis CSS e o tamanho da viewport como globais
     // nuas. Sem elas, abrir QUALQUER popup estoura ReferenceError dentro do teste.
     "getComputedStyle", "innerWidth", "innerHeight",
+    // O painel de trabalhos monta seletores com `CSS.escape` para achar o cartão inline do subagente.
+    // Sem este global, QUALQUER snapshot de execução estoura ReferenceError dentro do teste.
+    "CSS",
     src,
   );
   // app.js installs pollers/pagers that would hold the event loop open forever and hang the runner.
@@ -203,6 +243,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
     (cb: any) => unrefTimer(cb, 0), () => {}, () => {}, window,
     () => {}, () => {}, unrefInterval, unrefTimer,
     () => ({ getPropertyValue: () => "0" }), window.innerWidth, window.innerHeight,
+    { escape: (value: string) => String(value).replace(/["\\]/g, "\\$&") },
   );
   return Object.assign(api, { store, socket: () => sockets[sockets.length - 1] }) as ClientHandle;
 }
@@ -940,4 +981,430 @@ test("TSK-06: máquina que não reporta a allowlist não vira 'nenhum servidor'"
 
   // `known:false` é o que separa "não sei" de "não tem" — a tela mostra "—", não "nenhum".
   assert.equal(client.taskMcpMachines()[0].known, false);
+});
+
+// ── TSK-08 (fatia H): a lista de tarefas DENTRO da execução. Uma execução com N itens tem de mostrar
+// a FILA — o que terminou, o que roda e o que ainda não começou — e essa fila anda sozinha conforme
+// os itens concluem. Ela é DERIVADA dos nós de execução que o painel já recebe: não existe segunda
+// lista guardada, então não há como o painel mostrar uma fila diferente da execução real.
+const EXEC_CAPS = {
+  source: "jarvis_managed", observe: "live", transcript: "published_only", tools: true, cancel: "root",
+  steer: "none", retry: false, resume: false, input: "none", files: "metadata", usage: "subtree",
+  asynchronous: true, dependencies: true, isolatedWorkspace: "jarvis_worktree",
+};
+function execNode(over: any): any {
+  return {
+    schemaVersion: 1, journalId: "j-1", rootExecutionId: "root-1", rootTurnId: "turn-1",
+    sessionId: "s-work", runnerId: "local", parentExecutionId: "root-1", dependsOn: [], depth: 1,
+    kind: "agent", origin: "jarvis_managed", certification: "verified", state: "queued",
+    title: "Item", queuedAt: 1_000, capabilities: { ...EXEC_CAPS }, metrics: { self: {} }, ...over,
+  };
+}
+const EXEC_ROOT = execNode({ executionId: "root-1", parentExecutionId: undefined, depth: 0, kind: "workflow", title: "Conselho: cofre", state: "running", startedAt: 1_050 });
+/** Três itens em estados diferentes: um terminou, um roda, um nem começou. */
+function execItems(): any[] {
+  return [
+    execNode({ executionId: "item-1", title: "Levantar riscos", state: "succeeded", queuedAt: 1_001, startedAt: 1_100, endedAt: 1_200 }),
+    execNode({ executionId: "item-2", title: "Propor desenho", state: "running", queuedAt: 1_002, startedAt: 1_150 }),
+    execNode({ executionId: "item-3", title: "Revisar proposta", state: "queued", queuedAt: 1_003 }),
+  ];
+}
+function execSnapshot(nodes: any[], nextCursor?: string): any {
+  return { t: "executions_snapshot", scope: "all", nodes, generatedAt: 2_000, nextCursor };
+}
+let execSeq = 1;
+function execDelta(executionId: string, from: string, to: string, reason?: string): any {
+  execSeq += 1;
+  return { t: "execution_delta", runnerId: "local", event: {
+    schemaVersion: 1, journalId: "j-1", eventId: `j-1:${execSeq}`, executionId, rootExecutionId: "root-1",
+    rootTurnId: "turn-1", seq: execSeq, at: 3_000 + execSeq, kind: "state_changed", from, to, reason } };
+}
+/** Abre o painel no nó pedido depois de entregar um snapshot. Devolve o socket para inspeção. */
+async function openExecution(client: ClientHandle, nodes: any[], opts: { select?: string; nextCursor?: string } = {}): Promise<FakeSocket> {
+  const sock = await authenticate(client, MACHINES);
+  sock.deliver(execSnapshot(nodes, opts.nextCursor));
+  client.openWork(opts.select || "root-1");
+  return sock;
+}
+
+test("TSK-08: uma execução com N itens mostra a fila com o estado de cada item", async () => {
+  const client = loadClient();
+  await openExecution(client, [EXEC_ROOT, ...execItems()]);
+
+  const queue = client.workQueue();
+  assert.deepEqual(queue.map((i) => i.title), ["Levantar riscos", "Propor desenho", "Revisar proposta"]);
+  // O contrato é o estado POR ITEM: o que terminou, o que roda e o que ainda não começou.
+  assert.deepEqual(queue.map((i) => i.bucket), ["done", "running", "queued"]);
+
+  const html = client.workQueueHtml();
+  assert.match(html, /3 itens/, "a fila diz quantos itens a execução tem");
+  assert.match(html, /1 em execução/);
+  assert.match(html, /1 na fila/);
+  assert.match(html, /1 concluído/);
+});
+
+test("TSK-08: a fila anda sozinha quando um item conclui — sem reload e sem o usuário pedir", async () => {
+  const client = loadClient();
+  const sock = await openExecution(client, [EXEC_ROOT, ...execItems()]);
+  assert.deepEqual(client.workQueue().map((i) => i.bucket), ["done", "running", "queued"]);
+
+  sock.sent.length = 0;
+  // O evento é do FILHO, não do nó aberto. Antes desta fatia nada no detalhe reagia a ele: a fila
+  // ficaria parada em "1 concluído" até o usuário reabrir o painel.
+  sock.deliver(execDelta("item-2", "running", "succeeded"));
+
+  assert.deepEqual(client.workQueue().map((i) => i.bucket), ["done", "done", "queued"], "o item concluído tem de aparecer concluído na hora");
+  assert.match(client.workQueueHtml(), /2 concluídos/);
+  assert.equal(sock.sent.filter((f: any) => f.t === "executions_list").length, 0, "atualizar a fila não pode custar um recarregamento da lista");
+});
+
+test("TSK-08: item que nasce depois entra na fila sem recarregar", async () => {
+  const client = loadClient();
+  // Uma raiz aberta ganha itens em ondas (é assim que rodada 2 de um debate entra na mesma execução).
+  const sock = await openExecution(client, [EXEC_ROOT]);
+  assert.equal(client.workQueueHtml(), "");
+
+  execSeq += 1;
+  sock.deliver({ t: "execution_delta", runnerId: "local", event: {
+    schemaVersion: 1, journalId: "j-1", eventId: `j-1:${execSeq}`, executionId: "item-9", rootExecutionId: "root-1",
+    rootTurnId: "turn-1", seq: execSeq, at: 3_500, kind: "node_created",
+    node: execNode({ executionId: "item-9", title: "Rodada 2", state: "queued", queuedAt: 1_900 }) } });
+
+  assert.deepEqual(client.workQueue().map((i) => i.title), ["Rodada 2"]);
+  assert.match(client.workQueueHtml(), /1 item · 1 na fila/, "a fila tem de aparecer sozinha quando o primeiro item nasce");
+});
+
+test("TSK-08: a fila mantém a ordem de enfileiramento — concluir um item não embaralha as linhas", async () => {
+  const client = loadClient();
+  // O Hub serve a lista do mais recente para o mais antigo; a fila tem de desfazer isso.
+  const sock = await openExecution(client, [...execItems().reverse(), EXEC_ROOT]);
+  assert.deepEqual(client.workQueue().map((i) => i.id), ["item-1", "item-2", "item-3"]);
+
+  sock.deliver(execDelta("item-3", "queued", "running"));
+  sock.deliver(execDelta("item-3", "running", "succeeded"));
+
+  assert.deepEqual(client.workQueue().map((i) => i.id), ["item-1", "item-2", "item-3"], "uma fila que reordena a cada conclusão deixa de ser fila");
+});
+
+test("TSK-08: item cujo estado o Hub não conhece aparece como desconhecido, com motivo", async () => {
+  const client = loadClient();
+  await openExecution(client, [EXEC_ROOT,
+    execNode({ executionId: "item-1", title: "Sem lifecycle", state: "unknown", queuedAt: 1_001 }),
+    execNode({ executionId: "item-2", title: "Perdeu a máquina", state: "orphaned", queuedAt: 1_002, summary: "conexão caiu antes do terminal" }),
+  ]);
+
+  const queue = client.workQueue();
+  assert.deepEqual(queue.map((i) => i.bucket), ["unknown", "unknown"], "não saber nunca pode virar 'Concluído'");
+  assert.equal(queue.length, 2, "e nunca pode sumir da lista");
+  assert.match(queue[0].label, /desconhecid/i);
+  assert.match(queue[0].why, /lifecycle/, "o motivo é o que separa 'não sei' de 'nada aconteceu'");
+  assert.match(queue[1].why, /conexão caiu antes do terminal/, "o motivo publicado pela execução tem precedência sobre o texto genérico");
+  assert.match(client.workQueueHtml(), /2 desconhecidos/);
+});
+
+test("TSK-08: máquina que parou de responder não deixa 'Em execução' passar por verdade", async () => {
+  const client = loadClient();
+  const sock = await openExecution(client, [EXEC_ROOT, ...execItems()]);
+  assert.deepEqual(client.workQueue().map((i) => i.bucket), ["done", "running", "queued"]);
+
+  sock.deliver({ t: "execution_connection", runnerId: "local", state: "offline", at: 4_000 });
+
+  const queue = client.workQueue();
+  assert.equal(queue[0].bucket, "done", "estado terminal é durável: já terminou antes de a máquina cair");
+  assert.equal(queue[1].bucket, "unknown", "o que estava rodando na máquina muda vira desconhecido");
+  assert.equal(queue[2].bucket, "unknown", "e o que estava na fila também — ninguém pode dizer se começou");
+  assert.match(queue[1].why, /Desktop/, "o motivo nomeia a máquina que parou de responder");
+  assert.match(queue[1].why, /Em execução/, "e preserva qual era a última visão, em vez de apagá-la");
+  assert.match(client.workQueueHtml(), /2 desconhecidos/, "e a fila DESENHADA muda junto — não basta o cálculo estar certo");
+});
+
+test("TSK-08: navegador que perde o Hub para de afirmar o que os itens estão fazendo", async () => {
+  const client = loadClient();
+  const sock = await openExecution(client, [EXEC_ROOT, ...execItems()]);
+  assert.match(client.workQueueHtml(), /1 em execução/);
+
+  // Sem socket não chega evento nenhum: continuar desenhando "Em execução" seria o painel garantindo
+  // um presente que ele deixou de observar.
+  sock.drop();
+
+  assert.doesNotMatch(client.workQueueHtml(), /1 em execução/, "a fila desenhada tem de deixar de afirmar isso");
+  assert.match(client.workQueueHtml(), /2 desconhecidos/);
+  assert.match(client.workQueue()[1].why, /offline/);
+});
+
+test("TSK-08: item parado na fila diz quem ele está esperando", async () => {
+  const client = loadClient();
+  await openExecution(client, [EXEC_ROOT,
+    execNode({ executionId: "item-1", title: "Propor desenho", state: "running", queuedAt: 1_001 }),
+    execNode({ executionId: "item-2", title: "Revisar proposta", state: "queued", queuedAt: 1_002, dependsOn: ["item-1"] }),
+  ]);
+
+  const [, blocked] = client.workQueue();
+  assert.match(blocked.why, /aguarda Propor desenho/, "'Na fila' para sempre parece travamento; a dependência explica");
+});
+
+test("TSK-08: fila que pode estar incompleta avisa, em vez de fingir que aquilo é tudo", async () => {
+  const client = loadClient();
+  // Página pendente na lista de trabalhos: pode haver itens desta execução que ainda não chegaram.
+  await openExecution(client, [EXEC_ROOT, ...execItems()], { nextCursor: "pagina-2" });
+
+  assert.match(client.workQueueHtml(), /não carregados/, "faltar item tem de ser distinguível de 'a execução só tem estes'");
+});
+
+test("TSK-08: execução sem itens não inventa uma fila", async () => {
+  const client = loadClient();
+  await openExecution(client, [EXEC_ROOT]);
+
+  assert.deepEqual(client.workQueue(), []);
+  assert.equal(client.workQueueHtml(), "", "sem itens não há fila para mostrar");
+});
+
+// TSK-07 (fatia G): a frase do chat que declara a fonte precisa aparecer IGUAL nos dois lugares — na
+// gaveta da sessão e em Configurações → 🎯 Tarefas. Os frames abaixo não são inventados à mão: saem
+// do MESMO parser, do MESMO plano e da MESMA store que o Hub usa, montados aqui como ele monta.
+test("TSK-07: a fonte declarada por frase chega igual na gaveta e em Configurações", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-tsk-g-web-"));
+  try {
+    const proj = process.platform === "win32" ? "C:\\proj" : "/home/u/proj";
+    const store = new ProjectTaskBindingStore({ dir, platform: process.platform, now: () => 1 });
+
+    // O que o Hub faz ao reconhecer a frase, na mesma ordem.
+    const command = parseTaskSourceCommand("a fonte de tarefas deste projeto é a pasta docs/roadmap")!;
+    const planned = planTaskSourceCommand({ command, projectDir: proj, current: null, connections: [] });
+    assert.equal(planned.ok, true);
+    const binding = store.set(proj, (planned as { ok: true; plan: { binding: any } }).plan.binding);
+    const source = resolveTaskSource({ projectDir: proj, binding, connections: [] });
+
+    const client = loadClient();
+    await authenticate(client, MACHINES);
+    client.setSession("s-1", "local");
+    const sock = client.socket();
+
+    // 1) frame da sessão (o mesmo do botão da gaveta) e 2) a difusão que Configurações consome.
+    sock.deliver({ t: "task_binding", sessionId: "s-1", cwd: proj, binding, source });
+    sock.deliver({ t: "task_connections", connections: [], providers: [], bindings: store.list(), mcpMachines: [] });
+
+    assert.equal(client.taskSource().kind, "local");
+    assert.equal(client.taskSource().featuresDir, "docs/roadmap", "a gaveta mostra a pasta que ficou valendo");
+    const naTela = client.taskBindings().find((row: any) => row.binding.featuresDir === "docs/roadmap");
+    assert.ok(naTela, "Configurações lista o MESMO vínculo — é a mesma store, sem cópia paralela");
+    assert.equal(naTela.binding.tracker, source.tracker);
+
+    // 3) a confirmação no chat mostra o caminho RESOLVIDO, não um "ok".
+    const reply = formatTaskSourceConfirmation({ projectDir: proj, decision: source });
+    sock.deliver({ t: "message", message: { sessionId: "s-1", role: "assistant", text: reply, ts: 1, agent: "jarvis" } });
+    // O texto do balão vive num neto (`div.innerHTML = md(text)`), então a varredura é recursiva.
+    const flatten = (el: any): string => String(el?.innerHTML || "") + String(el?.textContent || "") + (el?.children || []).map(flatten).join("");
+    assert.match(flatten(client.el("log")), /docs\/roadmap/, "a confirmação precisa chegar ao chat com a pasta, não um 'ok'");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("TSK-07: pasta fora do projeto é recusada antes de virar vínculo — a tela não muda", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-tsk-g-web-"));
+  try {
+    const proj = process.platform === "win32" ? "C:\\proj" : "/home/u/proj";
+    const store = new ProjectTaskBindingStore({ dir, platform: process.platform, now: () => 1 });
+    const command = parseTaskSourceCommand("a pasta de tarefas deste projeto é ../fora")!;
+    const planned = planTaskSourceCommand({ command, projectDir: proj, current: null, connections: [] });
+    assert.equal(planned.ok, false);
+
+    const client = loadClient();
+    await authenticate(client, MACHINES);
+    client.setSession("s-1", "local");
+    // O Hub não grava e não difunde vínculo nenhum; só o recado com o motivo volta para o chat.
+    client.socket().deliver({ t: "task_connections", connections: [], providers: [], bindings: store.list(), mcpMachines: [] });
+    assert.equal(client.taskBindings().length, 0, "recusa não pode deixar vínculo pela metade na tela");
+    assert.match(!planned.ok ? planned.error : "", /fora do projeto/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── TSK-I (fatia I): marcar 1..N tarefas abre 1..N subsessões ligadas à sessão mãe. A regra travada
+// do épico é "lista selecionada manda, senão o Jarvis interpreta — nunca os dois"; do lado do cliente
+// isso significa que os dois nunca viajam no MESMO pedido.
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/** Coloca o cliente numa sessão com uma lista de features na tela. */
+async function withTaskList(client: ClientHandle, files: any[]): Promise<FakeSocket> {
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-mae", "local");
+  sock.deliver({ t: "task_binding", sessionId: "s-mae", cwd: "C:/proj", binding: { tracker: "local", featuresDir: "docs/features" }, source: { kind: "local", tracker: "local", ready: true, featuresDir: "docs/features" } });
+  sock.deliver({ t: "task_local_list", sessionId: "s-mae", dir: "docs/features", files, cached: false, scannedAt: 1 });
+  return sock;
+}
+
+const FEATURES = [
+  { key: "docs/features/a.md", title: "Tarefa A", description: "a" },
+  { key: "docs/features/b.md", title: "Tarefa B" },
+  { key: "docs/features/c.md", title: "Tarefa C" },
+];
+
+test("TSK-I: 3 marcadas viajam como SELEÇÃO — e a frase digitada não vai junto", async () => {
+  const client = loadClient();
+  const sock = await withTaskList(client, FEATURES);
+  for (const f of FEATURES) client.fanoutToggle({ tracker: "local", key: f.key, title: f.title });
+  assert.equal(client.fanoutMarks().length, 3);
+
+  client.fanoutAsk("e de quebra arruma o build e sobe a versão");
+
+  const pedido = sock.sent.filter((f) => f.t === "task_fanout_plan").at(-1);
+  assert.equal(pedido.selected.length, 3);
+  // A ausência da frase é o critério: é ela que ligaria o interpretador no Hub. Mandar as duas
+  // deixaria o servidor desempatar uma ambiguidade que aqui já estava resolvida.
+  assert.equal("phrase" in pedido, false, "com item marcado, a frase não pode acompanhar o pedido");
+  assert.deepEqual(pedido.selected.map((t: any) => t.title), ["Tarefa A", "Tarefa B", "Tarefa C"]);
+});
+
+test("TSK-I: sem nenhuma marca, o pedido leva a FRASE e não leva seleção", async () => {
+  const client = loadClient();
+  const sock = await withTaskList(client, FEATURES);
+
+  client.fanoutAsk("corrige o login e atualiza o README");
+
+  const pedido = sock.sent.filter((f) => f.t === "task_fanout_plan").at(-1);
+  assert.equal(pedido.phrase, "corrige o login e atualiza o README");
+  assert.equal("selected" in pedido, false, "sem marcas não existe seleção para mandar");
+});
+
+test("TSK-I: desmarcar o último item devolve o pedido ao caminho da interpretação", async () => {
+  const client = loadClient();
+  const sock = await withTaskList(client, FEATURES);
+  const uma = { tracker: "local", key: "docs/features/a.md", title: "Tarefa A" };
+  client.fanoutToggle(uma);
+  client.fanoutToggle(uma);
+  assert.equal(client.fanoutMarks().length, 0, "o mesmo item marcado duas vezes desmarca");
+
+  client.fanoutAsk("duas coisas");
+  const pedido = sock.sent.filter((f) => f.t === "task_fanout_plan").at(-1);
+  assert.equal(pedido.phrase, "duas coisas");
+  assert.equal("selected" in pedido, false);
+});
+
+test("TSK-I: nada é aberto antes da confirmação — e cancelar não abre nada", async () => {
+  const client = loadClient();
+  const sock = await withTaskList(client, FEATURES);
+  for (const f of FEATURES) client.fanoutToggle({ tracker: "local", key: f.key, title: f.title });
+  client.fanoutAsk("");
+
+  sock.deliver({ t: "task_fanout_plan", sessionId: "s-mae", ok: true, planId: "plan-1", origin: "selection",
+    tasks: FEATURES.map((f) => ({ tracker: "local", key: f.key, title: f.title })), confirm: "Vou abrir 3 subsessões..." });
+  await tick();
+
+  assert.equal(sock.sent.filter((f) => f.t === "task_fanout_open").length, 0, "o plano NÃO abre sozinho");
+  client.dlgCancel();
+  await tick();
+  assert.equal(sock.sent.filter((f) => f.t === "task_fanout_open").length, 0, "cancelar não abre sessão nenhuma");
+});
+
+test("TSK-I: confirmado, o cliente manda abrir o PLANO que o Hub emitiu (não a lista dele)", async () => {
+  const client = loadClient();
+  const sock = await withTaskList(client, FEATURES);
+  for (const f of FEATURES) client.fanoutToggle({ tracker: "local", key: f.key, title: f.title });
+  client.fanoutAsk("");
+
+  sock.deliver({ t: "task_fanout_plan", sessionId: "s-mae", ok: true, planId: "plan-1", origin: "selection",
+    tasks: FEATURES.map((f) => ({ tracker: "local", key: f.key, title: f.title })), confirm: "Vou abrir 3 subsessões..." });
+  await tick();
+  client.dlgConfirm();
+  await tick();
+
+  const abrir = sock.sent.filter((f) => f.t === "task_fanout_open").at(-1);
+  assert.equal(abrir.planId, "plan-1");
+  // Só o id do plano viaja: reenviar a lista abriria o que o cliente quiser, não o que foi confirmado.
+  assert.equal("tasks" in abrir, false);
+});
+
+test("TSK-I: as 3 subsessões abertas nascem com a SUA tarefa armada", async () => {
+  const client = loadClient();
+  const sock = await withTaskList(client, FEATURES);
+  for (const f of FEATURES) client.fanoutToggle({ tracker: "local", key: f.key, title: f.title });
+  client.fanoutAsk("");
+  sock.deliver({ t: "task_fanout_plan", sessionId: "s-mae", ok: true, planId: "plan-1", origin: "selection",
+    tasks: FEATURES.map((f) => ({ tracker: "local", key: f.key, title: f.title, description: f.description })), confirm: "x" });
+  await tick();
+  client.dlgConfirm();
+  await tick();
+
+  sock.deliver({ t: "task_fanout_opened", ok: true, sessionId: "s-mae", runnerId: "local", origin: "selection",
+    sessions: FEATURES.map((f, i) => ({ sessionId: `filha-${i}`, title: f.title, tracker: "local", key: f.key })) });
+
+  assert.equal(client.taskArmFor("local", "filha-0").task.key, "docs/features/a.md");
+  assert.equal(client.taskArmFor("local", "filha-2").label, "Tarefa C");
+  assert.equal(client.taskArmFor("local", "s-mae"), null, "a mãe não é armada com a tarefa da filha");
+  assert.equal(client.fanoutMarks().length, 0, "abriu: as marcas somem, senão o próximo clique abriria de novo");
+});
+
+test("TSK-I: plano por interpretação chega MARCADO como interpretação, com a frase de origem", async () => {
+  const client = loadClient();
+  const sock = await withTaskList(client, []);
+
+  client.fanoutAsk("corrige o login e atualiza o README");
+  sock.deliver({ t: "task_fanout_plan", sessionId: "s-mae", ok: true, planId: "plan-2", origin: "interpretation",
+    tasks: [{ tracker: "interpretada", key: "interpretada-1", title: "Corrigir o login" }, { tracker: "interpretada", key: "interpretada-2", title: "Atualizar o README" }],
+    interpretedFrom: "corrige o login e atualiza o README", confirm: "Vou abrir 2 subsessões a partir da MINHA INTERPRETAÇÃO..." });
+  await tick();
+
+  const plano = client.fanoutPlan();
+  assert.equal(plano.origin, "interpretation", "a UI precisa distinguir palpite de escolha");
+  assert.equal(plano.tasks.length, 2);
+  assert.equal(plano.interpretedFrom, "corrige o login e atualiza o README");
+  client.dlgConfirm();
+  await tick();
+  assert.equal(sock.sent.filter((f) => f.t === "task_fanout_open").at(-1).planId, "plan-2");
+});
+
+test("TSK-I: dúvida do interpretador vira pergunta na tela, não sessão aberta", async () => {
+  const client = loadClient();
+  const sock = await withTaskList(client, []);
+  client.fanoutAsk("arruma aquilo");
+
+  sock.deliver({ t: "task_fanout_plan", sessionId: "s-mae", ok: false, tasks: [], question: "são duas tarefas ou uma só?" });
+  await tick();
+
+  assert.equal(client.fanoutPlan(), null, "sem plano não há o que confirmar");
+  assert.equal(sock.sent.filter((f) => f.t === "task_fanout_open").length, 0);
+});
+
+test("TSK-I: trocar a fonte do projeto joga fora as marcas da fonte antiga", async () => {
+  const client = loadClient();
+  const sock = await withTaskList(client, FEATURES);
+  client.fanoutToggle({ tracker: "local", key: "docs/features/a.md", title: "Tarefa A" });
+  assert.equal(client.fanoutMarks().length, 1);
+
+  sock.deliver({ t: "task_binding", sessionId: "s-mae", cwd: "C:/proj", binding: { tracker: "jira", connectionId: "jira:acme" }, source: { kind: "provider", tracker: "jira", ready: true, connectionId: "jira:acme" } });
+
+  assert.equal(client.fanoutMarks().length, 0, "marca de outra fonte abriria subsessão para tarefa que sumiu da lista");
+});
+
+test("TSK-I: a gaveta 🎯 desenha a marca de cada item e o botão com o número", async () => {
+  const client = loadClient();
+  await withTaskList(client, FEATURES);
+  const texts = (node: any, out: string[] = []): string[] => {
+    for (const child of node.children || []) { out.push(String(child.textContent || ""), String(child.innerHTML || "")); texts(child, out); }
+    return out;
+  };
+
+  const find = (node: any, needle: string): any => {
+    for (const child of node.children || []) {
+      if (String(child.innerHTML || child.textContent || "").includes(needle)) return child;
+      const deep = find(child, needle); if (deep) return deep;
+    }
+    return null;
+  };
+
+  const fechada = texts(client.buildTaskDrawer()).join("\n");
+  assert.match(fechada, /Interpretar e abrir/, "sem marcas, o caminho oferecido é o da interpretação");
+  assert.match(fechada, /sem marcas: vira interpretação/);
+
+  // A lista de arquivos é uma gaveta dentro da gaveta: só depois de abri-la existem itens a marcar.
+  find(client.buildTaskDrawer(), "Arquivos de feature").onclick();
+  const vazio = texts(client.buildTaskDrawer()).join("\n");
+  assert.match(vazio, /Tarefa A/);
+  assert.match(vazio, /☐/, "cada item da lista tem sua marca");
+
+  for (const f of FEATURES) client.fanoutToggle({ tracker: "local", key: f.key, title: f.title });
+  const marcado = texts(client.buildTaskDrawer()).join("\n");
+  // O número aparece ANTES de qualquer sessão existir — é o aviso exigido para ação com efeito.
+  assert.match(marcado, /Abrir 3 subsessões/);
+  assert.match(marcado, /seleção manda — a frase acima é ignorada/);
+  assert.match(marcado, /☑/);
 });

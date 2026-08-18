@@ -1232,6 +1232,29 @@
     #workCrumb { color:var(--mut); font-size:10.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #workNodeTitle { margin-top:2px; font-size:15px; font-weight:700; overflow-wrap:anywhere; }
     #workNodeState { margin-top:3px; color:var(--mut); font-size:11.5px; }
+    /* Fila da execução: fica FORA de #workDetailBody de propósito. O corpo rola com a conversa, e uma
+       fila que some quando você rola atrás de um evento antigo deixa de responder "onde isto está". */
+    /* Teto por ALTURA, não por número de itens: a fila é resumo, não a tela inteira. Passando disso ela
+       rola sozinha — ficar sem espaço para a conversa da execução tornaria o painel pior, não melhor. */
+    #workQueue { flex:none; max-height:min(30vh,236px); overflow:auto; padding:8px 14px; border-bottom:1px solid var(--line); background:#ffffff05; }
+    #workQueue.hidden { display:none; }
+    .wqhead { display:flex; align-items:baseline; gap:7px; color:var(--mut); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.55px; }
+    .wqhead .wqcount { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-transform:none; letter-spacing:0; font-weight:500; font-size:11px; font-variant-numeric:tabular-nums; }
+    .wqwarn { margin-top:5px; color:#fcd9a0; font-size:10.5px; }
+    .wqitem { width:100%; min-height:44px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; column-gap:8px; margin-top:3px; padding:6px 7px; text-align:left; color:var(--text); background:transparent; border:1px solid transparent; border-radius:9px; font-weight:400; }
+    .wqitem:hover { background:#ffffff0a; }
+    .wqitem:focus-visible { outline:2px solid #7aa2f7; outline-offset:1px; }
+    .wqitem .wqn { color:var(--mut); font-size:10.5px; font-variant-numeric:tabular-nums; }
+    .wqitem .wqmain { min-width:0; }
+    .wqitem .wqtitle { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; font-weight:650; }
+    .wqitem .wqwhy { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--mut); font-size:10.5px; }
+    .wqitem .wqstate { display:inline-flex; align-items:center; gap:5px; color:var(--mut); font-size:10.5px; white-space:nowrap; }
+    .wqitem .wqstate::before { content:''; width:7px; height:7px; border-radius:50%; background:#6b7280; }
+    .wqitem[data-bucket="running"] .wqstate::before { background:#3b82f6; animation:p 1.2s infinite; }
+    .wqitem[data-bucket="waiting"] .wqstate::before { background:#f59e0b; }
+    .wqitem[data-bucket="queued"] .wqstate::before { background:#a78bfa; }
+    .wqitem[data-bucket="done"] .wqstate::before { background:#22c55e; }
+    .wqitem[data-bucket="failed"] .wqstate::before { background:#ef4444; }
     .worktabs { display:flex; gap:3px; padding:7px 10px 0; overflow:auto; scrollbar-width:none; border-bottom:1px solid var(--line); }
     .worktabs button { flex:none; min-height:40px; padding:7px 10px; border-radius:8px 8px 0 0; background:none; color:var(--mut); font-size:11.5px; font-weight:600; border-bottom:2px solid transparent; }
     .worktabs button[aria-selected="true"] { color:var(--text); border-bottom-color:#4f83ff; }
@@ -1271,6 +1294,9 @@
       .worktreewrap, .workdetail { height:100%; border-right:0; }
       #workPanel:not(.show-detail) .workdetail { display:none; }
       #workPanel.show-detail .worktreewrap { display:none; }
+      /* No telefone o painel é a tela toda e a conversa da execução divide o mesmo espaço: 236px de
+         fila deixariam ~130px de corpo, que não serve para ler nada. */
+      #workQueue { max-height:22vh; }
       #workPanel.show-detail #workBack { display:inline-flex; }
       .workhead button { width:44px; height:44px; min-width:44px; min-height:44px; }
       #workBack { font-size:24px; }
@@ -1547,6 +1573,7 @@
             <div id="workNodeTitle">Selecione um trabalho</div>
             <div id="workNodeState"></div>
           </div>
+          <div id="workQueue" class="workqueue hidden" role="region" aria-label="Fila desta execução"></div>
           <div class="worktabs" role="tablist" aria-label="Informações do trabalho">
             <button id="workTabActivity" type="button" role="tab" data-tab="activity" aria-controls="workDetailBody" aria-selected="true">Conversa</button>
             <button id="workTabFiles" type="button" role="tab" data-tab="files" aria-controls="workDetailBody" aria-selected="false">Arquivos</button>

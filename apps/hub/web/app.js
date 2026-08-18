@@ -17,7 +17,7 @@
     } catch {}
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','aiBtn','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','tskConns','tskBindings','tskMcp','tskAddConn','solutionBtn','solutionName','solutionBar','solBarMode','solBarMeta','solBarOff','solutionChars','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workQueue','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','tskConns','tskBindings','tskMcp','tskAddConn','solutionBtn','solutionName','solutionBar','solBarMode','solBarMeta','solBarOff','solutionChars','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','setFwAutoFlow','setFwApplyInstr','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwDir','fwDirBtn','fwTplBtn','fwReset','fwUpdates','fwCatBtn','fwCatalog','fwWfBtn','fwWorkflows','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','wfRun','wfStepBtn','wfStepName','bgJobs','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
       'secRunLabel','secRunGen','secRunOut','secRunners',
@@ -1157,7 +1157,7 @@
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
-    function openSession(id,runnerId){ if(!id)return; wfLocalErr=''; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfTaskSource=null; wfLocalFiles=null; wfLocalShow=false; setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
+    function openSession(id,runnerId){ if(!id)return; wfLocalErr=''; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfTaskSource=null; wfLocalFiles=null; wfLocalShow=false; wfFanoutClear(); setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
       if(typeof findState!=='undefined'&&findState)closeFind(); if(typeof findRegion!=='undefined')findRegion='chat';  // abriu sessão → foco no chat; fecha barra órfã
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
@@ -4400,7 +4400,11 @@
     function workLatestInput(events){ const resolved=new Set(events.filter(e=>e.kind==='input_resolved').map(e=>e.inputId)); return [...events].reverse().find(e=>e.kind==='input_requested'&&!resolved.has(e.inputId)); }
     function workInputHtml(ev){ if(!ev)return''; const choices=Array.isArray(ev.choices)?ev.choices:[]; return `<div class="worknotice"><b>Precisa de você</b><div>${esc(String(ev.summary||'Esta execução aguarda uma decisão.'))}</div><div class="workcontrols" style="margin-top:8px">${ev.inputKind==='approval'?'<button type="button" data-input="approve">Aprovar</button><button type="button" class="danger" data-input="reject">Rejeitar</button>':choices.map((c,i)=>`<button type="button" class="ghost" data-input="answer" data-answer="${esc(String(c))}">${esc(String(c))}</button>`).join('')+'<button type="button" class="ghost" data-input="answer">Responder…</button>'}</div></div>`; }
     function workMetricsHtml(n){ const own=(n.metrics&&n.metrics.self)||{}, sub=(n.metrics&&n.metrics.subtree)||null, block=(title,m)=>`<div class="worksection">${title}</div><div class="workmetrics"><div class="workmetric"><span>Tokens</span><b>${workTokenText(m)}</b></div><div class="workmetric"><span>Ferramentas</span><b>${workNum(m.toolCalls)||'—'}</b></div><div class="workmetric"><span>Custo</span><b>${workCostText(m)}</b></div><div class="workmetric"><span>Duração</span><b>${workDuration(n)}</b></div></div>`; return block('Este trabalho',own)+(sub?block('Incluindo descendentes',sub):''); }
-    function workCapabilitiesHtml(n){ const c=n.capabilities||{}, online=workConnected&&(!workConnections.has(n.runnerId)||workConnections.get(n.runnerId)==='online'), reason=!online?'A máquina dona está offline ou reconciliando.':c.reason||'Este controle não é suportado pelo adapter ou pelo estado atual.', liveState=online&&(n.state==='running'||n.state==='waiting_input'), terminal=WORK_TERMINAL.has(n.state), root=!n.parentExecutionId, cancelOk=liveState&&(c.cancel==='node'||c.cancel==='subtree'||(c.cancel==='root'&&root)), subtreeOk=liveState&&(c.cancel==='subtree'||(c.cancel==='root'&&root)), steerOk=online&&((c.steer==='running'&&liveState)||(c.steer==='queued'&&n.state==='queued')), retryOk=online&&terminal&&!!c.retry;
+    // Online = socket deste navegador aberto E máquina dona sem pendência de reconciliação. Extraído
+    // porque a fila e os controles precisam da MESMA resposta: se um deles tratar "última visão
+    // persistida" como ao vivo, o painel afirma sobre a execução algo que ninguém observou.
+    function workMachineOnline(n){ return workConnected&&(!workConnections.has(n&&n.runnerId)||workConnections.get(n&&n.runnerId)==='online'); }
+    function workCapabilitiesHtml(n){ const c=n.capabilities||{}, online=workMachineOnline(n), reason=!online?'A máquina dona está offline ou reconciliando.':c.reason||'Este controle não é suportado pelo adapter ou pelo estado atual.', liveState=online&&(n.state==='running'||n.state==='waiting_input'), terminal=WORK_TERMINAL.has(n.state), root=!n.parentExecutionId, cancelOk=liveState&&(c.cancel==='node'||c.cancel==='subtree'||(c.cancel==='root'&&root)), subtreeOk=liveState&&(c.cancel==='subtree'||(c.cancel==='root'&&root)), steerOk=online&&((c.steer==='running'&&liveState)||(c.steer==='queued'&&n.state==='queued')), retryOk=online&&terminal&&!!c.retry;
       const b=(label,act,ok,cls='ghost')=>`<button type="button" class="${cls}" data-control="${act}" ${ok?'':`disabled title="${esc(reason)}"`}>${label}</button>`;
       const unavailable=[!cancelOk&&'cancelar nó',!subtreeOk&&'cancelar árvore',!steerOk&&'orientar',!retryOk&&'tentar novamente',!terminal&&(n.archivedAt?'desarquivar':'arquivar')].filter(Boolean);
       return `<div class="worksection">Controles</div><div class="workcontrols">${b('Cancelar','cancel',cancelOk,'danger')}${b('Cancelar árvore','cancel_subtree',subtreeOk,'danger')}${b('Orientar','steer',steerOk)}${b('Tentar novamente','retry',retryOk)}${b(n.archivedAt?'Desarquivar':'Arquivar','archive',workConnected&&terminal)}</div>${unavailable.length?`<div class="workcapwhy">Indisponíveis: ${esc(unavailable.join(', '))}. ${esc(reason)}</div>`:''}`; }
@@ -4408,7 +4412,78 @@
     function workArtifactConflicts(n){ const owners=new Map(), ids=new Set([n.executionId,...workDescendants(n.executionId).map(x=>x.executionId)]); ids.forEach(id=>(workEvents.get(id)||[]).forEach(ev=>{const a=ev.artifact;if(ev.kind!=='artifact'||!a||!a.relativePath)return;const key=String(a.relativePath).replace(/\\/g,'/').toLowerCase(),set=owners.get(key)||new Set();set.add(id);owners.set(key,set);}));return new Set([...owners].filter(([,set])=>set.size>1).map(([path])=>path)); }
     function loadMoreWorkTranscript(id){ const cursor=workTranscriptCursor.get(id); if(!id||!cursor||workTranscriptLoading.has(id))return false; workTranscriptLoading.add(id); tx({t:'execution_open',executionId:id,cursor,limit:500}); return true; }
     function maybeAutoMoreWorkDetail(){ const id=workSelected; if(!id||E.workPanel.classList.contains('hidden')||!workTranscriptCursor.get(id))return; if(nearPaneBottom(E.workDetailBody,220)||E.workDetailBody.scrollHeight<=E.workDetailBody.clientHeight+70)loadMoreWorkTranscript(id); }
-    function renderWorkDetail(){ const n=workNodes.get(workSelected); if(!n){ E.workCrumb.textContent='';E.workNodeTitle.textContent='Selecione um trabalho';E.workNodeState.textContent='';E.workDetailBody.innerHTML='<div class="workempty"><span class="weicon">🧩</span><span>Selecione um trabalho para acompanhar.</span></div>';return; }
+    /* ── Fila da execução ─────────────────────────────────────────────────────────────────────────
+     * A fila é DERIVADA dos nós filhos que já chegam por `executions_snapshot`/`execution_delta`.
+     * Não existe lista paralela de itens, de propósito: um segundo dono do mesmo fato só precisa de
+     * um evento perdido para a tela anunciar "3 de 5 concluídos" enquanto a execução real está em
+     * outro ponto — e uma fila que discorda da execução é pior do que não ter fila nenhuma.
+     * Pelo mesmo motivo nada aqui chama IA: estado de item é dado observado, não interpretação.
+     * Os filtros do painel (máquina/sessão/IA/estado) de propósito NÃO valem aqui: a fila é o conjunto
+     * de itens DESTA execução, e esconder item por filtro faria o contador dizer uma coisa e a lista
+     * mostrar outra.
+     */
+    const WORK_QUEUE_WORD={waiting:['precisa de você','precisam de você'],running:['em execução','em execução'],queued:['na fila','na fila'],done:['concluído','concluídos'],failed:['falhou','falharam'],cancelled:['cancelado','cancelados'],unknown:['desconhecido','desconhecidos']};
+    const WORK_QUEUE_ORDER=['waiting','running','queued','done','failed','cancelled','unknown'];
+    const WORK_QUEUE_BUCKET={waiting_input:'waiting',running:'running',queued:'queued',succeeded:'done',failed:'failed',cancelled:'cancelled'};
+    // Por que o item está onde está. Item na fila mostra QUEM ele espera: sem isso, "Na fila" para
+    // sempre parece travamento, quando na verdade é dependência declarada ainda rodando.
+    function workQueueWhy(n,bucket){
+      if(bucket==='queued'){
+        const blockers=(n.dependsOn||[]).map(id=>({id:id,dep:workNodes.get(id)})).filter(x=>!x.dep||!WORK_TERMINAL.has(x.dep.state));
+        return blockers.length?'aguarda '+blockers.map(x=>x.dep?String(x.dep.title||x.id):(x.id+' (item que este painel não recebeu)')).join(', '):'';
+      }
+      return (bucket==='failed'||bucket==='cancelled')?String(n.summary||'').slice(0,220):'';
+    }
+    function workQueueItem(n){
+      const raw=n.state, terminal=WORK_TERMINAL.has(raw);
+      // Estado que o Hub NÃO conhece nunca vira um estado que ele conheceria. Um item órfão, sem
+      // lifecycle publicado, ou de máquina que parou de responder aparece como desconhecido COM
+      // motivo — jamais como "Concluído" e jamais fora da lista, que são as duas formas de mentir aqui.
+      if(!terminal&&(raw==='unknown'||raw==='orphaned'||!workMachineOnline(n))){
+        const why=raw==='orphaned'?String(n.summary||'conexão perdida com a máquina antes do estado final')
+          :raw==='unknown'?String(n.summary||'o provedor não publicou lifecycle suficiente para este item')
+          :`${machineLabel(n.runnerId)} ${workConnected?'não está respondendo':'inalcançável — este navegador está offline'}; a última visão dizia "${workStateLabel(raw)}"`;
+        return {node:n,bucket:'unknown',label:workStateLabel('unknown'),why:why.slice(0,220)};
+      }
+      const bucket=WORK_QUEUE_BUCKET[raw]||'unknown';
+      return {node:n,bucket:bucket,label:workStateLabel(raw),why:workQueueWhy(n,bucket)};
+    }
+    // Ordem da fila = ordem de enfileiramento, com a ordem de chegada como desempate estável. A árvore
+    // ordena por estado (workSort) e pode: ela é navegação. Uma FILA que reordena a cada item concluído
+    // faz o usuário perder de vista onde estava — e deixa de ser fila.
+    function workQueueItems(id){
+      if(!id)return [];
+      const seen=[...workNodes.keys()], rank=new Map(seen.map((k,i)=>[k,i]));
+      return workChildren(id).sort((a,b)=>(workNum(a.queuedAt)-workNum(b.queuedAt))||((rank.get(a.executionId)??0)-(rank.get(b.executionId)??0))).map(workQueueItem);
+    }
+    function workQueueSummary(items){
+      const counts={}; items.forEach(it=>{counts[it.bucket]=(counts[it.bucket]||0)+1;});
+      const parts=WORK_QUEUE_ORDER.filter(b=>counts[b]).map(b=>`${counts[b]} ${WORK_QUEUE_WORD[b][counts[b]===1?0:1]}`);
+      return `${items.length} ${items.length===1?'item':'itens'}${parts.length?' · '+parts.join(' · '):''}`;
+    }
+    function workQueueHtml(items){
+      // A lista de nós do painel é PAGINADA. Enquanto houver página por carregar, a fila pode estar
+      // incompleta — e "faltam itens" precisa ser distinguível de "a execução só tem estes".
+      const partial=workNextCursor?'<div class="wqwarn">⚠ Há trabalhos ainda não carregados neste painel — use “Mostrar mais” para conferir a fila inteira.</div>':'';
+      const rows=items.map((it,i)=>{
+        const title=String(it.node.title||it.node.executionId), meta=it.why||[it.node.agent,it.node.model].filter(Boolean).join(' · ')||workKindLabel(it.node.kind);
+        // O `title` repete o motivo porque a linha é cortada por reticências: quem só vê o corte
+        // ficaria com "Desconhecido" sem nunca alcançar o porquê, que é a metade que importa.
+        const state=(it.node.archivedAt?'Arquivado · ':'')+it.label;
+        return `<button type="button" class="wqitem" data-queue="${esc(String(it.node.executionId))}" data-bucket="${esc(it.bucket)}" title="${esc(title+(it.why?' — '+it.why:''))}"><span class="wqn">${i+1}</span><span class="wqmain"><span class="wqtitle">${esc(title)}</span><span class="wqwhy">${esc(String(meta))}</span></span><span class="wqstate">${esc(state)} · ${esc(workDuration(it.node))}</span></button>`;
+      }).join('');
+      return `<div class="wqhead"><span>Fila</span><span class="wqcount">${esc(workQueueSummary(items))}</span></div>${partial}${rows}`;
+    }
+    function renderWorkQueue(){
+      if(!E.workQueue)return;
+      const items=workQueueItems(workSelected);
+      E.workQueue.classList.toggle('hidden',!items.length);
+      E.workQueue.innerHTML=items.length?workQueueHtml(items):'';
+      E.workQueue.querySelectorAll('[data-queue]').forEach(b=>b.onclick=()=>openWorkNode(b.dataset.queue));
+    }
+    /** Só evento de FILHO DIRETO do nó aberto mexe na fila dele — o resto da árvore não paga render. */
+    function workQueueTouches(id){ const n=id&&workNodes.get(id); return !!(n&&workSelected&&n.parentExecutionId===workSelected); }
+    function renderWorkDetail(){ renderWorkQueue(); const n=workNodes.get(workSelected); if(!n){ E.workCrumb.textContent='';E.workNodeTitle.textContent='Selecione um trabalho';E.workNodeState.textContent='';E.workDetailBody.innerHTML='<div class="workempty"><span class="weicon">🧩</span><span>Selecione um trabalho para acompanhar.</span></div>';return; }
       const events=workEvents.get(n.executionId)||[], cap=n.capabilities||{}; E.workCrumb.textContent=workBreadcrumb(n); E.workNodeTitle.textContent=(!n.parentExecutionId)?'Trabalho principal':(n.title||n.executionId); E.workNodeTitle.title=String(n.title||n.executionId); E.workNodeState.textContent=workNodeStatusText(n);
       E.workPanel.querySelectorAll('.worktabs [data-tab]').forEach(b=>{const on=b.dataset.tab===workTab;b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1;});
       let h='', conn=workConnections.get(n.runnerId); if(conn&&conn!=='online')h+=`<div class="worknotice"><b>Máquina ${esc(conn)}.</b> Esta é a última visão persistida; os controles podem ficar indisponíveis até a reconciliação.</div>`; if(n.state==='orphaned')h+='<div class="worknotice err"><b>Conexão perdida.</b> O estado final ainda não foi observado; o Jarvis tentará reconciliar sem marcar cancelamento por inferência.</div>'; if(n.state==='unknown')h+='<div class="worknotice">Estado parcial: o provider ainda não publicou lifecycle suficiente.</div>'; if(n.truncated)h+='<div class="worknotice">Histórico do trabalho truncado. O que aparece abaixo é apenas a parte preservada.</div>'; if(n.summary)h+=`<div class="worknotice" style="border-color:var(--line);background:#ffffff07;color:var(--text)">${esc(String(n.summary))}</div>`;
@@ -4429,13 +4504,21 @@
     function openWorkNode(id,{fromHash=false}={}){ const n=workNodes.get(id); workSelected=id; workExpandPath(id); workUnseen=0; E.workNew.classList.add('hidden'); E.workPanel.classList.add('show-detail'); renderWorkTree(); renderWorkDetail(); tx({t:'execution_open',executionId:id,limit:500}); if(!fromHash)workSetHash(); }
     function openWorkPanel({fromHash=false}={}){ workLastFocus=document.activeElement; closeFilePanel();E.workPanel.classList.remove('hidden');E.workPanel.setAttribute('aria-hidden','false');closeSide();workConnected=!!(ws&&ws.readyState===1);renderWorkConnection();workUpdateScopes();renderWorkTree();renderWorkDetail();tx({t:'executions_list',scope:'all',limit:500});if(!fromHash&&workSelected)workSetHash();setTimeout(()=>{const f=E.workPanel.querySelector('.worknode[aria-selected="true"]')||E.workClose;f&&f.focus();},20); }
     function closeWorkPanel(clearHash=true){ E.workPanel.classList.add('hidden');E.workPanel.classList.remove('show-detail','max');E.workPanel.setAttribute('aria-hidden','true');E.workMax.textContent='⛶';if(clearHash){workSelected='';workSetHash(true);}if(workLastFocus&&workLastFocus.isConnected)workLastFocus.focus(); }
-    function renderWorkConnection(){ const bad=[...workConnections.values()].filter(x=>x!=='online').length; E.workLive.textContent=!workConnected?'offline · última visão':bad?`parcial · ${bad} máquina${bad===1?'':'s'}`:'ao vivo';E.workLive.classList.toggle('offline',!workConnected||!!bad); }
+    // Perder/recuperar a conexão muda o que o painel PODE afirmar sobre cada item da fila, então a
+    // fila é redesenhada junto com o indicador — senão ela seguiria dizendo "Em execução" sobre uma
+    // máquina que parou de responder, que é exatamente a afirmação que ninguém pode sustentar.
+    function renderWorkConnection(){ const bad=[...workConnections.values()].filter(x=>x!=='online').length; E.workLive.textContent=!workConnected?'offline · última visão':bad?`parcial · ${bad} máquina${bad===1?'':'s'}`:'ao vivo';E.workLive.classList.toggle('offline',!workConnected||!!bad); renderWorkQueue(); }
     function workAnnounce(text){ clearTimeout(workAnnounceT); workAnnounceT=setTimeout(()=>{E.workAnnounce.textContent=text;},400); }
     function workApplyEvent(ev){ if(!ev||!ev.executionId)return; let n=workNodes.get(ev.executionId); if(ev.kind==='node_created'&&ev.node){n=ev.node;workNodes.set(n.executionId,n);workMaybeInlineNode(n);}else if(n&&ev.kind==='state_changed'){n=Object.assign({},n,{state:ev.to,summary:ev.reason||n.summary,startedAt:ev.to==='running'&&!n.startedAt?(ev.at||Date.now()):n.startedAt,endedAt:WORK_TERMINAL.has(ev.to)?(ev.at||Date.now()):n.endedAt});workNodes.set(n.executionId,n);}else if(n&&ev.kind==='archived'){n=Object.assign({},n,{archivedAt:ev.archived?(ev.at||Date.now()):undefined});workNodes.set(n.executionId,n);}else if(n&&ev.kind==='usage'&&ev.usage){const scope=ev.scope==='subtree'?'subtree':'self',metrics=Object.assign({},n.metrics||{}),old=Object.assign({},metrics[scope]||{}),next=Object.assign({},old),replace=ev.measure==='cumulative';['inputTokens','cachedInputTokens','outputTokens','costUsd'].forEach(k=>{if(ev.usage[k]!=null)next[k]=replace?workNum(ev.usage[k]):workNum(old[k])+workNum(ev.usage[k]);});if(ev.usage.costKind)next.costKind=ev.usage.costKind;metrics[scope]=next;workNodes.set(n.executionId,Object.assign({},n,{metrics}));}else if(n&&(ev.kind==='tool'||ev.kind==='agent_event')){const a=ev.kind==='agent_event'&&ev.event,usage=a&&a.kind==='usage'&&a.usage,tool=ev.kind==='tool'?ev.tool:a&&a.tool,isStart=tool&&tool.status==='started',metrics=Object.assign({},n.metrics||{}),scope=a&&a.usageScope==='subtree'?'subtree':'self',own=Object.assign({},metrics[scope]||{});if(usage){['inputTokens','cachedInputTokens','outputTokens','costUsd'].forEach(k=>{if(usage[k]!=null)own[k]=workNum(own[k])+workNum(usage[k]);});if(usage.costKind)own.costKind=usage.costKind;}if(isStart)own.toolCalls=workNum(own.toolCalls)+1;if(usage||isStart){metrics[scope]=own;workNodes.set(n.executionId,Object.assign({},n,{metrics}));}}
       if(n)workSyncInlineNode(n);
       if(ev.kind!=='node_created'){const list=workEvents.get(ev.executionId)||[];if(!ev.eventId||!list.some(x=>x.eventId===ev.eventId)){list.push(ev);if(list.length>5000)list.splice(0,list.length-5000);workEvents.set(ev.executionId,list);}}
-      workRenderBadge(); workUpdateScopes(); renderWorkTree(true); if(workSelected===ev.executionId&&!E.workPanel.classList.contains('hidden')){const atEnd=E.workDetailBody.scrollHeight-E.workDetailBody.scrollTop-E.workDetailBody.clientHeight<45;if(atEnd){renderWorkDetail();E.workDetailBody.scrollTop=E.workDetailBody.scrollHeight;}else{workUnseen++;E.workNew.textContent=workUnseen+' novo'+(workUnseen===1?' evento':'s eventos');E.workNew.classList.remove('hidden');}} if(ev.kind==='input_requested')workAnnounce('Um trabalho precisa de você.'); }
-    function workApplySnapshot(m){ workLoaded=true;workLoadError='';if(m.scope==='all'&&!workLoadingMore){workNodes.clear();workCollapsed.clear();workAutoCollapsed.clear();}workLoadingMore=false;workNextCursor=m.nextCursor||'';E.workMore.classList.toggle('hidden',!workNextCursor);E.workMore.disabled=false;E.workMore.textContent='Mostrar mais';(Array.isArray(m.nodes)?m.nodes:[]).forEach(n=>{if(n&&n.executionId){workNodes.set(n.executionId,n);workSyncInlineNode(n);}});workRenderBadge();workUpdateScopes();renderWorkTree();scheduleAutoPager(maybeAutoMoreWork);const wanted=hashWork();if(wanted&&workNodes.has(wanted)&&workSelected!==wanted){if(E.workPanel.classList.contains('hidden'))openWorkPanel({fromHash:true});openWorkNode(wanted,{fromHash:true});}else if(workSelected&&!workNodes.has(workSelected)){workSelected='';renderWorkDetail();} }
+      workRenderBadge(); workUpdateScopes(); renderWorkTree(true);
+      // A fila do nó aberto se atualiza com o evento do FILHO — sem recarregar e sem o usuário pedir.
+      // Ela vive fora de #workDetailBody justamente por isto: redesenhar aqui não mexe na rolagem da
+      // conversa nem depende de o usuário estar no fim dela (onde o "N novos eventos" segura o render).
+      if(workQueueTouches(ev.executionId)&&!E.workPanel.classList.contains('hidden'))renderWorkQueue();
+      if(workSelected===ev.executionId&&!E.workPanel.classList.contains('hidden')){const atEnd=E.workDetailBody.scrollHeight-E.workDetailBody.scrollTop-E.workDetailBody.clientHeight<45;if(atEnd){renderWorkDetail();E.workDetailBody.scrollTop=E.workDetailBody.scrollHeight;}else{workUnseen++;E.workNew.textContent=workUnseen+' novo'+(workUnseen===1?' evento':'s eventos');E.workNew.classList.remove('hidden');}} if(ev.kind==='input_requested')workAnnounce('Um trabalho precisa de você.'); }
+    function workApplySnapshot(m){ workLoaded=true;workLoadError='';if(m.scope==='all'&&!workLoadingMore){workNodes.clear();workCollapsed.clear();workAutoCollapsed.clear();}workLoadingMore=false;workNextCursor=m.nextCursor||'';E.workMore.classList.toggle('hidden',!workNextCursor);E.workMore.disabled=false;E.workMore.textContent='Mostrar mais';(Array.isArray(m.nodes)?m.nodes:[]).forEach(n=>{if(n&&n.executionId){workNodes.set(n.executionId,n);workSyncInlineNode(n);}});workRenderBadge();workUpdateScopes();renderWorkTree();renderWorkQueue();scheduleAutoPager(maybeAutoMoreWork);const wanted=hashWork();if(wanted&&workNodes.has(wanted)&&workSelected!==wanted){if(E.workPanel.classList.contains('hidden'))openWorkPanel({fromHash:true});openWorkNode(wanted,{fromHash:true});}else if(workSelected&&!workNodes.has(workSelected)){workSelected='';renderWorkDetail();} }
     if(E.designBtn) E.designBtn.onclick=()=>{ E.designPanel.classList.contains('hidden')?openDesign():closeDesign(); };
     if(E.designClose) E.designClose.onclick=()=>closeDesign();
     if(E.designDetect) E.designDetect.onclick=()=>{ ensureDesignWebview(E.designUrl.value||''); detectDesignPreview(); };
@@ -4459,7 +4542,8 @@
     E.workDetailBody.addEventListener('scroll',maybeAutoMoreWorkDetail);
     E.workNew.onclick=()=>{workUnseen=0;E.workNew.classList.add('hidden');renderWorkDetail();E.workDetailBody.scrollTop=E.workDetailBody.scrollHeight;};
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!E.workPanel.classList.contains('hidden')){e.stopPropagation();closeWorkPanel();}});
-    setInterval(()=>{if(!E.workPanel.classList.contains('hidden')&&[...workNodes.values()].some(n=>n.state==='running')){renderWorkTree(true);const n=workNodes.get(workSelected);if(n)E.workNodeState.textContent=workNodeStatusText(n);}},5000);
+    // Relógio da fila e da árvore: só a DURAÇÃO envelhece sozinha (nenhum estado muda sem evento).
+    setInterval(()=>{if(!E.workPanel.classList.contains('hidden')&&[...workNodes.values()].some(n=>n.state==='running')){renderWorkTree(true);renderWorkQueue();const n=workNodes.get(workSelected);if(n)E.workNodeState.textContent=workNodeStatusText(n);}},5000);
 
     // ---------- ws ----------
     function tx(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
@@ -4613,7 +4697,7 @@
           // cache local (senão .md de um projeto de pasta sobreviveriam num projeto de provedor) e,
           // se o painel está aberto na nova fonte, pede a lista dela.
           const changed=!before||before!==(wfTaskSource&&wfTaskSource.kind)||beforeDir!==(wfTaskSource&&(wfTaskSource.featuresDir||wfTaskSource.mcpServer));
-          if(changed){ wfLocalFiles=null; wfLocalErr=''; wfSearchResults=null;
+          if(changed){ wfLocalFiles=null; wfLocalErr=''; wfSearchResults=null; wfFanoutClear();
             if(wfTaskSource&&wfTaskSource.featuresDir) wfLocalDir=wfTaskSource.featuresDir;
             if(wfLocalShow&&wfTaskSource&&wfTaskSource.kind==='local'&&wfTaskSource.ready) tx({t:'task_local_list',sessionId:currentSession});
           }
@@ -4628,6 +4712,10 @@
           if(settingsPanelOpen('tarefas')) renderTaskSettings();
           if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
         else if(m.t==='task_search_results'){ wfSearchResults=m; if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); } }
+        // Fatia I — o Hub decidiu QUAIS tarefas viram subsessão; ainda não abriu nada. O número e a
+        // origem vão para uma confirmação antes de qualquer sessão existir.
+        else if(m.t==='task_fanout_plan'){ if(m.sessionId===currentSession) wfFanoutPlanArrived(m); }
+        else if(m.t==='task_fanout_opened'){ wfFanoutOpened(m); }
         else if(m.t==='task_create_pending'){ toast('Criação aguardando sua aprovação: '+(m.preview||'')); }
         else if(m.t==='task_create_result'){ toast(m.ok?('Tarefa criada: '+(m.key||'')):('Criar tarefa: '+(m.error||'falhou'))); }
         else if(m.t==='framework_status'){ fwArrived(); if(m.error){ E.fwStatus.textContent=''; fwLog('✖ publicar: '+esc(m.error),'#f87171'); toast('Publicar: '+m.error); return; }
@@ -5137,6 +5225,58 @@
     function wfTaskArmKey(){ return (currentSessionRunner||'local')+' '+(currentSession||''); }
     function wfTaskArmGet(){ try{ const all=JSON.parse(localStorage.getItem('jarvis_task_arm')||'{}'); return all[wfTaskArmKey()]||null; }catch(e){ return null; } }
     function wfTaskArmSet(v){ try{ const all=JSON.parse(localStorage.getItem('jarvis_task_arm')||'{}'); if(v)all[wfTaskArmKey()]=v; else delete all[wfTaskArmKey()]; localStorage.setItem('jarvis_task_arm',JSON.stringify(all)); }catch(e){} }
+    // ── Fatia I: marcar 1..N tarefas para abrir 1..N subsessões ────────────────────────────────────
+    // A MARCA é o que decide tudo: com qualquer item marcado, o cliente manda a lista e NÃO manda a
+    // frase — o interpretador do Hub nem chega a ser cogitado. Seleção e interpretação nunca viajam
+    // juntas no mesmo pedido; se viajassem, sobraria para o servidor desempatar uma ambiguidade que
+    // aqui já estava resolvida.
+    let wfFanout=new Map(), wfFanoutPlan=null, wfFanoutBusy=false;
+    function wfFanoutKey(t){ return (t.tracker||'local')+' '+(t.key||t.title||''); }
+    function wfFanoutClear(){ wfFanout=new Map(); wfFanoutPlan=null; }
+    function wfFanoutHas(t){ return wfFanout.has(wfFanoutKey(t)); }
+    function wfFanoutToggle(t){ const k=wfFanoutKey(t); if(wfFanout.has(k)) wfFanout.delete(k); else wfFanout.set(k,t); }
+    function wfFanoutList(){ return [...wfFanout.values()]; }
+    // Pede a DECISÃO ao Hub. Nada é aberto aqui: a resposta volta para uma confirmação com o número.
+    function wfFanoutAsk(phrase){
+      if(!currentSession||wfFanoutBusy) return;
+      const marcadas=wfFanoutList();
+      wfFanoutBusy=true;
+      // `phrase` só acompanha o pedido quando NADA está marcado. Mandar as duas deixaria o Hub
+      // escolher — e o épico já escolheu: lista selecionada manda.
+      tx(marcadas.length
+        ? {t:'task_fanout_plan',sessionId:currentSession,selected:marcadas}
+        : {t:'task_fanout_plan',sessionId:currentSession,phrase:String(phrase||'')});
+      toast(marcadas.length?('Preparando '+marcadas.length+' subsessão(ões)…'):'Interpretando a frase…');
+    }
+    async function wfFanoutPlanArrived(m){
+      wfFanoutBusy=false;
+      if(!m.ok){ wfFanoutPlan=null; toast(m.question||m.error||'Não deu para montar a lista de subsessões.',{duration:12000}); return; }
+      wfFanoutPlan=m;
+      const interp=m.origin==='interpretation';
+      // A confirmação diz o NÚMERO antes de existir qualquer sessão, e separa "você marcou" de "eu
+      // interpretei" — abrir por palpite sem esse aviso é o modo de falha que a fatia evita.
+      const head=(m.confirm||'')+(interp?('\n\nIsto é INTERPRETAÇÃO da frase: “'+String(m.interpretedFrom||'').slice(0,160)+'”. Você não marcou nenhum item.'):'');
+      const ok=await dialog({title:head,okText:'Abrir '+(m.tasks||[]).length,cancelText:'Cancelar'});
+      if(!ok){ wfFanoutPlan=null; toast('Nenhuma subsessão foi aberta.'); return; }
+      tx({t:'task_fanout_open',planId:m.planId});
+    }
+    function wfFanoutOpened(m){
+      const plan=wfFanoutPlan; wfFanoutPlan=null; wfFanoutBusy=false;
+      if(!m.ok){ toast('Abrir subsessões: '+(m.error||'falhou'),{duration:12000}); return; }
+      const abertas=m.sessions||[];
+      // Cada filha nasce com a SUA tarefa armada — é o mesmo mecanismo de armar de uma tarefa só,
+      // aplicado por sessão. Sem isso, a subsessão saberia o título e esqueceria a tarefa.
+      const runner=m.runnerId||'local';
+      abertas.forEach((s,i)=>{
+        const t=(plan&&plan.tasks&&plan.tasks[i])||{};
+        try{ const all=JSON.parse(localStorage.getItem('jarvis_task_arm')||'{}');
+          all[runner+' '+s.sessionId]={task:{tracker:s.tracker||t.tracker||'local',key:s.key||t.key||'',title:s.title},meta:{description:t.description||''},label:s.title};
+          localStorage.setItem('jarvis_task_arm',JSON.stringify(all)); }catch(e){}
+      });
+      wfFanoutClear();
+      toast(abertas.length+' subsessão(ões) aberta(s)'+(m.origin==='interpretation'?' por interpretação':'')+' — abra pela lista de conversas.',{duration:12000});
+      if(wfPopIsOpen()){ closePop(); togglePop(E.wfStepBtn,buildWfStepPop); }
+    }
     function wfSessionRuns(){ return (wfRunsAll||[]).filter(r=>r.status==='active'&&(r.sessions||[]).includes(currentSession)); }
     const WF_ICON={pending:'○',done:'✓',skipped:'⤼'};
     // Rótulo curto para a trilha ("0 — Escopo" → ESCOPO, "GATE — revisão" → GATE). O título inteiro fica
@@ -5426,6 +5566,47 @@
         const del=e.target.closest&&e.target.closest('.wfc-del'); if(del){ tx({t:'task_connection_delete',id:del.dataset.id}); return; }
       });
     }
+    // Uma linha da lista de tarefas: a MARCA (fatia I) e o corpo que arma UMA tarefa. São dois
+    // botões porque são duas decisões diferentes — juntar num clique só faria "marcar 3" ser
+    // impossível sem antes armar (e desarmar) cada uma.
+    function wfTaskPick(p,task,html,onArm){
+      const on=wfFanoutHas(task);
+      const row=document.createElement('div'); row.className='wf-pick'; row.style.cssText='display:flex;align-items:center;gap:2px';
+      const mark=document.createElement('button'); mark.type='button'; mark.className='wfact wf-fanmark'; mark.style.cssText='flex:none;font-size:13px;padding:2px 4px';
+      mark.textContent=on?'☑':'☐'; mark.setAttribute('aria-pressed',String(on));
+      mark.title='Marcar esta tarefa para abrir uma subsessão (dá para marcar várias)';
+      mark.onclick=(ev)=>{ ev.stopPropagation(); wfFanoutToggle(task); replaceOpenPop(E.wfStepBtn,buildWfStepPop); };
+      const b=document.createElement('button'); b.type='button'; b.className='opt'; b.style.cssText='flex:1;min-width:0';
+      b.innerHTML=html; b.onclick=onArm;
+      row.appendChild(mark); row.appendChild(b); p.appendChild(row);
+      return row;
+    }
+    // A ação de abrir N subsessões. Só existe quando há o que abrir, e NUNCA abre daqui: manda o Hub
+    // decidir e devolver o número — a confirmação acontece depois, com a lista na mão.
+    function wfFanoutRow(p,phraseInput){
+      const marcadas=wfFanoutList();
+      const row=document.createElement('div'); row.className='wf-fanrow'; row.style.cssText='display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:2px 2px 6px';
+      const go=document.createElement('button'); go.type='button'; go.className='wfact wf-fango';
+      go.style.cssText='outline:1px solid var(--accent,#6ea8fe);padding:3px 8px';
+      go.textContent=marcadas.length?('▶ Abrir '+marcadas.length+(marcadas.length>1?' subsessões':' subsessão')):'▶ Interpretar e abrir';
+      go.title=marcadas.length
+        ? 'Abre uma conversa por tarefa marcada, ligada a esta. Você confirma o número antes.'
+        : 'Nada marcado: o Jarvis interpreta a frase acima e diz quantas tarefas viu — você confirma antes de abrir.';
+      go.onclick=()=>{ wfFanoutAsk(phraseInput?phraseInput.value:''); };
+      row.appendChild(go);
+      if(marcadas.length){
+        const clr=document.createElement('button'); clr.type='button'; clr.className='wfact wf-fanclear'; clr.textContent='limpar marcas';
+        clr.onclick=()=>{ wfFanoutClear(); replaceOpenPop(E.wfStepBtn,buildWfStepPop); };
+        row.appendChild(clr);
+      }
+      const hint=document.createElement('span'); hint.className='mut wf-fanhint'; hint.style.cssText='font-size:11px';
+      // O rótulo diz qual das duas fontes está valendo AGORA. É o aviso que impede alguém achar que a
+      // frase digitada entrou junto com os itens marcados.
+      hint.textContent=marcadas.length?'seleção manda — a frase acima é ignorada':'sem marcas: vira interpretação';
+      row.appendChild(hint);
+      p.appendChild(row);
+      return row;
+    }
     // ── Tarefa no fluxo (F1): colar chave/URL, escolher arquivo local de feature, e a fonte do
     // projeto (lembrada por pasta). A tarefa ARMADA vale para o próximo fluxo iniciado na sessão.
     function buildWfTaskSection(p){
@@ -5441,6 +5622,9 @@
       ok.onclick=()=>{ const v=inp.value.trim(); wfTaskArmSet(v?{input:v,label:v}:null); closePop(); toast(v?'Tarefa armada para o próximo fluxo.':'Tarefa desarmada.'); };
       inp.onkeydown=(ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); ok.onclick(); } };
       row.appendChild(inp); row.appendChild(ok); p.appendChild(row);
+      // Fatia I: a porta do fan-out fica colada no campo de frase porque é ele que alimenta o caminho
+      // da INTERPRETAÇÃO; as marcas vêm das listas abaixo e mudam o rótulo do botão no mesmo lugar.
+      wfFanoutRow(p,inp);
       p.appendChild(ph('Fonte do projeto'));
       const srcRow=document.createElement('div'); srcRow.style.cssText='display:flex;gap:4px;flex-wrap:wrap;padding:2px 2px 8px';
       ['local','mcp','github','jira','linear',''].forEach(src=>{
@@ -5483,12 +5667,12 @@
           if(wfLocalErr){ const e=document.createElement('div'); e.className='mut'; e.style.cssText='font-size:11.5px;padding:0 2px 6px;color:#f5b544'; e.textContent='\u26A0 '+wfLocalErr; p.appendChild(e); }
           else if(!wfLocalFiles.length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent=viaMcp?('O servidor '+(wfLocalDir||'MCP')+' não devolveu tarefas.'):('Nenhum .md em '+wfLocalDir+'.'); p.appendChild(d); }
           wfLocalFiles.slice(0,30).forEach(f=>{
-            const b=document.createElement('button'); b.type='button'; b.className='opt';
-            b.innerHTML='• '+esc(f.title)+' <span class="r mono" style="font-size:10px">'+esc(viaMcp?f.key:f.key.split('/').pop())+'</span>';
             // O rastreador da tarefa é a fonte de onde ela veio: "local" para arquivo, "mcp" para
             // servidor. Carimbar tudo como local faria a tarefa mentir a própria origem.
-            b.onclick=()=>{ wfLocalShow=false; wfTaskArmSet({task:{tracker:viaMcp?'mcp':'local',key:f.key,title:f.title},meta:{description:f.description||''},label:f.title}); closePop(); toast('Tarefa armada: '+f.title); };
-            p.appendChild(b);
+            const task={tracker:viaMcp?'mcp':'local',key:f.key,title:f.title,description:f.description||''};
+            wfTaskPick(p,task,'• '+esc(f.title)+' <span class="r mono" style="font-size:10px">'+esc(viaMcp?f.key:f.key.split('/').pop())+'</span>',()=>{
+              wfLocalShow=false; wfTaskArmSet({task:{tracker:task.tracker,key:f.key,title:f.title},meta:{description:f.description||''},label:f.title}); closePop(); toast('Tarefa armada: '+f.title);
+            });
           });
         }
       }
@@ -5550,10 +5734,10 @@
           if(sr&&!sr.busy&&sr.sessionId===currentSession){
             if(sr.error){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px;color:#f5b544'; d.textContent=sr.error; p.appendChild(d); }
             (sr.results||[]).slice(0,8).forEach(it=>{
-              const b=document.createElement('button'); b.type='button'; b.className='opt';
-              b.innerHTML=esc(it.key)+' · '+esc(String(it.title||'').slice(0,60))+(it.state?' <span class="r">'+esc(it.state)+'</span>':'');
-              b.onclick=()=>{ wfSearchResults=null; wfTaskArmSet({task:{tracker:it.tracker,key:it.key,title:it.title,url:it.url},meta:{title:it.title,description:it.description||'',url:it.url||''},label:it.key+' · '+it.title}); closePop(); toast('Tarefa armada: '+it.key); };
-              p.appendChild(b);
+              const task={tracker:it.tracker,key:it.key,title:it.title,description:it.description||'',url:it.url||''};
+              wfTaskPick(p,task,esc(it.key)+' · '+esc(String(it.title||'').slice(0,60))+(it.state?' <span class="r">'+esc(it.state)+'</span>':''),()=>{
+                wfSearchResults=null; wfTaskArmSet({task:{tracker:it.tracker,key:it.key,title:it.title,url:it.url},meta:{title:it.title,description:it.description||'',url:it.url||''},label:it.key+' · '+it.title}); closePop(); toast('Tarefa armada: '+it.key);
+              });
             });
           }
         }

@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -470,6 +470,20 @@ function sessionTaskSource(runnerId: string, sessionId: string) {
   const cwd = sessionProjectDir(runnerId, sessionId);
   const binding = cwd ? projectTasks.get(cwd) : undefined;
   return { cwd, binding, source: resolveTaskSource({ projectDir: cwd, binding: binding || null, connections: taskConnections.list() }) };
+}
+/**
+ * Planos de fan-out aguardando confirmação (fatia I). Vive em memória de propósito: um plano não
+ * confirmado não é estado do produto, e sobreviver a um restart faria o Hub abrir sessões a partir de
+ * uma lista que o usuário não tem mais na tela. Guardar o plano (em vez de reaproveitar a lista que o
+ * cliente reenviaria) é o que impede trocar as tarefas entre confirmar e abrir.
+ */
+const FANOUT_PLAN_TTL_MS = 10 * 60_000;
+const fanoutPlans = new Map<string, { sessionId: string; runnerId: string; res: FanoutResolution; at: number }>();
+function pruneFanoutPlans(): void {
+  const cutoff = Date.now() - FANOUT_PLAN_TTL_MS;
+  for (const [id, plan] of fanoutPlans) if (plan.at < cutoff) fanoutPlans.delete(id);
+  // Teto duro: um cliente em loop não pode transformar o cache de confirmação em vazamento.
+  if (fanoutPlans.size > 200) for (const id of [...fanoutPlans.keys()].slice(0, fanoutPlans.size - 200)) fanoutPlans.delete(id);
 }
 /** Resolução da regra de ouro para UMA sessão: cwd → vínculo → conexão (nunca conta padrão).
  *  `runnerId` é a máquina onde a sessão roda: sem ele, uma sessão remota resolveria o vínculo pela
@@ -6748,6 +6762,74 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       } catch (e: any) { send(ws, { t: "error", message: "Tarefas locais: " + String(e?.message ?? e) }); }
       return;
     }
+    // ── Fatia I: 1..N tarefas → 1..N subsessões ───────────────────────────────────────────────────
+    // DOIS passos de propósito. Abrir N conversas é ação com efeito, e N pode vir de um palpite do
+    // modelo: `task_fanout_plan` só DECIDE e devolve a lista (nada é criado), `task_fanout_open`
+    // executa um plano que o Hub já emitiu. Num passo só, a confirmação do usuário seria decorativa.
+    if (msg.t === "task_fanout_plan" && typeof msg.sessionId === "string") {
+      if (!requireOwner(ws)) return;
+      const refuse = (error: string): void => { send(ws, { t: "task_fanout_plan", sessionId: msg.sessionId, ok: false, tasks: [], error }); };
+      // A recusa de máquina remota vem ANTES de decidir: interpretar primeiro e recusar na hora de
+      // abrir cobraria uma chamada de modelo por um pedido que nunca poderia ser atendido.
+      if (activeRunner(ws) !== LOCAL_ID) { refuse("abrir subsessões ainda só funciona em sessão desta máquina (o Hub)"); return; }
+      // O modelo é chamado UMA vez, e só por dentro de resolveFanoutTasks: é a porta única que faz o
+      // "zero chamadas com item marcado" ser uma propriedade do código, não uma promessa do comentário.
+      const interpret = async (prompt: string): Promise<string> => {
+        const a = summaryAgent();
+        const opts = await compatibleAgentOpts(a, summaryCfg.model, summaryCfg.effort);
+        const r = (a.oneShot ? await a.oneShot(prompt, opts) : await a.send("__taskfanout__", prompt, CWD, opts)) as { text?: string; usage?: any };
+        addUsage(`__taskfanout__:${msg.sessionId}`, a.name, r.usage);
+        return String(r?.text || "");
+      };
+      try {
+        const res = await resolveFanoutTasks({ selected: msg.selected, phrase: typeof msg.phrase === "string" ? msg.phrase : undefined }, interpret);
+        if (!res.ok) { send(ws, { t: "task_fanout_plan", sessionId: msg.sessionId, ok: false, tasks: [], question: res.question, error: res.reason, interpretedFrom: res.interpretedFrom }); return; }
+        const planId = randomUUID();
+        fanoutPlans.set(planId, { sessionId: msg.sessionId, runnerId: activeRunner(ws), res, at: Date.now() });
+        pruneFanoutPlans();
+        send(ws, { t: "task_fanout_plan", sessionId: msg.sessionId, ok: true, planId, origin: res.origin, tasks: res.tasks, interpretedFrom: res.interpretedFrom, confirm: fanoutConfirmText(res) });
+      } catch (e: any) { refuse("Abrir subsessões: " + String(e?.message ?? e)); }
+      return;
+    }
+    if (msg.t === "task_fanout_open" && typeof msg.planId === "string") {
+      if (!requireOwner(ws)) return;
+      const fail = (error: string): void => { send(ws, { t: "task_fanout_opened", ok: false, sessions: [], error }); };
+      const plan = fanoutPlans.get(msg.planId);
+      // Plano expirado NÃO é reinterpretado aqui: recriar a lista na hora de abrir devolveria uma
+      // lista que ninguém confirmou. O usuário revê e confirma de novo.
+      if (!plan || Date.now() - plan.at > FANOUT_PLAN_TTL_MS) { fanoutPlans.delete(msg.planId); fail("o plano expirou — confirme de novo quantas subsessões abrir"); return; }
+      fanoutPlans.delete(msg.planId);   // um plano confirmado abre UMA vez (duplo clique não duplica sessão)
+      const parent = store.get(plan.sessionId);
+      // Só na máquina do Hub: a sessão de um runner remoto vive no disco DELE, e criar a filha aqui
+      // colocaria a subsessão numa máquina que não é a do projeto — o engano que a fatia C tirou da
+      // listagem. Recusa com motivo é melhor que abrir no lugar errado.
+      if (plan.runnerId !== LOCAL_ID) { fail("abrir subsessões ainda só funciona em sessão desta máquina (o Hub)"); return; }
+      if (!parent) { fail("a sessão de origem não existe mais"); return; }
+      if (store.isHidden(plan.sessionId)) { fail("sessão interna não abre subsessões"); return; }
+      const cwd = parent.cwd || CWD;
+      const opened: Array<{ sessionId: string; title: string; tracker: string; key: string }> = [];
+      for (const task of plan.res.tasks) {
+        const id = randomUUID();
+        // agent/cwd herdados da mãe: a subsessão é do MESMO projeto — deixar cair no default do Hub
+        // abriria a conversa da tarefa noutra pasta, com outra IA, sem ninguém pedir.
+        const child = store.ensure(id, { agent: parent.agent, cwd, title: task.title.slice(0, 60), parentSessionId: plan.sessionId });
+        store.add(id, { role: "assistant", text: fanoutSeedMessage(task, plan.res.origin || "selection", parent.title), ts: Date.now(), agent: "jarvis" });
+        opened.push({ sessionId: id, title: child.title, tracker: task.tracker, key: task.key });
+      }
+      // A mãe registra o que abriu. Sem isso, N conversas aparecem na lista e o histórico de quem as
+      // pediu não tem nenhuma linha sobre elas. Vai por `broadcast` (e não só para quem pediu) porque
+      // o recado é da CONVERSA: quem estiver com ela aberta noutro aparelho precisa ver na hora.
+      if (opened.length) {
+        const at = Date.now();
+        const text = fanoutParentMessage(plan.res, opened);
+        store.add(plan.sessionId, { role: "assistant", text, ts: at, agent: "jarvis" });
+        broadcast(plan.sessionId, { t: "message", message: { sessionId: plan.sessionId, role: "assistant", text, ts: at, agent: "jarvis" } });
+      }
+      auth.audit("task_fanout", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${plan.sessionId}: ${opened.length} subsessão(ões) · ${plan.res.origin}` });
+      pushSessions();
+      send(ws, { t: "task_fanout_opened", ok: true, sessionId: plan.sessionId, runnerId: LOCAL_ID, origin: plan.res.origin, sessions: opened, interpretedFrom: plan.res.interpretedFrom });
+      return;
+    }
     if (msg.t === "task_meta_get" && typeof msg.tracker === "string" && typeof msg.key === "string") {
       if (!requireOwner(ws)) return;
       send(ws, { t: "task_meta", tracker: msg.tracker, key: msg.key, meta: taskMeta.get(msg.tracker, msg.key) || null });
@@ -7680,6 +7762,52 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply, ts: Date.now(), agent: "jarvis" } });
       if (msg.speak) {
         try { const wav = await synthesize(reply, VOICE); send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: reply }); } catch { /* ignore */ }
+      }
+      return;
+    }
+
+    // G — declarar a fonte/pasta de tarefas do projeto por uma frase, sem abrir a gaveta.
+    //
+    // Fica ANTES de qualquer despacho para a IA de propósito: mandar a frase para o agente custaria
+    // crédito para, na melhor das hipóteses, ele responder que não sabe mexer no vínculo (o vínculo é
+    // do Hub, não da sessão). O reconhecimento é determinístico e mora no core — `null` significa
+    // "não é comigo" e o turno segue normal, que é o desfecho barato quando há dúvida.
+    // Só o dono declara fonte — mas para quem NÃO é dono a frase nem chega a ser comando: sequestrar
+    // o turno para responder "apenas o dono pode gerenciar dispositivos" (mensagem que nem fala de
+    // tarefas) engoliria a mensagem de um convidado por causa da forma dela. Sem dono, segue normal.
+    const sourceCommand = principalOf(ws)?.role === "owner" || !auth.AUTH_ENABLED ? parseTaskSourceCommand(text) : null;
+    if (sourceCommand) {
+      clearPendingInboundTurn(inboundKey);
+      if (!requireOwner(ws)) return;
+      // A pasta é a do projeto NA MÁQUINA da sessão. Resolver pelo cwd do Hub declararia a fonte de
+      // outro projeto — o mesmo engano que a fatia C tirou da listagem.
+      const taskRunnerId = activeRunner(ws);
+      // Na conversa da varinha não existe "este projeto": ela cairia no cwd do próprio Hub e
+      // declararia a fonte do repositório do Jarvis achando que era o do usuário.
+      const cwd = sid === WAKE_SESSION ? "" : sessionProjectDir(taskRunnerId, sid);
+      const planned = sid === WAKE_SESSION
+        ? { ok: false as const, error: "aqui eu não sei de qual projeto você está falando — abra a sessão do projeto e repita a frase lá" }
+        : planTaskSourceCommand({ command: sourceCommand, projectDir: cwd, current: (cwd ? projectTasks.get(cwd) : undefined) || null, connections: taskConnections.list() });
+      let reply: string;
+      if (!planned.ok) reply = `Fonte de tarefas: ${planned.error}.`;
+      else {
+        try {
+          const removed = planned.plan.remove;
+          // MESMA store (`projectTasks`) que alimenta `bindings` no frame de Configurações: é por ela
+          // ser a mesma que a tela reflete o que a frase fez, sem código de tela nenhum nesta fatia.
+          const binding = removed ? (projectTasks.remove(cwd), undefined) : projectTasks.set(cwd, planned.plan.binding!);
+          const decision = resolveTaskSource({ projectDir: cwd, binding: binding || null, connections: taskConnections.list() });
+          reply = formatTaskSourceConfirmation({ projectDir: cwd, decision, removed, connectionLabel: decision.connectionId ? taskConnections.get(decision.connectionId)?.label : undefined });
+          auth.audit("task_binding", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: taskRunnerId, detail: `${cwd}: ${removed ? "removido" : binding?.tracker || "nenhuma"} (chat)` });
+          // A gaveta desta sessão recebe o MESMO frame do botão da UI (a lista da fonte antiga é
+          // descartada por ele) e as outras telas recebem a difusão — um caminho só de verdade.
+          send(ws, { t: "task_binding", sessionId: sid, cwd, binding: binding || null, source: decision });
+          broadcastTaskConnections();
+        } catch (e: any) { reply = "Fonte de tarefas: " + String(e?.message ?? e); }
+      }
+      send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply, ts: Date.now(), agent: "jarvis" } });
+      if (msg.speak) {
+        try { const wav = await synthesize(reply, VOICE); send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: reply }); } catch { /* fala é best-effort; o texto já foi */ }
       }
       return;
     }

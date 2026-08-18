@@ -187,3 +187,34 @@ test("deleting a session removes its history file too", () => {
     assert.equal(existsSync(join(d, "sessions", "gone.jsonl")), false, "history file must be removed on delete");
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+// ── Fatia I: o vínculo mãe→filha precisa SOBREVIVER ao restart. Enquanto ele só existia no frame de
+// resposta, três subsessões viravam três conversas órfãs assim que a página recarregava.
+test("subsessões guardam a mãe e o vínculo sobrevive a um reload do Store", () => {
+  const d = dir();
+  try {
+    const s = new Store(DEF, d);
+    s.ensure("mae");
+    for (const id of ["f1", "f2", "f3"]) s.ensure(id, { title: id, parentSessionId: "mae" });
+    s.ensure("solta");
+
+    assert.equal(s.childrenOf("mae").length, 3);
+    assert.equal(s.childrenOf("solta").length, 0);
+
+    const reloaded = new Store(DEF, d);
+    assert.deepEqual(reloaded.childrenOf("mae").map((x) => x.id).sort(), ["f1", "f2", "f3"]);
+    assert.equal(reloaded.get("f1")?.parentSessionId, "mae");
+    assert.equal(reloaded.list().find((x) => x.id === "f2")?.parentSessionId, "mae", "a lista carrega o vínculo");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("ensure não reescreve a mãe de uma sessão que já existe", () => {
+  const d = dir();
+  try {
+    const s = new Store(DEF, d);
+    s.ensure("f", { parentSessionId: "mae-1" });
+    s.ensure("f", { parentSessionId: "mae-2" });
+    assert.equal(s.get("f")?.parentSessionId, "mae-1", "certidão de nascimento não se reemite");
+    assert.equal(s.childrenOf("mae-2").length, 0);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

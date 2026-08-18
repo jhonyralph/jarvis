@@ -16,6 +16,29 @@ o vínculo da Luby, não o do Desktop).
 Troque a fonte no chip 🧭 → **🎯 Tarefa** → **Fonte do projeto**. A lista muda na hora; o que estava
 na tela era da fonte antiga e é descartado.
 
+## Trocar pelo chat
+
+Uma frase na conversa do projeto também resolve, sem abrir gaveta nenhuma:
+
+```
+a fonte de tarefas deste projeto é a pasta docs/roadmap
+troca a fonte de tarefas deste projeto para jira da conta trabalho
+fonte de tarefas: mcp linear-local
+fonte de tarefas deste projeto: nenhuma
+```
+
+O Jarvis responde com o **caminho resolvido** e a fonte que passou a valer (`docs/./roadmap` volta
+como `docs/roadmap`) — nunca um "ok", porque "ok" não deixa você conferir se ficou valendo o que você
+quis. Pasta que escapa do projeto (`..`, caminho absoluto de outro lugar) é **recusada com o motivo**
+e nada é gravado. Fonte que ainda não pode servir é gravada e a resposta já diz o que falta (vincular
+a conta, por exemplo). O que a frase muda aparece na hora em **Configurações → 🎯 Tarefas**: é a
+mesma memória por pasta, difundida para todas as telas abertas.
+
+O reconhecimento é **determinístico, sem nenhuma IA no caminho** (declarar fonte não gasta crédito), e
+por isso é exigente: a frase precisa começar nomeando a configuração e o alvo precisa ser reconhecido
+por inteiro. Falar de tarefas, pasta ou Jira no meio de uma conversa — inclusive perguntando *"a fonte
+de tarefas deste projeto é o jira?"* — não muda nada: na dúvida o turno segue normal para a IA.
+
 Para ver **tudo que está ligado** de uma vez — sem abrir uma sessão em cada pasta — use
 **Configurações → 🎯 Tarefas**: as conexões do cofre com o estado de verificação (quem é a conta,
 quando foi verificada, se o segredo existe no ambiente), a fonte declarada por cada projeto (com
@@ -88,6 +111,30 @@ O resultado é cacheado por 60s por servidor (subir um processo a cada abertura 
 
 Requisitos de máquina: o runner precisa estar **online** e no protocolo atual — uma máquina
 desatualizada recusa com esse motivo em vez de deixar o Hub responder pelo disco errado.
+
+## Várias tarefas de uma vez → várias subsessões
+
+Na lista do painel cada item tem uma **marca** (☐). Marcadas 1..N tarefas, o botão **▶ Abrir N
+subsessões** abre uma conversa por tarefa, **ligada à conversa de onde você marcou** — o vínculo é
+gravado na sessão (sobrevive a recarregar a página e a reiniciar o Hub), a filha nasce com a tarefa
+já armada, e a mãe fica com um recado dizendo o que foi aberto.
+
+Duas fontes, nunca as duas juntas:
+
+| Situação | O que decide |
+|---|---|
+| Pelo menos um item marcado | **A sua seleção.** Nenhum modelo é consultado — o que estiver escrito no campo de texto é ignorado. |
+| Nenhum item marcado | **Interpretação:** o Jarvis lê a frase do campo e diz quantas tarefas viu. O resultado aparece marcado como interpretação, na confirmação e na primeira mensagem de cada filha. |
+
+- **Você confirma o número antes de qualquer sessão existir.** O pedido tem dois passos: o Hub só
+  *decide* a lista e devolve o plano; abrir acontece depois, com o plano confirmado. Um plano
+  confirmado abre **uma vez** (clicar duas vezes não vira o dobro de conversas).
+- **Sem certeza, o Jarvis pergunta.** Frase vaga, resposta em prosa ou lista vazia viram pergunta com
+  motivo — nunca um número chutado de sessões.
+- **Teto de 8 por vez.** Acima disso o pedido é recusado com motivo, e não truncado: cortar em
+  silêncio jogaria fora tarefa que você marcou.
+- Hoje só funciona em sessão **desta máquina** (o Hub). Numa sessão de máquina remota o pedido é
+  recusado com esse motivo, em vez de criar a subsessão na máquina errada.
 
 ## Fontes de provedor (GitHub, Jira, Linear, …)
 
