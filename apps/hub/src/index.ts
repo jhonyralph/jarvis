@@ -52,6 +52,7 @@ import { createBuiltInPersonalSources, createPersonalSourceFactory } from "./per
 import { createPersonalProactiveScheduler } from "./personalProactiveIntegration.js";
 import { preparePersonalTurnContext, type PreparedPersonalTurnContext } from "./personalTurnContext.js";
 import { PersonalSessionBindings, type PersonalSessionGeneration } from "./personalSessionBindings.js";
+import { PendingAskStore } from "./pendingAsks.js";
 import { ExecutionOwnershipStore } from "./executionOwnership.js";
 import { PendingRequestRegistry, SessionDispatchReservations, remoteErrorRoute, type PendingRequest, type SessionDispatchLease } from "./sessionIsolation.js";
 
@@ -923,16 +924,29 @@ const routeAborts = new Map<string, AbortController>();
 // and deliberately never blocks the composer or queue. A newer turn invalidates stale questions.
 const decisionKey = (runnerId: string, sid: string): string => runnerId + "\0" + sid;
 const asking = new Map<string, string>();
-const pendingAsk = new Map<string, { runnerId: string; sessionId: string; questions: unknown[] }>();
+// A pergunta pendente é do Hub e da PESSOA: em memória ela morria no restart, e só existia para quem
+// estava com a sessão aberta. Ver docs/specs/TSK-10-pending-decision-reaches-you.md.
+const pendingAsks = new PendingAskStore(join(JARVIS_DIR, "hub", "pending-asks.json"));
+/** Aviso ENXUTO (sem o texto das perguntas) para todo cliente que pode abrir a sessão — inclusive
+ *  quem está olhando outra. Espalhar o conteúdo resolveria o aviso criando um vazamento. */
+function broadcastAskState(runnerId: string, sid: string, count: number | null, at?: number): void {
+  const frame = count === null
+    ? { t: "ask_cleared", runnerId, sessionId: sid }
+    : { t: "ask_pending", runnerId, sessionId: sid, count, at: at || Date.now() };
+  const raw = JSON.stringify(frame);
+  for (const c of clientsOn(runnerId)) if (c.readyState === c.OPEN && canAccessSession(c, runnerId, sid)) c.send(raw);
+}
 function clearPendingAsk(runnerId: string, sid: string): void {
-  const key = decisionKey(runnerId, sid), wasAsking = asking.delete(key), wasPending = pendingAsk.delete(key), changed = wasAsking || wasPending;
-  if (changed) broadcastOn(runnerId, sid, { t: "ask_cleared", runnerId, sessionId: sid });
+  const key = decisionKey(runnerId, sid), wasAsking = asking.delete(key);
+  let wasPending = false;
+  try { wasPending = pendingAsks.remove(runnerId, sid); } catch { /* disco travado não pode travar o turno */ }
+  if (wasAsking || wasPending) broadcastAskState(runnerId, sid, null);
 }
 /** Resend pending analysis/questions to a client that just (re)opened the exact machine/session. */
 function sendPendingAsk(ws: WebSocket, runnerId: string, sid: string): void {
   const key = decisionKey(runnerId, sid);
   if (asking.has(key)) send(ws, { t: "asking", runnerId, sessionId: sid, on: true });
-  const pa = pendingAsk.get(key); if (pa) send(ws, { t: "ask", runnerId, sessionId: sid, questions: pa.questions });
+  const pa = pendingAsks.get(runnerId, sid); if (pa) send(ws, { t: "ask", runnerId, sessionId: sid, questions: pa.questions });
 }
 // runs/sessions are per-machine: only clients viewing the LOCAL machine get local ones.
 function broadcastRuns(): void {
@@ -2169,10 +2183,12 @@ function relayRunner(rc: RunnerConn, m: any): void {
           for (const c of clientsOn(rc.id)) if (subs.get(c) === sid && canAccessSession(c, rc.id, sid)) send(c, { t: "tts", runnerId: rc.id, sessionId: sid, audio: wav.toString("base64"), text: replyText });
         } catch { /* TTS is best-effort. */ }
       })();
-      notifyEvent("done", `${label} · sessão concluída`, replyText, sid, notificationTargetForSession(rc.id, sid));
+      const askTarget = notificationTargetForSession(rc.id, sid);
+      // Uma notificação por turno: quem decide entre "concluída" e "decisão esperando" é a runAsking.
+      void runAsking(rc.id, sid, replyText, { title: `${label} · sessão`, target: askTarget, done: () => notifyEvent("done", `${label} · sessão concluída`, replyText, sid, askTarget) });
     }
     else if (event.kind === "failed") notifyEvent("error", `${label} · falhou`, event.text || "", sid, notificationTargetForSession(rc.id, sid));
-    if (event.kind === "completed") { void runAsking(rc.id, sid, event.text || ""); void indexRunnerSession(rc, sid); }
+    if (event.kind === "completed") void indexRunnerSession(rc, sid);
     return;
   }
   if (m.t === "activity_committed") {
@@ -4376,8 +4392,11 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
       catch (error) { throw new Error(`native session alias ownership conflict: ${String((error as Error)?.message || error)}`); }
       broadcast(sid, { t: "session", sessionId: sid, nativeId });
     }
-    notifyEvent("done", store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis"), reply.text, sid, notificationTargetForSession(LOCAL_ID, sid));
-    void runAsking(LOCAL_ID, sid, reply.text);
+    {
+      const askTitle = store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis");
+      const askTarget = notificationTargetForSession(LOCAL_ID, sid);
+      void runAsking(LOCAL_ID, sid, reply.text, { title: askTitle, target: askTarget, done: () => notifyEvent("done", askTitle, reply.text, sid, askTarget) });
+    }
     // A subagent's internal tool calls only exist while the turn is live (Claude Code writes no
     // recoverable trace of them to disk once done — verified: Task's toolUseResult.outputFile is
     // never populated). The buffered stream events ARE that trace; hand them back so the caller can
@@ -4698,19 +4717,37 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
 }
 /** Post-turn decision flow: publish non-blocking analysis state, then keep any questions available
  *  for every device that opens this exact machine/session. A newer turn invalidates the generation. */
-async function runAsking(runnerId: string, sid: string, replyText: string): Promise<void> {
+/** Uma notificação por turno: o "concluído" espera saber se sobrou decisão pendente. `ASK_NOTIFY_CAP_MS`
+ *  existe para o aviso nunca ficar refém da detecção — estourou o teto, sai "concluído", e a decisão
+ *  vira um segundo aviso (o único caso de dois, documentado no spec TSK-10). */
+const ASK_NOTIFY_CAP_MS = 20_000;
+interface AskNotify { done: () => void; title: string; target?: PushActor }
+async function runAsking(runnerId: string, sid: string, replyText: string, notify?: AskNotify): Promise<void> {
   const key = decisionKey(runnerId, sid), generation = randomUUID();
   asking.set(key, generation);
   broadcastOn(runnerId, sid, { t: "asking", runnerId, sessionId: sid, on: true });
+  let notified = false;
+  const notifyOnce = (fn?: () => void): void => { if (notified || !fn) return; notified = true; fn(); };
+  const cap = notify ? setTimeout(() => notifyOnce(notify.done), ASK_NOTIFY_CAP_MS) : undefined;
   try {
     const questions = await detectDecisions(replyText);
     if (asking.get(key) !== generation) return;
     if (questions.length) {
-      pendingAsk.set(key, { runnerId, sessionId: sid, questions });
-      broadcastOn(runnerId, sid, { t: "ask", runnerId, sessionId: sid, questions });
-    }
-  } catch { /* ignore */ }
+      const principalId = captureSessionOwnerGeneration(runnerId, sid).principalId || auth.OWNER_IDENTITY;
+      try {
+        const row = pendingAsks.set({ runnerId, sessionId: sid, principalId, questions });
+        broadcastOn(runnerId, sid, { t: "ask", runnerId, sessionId: sid, questions });
+        broadcastAskState(runnerId, sid, questions.length, row.at);
+      } catch (error) { console.warn("[ask] não foi possível guardar a decisão pendente:", String((error as Error)?.message || error)); }
+      if (notify) {
+        const body = questions.length === 1 ? "1 decisão esperando você" : `${questions.length} decisões esperando você`;
+        const sendAsk = (): void => notifyEvent("ask", notify.title, body, sid, notify.target);
+        if (notified) sendAsk(); else notifyOnce(sendAsk);
+      }
+    } else notifyOnce(notify?.done);
+  } catch { notifyOnce(notify?.done); }
   finally {
+    if (cap) clearTimeout(cap);
     if (asking.get(key) === generation) {
       asking.delete(key);
       broadcastOn(runnerId, sid, { t: "asking", runnerId, sessionId: sid, on: false });

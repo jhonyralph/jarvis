@@ -51,3 +51,12 @@ test("grouped notifications summarize the latest events within the soft payload 
   assert.doesNotMatch(p.body, /^Ok: A/);
   assert.ok(payloadBytes(p) <= NOTIFICATION_LIMITS.jarvisSoftPayloadBytes);
 });
+
+// TSK-10: o texto tem que dizer que o trabalho PAROU esperando decisão. "Concluído" é a mensagem
+// errada — foi exatamente o que confundiu o usuário: sessão travada anunciada como pronta.
+test("payload de ask fala em decisão esperando, não em conclusão", () => {
+  const payload = formatPushPayload("ask", "Refatorar o cofre", "2 decisões esperando você", "s-1");
+  assert.match(payload.title, /decis/i, "o título precisa dizer do que se trata");
+  assert.doesNotMatch(payload.title, /conclu/i, "não pode se passar por aviso de conclusão");
+  assert.match(payload.body, /Refatorar o cofre/, "diz QUAL sessão está esperando");
+});

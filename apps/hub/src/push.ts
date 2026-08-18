@@ -14,9 +14,11 @@ import { writeJsonAtomic } from "@jarvis/core";
 import { MobilePush, type MobilePushTarget } from "./mobilePush.js";
 import { cleanNotifyText, formatGroupedPushPayload, formatPushPayload, type NotifyKind } from "./notifyFormat.js";
 
-export interface PushPrefs { events: NotifyKind[]; mode: "each" | "grouped"; everyMin: number }
+export interface PushPrefs { events: NotifyKind[]; mode: "each" | "grouped"; everyMin: number; v?: number }
 export interface PushActor extends MobilePushTarget {}
-const DEFAULT_PREFS: PushPrefs = { events: ["done", "error"], mode: "each", everyMin: 15 };
+const DEFAULT_PREFS: PushPrefs = { events: ["done", "error", "ask"], mode: "each", everyMin: 15 };
+/** Sobe quando um tipo de evento novo aparece: separa "preferência antiga" de "o usuário desligou". */
+const PREFS_VERSION = 2;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 
@@ -63,9 +65,15 @@ function authenticatedDeviceSnapshot(devices: Iterable<Required<PushActor>> | nu
 /** Normalize whatever prefs a client sent into a valid PushPrefs — applied at BOTH read and write. */
 export function normalizePrefs(sub: any): PushPrefs {
   const p = sub?.prefs || {};
-  const events = Array.isArray(p.events) ? p.events.filter((e: string) => ["done", "error", "machine", "personal"].includes(e)) : DEFAULT_PREFS.events;
+  const known = ["done", "error", "machine", "personal", "ask"];
+  const events: NotifyKind[] = Array.isArray(p.events) ? p.events.filter((e: string) => known.includes(e)) : [...DEFAULT_PREFS.events];
+  // `ask` nasceu depois. Uma preferência gravada ANTES dele (sem marca de versão) que já aceitava
+  // `done` passa a aceitar `ask`: "terminou e precisa de você" é um subconjunto de "terminou", então
+  // herdar é fiel à escolha original — e sem isso o aviso entraria mudo em todo aparelho já inscrito.
+  // Com a marca de versão, a ausência vira escolha explícita do usuário e é respeitada.
+  if ((Number(p.v) || 0) < PREFS_VERSION && events.includes("done") && !events.includes("ask")) events.push("ask");
   const everyMin = Math.min(240, Math.max(1, Number(p.everyMin) || DEFAULT_PREFS.everyMin));
-  return { events, mode: p.mode === "grouped" ? "grouped" : "each", everyMin };
+  return { events, mode: p.mode === "grouped" ? "grouped" : "each", everyMin, v: PREFS_VERSION };
 }
 /** Keep ONLY the canonical web-push fields — a subscription is client-supplied and was persisted
  *  verbatim, so extra keys used to land on disk. Returns null for a malformed sub (endpoint + the

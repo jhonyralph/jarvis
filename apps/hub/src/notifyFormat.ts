@@ -1,4 +1,4 @@
-export type NotifyKind = "done" | "error" | "machine" | "personal";
+export type NotifyKind = "done" | "error" | "machine" | "personal" | "ask";
 
 export interface PushNotificationPayload {
   title: string;
@@ -119,6 +119,11 @@ export function formatPushPayload(kind: NotifyKind, title: string, body: string,
   if (kind === "done") {
     outTitle = /teste de notific/i.test(cleanTitle) ? "Jarvis · teste" : "Jarvis · concluído";
     outBody = doneBody(cleanTitle, cleanBody);
+  } else if (kind === "ask") {
+    // O turno acabou mas o trabalho NÃO: anunciar isso como "concluído" foi exatamente o que fez o
+    // usuário perder horas achando que estava tudo certo enquanto a sessão esperava por ele.
+    outTitle = "Jarvis · decisão esperando";
+    outBody = clipChars([cleanTitle, cleanBody].filter(Boolean).join(" — "), NOTIFICATION_LIMITS.bodyChars);
   } else if (kind === "error") {
     outTitle = "Jarvis · falhou";
     outBody = compactError(cleanTitle, cleanBody);
@@ -138,7 +143,7 @@ export function formatGroupedPushPayload(items: GroupedNotifyItem[]): PushNotifi
   const safe = items.map((i) => ({ kind: i.kind, title: cleanNotifyText(i.title), body: cleanNotifyText(i.body) })).filter((i) => i.title || i.body);
   const n = safe.length;
   const lines = safe.slice(-4).map((i) => {
-    const prefix = i.kind === "error" ? "Falha" : i.kind === "machine" ? "Sistema" : i.kind === "personal" ? "Sugestão" : "Ok";
+    const prefix = i.kind === "ask" ? "Decisao" : i.kind === "error" ? "Falha" : i.kind === "machine" ? "Sistema" : i.kind === "personal" ? "Sugestão" : "Ok";
     return `${prefix}: ${i.title || i.body}`;
   });
   const payload: PushNotificationPayload = {

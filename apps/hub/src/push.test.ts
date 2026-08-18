@@ -22,10 +22,11 @@ test("sanitizeSub rejects malformed subscriptions", () => {
 });
 
 test("normalizePrefs defaults, filters unknown events, and clamps the interval", () => {
-  assert.deepEqual(normalizePrefs({}), { events: ["done", "error"], mode: "each", everyMin: 15 });
+  // TSK-10: o padrão passou a incluir `ask`, e `v` marca a versão das preferências (separa legado de escolha).
+  assert.deepEqual(normalizePrefs({}), { events: ["done", "error", "ask"], mode: "each", everyMin: 15, v: 2 });
   assert.deepEqual(
     normalizePrefs({ prefs: { events: ["done", "bogus", "machine"], mode: "grouped", everyMin: 9999 } }),
-    { events: ["done", "machine"], mode: "grouped", everyMin: 240 },
+    { events: ["done", "machine", "ask"], mode: "grouped", everyMin: 240, v: 2 },
   );
   assert.equal(normalizePrefs({ prefs: { everyMin: 0 } }).everyMin, 15, "everyMin 0 is falsy → default");
   assert.equal(normalizePrefs({ prefs: { everyMin: 0.5 } }).everyMin, 1, "a positive sub-1 value floors to 1");
@@ -132,4 +133,29 @@ test("push persistence uses private POSIX modes", { skip: process.platform === "
   chmodSync(join(dir, "vapid.json"), 0o644);
   new PushCenter(dir);
   assert.equal(statSync(join(dir, "vapid.json")).mode & 0o777, 0o600, "existing private-key files are tightened on load");
+});
+
+// TSK-10: "terminou" e "terminou e precisa de você" são avisos diferentes. O tipo novo `ask` não
+// pode nascer desligado em quem já tinha assinatura — senão a feature entra muda e ninguém percebe.
+test("normalizePrefs aceita o tipo ask", () => {
+  const prefs = normalizePrefs({ prefs: { events: ["ask", "error"], v: 2 } });
+  assert.deepEqual(prefs.events, ["ask", "error"]);
+});
+
+test("assinatura antiga que aceita done herda ask", () => {
+  // Sem marca de versão = preferência gravada antes de o tipo existir.
+  const herdada = normalizePrefs({ prefs: { events: ["done", "error"] } });
+  assert.ok(herdada.events.includes("ask"), "quem queria saber que terminou quer saber que está travado");
+  assert.ok(herdada.events.includes("done"), "e continua recebendo o que já recebia");
+});
+
+test("assinatura antiga que NÃO aceita done não herda ask", () => {
+  const semDone = normalizePrefs({ prefs: { events: ["machine"] } });
+  assert.equal(semDone.events.includes("ask"), false, "herdar aqui seria inventar consentimento");
+});
+
+test("desligar ask explicitamente é respeitado", () => {
+  // Com marca de versão, a ausência é escolha do usuário — não legado.
+  const desligado = normalizePrefs({ prefs: { events: ["done", "error"], v: 2 } });
+  assert.equal(desligado.events.includes("ask"), false, "a marca de versão separa legado de escolha");
 });
