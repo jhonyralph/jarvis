@@ -89,6 +89,11 @@ function fakeEl(tag = "div"): any {
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
     textContent: "", value: "", title: "", checked: false, disabled: false,
     scrollHeight: 0, clientHeight: 0, scrollTop: 0, offsetHeight: 0, parentNode: null,
+    // O log do framework poda a lista por `childNodes`/`lastChild`: sem estes espelhos, QUALQUER
+    // frame que passe por fwLog (workflow_list, inventário) estoura antes da asserção.
+    get childNodes() { return el.children; },
+    get firstChild() { return el.children[0] || null; },
+    get lastChild() { return el.children[el.children.length - 1] || null; },
     appendChild(c: any) { el.children.push(c); if (c) c.parentNode = el; return c; },
     removeChild(c: any) { el.children = el.children.filter((x: any) => x !== c); return c; },
     insertBefore(c: any) { el.children.push(c); return c; },
@@ -100,7 +105,12 @@ function fakeEl(tag = "div"): any {
     },
     append() {}, remove() {}, focus() {}, blur() {}, click() {}, scrollIntoView() {},
     setAttribute() {}, removeAttribute() {}, getAttribute: () => null, hasAttribute: () => false,
-    addEventListener() {}, removeEventListener() {}, requestSubmit() {}, closest: () => null,
+    // Listeners DELEGADOS ficam guardados: a faixa do fluxo trata quase tudo por delegação
+    // (`E.wfRun.addEventListener('click', …)`), e um stub que engole o registro deixa metade dos
+    // gestos da faixa — iniciar, alternar o auto-início, encolher — sem como ser exercitada.
+    _on: {} as Record<string, any[]>,
+    addEventListener(type: string, fn: any) { (el._on[type] = el._on[type] || []).push(fn); },
+    removeEventListener() {}, requestSubmit() {}, closest: () => null,
     querySelector: () => fakeEl(), querySelectorAll: () => [], getBoundingClientRect: () => ({ top: 0, bottom: 0, height: 0, width: 0 }),
   };
   // Real accessor: `el.innerHTML = ''` is how the client clears a list before re-rendering, so the
@@ -710,6 +720,32 @@ function wfRunFixture(over: any = {}): any {
   };
 }
 function bandHtml(client: any): string { return String(client.el("wfRun").innerHTML || ""); }
+/** Todo elemento montado dentro da faixa. O corpo do painel é construído com createElement/appendChild
+ *  (não com innerHTML), então `bandHtml` sozinho enxerga só o cabeçalho. */
+function barNodes(client: any): any[] {
+  const out: any[] = [];
+  const walk = (el: any): void => { for (const c of el.children || []) { out.push(c); walk(c); } };
+  walk(client.el("wfRun"));
+  return out;
+}
+/** Texto de tudo que a faixa mostra — cabeçalho (innerHTML) + corpo (nós construídos). */
+function barText(client: any): string {
+  return [bandHtml(client), ...barNodes(client).map((n) => `${n.innerHTML || ""} ${n.textContent || ""} ${n.title || ""}`)].join(" ");
+}
+/** O primeiro botão do corpo cujo rótulo casa — é assim que o teste "clica" no que foi construído. */
+function barButton(client: any, re: RegExp): any {
+  return barNodes(client).find((n) => n.tagName === "BUTTON" && re.test(`${n.textContent || ""} ${n.innerHTML || ""}`)) || null;
+}
+/** Dispara um clique DELEGADO na faixa, como se o alvo tivesse a classe pedida. */
+function clickBar(client: any, cls: string): void {
+  const target = { closest: (sel: string) => (sel === `.${cls}` ? { dataset: {} } : null), dataset: {} };
+  for (const fn of client.el("wfRun")._on?.click || []) fn({ target, preventDefault() {}, stopPropagation() {} });
+}
+/** A lista de fluxos como o Hub a manda — inclusive quem é o padrão e se ele inicia sozinho. */
+function deliverFlows(sock: any, opts: { autoStart?: boolean; autoStartId?: string | null; defs?: any[] } = {}): void {
+  sock.deliver({ t: "workflow_list", ok: true, workflows: opts.defs || WF_DEFS, candidates: [],
+    autoStartFlows: opts.autoStart !== false, autoStartId: opts.autoStartId === undefined ? "pipeline-sdlc" : opts.autoStartId });
+}
 
 test("TSK-01: com fluxo ativo o chip expande a faixa, sem abrir seletor", async () => {
   const client = loadClient();
@@ -741,16 +777,127 @@ test("TSK-01: o chip é alternância — o segundo clique recolhe", async () => 
   assert.equal(client.popAnchor(), null);
 });
 
-test("TSK-01: sem fluxo ativo o chip continua sendo a porta de entrada", async () => {
+// ── Faixa única: o chip abre a MESMA faixa com ou sem fluxo. Sem fluxo ele abria um popover — que
+// fechava ao primeiro clique fora, empilhava sobre a faixa e escondia lá dentro a escolha de fonte,
+// pasta e arquivo. O popover do fluxo deixou de existir; quem não tem fluxo vê o modo início.
+test("sem fluxo ativo o chip abre a faixa no modo início — sem popover e sem criar acompanhamento", async () => {
   const client = loadClient();
-  await authenticate(client, MACHINES);
+  const sock = await authenticate(client, MACHINES);
   client.setSession("s-wf", "local");
-  client.wfSetDefs(WF_DEFS);
+  deliverFlows(sock);
 
   client.wfClickChip();
 
-  assert.equal(client.popAnchor(), client.el("wfStepBtn"), "o seletor de fluxos abriu");
-  assert.equal(client.wfRunActive(), false, "e clicar NÃO cria acompanhamento");
+  assert.equal(client.popAnchor(), null, "nenhum popover foi aberto");
+  assert.equal(client.wfRunActive(), false, "abrir a faixa NÃO cria acompanhamento");
+  assert.match(barText(client), /Iniciar um fluxo/, "a faixa oferece começar um fluxo");
+  assert.match(barText(client), /F1 — Discovery/, "e os passos, para entrar direto no certo");
+});
+
+test("o segundo clique fecha a faixa do modo início e ela some do DOM", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock);
+
+  client.wfClickChip();
+  client.wfClickChip();
+
+  assert.equal(bandHtml(client), "", "sem fluxo e fechada, a faixa não ocupa linha nenhuma");
+  assert.equal(barNodes(client).length, 0, "e não deixa nós pendurados de um render anterior");
+});
+
+// O ponto do dono: o início automático estava LIGADO e não aparecia em lugar nenhum fora de
+// Configurações → Framework. Uma sessão que nasce dentro de um fluxo paga steering em todo turno.
+test("a faixa diz qual fluxo é o padrão e que ele inicia sozinho", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock, { autoStart: true });
+
+  client.wfClickChip();
+
+  const txt = barText(client);
+  assert.match(txt, /padrão/, "o fluxo padrão é identificado como tal");
+  assert.match(txt, /inicia sozinho em sessão nova/, "e o efeito dele é dito por extenso");
+  assert.match(bandHtml(client), /auto: ON/, "com a chave de desligar à vista");
+});
+
+test("auto-início desligado aparece como desligado — e não como ausência de padrão", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock, { autoStart: false });
+
+  client.wfClickChip();
+
+  assert.match(barText(client), /auto-início desligado/);
+  assert.match(bandHtml(client), /auto: off/);
+});
+
+test("a chave do auto-início é operável da faixa, sem rebaixar a preferência do framework", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock, { autoStart: true });
+  client.wfClickChip();
+
+  clickBar(client, "wf-auto");
+
+  const set = sock.sent.filter((m: any) => m.t === "set_framework_cfg");
+  assert.equal(set.length, 1);
+  assert.equal(set[0].autoStartFlows, false, "desliga o que estava ligado");
+  assert.equal("preference" in set[0], false, "e não manda preferência — quem não manda, não muda");
+});
+
+test("Iniciar começa o fluxo padrão no primeiro passo", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock);
+  client.wfClickChip();
+
+  clickBar(client, "wf-begin");
+
+  const start = sock.sent.find((m: any) => m.t === "workflow_run_start");
+  assert.ok(start, "pediu para iniciar");
+  assert.equal(start.workflowId, "pipeline-sdlc");
+  assert.equal(start.stepId, "f1", "no primeiro passo, não no meio");
+});
+
+// Ponto 3 do dono: escolher a PASTA das features só existia em Configurações → Tarefas. Quem estava
+// no fluxo tinha de sair, achar o projeto na lista e voltar.
+test("a gaveta de Tarefa da faixa escolhe a pasta e lista os arquivos de feature", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock);
+  sock.deliver({ t: "task_binding", sessionId: "s-wf", cwd: "/p", binding: { tracker: "local", featuresDir: "docs/features" },
+    source: { kind: "local", ready: true, featuresDir: "docs/features" } });
+  client.wfClickChip();
+
+  const drawer = barButton(client, /🎯 Tarefa/);
+  assert.ok(drawer, "a gaveta de Tarefa existe dentro da faixa");
+  drawer.onclick();
+
+  assert.match(barText(client), /pasta: docs\/features/, "a pasta é escolhível aqui");
+  assert.ok(barButton(client, /Arquivos de feature/), "e os arquivos da pasta também");
+});
+
+// Com fluxo ativo os passos DELE já estão na faixa; o corpo do painel não pode repetir a lista.
+test("com fluxo ativo o corpo da faixa oferece trocar de fluxo, não repetir o atual", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock, { defs: [...WF_DEFS, { id: "hotfix", name: "Hotfix", steps: [{ id: "h1", title: "H1 — Corrigir", kind: "step" }] }] });
+  client.wfSetRun(wfRunFixture());
+
+  client.wfClickChip();
+
+  const corpo = barNodes(client).map((nd) => `${nd.innerHTML || ""} ${nd.textContent || ""}`).join(" ");
+  assert.match(corpo, /Trocar de fluxo/, "o outro fluxo é alcançável");
+  assert.match(corpo, /Hotfix/);
+  assert.doesNotMatch(corpo, /Pipeline<\/b>/, "e o fluxo atual não vira uma segunda lista");
 });
 
 test("TSK-01: faixa encolhida em alça volta inteira num clique", async () => {

@@ -13,8 +13,10 @@ o vínculo da Luby, não o do Desktop).
 | `github` / `jira` / `linear` / … | o provedor, pela conexão vinculada no cofre | Hub (o cofre é central) |
 | *(nenhuma)* | nada — o painel pede para você declarar | — |
 
-Troque a fonte no chip 🧭 → **🎯 Tarefa** → **Fonte do projeto**. A lista muda na hora; o que estava
-na tela era da fonte antiga e é descartado.
+Troque a fonte no chip 🧭 (que abre a **faixa do fluxo**) → **🎯 Tarefa** → **Fonte do projeto**. A
+lista muda na hora; o que estava na tela era da fonte antiga e é descartado. Na mesma gaveta ficam a
+**pasta** (fonte `local`), o **servidor** (fonte `mcp`) e a **conexão** (provedores) — escolher de
+onde vêm as tarefas não exige mais sair do fluxo.
 
 ## Trocar pelo chat
 
@@ -53,8 +55,9 @@ a conta, configurar o servidor) — nunca uma lista vazia, que é indistinguíve
 
 Cada `.md` da pasta vira uma tarefa: título vem do frontmatter (`title:`/`name:`), do primeiro `# h1`
 ou do nome do arquivo; a descrição, de `description:` ou do primeiro parágrafo. A pasta é relativa ao
-projeto e não pode escapar dele. A varredura é cacheada por assinatura da pasta — **Atualizar lista**
-relê ignorando o cache.
+projeto e não pode escapar dele. A pasta se troca em **🎯 Tarefa → pasta:** (ou em Configurações →
+🎯 Tarefas, para projetos que não estão abertos). A varredura é cacheada por assinatura da pasta —
+**Atualizar lista** relê ignorando o cache.
 
 ## Fonte `mcp` — servidor na máquina do projeto
 

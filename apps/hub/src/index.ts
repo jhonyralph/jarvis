@@ -6363,7 +6363,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (msg.t === "set_framework_cfg") {
       if (!requireOwner(ws)) return;
-      frameworkCfg.preference = normalizeFrameworkPreference(msg.preference);
+      // Mesma regra do `autoStartFlows` logo abaixo, e pelo mesmo motivo: `normalizeFrameworkPreference`
+      // devolve "ask" para qualquer coisa que não reconheça, então um payload que só quer mexer no
+      // início automático rebaixava a preferência do dono em silêncio.
+      if (typeof msg.preference === "string") frameworkCfg.preference = normalizeFrameworkPreference(msg.preference);
       // Só muda quando o cliente mandou o campo: um payload antigo (ou parcial) não pode religar
       // silenciosamente um início automático que o dono desligou de propósito.
       if (typeof msg.autoStartFlows === "boolean") frameworkCfg.autoStartFlows = msg.autoStartFlows;
@@ -6552,7 +6555,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           .map((f) => ({ path: f.path, def: parseWorkflowFromSkill(f.content, { path: f.path }) }))
           .filter((c) => c.def.steps.length >= 2 && !have.has(c.def.id))
           .map((c) => ({ path: c.path, id: c.def.id, name: c.def.name, steps: c.def.steps.length, pack: packs[c.path] ?? null }));
-        send(ws, { t: "workflow_list", ok: true, workflows: defs, candidates });
+        // Quem começa sozinho é decisão do Hub (o pacote declara `autoStart`; empate resolve pelo menor
+        // id) somada à chave do dono. Vai no MESMO frame da lista porque a interface tem de mostrar
+        // isso onde o fluxo é escolhido — um cliente que reimplementasse a regra marcaria "padrão" no
+        // fluxo errado, e um auto-início invisível é um fluxo que entra em todo turno sem ninguém pedir.
+        send(ws, { t: "workflow_list", ok: true, workflows: defs, candidates, autoStartFlows: frameworkCfg.autoStartFlows, autoStartId: defaultWorkflowDefinition()?.id ?? null });
       } catch (e: any) { send(ws, { t: "workflow_list", ok: false, error: String(e?.message ?? e) }); }
       return;
     }

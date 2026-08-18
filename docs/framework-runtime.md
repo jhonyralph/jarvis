@@ -55,12 +55,14 @@ fluxo, a **tarefa** e a **sessão**.
 
 Duas formas de começar:
 
-1. **À mão** — a faixa acima do campo de digitação: `🧭 Nenhum fluxo acompanhando esta sessão ·
-   [Iniciar fluxo]`. Você escolhe o fluxo e informa a tarefa (`linear PRI-824`, `github #42`, ou
-   vazio).
+1. **À mão** — o chip `🧭 Fluxo` do composer abre a **faixa** logo acima do campo de digitação. Sem
+   fluxo ativo ela vem no modo início: o fluxo **padrão** com `[Iniciar]`, a lista dos outros fluxos
+   (com entrada direta num passo) e a gaveta `🎯 Tarefa`, onde se escolhe a fonte, a pasta de features
+   e a tarefa. Com fluxo ativo, o mesmo chip abre/fecha a faixa do acompanhamento.
 2. **Sozinho** — se o fluxo tem `"autoStart": true`, ele começa a acompanhar na primeira mensagem de
-   cada sessão nova. Só entra em sessão que **nunca** teve fluxo; abandonar não faz voltar. Desligável
-   em *Configurações → Framework*.
+   cada sessão nova. Só entra em sessão que **nunca** teve fluxo; abandonar não faz voltar. O estado
+   aparece na própria faixa (`padrão · ▶ inicia sozinho em sessão nova`, com o botão `auto: ON/off`)
+   e em *Configurações → Framework* — as duas telas mexem na mesma chave.
 
 A partir daí, **todo turno** recebe na frente do seu texto:
 

@@ -548,18 +548,20 @@
     /* popover anchored above a pill */
     .pop { position:fixed; z-index:40; background:var(--panel); border:1px solid #ffffff2b; border-radius:12px; padding:10px; box-shadow:0 14px 44px #000b; min-width:230px; max-width:340px; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
     .pop.usage-pop { width:min(360px,calc(100vw - 16px)); }
-    .pop .ph { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin:0 2px 8px; }
+    .pop .ph, #wfRun .ph { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin:0 2px 8px; }
     .upop .uh { font-size:11px; color:var(--mut); text-transform:uppercase; letter-spacing:.4px; margin:0 0 6px; }
     .upop .urow { display:flex; justify-content:space-between; align-items:baseline; font-size:12.5px; margin:0 0 4px; gap:8px; }
     .upop .urow b { font-variant-numeric:tabular-nums; }
     .upop .ubar { height:6px; background:#ffffff14; border-radius:99px; overflow:hidden; margin:0 0 8px; } .upop .ubar span { display:block; height:100%; border-radius:99px; }
     .upop .umut { color:var(--mut); font-size:11.5px; } .upop .ureset { margin:-4px 0 8px; }
     .upop .uloading { min-height:96px; display:flex; align-items:center; }
-    .pop .opt { padding:8px 9px; border-radius:8px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:8px; }
-    .pop button.opt { width:100%; border:0; background:transparent; color:inherit; font:inherit; text-align:left; }
-    .pop .opt:hover { background:#ffffff0d; } .pop .opt.sel { background:#ffffff17; }
+    /* `.opt` e `.ph` nasceram dentro do popover, mas o painel de fluxo mudou de casa: ele agora é a
+       faixa acima do composer. Sem estes seletores, a MESMA lista de fluxos vira texto cru lá. */
+    .pop .opt, #wfRun .opt { padding:8px 9px; border-radius:8px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:8px; }
+    .pop button.opt, #wfRun button.opt { width:100%; border:0; background:transparent; color:inherit; font:inherit; text-align:left; }
+    .pop .opt:hover, #wfRun .opt:hover { background:#ffffff0d; } .pop .opt.sel, #wfRun .opt.sel { background:#ffffff17; }
     .pop .opt.disabled { opacity:.4; cursor:not-allowed; } .pop .opt.disabled:hover { background:none; }
-    .pop .opt .r { margin-left:auto; color:var(--mut); font-size:11px; }
+    .pop .opt .r, #wfRun .opt .r { margin-left:auto; color:var(--mut); font-size:11px; }
     /* Selos de passo (gate / pede evidência) dentro do seletor 🧭 — o estilo existia só na faixa. */
     .pop .wfbadge { flex:none; font-size:10px; padding:0 6px; border-radius:20px; background:#ffffff12; color:var(--mut,#8ea0b5); }
     .pop.ai-pop { width:min(320px,calc(100vw - 16px)); }
@@ -573,7 +575,7 @@
     .pop .slbl { display:flex; justify-content:space-between; font-size:11px; color:var(--mut); margin:2px 2px 10px; }
     .pop input[type=range] { width:100%; accent-color:var(--me); }
     .pop .effort-range { min-height:44px; margin:0; cursor:pointer; }
-    .pop button.opt:focus-visible, .pop .effort-range:focus-visible, .pop .effort-single:focus-visible { outline:2px solid var(--me); outline-offset:2px; }
+    .pop button.opt:focus-visible, #wfRun button.opt:focus-visible, .pop .effort-range:focus-visible, .pop .effort-single:focus-visible { outline:2px solid var(--me); outline-offset:2px; }
     .pop .sval { text-align:center; font-size:13.5px; margin-top:10px; font-weight:600; }
     .pop .effort-single { width:100%; min-height:44px; border:1px solid var(--line); border-radius:9px; background:#ffffff08; color:var(--text); font:inherit; font-size:13.5px; font-weight:600; cursor:pointer; }
     .pop .effort-single:hover, .pop .effort-single.sel { background:#ffffff17; border-color:#ffffff35; }
