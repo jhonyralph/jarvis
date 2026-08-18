@@ -1,3 +1,11 @@
+# [0.26.0](https://github.com/jhonyralph/jarvis/compare/v0.25.0...v0.26.0) (2026-08-18)
+
+
+### Features
+
+* **decisao:** a lista mostra qual sessão parou esperando você ([5da00e8](https://github.com/jhonyralph/jarvis/commit/5da00e8443b1e4d6e4fa1f1b954d14d888b7af91))
+* **decisao:** o Hub avisa que a sessão parou esperando decisão ([53e28cf](https://github.com/jhonyralph/jarvis/commit/53e28cf26819041bf0e4a87ea70c0150d08ce3de))
+
 # [0.25.0](https://github.com/jhonyralph/jarvis/compare/v0.24.0...v0.25.0) (2026-08-18)
 
 
