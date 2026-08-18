@@ -5310,6 +5310,12 @@
       lf.innerHTML='📄 Arquivos de feature <span class="r">'+esc(wfLocalDir)+'</span>';
       lf.onclick=()=>{ wfLocalShow=true; tx({t:'task_local_list',sessionId:currentSession}); };
       p.appendChild(lf);
+      // Atualizar: o Hub serve a lista de um cache invalidado por assinatura da pasta, e existe caso
+      // em que o mtime nao basta (drive de rede, dois writes no mesmo tick). O pedido explicito e a saida.
+      if(wfLocalShow){ const rf=document.createElement('button'); rf.type='button'; rf.className='wfact'; rf.style.cssText='margin:0 2px 6px';
+        rf.textContent='Atualizar lista'; rf.title='Reler os arquivos de feature agora, ignorando o cache';
+        rf.onclick=(ev)=>{ ev.stopPropagation(); tx({t:'task_local_list',sessionId:currentSession,refresh:true}); };
+        p.appendChild(rf); }
       if(wfLocalShow&&wfLocalFiles){
         if(!wfLocalFiles.length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent='Nenhum .md em '+wfLocalDir+'.'; p.appendChild(d); }
         wfLocalFiles.slice(0,30).forEach(f=>{

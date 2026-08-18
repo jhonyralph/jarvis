@@ -47,6 +47,7 @@ export * from "./workflow.js";
 export * from "./workflow-run.js";
 export * from "./workflow-run-store.js";
 export * from "./task-link.js";
+export * from "./task-local-cache.js";
 export * from "./task-providers.js";
 export * from "./task-connections.js";
 export * from "./task-bridge.js";
