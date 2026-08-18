@@ -115,19 +115,37 @@ O resultado é cacheado por 60s por servidor (subir um processo a cada abertura 
 Requisitos de máquina: o runner precisa estar **online** e no protocolo atual — uma máquina
 desatualizada recusa com esse motivo em vez de deixar o Hub responder pelo disco errado.
 
+## Escolher a tarefa do fluxo
+
+A tarefa vem da **fonte declarada**: a lista de arquivos, a lista do servidor MCP ou a busca no
+provedor. Colar chave/URL à mão só aparece quando a fonte é um **provedor** — num board com milhares
+de itens, digitar `ABC-42` é o caminho rápido; num projeto cuja fonte é uma pasta, um campo que
+aceita URL de Jira só ensina a contradizer a fonte que o próprio projeto declarou.
+
+O efeito depende de haver fluxo:
+
+| Situação | O que acontece | Rótulo do botão |
+|---|---|---|
+| Fluxo ativo | **Troca a tarefa do acompanhamento agora** (passos, evidência e foco ficam como estão) | `Usar neste fluxo` |
+| Sem fluxo | A escolha espera e entra quando você iniciar um fluxo | `Usar no próximo fluxo` |
+
+Uma tarefa já acompanhada por **outro** fluxo é recusada com motivo: dois acompanhamentos do mesmo
+ticket é o estado incoerente que o início já impedia.
+
 ## Várias tarefas de uma vez → várias subsessões
 
 Na lista do painel cada item tem uma **marca** (☐). Marcadas 1..N tarefas, o botão **▶ Abrir N
-subsessões** abre uma conversa por tarefa, **ligada à conversa de onde você marcou** — o vínculo é
+conversas** abre uma conversa por tarefa, **ligada à conversa de onde você marcou** — o vínculo é
 gravado na sessão (sobrevive a recarregar a página e a reiniciar o Hub), a filha nasce com a tarefa
-já armada, e a mãe fica com um recado dizendo o que foi aberto.
+já escolhida, e a mãe fica com um recado dizendo o que foi aberto. Sem nada marcado, o caminho da
+frase mora na gaveta **🗂 Abrir várias conversas**, com campo próprio.
 
 Duas fontes, nunca as duas juntas:
 
 | Situação | O que decide |
 |---|---|
 | Pelo menos um item marcado | **A sua seleção.** Nenhum modelo é consultado — o que estiver escrito no campo de texto é ignorado. |
-| Nenhum item marcado | **Interpretação:** o Jarvis lê a frase do campo e diz quantas tarefas viu. O resultado aparece marcado como interpretação, na confirmação e na primeira mensagem de cada filha. |
+| Nenhum item marcado | **Interpretação:** o Jarvis lê a frase da gaveta e diz quantas tarefas viu. O resultado aparece marcado como interpretação, na confirmação e na primeira mensagem de cada filha. |
 
 - **Você confirma o número antes de qualquer sessão existir.** O pedido tem dois passos: o Hub só
   *decide* a lista e devolve o plano; abrir acontece depois, com o plano confirmado. Um plano

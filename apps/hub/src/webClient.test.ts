@@ -930,6 +930,151 @@ test("TSK-01: a faixa oferece porta para a gaveta de Tarefa", async () => {
   assert.match(bandHtml(client), /wf-task/, "a faixa expandida tem o acesso à tarefa");
 });
 
+// ── Ponto 2: o campo de colar seguia existindo em qualquer projeto, e "Armar" guardava a escolha
+// para o PRÓXIMO fluxo mesmo com um fluxo rodando — a faixa dizia "trocar" e nada trocava.
+async function drawerWith(source: any, run?: any): Promise<{ client: any; sock: any; nodes: (drawer?: any) => any[]; drawer: () => any }> {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock);
+  sock.deliver({ t: "task_connections", connections: [], providers: [{ id: "jira", label: "Jira", targetHint: "chave do projeto (ex.: ABC)" }], bindings: [], mcpMachines: [] });
+  sock.deliver({ t: "task_binding", sessionId: "s-wf", cwd: "/p", binding: { tracker: source.kind === "provider" ? source.tracker : source.kind }, source });
+  if (run) client.wfSetRun(run);
+  // UMA árvore por chamada: reconstruir a gaveta entre o "digitar" e o "clicar" faria o teste
+  // preencher um input descartado e clicar num botão que lê outro, vazio — passando por engano.
+  const nodes = (drawer?: any): any[] => {
+    const out: any[] = [];
+    const walk = (el: any): void => { for (const c of el.children || []) { out.push(c); walk(c); } };
+    walk(drawer || client.buildTaskDrawer());
+    return out;
+  };
+  return { client, sock, nodes, drawer: () => client.buildTaskDrawer() };
+}
+
+test("ponto 2: em projeto de PASTA não existe campo para colar URL de tracker", async () => {
+  const { nodes } = await drawerWith({ kind: "local", ready: true, featuresDir: "docs/features" });
+  const inputs = nodes().filter((el) => el.tagName === "INPUT");
+  assert.equal(inputs.length, 0, "a fonte declarada é a pasta: colar chave de Jira aqui contradiz a própria fonte");
+  assert.ok(nodes().some((el) => /Arquivos de feature/.test(String(el.innerHTML || ""))), "a lista da fonte é o caminho");
+});
+
+test("ponto 2: em projeto de provedor o campo existe e diz QUANDO tem efeito", async () => {
+  const semRun = await drawerWith({ kind: "provider", tracker: "jira", ready: false, reason: "vincule a conexão" });
+  const inp = semRun.nodes().find((el) => el.tagName === "INPUT");
+  assert.ok(inp, "num board com milhares de itens, colar a chave é o caminho rápido");
+  assert.match(String(inp.placeholder || ""), /chave ou URL/);
+  assert.ok(semRun.nodes().some((el) => String(el.textContent || "") === "Usar no próximo fluxo"), "sem fluxo, o rótulo diz que fica para depois");
+
+  const comRun = await drawerWith({ kind: "provider", tracker: "jira", ready: false, reason: "vincule a conexão" }, wfRunFixture());
+  assert.ok(comRun.nodes().some((el) => String(el.textContent || "") === "Usar neste fluxo"), "com fluxo, o rótulo promete efeito AGORA");
+});
+
+test("ponto 2: com fluxo ativo, escolher a tarefa troca a do fluxo — não guarda para o próximo", async () => {
+  const { client, sock, nodes, drawer } = await drawerWith({ kind: "provider", tracker: "jira", ready: false, reason: "vincule a conexão" }, wfRunFixture());
+  const arvore = drawer();
+  const inp = nodes(arvore).find((el) => el.tagName === "INPUT");
+  inp.value = "ABC-42";
+  nodes(arvore).find((el) => String(el.textContent || "") === "Usar neste fluxo").onclick();
+
+  const upd = sock.sent.find((m: any) => m.t === "workflow_run_update" && m.op === "task");
+  assert.ok(upd, "a troca vai para o Hub, que interpreta a chave pelo vínculo da pasta");
+  assert.equal(upd.runId, "run-1");
+  assert.equal(upd.taskInput, "ABC-42");
+  assert.equal(client.taskArmFor("local", "s-wf"), null, "e NADA fica armado escondido para o próximo fluxo");
+});
+
+test("ponto 2: sem fluxo, escolher um arquivo de feature guarda para o fluxo que vier", async () => {
+  const client = loadClient();
+  await withTaskList(client, FEATURES);
+  const find = (node: any, needle: string): any => {
+    for (const child of node.children || []) {
+      if (String(child.innerHTML || child.textContent || "").includes(needle)) return child;
+      const deep = find(child, needle); if (deep) return deep;
+    }
+    return null;
+  };
+  find(client.buildTaskDrawer(), "Arquivos de feature").onclick();
+  find(client.buildTaskDrawer(), "Tarefa A").onclick();
+
+  const armada = client.taskArmFor("local", "s-mae");
+  assert.ok(armada, "sem fluxo não há o que trocar: a escolha espera o início");
+  assert.equal(armada.task.key, FEATURES[0].key);
+});
+
+// A faixa mostrava a lista inteira embaixo da trilha: num fluxo de 11 fases, onze linhas repetindo
+// o mapa que já estava desenhado acima. A lista existe para AGIR (marcar, anexar, pular).
+const WF_LONG = wfRunFixture({
+  currentStepId: "f2",
+  steps: [
+    { id: "f1", title: "F1 — Discovery", state: "done", kind: "step", requiresEvidence: true, evidence: [] },
+    { id: "f2", title: "F2 — Spec", state: "pending", kind: "step" },
+    { id: "f3", title: "F3 — Testes", state: "pending", kind: "step" },
+    { id: "f4", title: "F4 — Deploy", state: "pending", kind: "step", requiresEvidence: true, evidence: [] },
+  ],
+  summary: { done: 1, total: 4 },
+});
+
+test("a faixa lista o passo em foco e a dívida de evidência — o resto fica atrás de um clique", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock);
+  client.wfSetRun(WF_LONG);
+  client.wfClickChip();
+
+  const html = bandHtml(client);
+  // `>N. Título` casa a LINHA da lista; a trilha repete os mesmos nomes dentro de `title="…"`, e uma
+  // asserção frouxa passaria vendo o tooltip do ponto em vez da linha.
+  assert.match(html, />2\. F2 — Spec/, "o passo em foco aparece");
+  assert.match(html, />1\. F1 — Discovery/, "e o passo dado que ficou devendo evidência também");
+  assert.doesNotMatch(html, />3\. F3 — Testes/, "o passo futuro sem dívida não ocupa linha");
+  assert.doesNotMatch(html, />4\. F4 — Deploy/, "nem o futuro que ainda VAI pedir evidência");
+  assert.match(html, /ver todos os 4 passos \(2 ocultos\)/, "e o que foi escondido é dito, não sumido");
+  assert.match(html, /wftrack/, "a trilha continua sendo o mapa das fases");
+});
+
+test("ver todos os passos abre a lista inteira e o segundo clique recolhe", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock);
+  client.wfSetRun(WF_LONG);
+  client.wfClickChip();
+
+  clickBar(client, "wf-allsteps");
+  const aberta = bandHtml(client);
+  assert.match(aberta, />3\. F3 — Testes/);
+  assert.match(aberta, />4\. F4 — Deploy/);
+  assert.match(aberta, /ocultar os outros passos/);
+
+  clickBar(client, "wf-allsteps");
+  assert.doesNotMatch(bandHtml(client), />3\. F3 — Testes/, "voltou ao essencial");
+});
+
+// Provedor declarado SEM conta vinculada: destino e política de criação valem para escritas que não
+// podem acontecer. Deixar os botões clicáveis ensina a desconfiar da tela.
+test("provedor sem conexão só oferece o que resolve a falta — o resto fica desabilitado", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  deliverFlows(sock);
+  sock.deliver({ t: "task_connections", connections: [], providers: [{ id: "jira", label: "Jira" }], bindings: [], mcpMachines: [] });
+  sock.deliver({ t: "task_binding", sessionId: "s-wf", cwd: "/p", binding: { tracker: "jira" },
+    source: { kind: "provider", tracker: "jira", ready: false, reason: "nenhuma conta está vinculada — vincule a conexão" } });
+
+  const drawer = client.buildTaskDrawer();
+  const botoes = (function walk(el: any): any[] {
+    return (el.children || []).flatMap((c: any) => [c, ...walk(c)]);
+  })(drawer).filter((b: any) => b.tagName === "BUTTON");
+  const acha = (re: RegExp): any => botoes.find((b: any) => re.test(String(b.textContent || "")));
+
+  assert.equal(acha(/destino:/).disabled, true, "destino de escrita exige conta");
+  assert.equal(acha(/criar sem aprovar/).disabled, true, "política de criação também");
+  const vincular = acha(/adicionar conexão de jira/);
+  assert.ok(vincular, "cofre vazio: o botão leva a ADICIONAR, em vez de abrir um seletor sem opções");
+  assert.equal(vincular.disabled, false, "e o caminho que resolve a falta continua clicável");
+});
+
 // ── TSK-10: a decisão pendente precisa aparecer para quem NÃO está na sessão. Antes, o frame nem
 // chegava (o servidor filtrava por inscrição) e, quando chegava, virava o mesmo pontinho de não-lida
 // de qualquer resposta — indistinguível de "chegou mensagem".
@@ -1539,8 +1684,14 @@ test("TSK-I: a gaveta 🎯 desenha a marca de cada item e o botão com o número
   };
 
   const fechada = texts(client.buildTaskDrawer()).join("\n");
-  assert.match(fechada, /Interpretar e abrir/, "sem marcas, o caminho oferecido é o da interpretação");
-  assert.match(fechada, /sem marcas: vira interpretação/);
+  // Sem marcas, abrir várias conversas é uma gaveta fechada: não disputa espaço com a tarefa do fluxo
+  // nem empresta o campo dela. Aberta, o rótulo diz de onde sai o conteúdo (a frase ao lado).
+  assert.match(fechada, /Abrir várias conversas/);
+  assert.doesNotMatch(fechada, /abrir uma conversa por tarefa desta frase/, "fechada, não paga campo nem botão");
+  find(client.buildTaskDrawer(), "Abrir várias conversas").onclick();
+  const fanAberta = texts(client.buildTaskDrawer()).join("\n");
+  assert.match(fanAberta, /abrir uma conversa por tarefa desta frase/);
+  assert.doesNotMatch(fanAberta, /Interpretar e abrir/, "o rótulo opaco não volta");
 
   // A lista de arquivos é uma gaveta dentro da gaveta: só depois de abri-la existem itens a marcar.
   find(client.buildTaskDrawer(), "Arquivos de feature").onclick();
@@ -1551,7 +1702,7 @@ test("TSK-I: a gaveta 🎯 desenha a marca de cada item e o botão com o número
   for (const f of FEATURES) client.fanoutToggle({ tracker: "local", key: f.key, title: f.title });
   const marcado = texts(client.buildTaskDrawer()).join("\n");
   // O número aparece ANTES de qualquer sessão existir — é o aviso exigido para ação com efeito.
-  assert.match(marcado, /Abrir 3 subsessões/);
+  assert.match(marcado, /Abrir 3 conversas/);
   assert.match(marcado, /seleção manda — a frase acima é ignorada/);
   assert.match(marcado, /☑/);
 });

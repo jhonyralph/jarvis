@@ -214,6 +214,20 @@ export function attachEvidence(run: WorkflowRun, stepId: string, evidence: Omit<
   return out;
 }
 
+/**
+ * Trocar a TAREFA de um acompanhamento em andamento.
+ *
+ * Existe porque a alternativa era a interface mentir: a gaveta oferecia "trocar" a tarefa e, com fluxo
+ * ativo, tudo que ela fazia era guardar a escolha para o PRÓXIMO fluxo — a tela dizia "armada", o run
+ * seguia com a tarefa antiga (ou sem nenhuma) e o turno da IA continuava falando da errada.
+ *
+ * Não toca em passos nem em evidência: a tarefa é O QUE se está fazendo; os passos são ONDE se está.
+ * Trocar de assunto não desfaz o caminho andado — e apagar evidência aqui seria perda silenciosa.
+ */
+export function setRunTask(run: WorkflowRun, task: TaskRef, opts: { now: number }): WorkflowRun {
+  return { ...clone(run), task: normalizeTaskRef(task), updatedAt: opts.now };
+}
+
 export function linkSession(run: WorkflowRun, sessionId: string, now: number): WorkflowRun {
   if (!sessionId || run.sessions.includes(sessionId)) return run;
   const out = clone(run);

@@ -5210,6 +5210,11 @@
     // Seletor 🧭: qual fluxo teve os passos abertos para entrada direta (`null` = padrão, que abre
     // sozinho quando só existe um fluxo) e se a gaveta opcional de Tarefa está aberta.
     let wfPickOpen=null, wfTaskOpen=false;
+    // A lista detalhada de passos abre sob pedido. Ela repetia inteira o que a TRILHA logo acima já
+    // mostra — num fluxo de 11 fases, onze linhas para dizer de novo onde você está.
+    let wfAllSteps=false;
+    // Gaveta do fan-out (abrir várias conversas). Fechada por padrão: é ação de exceção.
+    let wfFanoutOpen=false;
     // Redesenhar o painel do fluxo depois de uma resposta do Hub (conexões, arquivos, busca, marcas).
     // Existe como função própria porque o painel tem UMA casa — a faixa — e o resto do código não
     // precisa saber disso: quando a superfície mudou de lugar, foi este ponto que mudou, e só ele.
@@ -5373,7 +5378,14 @@
             +body+'</div>'; })()
         // Outras tarefas da sessão: uma linha cada, com troca de foco em um clique (F3).
         +(wfOthers.length?wfOthers.map(r=>{ const os=r.summary||{}; return '<div class="wfs" style="opacity:.85"><span class="wfst">↔</span><span class="wft" title="'+esc(r.workflowName||'')+'">'+esc(r.taskLabel||r.workflowName)+' <span class="mut">'+(os.current?esc(os.current.title):'concluído')+' · '+(os.done||0)+'/'+(os.total||0)+'</span></span><button class="wfact wf-focus" data-run="'+esc(r.runId)+'" type="button" title="Tornar esta a tarefa em foco da sessão">focar</button></div>'; }).join(''):'')
-        +steps.map((st,i)=>'<div class="wfs '+st.state+(st.id===wfRun.currentStepId?' cur':'')+'" data-id="'+esc(st.id)+'">'
+        // Passo em foco + DÍVIDA de evidência (passo dado que ficou devendo). O resto some atrás de um
+        // clique: a trilha continua sendo o mapa, e o que a lista acrescenta é ação — marcar, anexar,
+        // pular. Nada é truncado em silêncio: o botão diz quantos passos estão escondidos.
+        +(function(){
+          const deve=(st)=>!!(st.requiresEvidence&&!((st.evidence||[]).length)&&st.state==='done');
+          const mostra=(st)=>wfAllSteps||st.id===wfRun.currentStepId||deve(st);
+          const ocultos=steps.filter(st=>!mostra(st)).length;
+          return steps.map((st,i)=>!mostra(st)?'':'<div class="wfs '+st.state+(st.id===wfRun.currentStepId?' cur':'')+'" data-id="'+esc(st.id)+'">'
           +'<span class="wfst">'+(WF_ICON[st.state]||'○')+'</span>'
           +'<span class="wft" title="'+esc(st.title)+'">'+(i+1)+'. '+esc(st.title)+'</span>'
           +(st.kind==='gate'?'<span class="wfbadge">gate</span>':'')
@@ -5381,6 +5393,11 @@
           +'<button class="wfact wf-ev" data-id="'+esc(st.id)+'" type="button" title="Anexar evidência">📎</button>'
           +'<button class="wfact wf-mark" data-id="'+esc(st.id)+'" type="button" title="'+(st.state==='done'?'Desmarcar':'Marcar como feito')+'">'+(st.state==='done'?'↺':'✓')+'</button>'
           +'</div>').join('')
+          // Fora da classe `.wfs`: aquela linha significa "pular para este passo" e herdaria o clique.
+          +((ocultos||wfAllSteps)?('<button class="wfact wf-allsteps" type="button" style="margin:2px 0 0" title="'
+            +(wfAllSteps?'Mostrar de novo só o passo em foco e o que ficou devendo evidência':'Abrir a lista inteira para marcar, anexar evidência ou pular')+'">'
+            +(wfAllSteps?'▾ ocultar os outros passos':'▸ ver todos os '+steps.length+' passos ('+ocultos+' oculto'+(ocultos===1?'':'s')+')')+'</button>'):'');
+        })()
         // A porta de saída. Fora da classe `.wfs` de propósito: aquela linha é clicável e significa
         // "pular para este passo" — um rodapé com o mesmo nome herdaria o clique errado.
         +'<div class="wffoot" style="display:flex;align-items:center;gap:6px;margin-top:5px;padding-top:6px;border-top:1px solid rgba(127,127,127,.25)">'
@@ -5644,48 +5661,102 @@
     }
     // A ação de abrir N subsessões. Só existe quando há o que abrir, e NUNCA abre daqui: manda o Hub
     // decidir e devolver o número — a confirmação acontece depois, com a lista na mão.
-    function wfFanoutRow(p,phraseInput){
+    function wfFanoutRow(p){
       const marcadas=wfFanoutList();
+      // Sem marcas e sem a gaveta aberta, o assunto é uma linha só — quem nunca vai abrir várias
+      // conversas não paga um campo de texto na tela por causa disso.
+      if(!marcadas.length){
+        const t0=document.createElement('button'); t0.type='button'; t0.className='opt';
+        t0.style.cssText='border-top:1px solid rgba(127,127,127,.25);margin-top:6px;padding-top:8px;font-size:12px';
+        t0.innerHTML=(wfFanoutOpen?'▾':'▸')+' 🗂 Abrir várias conversas <span class="r">uma por tarefa</span>';
+        t0.title='Marque tarefas nas listas acima, ou descreva em uma frase quais tarefas abrir';
+        t0.onclick=()=>{ wfFanoutOpen=!wfFanoutOpen; wfRerender(); };
+        p.appendChild(t0);
+        if(!wfFanoutOpen) return null;
+      }
       const row=document.createElement('div'); row.className='wf-fanrow'; row.style.cssText='display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:2px 2px 6px';
+      // Campo PRÓPRIO da frase: ele alimenta só a interpretação. Antes era o mesmo campo da tarefa, e
+      // a mesma caixa significava duas coisas conforme o botão que você apertasse.
+      let phraseInput=null;
+      if(!marcadas.length){
+        phraseInput=document.createElement('input'); phraseInput.type='text'; phraseInput.style.cssText='flex:1;min-width:140px';
+        phraseInput.placeholder='ex.: abra as 3 primeiras features da pasta';
+        row.appendChild(phraseInput);
+      }
+      // Dois caminhos, dois rótulos. "▶ Interpretar e abrir" não dizia o que ia acontecer nem de onde
+      // sairia o conteúdo — e um botão em destaque que ninguém entende é pior do que um botão a menos.
+      // Com marcas, ele anuncia o número. Sem marcas, ele deixa de ser o botão principal e vira uma
+      // linha presa à frase, que é de onde a interpretação sai.
       const go=document.createElement('button'); go.type='button'; go.className='wfact wf-fango';
-      go.style.cssText='outline:1px solid var(--accent,#6ea8fe);padding:3px 8px';
-      go.textContent=marcadas.length?('▶ Abrir '+marcadas.length+(marcadas.length>1?' subsessões':' subsessão')):'▶ Interpretar e abrir';
+      go.style.cssText=marcadas.length?'outline:1px solid var(--accent,#6ea8fe);padding:3px 8px':'padding:2px 4px;font-size:11px';
+      go.textContent=marcadas.length?('▶ Abrir '+marcadas.length+(marcadas.length>1?' conversas':' conversa')):'↳ abrir uma conversa por tarefa desta frase';
       go.title=marcadas.length
-        ? 'Abre uma conversa por tarefa marcada, ligada a esta. Você confirma o número antes.'
-        : 'Nada marcado: o Jarvis interpreta a frase acima e diz quantas tarefas viu — você confirma antes de abrir.';
+        ? 'Abre uma conversa por tarefa marcada, ligada a esta. Você confirma o número antes de qualquer uma existir.'
+        : 'O Jarvis lê a frase ao lado, diz quantas tarefas encontrou e pede sua confirmação antes de abrir as conversas.';
       go.onclick=()=>{ wfFanoutAsk(phraseInput?phraseInput.value:''); };
+      if(phraseInput) phraseInput.onkeydown=(ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); go.onclick(); } };
       row.appendChild(go);
       if(marcadas.length){
         const clr=document.createElement('button'); clr.type='button'; clr.className='wfact wf-fanclear'; clr.textContent='limpar marcas';
         clr.onclick=()=>{ wfFanoutClear(); wfRerender(); };
         row.appendChild(clr);
+        // O aviso que impede alguém achar que a frase digitada entrou junto com os itens marcados.
+        const hint=document.createElement('span'); hint.className='mut wf-fanhint'; hint.style.cssText='font-size:11px';
+        hint.textContent='seleção manda — a frase acima é ignorada';
+        row.appendChild(hint);
       }
-      const hint=document.createElement('span'); hint.className='mut wf-fanhint'; hint.style.cssText='font-size:11px';
-      // O rótulo diz qual das duas fontes está valendo AGORA. É o aviso que impede alguém achar que a
-      // frase digitada entrou junto com os itens marcados.
-      hint.textContent=marcadas.length?'seleção manda — a frase acima é ignorada':'sem marcas: vira interpretação';
-      row.appendChild(hint);
       p.appendChild(row);
       return row;
     }
-    // ── Tarefa no fluxo (F1): colar chave/URL, escolher arquivo local de feature, e a fonte do
-    // projeto (lembrada por pasta). A tarefa ARMADA vale para o próximo fluxo iniciado na sessão.
+    // Escolher uma tarefa vale AGORA quando existe fluxo (troca a tarefa do acompanhamento) e vale para
+    // o PRÓXIMO quando ainda não existe. Antes só o segundo caso era real: com fluxo ativo, escolher
+    // uma tarefa dizia "armada" e não mudava nada — a faixa seguia mostrando a tarefa antiga e o turno
+    // da IA falando dela. O botão prometia "trocar" e guardava para depois.
+    function wfUseTask(task,meta,label){
+      if(!currentSession){ toast(t('tOpenFirst')); return; }
+      if(wfRun){ tx({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op:'task',task:task,taskMeta:meta||undefined}); toast('Tarefa deste fluxo: '+label); return; }
+      wfTaskArmSet({task:task,meta:meta||undefined,label:label});
+      toast('Tarefa escolhida — entra quando você iniciar o fluxo: '+label);
+    }
+    // Texto colado (chave ou URL). Quem interpreta é o HUB, porque a regra depende do vínculo da pasta
+    // da sessão: uma chave nua resolvida aqui herdaria o rastreador de outro projeto.
+    function wfUseTaskInput(v){
+      if(!currentSession){ toast(t('tOpenFirst')); return; }
+      if(wfRun){ tx({t:'workflow_run_update',runId:wfRun.runId,sessionId:currentSession,op:'task',taskInput:v}); toast('Tarefa deste fluxo: '+v); return; }
+      wfTaskArmSet({input:v,label:v});
+      toast('Tarefa escolhida — entra quando você iniciar o fluxo: '+v);
+    }
+    // ── Tarefa no fluxo (F1): a tarefa vem da FONTE DECLARADA do projeto — lista de arquivos, lista do
+    // servidor MCP ou busca no provedor. Colar chave/URL só existe onde faz sentido: num board com
+    // milhares de itens, digitar "PRI-824" é mais rápido que procurar. Em projeto cuja fonte é uma
+    // pasta, um campo que aceita URL do Jira só ensina a contradizer a própria fonte declarada.
     function buildWfTaskSection(p){
       if(authUser&&authUser.role==='owner'&&wfConnections===null){ wfConnections=[]; tx({t:'task_connections'}); }
       p.appendChild(ph('Tarefa'));
       const arm=wfTaskArmGet();
       const info=document.createElement('div'); info.className='mut'; info.style.cssText='font-size:11.5px;padding:2px 2px 6px;max-width:280px';
-      info.textContent=arm?('Armada: '+(arm.label||arm.input||'')+' — vale para o próximo fluxo iniciado'):(wfRun&&wfRun.task&&wfRun.task.key?('Atual: '+(wfRun.taskLabel||wfRun.task.key)):'Cole uma chave/URL ou escolha um arquivo de feature.');
+      info.textContent=(wfRun&&wfRun.task&&wfRun.task.key)?('Deste fluxo: '+(wfRun.taskLabel||wfRun.task.key))
+        :arm?('Escolhida: '+(arm.label||arm.input||'')+' — entra quando o fluxo começar')
+        :(wfRun?'Este fluxo está sem tarefa. Escolha uma abaixo.':'Escolha abaixo; ela entra no fluxo que você iniciar.');
       p.appendChild(info);
-      const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;padding:0 2px 6px';
-      const inp=document.createElement('input'); inp.type='text'; inp.placeholder='PRI-824 · URL do Jira/GitHub/Linear'; inp.style.cssText='flex:1;min-width:120px'; if(arm&&arm.input)inp.value=arm.input;
-      const ok=document.createElement('button'); ok.type='button'; ok.className='wfact'; ok.textContent=arm?'Rearmar':'Armar';
-      ok.onclick=()=>{ const v=inp.value.trim(); wfTaskArmSet(v?{input:v,label:v}:null); closePop(); toast(v?'Tarefa armada para o próximo fluxo.':'Tarefa desarmada.'); };
-      inp.onkeydown=(ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); ok.onclick(); } };
-      row.appendChild(inp); row.appendChild(ok); p.appendChild(row);
-      // Fatia I: a porta do fan-out fica colada no campo de frase porque é ele que alimenta o caminho
-      // da INTERPRETAÇÃO; as marcas vêm das listas abaixo e mudam o rótulo do botão no mesmo lugar.
-      wfFanoutRow(p,inp);
+      const provColar=(wfTaskSource&&wfTaskSource.kind==='provider')?wfTaskSource.tracker:'';
+      if(provColar){
+        const spec=(wfProviders||[]).find(x=>x.id===provColar);
+        const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;padding:0 2px 6px';
+        const inp=document.createElement('input'); inp.type='text';
+        inp.placeholder='chave ou URL — '+((spec&&spec.targetHint)?('ex.: '+spec.targetHint):provColar);
+        inp.style.cssText='flex:1;min-width:120px'; if(arm&&arm.input)inp.value=arm.input;
+        const ok=document.createElement('button'); ok.type='button'; ok.className='wfact';
+        // O rótulo diz QUANDO tem efeito. "Armar" não dizia nem o que fazia nem quando.
+        ok.textContent=wfRun?'Usar neste fluxo':'Usar no próximo fluxo';
+        ok.title=wfRun?'Troca a tarefa do fluxo que está acompanhando esta sessão'
+          :'Guarda a escolha; ela entra no acompanhamento assim que você iniciar um fluxo';
+        ok.onclick=()=>{ const v=inp.value.trim();
+          if(!v){ if(!wfRun&&arm){ wfTaskArmSet(null); toast('Escolha desfeita.'); wfRerender(); } return; }
+          wfUseTaskInput(v); };
+        inp.onkeydown=(ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); ok.onclick(); } };
+        row.appendChild(inp); row.appendChild(ok); p.appendChild(row);
+      }
       p.appendChild(ph('Fonte do projeto'));
       const srcRow=document.createElement('div'); srcRow.style.cssText='display:flex;gap:4px;flex-wrap:wrap;padding:2px 2px 8px';
       ['local','mcp','github','jira','linear',''].forEach(src=>{
@@ -5752,7 +5823,7 @@
             // servidor. Carimbar tudo como local faria a tarefa mentir a própria origem.
             const task={tracker:viaMcp?'mcp':'local',key:f.key,title:f.title,description:f.description||''};
             wfTaskPick(p,task,'• '+esc(f.title)+' <span class="r mono" style="font-size:10px">'+esc(viaMcp?f.key:f.key.split('/').pop())+'</span>',()=>{
-              wfLocalShow=false; wfTaskArmSet({task:{tracker:task.tracker,key:f.key,title:f.title},meta:{description:f.description||''},label:f.title}); closePop(); toast('Tarefa armada: '+f.title);
+              wfLocalShow=false; wfUseTask({tracker:task.tracker,key:f.key,title:f.title},{description:f.description||''},f.title); wfRerender();
             });
           });
         }
@@ -5781,10 +5852,18 @@
         cRow.innerHTML='🔐 '+(conn?('<b>'+esc(conn.label)+'</b> <span class="mut">'+esc(conn.identity?('@'+conn.identity.login):'não verificada')+(conn.envOk?'':' · ⚠ env')+'</span>'):'<span style="color:#f5b544">sem conexão vinculada — escolha a conta</span>');
         p.appendChild(cRow);
         const bRow=document.createElement('div'); bRow.style.cssText='display:flex;gap:4px;flex-wrap:wrap;padding:0 2px 6px';
-        const mkb=(txt,fn,title)=>{ const b=document.createElement('button'); b.type='button'; b.className='wfact'; b.textContent=txt; if(title)b.title=title; b.onclick=fn; bRow.appendChild(b); };
+        // Sem conexão vinculada, TODO o resto deste bloco é decoração: destino e política de criação
+        // valem para escritas que não podem acontecer, e um botão que abre um diálogo para depois não
+        // ter efeito ensina o usuário a desconfiar da tela. Fica ligado só o que resolve a falta.
+        const mkb=(txt,fn,title,off)=>{ const b=document.createElement('button'); b.type='button'; b.className='wfact'; b.textContent=txt;
+          if(off){ b.disabled=true; b.title='Precisa de uma conexão de '+trackerNow+' vinculada a este projeto — vincule a conta primeiro.'; }
+          else if(title) b.title=title;
+          b.onclick=off?null:fn; bRow.appendChild(b); return b; };
         const candidates=(wfConnections||[]).filter(c=>c.provider===trackerNow);
-        mkb(conn?'trocar conexão':'vincular conexão',async()=>{
-          if(!candidates.length){ toast('Nenhuma conexão de '+trackerNow+' no cofre — adicione em ⚙.'); return; }
+        // Cofre vazio para este provedor: o caminho útil é ADICIONAR, não abrir um seletor sem opções
+        // (o que antes era um toast de erro depois do clique).
+        mkb(conn?'trocar conexão':(candidates.length?'vincular conexão':('adicionar conexão de '+trackerNow)),async()=>{
+          if(!candidates.length){ void taskConnAddFlow(); return; }
           closePop();
           const pick=await dialog({title:'Qual conexão para ESTE projeto?\n\n'+candidates.map((c,i)=>(i+1)+'. '+c.label+' ('+(c.identity?('@'+c.identity.login):'não verificada')+')').join('\n'),input:true,placeholder:'número',okText:'Vincular'});
           if(pick==null) return; const chosen=candidates[parseInt(pick,10)-1]; if(!chosen){ toast('Opção inválida'); return; }
@@ -5796,12 +5875,12 @@
           const v=await dialog({title:'Destino de ESCRITA neste projeto ('+((spec&&spec.targetHint)||'destino')+'):',input:true,value:(wfTaskBinding&&wfTaskBinding.target)||'',okText:'Salvar'});
           if(v==null) return;
           tx({t:'task_binding_set',sessionId:currentSession,tracker:trackerNow,connectionId:(wfTaskBinding&&wfTaskBinding.connectionId)||undefined,featuresDir:(wfTaskBinding&&wfTaskBinding.featuresDir)||undefined,target:v.trim()||undefined,autoApprove:(wfTaskBinding&&wfTaskBinding.autoApprove)||undefined});
-        },'Onde criar tarefas (owner/repo, chave do projeto Jira, chave do time Linear)');
+        },'Onde criar tarefas (owner/repo, chave do projeto Jira, chave do time Linear)',!conn);
         const auto=!!(wfTaskBinding&&wfTaskBinding.autoApprove&&wfTaskBinding.autoApprove.includes('create'));
         mkb('criar sem aprovar: '+(auto?'ON':'off'),()=>{
           tx({t:'task_binding_set',sessionId:currentSession,tracker:trackerNow,connectionId:(wfTaskBinding&&wfTaskBinding.connectionId)||undefined,featuresDir:(wfTaskBinding&&wfTaskBinding.featuresDir)||undefined,target:(wfTaskBinding&&wfTaskBinding.target)||undefined,autoApprove:auto?[]:['create']});
           toast(auto?'Criação volta a pedir aprovação neste projeto.':'Criação liberada NESTE projeto (divergência de conta ainda pede aprovação).');
-        },'Política adaptativa por projeto+ação: libera criar tarefa sem aprovação AQUI');
+        },'Política adaptativa por projeto+ação: libera criar tarefa sem aprovação AQUI',!conn);
         mkb('⚙',()=>{ wfConnManage=true; wfRerender(); },'Gerenciar o cofre de conexões');
         p.appendChild(bRow);
         if(conn){
@@ -5817,12 +5896,16 @@
             (sr.results||[]).slice(0,8).forEach(it=>{
               const task={tracker:it.tracker,key:it.key,title:it.title,description:it.description||'',url:it.url||''};
               wfTaskPick(p,task,esc(it.key)+' · '+esc(String(it.title||'').slice(0,60))+(it.state?' <span class="r">'+esc(it.state)+'</span>':''),()=>{
-                wfSearchResults=null; wfTaskArmSet({task:{tracker:it.tracker,key:it.key,title:it.title,url:it.url},meta:{title:it.title,description:it.description||'',url:it.url||''},label:it.key+' · '+it.title}); closePop(); toast('Tarefa armada: '+it.key);
+                wfSearchResults=null; wfUseTask({tracker:it.tracker,key:it.key,title:it.title,url:it.url},{title:it.title,description:it.description||'',url:it.url||''},it.key+' · '+it.title); wfRerender();
               });
             });
           }
         }
       }
+      // Abrir VÁRIAS conversas é outro assunto que dividia o mesmo campo da tarefa — a mesma caixa
+      // servia para "qual é a tarefa daqui" e para "descreva quais tarefas abrir". Agora tem casa e
+      // rótulo próprios, e fica fechada até você querer.
+      wfFanoutRow(p);
       const mine=wfSessionRuns();
       if(mine.length>1){
         p.appendChild(ph('Tarefas desta sessão'));
@@ -5960,6 +6043,7 @@
       // Começar o fluxo padrão no primeiro passo: é o gesto que o chip prometia e não entregava.
       if(e.target.closest('.wf-begin')){ const d=wfDefault(); if(d) wfPickStep(d.id,((d.steps||[])[0]||{}).id); return; }
       if(e.target.closest('.wf-auto')){ wfToggleAutoStart(); return; }
+      if(e.target.closest('.wf-allsteps')){ wfAllSteps=!wfAllSteps; renderWfRun(); return; }
       if(!wfRun) return;
       if(e.target.closest('.wf-tog')){ wfOpen=!wfOpen; renderWfRun(); return; }
       // Porta para a gaveta de Tarefa a partir da faixa (o chip agora abre a faixa, não o seletor).

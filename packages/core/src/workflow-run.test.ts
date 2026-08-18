@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   createRun, markStep, advanceRun, jumpToStep, attachEvidence, linkSession, summarizeRun,
   isSkipAhead, stepsSkippedBy, focusStep, parseStepDirectives, resolveStepRef, applyStepDirectives,
-  buildWorkflowSteering, normalizeTaskRef, taskLabel,
+  buildWorkflowSteering, normalizeTaskRef, taskLabel, setRunTask,
 } from "./workflow-run.js";
 import type { WorkflowDefinition } from "./workflow.js";
 
@@ -88,6 +88,22 @@ test("desmarcar volta o passo para pendente e limpa a autoria", () => {
   // O FOCO não volta sozinho para trás: corrigir o registro de um passo anterior não é dizer "quero
   // voltar para lá". Para voltar existe o gesto explícito (focusStep / seletor do composer).
   assert.equal(run.currentStepId, "diagnose");
+});
+
+test("setRunTask troca o assunto sem desfazer o caminho andado", () => {
+  const run = attachEvidence(markStep(mk("s1"), "escopo", "done", { by: "user", now: 2000 }), "evidencia", { kind: "link", value: "https://x" }, { by: "user", now: 2100 });
+  const trocado = setRunTask(run, { tracker: "jira", key: "ABC-42", title: "Outra" }, { now: 3000 });
+
+  assert.equal(trocado.task.key, "ABC-42");
+  assert.equal(trocado.task.tracker, "jira");
+  assert.equal(taskLabel(trocado.task), "jira: ABC-42");
+  // Trocar a tarefa é dizer O QUE se está fazendo; os passos são ONDE se está. Apagar progresso ou
+  // evidência aqui seria perda silenciosa — e o run é o registro do que foi executado.
+  assert.equal(trocado.steps.find((s) => s.id === "escopo")?.state, "done", "o passo feito continua feito");
+  assert.equal(trocado.steps.find((s) => s.id === "evidencia")?.evidence?.length, 1, "a evidência anexada permanece");
+  assert.equal(trocado.currentStepId, run.currentStepId, "e o foco não se mexe");
+  assert.equal(trocado.updatedAt, 3000);
+  assert.equal(run.task.key, "PRI-824", "o run original não é mutado");
 });
 
 test("focusStep move só o foco — não marca ninguém como pulado", () => {
