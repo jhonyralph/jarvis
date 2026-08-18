@@ -1,3 +1,10 @@
+## [0.26.1](https://github.com/jhonyralph/jarvis/compare/v0.26.0...v0.26.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* **tarefas:** quem lista as tarefas locais é a máquina do projeto ([f27d9b9](https://github.com/jhonyralph/jarvis/commit/f27d9b93773acc6ba7b3926d489cd14e34bb3e3f))
+
 # [0.26.0](https://github.com/jhonyralph/jarvis/compare/v0.25.0...v0.26.0) (2026-08-18)
 
 
