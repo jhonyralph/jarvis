@@ -164,3 +164,22 @@ test("memory stats and project prefixes support monorepo partitions", () => {
     assert.deepEqual(stats.projects.map((p) => p.projectKey).sort(), ["/repo/apps/web", "/repo/packages/core"]);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+test("normalizeOwners makes a private note searchable from the owner's other devices", () => {
+  const d = mkdtempSync(join(tmpdir(), "jarvis-mem-"));
+  try {
+    const m = new MemoryStore(d);
+    m.upsert(entry("desktop-note", [1, 0], { runnerId: "local", ownerId: "device-desktop", text: "Nota privada do dono" }));
+    m.upsert(entry("guest-note", [1, 0], { runnerId: "local", ownerId: "u:convidado", text: "Nota do convidado" }));
+    m.upsert(entry("shared-note", [1, 0], { runnerId: "local", text: "Sem dono" }));
+
+    const changed = m.normalizeOwners((ownerId) => (ownerId.startsWith("device-") ? "owner" : ownerId));
+    assert.equal(changed, 1, "só a entrada de um login de dispositivo muda");
+    assert.deepEqual(m.search([1, 0], { runnerIds: ["local"], principalId: "owner" }).map((h) => h.id).sort(), ["desktop-note", "shared-note"]);
+    assert.deepEqual(m.search([1, 0], { runnerIds: ["local"], principalId: "u:convidado" }).map((h) => h.id).sort(), ["guest-note", "shared-note"]);
+    assert.equal(m.normalizeOwners((ownerId) => ownerId), 0, "idempotente");
+
+    const restarted = new MemoryStore(d);
+    assert.deepEqual(restarted.search([1, 0], { runnerIds: ["local"], principalId: "owner" }).map((h) => h.id).sort(), ["desktop-note", "shared-note"], "persistido");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

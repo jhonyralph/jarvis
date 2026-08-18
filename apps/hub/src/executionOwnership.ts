@@ -93,6 +93,28 @@ export class ExecutionOwnershipStore {
     return structuredClone(row);
   }
 
+  /** Rewrite persisted principals through `resolve` (see auth.identityOf), so an execution claimed by
+   *  one of the owner's devices stays controllable from every other one. Boot-time; all-or-nothing. */
+  normalizePrincipals(resolve: (principalId: string) => string): number {
+    const previous = new Map(this.roots);
+    let changed = 0;
+    try {
+      for (const [key, row] of this.roots) {
+        const principalId = resolve(row.principalId);
+        if (!validId(principalId, 200)) throw new Error("invalid execution ownership");
+        if (principalId === row.principalId) continue;
+        this.roots.set(key, { ...row, principalId });
+        changed++;
+      }
+      if (changed) this.save();
+    } catch (error) {
+      this.roots.clear();
+      for (const [key, row] of previous) this.roots.set(key, row);
+      throw error;
+    }
+    return changed;
+  }
+
   remove(runnerId: string, rootExecutionId: string): boolean {
     const key = keyOf(runnerId, rootExecutionId), row = this.roots.get(key);
     if (!row) return false;

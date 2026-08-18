@@ -269,16 +269,47 @@ export function revokeAllExcept(deviceId: string): number {
 }
 
 // ---- authorization (per-runner) ----
+/** Accepts a raw userId OR an identity (see identityOf): background work carries the identity, and
+ *  it must resolve to the same runners the device login would get. */
 export function allowedRunners(userId: string): "*" | string[] {
-  const u = data.users.find((x) => x.id === userId);
+  if (userId === OWNER_IDENTITY) return "*";
+  const id = userId.startsWith("u:") ? userId.slice(2) : userId;
+  const u = data.users.find((x) => x.id === id);
   if (u?.role === "owner") return "*";
-  return data.grants[userId] || [];
+  return data.grants[id] || [];
 }
 export function canAccessRunner(userId: string, runnerId: string): boolean {
   const a = allowedRunners(userId);
   return a === "*" || a.includes(runnerId);
 }
 export function setGrants(userId: string, runners: string[]): void { data.grants[userId] = runners; save(data); }
+
+// ---- identity (the human behind the principals) ----
+/** Personal isolation exists to keep an INVITED person out of someone else's transcript — never to
+ *  keep the owner out of their own work. The Hub mints one user per paired DEVICE, so the same human
+ *  on the desktop and on the phone used to be two strangers: the moment a session consumed personal
+ *  context on one device it disappeared from the other, with no way back. Anything scoped to "whose
+ *  work is this" (personal session bindings, execution ownership, semantic memory) is therefore
+ *  scoped to the IDENTITY, not to the device login:
+ *   - every `owner` device resolves to OWNER_IDENTITY — one person, all their machines;
+ *   - a caller with no principal resolves there too: with auth on, only loopback wake/CLI traffic
+ *     gets that far, and reaching the Hub locally already implies a shell on the owner's machine;
+ *   - each `member` keeps its own bucket (`u:<userId>`), so invited people stay isolated;
+ *   - an unknown or revoked user also keeps its own bucket — leftovers must never widen access.
+ *  Idempotent on purpose: these values are persisted and read back, so identityOf(identityOf(x))
+ *  must equal identityOf(x). Push/audit/attribution keep using the RAW userId — those answer
+ *  "which device", a different question from "which person". */
+export const OWNER_IDENTITY = "owner";
+export function identityOf(userId?: string | null): string {
+  const id = (userId || "").trim();
+  if (!id || id === "local" || id === OWNER_IDENTITY) return OWNER_IDENTITY;
+  if (id.startsWith("u:")) return id; // already an identity
+  if (!AUTH_ENABLED) return OWNER_IDENTITY;
+  return data.users.find((u) => u.id === id)?.role === "owner" ? OWNER_IDENTITY : `u:${id}`;
+}
+export function sameIdentity(left?: string | null, right?: string | null): boolean {
+  return identityOf(left) === identityOf(right);
+}
 
 // ---- runner<->hub tokens (infra) ----
 export function mintRunnerToken(runnerId: string, label: string): string {

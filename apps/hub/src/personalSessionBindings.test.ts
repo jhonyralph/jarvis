@@ -93,3 +93,36 @@ test("remove rolls back its in-memory row and generation when persistence fails"
   assert.equal(bindings.get("local", "session-a")?.principalId, "alice");
   assert.equal(new PersonalSessionBindings(file).get("local", "session-a")?.principalId, "alice");
 });
+
+test("normalizePrincipals folds the same person's device logins into one identity", () => {
+  const root = mkdtempSync(join(tmpdir(), "jarvis-personal-bindings-"));
+  const file = join(root, "bindings.json");
+  const bindings = new PersonalSessionBindings(file, () => 100);
+  bindings.claimMany("local", ["managed-a", "claude:native-a"], "device-desktop");
+  bindings.claim("local", "managed-b", "device-phone");
+  bindings.claim("local", "managed-c", "u:convidado");
+  const generationBefore = bindings.capture("local", "managed-a").generation;
+
+  const changed = bindings.normalizePrincipals((principalId) => (principalId.startsWith("device-") ? "owner" : principalId));
+  assert.equal(changed, 3, "os três vínculos dos dois aparelhos do dono");
+  assert.equal(bindings.allows("local", "managed-a", "owner"), true);
+  assert.equal(bindings.allows("local", "claude:native-a", "owner"), true);
+  assert.equal(bindings.allows("local", "managed-b", "owner"), true, "a sessão presa no celular volta para o dono");
+  assert.equal(bindings.allows("local", "managed-c", "owner"), false, "o convidado continua isolado");
+  assert.equal(bindings.capture("local", "managed-a").generation, generationBefore, "renomear o mesmo dono não é troca de dono");
+
+  const restarted = new PersonalSessionBindings(file);
+  assert.equal(restarted.get("local", "managed-b")?.principalId, "owner", "persistido");
+  assert.equal(restarted.normalizePrincipals((principalId) => principalId), 0, "idempotente: o segundo boot não tem nada a fazer");
+});
+
+test("normalizePrincipals keeps every row when one mapping is invalid", () => {
+  const root = mkdtempSync(join(tmpdir(), "jarvis-personal-bindings-"));
+  const bindings = new PersonalSessionBindings(join(root, "bindings.json"), () => 100);
+  bindings.claim("local", "managed-a", "device-desktop");
+  bindings.claim("local", "managed-b", "device-phone");
+
+  assert.throws(() => bindings.normalizePrincipals((principalId) => (principalId === "device-phone" ? "" : "owner")), /invalid personal session binding/);
+  assert.equal(bindings.get("local", "managed-a")?.principalId, "device-desktop", "tudo ou nada");
+  assert.equal(bindings.get("local", "managed-b")?.principalId, "device-phone");
+});

@@ -162,6 +162,28 @@ export class PersonalSessionBindings {
     return ids.map((sessionId) => structuredClone(this.rows.get(keyOf(runnerId, sessionId))!));
   }
 
+  /** Rewrite persisted principals through `resolve` (see auth.identityOf). Boot-time normalization:
+   *  generations stay untouched because this renames the SAME owner to a stable identity — it is not
+   *  an ownership change, and bumping would invalidate snapshots for no reason. All-or-nothing. */
+  normalizePrincipals(resolve: (principalId: string) => string): number {
+    const previousRows = new Map(this.rows), previousGenerations = new Map(this.generations);
+    let changed = 0;
+    try {
+      for (const [key, row] of this.rows) {
+        const principalId = resolve(row.principalId);
+        if (!validId(principalId, 200)) throw new Error("invalid personal session binding");
+        if (principalId === row.principalId) continue;
+        this.rows.set(key, { ...row, principalId });
+        changed++;
+      }
+      if (changed) this.save();
+    } catch (error) {
+      this.restore(previousRows, previousGenerations);
+      throw error;
+    }
+    return changed;
+  }
+
   /** Invalidate a deleted session even when it was unbound, so stale async work cannot republish it. */
   remove(runnerId: string, sessionId: string): boolean {
     const key = keyOf(runnerId, sessionId), existed = this.rows.has(key);

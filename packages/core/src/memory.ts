@@ -168,6 +168,19 @@ export class MemoryStore {
     for (const raw of entries) { const e = normalizeEntry(raw); const i = this.data.findIndex((x) => x.id === e.id); if (i >= 0) this.data[i] = e; else this.data.push(e); }
     this.flush();
   }
+  /** Rewrite every ownerId through `resolve`, so entries indexed under one login of the same person
+   *  stay searchable from their other devices. Returns how many entries changed. */
+  normalizeOwners(resolve: (ownerId: string) => string): number {
+    let changed = 0;
+    for (const e of this.data) {
+      if (!e.ownerId) continue;
+      const ownerId = resolve(e.ownerId);
+      if (!ownerId || ownerId === e.ownerId) continue;
+      e.ownerId = ownerId; changed++;
+    }
+    if (changed) this.flush();
+    return changed;
+  }
   removeSession(sessionId: string, runnerId?: string): void {
     const before = this.data.length;
     const normalizedRunner = runnerId ? normalizeMemoryNamespace(runnerId) : undefined;

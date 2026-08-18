@@ -100,3 +100,44 @@ test("runner token TOFU: adopts the real id once, then is pinned; no id takeover
 });
 
 test.after(() => rmSync(HOME, { recursive: true, force: true }));
+
+/**
+ * Identity: the Hub mints one user per paired DEVICE, so the same human on the desktop and on the
+ * phone used to be two strangers — anything scoped to a principal (personal session bindings,
+ * executions, memory) vanished from the other machine. Ownership is scoped to the PERSON now.
+ */
+test("identity: every owner device is the same person, a member stays isolated", () => {
+  const owner = auth.listDevices().find((d) => d.role === "owner")!;
+  const phone = auth.redeem(auth.mintInvite(owner.userId, { role: "owner", ttlSec: 3600 }).code, "Celular do dono");
+  const guest = auth.redeem(auth.mintInvite(owner.userId, { role: "member", runners: ["runner-A"], ttlSec: 3600 }).code, "Convidado");
+
+  assert.equal(auth.identityOf(owner.userId), auth.OWNER_IDENTITY);
+  assert.equal(auth.identityOf(phone.user.id), auth.OWNER_IDENTITY);
+  assert.notEqual(owner.userId, phone.user.id, "são logins de dispositivo distintos");
+  assert.equal(auth.sameIdentity(owner.userId, phone.user.id), true, "desktop e celular do dono são a mesma pessoa");
+
+  assert.equal(auth.identityOf(guest.user.id), `u:${guest.user.id}`);
+  assert.equal(auth.sameIdentity(owner.userId, guest.user.id), false, "um convidado continua isolado do dono");
+  assert.equal(auth.sameIdentity(guest.user.id, phone.user.id), false);
+});
+
+test("identity: idempotent, local-first, and an unknown user keeps its own bucket", () => {
+  const owner = auth.listDevices().find((d) => d.role === "owner")!;
+  const member = auth.listDevices().find((d) => d.role === "member")!;
+  // Identities are persisted and read back, so feeding one in again must not wrap it twice.
+  assert.equal(auth.identityOf(auth.identityOf(owner.userId)), auth.OWNER_IDENTITY);
+  assert.equal(auth.identityOf(auth.identityOf(member.userId)), `u:${member.userId}`);
+
+  assert.equal(auth.identityOf("local"), auth.OWNER_IDENTITY, "o listener local roda na máquina do dono");
+  assert.equal(auth.identityOf(undefined), auth.OWNER_IDENTITY);
+  assert.equal(auth.identityOf(""), auth.OWNER_IDENTITY);
+  assert.equal(auth.identityOf("0123456789abcdef"), "u:0123456789abcdef", "usuário revogado/desconhecido não vira dono");
+});
+
+test("allowedRunners accepts identities as well as raw device logins", () => {
+  const member = auth.listDevices().find((d) => d.role === "member" && auth.allowedRunners(d.userId) !== "*")!;
+  assert.equal(auth.allowedRunners(auth.OWNER_IDENTITY), "*", "trabalho em background carrega a identidade, não o login");
+  assert.equal(auth.canAccessRunner(auth.OWNER_IDENTITY, "qualquer-runner"), true);
+  assert.deepEqual(auth.allowedRunners(`u:${member.userId}`), auth.allowedRunners(member.userId));
+  assert.equal(auth.canAccessRunner(`u:${member.userId}`, "runner-A"), auth.canAccessRunner(member.userId, "runner-A"));
+});
