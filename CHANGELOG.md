@@ -1,3 +1,17 @@
+# [0.27.0](https://github.com/jhonyralph/jarvis/compare/v0.26.1...v0.27.0) (2026-08-18)
+
+
+### Bug Fixes
+
+* **update:** updater do Windows deixa de derrubar a máquina para falhar ([04dc655](https://github.com/jhonyralph/jarvis/commit/04dc6553aac4d5bdd5643aefa5f433f6cf383d00))
+
+
+### Features
+
+* **tarefas:** Configurações mostra e gerencia conexões, fontes e servidores MCP ([5bcb396](https://github.com/jhonyralph/jarvis/commit/5bcb39685419dabe9212118afc13daf8e470a1de))
+* **tarefas:** fonte pelo chat (G), fila da execução (H) e N tarefas → N subsessões (I) ([caf7e2f](https://github.com/jhonyralph/jarvis/commit/caf7e2fa7aaa47ac1c53f4db71db9219c9deb956))
+* **tarefas:** fonte única declarada por projeto (D) e fonte MCP na máquina do projeto (E) ([2455057](https://github.com/jhonyralph/jarvis/commit/245505760c9aea357af08ed6e2b6ad2e1fbc35de))
+
 ## [0.26.1](https://github.com/jhonyralph/jarvis/compare/v0.26.0...v0.26.1) (2026-08-18)
 
 
