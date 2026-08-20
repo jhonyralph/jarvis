@@ -1,3 +1,21 @@
+# [0.28.0](https://github.com/jhonyralph/jarvis/compare/v0.27.0...v0.28.0) (2026-08-20)
+
+
+### Bug Fixes
+
+* **framework:** backup de escrita parou de virar conteúdo do framework ([e2f548c](https://github.com/jhonyralph/jarvis/commit/e2f548c889d2b5cbfae0a2ad61ad142ae0fa3dae))
+* **update:** a falha do updater aparece na tela, em vez de morar no JSON ([d8d9860](https://github.com/jhonyralph/jarvis/commit/d8d9860c72138c0c3e13e78098b4bea6b1126d24))
+
+
+### Features
+
+* **fluxo:** a faixa é a única casa do fluxo, e o auto-início deixa de ser invisível ([e0f5c8c](https://github.com/jhonyralph/jarvis/commit/e0f5c8c83d9de8b820e57fd9464b34889c3bb4e2))
+* **fluxo:** a gaveta de tarefa para de prometer o que não fazia ([bc0fa79](https://github.com/jhonyralph/jarvis/commit/bc0fa7901ca21edd4a1c1ad495000d603c7718a9))
+* **tarefas:** a fonte declarada do projeto passa a servir a IA também ([21e0107](https://github.com/jhonyralph/jarvis/commit/21e0107db54f0cb2354e39b46e164df03e1c9285))
+* **tarefas:** a IA de qualquer máquina mexe nas tarefas do projeto DELA ([978c178](https://github.com/jhonyralph/jarvis/commit/978c178ad44b4a8d09fc8400a3b0b29c5de19305))
+* **tarefas:** o servidor MCP de uma máquina se configura pela tela ([6f97776](https://github.com/jhonyralph/jarvis/commit/6f977769ad7cdb5bbad1ecd17f227592fd16268f))
+* **update:** o Hub entrega o corpo do updater — fim do defeito incorrigível ([16aca20](https://github.com/jhonyralph/jarvis/commit/16aca20d762f4fc6bb257337d1ce309bb2916d4f))
+
 # [0.27.0](https://github.com/jhonyralph/jarvis/compare/v0.26.1...v0.27.0) (2026-08-18)
 
 
