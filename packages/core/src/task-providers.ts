@@ -252,41 +252,45 @@ export interface TaskState { id: string; name: string; type?: string }
  * Os estados REAIS do board da conexao — para o filtro falar a lingua do board, e nao um vocabulario
  * normalizado que inventa "em andamento" onde o tracker so tem aberta/fechada.
  *
- * `target` e o destino declarado no vinculo do projeto (chave do time no Linear, chave do projeto no
- * Jira). Ele importa mais do que parece: uma conta real devolveu 49 estados no total e 13 no time que
- * interessava. Sem destino, o fallback deduplica por nome — usavel, mas mistura times, e por isso a
- * tela precisa dizer que configurar o destino melhora a lista.
+ * O escopo e DESCOBERTO, nao configurado. A primeira versao usava o `destino` do vinculo do projeto,
+ * e estava errada: destino e o campo de ESCRITA (owner/repo, chave de projeto Jira, chave de time
+ * Linear) — formato diferente por provedor e sem relacao necessaria com o board de onde se le. Pior,
+ * exigia configuracao para o filtro nascer decente.
  *
- * GitHub e GitLab nao pagam rede: issue la e aberta ou fechada, e isso e o board deles inteiro.
+ * Quando o provedor sabe responder "quais boards sao meus", perguntamos a ele: no Linear, uma conta
+ * real devolveu 49 estados no total e 13 depois de recortar pelos times do proprio usuario, sem
+ * ninguem preencher nada. Onde o provedor nao sabe (Jira), a lista e da instancia, deduplicada. E
+ * onde o conceito nao existe (GitHub, GitLab), sao dois estados fixos e nenhuma chamada de rede.
  */
-export async function listProviderStates(providerId: string, input: ProviderCallInput & { target?: string }): Promise<TaskState[]> {
+export async function listProviderStates(providerId: string, input: ProviderCallInput): Promise<TaskState[]> {
   const f = input.fetchFn || defaultFetch;
   const secrets = [input.secret, input.secret2 || ""].filter(Boolean);
   const cfg = input.config || {};
-  const target = String(input.target || "").trim();
   const j = (url: string, init?: Parameters<FetchLike>[1]) => call(f, secrets, url, { ...init, signal: input.signal });
   switch (providerId) {
     case "github": return [{ id: "open", name: "Open", type: "unstarted" }, { id: "closed", name: "Closed", type: "completed" }];
     case "gitlab": return [{ id: "opened", name: "Opened", type: "unstarted" }, { id: "closed", name: "Closed", type: "completed" }];
     case "jira": {
-      // Com projeto declarado, os estados vem DELE (por tipo de issue, com repeticao entre tipos);
-      // sem projeto, a lista da instancia inteira. Os dois sao endpoints documentados, e o formato
-      // difere — por isso a leitura aceita as duas formas em vez de assumir uma.
-      const url = target ? `${jiraBase(cfg)}/rest/api/3/project/${encodeURIComponent(target)}/statuses` : `${jiraBase(cfg)}/rest/api/3/status`;
-      const r = await j(url, { headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, accept: "application/json" } });
+      const r = await j(`${jiraBase(cfg)}/rest/api/3/status`, { headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, accept: "application/json" } });
+      // O retorno varia entre instalacoes (lista plana, ou agrupada por tipo de issue com `statuses`
+      // dentro): ler as duas formas custa uma linha e evita lista vazia num Jira que responde certo.
       const cru: any[] = Array.isArray(r) ? r.flatMap((it: any) => (Array.isArray(it?.statuses) ? it.statuses : [it])) : [];
       return dedupeStates(cru.map((it: any) => ({ id: String(it?.id ?? it?.name ?? ""), name: String(it?.name || ""), type: it?.statusCategory?.key || undefined })));
     }
     case "linear": {
-      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "{ workflowStates(first: 250) { nodes { id name type position team { key } } } }" }) });
+      // UMA requisicao para as duas perguntas: de quais times sou, e quais sao os estados. Duas idas
+      // deixariam uma janela em que o time some entre elas — e custariam o dobro de latencia.
+      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "{ viewer { teams(first: 50) { nodes { key } } } workflowStates(first: 250) { nodes { id name type position team { key } } } }" }) });
+      const meus = new Set<string>(((r?.data?.viewer?.teams?.nodes || []) as any[]).map((t) => String(t?.key || "").toUpperCase()).filter(Boolean));
       const nodes: any[] = r?.data?.workflowStates?.nodes || [];
-      const doTime = target ? nodes.filter((n) => String(n?.team?.key || "").toUpperCase() === target.toUpperCase()) : nodes;
+      // Sem time nenhum (conta de servico, por exemplo) o recorte vazio esconderia o board inteiro:
+      // ali a lista completa deduplicada e menos errada que uma tela vazia.
+      const doTime = meus.size ? nodes.filter((n) => meus.has(String(n?.team?.key || "").toUpperCase())) : nodes;
       // Ordenar SO por `position` embaralha o board: medido numa conta real, saía "Triage > Backlog >
       // In Progress > Done > Canceled > Duplicate > In Review > ...". O `position` do Linear vale
       // DENTRO do tipo, nao entre tipos — entao o tipo manda primeiro, e a posicao desempata.
       const ordenados = [...doTime].sort((a, b) => rankLinearState(a?.type) - rankLinearState(b?.type) || (Number(a?.position) || 0) - (Number(b?.position) || 0));
-      const mapeados = ordenados.map((n) => ({ id: String(n?.id || ""), name: String(n?.name || ""), type: n?.type || undefined }));
-      return target ? mapeados.filter((x) => x.id && x.name) : dedupeStates(mapeados);
+      return dedupeStates(ordenados.map((n) => ({ id: String(n?.id || ""), name: String(n?.name || ""), type: n?.type || undefined })));
     }
     default: throw new Error(`estados do board ainda nao implementados para ${providerId} (tier 2 — identidade so)`);
   }

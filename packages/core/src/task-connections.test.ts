@@ -255,52 +255,73 @@ test("org da conexao restringe a lista, e tier 2 recusa em vez de mentir lista v
 
 /* ── Os estados REAIS do board ────────────────────────────────────────────────────────────────────
    O filtro fala a lingua do board (escolha do dono) em vez de um vocabulario normalizado que
-   inventaria "em andamento" onde GitHub so tem aberta/fechada. */
+   inventaria "em andamento" onde GitHub so tem aberta/fechada. E o escopo e DESCOBERTO: amarra-lo ao
+   `destino` do vinculo era conflacao — destino e o campo de ESCRITA, com formato proprio por
+   provedor, e exigia configuracao para o filtro nascer decente. */
+
+const linearStates = (teams: string[], nodes: any[]) => ({
+  "https://api.linear.app/graphql": { data: { viewer: { teams: { nodes: teams.map((key) => ({ key })) } }, workflowStates: { nodes } } },
+});
 
 test("estados do Linear saem na ordem do BOARD, nao na do campo position", async () => {
   // Formato tirado de uma conta real: `position` vale DENTRO do tipo, nao entre tipos. Ordenar so
   // por ele produzia "Triage > Backlog > In Progress > Done > Canceled > In Review", que nao e
   // board nenhum — Done no meio e In Review depois de Canceled.
-  const routes = fake({
-    "https://api.linear.app/graphql": { data: { workflowStates: { nodes: [
-      { id: "s3", name: "In Progress", type: "started", position: 1, team: { key: "ENG" } },
-      { id: "s4", name: "Done", type: "completed", position: 2, team: { key: "ENG" } },
-      { id: "s5", name: "Canceled", type: "canceled", position: 3, team: { key: "ENG" } },
-      { id: "s6", name: "In Review", type: "started", position: 4, team: { key: "ENG" } },
-      { id: "s1", name: "Triage", type: "triage", position: 5, team: { key: "ENG" } },
-      { id: "s2", name: "Backlog", type: "backlog", position: 6, team: { key: "ENG" } },
-      { id: "x1", name: "Feito", type: "completed", position: 1, team: { key: "OUTRO" } },
-    ] } } },
-  });
+  const routes = fake(linearStates(["ENG"], [
+    { id: "s3", name: "In Progress", type: "started", position: 1, team: { key: "ENG" } },
+    { id: "s4", name: "Done", type: "completed", position: 2, team: { key: "ENG" } },
+    { id: "s5", name: "Canceled", type: "canceled", position: 3, team: { key: "ENG" } },
+    { id: "s6", name: "In Review", type: "started", position: 4, team: { key: "ENG" } },
+    { id: "s1", name: "Triage", type: "triage", position: 5, team: { key: "ENG" } },
+    { id: "s2", name: "Backlog", type: "backlog", position: 6, team: { key: "ENG" } },
+    { id: "x1", name: "Feito", type: "completed", position: 1, team: { key: "OUTRO" } },
+  ]));
 
-  const eng = await listProviderStates("linear", { config: {}, secret: "s", target: "ENG", fetchFn: routes.fetchFn });
+  const eng = await listProviderStates("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn });
   assert.deepEqual(eng.map((x) => x.name), ["Triage", "Backlog", "In Progress", "In Review", "Done", "Canceled"],
     "o tipo manda primeiro; a posicao so desempata dentro dele");
-  assert.equal(eng.some((x) => x.name === "Feito"), false, "estado de OUTRO time nao e estado deste board");
+  assert.equal(eng.some((x) => x.name === "Feito"), false, "board de time que nao e meu nao entra no filtro");
+  // Uma requisicao para as duas perguntas: duas idas deixariam uma janela em que o time some entre
+  // elas, e custariam o dobro de latencia.
+  assert.equal(routes.calls.length, 1, "os times e os estados vem juntos");
+});
+
+test("o escopo vem do provedor, sem ninguem configurar destino", async () => {
+  const routes = fake(linearStates(["ENG"], [
+    { id: "a", name: "Triage", type: "triage", position: 1, team: { key: "ENG" } },
+    { id: "b", name: "Sprint", type: "started", position: 1, team: { key: "MKT" } },
+  ]));
+  const st = await listProviderStates("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn });
+  assert.deepEqual(st.map((x) => x.name), ["Triage"]);
+  assert.match(String(JSON.parse(routes.calls[0].init.body).query), /viewer \{ teams/, "quem responde 'quais boards sao meus' e o provedor");
+});
+
+test("conta sem time nenhum ve o board inteiro, em vez de uma tela vazia", async () => {
+  // Recorte vazio esconderia tudo. Numa conta de servico, lista completa e menos errada que nada.
+  const routes = fake(linearStates([], [
+    { id: "a", name: "Triage", type: "triage", position: 1, team: { key: "ENG" } },
+    { id: "b", name: "Sprint", type: "started", position: 1, team: { key: "MKT" } },
+  ]));
+  assert.equal((await listProviderStates("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn })).length, 2);
 });
 
 test("tipo desconhecido vai para o fim, em vez de se misturar com 'a fazer'", async () => {
   // O catalogo de tipos do Linear cresce (`duplicate` apareceu depois). Colocar o desconhecido no
   // inicio poria um estado terminal onde se procura trabalho por comecar.
-  const routes = fake({
-    "https://api.linear.app/graphql": { data: { workflowStates: { nodes: [
-      { id: "d", name: "Duplicate", type: "duplicate", position: 1, team: { key: "ENG" } },
-      { id: "t", name: "Triage", type: "triage", position: 9, team: { key: "ENG" } },
-    ] } } },
-  });
-  assert.deepEqual((await listProviderStates("linear", { config: {}, secret: "s", target: "ENG", fetchFn: routes.fetchFn })).map((x) => x.name), ["Triage", "Duplicate"]);
+  const routes = fake(linearStates(["ENG"], [
+    { id: "d", name: "Duplicate", type: "duplicate", position: 1, team: { key: "ENG" } },
+    { id: "t", name: "Triage", type: "triage", position: 9, team: { key: "ENG" } },
+  ]));
+  assert.deepEqual((await listProviderStates("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn })).map((x) => x.name), ["Triage", "Duplicate"]);
 });
 
-test("sem destino declarado, o Linear deduplica por nome — e a lista mistura times", async () => {
-  const routes = fake({
-    "https://api.linear.app/graphql": { data: { workflowStates: { nodes: [
-      { id: "a", name: "Done", type: "completed", position: 1, team: { key: "ENG" } },
-      { id: "b", name: "done", type: "completed", position: 1, team: { key: "OPS" } },
-      { id: "c", name: "Triage", type: "triage", position: 1, team: { key: "OPS" } },
-    ] } } },
-  });
-  const todos = await listProviderStates("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn });
-  assert.deepEqual(todos.map((x) => x.name), ["Triage", "Done"], "mesmo nome em dois times e UM estado para quem filtra");
+test("mesmo nome em times diferentes e UM estado para quem filtra", async () => {
+  const routes = fake(linearStates(["ENG", "OPS"], [
+    { id: "a", name: "Done", type: "completed", position: 1, team: { key: "ENG" } },
+    { id: "b", name: "done", type: "completed", position: 1, team: { key: "OPS" } },
+    { id: "c", name: "Triage", type: "triage", position: 1, team: { key: "OPS" } },
+  ]));
+  assert.deepEqual((await listProviderStates("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn })).map((x) => x.name), ["Triage", "Done"]);
 });
 
 test("GitHub e GitLab nao pagam rede: o board deles e aberta/fechada", async () => {
@@ -310,20 +331,19 @@ test("GitHub e GitLab nao pagam rede: o board deles e aberta/fechada", async () 
   assert.equal(routes.calls.length, 0, "pedir a rede para saber o que ja se sabe e latencia de graca");
 });
 
-test("Jira le os dois formatos: por projeto e da instancia", async () => {
-  const porProjeto = fake({
-    "https://acme.atlassian.net/rest/api/3/project/ABC/statuses": [
-      { name: "Bug", statuses: [{ id: "1", name: "To Do", statusCategory: { key: "new" } }, { id: "3", name: "Done", statusCategory: { key: "done" } }] },
-      { name: "Task", statuses: [{ id: "1", name: "To Do", statusCategory: { key: "new" } }] },
-    ],
-  });
-  const doProjeto = await listProviderStates("jira", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", target: "ABC", fetchFn: porProjeto.fetchFn });
-  assert.deepEqual(doProjeto.map((x) => x.name), ["To Do", "Done"], "o mesmo status em dois tipos de issue aparece uma vez");
+test("Jira le as duas formas de resposta da instancia", async () => {
+  // Instalacoes respondem lista plana ou agrupada por tipo de issue; ler so uma daria lista vazia
+  // num Jira que respondeu certo.
+  const plana = fake({ "https://acme.atlassian.net/rest/api/3/status": [{ id: "9", name: "Blocked", statusCategory: { key: "indeterminate" } }] });
+  const cfg = { baseUrl: "https://acme.atlassian.net", email: "e@x" };
+  assert.deepEqual((await listProviderStates("jira", { config: cfg, secret: "s", fetchFn: plana.fetchFn })).map((x) => x.name), ["Blocked"]);
 
-  const daInstancia = fake({ "https://acme.atlassian.net/rest/api/3/status": [{ id: "9", name: "Blocked", statusCategory: { key: "indeterminate" } }] });
-  const semAlvo = await listProviderStates("jira", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", fetchFn: daInstancia.fetchFn });
-  assert.deepEqual(semAlvo.map((x) => x.name), ["Blocked"]);
-  assert.match(daInstancia.calls[0].url, /rest\/api\/3\/status$/, "sem projeto declarado, a lista e da instancia");
+  const agrupada = fake({ "https://acme.atlassian.net/rest/api/3/status": [
+    { name: "Bug", statuses: [{ id: "1", name: "To Do", statusCategory: { key: "new" } }, { id: "3", name: "Done", statusCategory: { key: "done" } }] },
+    { name: "Task", statuses: [{ id: "1", name: "To Do", statusCategory: { key: "new" } }] },
+  ] });
+  assert.deepEqual((await listProviderStates("jira", { config: cfg, secret: "s", fetchFn: agrupada.fetchFn })).map((x) => x.name), ["To Do", "Done"],
+    "o mesmo status em dois tipos de issue aparece uma vez");
 });
 
 test("tier 2 recusa os estados em vez de devolver lista vazia", async () => {
