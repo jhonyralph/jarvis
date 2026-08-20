@@ -18,6 +18,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
+// A versão vem da CONSTANTE: fixar o número aqui faz o teste quebrar a cada fatia que sobe o
+// protocolo — e quebrar por motivo errado, porque o que ele testa não é a versão.
+import { RUNNER_PROTOCOL_VERSION } from "@jarvis/protocol";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -76,7 +79,7 @@ async function fakeRunner(port: number, opts: { runnerId: string; cwdBySession: 
     t: "register", token: "",
     info: {
       runnerId: opts.runnerId, host: "maquina-de-teste", os: "linux", agents: ["mock"], agentDescriptors: [], agentUsage: {},
-      protocolVersion: 12, version: "test", label: "Máquina de teste", taskBridge: true,
+      protocolVersion: RUNNER_PROTOCOL_VERSION, version: "test", label: "Máquina de teste", taskBridge: true,
     },
   });
   await inbox.take((m) => m.t === "welcome");

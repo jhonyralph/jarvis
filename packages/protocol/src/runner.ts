@@ -20,7 +20,7 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
  *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
  *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
  *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
-export const RUNNER_PROTOCOL_VERSION = 12;
+export const RUNNER_PROTOCOL_VERSION = 13;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
@@ -47,6 +47,11 @@ export interface RunnerInfo {
   taskMcpServers?: string[];
   /** TSK-11 — esta máquina aceita servir a ponte de tarefas (a IA daqui mexendo em tarefas). */
   taskBridge?: boolean;
+  /** TSK-12 — o caminho REAL da allowlist NESTA máquina. A tela mostrava o caminho do Hub como se
+   *  fosse o da máquina remota: numa Luby Linux, aparecia um caminho C:\Users de Windows. */
+  taskMcpConfigFile?: string;
+  /** TSK-12 — esta máquina aceita ser configurada pela tela (`JARVIS_TASK_MCP_REMOTE_EDIT`). */
+  taskMcpRemoteEdit?: boolean;
   /** Durable proof that dependencies/validation completed for a correlated update before restart. */
   updateReceipt?: { requestId: string; targetCommit: string; current: string; preparedAt: number };
   /** Durable failure/success log produced by an external updater before the runner restarted. */
@@ -259,6 +264,10 @@ export type RunnerToHub =
   /** Resposta ao pedido de remote do Hub: o `git remote` do projeto vive no disco DESTA máquina, e
    *  computá-lo no Hub devolvia o remote de outro repositório (ou nenhum). */
   | { t: "git_remote"; reqId: string; cwd: string; url?: string }
+  /** TSK-12 — respostas da configuração de MCP. `servers` vem REDIGIDO: nomes de env, nunca valores. */
+  | { t: "task_mcp_config"; reqId: string; configFile: string; schemaVersion: number; servers: Array<Record<string, unknown>>; error?: string }
+  | { t: "task_mcp_config_set"; reqId: string; ok: boolean; error?: string }
+  | { t: "task_mcp_test"; reqId: string; ok: boolean; count?: number; sample?: string[]; error?: string }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" }
   | ExecutionRunnerToHub;
@@ -350,6 +359,11 @@ export type HubToRunner =
       key?: string; url?: string }
   /** Pergunta o `git remote` de uma pasta DESTA máquina (guarda-corpo de conta errada na escrita). */
   | { t: "git_remote"; reqId: string; cwd: string }
+  /** TSK-12 — ler, gravar e testar a allowlist de MCP DESTA máquina. Quem valida e grava é ela: o Hub
+   *  encaminha a intenção, como na ponte de tarefas. Nenhum valor de env viaja de volta. */
+  | { t: "task_mcp_config"; reqId: string }
+  | { t: "task_mcp_config_set"; reqId: string; name: string; server?: Record<string, unknown>; remove?: boolean }
+  | { t: "task_mcp_test"; reqId: string; name: string }
   | { t: "ping" }
   | ExecutionHubToRunner;
 

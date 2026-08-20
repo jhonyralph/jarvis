@@ -5,12 +5,12 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Transport } from "@modelcontextprotocol/client";
 import type { PersonalMcpSdkClient } from "./personal-mcp-client.js";
-import { loadTaskMcpConfig, mapMcpTasks, pickTaskMcpServer, listMcpTasks, listTasksFromMcp, taskMcpConfigFile, type TaskMcpServer } from "./task-mcp.js";
+import { loadTaskMcpConfig, mapMcpTasks, pickTaskMcpServer, listMcpTasks, listTasksFromMcp, taskMcpConfigFile, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, type TaskMcpServer } from "./task-mcp.js";
 
 const transport: Transport = { async start() {}, async close() {}, async send() {} };
 
@@ -249,4 +249,62 @@ test("MCP: sem allowlist na máquina, a fonte devolve motivo com o caminho do ar
   const out = await listTasksFromMcp({ file: taskMcpConfigFile("/maquina/sem/config"), wanted: "linear" });
   assert.ok("error" in out);
   assert.match((out as any).error, /não tem nenhum servidor MCP de tarefas configurado|não tem servidor MCP de tarefas chamado/);
+});
+
+/* ── TSK-12: configurar pela tela. Quem valida e grava é a máquina; a tela só vê nomes. ────────── */
+
+const STDIO_OK = {
+  label: "Linear do trabalho",
+  transport: { kind: "stdio", command: "npx", args: ["-y", "linear-mcp"], env: { NODE_ENV: "production" }, secretEnv: { LINEAR_API_KEY: "linear_token" } },
+  listTool: "list_issues",
+  fields: { key: "identifier" },
+};
+
+test("validação recusa segredo em env e diz o conserto", () => {
+  const mau = validateTaskMcpServerInput("linear", { ...STDIO_OK, transport: { ...STDIO_OK.transport, env: { GITHUB_TOKEN: "ghp_xxx" } } });
+  assert.equal(mau.ok, false);
+  // A mesma regra do cliente MCP pessoal: valor que parece segredo não vira arquivo de configuração.
+  assert.match((mau as { error: string }).error, /GITHUB_TOKEN.*secretEnv/i);
+
+  const bom = validateTaskMcpServerInput("linear", STDIO_OK);
+  assert.equal(bom.ok, true, JSON.stringify(bom));
+});
+
+test("validação cobra o que falta pelo NOME do campo, não com 'inválido'", () => {
+  const semTool = validateTaskMcpServerInput("x", { transport: { kind: "stdio", command: "npx" } });
+  assert.match((semTool as { error: string }).error, /listTool/);
+  const semCmd = validateTaskMcpServerInput("x", { transport: { kind: "stdio" }, listTool: "list" });
+  assert.match((semCmd as { error: string }).error, /command/);
+  const semEndpoint = validateTaskMcpServerInput("x", { transport: { kind: "streamable-http" }, listTool: "list" });
+  assert.match((semEndpoint as { error: string }).error, /endpoint/);
+  const nomeRuim = validateTaskMcpServerInput("nome com espaço", STDIO_OK);
+  assert.match((nomeRuim as { error: string }).error, /nome do servidor/i);
+});
+
+test("gravar carimba schemaVersion, e ler de volta devolve o mesmo servidor", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jf-mcpcfg-"));
+  const file = join(dir, "task-mcp.json");
+  try {
+    const v = validateTaskMcpServerInput("linear", STDIO_OK);
+    assert.equal(v.ok, true);
+    writeTaskMcpConfig({ [(v as { name: string }).name]: (v as { server: TaskMcpServer }).server }, file);
+
+    const cru = JSON.parse(readFileSync(file, "utf8"));
+    assert.equal(cru.schemaVersion, TASK_MCP_SCHEMA_VERSION, "sem carimbo, a migração da 4b vira adivinhação");
+    const lido = loadTaskMcpConfig(file);
+    assert.equal(lido.error, undefined);
+    assert.equal(lido.servers.linear.listTool, "list_issues");
+    assert.equal((lido.servers.linear.transport as any).command, "npx");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("o que vai para a tela tem NOMES de env, nunca valores", () => {
+  const v = validateTaskMcpServerInput("linear", STDIO_OK);
+  const visto = describeTaskMcpServers({ servers: { linear: (v as { server: TaskMcpServer }).server } });
+
+  assert.deepEqual(visto[0].envNames, ["NODE_ENV"]);
+  assert.deepEqual(visto[0].secretEnvNames, ["LINEAR_API_KEY"]);
+  const serializado = JSON.stringify(visto);
+  assert.equal(serializado.includes("linear_token"), false, "nem o NOME do segredo vira valor exposto por engano");
+  assert.equal(serializado.includes("production"), false, "valor de env não sobe para a tela");
 });

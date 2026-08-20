@@ -26,6 +26,8 @@ import {
   type PersonalMcpClientDependencies,
   type PersonalMcpTransport,
 } from "./personal-mcp-client.js";
+import { isSensitiveEnvKey } from "./personal-mcp-client.js";
+import { writeJsonAtomic } from "./persist.js";
 import type { LocalTaskFile } from "./task-local-cache.js";
 
 /** Teto de itens numa listagem — a lista é para escolher uma tarefa, não para paginar um board. */
@@ -119,6 +121,82 @@ function parseServer(value: any): TaskMcpServer | null {
     listArguments: value.listArguments && typeof value.listArguments === "object" ? value.listArguments : undefined,
     fields,
   };
+}
+
+/* ── Configuração PELA TELA (TSK-12) ───────────────────────────────────────────────────────────
+   Quem valida e grava é a máquina dona do arquivo. O Hub só encaminha a intenção: a decisão fica
+   onde está o disco, que é a mesma postura da ponte de tarefas. O que sai daqui para a tela é
+   REDIGIDO — nomes de env, nunca valores. */
+
+/** Limites: uma allowlist, não um catálogo. Números grandes aqui só escondem engano de configuração. */
+export const TASK_MCP_MAX_SERVERS = 20;
+const NOME_OK = /^[a-z0-9][a-z0-9._-]{0,59}$/i;
+const ENV_NAME_OK = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export type TaskMcpValidation = { ok: true; name: string; server: TaskMcpServer } | { ok: false; error: string };
+
+/**
+ * Valida o que veio da tela ANTES de virar arquivo. O erro precisa dizer o conserto: "faltou X" é
+ * inútil se a pessoa não sabe onde X mora. Recusa em vez de sanear — corrigir em silêncio o que
+ * alguém digitou esconde engano de configuração, que é o defeito que esta fatia existe para matar.
+ */
+export function validateTaskMcpServerInput(name: unknown, input: unknown): TaskMcpValidation {
+  const nome = str(name, 60);
+  if (!NOME_OK.test(nome)) return { ok: false, error: "nome do servidor: use letras, números, ponto, hífen ou _ (até 60)" };
+  if (!input || typeof input !== "object") return { ok: false, error: "servidor vazio" };
+  const raw = input as Record<string, any>;
+  if (!str(raw.listTool, 80)) return { ok: false, error: "falta `listTool`: o nome da ferramenta MCP que LISTA tarefas" };
+  const t = raw.transport && typeof raw.transport === "object" ? raw.transport as Record<string, any> : {};
+  const kind = str(t.kind, 20) || (str(t.endpoint, 500) ? "streamable-http" : "stdio");
+  if (kind === "streamable-http") {
+    if (!str(t.endpoint, 500)) return { ok: false, error: "transporte HTTP precisa de `endpoint`" };
+  } else {
+    if (!str(t.command, 300)) return { ok: false, error: "transporte stdio precisa de `command` (o executável que sobe o servidor)" };
+    if (t.args !== undefined && !Array.isArray(t.args)) return { ok: false, error: "`args` precisa ser uma lista de textos" };
+    if ((t.args?.length ?? 0) > 40) return { ok: false, error: "no máximo 40 argumentos" };
+    for (const [key, value] of Object.entries((t.env && typeof t.env === "object" ? t.env : {}) as Record<string, unknown>)) {
+      if (!ENV_NAME_OK.test(key)) return { ok: false, error: `nome de variável inválido: ${key}` };
+      // A MESMA regra do cliente MCP pessoal. Valor que parece segredo não vira arquivo de
+      // configuração: ele entra por `secretEnv` (NOME), e é resolvido no processo local.
+      if (isSensitiveEnvKey(key)) return { ok: false, error: `${key} parece segredo — declare em "secretEnv" o NOME do segredo, não o valor` };
+      if (typeof value !== "string") return { ok: false, error: `${key}: valor precisa ser texto` };
+    }
+    for (const [key, ref] of Object.entries((t.secretEnv && typeof t.secretEnv === "object" ? t.secretEnv : {}) as Record<string, unknown>)) {
+      if (!ENV_NAME_OK.test(key)) return { ok: false, error: `nome de variável inválido: ${key}` };
+      if (!str(ref, 120)) return { ok: false, error: `${key}: falta o NOME do segredo` };
+    }
+  }
+  const server = parseServer({ ...raw, transport: { ...t, kind } });
+  if (!server) return { ok: false, error: "configuração incompleta para este transporte" };
+  return { ok: true, name: nome, server };
+}
+
+/**
+ * Grava a allowlist da máquina. Carimba `schemaVersion` porque a 4b vai migrar a forma do arquivo, e
+ * migrar adivinhando a versão de arquivos escritos à mão é como o formato se perde.
+ */
+export function writeTaskMcpConfig(servers: Record<string, TaskMcpServer>, file = taskMcpConfigFile()): void {
+  const names = Object.keys(servers);
+  if (names.length > TASK_MCP_MAX_SERVERS) throw new Error(`no máximo ${TASK_MCP_MAX_SERVERS} servidores nesta máquina`);
+  writeJsonAtomic(file, { schemaVersion: TASK_MCP_SCHEMA_VERSION, servers }, { pretty: true });
+}
+
+/** A versão que a gravação carimba. Arquivo sem carimbo é lido como 1 — é o que todo mundo tem hoje. */
+export const TASK_MCP_SCHEMA_VERSION = 1;
+
+/** O que a TELA pode ver: nomes de env, nunca valores. O que não trafega não vaza. */
+export function describeTaskMcpServers(config: TaskMcpConfig): Array<Record<string, unknown>> {
+  return Object.entries(config.servers).map(([name, s]) => {
+    const t = s.transport as Record<string, any>;
+    return {
+      name, label: s.label, listTool: s.listTool, listArguments: s.listArguments, fields: s.fields,
+      transportKind: t.kind,
+      ...(t.kind === "stdio"
+        ? { command: t.command, args: t.args, cwd: t.cwd, envNames: Object.keys(t.env ?? {}), secretEnvNames: Object.keys(t.secretEnv ?? {}) }
+        : { endpoint: t.endpoint }),
+      testedAt: (s as unknown as Record<string, unknown>).testedAt,
+    };
+  });
 }
 
 /**

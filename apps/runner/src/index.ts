@@ -33,7 +33,8 @@ import {
   formatCouncilFinalMessage, managedChildExecutionId,
   TerminalManager,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
-  LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, listTasksFromMcp, loadTaskMcpConfig,
+  LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile,
+  validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type UpdateStatus, type UpdateAttemptRecord, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
@@ -270,6 +271,9 @@ permServer.unref(); // never keep the process alive on its own account
 //
 // Desligar: `JARVIS_TASK_BRIDGE=0` no runner.env desta máquina (nasce ligada).
 const TASK_BRIDGE_ON = String(process.env.JARVIS_TASK_BRIDGE ?? "1") !== "0";
+// TSK-12 — configurar a allowlist de MCP DESTA máquina pela tela. Nasce ligada; `=0` no runner.env
+// devolve a postura antiga (só quem tem acesso ao disco daqui configura).
+const TASK_MCP_REMOTE_EDIT = String(process.env.JARVIS_TASK_MCP_REMOTE_EDIT ?? "1") !== "0";
 const TASK_TOKEN = randomBytes(24).toString("hex");
 const TASK_TIMEOUT_MS = 60 * 1000;
 const pendingTaskCalls = new Map<string, { timer: ReturnType<typeof setTimeout>; settle: (payload: unknown) => void }>();
@@ -1084,6 +1088,10 @@ function connect(): void {
       // mostrar o que está ligado aqui. Comando, env e segredo não saem do disco local.
       taskMcpServers: Object.keys(loadTaskMcpConfig().servers),
       taskBridge: TASK_BRIDGE_ON,
+      // O caminho é DESTA máquina. A tela mostrava o do Hub para todo mundo — caminho de outro
+      // computador, apresentado como "na própria máquina".
+      taskMcpConfigFile: taskMcpConfigFile(),
+      taskMcpRemoteEdit: TASK_MCP_REMOTE_EDIT,
     };
     send({ t: "register", token: TOKEN, info });
     void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));
@@ -1113,6 +1121,46 @@ function connect(): void {
       if (m.t === "ping") { send({ t: "pong" }); return; }
       // Manual permission mode: the user answered a tool approval this machine is blocked on. The Hub
       // already checked session access before forwarding; an unknown id means it was settled already.
+      // TSK-12 — ler / gravar / testar a allowlist DESTA máquina. Validar e gravar acontece AQUI: o
+      // arquivo é daqui, o binário é daqui, e a credencial que ele usa é daqui.
+      if (m.t === "task_mcp_config" && typeof m.reqId === "string") {
+        const cfg = loadTaskMcpConfig();
+        send({ t: "task_mcp_config", reqId: m.reqId, configFile: taskMcpConfigFile(), schemaVersion: TASK_MCP_SCHEMA_VERSION, servers: describeTaskMcpServers(cfg), error: cfg.error });
+        return;
+      }
+      if (m.t === "task_mcp_config_set" && typeof m.reqId === "string" && typeof m.name === "string") {
+        const reqId = m.reqId, nome = m.name;
+        if (!TASK_MCP_REMOTE_EDIT) { send({ t: "task_mcp_config_set", reqId, ok: false, error: "edição remota desligada nesta máquina (JARVIS_TASK_MCP_REMOTE_EDIT=0)" }); return; }
+        try {
+          const atual = loadTaskMcpConfig();
+          const servers = { ...atual.servers };
+          if (m.remove === true) {
+            if (!servers[nome]) { send({ t: "task_mcp_config_set", reqId, ok: false, error: `esta máquina não tem servidor chamado "${nome}"` }); return; }
+            delete servers[nome];
+          } else {
+            const v = validateTaskMcpServerInput(nome, m.server);
+            if (!v.ok) { send({ t: "task_mcp_config_set", reqId, ok: false, error: v.error }); return; }
+            servers[v.name] = v.server;
+          }
+          writeTaskMcpConfig(servers);
+          console.log(`[runner] task-mcp: ${m.remove === true ? "removido" : "salvo"} ${nome}`);
+          send({ t: "task_mcp_config_set", reqId, ok: true });
+        } catch (e: any) { send({ t: "task_mcp_config_set", reqId, ok: false, error: String(e?.message ?? e) }); }
+        return;
+      }
+      if (m.t === "task_mcp_test" && typeof m.reqId === "string" && typeof m.name === "string") {
+        const reqId = m.reqId;
+        void (async () => {
+          try {
+            // `refresh` de propósito: testar tem de perguntar ao servidor AGORA, não repetir o que o
+            // cache guardou há 60s — senão "testado" prova o passado.
+            const listing = await listTasksFromMcp({ wanted: m.name, refresh: true });
+            if ("error" in listing) { send({ t: "task_mcp_test", reqId, ok: false, error: listing.error }); return; }
+            send({ t: "task_mcp_test", reqId, ok: true, count: listing.files.length, sample: listing.files.slice(0, 3).map((f) => f.title) });
+          } catch (e: any) { send({ t: "task_mcp_test", reqId, ok: false, error: String(e?.message ?? e) }); }
+        })();
+        return;
+      }
       if (m.t === "task_bridge_result" && typeof m.reqId === "string") {
         const { t: _t, reqId, ...payload } = m as Record<string, unknown> & { t: string; reqId: string };
         pendingTaskCalls.get(reqId)?.settle(payload);

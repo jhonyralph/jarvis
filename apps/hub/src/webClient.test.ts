@@ -62,6 +62,7 @@ interface ClientHandle {
   taskSource(): any;
   taskBindings(): any;
   taskMcpMachines(): any;
+  renderTaskSettings(): void;
   localTaskFiles(): any;
   searchResults(): any;
   readonly recentsHtml: string[];
@@ -209,6 +210,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   taskSource: ()=>wfTaskSource,
   taskBindings: ()=>tskBindings,
   taskMcpMachines: ()=>tskMcpMachines,
+  renderTaskSettings: ()=>renderTaskSettings(),
   localTaskFiles: ()=>wfLocalFiles,
   searchResults: ()=>wfSearchResults,
   popAnchor: ()=>E.pop._anchor||null,
@@ -1073,6 +1075,27 @@ test("provedor sem conexão só oferece o que resolve a falta — o resto fica d
   const vincular = acha(/adicionar conexão de jira/);
   assert.ok(vincular, "cofre vazio: o botão leva a ADICIONAR, em vez de abrir um seletor sem opções");
   assert.equal(vincular.disabled, false, "e o caminho que resolve a falta continua clicável");
+});
+
+// ── TSK-12: a seção de MCP por máquina em Configurações → 🎯 Tarefas.
+test("MCP por máquina: caminho REAL de cada uma, e formulário só onde ele vai gravar", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  sock.deliver({ t: "task_connections", connections: [], providers: [], bindings: [], mcpMachines: [
+    { runnerId: "luby", label: "Luby", servers: ["linear"], configFile: "/home/luby/.jarvis/task-mcp.json", known: true, editable: true, online: true },
+    { runnerId: "antiga", label: "Antiga", servers: [], configFile: "", known: false, editable: false, online: true },
+  ] });
+  client.el("setSection").value = "tarefas";
+  client.renderTaskSettings();
+
+  const html = String(client.el("tskMcp").innerHTML || "") + client.el("tskMcp").children.map((c: any) => `${c.innerHTML || ""} ${c.textContent || ""}`).join(" ");
+  assert.match(html, /\/home\/luby\/\.jarvis\/task-mcp\.json/, "o caminho é o DA MÁQUINA, não o do Hub");
+  assert.match(html, /só leitura/, "máquina que não pode ser configurada daqui diz isso");
+  const botoes = (function walk(el: any): any[] { return (el.children || []).flatMap((c: any) => [c, ...walk(c)]); })(client.el("tskMcp"))
+    .filter((b: any) => b.tagName === "BUTTON").map((b: any) => String(b.textContent || ""));
+  assert.ok(botoes.includes("+ servidor"), "a máquina apta ganha o formulário");
+  assert.ok(botoes.includes("testar linear"), "e o teste, porque 'salvo' não é 'responde'");
+  assert.equal(botoes.filter((t) => t === "+ servidor").length, 1, "a máquina inapta NÃO ganha formulário que não vai gravar");
 });
 
 // ── TSK-10: a decisão pendente precisa aparecer para quem NÃO está na sessão. Antes, o frame nem

@@ -33,6 +33,12 @@ const DEFAULT_MAX_LIST_PAGES = 8;
 const MAX_SECRET_BYTES = 64 * 1024;
 const REDACTED = "[REDACTED]";
 const SENSITIVE_KEY = /(^|_)(authorization|cookie|credential|passwd|password|secret|token|api_?key)($|_)/i;
+/**
+ * Nome de env que NÃO pode carregar valor literal — o valor vai por `secretEnv` (nome do segredo,
+ * resolvido no processo local). Exportado porque a mesma regra passou a valer na configuração de MCP
+ * de tarefas vinda da tela (TSK-12): duas portas, uma regra só.
+ */
+export function isSensitiveEnvKey(key: string): boolean { return SENSITIVE_KEY.test(key); }
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
 export type PersonalSecretResolver = (secretRef: string) => string | Promise<string>;

@@ -4712,6 +4712,8 @@
           if(settingsPanelOpen('tarefas')) renderTaskSettings();
           wfRerender(); }
         else if(m.t==='task_search_results'){ wfSearchResults=m; wfRerender(); }
+        else if(m.t==='task_mcp_config_set'){ toast(m.ok?'Servidor MCP salvo naquela máquina.':('MCP: '+(m.error||'falhou'))); }
+        else if(m.t==='task_mcp_test'){ toast(m.ok?('Servidor respondeu: '+(m.count||0)+' tarefa(s)'+((m.sample||[]).length?' — ex.: '+m.sample[0]:'')):('Teste falhou: '+(m.error||''))); }
         // Fatia I — o Hub decidiu QUAIS tarefas viram subsessão; ainda não abriu nada. O número e a
         // origem vão para uma confirmação antes de qualquer sessão existir.
         else if(m.t==='task_fanout_plan'){ if(m.sessionId===currentSession) wfFanoutPlanArrived(m); }
@@ -5544,10 +5546,59 @@
           :'<span class="mut">nenhum servidor configurado</span>';
         const d=document.createElement('div');
         d.style.cssText='padding:6px 2px;border-bottom:1px solid rgba(127,127,127,.2)';
-        d.innerHTML='<b>'+esc(m.label||m.runnerId)+'</b><div class="mut" style="font-size:12px">'+lista+'</div>'
-          +'<div class="mut" style="font-size:11px">configurado em <code>'+esc(m.configFile||'~/.jarvis/task-mcp.json')+'</code> na própria máquina</div>';
+        // O caminho agora vem DA MÁQUINA. Enquanto vinha do Hub, uma máquina Linux exibia o caminho do
+        // Windows daqui como se fosse o dela — resposta plausível e falsa, que é o pior tipo.
+        d.innerHTML='<b>'+esc(m.label||m.runnerId)+'</b>'+(m.editable?'':' <span class="mut" style="font-size:11px">(só leitura)</span>')
+          +'<div class="mut" style="font-size:12px">'+lista+'</div>'
+          +(m.configFile?('<div class="mut" style="font-size:11px">arquivo dela: <code>'+esc(m.configFile)+'</code></div>'):'')
+          +(m.editable?'':'<div class="mut" style="font-size:11px">'+(m.online===false?'máquina offline — ela grava a própria configuração':'esta máquina ainda não sabe ser configurada daqui (atualize-a) ou tem JARVIS_TASK_MCP_REMOTE_EDIT=0')+'</div>');
+        if(m.editable){
+          const row=document.createElement('div'); row.className='row'; row.style.cssText='gap:4px;margin-top:4px;flex-wrap:wrap';
+          (m.servers||[]).forEach(nome=>{
+            const t=document.createElement('button'); t.type='button'; t.className='wfact'; t.textContent='testar '+nome;
+            t.title='Perguntar AGORA a este servidor, ignorando cache — "salvo" não é o mesmo que "responde"';
+            t.onclick=()=>{ tx({t:'task_mcp_test',runnerId:m.runnerId,name:nome}); toast('Testando '+nome+'…'); };
+            const r=document.createElement('button'); r.type='button'; r.className='wfact'; r.textContent='remover '+nome;
+            r.onclick=async()=>{
+              // O vínculo do projeto guarda o NOME do servidor: remover sem avisar quebra a fonte de
+              // quem aponta para ele, e a quebra só aparece na próxima listagem.
+              const usando=(tskBindings||[]).filter(b=>b.tracker==='mcp'&&(b.mcpServer||'')===nome).map(b=>b.project);
+              const aviso=usando.length?('\n\nProjeto(s) que ficam sem fonte: '+usando.join(', ')):'';
+              if(await dialog({title:'Remover o servidor "'+nome+'" de '+(m.label||m.runnerId)+'?'+aviso,okText:'Remover',danger:true})==null) return;
+              tx({t:'task_mcp_config_set',runnerId:m.runnerId,name:nome,remove:true});
+            };
+            row.appendChild(t); row.appendChild(r);
+          });
+          const add=document.createElement('button'); add.type='button'; add.className='wfact'; add.textContent='+ servidor';
+          add.onclick=()=>void tskMcpAddFlow(m);
+          row.appendChild(add); d.appendChild(row);
+        }
         E.tskMcp.appendChild(d);
       });
+    }
+    // Adicionar um servidor MCP NAQUELA máquina. A confirmação mostra a LINHA DE COMANDO que ela
+    // passará a poder executar: gravar comando às cegas é o gesto perigoso desta fatia, então é ele
+    // que pede confirmação explícita. Segredo não se digita aqui — vai por NOME (secretEnv).
+    async function tskMcpAddFlow(m){
+      const nome=await dialog({title:'Nome do servidor nesta máquina (ex.: linear-trabalho):',input:true,okText:'Continuar'});
+      if(nome==null||!nome.trim()) return;
+      const cmd=await dialog({title:'Comando que sobe o servidor (ex.: npx):',input:true,okText:'Continuar'});
+      if(cmd==null||!cmd.trim()) return;
+      const args=await dialog({title:'Argumentos separados por espaço (vazio = nenhum):',input:true,okText:'Continuar'});
+      if(args==null) return;
+      const tool=await dialog({title:'Ferramenta MCP que LISTA as tarefas (ex.: list_issues):',input:true,okText:'Continuar'});
+      if(tool==null||!tool.trim()) return;
+      const sec=await dialog({title:'Segredo por variável de ambiente — formato VAR=nome_do_segredo (vazio = nenhum).\n\nO VALOR fica na máquina; aqui vai só o NOME.',input:true,okText:'Continuar'});
+      if(sec==null) return;
+      const secretEnv={}; const par=String(sec||'').trim();
+      if(par){ const i=par.indexOf('='); if(i<1){ toast('Formato inválido — use VAR=nome_do_segredo'); return; } secretEnv[par.slice(0,i).trim()]=par.slice(i+1).trim(); }
+      const linha=(cmd.trim()+' '+args.trim()).trim();
+      const ok=await dialog({title:'Esta máquina passará a poder executar:\n\n  '+linha+'\n\nConfirma?',okText:'Salvar'});
+      if(ok==null) return;
+      tx({t:'task_mcp_config_set',runnerId:m.runnerId,name:nome.trim(),server:{
+        transport:{kind:'stdio',command:cmd.trim(),args:args.trim()?args.trim().split(/\s+/):undefined,secretEnv:Object.keys(secretEnv).length?secretEnv:undefined},
+        listTool:tool.trim(),
+      }});
     }
     if(E.tskAddConn) E.tskAddConn.onclick=()=>{ void taskConnAddFlow(); };
     document.addEventListener('click',async(e)=>{

@@ -63,7 +63,21 @@ projeto e não pode escapar dele. A pasta se troca em **🎯 Tarefa → pasta:**
 
 O servidor MCP roda **na máquina do projeto**, porque é lá que existem o binário, a credencial e a
 rede dele. O Hub guarda apenas o **nome** do servidor; a receita (comando, ambiente, segredo) vive no
-disco daquela máquina, em:
+disco daquela máquina.
+
+**Pela tela** (Configurações → 🎯 Tarefas): cada máquina lista seus servidores com **+ servidor**,
+**testar** e **remover**. Quem valida e grava é a **própria máquina** — o Hub encaminha a intenção,
+como na ponte de tarefas. Três coisas que valem saber:
+
+- Gravar um servidor pede confirmação mostrando a **linha de comando** que aquela máquina passará a
+  poder executar.
+- Segredo não se digita ali: vai por `secretEnv`, que carrega o **NOME** da variável. Chave de env que
+  pareça segredo (`*_TOKEN`, `*_SECRET`, `PASSWORD`…) é recusada apontando o caminho certo.
+- **testar** pergunta ao servidor na hora, ignorando o cache: "salvo" não é o mesmo que "responde".
+
+Máquina em protocolo antigo, offline, ou com `JARVIS_TASK_MCP_REMOTE_EDIT=0` aparece como **só
+leitura**, com o motivo — nunca um formulário que não vai gravar. E o arquivo continua editável à mão
+naquela máquina, em:
 
 ```
 ~/.jarvis/task-mcp.json
