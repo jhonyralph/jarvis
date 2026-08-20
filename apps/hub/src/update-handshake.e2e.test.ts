@@ -154,7 +154,12 @@ test("old/offline runners retain an update until restart and commit verification
     // de em círculo, que é o defeito pior porque não deixa rastro. Uma máquina em HEAD~1 (commit real,
     // que este Hub conhece, ao contrário dos "old0000" dos outros casos) tem de continuar recebendo.
     const behindId = "runner-behind-e2e";
-    const anterior = (await pExecFile("git", ["rev-parse", "--short", "HEAD~1"], { cwd: root })).stdout.trim();
+    // Um commit real que ESTE checkout conhece e que nao e o alvo. Em clone raso de profundidade 1
+    // ele nao existe, e o `git` responde "Needed a single revision" — erro que nao diz nada sobre o
+    // que o teste queria. Quando faltar, o motivo tem de ser o motivo (ver fetch-depth no ci.yml).
+    const anterior = await pExecFile("git", ["rev-parse", "--short", "HEAD~1"], { cwd: root })
+      .then((r) => r.stdout.trim())
+      .catch(() => { throw new Error("este checkout nao tem commit-pai (clone raso?): o e2e da guarda de alvo precisa de fetch-depth >= 2"); });
     const quarentena = await connectRunner(port, { runnerId: behindId, host: "atrasado-old", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION - 1, commit: anterior });
     const pedido = await quarentena.box.take((m) => m.t === "update");
     quarentena.ws.close(); await new Promise((r) => setTimeout(r, 150));

@@ -15,7 +15,13 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # fetch-depth 2, nao 1 (o padrao): o e2e do update prova que a guarda "a maquina ja contem o
+      # alvo?" NAO esta invertida, e para isso precisa de uma maquina ATRAS do Hub — ou seja, de um
+      # commit real que o checkout conheca e que nao seja o HEAD. Com clone raso de um commit so,
+      # `git rev-parse HEAD~1` responde "Needed a single revision" e o teste morre por ambiente.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
