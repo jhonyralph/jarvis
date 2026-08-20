@@ -1,3 +1,17 @@
+# [0.31.0](https://github.com/jhonyralph/jarvis/compare/v0.30.0...v0.31.0) (2026-08-20)
+
+
+### Bug Fixes
+
+* **tarefas:** o escopo dos estados é descoberto, não configurado ([493d115](https://github.com/jhonyralph/jarvis/commit/493d115e5e98c1d10a55bf26be8c855232915531))
+
+
+### Features
+
+* **protocolo:** subsessões nascem na máquina da sessão, não no Hub ([9340674](https://github.com/jhonyralph/jarvis/commit/93406744c59e2fdaa154764350b4b894d32d0dc0))
+* **tarefas:** busca paginada e seleção visível no painel do fluxo ([183e45d](https://github.com/jhonyralph/jarvis/commit/183e45d9cf0966e06523d4d77a9b526eabd50f07))
+* **tarefas:** modal do board com filtro de estado e paginação ([502c8e2](https://github.com/jhonyralph/jarvis/commit/502c8e20967af98c1da48cd3ec1cecac66b1e76c))
+
 # [0.30.0](https://github.com/jhonyralph/jarvis/compare/v0.29.0...v0.30.0) (2026-08-20)
 
 
