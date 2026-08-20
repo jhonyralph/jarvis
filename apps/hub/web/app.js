@@ -1157,7 +1157,7 @@
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
-    function openSession(id,runnerId){ if(!id)return; wfLocalErr=''; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfTaskSource=null; wfLocalFiles=null; wfLocalShow=false; wfProvList=null; wfProvErr=''; wfProvShow=false; wfFanoutClear(); setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
+    function openSession(id,runnerId){ if(!id)return; wfLocalErr=''; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfTaskSource=null; wfLocalFiles=null; wfLocalShow=false; wfProvList=null; wfProvErr=''; wfProvShow=false; if(wfModal) wfModalClose(); wfFanoutClear(); setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
       if(typeof findState!=='undefined'&&findState)closeFind(); if(typeof findRegion!=='undefined')findRegion='chat';  // abriu sessão → foco no chat; fecha barra órfã
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
@@ -4723,7 +4723,16 @@
           wfRerender();
         } }
         else if(m.t==='task_local_list'){ if(m.sessionId===currentSession){ wfLocalErr=String(m.error||''); wfLocalFiles=m.files||[]; wfLocalDir=m.dir||wfLocalDir; if(wfLocalShow) wfRerender(); } }
-        else if(m.t==='task_provider_results'){ if(m.sessionId===currentSession){ wfProvErr=String(m.error||''); wfProvList=m.results||[]; if(wfProvShow) wfRerender(); } }
+        else if(m.t==='task_provider_results'){ if(m.sessionId===currentSession){ wfProvErr=String(m.error||''); wfProvList=m.results||[];
+          if(wfModal){ wfModal.busy=false; wfModal.err=String(m.error||'');
+            // Pagina seguinte ACUMULA; primeira pagina (sem cursor no pedido) substitui. Sem isso,
+            // trocar de filtro deixaria na tela itens do criterio anterior.
+            const primeira=!m.cursorFrom&&!(wfModal.list&&wfModal.pedindoMais);
+            wfModal.list=(wfModal.pedindoMais&&wfModal.list)?wfModal.list.concat(m.results||[]):(m.results||[]);
+            wfModal.pedindoMais=false; wfModal.cursor=String(m.cursor||'');
+            if(m.states) wfModal.states=m.states;
+            wfModalRender(); }
+          if(wfProvShow) wfRerender(); } }
         else if(m.t==='task_meta'){ wfTaskMeta[wfMetaKey({tracker:m.tracker,key:m.key})]=m.meta||null; renderWfRun(); }
         else if(m.t==='task_connections'){ wfConnections=m.connections||[]; wfProviders=m.providers||[];
           tskBindings=m.bindings||[]; tskMcpMachines=m.mcpMachines||[];
@@ -4731,7 +4740,9 @@
           // Configurações repintam sozinhos, inclusive quando quem mexeu foi o outro aparelho.
           if(settingsPanelOpen('tarefas')) renderTaskSettings();
           wfRerender(); }
-        else if(m.t==='task_search_results'){ wfSearchResults=m; wfRerender(); }
+        else if(m.t==='task_search_results'){ wfSearchResults=m;
+          if(wfModal&&m.sessionId===currentSession){ wfModal.busy=false; wfModal.err=String(m.error||''); wfModal.list=m.results||[]; wfModal.cursor=''; wfModalRender(); }
+          wfRerender(); }
         else if(m.t==='task_mcp_config_set'){ toast(m.ok?'Servidor MCP salvo naquela máquina.':('MCP: '+(m.error||'falhou'))); }
         else if(m.t==='task_mcp_test'){ toast(m.ok?('Servidor respondeu: '+(m.count||0)+' tarefa(s)'+((m.sample||[]).length?' — ex.: '+m.sample[0]:'')):('Teste falhou: '+(m.error||''))); }
         // Fatia I — o Hub decidiu QUAIS tarefas viram subsessão; ainda não abriu nada. O número e a
@@ -5281,6 +5292,106 @@
     // Lista do PROVEDOR ("minhas tarefas abertas"). Espelha wfLocalFiles/wfLocalShow de proposito:
     // mesma forma para a fonte que mora fora da maquina, para as duas telas se comportarem igual.
     let wfProvList=null, wfProvErr='', wfProvShow=false;
+    // ── Modal de tarefas do provedor ──────────────────────────────────────────────────────────────
+    // Uma gaveta de 300px servia para pasta de features (dezenas de itens); board tem milhares. Aqui
+    // cabem o filtro por estado REAL do board, a busca e o "carregar mais" — que na gaveta ficariam
+    // espremidos a ponto de nao serem usados.
+    let wfModal=null;
+    function wfModalOpen(conn){
+      wfModal={conn:conn,list:null,cursor:'',states:null,state:'',err:'',busy:true,q:'',modo:'lista',el:null,card:null};
+      tx({t:'task_provider_list',sessionId:currentSession});
+      wfModalRender();
+    }
+    function wfModalClose(){ if(wfModal&&wfModal.el){ try{wfModal.el.remove();}catch(e){} } wfModal=null; wfRerender(); }
+    /** Recarrega do zero: troca de filtro descarta a lista antiga em vez de misturar dois criterios. */
+    function wfModalReload(estado){
+      if(!wfModal) return;
+      wfModal.state=estado; wfModal.list=null; wfModal.cursor=''; wfModal.err=''; wfModal.busy=true; wfModal.modo='lista'; wfModal.q='';
+      tx({t:'task_provider_list',sessionId:currentSession,state:estado||undefined});
+      wfModalRender();
+    }
+    function wfModalMore(){
+      if(!wfModal||!wfModal.cursor||wfModal.busy) return;
+      wfModal.busy=true; wfModal.pedindoMais=true;
+      // O cursor e OPACO: veio do Hub e volta como veio. O cliente nao sabe (nem precisa) se aquilo e
+      // cursor do Linear, numero de pagina do GitHub ou deslocamento do Jira.
+      tx({t:'task_provider_list',sessionId:currentSession,state:wfModal.state||undefined,cursor:wfModal.cursor});
+      wfModalRender();
+    }
+    function wfModalSearch(q){
+      if(!wfModal||!q) return;
+      wfModal.busy=true; wfModal.modo='busca'; wfModal.q=q; wfModal.err=''; wfModal.list=null; wfModal.cursor='';
+      tx({t:'task_search',sessionId:currentSession,query:q});
+      wfModalRender();
+    }
+    function wfModalRender(){
+      if(!wfModal) return;
+      if(!wfModal.el){
+        const ov=document.createElement('div'); ov.className='modal';
+        ov.onclick=(ev)=>{ if(ev.target===ov) wfModalClose(); };
+        const card=document.createElement('div'); card.className='card'; card.style.cssText='width:min(680px,100%);gap:8px';
+        ov.appendChild(card); document.body.appendChild(ov); wfModal.el=ov; wfModal.card=card;
+      }
+      const c=wfModal.card, conn=wfModal.conn; c.innerHTML='';
+      const hdr=document.createElement('div'); hdr.className='row'; hdr.style.cssText='justify-content:space-between;align-items:center';
+      hdr.innerHTML='<b>Tarefas · '+esc(conn.label)+'</b><span class="mut" style="font-size:11.5px">'+esc(conn.identity?('@'+conn.identity.login):'conta nao verificada')+'</span>';
+      const fechar=document.createElement('button'); fechar.type='button'; fechar.className='wfact'; fechar.textContent='Fechar'; fechar.onclick=wfModalClose;
+      hdr.appendChild(fechar); c.appendChild(hdr);
+
+      const linha=document.createElement('div'); linha.className='row'; linha.style.cssText='gap:6px;flex-wrap:wrap';
+      // O filtro fala a lingua do BOARD: os estados vem do provedor, na ordem dele. Enquanto eles nao
+      // chegam o seletor nao aparece — um <select> vazio ensinaria que nao ha filtro.
+      if(wfModal.states&&wfModal.states.length){
+        const sel=document.createElement('select'); sel.style.cssText='flex:none;max-width:200px';
+        const op0=document.createElement('option'); op0.value=''; op0.textContent='Minhas abertas'; sel.appendChild(op0);
+        wfModal.states.forEach(st=>{ const o=document.createElement('option'); o.value=st.id; o.textContent=st.name; if(wfModal.state===st.id) o.selected=true; sel.appendChild(o); });
+        sel.onchange=()=>wfModalReload(sel.value);
+        linha.appendChild(sel);
+      }
+      const inp=document.createElement('input'); inp.type='text'; inp.placeholder='\uD83D\uDD0E buscar em '+conn.label; inp.value=wfModal.q||''; inp.style.cssText='flex:1;min-width:140px';
+      const btn=document.createElement('button'); btn.type='button'; btn.className='wfact'; btn.textContent='Buscar';
+      // Botao que nao faz nada ensina a desconfiar da tela: campo vazio VOLTA para a lista.
+      btn.onclick=()=>{ const q=inp.value.trim(); if(q) wfModalSearch(q); else wfModalReload(wfModal.state); };
+      inp.onkeydown=(ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); btn.onclick(); } };
+      linha.appendChild(inp); linha.appendChild(btn); c.appendChild(linha);
+
+      const corpo=document.createElement('div'); corpo.style.cssText='display:flex;flex-direction:column;gap:2px;max-height:52vh;overflow:auto';
+      if(wfModal.err){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:12px;color:#f5b544;padding:4px 2px'; d.textContent='\u26A0 '+wfModal.err; corpo.appendChild(d); }
+      else if(!wfModal.list&&wfModal.busy){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:12px;padding:4px 2px'; d.textContent='Carregando...'; corpo.appendChild(d); }
+      else if(wfModal.list&&!wfModal.list.length){
+        const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:12px;padding:4px 2px';
+        d.textContent=wfModal.modo==='busca'?('Nada encontrado para "'+wfModal.q+'".')
+          :wfModal.state?'Nenhuma tarefa sua neste estado.'
+          :('Nenhuma tarefa aberta atribuida a '+(conn.identity?('@'+conn.identity.login):'esta conta')+'.');
+        corpo.appendChild(d);
+      }
+      else if(wfModal.list) wfModal.list.forEach(it=>{
+        const task={tracker:it.tracker,key:it.key,title:it.title,url:it.url||''};
+        wfTaskPick(corpo,task,esc(it.key)+' \u00B7 '+esc(String(it.title||'').slice(0,70))+(it.state?' <span class="r">'+esc(it.state)+'</span>':''),()=>{
+          wfUseTask(task,{title:it.title,url:it.url||''},it.key+' \u00B7 '+it.title);
+          // A lista vem SEM descricao (uma delas media 38 KB). A integra da tarefa ESCOLHIDA chega
+          // por aqui, que e o caminho que ja alimenta a faixa e o Resumir.
+          tx({t:'task_load',sessionId:currentSession,key:it.key});
+          wfModalClose();
+        });
+      });
+      c.appendChild(corpo);
+
+      const rodape=document.createElement('div'); rodape.className='row'; rodape.style.cssText='justify-content:space-between;align-items:center;gap:8px';
+      const conta=document.createElement('span'); conta.className='mut'; conta.style.cssText='font-size:11.5px';
+      const marcadas=wfFanoutCount();
+      conta.textContent=(wfModal.list?wfModal.list.length+' na tela':'')+(marcadas?(' \u00B7 '+marcadas+' marcada(s) para subsessao'):'');
+      rodape.appendChild(conta);
+      // "Carregar mais" so aparece quando o provedor DISSE que ha mais. Botao sempre visivel viraria
+      // uma promessa que termina em lista vazia.
+      if(wfModal.cursor&&wfModal.modo==='lista'){
+        const mais=document.createElement('button'); mais.type='button'; mais.className='wfact';
+        mais.textContent=wfModal.busy?'Carregando...':'Carregar mais'; mais.disabled=!!wfModal.busy;
+        mais.onclick=wfModalMore; rodape.appendChild(mais);
+      }
+      c.appendChild(rodape);
+    }
+
     // D — a FONTE resolvida pelo Hub (uma só por projeto): {kind:'none'|'local'|'provider', ready,
     // code, reason, featuresDir}. O cliente NÃO reimplementa a regra: só desenha a fonte que veio e,
     // quando ela não pode servir, mostra o motivo com o conserto a um clique.
@@ -5307,6 +5418,7 @@
     function wfFanoutKey(t){ return (t.tracker||'local')+' '+(t.key||t.title||''); }
     function wfFanoutClear(){ wfFanout=new Map(); wfFanoutPlan=null; }
     function wfFanoutHas(t){ return wfFanout.has(wfFanoutKey(t)); }
+    function wfFanoutCount(){ return wfFanout.size; }
     function wfFanoutToggle(t){ const k=wfFanoutKey(t); if(wfFanout.has(k)) wfFanout.delete(k); else wfFanout.set(k,t); }
     function wfFanoutList(){ return [...wfFanout.values()]; }
     // Pede a DECISÃO ao Hub. Nada é aberto aqui: a resposta volta para uma confirmação com o número.
@@ -5996,50 +6108,14 @@
         mkb('⚙',()=>{ wfConnManage=true; wfRerender(); },'Gerenciar o cofre de conexões');
         p.appendChild(bRow);
         if(conn){
-          // A lista que faltava. Fica ANTES da busca porque e a resposta para "quais sao as minhas
-          // tarefas?" — buscar pressupoe ja saber o que procurar, e era so isso que existia aqui.
-          const pf=document.createElement('button'); pf.type='button'; pf.className='opt';
-          pf.innerHTML='📋 Minhas tarefas <span class="r">'+esc(conn.label)+'</span>';
-          pf.title='Atribuidas a '+(conn.identity?('@'+conn.identity.login):'esta conta')+' e ainda nao fechadas';
-          pf.onclick=()=>{ wfProvShow=true; if(!wfProvList) tx({t:'task_provider_list',sessionId:currentSession}); wfRerender(); };
-          p.appendChild(pf);
-          if(wfProvShow){
-            const rp=document.createElement('button'); rp.type='button'; rp.className='wfact'; rp.style.cssText='margin:0 2px 6px';
-            rp.textContent='Atualizar lista'; rp.title='Perguntar de novo ao '+conn.label;
-            rp.onclick=(ev)=>{ ev.stopPropagation(); wfProvList=null; wfProvErr=''; tx({t:'task_provider_list',sessionId:currentSession}); wfRerender(); };
-            p.appendChild(rp);
-            if(wfProvErr){ const e=document.createElement('div'); e.className='mut'; e.style.cssText='font-size:11.5px;padding:0 2px 6px;color:#f5b544'; e.textContent='\u26A0 '+wfProvErr; p.appendChild(e); }
-            else if(!wfProvList){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent='Carregando...'; p.appendChild(d); }
-            // Lista vazia calada e indistinguivel de "quebrou": diz de quem e a conta e que nao ha nada.
-            else if(!wfProvList.length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent='Nenhuma tarefa aberta atribuida a '+(conn.identity?('@'+conn.identity.login):'esta conta')+' em '+conn.label+'.'; p.appendChild(d); }
-            else wfProvList.slice(0,25).forEach(it=>{
-              const task={tracker:it.tracker,key:it.key,title:it.title,url:it.url||''};
-              wfTaskPick(p,task,esc(it.key)+' \u00B7 '+esc(String(it.title||'').slice(0,60))+(it.state?' <span class="r">'+esc(it.state)+'</span>':''),()=>{
-                wfProvShow=false;
-                wfUseTask(task,{title:it.title,url:it.url||''},it.key+' \u00B7 '+it.title);
-                // A lista vem SEM descricao (uma delas media 38 KB). A integra da tarefa ESCOLHIDA
-                // chega por aqui, que e o caminho que ja alimenta a faixa e o Resumir.
-                tx({t:'task_load',sessionId:currentSession,key:it.key});
-                wfRerender();
-              });
-            });
-          }
-          const sRow=document.createElement('div'); sRow.style.cssText='display:flex;gap:6px;padding:0 2px 6px';
-          const sInp=document.createElement('input'); sInp.type='text'; sInp.placeholder='🔎 buscar em '+esc(conn.label); sInp.style.cssText='flex:1;min-width:120px';
-          const sBtn=document.createElement('button'); sBtn.type='button'; sBtn.className='wfact'; sBtn.textContent='Buscar';
-          sBtn.onclick=()=>{ const q=sInp.value.trim(); if(!q) return; wfSearchResults={busy:true}; tx({t:'task_search',sessionId:currentSession,query:q}); toast('Buscando em '+conn.label+'…'); };
-          sInp.onkeydown=(ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); sBtn.onclick(); } };
-          sRow.appendChild(sInp); sRow.appendChild(sBtn); p.appendChild(sRow);
-          const sr=wfSearchResults;
-          if(sr&&!sr.busy&&sr.sessionId===currentSession){
-            if(sr.error){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px;color:#f5b544'; d.textContent=sr.error; p.appendChild(d); }
-            (sr.results||[]).slice(0,8).forEach(it=>{
-              const task={tracker:it.tracker,key:it.key,title:it.title,description:it.description||'',url:it.url||''};
-              wfTaskPick(p,task,esc(it.key)+' · '+esc(String(it.title||'').slice(0,60))+(it.state?' <span class="r">'+esc(it.state)+'</span>':''),()=>{
-                wfSearchResults=null; wfUseTask({tracker:it.tracker,key:it.key,title:it.title,url:it.url},{title:it.title,description:it.description||'',url:it.url||''},it.key+' · '+it.title); wfRerender();
-              });
-            });
-          }
+          // Board tem milhares de itens: escolher isso numa gaveta de 300px foi o que motivou o
+          // modal. Para fonte `provider` a gaveta passa a ter UMA porta; pasta local e MCP seguem
+          // listando aqui mesmo, onde dezenas de itens cabem sem filtro nem paginacao.
+          const ab=document.createElement('button'); ab.type='button'; ab.className='opt';
+          ab.innerHTML='\uD83D\uDCCB Escolher tarefa <span class="r">'+esc(conn.label)+'</span>';
+          ab.title='Lista com filtro de estado, busca e carregar mais';
+          ab.onclick=()=>wfModalOpen(conn);
+          p.appendChild(ab);
         }
       }
       // Abrir VÁRIAS conversas é outro assunto que dividia o mesmo campo da tarefa — a mesma caixa

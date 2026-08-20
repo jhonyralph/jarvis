@@ -195,53 +195,89 @@ export async function searchProviderTasks(providerId: string, query: string, inp
   }
 }
 
+/** Uma pagina de tarefas. `cursor` ausente = acabou; presente = mande de volta para pegar a proxima. */
+export interface TaskPage { tasks: TaskItem[]; cursor?: string }
+
 /**
- * "As MINHAS tarefas abertas" no provedor da conexão.
+ * "As MINHAS tarefas abertas" no provedor da conexao, uma pagina por vez.
  *
  * Buscar exige saber o que procurar. Uma fonte `provider` abria com uma caixa de busca vazia — e nada
  * mais — enquanto `local` e `mcp` abrem listando; quem tinha a conta certa, verificada e vinculada
- * mesmo assim não via tarefa nenhuma, e concluía que a integração não funcionava.
+ * mesmo assim nao via tarefa nenhuma, e concluia que a integracao nao funcionava.
  *
- * Listar não é busca com termo vazio: o critério aqui é "atribuída a MIM e ainda não fechada", que
- * nenhum termo de busca expressa. Por isso é operação própria, e o filtro vai no SERVIDOR do provedor
- * — filtrar depois gastaria o teto de resultados com tarefa que já acabou.
+ * Listar nao e busca com termo vazio: o criterio e "atribuida a MIM e ainda nao fechada", que nenhum
+ * termo expressa. Com `state`, o criterio passa a ser aquele estado — inclusive um FECHADO: quem pede
+ * "Done" quer os Done, e manter o recorte de abertas por cima devolveria lista vazia sem explicacao.
  *
- * A lista NÃO traz descrição, de propósito. Uma linha de lista mostra chave, título e estado; a
- * descrição só serve quando a tarefa é ESCOLHIDA — e aí `getProviderTask` traz a íntegra. Medição
- * real neste board: 83 KB para 5 itens, uma única descrição com 38 KB. E o cache de tarefas corta
- * em 4000 caracteres na gravação, então o excedente nem sobrevivia à viagem.
+ * O `cursor` e OPACO. Os quatro provedores paginam de formas incompativeis (cursor no Linear, numero
+ * de pagina em GitHub/GitLab, deslocamento no Jira); traduzir isso na tela faria o cliente saber de
+ * qual provedor veio a lista, e trocar de provedor mudaria a tela. Aqui ele e so uma string que volta.
+ *
+ * A lista NAO traz descricao, de proposito. Uma linha de lista mostra chave, titulo e estado; a
+ * descricao so serve quando a tarefa e ESCOLHIDA — e ai `getProviderTask` traz a integra. Medicao
+ * real neste board: 83 KB para 5 itens, uma unica descricao com 38 KB. E o cache de tarefas corta
+ * em 4000 caracteres na gravacao, entao o excedente nem sobrevivia a viagem.
  */
-export async function listProviderTasks(providerId: string, input: ProviderCallInput & { limit?: number }): Promise<TaskItem[]> {
+export async function listProviderTasks(providerId: string, input: ProviderCallInput & { limit?: number; state?: string; cursor?: string }): Promise<TaskPage> {
   const f = input.fetchFn || defaultFetch;
   const secrets = [input.secret, input.secret2 || ""].filter(Boolean);
   const cfg = input.config || {};
   const limit = Math.min(50, Math.max(1, Math.trunc(Number(input.limit)) || 25));
+  const estado = String(input.state || "").trim().slice(0, 120);
+  const cursor = String(input.cursor || "").trim().slice(0, 400);
+  const pagina = Math.max(1, Math.trunc(Number(cursor)) || 1);   // GitHub/GitLab/Jira: cursor e numero
   const j = (url: string, init?: Parameters<FetchLike>[1]) => call(f, secrets, url, { ...init, signal: input.signal });
   switch (providerId) {
     case "github": {
-      // `/issues` (ou `/orgs/{org}/issues`) é o endpoint de "atribuídas ao usuário autenticado". Ele
-      // devolve PULL REQUEST junto — e PR não é tarefa, então sai daqui como a busca faz com `is:issue`.
+      // `/issues` (ou `/orgs/{org}/issues`) e o endpoint de "atribuidas ao usuario autenticado". Ele
+      // devolve PULL REQUEST junto — e PR nao e tarefa, entao sai daqui como a busca faz com `is:issue`.
       const base = cfg.org ? `https://api.github.com/orgs/${encodeURIComponent(cfg.org)}/issues` : "https://api.github.com/issues";
-      const r = await j(`${base}?filter=assigned&state=open&per_page=${limit}`, { headers: ghHeaders(input.secret) });
-      return (Array.isArray(r) ? r : []).filter((it: any) => !it?.pull_request)
+      const r = await j(`${base}?filter=assigned&state=${estado === "closed" ? "closed" : "open"}&per_page=${limit}&page=${pagina}`, { headers: ghHeaders(input.secret) });
+      const cru = Array.isArray(r) ? r : [];
+      const tasks = cru.filter((it: any) => !it?.pull_request)
         .map((it: any) => ({ tracker: "github", key: `${ghRepoOf(it)}#${it.number}`, title: String(it.title || ""), url: it.html_url, state: it.state }));
+      // Pagina cheia = pode haver mais. PR filtrado encurta a lista SEM significar fim: por isso o
+      // teste e no que o provedor devolveu, nao no que sobrou.
+      return { tasks, cursor: cru.length >= limit ? String(pagina + 1) : undefined };
     }
     case "gitlab": {
-      const r = await j(`${gitlabBase(cfg)}/api/v4/issues?scope=assigned_to_me&state=opened&per_page=${limit}`, { headers: { authorization: `Bearer ${input.secret}` } });
-      return (Array.isArray(r) ? r : []).map((it: any) => ({ tracker: "gitlab", key: `${String(it?.references?.full || "").replace(/#\d+$/, "") || it.project_id}#${it.iid}`, title: String(it.title || ""), url: it.web_url, state: it.state }));
+      const r = await j(`${gitlabBase(cfg)}/api/v4/issues?scope=assigned_to_me&state=${estado === "closed" ? "closed" : "opened"}&per_page=${limit}&page=${pagina}`, { headers: { authorization: `Bearer ${input.secret}` } });
+      const cru = Array.isArray(r) ? r : [];
+      return {
+        tasks: cru.map((it: any) => ({ tracker: "gitlab", key: `${String(it?.references?.full || "").replace(/#\d+$/, "") || it.project_id}#${it.iid}`, title: String(it.title || ""), url: it.web_url, state: it.state })),
+        cursor: cru.length >= limit ? String(pagina + 1) : undefined,
+      };
     }
     case "jira": {
-      const r = await j(`${jiraBase(cfg)}/rest/api/3/search`, { method: "POST", headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, "content-type": "application/json" }, body: JSON.stringify({ jql: "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC", maxResults: limit, fields: ["summary", "status"] }) });
-      return (r.issues || []).map((it: any) => ({ tracker: "jira", key: String(it.key || ""), title: String(it?.fields?.summary || ""), url: `${jiraBase(cfg)}/browse/${it.key}`, state: it?.fields?.status?.name }));
+      // Aqui o cursor e o DESLOCAMENTO, nao o numero da pagina — e o proprio Jira responde `total`.
+      const startAt = Math.max(0, Math.trunc(Number(cursor)) || 0);
+      const jql = estado
+        ? `assignee = currentUser() AND status = ${JSON.stringify(estado)} ORDER BY updated DESC`
+        : "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
+      const r = await j(`${jiraBase(cfg)}/rest/api/3/search`, { method: "POST", headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, "content-type": "application/json" }, body: JSON.stringify({ jql, maxResults: limit, startAt, fields: ["summary", "status"] }) });
+      const issues = r?.issues || [];
+      const total = Number(r?.total);
+      const proximo = startAt + issues.length;
+      return {
+        tasks: issues.map((it: any) => ({ tracker: "jira", key: String(it.key || ""), title: String(it?.fields?.summary || ""), url: `${jiraBase(cfg)}/browse/${it.key}`, state: it?.fields?.status?.name })),
+        cursor: issues.length && (Number.isFinite(total) ? proximo < total : issues.length >= limit) ? String(proximo) : undefined,
+      };
     }
     case "linear": {
-      // Query conferida contra a API real: `filter` com completedAt/canceledAt nulos exclui concluída
-      // e cancelada do lado do Linear, e `orderBy: updatedAt` põe o que se mexeu por último em cima.
-      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "query($n:Int!){ viewer { assignedIssues(first:$n, orderBy: updatedAt, filter: { completedAt: { null: true }, canceledAt: { null: true } }) { nodes { identifier title url state { name } } } } }", variables: { n: limit } }) });
-      const nodes = r?.data?.viewer?.assignedIssues?.nodes || [];
-      return nodes.map((it: any) => ({ tracker: "linear", key: String(it.identifier || ""), title: String(it.title || ""), url: it.url, state: it?.state?.name }));
+      // O filtro vai no SERVIDOR: recortar depois gastaria o teto da pagina com tarefa que ja acabou.
+      const filtro = estado ? { state: { id: { eq: estado } } } : { completedAt: { null: true }, canceledAt: { null: true } };
+      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({
+        query: "query($n:Int!,$c:String,$f:IssueFilter){ viewer { assignedIssues(first:$n, after:$c, orderBy: updatedAt, filter:$f) { pageInfo { hasNextPage endCursor } nodes { identifier title url state { name } } } } }",
+        variables: { n: limit, c: cursor || null, f: filtro },
+      }) });
+      const conexao = r?.data?.viewer?.assignedIssues;
+      const nodes = conexao?.nodes || [];
+      return {
+        tasks: nodes.map((it: any) => ({ tracker: "linear", key: String(it.identifier || ""), title: String(it.title || ""), url: it.url, state: it?.state?.name })),
+        cursor: conexao?.pageInfo?.hasNextPage ? String(conexao.pageInfo.endCursor || "") || undefined : undefined,
+      };
     }
-    default: throw new Error(`lista de tarefas ainda não implementada para ${providerId} (tier 2 — identidade só)`);
+    default: throw new Error(`lista de tarefas ainda nao implementada para ${providerId} (tier 2 — identidade so)`);
   }
 }
 

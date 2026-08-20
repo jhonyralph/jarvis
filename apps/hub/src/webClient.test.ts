@@ -57,6 +57,7 @@ interface ClientHandle {
   wfSetRun(run: any): void;
   wfClickChip(): void;
   wfBody(): any;
+  wfModalCard(): any;
   wfRerender(): void;
   wfExpanded(): boolean;
   askPendingCount(sessionId: string, runnerId?: string): number;
@@ -206,6 +207,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   wfSetRun: (run)=>{ wfRun=run; wfOpen=false; renderWfRun(); },
   wfClickChip: ()=>E.wfStepBtn.onclick({preventDefault(){},stopPropagation(){}}),
   wfBody: ()=>wfStepsEl,
+  wfModalCard: ()=>wfModal&&wfModal.card,
   wfRerender: ()=>wfRerender(),
   wfExpanded: ()=>wfOpen,
   askPendingCount: (sid,rid)=>(askPending.get(sessionStateKey(sid,rid||"local"))||{count:0}).count,
@@ -1316,11 +1318,12 @@ test("trocar de sessao NAO herda a rolagem da conversa anterior", async () => {
   assert.notEqual(outro.scrollTop, 200);
 });
 
-// ── A lista que faltava na fonte `provider` ─────────────────────────────────────────────────────
+// ── O modal de tarefas do provedor ──────────────────────────────────────────────────────────────
 // Projeto com Linear vinculado e verificado abria so com uma caixa de busca vazia: nenhuma lista,
 // nenhum estado vazio, e o botao Buscar sem texto nao fazia nada. O dono concluia, com razao, que a
-// integracao nao funcionava — enquanto a conexao respondia perfeitamente.
-async function drawerComConexao(): Promise<{ client: any; sock: any; nodes: (d?: any) => any[]; drawer: () => any }> {
+// integracao nao funcionava — enquanto a conexao respondia perfeitamente. E uma gaveta de 300px nao
+// comporta board: filtro, busca e paginacao precisam de superficie propria.
+async function comConexao(): Promise<{ client: any; sock: any; nos: (raiz?: any) => any[] }> {
   const client = loadClient();
   const sock = await authenticate(client, MACHINES);
   client.setSession("s-wf", "local");
@@ -1328,67 +1331,112 @@ async function drawerComConexao(): Promise<{ client: any; sock: any; nodes: (d?:
     connections: [{ id: "linear:pallium", provider: "linear", label: "Pallium", identity: { id: "u1", login: "jonathan.campos@luby.com.br" } }] });
   sock.deliver({ t: "task_binding", sessionId: "s-wf", cwd: "/p", binding: { tracker: "linear", connectionId: "linear:pallium" },
     source: { kind: "provider", tracker: "linear", ready: true, connectionId: "linear:pallium" } });
-  const nodes = (d?: any): any[] => {
+  const nos = (raiz?: any): any[] => {
     const out: any[] = [];
     const walk = (el: any): void => { for (const c of el.children || []) { out.push(c); walk(c); } };
-    walk(d || client.buildTaskDrawer());
+    walk(raiz || client.buildTaskDrawer());
     return out;
   };
-  return { client, sock, nodes, drawer: () => client.buildTaskDrawer() };
+  return { client, sock, nos };
 }
-const acha = (ns: any[], re: RegExp): any => ns.find((el) => re.test(String(el.innerHTML || el.textContent || "")));
+const ache = (ns: any[], re: RegExp): any => ns.find((el) => re.test(String(el.innerHTML || el.textContent || "")));
+const ENG904 = { tracker: "linear", key: "ENG-904", title: "AI-generated category insight missing", url: "https://linear.app/x/ENG-904", state: "Triage" };
+const ESTADOS = [{ id: "st-triage", name: "Triage", type: "triage" }, { id: "st-rev", name: "In Review", type: "started" }];
 
-test("fonte provider oferece MINHAS tarefas, sem precisar adivinhar o termo de busca", async () => {
-  const { sock, nodes, drawer } = await drawerComConexao();
+test("a gaveta de provider tem UMA porta, e ela abre a lista", async () => {
+  const { client, sock, nos } = await comConexao();
+  const porta = ache(nos(), /Escolher tarefa/);
+  assert.ok(porta, "sem isto, a unica porta era buscar — e buscar pressupoe ja saber o que procurar");
+  porta.onclick();
 
-  const botao = acha(nodes(), /Minhas tarefas/);
-  assert.ok(botao, "sem isto, a unica porta era buscar — e buscar pressupoe ja saber o que procurar");
-  botao.onclick();
   const pedido = sock.sent.find((m: any) => m.t === "task_provider_list");
-  assert.ok(pedido, "o clique pergunta ao Hub");
-  assert.equal(pedido.sessionId, "s-wf");
+  assert.ok(pedido, "abrir ja pergunta ao Hub");
+  assert.equal(pedido.cursor, undefined, "a primeira pagina nao manda cursor — e o que traz os estados junto");
 
-  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", connection: { id: "linear:pallium", label: "Pallium" },
-    results: [{ tracker: "linear", key: "ENG-904", title: "AI-generated category insight missing", url: "https://linear.app/x/ENG-904", state: "Triage" }] });
-
-  const arvore = drawer();
-  assert.ok(acha(nodes(arvore), /ENG-904/), "a tarefa aparece na lista: " + String(arvore.innerHTML || "").slice(0, 200));
-  assert.ok(acha(nodes(arvore), /Triage/), "com o estado, que e o que diz se vale pegar");
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [ENG904], states: ESTADOS, cursor: "abc" });
+  const texto = nos(client.wfModalCard()).map((n: any) => String(n.innerHTML || n.textContent || "")).join(" ");
+  assert.match(texto, /ENG-904/, "a tarefa aparece: " + texto.slice(0, 200));
+  assert.match(texto, /Triage/, "com o estado, que e o que diz se vale pegar");
 });
 
-test("escolher da lista arma a tarefa e busca a INTEGRA dela", async () => {
-  const { client, sock, nodes, drawer } = await drawerComConexao();
-  acha(nodes(), /Minhas tarefas/).onclick();
-  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [{ tracker: "linear", key: "ENG-904", title: "Insight sumido", url: "u", state: "Triage" }] });
+test("o filtro fala a lingua do board, e trocar de estado descarta a lista antiga", async () => {
+  const { client, sock, nos } = await comConexao();
+  ache(nos(), /Escolher tarefa/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [ENG904], states: ESTADOS });
 
-  acha(nodes(drawer()), /ENG-904/).onclick();
+  const sel = nos(client.wfModalCard()).find((n: any) => n.tagName === "SELECT");
+  assert.ok(sel, "os estados vieram do provedor: o seletor existe");
+  assert.deepEqual((sel.children || []).map((o: any) => o.textContent), ["Minhas abertas", "Triage", "In Review"],
+    "na ordem do board, com o criterio padrao na frente");
+
+  sel.value = "st-rev"; sel.onchange();
+  const filtrado = sock.sent.filter((m: any) => m.t === "task_provider_list").at(-1);
+  assert.equal(filtrado.state, "st-rev");
+  // Misturar dois criterios na mesma lista seria pior que recarregar.
+  assert.equal(nos(client.wfModalCard()).some((n: any) => /ENG-904/.test(String(n.innerHTML || ""))), false, "a lista do criterio anterior sai da tela");
+});
+
+test("carregar mais ACUMULA, e o cursor volta como veio", async () => {
+  const { client, sock, nos } = await comConexao();
+  ache(nos(), /Escolher tarefa/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [ENG904], states: ESTADOS, cursor: "cursor-opaco" });
+
+  const mais = nos(client.wfModalCard()).find((n: any) => /Carregar mais/.test(String(n.textContent || "")));
+  assert.ok(mais, "o provedor disse que ha mais");
+  mais.onclick();
+  assert.equal(sock.sent.filter((m: any) => m.t === "task_provider_list").at(-1).cursor, "cursor-opaco",
+    "o cliente nao interpreta o cursor — devolve a string que recebeu");
+
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [{ ...ENG904, key: "ENG-903", title: "Outra" }], cursor: "" });
+  const texto = nos(client.wfModalCard()).map((n: any) => String(n.innerHTML || "")).join(" ");
+  assert.match(texto, /ENG-904/, "a pagina 1 continua na tela");
+  assert.match(texto, /ENG-903/, "e a 2 entrou embaixo");
+  assert.equal(nos(client.wfModalCard()).some((n: any) => /Carregar mais/.test(String(n.textContent || ""))), false, "sem cursor, sem promessa de mais");
+});
+
+test("escolher no modal arma a tarefa, busca a INTEGRA e fecha", async () => {
+  const { client, sock, nos } = await comConexao();
+  ache(nos(), /Escolher tarefa/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [ENG904], states: ESTADOS });
+
+  ache(nos(client.wfModalCard()), /ENG-904/).onclick();
 
   const armada = client.taskArmFor("local", "s-wf");
   assert.ok(armada, "sem fluxo rodando, a escolha fica guardada para o proximo");
   assert.equal(armada.task.key, "ENG-904");
   // A lista vem sem descricao de proposito; a integra da ESCOLHIDA chega pelo caminho que ja
   // alimenta a faixa e o Resumir. Sem este pedido, a tarefa entraria no fluxo so com o titulo.
-  const carga = sock.sent.find((m: any) => m.t === "task_load");
-  assert.ok(carga, "a descricao completa precisa vir de algum lugar");
-  assert.equal(carga.key, "ENG-904");
+  assert.equal(sock.sent.find((m: any) => m.t === "task_load")?.key, "ENG-904");
+  assert.equal(client.wfModalCard(), null, "escolheu, fechou: o modal nao fica no caminho");
 });
 
-test("lista vazia diz de quem e a conta, em vez de parecer quebrada", async () => {
-  const { sock, nodes, drawer } = await drawerComConexao();
-  acha(nodes(), /Minhas tarefas/).onclick();
-  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [] });
+test("busca com campo vazio VOLTA para a lista, em vez de nao fazer nada", async () => {
+  const { client, sock, nos } = await comConexao();
+  ache(nos(), /Escolher tarefa/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [ENG904], states: ESTADOS });
 
-  const texto = String(drawer().innerHTML || "") + nodes().map((n: any) => String(n.textContent || "")).join(" ");
+  const inp = nos(client.wfModalCard()).find((n: any) => n.tagName === "INPUT");
+  const btn = nos(client.wfModalCard()).find((n: any) => String(n.textContent || "") === "Buscar");
+  inp.value = "insight"; btn.onclick();
+  assert.equal(sock.sent.filter((m: any) => m.t === "task_search").at(-1).query, "insight");
+
+  const inp2 = nos(client.wfModalCard()).find((n: any) => n.tagName === "INPUT");
+  const btn2 = nos(client.wfModalCard()).find((n: any) => String(n.textContent || "") === "Buscar");
+  inp2.value = "  "; btn2.onclick();
+  // Antes, campo vazio era `if(!q) return` — clique sem requisicao, sem toast, sem nada na tela.
+  assert.ok(sock.sent.filter((m: any) => m.t === "task_provider_list").length >= 2, "limpar a busca traz a lista de volta");
+});
+
+test("vazio e erro sao ditos, nao silenciados", async () => {
+  const { client, sock, nos } = await comConexao();
+  ache(nos(), /Escolher tarefa/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [], states: ESTADOS });
+  let texto = nos(client.wfModalCard()).map((n: any) => String(n.textContent || "")).join(" ");
   assert.match(texto, /Nenhuma tarefa aberta atribuida a @jonathan\.campos@luby\.com\.br/,
     "vazio calado e indistinguivel de falha — foi assim que o erro passou despercebido");
-});
 
-test("erro do provedor aparece na lista, nao no silencio", async () => {
-  const { sock, nodes, drawer } = await drawerComConexao();
-  acha(nodes(), /Minhas tarefas/).onclick();
   sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [], error: "HTTP 401: [REDACTED]" });
-
-  const texto = String(drawer().innerHTML || "") + nodes().map((n: any) => String(n.textContent || "")).join(" ");
+  texto = nos(client.wfModalCard()).map((n: any) => String(n.textContent || "")).join(" ");
   assert.match(texto, /HTTP 401/);
 });
 

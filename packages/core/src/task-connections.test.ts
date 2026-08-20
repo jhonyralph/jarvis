@@ -192,11 +192,10 @@ test("payload público: nome de env var vai, VALOR de segredo nunca — nem esco
   assert.equal(publico[2].envOk, false, "segredo ausente vira booleano, não silêncio");
 });
 
-/* ── "As MINHAS tarefas abertas" ──────────────────────────────────────────────────────────────────
+/* ── "As MINHAS tarefas abertas", uma pagina por vez ─────────────────────────────────────────────
    Um projeto com fonte `provider` abria so com uma caixa de busca vazia: quem tinha a conta certa,
    verificada e vinculada, mesmo assim nao via tarefa nenhuma e concluia que a integracao falhou.
-   Listar nao e buscar com termo vazio — o criterio e "atribuida a MIM e ainda aberta", que nenhum
-   termo expressa. */
+   Listar nao e buscar com termo vazio — o criterio e "atribuida a MIM e ainda aberta". */
 
 test("listar tarefas do provedor pede as MINHAS abertas, em cada tier 1", async () => {
   const routes = fake({
@@ -205,41 +204,38 @@ test("listar tarefas do provedor pede as MINHAS abertas, em cada tier 1", async 
       { number: 13, title: "PR aberto", html_url: "https://github.com/acme/api/pull/13", state: "open", repository: { full_name: "acme/api" }, pull_request: { url: "x" } },
     ],
     "https://gitlab.com/api/v4/issues": [{ iid: 5, title: "Bug", web_url: "https://gitlab.com/acme/app/-/issues/5", state: "opened", references: { full: "acme/app#5" } }],
-    "https://acme.atlassian.net/rest/api/3/search": { issues: [{ key: "ABC-1", fields: { summary: "Tarefa", status: { name: "In Progress" } } }] },
-    "https://api.linear.app/graphql": { data: { viewer: { assignedIssues: { nodes: [{ identifier: "ENG-904", title: "Insight sumido", url: "https://linear.app/acme/issue/ENG-904", state: { name: "Triage" } }] } } } },
+    "https://acme.atlassian.net/rest/api/3/search": { total: 1, issues: [{ key: "ABC-1", fields: { summary: "Tarefa", status: { name: "In Progress" } } }] },
+    "https://api.linear.app/graphql": { data: { viewer: { assignedIssues: { pageInfo: { hasNextPage: false }, nodes: [{ identifier: "ENG-904", title: "Insight sumido", url: "https://linear.app/acme/issue/ENG-904", state: { name: "Triage" } }] } } } },
   });
 
   const gh = await listProviderTasks("github", { config: {}, secret: "s", fetchFn: routes.fetchFn });
-  assert.equal(gh.length, 1, "pull request nao e tarefa: o endpoint devolve os dois juntos");
-  assert.equal(gh[0].key, "acme/api#12", "a chave sai igual a da busca, que le repository_url");
+  assert.equal(gh.tasks.length, 1, "pull request nao e tarefa: o endpoint devolve os dois juntos");
+  assert.equal(gh.tasks[0].key, "acme/api#12", "a chave sai igual a da busca, que le repository_url");
 
-  const gl = await listProviderTasks("gitlab", { config: {}, secret: "s", fetchFn: routes.fetchFn });
-  assert.equal(gl[0].key, "acme/app#5");
-  const ji = await listProviderTasks("jira", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", fetchFn: routes.fetchFn });
-  assert.equal(ji[0].key, "ABC-1");
-  const li = await listProviderTasks("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn });
-  assert.equal(li[0].key, "ENG-904");
+  assert.equal((await listProviderTasks("gitlab", { config: {}, secret: "s", fetchFn: routes.fetchFn })).tasks[0].key, "acme/app#5");
+  assert.equal((await listProviderTasks("jira", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", fetchFn: routes.fetchFn })).tasks[0].key, "ABC-1");
+  assert.equal((await listProviderTasks("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn })).tasks[0].key, "ENG-904");
 
   // O criterio "minhas e abertas" tem de estar na PERGUNTA, nao num filtro depois: filtrar aqui
-  // gastaria o teto de resultados com tarefa que ja acabou.
+  // gastaria o teto da pagina com tarefa que ja acabou.
   const url = (prefixo: string) => routes.calls.find((c) => c.url.startsWith(prefixo))!;
   assert.match(url("https://api.github.com/issues").url, /filter=assigned&state=open/);
   assert.match(url("https://gitlab.com/api/v4/issues").url, /scope=assigned_to_me&state=opened/);
   assert.match(String(JSON.parse(url("https://acme.atlassian.net/rest/api/3/search").init.body).jql), /assignee = currentUser\(\) AND statusCategory != Done/);
   const linearBody = String(JSON.parse(url("https://api.linear.app/graphql").init.body).query);
   assert.match(linearBody, /viewer \{ assignedIssues/);
-  assert.match(linearBody, /completedAt: \{ null: true \}/);
+  assert.deepEqual(JSON.parse(url("https://api.linear.app/graphql").init.body).variables.f, { completedAt: { null: true }, canceledAt: { null: true } });
 });
 
 test("a lista nao carrega descricao — ela custa caro e nao cabe na linha", async () => {
   const enorme = "x".repeat(38_000);
   const routes = fake({
     "https://api.github.com/issues": [{ number: 12, title: "T", body: enorme, html_url: "https://github.com/acme/api/issues/12", state: "open", repository: { full_name: "acme/api" } }],
-    "https://api.linear.app/graphql": { data: { viewer: { assignedIssues: { nodes: [{ identifier: "ENG-904", title: "T", url: "u", state: { name: "Triage" } }] } } } },
+    "https://api.linear.app/graphql": { data: { viewer: { assignedIssues: { pageInfo: { hasNextPage: false }, nodes: [{ identifier: "ENG-904", title: "T", url: "u", state: { name: "Triage" } }] } } } },
   });
 
   const gh = await listProviderTasks("github", { config: {}, secret: "s", fetchFn: routes.fetchFn });
-  assert.equal(gh[0].description, undefined, "38 KB por item viajariam a cada abertura do painel");
+  assert.equal(gh.tasks[0].description, undefined, "38 KB por item viajariam a cada abertura do painel");
   // E o Linear nem PEDE o campo: economia na origem, nao no mapeamento.
   await listProviderTasks("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn });
   assert.doesNotMatch(String(JSON.parse(routes.calls.at(-1)!.init.body).query), /description/);
@@ -251,6 +247,71 @@ test("org da conexao restringe a lista, e tier 2 recusa em vez de mentir lista v
   assert.match(routes.calls[0].url, /^https:\/\/api\.github\.com\/orgs\/acme\/issues/);
   // Lista vazia de um provedor sem implementacao seria indistinguivel de "voce nao tem tarefas".
   await assert.rejects(() => listProviderTasks("trello", { config: {}, secret: "a", secret2: "b", fetchFn: routes.fetchFn }), /tier 2/);
+});
+
+/* ── Paginacao: o cursor e OPACO ─────────────────────────────────────────────────────────────────
+   Os quatro provedores paginam de formas incompativeis (cursor no Linear, numero de pagina em
+   GitHub/GitLab, deslocamento no Jira). Traduzir isso na tela faria o cliente saber de qual provedor
+   veio a lista — e trocar de provedor mudaria a tela. */
+
+test("pagina cheia devolve cursor; pagina curta encerra a lista", async () => {
+  const cheia = fake({ "https://api.github.com/issues": [1, 2].map((n) => ({ number: n, title: "T", html_url: `https://github.com/acme/api/issues/${n}`, state: "open", repository: { full_name: "acme/api" } })) });
+  const primeira = await listProviderTasks("github", { config: {}, secret: "s", limit: 2, fetchFn: cheia.fetchFn });
+  assert.equal(primeira.cursor, "2", "pagina cheia: pode haver mais");
+  assert.match(cheia.calls[0].url, /page=1/);
+
+  await listProviderTasks("github", { config: {}, secret: "s", limit: 2, cursor: primeira.cursor, fetchFn: cheia.fetchFn });
+  assert.match(cheia.calls[1].url, /page=2/, "o cursor volta como a proxima pagina");
+
+  const curta = fake({ "https://api.github.com/issues": [{ number: 1, title: "T", html_url: "https://github.com/acme/api/issues/1", state: "open", repository: { full_name: "acme/api" } }] });
+  assert.equal((await listProviderTasks("github", { config: {}, secret: "s", limit: 2, fetchFn: curta.fetchFn })).cursor, undefined);
+});
+
+test("PR filtrado encurta a lista sem significar fim", async () => {
+  // O teste de "tem mais" e no que o PROVEDOR devolveu, nao no que sobrou depois do filtro: senao
+  // uma pagina cheia de pull requests encerraria a paginacao com tarefas ainda por vir.
+  const routes = fake({ "https://api.github.com/issues": [
+    { number: 1, title: "PR", html_url: "https://github.com/acme/api/pull/1", state: "open", repository: { full_name: "acme/api" }, pull_request: {} },
+    { number: 2, title: "PR", html_url: "https://github.com/acme/api/pull/2", state: "open", repository: { full_name: "acme/api" }, pull_request: {} },
+  ] });
+  const pagina = await listProviderTasks("github", { config: {}, secret: "s", limit: 2, fetchFn: routes.fetchFn });
+  assert.equal(pagina.tasks.length, 0);
+  assert.equal(pagina.cursor, "2", "zero tarefas nesta pagina nao quer dizer zero tarefas");
+});
+
+test("Linear devolve o cursor do provedor; Jira conta pelo total", async () => {
+  const li = fake({ "https://api.linear.app/graphql": { data: { viewer: { assignedIssues: { pageInfo: { hasNextPage: true, endCursor: "abc123" }, nodes: [{ identifier: "ENG-1", title: "T", url: "u", state: { name: "Triage" } }] } } } } });
+  const pg = await listProviderTasks("linear", { config: {}, secret: "s", cursor: "anterior", fetchFn: li.fetchFn });
+  assert.equal(pg.cursor, "abc123", "o cursor e do provedor, opaco para quem chama");
+  assert.equal(JSON.parse(li.calls[0].init.body).variables.c, "anterior", "e volta como `after`");
+
+  const ji = fake({ "https://acme.atlassian.net/rest/api/3/search": { total: 5, issues: [{ key: "ABC-1", fields: { summary: "T", status: { name: "To Do" } } }, { key: "ABC-2", fields: { summary: "T", status: { name: "To Do" } } }] } });
+  const cfg = { baseUrl: "https://acme.atlassian.net", email: "e@x" };
+  const jp = await listProviderTasks("jira", { config: cfg, secret: "s", limit: 2, fetchFn: ji.fetchFn });
+  assert.equal(jp.cursor, "2", "no Jira o cursor e o DESLOCAMENTO, nao o numero da pagina");
+  assert.equal(JSON.parse(ji.calls[0].init.body).startAt, 0);
+
+  const fim = fake({ "https://acme.atlassian.net/rest/api/3/search": { total: 2, issues: [{ key: "ABC-2", fields: { summary: "T", status: { name: "To Do" } } }] } });
+  assert.equal((await listProviderTasks("jira", { config: cfg, secret: "s", limit: 2, cursor: "1", fetchFn: fim.fetchFn })).cursor, undefined, "chegou ao total: acabou");
+});
+
+/* ── Filtro por estado ───────────────────────────────────────────────────────────────────────────
+   Pedir um estado FECHADO tem de devolver os fechados. Manter o recorte de "abertas" por cima
+   devolveria lista vazia sem explicacao — e a pessoa concluiria que o board esta vazio. */
+
+test("filtrar por estado troca o criterio, inclusive para estados fechados", async () => {
+  const li = fake({ "https://api.linear.app/graphql": { data: { viewer: { assignedIssues: { pageInfo: { hasNextPage: false }, nodes: [{ identifier: "ENG-1", title: "T", url: "u", state: { name: "Done" } }] } } } } });
+  await listProviderTasks("linear", { config: {}, secret: "s", state: "state-uuid", fetchFn: li.fetchFn });
+  assert.deepEqual(JSON.parse(li.calls[0].init.body).variables.f, { state: { id: { eq: "state-uuid" } } },
+    "o recorte de abertas sai de cena: quem pede Done quer os Done");
+
+  const gh = fake({ "https://api.github.com/issues": [] });
+  await listProviderTasks("github", { config: {}, secret: "s", state: "closed", fetchFn: gh.fetchFn });
+  assert.match(gh.calls[0].url, /state=closed/);
+
+  const ji = fake({ "https://acme.atlassian.net/rest/api/3/search": { total: 0, issues: [] } });
+  await listProviderTasks("jira", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", state: "10001", fetchFn: ji.fetchFn });
+  assert.match(String(JSON.parse(ji.calls[0].init.body).jql), /status = "10001"/, "o id vai citado: nome de status tem espaco");
 });
 
 /* ── Os estados REAIS do board ────────────────────────────────────────────────────────────────────
