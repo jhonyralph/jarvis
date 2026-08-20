@@ -17,7 +17,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { join, normalize, dirname, basename, resolve, sep } from "node:path";
+import { join, normalize, dirname, basename, relative, resolve, sep } from "node:path";
 import QRCode from "qrcode";
 import { PushCenter, type PushActor } from "./push.js";
 import { RunnerListWaiters } from "./runnerListWaiters.js";
@@ -35,10 +35,10 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
-import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
+import { RUNNER_PROTOCOL_VERSION, RUNNER_CAPABILITY_SINCE, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
 import * as guard from "./guard.js";
 import { startAdminApi } from "./adminApi.js";
@@ -68,6 +68,90 @@ process.env.JARVIS_PERM_URL = `http://127.0.0.1:${PORT}/internal/perm`;
 // Ponte de TAREFAS (C3): mesmo desenho da de permissão — token por processo + endpoint interno em
 // loopback. É por aqui que jarvis_task_search/get/create de QUALQUER IA chega ao cofre de conexões.
 /**
+ * A LISTA da fonte do projeto, sem cliente esperando na outra ponta. As duas listagens que já existem
+ * (`task_local_list`, `task_mcp_list`) nasceram servindo a TELA: elas respondem para o socket que
+ * perguntou. A ponte é a IA, não a tela — daí esta versão que devolve promessa.
+ *
+ * Quem varre continua sendo a máquina do projeto, sempre. É o mesmo invariante da fatia C.
+ */
+const pendingTaskListing = new Map<string, { timer: NodeJS.Timeout; settle: (r: TaskListingResult) => void }>();
+type TaskListingResult = { files: Array<{ key: string; title: string; description?: string }>; dir: string } | { error: string };
+const TASK_LISTING_TIMEOUT_MS = 25_000;
+async function askProjectTasks(runnerId: string, sessionId: string, source: any): Promise<TaskListingResult> {
+  const cwd = sessionProjectDir(runnerId, sessionId);
+  if (runnerId === LOCAL_ID) {
+    try {
+      if (source.kind === "mcp") {
+        const listing = await listTasksFromMcp({ wanted: source.mcpServer });
+        return "error" in listing ? { error: listing.error } : { files: listing.files, dir: listing.label };
+      }
+      const { rel, root } = resolveFeaturesRoot(cwd, source.featuresDir);
+      const listing = localTaskCache.list(`${LOCAL_ID}\u0000${root}`, root,
+        (content, relPath) => { const parsed = parseFeatureTask(content, relPath); return { key: parsed.task.key, title: parsed.title, description: parsed.description }; },
+        localTaskFs, { relPrefix: rel });
+      return { files: listing.files, dir: rel };
+    } catch (e: any) { return { error: String(e?.message ?? e).slice(0, 400) }; }
+  }
+  const rc = runners.get(runnerId);
+  if (!rc?.ws) return { error: "a máquina do projeto está offline — a lista de tarefas vive nela" };
+  if ((rc.info.protocolVersion || 1) < RUNNER_CAPABILITY_SINCE.mcpTaskList) return { error: "esta máquina está desatualizada e não sabe listar as tarefas dela — atualize-a" };
+  const reqId = "tl-" + randomUUID();
+  return new Promise<TaskListingResult>((done) => {
+    const settle = (r: TaskListingResult): void => { const p = pendingTaskListing.get(reqId); if (!p) return; clearTimeout(p.timer); pendingTaskListing.delete(reqId); done(r); };
+    const timer = setTimeout(() => settle({ error: "a máquina do projeto não respondeu a tempo" }), TASK_LISTING_TIMEOUT_MS);
+    (timer as { unref?: () => void }).unref?.();
+    pendingTaskListing.set(reqId, { timer, settle });
+    const frame = source.kind === "mcp"
+      ? { t: "task_mcp_list", reqId, sessionId, server: source.mcpServer }
+      : { t: "task_local_list", reqId, sessionId, featuresDir: source.featuresDir };
+    if (!sendToRunner(rc, frame)) settle({ error: "não consegui falar com a máquina do projeto" });
+  });
+}
+
+/**
+ * Criar tarefa NA FONTE da máquina do projeto (pasta ou MCP). Espelha `askProjectTasks`: quem escreve
+ * é a máquina, e o Hub só manda a intenção — já aprovada pelo dono, porque este caminho passa pelo
+ * mesmo portão da escrita em provedor.
+ */
+const pendingTaskWrite = new Map<string, { timer: NodeJS.Timeout; settle: (r: { ok: true; key: string; url?: string } | { ok: false; error: string }) => void }>();
+const TASK_WRITE_TIMEOUT_MS = 30_000;
+async function writeProjectTask(runnerId: string, sessionId: string, source: any, task: { title: string; description?: string }): Promise<{ ok: true; key: string; url?: string } | { ok: false; error: string }> {
+  const cwd = sessionProjectDir(runnerId, sessionId);
+  if (runnerId === LOCAL_ID) {
+    try {
+      if (source.kind === "mcp") {
+        const criado = await createTaskViaMcp({ wanted: source.mcpServer, title: task.title, description: task.description });
+        return "error" in criado ? { ok: false, error: criado.error } : { ok: true, key: criado.key, url: criado.url };
+      }
+      const { root } = resolveFeaturesRoot(cwd, source.featuresDir);
+      const nome = featureFileName(task.title);
+      const destino = join(root, nome);
+      if (existsSync(destino)) return { ok: false, error: `já existe um arquivo ${nome} nessa pasta` };
+      mkdirSync(root, { recursive: true });
+      writeFileSync(destino, featureFileContent(task.title, task.description), "utf8");
+      return { ok: true, key: relative(cwd, destino).split(sep).join("/") };
+    } catch (e: any) { return { ok: false, error: String(e?.message ?? e).slice(0, 400) }; }
+  }
+  const rc = runners.get(runnerId);
+  if (!rc?.ws) return { ok: false, error: "a máquina do projeto está offline — é nela que a tarefa é criada" };
+  if ((rc.info.protocolVersion || 1) < RUNNER_CAPABILITY_SINCE.taskSourceWrite) return { ok: false, error: "esta máquina ainda não sabe criar tarefa na fonte dela — atualize-a" };
+  const reqId = "tw-" + randomUUID();
+  return new Promise((done) => {
+    const settle = (r: { ok: true; key: string; url?: string } | { ok: false; error: string }): void => {
+      const pending = pendingTaskWrite.get(reqId); if (!pending) return;
+      clearTimeout(pending.timer); pendingTaskWrite.delete(reqId); done(r);
+    };
+    const timer = setTimeout(() => settle({ ok: false, error: "a máquina do projeto não respondeu a tempo" }), TASK_WRITE_TIMEOUT_MS);
+    (timer as { unref?: () => void }).unref?.();
+    pendingTaskWrite.set(reqId, { timer, settle });
+    const frame = source.kind === "mcp"
+      ? { t: "task_mcp_create", reqId, server: source.mcpServer, title: task.title, description: task.description }
+      : { t: "task_local_write", reqId, sessionId, featuresDir: source.featuresDir, title: task.title, description: task.description };
+    if (!sendToRunner(rc, frame)) settle({ ok: false, error: "não consegui falar com a máquina do projeto" });
+  });
+}
+
+/**
  * A ponte de tarefas, servida para QUALQUER máquina. Nasceu dentro do handler HTTP local e por isso
  * resolvia tudo como se a sessão fosse do Hub (`LOCAL_ID` implícito) — correto por acidente enquanto
  * a ponte só existia aqui. Com a ponte no runner (TSK-11), a máquina é parâmetro: é ela que decide
@@ -76,6 +160,62 @@ process.env.JARVIS_PERM_URL = `http://127.0.0.1:${PORT}/internal/perm`;
  */
 async function serveTaskBridge(ctx: { runnerId: string; sessionId: string; op: string; args: Record<string, unknown>; reply: (payload: unknown) => void }): Promise<void> {
   const { runnerId, sessionId, op, args, reply } = ctx;
+      // A FONTE DECLARADA manda, e ela decide quem responde. Antes tudo passava pelo cofre: num projeto
+      // cuja fonte é pasta ou MCP — que não têm conta POR DEFINIÇÃO — a IA recebia "escolha a conta",
+      // instrução impossível de seguir, enquanto o painel listava as tarefas normalmente no mesmo
+      // projeto. Duas respostas para a mesma pergunta é o defeito.
+      const fonte = sessionTaskSource(runnerId, sessionId).source as any;
+      if (fonte.kind === "local" || fonte.kind === "mcp") {
+        try {
+          if (op === "search" || op === "get") {
+            const listagem = await askProjectTasks(runnerId, sessionId, fonte);
+            if ("error" in listagem) { reply({ ok: false, code: "SOURCE_UNAVAILABLE", error: listagem.error }); return; }
+            const tracker = fonte.kind === "mcp" ? "mcp" : "local";
+            if (op === "get") {
+              const chave = String(args.key || "");
+              const achado = listagem.files.find((f) => f.key === chave);
+              reply(achado ? { ok: true, connection: listagem.dir, task: { tracker, key: achado.key, title: achado.title, description: achado.description || "" } }
+                : { ok: false, error: `não achei "${chave}" na fonte deste projeto (${listagem.dir})` });
+              return;
+            }
+            const termo = String(args.query || "").trim().toLowerCase();
+            const achados = (termo ? listagem.files.filter((f) => `${f.title} ${f.key}`.toLowerCase().includes(termo)) : listagem.files).slice(0, 10);
+            reply({ ok: true, connection: listagem.dir, results: achados.map((f) => ({ tracker, key: f.key, title: f.title })) });
+            return;
+          }
+          // CRIAR na fonte da máquina. Escrever arquivo no repositório de alguém é escrita, não
+          // leitura: passa pelo MESMO portão do provedor — preview nominal e aprovação do dono, salvo
+          // `autoApprove` declarado no projeto.
+          const titulo = String(args.title || "").trim().slice(0, 300);
+          const descricao = typeof args.description === "string" ? args.description.slice(0, 4000) : undefined;
+          if (!titulo) { reply({ ok: false, error: "a tarefa precisa de título" }); return; }
+          const ondeCria = fonte.kind === "mcp" ? `servidor MCP ${fonte.mcpServer || "desta máquina"}` : `pasta ${fonte.featuresDir}`;
+          const maquina = runnerId === LOCAL_ID ? "esta máquina" : (runners.get(runnerId)?.info.label || runnerId);
+          const preview = `Criar "${titulo}" em ${ondeCria} (${maquina})`;
+          const executar = async (): Promise<void> => {
+            const escrita = await writeProjectTask(runnerId, sessionId, fonte, { title: titulo, description: descricao });
+            if (!escrita.ok) { reply({ ok: false, error: escrita.error }); return; }
+            auth.audit("task_write", { runnerId, detail: `create(ia) ${fonte.kind} → ${escrita.key}` });
+            broadcastOn(runnerId, sessionId, { t: "notice", message: `Tarefa criada pela IA: ${escrita.key} (${ondeCria})` });
+            reply({ ok: true, key: escrita.key, url: escrita.url, connection: ondeCria });
+          };
+          const cwdProjeto = sessionProjectDir(runnerId, sessionId);
+          const vinculo = cwdProjeto ? projectTasks.get(cwdProjeto) : undefined;
+          if (vinculo?.autoApprove?.includes("create")) { await executar(); return; }
+          const politica = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: cwdProjeto, sessionId });
+          const aprovacao = createAdaptiveApprovalRequest({
+            id: `task:create:${Date.now()}:${randomUUID().slice(0, 8)}`, action: "task_write",
+            title: `🧭 ${preview}`, reason: descricao ? descricao.slice(0, 200) : "pedida pela IA da sessão",
+            policy: politica.policy, sessionId, ttlMs: 30 * 60 * 1000,
+          });
+          const expira = setTimeout(() => { if (pendingAdaptiveApprovals.delete(aprovacao.id)) { broadcastAdaptiveApprovals(); reply({ ok: false, error: "aprovação expirou sem resposta" }); } }, 30 * 60 * 1000);
+          (expira as { unref?: () => void }).unref?.();
+          pendingAdaptiveApprovals.set(aprovacao.id, { approval: aprovacao, resolve: (aprovado) => { clearTimeout(expira); if (aprovado) void executar(); else reply({ ok: false, error: "você recusou a criação" }); } });
+          broadcastAdaptiveApprovals();
+          notifyEvent("machine", "Tarefa aguardando aprovação", preview, sessionId);
+          return;
+        } catch (e: any) { reply({ ok: false, error: String(e?.message ?? e) }); return; }
+      }
       try {
         if (op === "search" || op === "get") {
           const { resolved } = resolveSessionTaskConnection(sessionId, false, runnerId);
@@ -494,7 +634,8 @@ function taskConnectionsFrame(): Record<string, unknown> {
     // Servidores MCP por máquina — só nomes. A máquina local é este Hub; as demais reportam no
     // registro (runner antigo não manda, e a tela mostra "—" em vez de mentir "nenhum").
     mcpMachines: [
-      { runnerId: LOCAL_ID, label: runnerLabels[LOCAL_ID] || runners.get(LOCAL_ID)?.info.host || "Servidor", servers: Object.keys(loadTaskMcpConfig().servers), configFile: taskMcpConfigFile(), known: true, editable: true, online: true },
+      (() => { const local = loadTaskMcpConfig(); return { runnerId: LOCAL_ID, label: runnerLabels[LOCAL_ID] || runners.get(LOCAL_ID)?.info.host || "Servidor", servers: Object.keys(local.servers), configFile: taskMcpConfigFile(), known: true, editable: true, online: true,
+        uses: Object.fromEntries(Object.keys(local.servers).map((n) => [n, { list: true, create: !!local.creates[n] }])) }; })(),
       ...[...runners.values()].map((rc) => ({
         runnerId: rc.id,
         label: rc.info.label || rc.info.host || rc.id,
@@ -505,7 +646,10 @@ function taskConnectionsFrame(): Record<string, unknown> {
         known: Array.isArray(rc.info.taskMcpServers),
         // Editável = protocolo novo E chave ligada lá. Formulário que não vai gravar é pior que
         // formulário nenhum: ele promete e falha depois de você digitar tudo.
-        editable: (rc.info.protocolVersion || 1) >= 13 && rc.info.taskMcpRemoteEdit !== false,
+        editable: (rc.info.protocolVersion || 1) >= RUNNER_CAPABILITY_SINCE.taskMcpConfig && rc.info.taskMcpRemoteEdit !== false,
+        // Usos declarados por servidor (v2): "listar" e "criar" são capacidades diferentes, e um
+        // servidor que só lista precisa dizer isso onde alguém vai pedir para criar.
+        uses: rc.info.taskMcpUses || {},
         online: !!rc.ws,
       })),
     ],
@@ -2005,7 +2149,7 @@ function rememberExecutionPrincipal(runnerId: string, turnId: string, principalI
  */
 const bridgeAnnounced = new Set<string>();
 function announceTaskBridge(rc: RunnerConn, sessionId: string): void {
-  const ponte = !!rc.info.taskBridge, edicao = rc.info.taskMcpRemoteEdit !== false && (rc.info.protocolVersion || 1) >= 13;
+  const ponte = !!rc.info.taskBridge, edicao = rc.info.taskMcpRemoteEdit !== false && (rc.info.protocolVersion || 1) >= RUNNER_CAPABILITY_SINCE.taskMcpConfig;
   if ((!ponte && !edicao) || !sessionId) return;
   const key = `${rc.id}:${sessionId}`;
   if (bridgeAnnounced.has(key)) return;
@@ -2234,6 +2378,19 @@ function relayRunner(rc: RunnerConn, m: any): void {
   // E — a máquina do projeto respondeu pela fonte MCP dela. Chega ao cliente no MESMO formato da
   // lista local (o painel tem uma porta só); `kind` diz de qual fonte veio, e `dir` traz o rótulo
   // do servidor. Nenhum comando/segredo trafega: só as tarefas.
+  if ((m.t === "task_local_write" || m.t === "task_mcp_create") && pendingTaskWrite.has(String(m.reqId))) {
+    pendingTaskWrite.get(String(m.reqId))!.settle(m.ok === true
+      ? { ok: true, key: String(m.key || ""), url: typeof m.url === "string" ? m.url : undefined }
+      : { ok: false, error: String(m.error || "a máquina recusou sem dizer o motivo") });
+    return;
+  }
+  if ((m.t === "task_mcp_list" || m.t === "task_local_list") && pendingTaskListing.has(String(m.reqId))) {
+    // Pedido da PONTE (a IA), não da tela: quem espera é uma promessa, não um socket.
+    pendingTaskListing.get(String(m.reqId))!.settle(m.error
+      ? { error: String(m.error) }
+      : { files: Array.isArray(m.files) ? m.files : [], dir: String(m.dir || m.server || "") });
+    return;
+  }
   if (m.t === "task_mcp_list") {
     const request = takePendingRequest(rc, m.reqId, ["task_mcp_list"], typeof m.sessionId === "string" ? m.sessionId : undefined);
     if (request) send(request.socket, { t: "task_local_list", kind: "mcp", runnerId: rc.id, sessionId: m.sessionId, dir: String(m.server || ""), files: Array.isArray(m.files) ? m.files : [], cached: false, scannedAt: Number(m.scannedAt) || Date.now(), ...(m.error ? { error: String(m.error) } : {}) });
@@ -6829,7 +6986,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // Protocolo ANTES de conexão, de propósito: máquina em quarentena de atualização fica com
       // `ws: null` aqui, e dizer "offline" para quem está conectado esperando update manda a pessoa
       // procurar o problema no lugar errado.
-      if ((rc.info.protocolVersion || 1) < 13) { recusa("esta máquina ainda não sabe ser configurada daqui — atualize-a"); return; }
+      if ((rc.info.protocolVersion || 1) < RUNNER_CAPABILITY_SINCE.taskMcpConfig) { recusa("esta máquina ainda não sabe ser configurada daqui — atualize-a"); return; }
       if (!rc.ws) { recusa("máquina offline — a configuração dela é gravada por ela mesma"); return; }
       if (op !== "task_mcp_config" && rc.info.taskMcpRemoteEdit === false) { recusa("edição remota desligada nesta máquina (JARVIS_TASK_MCP_REMOTE_EDIT=0)"); return; }
       if (op === "task_mcp_config_set") auth.audit("task_mcp_config", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: alvo, detail: `${msg.remove === true ? "remove" : "set"} ${String(msg.name || "")}` });

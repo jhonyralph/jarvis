@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 // A versão vem da CONSTANTE: fixar o número aqui faz o teste quebrar a cada fatia que sobe o
 // protocolo — e quebrar por motivo errado, porque o que ele testa não é a versão.
-import { RUNNER_PROTOCOL_VERSION } from "@jarvis/protocol";
+import { RUNNER_PROTOCOL_VERSION, RUNNER_CAPABILITY_SINCE } from "@jarvis/protocol";
 
 
 
@@ -193,7 +193,9 @@ test("configurar MCP pela tela: o pedido vai para a máquina certa, e as guardas
     await cliente.take((m) => m.t === "version");
 
     const nova = await fakeRunner(hubPort, { runnerId: "luby", configFile: "/home/luby/.jarvis/task-mcp.json" });
-    const velha = await fakeRunner(hubPort, { runnerId: "antiga", protocolVersion: RUNNER_PROTOCOL_VERSION - 1 });
+    // "Antiga" é antes da CAPACIDADE, não "uma abaixo da atual": quando o protocolo subiu para 14, a
+    // máquina em 13 continuava sabendo ser configurada — e o teste acusou o contrário.
+    const velha = await fakeRunner(hubPort, { runnerId: "antiga", protocolVersion: RUNNER_CAPABILITY_SINCE.taskMcpConfig - 1 });
     const trancada = await fakeRunner(hubPort, { runnerId: "trancada", remoteEdit: false });
     maquinas.push(nova, velha, trancada);
     await cliente.take((m) => m.t === "machines" && m.machines?.some((x: any) => x.id === "trancada"));

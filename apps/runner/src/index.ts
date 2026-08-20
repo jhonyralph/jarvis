@@ -16,7 +16,7 @@ import WebSocket from "ws";
 import { hostname, homedir, platform } from "node:os";
 import { execFile, spawn } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, unlinkSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, relative, sep } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -33,7 +33,8 @@ import {
   formatCouncilFinalMessage, managedChildExecutionId,
   TerminalManager,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
-  LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile,
+  LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, featureFileContent, featureFileName, createTaskViaMcp,
+  listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile,
   validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type UpdateStatus, type UpdateAttemptRecord, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
 } from "@jarvis/core";
@@ -1091,6 +1092,9 @@ function connect(): void {
       // O caminho é DESTA máquina. A tela mostrava o do Hub para todo mundo — caminho de outro
       // computador, apresentado como "na própria máquina".
       taskMcpConfigFile: taskMcpConfigFile(),
+      // Quais USOS cada servidor declara (v2). A tela precisa disso para não oferecer "criar" onde a
+      // máquina só sabe listar — e para não esconder que sabe.
+      taskMcpUses: Object.fromEntries(Object.keys(loadTaskMcpConfig().servers).map((n) => [n, { list: true, create: !!loadTaskMcpConfig().creates[n] }])),
       taskMcpRemoteEdit: TASK_MCP_REMOTE_EDIT,
     };
     send({ t: "register", token: TOKEN, info });
@@ -1158,6 +1162,35 @@ function connect(): void {
             if ("error" in listing) { send({ t: "task_mcp_test", reqId, ok: false, error: listing.error }); return; }
             send({ t: "task_mcp_test", reqId, ok: true, count: listing.files.length, sample: listing.files.slice(0, 3).map((f) => f.title) });
           } catch (e: any) { send({ t: "task_mcp_test", reqId, ok: false, error: String(e?.message ?? e) }); }
+        })();
+        return;
+      }
+      // TSK-13 — criar tarefa NA FONTE DESTA MÁQUINA. Escrever é da máquina, como ler: o Hub manda a
+      // intenção já aprovada pelo dono, e a contenção de caminho acontece aqui, ao lado do disco.
+      if (m.t === "task_local_write" && typeof m.reqId === "string" && typeof m.sessionId === "string") {
+        const reqId = m.reqId;
+        try {
+          const { root } = resolveFeaturesRoot(sessCwd(m.sessionId), typeof m.featuresDir === "string" ? m.featuresDir : undefined);
+          const nome = featureFileName(String(m.title || ""));
+          const destino = join(root, nome);
+          // Criar não é editar: sobrescrever silenciosamente a tarefa de outra pessoa seria perda.
+          if (existsSync(destino)) { send({ t: "task_local_write", reqId, ok: false, error: `já existe um arquivo ${nome} nessa pasta` }); return; }
+          mkdirSync(root, { recursive: true });
+          writeFileSync(destino, featureFileContent(String(m.title || ""), typeof m.description === "string" ? m.description : undefined), "utf8");
+          const rel = relative(sessCwd(m.sessionId), destino).split(sep).join("/");
+          console.log(`[runner] tarefa criada: ${rel}`);
+          send({ t: "task_local_write", reqId, ok: true, key: rel });
+        } catch (e: any) { send({ t: "task_local_write", reqId, ok: false, error: String(e?.message ?? e).slice(0, 400) }); }
+        return;
+      }
+      if (m.t === "task_mcp_create" && typeof m.reqId === "string") {
+        const reqId = m.reqId;
+        void (async () => {
+          try {
+            const criado = await createTaskViaMcp({ wanted: typeof m.server === "string" ? m.server : undefined, title: String(m.title || ""), description: typeof m.description === "string" ? m.description : undefined });
+            if ("error" in criado) { send({ t: "task_mcp_create", reqId, ok: false, error: criado.error }); return; }
+            send({ t: "task_mcp_create", reqId, ok: true, key: criado.key, url: criado.url });
+          } catch (e: any) { send({ t: "task_mcp_create", reqId, ok: false, error: String(e?.message ?? e).slice(0, 400) }); }
         })();
         return;
       }

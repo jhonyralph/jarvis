@@ -13,6 +13,18 @@ o vínculo da Luby, não o do Desktop).
 | `github` / `jira` / `linear` / … | o provedor, pela conexão vinculada no cofre | Hub (o cofre é central) |
 | *(nenhuma)* | nada — o painel pede para você declarar | — |
 
+O que a **IA** pode fazer em cada uma (pela ponte de tarefas, em qualquer máquina):
+
+| Fonte | Buscar / ler | Criar |
+|---|---|---|
+| `local` | sim — os `.md` da pasta declarada | sim, com sua aprovação: vira um arquivo novo na pasta |
+| `mcp` | sim — o servidor daquela máquina | só se o uso declarar `create` (`uses.tasks.<servidor>.create`) |
+| provedor | sim — pela conexão do cofre | sim, com sua aprovação e destino definido |
+
+Criar é sempre **escrita**: preview nominal, aprovação na sua tela (salvo `autoApprove` do projeto) e
+auditoria. Nenhuma dessas respostas depende de conta onde a fonte não tem conta — foi assim até a
+TSK-13, e a IA recusava mandando "escolher a conta" num projeto de pasta.
+
 Troque a fonte no chip 🧭 (que abre a **faixa do fluxo**) → **🎯 Tarefa** → **Fonte do projeto**. A
 lista muda na hora; o que estava na tela era da fonte antiga e é descartado. Na mesma gaveta ficam a
 **pasta** (fonte `local`), o **servidor** (fonte `mcp`) e a **conexão** (provedores) — escolher de

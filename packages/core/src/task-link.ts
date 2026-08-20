@@ -82,6 +82,29 @@ export interface FeatureTask {
  * descrição: `description:` do frontmatter ou o primeiro parágrafo útil. Nada é inventado — sem
  * título real, o nome do arquivo responde.
  */
+/**
+ * O arquivo de feature que a IA cria. Escreve o que `parseFeatureTask` sabe ler de volta — título e
+ * descrição no frontmatter — porque um formato de escrita que o próprio leitor não reconhece vira
+ * tarefa fantasma na listagem seguinte.
+ *
+ * O `#` do corpo repete o título de propósito: o arquivo é lido por humano no editor, não só pelo
+ * parser, e um .md que abre sem cabeçalho parece um arquivo pela metade.
+ */
+export function featureFileContent(title: string, description?: string): string {
+  const t = clean(title, 300).replace(/\r?\n/g, " ");
+  const d = clean(description || "", 4000);
+  const primeira = d.split(/\r?\n/)[0].slice(0, 300);
+  const fm = ["---", `title: ${JSON.stringify(t)}`, ...(d ? [`description: ${JSON.stringify(primeira)}`] : []), "---"].join("\n");
+  return `${fm}\n\n# ${t}\n${d ? `\n${d}\n` : ""}`;
+}
+
+/** Nome de arquivo seguro a partir de um título — sem acento, sem espaço, sem surpresa de sistema. */
+export function featureFileName(title: string): string {
+  const base = clean(title, 80).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  return `${base || "tarefa"}.md`;
+}
+
 export function parseFeatureTask(content: string, relPath: string): FeatureTask {
   const text = String(content || "");
   const path = clean(relPath, 300).replace(/\\/g, "/");

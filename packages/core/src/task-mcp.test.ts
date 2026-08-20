@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Transport } from "@modelcontextprotocol/client";
 import type { PersonalMcpSdkClient } from "./personal-mcp-client.js";
-import { loadTaskMcpConfig, mapMcpTasks, pickTaskMcpServer, listMcpTasks, listTasksFromMcp, taskMcpConfigFile, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, type TaskMcpServer } from "./task-mcp.js";
+import { loadTaskMcpConfig, mapMcpTasks, pickTaskMcpServer, listMcpTasks, listTasksFromMcp, taskMcpConfigFile, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, createTaskViaMcp, TASK_MCP_SCHEMA_VERSION, type TaskMcpServer } from "./task-mcp.js";
 
 const transport: Transport = { async start() {}, async close() {}, async send() {} };
 
@@ -100,15 +100,16 @@ test("MCP: transporte HTTP nasce restrito a loopback/LAN quando o arquivo não d
 });
 
 test("MCP: escolha do servidor nunca adivinha entre vários", () => {
-  const one = { servers: { linear: stdioServer } };
+  const vazio = { creates: {}, schemaVersion: 2 };
+  const one = { servers: { linear: stdioServer }, ...vazio };
   assert.equal((pickTaskMcpServer(one) as any).name, "linear", "servidor único responde sem precisar de nome");
   assert.equal((pickTaskMcpServer(one, "linear") as any).name, "linear");
 
-  const many = { servers: { linear: stdioServer, jira: stdioServer } };
+  const many = { servers: { linear: stdioServer, jira: stdioServer }, ...vazio };
   assert.match((pickTaskMcpServer(many) as any).error, /diga qual este projeto usa/);
   assert.match((pickTaskMcpServer(many, "outro") as any).error, /não tem servidor MCP de tarefas chamado "outro"/);
-  assert.match((pickTaskMcpServer({ servers: {} }, "x") as any).error, /nenhum servidor MCP de tarefas configurado/);
-  assert.match((pickTaskMcpServer({ servers: {} }) as any).error, new RegExp(taskMcpConfigFile().replace(/[\\/.]/g, ".")));
+  assert.match((pickTaskMcpServer({ servers: {}, ...vazio }, "x") as any).error, /nenhum servidor MCP de tarefas configurado/);
+  assert.match((pickTaskMcpServer({ servers: {}, ...vazio }) as any).error, new RegExp(taskMcpConfigFile().replace(/[\\/.]/g, ".")));
 });
 
 /* ── leitura do resultado (zero LLM) ──────────────────────────────────────────────────────────── */
@@ -300,11 +301,100 @@ test("gravar carimba schemaVersion, e ler de volta devolve o mesmo servidor", ()
 
 test("o que vai para a tela tem NOMES de env, nunca valores", () => {
   const v = validateTaskMcpServerInput("linear", STDIO_OK);
-  const visto = describeTaskMcpServers({ servers: { linear: (v as { server: TaskMcpServer }).server } });
+  const visto = describeTaskMcpServers({ servers: { linear: (v as { server: TaskMcpServer }).server }, creates: {}, schemaVersion: 2 });
 
   assert.deepEqual(visto[0].envNames, ["NODE_ENV"]);
   assert.deepEqual(visto[0].secretEnvNames, ["LINEAR_API_KEY"]);
   const serializado = JSON.stringify(visto);
   assert.equal(serializado.includes("linear_token"), false, "nem o NOME do segredo vira valor exposto por engano");
   assert.equal(serializado.includes("production"), false, "valor de env não sobe para a tela");
+});
+
+/* ── TSK-13: servidor de um lado, USOS do outro. Ler aceita as duas formas; gravar migra. ─────── */
+
+test("v1 continua sendo lido igual — nenhuma máquina precisa ser tocada", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jf-v1-"));
+  const file = join(dir, "task-mcp.json");
+  try {
+    // Forma antiga: listTool dentro do próprio servidor, sem schemaVersion.
+    writeFileSync(file, JSON.stringify({ servers: { linear: { transport: { kind: "stdio", command: "npx" }, listTool: "list_issues", fields: { key: "identifier" } } } }));
+
+    const cfg = loadTaskMcpConfig(file);
+
+    assert.equal(cfg.schemaVersion, 1);
+    assert.equal(cfg.servers.linear.listTool, "list_issues", "o uso de listagem segue chegando dobrado no servidor");
+    assert.deepEqual(cfg.creates, {}, "v1 não declara criação — e criar por ele é recusado, não inventado");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("gravar migra para v2: transporte de um lado, usos do outro, sem perder nada", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jf-v2-"));
+  const file = join(dir, "task-mcp.json");
+  try {
+    writeFileSync(file, JSON.stringify({ servers: { linear: { transport: { kind: "stdio", command: "npx" }, listTool: "list_issues", fields: { key: "identifier" } } } }));
+    const antes = loadTaskMcpConfig(file);
+
+    writeTaskMcpConfig(antes.servers, file, { linear: { tool: "create_issue", arguments: { teamId: "PRI" } } });
+
+    const cru = JSON.parse(readFileSync(file, "utf8"));
+    assert.equal(cru.schemaVersion, 2);
+    assert.deepEqual(Object.keys(cru.servers.linear).sort(), ["transport"], "o servidor guarda só COMO subir");
+    assert.equal(cru.uses.tasks.linear.list.tool, "list_issues", "e o uso guarda PARA QUE");
+    assert.equal(cru.uses.tasks.linear.create.tool, "create_issue");
+
+    // O que o resto do código enxerga não muda entre as duas formas — é isso que faz a migração ser
+    // segura: quem consome não sabe (nem precisa saber) em que forma o arquivo está.
+    const depois = loadTaskMcpConfig(file);
+    assert.equal(depois.schemaVersion, 2);
+    assert.equal(depois.servers.linear.listTool, antes.servers.linear.listTool);
+    assert.deepEqual(depois.servers.linear.fields, antes.servers.linear.fields);
+    assert.equal(depois.creates.linear.tool, "create_issue");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("v2 com DOIS servidores mantém o uso de cada um — a escolha continua sendo do vínculo", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jf-v2b-"));
+  const file = join(dir, "task-mcp.json");
+  try {
+    const um = validateTaskMcpServerInput("linear", STDIO_OK);
+    const dois = validateTaskMcpServerInput("board", { ...STDIO_OK, listTool: "tasks" });
+    writeTaskMcpConfig({ linear: (um as any).server, board: (dois as any).server }, file, { board: { tool: "new_task" } });
+
+    const cfg = loadTaskMcpConfig(file);
+
+    assert.equal(cfg.servers.linear.listTool, "list_issues");
+    assert.equal(cfg.servers.board.listTool, "tasks", "cada servidor guarda o PRÓPRIO uso de listagem");
+    assert.equal(cfg.creates.board.tool, "new_task");
+    assert.equal(cfg.creates.linear, undefined, "e criar só existe onde foi declarado");
+    // Com dois servidores, escolher continua sendo do vínculo do projeto — nunca do arquivo.
+    assert.match((pickTaskMcpServer(cfg) as any).error, /diga qual este projeto usa/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("criar por MCP só existe onde o uso foi DECLARADO", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "jf-create-"));
+  const file = join(dir, "task-mcp.json");
+  try {
+    const v = validateTaskMcpServerInput("linear", STDIO_OK);
+    writeTaskMcpConfig({ linear: (v as any).server }, file);   // sem `create` declarado
+
+    const semUso = await createTaskViaMcp({ title: "Nova", file });
+
+    assert.ok("error" in semUso);
+    // O servidor pode até anunciar uma ferramenta de criar: o que a MÁQUINA declarou é o teto, e a
+    // recusa diz onde declarar em vez de só negar.
+    assert.match((semUso as { error: string }).error, /não declara ferramenta de criar.*uses\.tasks\.linear/s);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("criar por MCP exige título e devolve a chave que o servidor confirmou", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "jf-create2-"));
+  const file = join(dir, "task-mcp.json");
+  try {
+    const v = validateTaskMcpServerInput("linear", STDIO_OK);
+    writeTaskMcpConfig({ linear: (v as any).server }, file, { linear: { tool: "create_issue" } });
+
+    const semTitulo = await createTaskViaMcp({ title: "   ", file });
+    assert.match((semTitulo as { error: string }).error, /título/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -5541,8 +5541,12 @@
       tskMcpMachines.forEach(m=>{
         // Máquina em código antigo NÃO reporta a allowlist. Dizer "nenhum servidor" ali seria mentir
         // com cara de resposta — o mesmo engano que a fatia C matou.
+        // Os USOS declarados aparecem ao lado do nome: um servidor que só sabe listar e um que também
+        // cria não são a mesma coisa, e a diferença some se a tela mostrar só o nome.
+        const usos=(nome)=>{ const u=(m.uses||{})[nome]||{}; const partes=[]; if(u.list!==false)partes.push('listar'); if(u.create)partes.push('criar');
+          return partes.length?(' <span class="mut" style="font-size:10.5px">('+partes.join(' + ')+')</span>'):''; };
         const lista=!m.known?'<span class="mut">— (máquina desatualizada: não reporta a lista)</span>'
-          :(m.servers||[]).length?(m.servers||[]).map(x=>'<code>'+esc(x)+'</code>').join(', ')
+          :(m.servers||[]).length?(m.servers||[]).map(x=>'<code>'+esc(x)+'</code>'+usos(x)).join(', ')
           :'<span class="mut">nenhum servidor configurado</span>';
         const d=document.createElement('div');
         d.style.cssText='padding:6px 2px;border-bottom:1px solid rgba(127,127,127,.2)';

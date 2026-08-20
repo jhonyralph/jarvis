@@ -47,7 +47,14 @@ export interface TaskMcpServer {
 }
 
 export interface TaskMcpConfig {
+  /** Servidores EFETIVOS: transporte + o uso de listagem já combinado, que é o que o resto do código
+   *  consome desde sempre. A separação servidor × uso é forma de ARQUIVO (v2), não de runtime. */
   servers: Record<string, TaskMcpServer>;
+  /** Uso de CRIAÇÃO por servidor (v2). Ausente = aquele servidor não sabe criar, e criar por ele é
+   *  recusado com motivo: o que o servidor anuncia não amplia nada. */
+  creates: Record<string, { tool: string; arguments?: Record<string, unknown> }>;
+  /** Versão lida do arquivo (1 = forma antiga, sem `uses`). */
+  schemaVersion: number;
   /** motivo legível quando o arquivo existe mas não pôde ser usado (nunca silencioso). */
   error?: string;
 }
@@ -64,21 +71,38 @@ const str = (v: unknown, cap = 200): string => (typeof v === "string" ? v.trim()
  * é justamente a resposta que engana.
  */
 export function loadTaskMcpConfig(file = taskMcpConfigFile()): TaskMcpConfig {
-  if (!existsSync(file)) return { servers: {} };
+  const vazio = { servers: {}, creates: {}, schemaVersion: TASK_MCP_SCHEMA_VERSION };
+  if (!existsSync(file)) return vazio;
   let raw: any;
   try { raw = JSON.parse(readFileSync(file, "utf8")); }
-  catch (e: any) { return { servers: {}, error: `${file} não é um JSON válido (${String(e?.message ?? e).slice(0, 120)})` }; }
+  catch (e: any) { return { ...vazio, error: `${file} não é um JSON válido (${String(e?.message ?? e).slice(0, 120)})` }; }
   const source = raw && typeof raw === "object" && raw.servers && typeof raw.servers === "object" ? raw.servers : undefined;
-  if (!source) return { servers: {}, error: `${file} precisa de um objeto "servers" com os servidores MCP de tarefa` };
+  if (!source) return { ...vazio, error: `${file} precisa de um objeto "servers" com os servidores MCP de tarefa` };
+  // v2 separa COMO subir o servidor (transport) de PARA QUE usá-lo (uses.tasks[nome]). O runtime
+  // continua consumindo um servidor "efetivo": a separação existe para o mesmo processo servir mais de
+  // um uso — listar e criar —, não para espalhar a decisão por duas estruturas em memória.
+  const versao = Number(raw?.schemaVersion) >= 2 ? 2 : 1;
+  const usos = (versao === 2 && raw?.uses && typeof raw.uses === "object" && raw.uses.tasks && typeof raw.uses.tasks === "object")
+    ? raw.uses.tasks as Record<string, any> : {};
   const servers: Record<string, TaskMcpServer> = {};
+  const creates: TaskMcpConfig["creates"] = {};
   const rejected: string[] = [];
-  for (const [name, value] of Object.entries(source as Record<string, any>)) {
-    const parsed = parseServer(value);
+  for (const [rawName, value] of Object.entries(source as Record<string, any>)) {
+    const name = str(rawName, 60);
+    const uso = usos[rawName] && typeof usos[rawName] === "object" ? usos[rawName] : undefined;
+    // O uso de listagem é dobrado de volta no servidor: é o que `pickTaskMcpServer` e
+    // `listTasksFromMcp` sempre consumiram, e nenhum deles precisa saber em que forma o arquivo está.
+    const efetivo = versao === 2 && uso?.list
+      ? { ...value, listTool: uso.list.tool, listArguments: uso.list.arguments, fields: uso.list.fields }
+      : value;
+    const parsed = parseServer(efetivo);
     if (!parsed) { rejected.push(name); continue; }
-    servers[str(name, 60)] = parsed;
+    servers[name] = parsed;
+    const criar = uso?.create;
+    if (criar && str(criar.tool, 80)) creates[name] = { tool: str(criar.tool, 80), arguments: criar.arguments && typeof criar.arguments === "object" ? criar.arguments : undefined };
   }
   const error = rejected.length ? `servidor(es) ignorado(s) por configuração incompleta em ${file}: ${rejected.join(", ")}` : undefined;
-  return { servers, error };
+  return { servers, creates, schemaVersion: versao, error };
 }
 
 function parseServer(value: any): TaskMcpServer | null {
@@ -175,14 +199,25 @@ export function validateTaskMcpServerInput(name: unknown, input: unknown): TaskM
  * Grava a allowlist da máquina. Carimba `schemaVersion` porque a 4b vai migrar a forma do arquivo, e
  * migrar adivinhando a versão de arquivos escritos à mão é como o formato se perde.
  */
-export function writeTaskMcpConfig(servers: Record<string, TaskMcpServer>, file = taskMcpConfigFile()): void {
+export function writeTaskMcpConfig(servers: Record<string, TaskMcpServer>, file = taskMcpConfigFile(), creates: TaskMcpConfig["creates"] = {}): void {
   const names = Object.keys(servers);
   if (names.length > TASK_MCP_MAX_SERVERS) throw new Error(`no máximo ${TASK_MCP_MAX_SERVERS} servidores nesta máquina`);
-  writeJsonAtomic(file, { schemaVersion: TASK_MCP_SCHEMA_VERSION, servers }, { pretty: true });
+  // Grava SEMPRE em v2: transporte de um lado, usos do outro. A migração acontece aqui — ler continua
+  // aceitando v1, então nenhuma máquina precisa ser tocada para seguir funcionando.
+  const puros: Record<string, unknown> = {};
+  const uses: Record<string, unknown> = {};
+  for (const [name, s] of Object.entries(servers)) {
+    puros[name] = { ...(s.label ? { label: s.label } : {}), transport: s.transport };
+    uses[name] = {
+      list: { tool: s.listTool, ...(s.listArguments ? { arguments: s.listArguments } : {}), ...(s.fields ? { fields: s.fields } : {}) },
+      ...(creates[name] ? { create: { tool: creates[name].tool, ...(creates[name].arguments ? { arguments: creates[name].arguments } : {}) } } : {}),
+    };
+  }
+  writeJsonAtomic(file, { schemaVersion: TASK_MCP_SCHEMA_VERSION, servers: puros, uses: { tasks: uses } }, { pretty: true });
 }
 
 /** A versão que a gravação carimba. Arquivo sem carimbo é lido como 1 — é o que todo mundo tem hoje. */
-export const TASK_MCP_SCHEMA_VERSION = 1;
+export const TASK_MCP_SCHEMA_VERSION = 2;
 
 /** O que a TELA pode ver: nomes de env, nunca valores. O que não trafega não vaza. */
 export function describeTaskMcpServers(config: TaskMcpConfig): Array<Record<string, unknown>> {
@@ -345,6 +380,68 @@ export async function listTasksFromMcp(input: {
   const listing: McpTaskListing = { label: picked.server.label || picked.name, files, scannedAt: now(), cached: false };
   cache.set(picked.name, { at: now(), listing });
   return listing;
+}
+
+/**
+ * CRIAR uma tarefa pelo servidor MCP desta máquina (TSK-13).
+ *
+ * A ferramenta de criação é a declarada em `uses.tasks[<servidor>].create` — e SÓ ela. Servidor sem
+ * `create` declarado é recusado com motivo, mesmo que anuncie uma ferramenta de criar: o que o
+ * servidor oferece nunca amplia o que a máquina autorizou. É a mesma regra do `listTool`, aplicada
+ * ao lado que escreve, onde ela importa mais.
+ */
+export async function createTaskViaMcp(input: {
+  wanted?: string;
+  title: string;
+  description?: string;
+  file?: string;
+  deps?: ListMcpTasksDeps;
+  signal?: AbortSignal;
+}): Promise<{ key: string; url?: string } | { error: string }> {
+  const config = loadTaskMcpConfig(input.file);
+  const picked = pickTaskMcpServer(config, input.wanted);
+  if ("error" in picked) return { error: config.error ? `${picked.error}. Além disso: ${config.error}` : picked.error };
+  const criar = config.creates[picked.name];
+  if (!criar) {
+    return { error: `o servidor MCP "${picked.name}" não declara ferramenta de criar tarefa — adicione "create" em uses.tasks.${picked.name} no ${input.file || taskMcpConfigFile()}` };
+  }
+  const titulo = str(input.title, 300);
+  if (!titulo) return { error: "a tarefa precisa de título" };
+  const deps = input.deps || {};
+  const fixos = criar.arguments || {};
+  const argumentos = { ...fixos, title: titulo, ...(input.description ? { description: str(input.description, 4000) } : {}) };
+  const grant = {
+    name: criar.tool,
+    // `write` é o que este grant é. Declarar "read" aqui para simplificar seria mentir para a única
+    // camada que decide o que pode acontecer.
+    risk: "write" as const,
+    allowedArguments: Object.keys(argumentos),
+    inputSchema: { type: "object", additionalProperties: false, properties: Object.fromEntries(Object.keys(argumentos).map((k) => [k, {}])) },
+  };
+  const client = new ManagedPersonalMcpClient({ id: `task-${picked.name}`.slice(0, 60), transport: picked.server.transport, tools: [grant], resources: [] } as any,
+    { ...deps, resolveSecret: deps.resolveSecret ?? ((secretRef: string): string => {
+      const value = process.env[secretRef];
+      if (!value) throw new Error("segredo ausente no ambiente desta máquina");
+      return value;
+    }) });
+  try {
+    if (picked.server.transport.kind === "stdio") {
+      const starter = createMcpStdioStartActionExecutor({ client, kind: "task_mcp_start", impact: `subir o servidor MCP de tarefas "${picked.name}" nesta máquina` });
+      await starter.execute({}, { principalId: "jarvis-task-source", signal: input.signal ?? new AbortController().signal });
+    } else {
+      await client.connect(input.signal);
+    }
+    const result = await client.callTool(criar.tool, argumentos, { signal: input.signal });
+    // Mesma leitura determinística da listagem: o que voltou tem de ser DADO. Servidor que responde
+    // em prosa é erro com motivo — interpretar isso exigiria um modelo, e criar tarefa não adivinha.
+    const criada = mapMcpTasks(result, { fields: picked.server.fields, max: 1 })[0];
+    if (!criada) return { error: `o servidor "${picked.name}" criou a tarefa mas não devolveu a chave dela — não dá para confirmar o que foi criado` };
+    return { key: criada.key, url: (criada as { url?: string }).url };
+  } catch (e: any) {
+    return { error: String(e?.message ?? e).slice(0, 400) };
+  } finally {
+    try { await client.close(); } catch { /* fechar é best-effort */ }
+  }
 }
 
 /**

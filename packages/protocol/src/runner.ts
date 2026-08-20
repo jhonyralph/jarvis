@@ -20,7 +20,20 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
  *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
  *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
  *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
-export const RUNNER_PROTOCOL_VERSION = 13;
+export const RUNNER_PROTOCOL_VERSION = 14;
+
+/**
+ * Em qual versão cada CAPACIDADE entrou. Comparar com número solto espalha a regra pelo código, e
+ * "um a menos que o atual" deixa de significar "antes da capacidade" no primeiro bump seguinte — foi
+ * exatamente assim que o e2e da configuração de MCP quebrou quando o protocolo foi para 14.
+ */
+export const RUNNER_CAPABILITY_SINCE = {
+  /** listar tarefas locais da própria máquina */ localTaskList: 10,
+  /** listar tarefas pelo servidor MCP da máquina */ mcpTaskList: 11,
+  /** ponte de tarefas (a IA daquela máquina) */ taskBridge: 12,
+  /** configurar o task-mcp.json pela tela */ taskMcpConfig: 13,
+  /** criar tarefa na fonte da própria máquina */ taskSourceWrite: 14,
+} as const;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
@@ -52,6 +65,9 @@ export interface RunnerInfo {
   taskMcpConfigFile?: string;
   /** TSK-12 — esta máquina aceita ser configurada pela tela (`JARVIS_TASK_MCP_REMOTE_EDIT`). */
   taskMcpRemoteEdit?: boolean;
+  /** TSK-13 — usos declarados por servidor: `{ "<nome>": { list, create } }`. Listar e criar são
+   *  capacidades diferentes, e a tela não pode oferecer o que a máquina não declarou. */
+  taskMcpUses?: Record<string, { list: boolean; create: boolean }>;
   /** Durable proof that dependencies/validation completed for a correlated update before restart. */
   updateReceipt?: { requestId: string; targetCommit: string; current: string; preparedAt: number };
   /** Durable failure/success log produced by an external updater before the runner restarted. */
@@ -268,6 +284,8 @@ export type RunnerToHub =
   | { t: "task_mcp_config"; reqId: string; configFile: string; schemaVersion: number; servers: Array<Record<string, unknown>>; error?: string }
   | { t: "task_mcp_config_set"; reqId: string; ok: boolean; error?: string }
   | { t: "task_mcp_test"; reqId: string; ok: boolean; count?: number; sample?: string[]; error?: string }
+  | { t: "task_local_write"; reqId: string; ok: boolean; key?: string; error?: string }
+  | { t: "task_mcp_create"; reqId: string; ok: boolean; key?: string; url?: string; error?: string }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" }
   | ExecutionRunnerToHub;
@@ -364,6 +382,11 @@ export type HubToRunner =
   | { t: "task_mcp_config"; reqId: string }
   | { t: "task_mcp_config_set"; reqId: string; name: string; server?: Record<string, unknown>; remove?: boolean }
   | { t: "task_mcp_test"; reqId: string; name: string }
+  /** TSK-13 — criar um arquivo de feature na pasta declarada do projeto, NESTA máquina. O caminho é
+   *  contido pela mesma função da leitura, e arquivo existente NÃO é sobrescrito: criar não é editar. */
+  | { t: "task_local_write"; reqId: string; sessionId: string; featuresDir?: string; title: string; description?: string }
+  /** TSK-13 — chamar a ferramenta de CRIAÇÃO declarada em `uses.tasks[<servidor>].create`. */
+  | { t: "task_mcp_create"; reqId: string; server?: string; title: string; description?: string }
   | { t: "ping" }
   | ExecutionHubToRunner;
 

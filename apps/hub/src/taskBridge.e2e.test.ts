@@ -70,11 +70,12 @@ class Inbox {
 }
 
 /** Um runner de mentira que fala o protocolo: registra-se, responde `git_remote` e usa a ponte. */
-async function fakeRunner(port: number, opts: { runnerId: string; cwdBySession: Record<string, string>; remoteUrl?: string }): Promise<{ inbox: Inbox; close: () => void }> {
+async function fakeRunner(port: number, opts: { runnerId: string; cwdBySession: Record<string, string>; remoteUrl?: string; files?: Array<{ key: string; title: string; description?: string }> }): Promise<{ inbox: Inbox; escritas: Array<{ title: string; featuresDir: string }>; close: () => void }> {
   // A máquina disca `/runner`; qualquer outro caminho o Hub trata como cliente de UI.
   const ws = new WebSocket(`ws://127.0.0.1:${port}/runner`);
   await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
   const inbox = new Inbox(ws);
+  const escritas: Array<{ title: string; featuresDir: string }> = [];
   inbox.send({
     t: "register", token: "",
     info: {
@@ -93,8 +94,18 @@ async function fakeRunner(port: number, opts: { runnerId: string; cwdBySession: 
     if (m?.t === "list") { inbox.send(sessions()); return; }
     // O remote vive no disco DESTA máquina; o Hub pergunta em vez de calcular no disco dele.
     if (m?.t === "git_remote" && typeof m.reqId === "string") inbox.send({ t: "git_remote", reqId: m.reqId, cwd: m.cwd, url: opts.remoteUrl });
+    // TSK-13: a lista da fonte vive NESTA máquina; o Hub pergunta, não varre o disco dele.
+    // TSK-13: criar tarefa também é da MÁQUINA — o Hub manda a intenção já aprovada.
+    if (m?.t === "task_local_write" && typeof m.reqId === "string") {
+      escritas.push({ title: String(m.title || ""), featuresDir: String(m.featuresDir || "") });
+      inbox.send({ t: "task_local_write", reqId: m.reqId, ok: true, key: `${m.featuresDir || "docs/features"}/nova.md` });
+      return;
+    }
+    if (m?.t === "task_local_list" && typeof m.reqId === "string") {
+      inbox.send({ t: "task_local_list", reqId: m.reqId, sessionId: m.sessionId, dir: String(m.featuresDir || "docs/features"), files: opts.files || [], cached: false, scannedAt: Date.now() });
+    }
   });
-  return { inbox, close: () => ws.close() };
+  return { inbox, escritas, close: () => ws.close() };
 }
 
 test("ponte de tarefas: a máquina que pede é a máquina que decide qual projeto responde", { timeout: 70_000 }, async () => {
@@ -126,7 +137,8 @@ test("ponte de tarefas: a máquina que pede é a máquina que decide qual projet
     const vinculoLocal = await cliente.take((m) => m.t === "task_binding" && m.sessionId === sessaoLocal);
     assert.equal(vinculoLocal.binding.tracker, "github");
 
-    runner = await fakeRunner(hubPort, { runnerId: "maquina-remota", cwdBySession: { "s-remota": projetoRemoto }, remoteUrl: undefined });
+    runner = await fakeRunner(hubPort, { runnerId: "maquina-remota", cwdBySession: { "s-remota": projetoRemoto }, remoteUrl: undefined,
+      files: [{ key: "docs/features/login.md", title: "Corrigir o login" }, { key: "docs/features/perfil.md", title: "Tela de perfil" }] });
     await cliente.take((m) => m.t === "machines" && m.machines?.some((x: any) => x.id === "maquina-remota"));
 
     // 1) CONTENÇÃO: a máquina remota pede tarefa para uma sessão CUJO PROJETO não declarou fonte.
@@ -164,6 +176,37 @@ test("ponte de tarefas: a máquina que pede é a máquina que decide qual projet
     assert.equal(semEscrita.ok, false);
     assert.equal(semEscrita.code, "NO_CONNECTION", "a conta vem antes do destino: " + JSON.stringify(semEscrita));
     assert.ok(String(semEscrita.error || "").length > 10, "recusa com motivo legível, não só código");
+
+    // 5) TSK-13 — fonte PASTA: a IA passa a ser servida pela fonte declarada, sem cofre no caminho.
+    // Antes, este mesmo pedido recusava com "escolha a conta" — num projeto que não tem conta.
+    cliente.send({ t: "task_binding_set", sessionId: "s-remota", tracker: "local" });
+    await cliente.take((m) => m.t === "task_binding" && m.sessionId === "s-remota" && m.binding?.tracker === "local");
+
+    runner.inbox.send({ t: "task_bridge", reqId: "r5", sessionId: "s-remota", op: "search", args: { query: "login" } });
+    const daPasta = await runner.inbox.take((m) => m.t === "task_bridge_result" && m.reqId === "r5");
+    assert.equal(daPasta.ok, true, "fonte local responde à IA: " + JSON.stringify(daPasta));
+    assert.equal(daPasta.results.length, 1, "o termo filtra a lista da MÁQUINA");
+    assert.equal(daPasta.results[0].key, "docs/features/login.md");
+    assert.equal(daPasta.results[0].tracker, "local", "a tarefa não mente a própria origem");
+
+    runner.inbox.send({ t: "task_bridge", reqId: "r6", sessionId: "s-remota", op: "get", args: { key: "docs/features/perfil.md" } });
+    const uma = await runner.inbox.take((m) => m.t === "task_bridge_result" && m.reqId === "r6");
+    assert.equal(uma.ok, true);
+    assert.equal(uma.task.title, "Tela de perfil");
+
+    // E criar nesta fonte recusa DIZENDO que é isso — não culpando uma conta inexistente.
+    runner.inbox.send({ t: "task_bridge", reqId: "r7", sessionId: "s-remota", op: "create", args: { title: "Nova tarefa" } });
+    const aprovacao = await cliente.take((m) => m.t === "adaptive_approvals" && (m.approvals || []).some((a: any) => /Nova tarefa/.test(String(a.title || ""))));
+    const pedido = aprovacao.approvals.find((a: any) => /Nova tarefa/.test(String(a.title || "")));
+    assert.match(String(pedido.title), /pasta docs\/features/, "o preview diz ONDE vai escrever: " + JSON.stringify(pedido.title));
+    assert.equal(runner.escritas.length, 0, "nada foi escrito antes da aprovação");
+
+    cliente.send({ t: "adaptive_approval", id: pedido.id, action: "approve" });
+    const criado = await runner.inbox.take((m) => m.t === "task_bridge_result" && m.reqId === "r7");
+    assert.equal(criado.ok, true, JSON.stringify(criado));
+    assert.equal(runner.escritas.length, 1, "e a MÁQUINA é quem escreveu");
+    assert.equal(runner.escritas[0].title, "Nova tarefa");
+    assert.equal(criado.key, "docs/features/nova.md", "e a chave devolvida é o caminho relativo do arquivo");
   } finally {
     runner?.close();
     ws?.close();
