@@ -20,7 +20,7 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
  *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
  *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
  *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
-export const RUNNER_PROTOCOL_VERSION = 11;
+export const RUNNER_PROTOCOL_VERSION = 12;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
 export interface RunnerInfo {
@@ -45,6 +45,8 @@ export interface RunnerInfo {
    *  que a tela de Configurações mostra para você saber o que está ligado em cada máquina sem abrir
    *  sessão nela. Aditivo: runner antigo simplesmente não manda, e a tela diz "—". */
   taskMcpServers?: string[];
+  /** TSK-11 — esta máquina aceita servir a ponte de tarefas (a IA daqui mexendo em tarefas). */
+  taskBridge?: boolean;
   /** Durable proof that dependencies/validation completed for a correlated update before restart. */
   updateReceipt?: { requestId: string; targetCommit: string; current: string; preparedAt: number };
   /** Durable failure/success log produced by an external updater before the runner restarted. */
@@ -249,6 +251,14 @@ export type RunnerToHub =
    *  UI, so the runner relays the request and waits for the matching `permission_decision`. `id` is
    *  minted by the runner and is only meaningful for this runner's pending table. */
   | { t: "permission_request"; sessionId: string; id: string; tool: string; input: unknown; cwd?: string }
+  /** TSK-11 — a IA desta máquina quer mexer nas tarefas do projeto dela. Quem tem a credencial é o
+   *  Hub, então o runner NÃO decide nada: encaminha a intenção e espera `task_bridge_result`. O Hub
+   *  resolve a conexão pelo vínculo do projeto DESTA máquina — é isso que impede uma máquina de
+   *  alcançar a conta de um projeto que não está nela. */
+  | { t: "task_bridge"; reqId: string; sessionId: string; op: "search" | "get" | "create"; args: Record<string, unknown> }
+  /** Resposta ao pedido de remote do Hub: o `git remote` do projeto vive no disco DESTA máquina, e
+   *  computá-lo no Hub devolvia o remote de outro repositório (ou nenhum). */
+  | { t: "git_remote"; reqId: string; cwd: string; url?: string }
   | { t: "error"; reqId?: string; message: string }
   | { t: "pong" }
   | ExecutionRunnerToHub;
@@ -333,6 +343,13 @@ export type HubToRunner =
   /** The user answered a `permission_request` this runner relayed. Unknown/expired ids are ignored
    *  (already settled or timed out → the runner already failed it closed). */
   | { t: "permission_decision"; sessionId: string; id: string; behavior: "allow" | "deny"; updatedInput?: unknown; message?: string }
+  /** TSK-11 — resultado do pedido da ponte. Nunca carrega credencial: só o rótulo da conexão. */
+  | { t: "task_bridge_result"; reqId: string; ok: boolean; code?: string; error?: string; connection?: string;
+      results?: Array<{ tracker: string; key: string; title: string; state?: string; url?: string }>;
+      task?: { tracker: string; key: string; title: string; description?: string; url?: string };
+      key?: string; url?: string }
+  /** Pergunta o `git remote` de uma pasta DESTA máquina (guarda-corpo de conta errada na escrita). */
+  | { t: "git_remote"; reqId: string; cwd: string }
   | { t: "ping" }
   | ExecutionHubToRunner;
 

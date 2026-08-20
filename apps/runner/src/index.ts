@@ -14,7 +14,7 @@
  */
 import WebSocket from "ws";
 import { hostname, homedir, platform } from "node:os";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -261,6 +261,65 @@ permServer.listen(0, "127.0.0.1", () => {
   process.env.JARVIS_PERM_URL = `http://127.0.0.1:${port}/internal/perm`;
 });
 permServer.unref(); // never keep the process alive on its own account
+
+// --- Ponte de tarefas (TSK-11) — a IA DESTA máquina mexendo nas tarefas do projeto dela -----------
+// Mesmo desenho da ponte de permissão acima, e pelo mesmo motivo: quem tem a credencial é o Hub, e
+// esta máquina não decide nada. Ela recebe a chamada do MCP local, encaminha a INTENÇÃO pelo WS que
+// já existe e devolve o que o Hub responder. O Hub resolve a conexão pelo vínculo do projeto DESTA
+// máquina — é o que impede uma máquina de alcançar a conta de um projeto que não está nela.
+//
+// Desligar: `JARVIS_TASK_BRIDGE=0` no runner.env desta máquina (nasce ligada).
+const TASK_BRIDGE_ON = String(process.env.JARVIS_TASK_BRIDGE ?? "1") !== "0";
+const TASK_TOKEN = randomBytes(24).toString("hex");
+const TASK_TIMEOUT_MS = 60 * 1000;
+const pendingTaskCalls = new Map<string, { timer: ReturnType<typeof setTimeout>; settle: (payload: unknown) => void }>();
+/** Link caiu: ninguém mais pode responder. Falhar fechado agora é melhor do que pendurar o turno. */
+function failAllPendingTasks(reason: string): void {
+  for (const [, p] of pendingTaskCalls) p.settle({ ok: false, error: reason });
+}
+const taskServer = createServer((req, res) => {
+  const ra = req.socket.remoteAddress || "";
+  const isLocal = ra === "127.0.0.1" || ra === "::1" || ra === "::ffff:127.0.0.1";
+  const bearerOk = String(req.headers["authorization"] || "") === "Bearer " + TASK_TOKEN;
+  if (req.method !== "POST" || (req.url || "").split("?")[0] !== "/internal/task") { res.writeHead(404).end(); return; }
+  let body = ""; let tooBig = false;
+  req.on("data", (chunk) => { body += chunk; if (body.length > 128 * 1024) { tooBig = true; req.destroy(); } });
+  req.on("error", () => { try { res.writeHead(400).end(); } catch { /* ignore */ } });
+  req.on("end", () => {
+    if (tooBig) { try { res.writeHead(413).end(); } catch { /* ignore */ } return; }
+    let d: any; try { d = JSON.parse(body); } catch { res.writeHead(400).end(); return; }
+    if (!isLocal || !(bearerOk || d?.token === TASK_TOKEN)) { res.writeHead(401).end(); return; }
+    const answer = (payload: unknown): void => {
+      try { res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify(payload)); }
+      catch { /* a ponte já se foi */ }
+    };
+    // Sem Hub vivo não há cofre nem aprovação: recusa com motivo, em vez de queimar o timeout inteiro
+    // e devolver silêncio para a IA.
+    if (!ws || ws.readyState !== WebSocket.OPEN) { answer({ ok: false, error: "Hub desconectado — recusado por segurança" }); return; }
+    const reqId = randomUUID();
+    const settle = (payload: unknown): void => {
+      const p = pendingTaskCalls.get(reqId); if (!p) return;
+      clearTimeout(p.timer); pendingTaskCalls.delete(reqId); answer(payload);
+    };
+    const timer = setTimeout(() => settle({ ok: false, error: "tempo esgotado esperando o Hub" }), TASK_TIMEOUT_MS);
+    pendingTaskCalls.set(reqId, { timer, settle });
+    req.on("aborted", () => settle({ ok: false, error: "conexão encerrada" }));
+    send({ t: "task_bridge", reqId, sessionId: typeof d?.sessionId === "string" ? d.sessionId : "",
+      op: d?.op === "get" || d?.op === "create" ? d.op : "search",
+      args: (d?.args && typeof d.args === "object" ? d.args : {}) as Record<string, unknown> });
+  });
+});
+taskServer.on("error", (e: any) => console.error("[runner] ponte de tarefas:", String(e?.message ?? e)));
+if (TASK_BRIDGE_ON) {
+  taskServer.listen(0, "127.0.0.1", () => {
+    const addr = taskServer.address();
+    const port = addr && typeof addr === "object" ? addr.port : 0;
+    if (!port) return;
+    process.env.JARVIS_TASK_TOKEN = TASK_TOKEN;
+    process.env.JARVIS_TASK_URL = `http://127.0.0.1:${port}/internal/task`;
+  });
+  taskServer.unref();
+}
 
 async function maybeSelfUpdate(reason: string, forceCheck = false): Promise<void> {
   if (RUNNER_SELF_UPDATE_MS <= 0) return;
@@ -1024,6 +1083,7 @@ function connect(): void {
       // Só os NOMES da allowlist de MCP desta máquina: é o que a tela de Configurações precisa para
       // mostrar o que está ligado aqui. Comando, env e segredo não saem do disco local.
       taskMcpServers: Object.keys(loadTaskMcpConfig().servers),
+      taskBridge: TASK_BRIDGE_ON,
     };
     send({ t: "register", token: TOKEN, info });
     void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));
@@ -1053,6 +1113,21 @@ function connect(): void {
       if (m.t === "ping") { send({ t: "pong" }); return; }
       // Manual permission mode: the user answered a tool approval this machine is blocked on. The Hub
       // already checked session access before forwarding; an unknown id means it was settled already.
+      if (m.t === "task_bridge_result" && typeof m.reqId === "string") {
+        const { t: _t, reqId, ...payload } = m as Record<string, unknown> & { t: string; reqId: string };
+        pendingTaskCalls.get(reqId)?.settle(payload);
+        return;
+      }
+      // O `git remote` do projeto está no disco DESTA máquina. O Hub pergunta porque calcular lá
+      // devolveria o remote de outro repositório — e é esse valor que barra criar tarefa na conta
+      // errada. Sem resposta, o Hub trata como "não posso afirmar" e não auto-aprova.
+      if (m.t === "git_remote" && typeof m.reqId === "string" && typeof m.cwd === "string") {
+        const reqId = m.reqId, dir = m.cwd;
+        execFile("git", ["-C", dir, "remote", "get-url", "origin"], { timeout: 3_000, windowsHide: true }, (err, stdout) => {
+          send({ t: "git_remote", reqId, cwd: dir, url: err ? undefined : String(stdout || "").trim().slice(0, 300) || undefined });
+        });
+        return;
+      }
       if (m.t === "permission_decision" && typeof m.id === "string") {
         const pending = pendingPermissions.get(m.id);
         if (pending) pending.settle(m.behavior === "allow"
@@ -1374,6 +1449,7 @@ function connect(): void {
     clearInterval(hb); ws = null;
     // Sem Hub não há UI para responder: nega o que estava pendente em vez de segurar o turno por 5min.
     denyAllPendingPermissions("Hub desconectado — negado por segurança");
+    failAllPendingTasks("Hub desconectado — recusado por segurança");
     armOutageAbort(); // arma o corte de turnos abandonados se a queda persistir (flap reseta no reconnect)
     // #4: NÃO dispare auto-update numa queda transiente (ex.: 502 do túnel) — era o gatilho que criava
     // corrida com o update do Hub. Só considera após desconexão SUSTENTADA (backoff já cresceu); a

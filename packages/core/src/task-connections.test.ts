@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, publicTaskConnections } from "./task-connections.js";
+import { TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, remoteCheckApplies, publicTaskConnections } from "./task-connections.js";
 import { fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, sanitizeSecrets, adfToText, TASK_PROVIDERS, type FetchLike } from "./task-providers.js";
 
 const fake = (routes: Record<string, unknown | ((init?: any) => unknown)>): { fetchFn: FetchLike; calls: Array<{ url: string; init?: any }> } => {
@@ -154,6 +154,18 @@ test("divergência remote×conexão avisa antes da escrita errada", () => {
   assert.equal(remoteMismatchWarning("https://github.com/acme/api.git", conn), undefined);
   assert.equal(remoteMismatchWarning(undefined, conn), undefined, "sem remote, sem alarme falso");
   assert.equal(remoteMismatchWarning("git@github.com:x/y.git", { ...conn, config: {} }), undefined, "sem org declarada, sem palpite");
+});
+
+// TSK-11, borda 4: "sem aviso" tem DOIS sentidos — "conferi e está certo" e "não tinha como
+// conferir". Auto-aprovação só pode confiar no primeiro; e exigir remote onde a checagem nada diz
+// (Jira, Linear, GitHub sem org) quebraria auto-aprovação por um motivo inexistente.
+test("a checagem de remote só se aplica onde ela pode afirmar alguma coisa", () => {
+  const github = { provider: "github", label: "ACME", config: { org: "acme" } } as any;
+  assert.equal(remoteCheckApplies(github), true);
+  assert.equal(remoteCheckApplies({ ...github, config: {} }), false, "sem org não há o que comparar");
+  assert.equal(remoteCheckApplies({ ...github, provider: "gitlab" }), true);
+  assert.equal(remoteCheckApplies({ ...github, provider: "jira" }), false, "git remote não diz nada sobre a conta do Jira");
+  assert.equal(remoteCheckApplies({ ...github, provider: "linear" }), false);
 });
 
 /* ── F: o que sai para o cliente ──────────────────────────────────────────────────────────────── */

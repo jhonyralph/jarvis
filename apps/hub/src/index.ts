@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -67,6 +67,78 @@ process.env.JARVIS_PERM_TOKEN = PERM_TOKEN;
 process.env.JARVIS_PERM_URL = `http://127.0.0.1:${PORT}/internal/perm`;
 // Ponte de TAREFAS (C3): mesmo desenho da de permissão — token por processo + endpoint interno em
 // loopback. É por aqui que jarvis_task_search/get/create de QUALQUER IA chega ao cofre de conexões.
+/**
+ * A ponte de tarefas, servida para QUALQUER máquina. Nasceu dentro do handler HTTP local e por isso
+ * resolvia tudo como se a sessão fosse do Hub (`LOCAL_ID` implícito) — correto por acidente enquanto
+ * a ponte só existia aqui. Com a ponte no runner (TSK-11), a máquina é parâmetro: é ela que decide
+ * QUAL projeto, e portanto qual conta. Uma máquina só alcança as conexões dos projetos que estão
+ * nela; o segredo nunca sai daqui, só o resultado.
+ */
+async function serveTaskBridge(ctx: { runnerId: string; sessionId: string; op: string; args: Record<string, unknown>; reply: (payload: unknown) => void }): Promise<void> {
+  const { runnerId, sessionId, op, args, reply } = ctx;
+      try {
+        if (op === "search" || op === "get") {
+          const { resolved } = resolveSessionTaskConnection(sessionId, false, runnerId);
+          if ("refusal" in resolved) { reply({ ok: false, code: resolved.refusal.code, error: resolved.refusal.message }); return; }
+          const t = providerSignal();
+          try {
+            if (op === "search") {
+              const results = await searchProviderTasks(resolved.connection.provider, String(args.query || ""), { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
+              reply({ ok: true, connection: resolved.connection.label, results: results.slice(0, 10) });
+            } else {
+              const item = await getProviderTask(resolved.connection.provider, String(args.key || ""), { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
+              if (item) taskMeta.merge(item.tracker, item.key, { title: item.title, description: item.description, url: item.url });
+              reply(item ? { ok: true, connection: resolved.connection.label, task: item } : { ok: false, error: "tarefa não encontrada" });
+            }
+          } finally { t.finish(); }
+          return;
+        }
+        if (op === "create") {
+          const { cwd, binding, resolved } = resolveSessionTaskConnection(sessionId, true, runnerId);
+          if ("refusal" in resolved) { reply({ ok: false, code: resolved.refusal.code, error: resolved.refusal.message }); return; }
+          const target = String(binding?.target || "");
+          const title = String(args.title || "").trim().slice(0, 300);
+          const description = typeof args.description === "string" ? args.description.slice(0, 4000) : undefined;
+          if (!target) { reply({ ok: false, code: "NO_TARGET", error: "o vínculo do projeto não define o destino da escrita (repo/projeto/time)" }); return; }
+          if (!title) { reply({ ok: false, error: "a tarefa precisa de título" }); return; }
+          const remote = await gitRemoteOf(runnerId, cwd);
+          const warning = remoteMismatchWarning(remote, resolved.connection);
+          // Borda 4 (TSK-11): quando a checagem SE APLICA e o remote não pôde ser lido — git ausente na
+          // máquina do projeto, máquina offline, timeout —, não dá para afirmar que a conta é a certa.
+          // Ausência de prova não é prova de ausência, e auto-aprovar aqui seria exatamente o acidente
+          // da conta errada que o aviso existe para impedir.
+          const remoteIncerto = remoteCheckApplies(resolved.connection) && !remote;
+          const who = resolved.connection.identity?.login || resolved.connection.label;
+          const preview = `Criar "${title}" em ${resolved.connection.label} · ${target} como ${who}${warning ? ` — ⚠ ${warning}` : remoteIncerto ? " — ⚠ não consegui ler o remote do projeto nesta máquina" : ""}`;
+          const execute = async (): Promise<void> => {
+            const pt = providerSignal(15_000);
+            try {
+              const created = await createProviderTask(resolved.connection.provider, target, { title, description }, { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: pt.signal });
+              taskMeta.merge(resolved.connection.provider, created.key, { title, description, url: created.url });
+              auth.audit("task_write", { runnerId, detail: `create(ia) ${resolved.connection.id} → ${created.key}` });
+              broadcastOn(runnerId, sessionId, { t: "notice", message: `Tarefa criada pela IA: ${created.key}${created.url ? ` — ${created.url}` : ""} (${resolved.connection.label})` });
+              reply({ ok: true, key: created.key, url: created.url, connection: resolved.connection.label });
+            } catch (e: any) { reply({ ok: false, error: String(e?.message ?? e) }); }
+            finally { pt.finish(); }
+          };
+          // Divergência remote×conexão NUNCA é auto-aprovável — é o acidente da conta errada.
+          if (binding?.autoApprove?.includes("create") && !warning && !remoteIncerto) { await execute(); return; }
+          const resolvedPolicy = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd, sessionId });
+          const approval = createAdaptiveApprovalRequest({
+            id: `task:create:${Date.now()}:${randomUUID().slice(0, 8)}`, action: "task_write",
+            title: `🧭 ${preview}`, reason: description ? description.slice(0, 200) : "pedida pela IA da sessão",
+            policy: resolvedPolicy.policy, sessionId, ttlMs: 30 * 60 * 1000,
+          });
+          const expire = setTimeout(() => { if (pendingAdaptiveApprovals.delete(approval.id)) { broadcastAdaptiveApprovals(); reply({ ok: false, error: "aprovação expirou sem decisão" }); } }, 30 * 60 * 1000);
+          (expire as { unref?: () => void }).unref?.();
+          pendingAdaptiveApprovals.set(approval.id, { approval, resolve: (approved) => { clearTimeout(expire); if (approved) void execute(); else reply({ ok: false, error: "criação recusada pelo dono" }); } });
+          broadcastAdaptiveApprovals();
+          notifyEvent("machine", "Tarefa aguardando aprovação", preview, sessionId);
+          return;
+        }
+        reply({ ok: false, error: `operação desconhecida: ${op}` });
+      } catch (e: any) { reply({ ok: false, error: String(e?.message ?? e) }); }
+}
 const TASK_BRIDGE_TOKEN = randomBytes(24).toString("hex");
 process.env.JARVIS_TASK_TOKEN = TASK_BRIDGE_TOKEN;
 process.env.JARVIS_TASK_URL = `http://127.0.0.1:${PORT}/internal/task`;
@@ -451,6 +523,28 @@ function gitRemoteUrl(cwd: string): Promise<string | undefined> {
     catch { done(undefined); }
   });
 }
+/**
+ * O `git remote` do projeto vive no disco da MÁQUINA dele. Calcular sempre aqui devolvia o remote de
+ * outro repositório — ou nenhum — para sessão remota, e é justamente esse valor que impede criar
+ * tarefa na conta errada (`remoteMismatchWarning`). Máquina que não responde devolve `undefined`, e
+ * quem chama trata ausência como "não posso afirmar" — nunca como "está tudo certo".
+ */
+const pendingGitRemote = new Map<string, { timer: NodeJS.Timeout; settle: (url?: string) => void }>();
+const GIT_REMOTE_TIMEOUT_MS = 4_000;
+function gitRemoteOf(runnerId: string, cwd: string): Promise<string | undefined> {
+  if (!cwd) return Promise.resolve(undefined);
+  if (runnerId === LOCAL_ID) return gitRemoteUrl(cwd);
+  const rc = runners.get(runnerId);
+  if (!rc?.ws) return Promise.resolve(undefined);
+  const reqId = "gr-" + randomUUID();
+  return new Promise((done) => {
+    const settle = (url?: string): void => { const p = pendingGitRemote.get(reqId); if (!p) return; clearTimeout(p.timer); pendingGitRemote.delete(reqId); done(url); };
+    const timer = setTimeout(() => settle(undefined), GIT_REMOTE_TIMEOUT_MS);
+    (timer as { unref?: () => void }).unref?.();
+    pendingGitRemote.set(reqId, { timer, settle });
+    if (!sendToRunner(rc, { t: "git_remote", reqId, cwd })) settle(undefined);
+  });
+}
 /** Timeout duro para chamadas de provedor: uma API pendurada não pode prender um handler do Hub. */
 function providerSignal(ms = 10_000): { signal: AbortSignal; finish: () => void } {
   const ctrl = new AbortController();
@@ -727,62 +821,7 @@ const server = createServer((req, res) => {
         const sessionId = typeof d?.sessionId === "string" ? d.sessionId : "";
         const op = String(d?.op || "");
         const args = (d?.args && typeof d.args === "object" ? d.args : {}) as Record<string, unknown>;
-        try {
-          if (op === "search" || op === "get") {
-            const { resolved } = resolveSessionTaskConnection(sessionId, false);
-            if ("refusal" in resolved) { reply({ ok: false, code: resolved.refusal.code, error: resolved.refusal.message }); return; }
-            const t = providerSignal();
-            try {
-              if (op === "search") {
-                const results = await searchProviderTasks(resolved.connection.provider, String(args.query || ""), { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
-                reply({ ok: true, connection: resolved.connection.label, results: results.slice(0, 10) });
-              } else {
-                const item = await getProviderTask(resolved.connection.provider, String(args.key || ""), { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
-                if (item) taskMeta.merge(item.tracker, item.key, { title: item.title, description: item.description, url: item.url });
-                reply(item ? { ok: true, connection: resolved.connection.label, task: item } : { ok: false, error: "tarefa não encontrada" });
-              }
-            } finally { t.finish(); }
-            return;
-          }
-          if (op === "create") {
-            const { cwd, binding, resolved } = resolveSessionTaskConnection(sessionId, true);
-            if ("refusal" in resolved) { reply({ ok: false, code: resolved.refusal.code, error: resolved.refusal.message }); return; }
-            const target = String(binding?.target || "");
-            const title = String(args.title || "").trim().slice(0, 300);
-            const description = typeof args.description === "string" ? args.description.slice(0, 4000) : undefined;
-            if (!target) { reply({ ok: false, code: "NO_TARGET", error: "o vínculo do projeto não define o destino da escrita (repo/projeto/time)" }); return; }
-            if (!title) { reply({ ok: false, error: "a tarefa precisa de título" }); return; }
-            const warning = remoteMismatchWarning(await gitRemoteUrl(cwd), resolved.connection);
-            const who = resolved.connection.identity?.login || resolved.connection.label;
-            const preview = `Criar "${title}" em ${resolved.connection.label} · ${target} como ${who}${warning ? ` — ⚠ ${warning}` : ""}`;
-            const execute = async (): Promise<void> => {
-              const pt = providerSignal(15_000);
-              try {
-                const created = await createProviderTask(resolved.connection.provider, target, { title, description }, { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: pt.signal });
-                taskMeta.merge(resolved.connection.provider, created.key, { title, description, url: created.url });
-                auth.audit("task_write", { runnerId: LOCAL_ID, detail: `create(ia) ${resolved.connection.id} → ${created.key}` });
-                broadcastOn(LOCAL_ID, sessionId, { t: "notice", message: `Tarefa criada pela IA: ${created.key}${created.url ? ` — ${created.url}` : ""} (${resolved.connection.label})` });
-                reply({ ok: true, key: created.key, url: created.url, connection: resolved.connection.label });
-              } catch (e: any) { reply({ ok: false, error: String(e?.message ?? e) }); }
-              finally { pt.finish(); }
-            };
-            // Divergência remote×conexão NUNCA é auto-aprovável — é o acidente da conta errada.
-            if (binding?.autoApprove?.includes("create") && !warning) { await execute(); return; }
-            const resolvedPolicy = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd, sessionId });
-            const approval = createAdaptiveApprovalRequest({
-              id: `task:create:${Date.now()}:${randomUUID().slice(0, 8)}`, action: "task_write",
-              title: `🧭 ${preview}`, reason: description ? description.slice(0, 200) : "pedida pela IA da sessão",
-              policy: resolvedPolicy.policy, sessionId, ttlMs: 30 * 60 * 1000,
-            });
-            const expire = setTimeout(() => { if (pendingAdaptiveApprovals.delete(approval.id)) { broadcastAdaptiveApprovals(); reply({ ok: false, error: "aprovação expirou sem decisão" }); } }, 30 * 60 * 1000);
-            (expire as { unref?: () => void }).unref?.();
-            pendingAdaptiveApprovals.set(approval.id, { approval, resolve: (approved) => { clearTimeout(expire); if (approved) void execute(); else reply({ ok: false, error: "criação recusada pelo dono" }); } });
-            broadcastAdaptiveApprovals();
-            notifyEvent("machine", "Tarefa aguardando aprovação", preview, sessionId);
-            return;
-          }
-          reply({ ok: false, error: `operação desconhecida: ${op}` });
-        } catch (e: any) { reply({ ok: false, error: String(e?.message ?? e) }); }
+        await serveTaskBridge({ runnerId: LOCAL_ID, sessionId, op, args, reply });
       })();
     });
     return;
@@ -1953,9 +1992,23 @@ function rememberExecutionPrincipal(runnerId: string, turnId: string, principalI
     for (const [key, hint] of executionPrincipalHints) if (hint.expiresAt <= now || executionPrincipalHints.size > 1_500) executionPrincipalHints.delete(key);
   }
 }
+/**
+ * Uma porta nova para o cofre não pode ser invisível para quem é dono dele: máquina com a ponte de
+ * tarefas ativa se anuncia na sessão, uma vez por sessão. Nasce no primeiro turno — antes disso a
+ * ponte ainda não teve como ser usada, e um aviso na abertura da tela seria ruído por antecipação.
+ */
+const bridgeAnnounced = new Set<string>();
+function announceTaskBridge(rc: RunnerConn, sessionId: string): void {
+  if (!rc.info.taskBridge || !sessionId) return;
+  const key = `${rc.id}:${sessionId}`;
+  if (bridgeAnnounced.has(key)) return;
+  bridgeAnnounced.add(key);
+  broadcastOn(rc.id, sessionId, { t: "notice", message: `Esta máquina (${rc.info.label || rc.info.host || rc.id}) permite que a IA busque e crie tarefas pela conta do projeto. Criar sempre pede sua aprovação. Para desligar: JARVIS_TASK_BRIDGE=0 no runner.env dela.` });
+}
 function sendOwnedRunnerTurn(rc: RunnerConn, sessionId: string, turnId: string, principalId: string, frame: Record<string, unknown>): boolean {
   const key = executionTurnKey(rc.id, turnId);
   rememberExecutionPrincipal(rc.id, turnId, principalId);
+  announceTaskBridge(rc, sessionId);
   if (sendToRunner(rc, { ...frame, sessionId, turnId })) return true;
   executionPrincipalHints.delete(key);
   return false;
@@ -2349,6 +2402,25 @@ function relayRunner(rc: RunnerConn, m: any): void {
   // Manual permission mode (Fase 3), remote leg: a tool on THAT machine is blocked. The runner holds
   // its bridge's response open; we own the UI, so register a pending whose settle ships the answer
   // back over this runner's socket, then ask whoever is watching the session.
+  // TSK-11 — a IA de uma sessão DESTA máquina quer mexer nas tarefas do projeto dela. `rc.id` é o
+  // dado que faltava: é ele que amarra o pedido ao projeto daquela máquina, e portanto à conta certa.
+  if (m.t === "task_bridge" && typeof m.reqId === "string" && typeof m.sessionId === "string") {
+    const reqId = m.reqId, sessionId = m.sessionId, op = String(m.op || "");
+    const args = (m.args && typeof m.args === "object" ? m.args : {}) as Record<string, unknown>;
+    let answered = false;
+    const reply = (payload: any): void => {
+      if (answered) return;                       // entrega duplicada: o primeiro é dono da resposta
+      answered = true;
+      log.info("task_bridge", { runnerId: rc.id, sessionId, op, ok: !!payload?.ok });
+      if (rc.ws) sendToRunner(rc, { t: "task_bridge_result", reqId, ...payload });
+    };
+    void serveTaskBridge({ runnerId: rc.id, sessionId, op, args, reply });
+    return;
+  }
+  if (m.t === "git_remote" && typeof m.reqId === "string") {
+    pendingGitRemote.get(m.reqId)?.settle(typeof m.url === "string" && m.url ? m.url : undefined);
+    return;
+  }
   if (m.t === "permission_request" && typeof m.sessionId === "string" && typeof m.id === "string") {
     const sessionId = m.sessionId, id = m.id;
     if (pendingPermissions.has(id)) return; // duplicate delivery — the first one still owns the answer
@@ -7019,16 +7091,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "task_create" && typeof msg.sessionId === "string" && typeof msg.title === "string") {
       if (!requireOwner(ws)) return;
       const sessionId = msg.sessionId;
-      const { cwd, binding, resolved } = resolveSessionTaskConnection(sessionId, true);
+      // A máquina da sessão decide QUAL projeto — e portanto qual conta. Com `LOCAL_ID` implícito,
+      // uma sessão remota caía no `cwd` do próprio Hub e escrevia no board de outro projeto.
+      const { cwd, binding, resolved } = resolveSessionTaskConnection(sessionId, true, activeRunner(ws));
       if ("refusal" in resolved) { send(ws, { t: "task_create_result", sessionId, ok: false, error: resolved.refusal.message, code: resolved.refusal.code }); return; }
       const target = String(binding?.target || "");
       if (!target) { send(ws, { t: "task_create_result", sessionId, ok: false, error: "o vínculo do projeto não define o DESTINO da escrita (repo/projeto/time) — configure antes de criar", code: "NO_TARGET" }); return; }
       const title = String(msg.title).trim().slice(0, 300);
       const description = typeof msg.description === "string" ? msg.description.slice(0, 4000) : undefined;
       if (!title) { send(ws, { t: "task_create_result", sessionId, ok: false, error: "a tarefa precisa de título" }); return; }
-      const warning = remoteMismatchWarning(await gitRemoteUrl(cwd), resolved.connection);
+      const remote = await gitRemoteOf(activeRunner(ws), cwd);
+      const warning = remoteMismatchWarning(remote, resolved.connection);
+      const remoteIncerto = remoteCheckApplies(resolved.connection) && !remote;   // borda 4 (TSK-11)
       const who = resolved.connection.identity?.login || resolved.connection.label;
-      const preview = `Criar "${title}" em ${resolved.connection.label} · ${target} como ${who}${warning ? ` — ⚠ ${warning}` : ""}`;
+      const preview = `Criar "${title}" em ${resolved.connection.label} · ${target} como ${who}${warning ? ` — ⚠ ${warning}` : remoteIncerto ? " — ⚠ não consegui ler o remote do projeto nesta máquina" : ""}`;
       const execute = async (): Promise<void> => {
         const t = providerSignal(15_000);
         try {
@@ -7042,7 +7118,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         } finally { t.finish(); }
       };
       // ⚠ de divergência remote×conexão NUNCA é auto-aprovável: é exatamente o acidente da conta errada.
-      if (binding?.autoApprove?.includes("create") && !warning) { await execute(); return; }
+      if (binding?.autoApprove?.includes("create") && !warning && !remoteIncerto) { await execute(); return; }
       const resolvedPolicy = resolveAdaptivePolicy(adaptivePolicyDoc, { cwd, sessionId });
       const approval = createAdaptiveApprovalRequest({
         id: `task:create:${Date.now()}`,

@@ -199,6 +199,19 @@ export function resolveTaskConnection(input: {
 }
 
 /** Divergência barata remote×conexão (GitHub/GitLab): pega board/conta errada ANTES da escrita. */
+/**
+ * A checagem de conta errada pelo `git remote` só DIZ alguma coisa quando o provedor é hospedado em
+ * git e a conexão declara a org. Fora disso (Jira, Linear, ou GitHub sem org) o remote não afirma nem
+ * nega nada — e exigir remote ali quebraria auto-aprovação por um motivo que não existe.
+ *
+ * Existe separado de `remoteMismatchWarning` porque "sem aviso" tem dois sentidos que não podem ser
+ * confundidos na hora de auto-aprovar: "conferi e está certo" e "não tinha como conferir".
+ */
+export function remoteCheckApplies(connection: TaskConnection): boolean {
+  if (connection.provider !== "github" && connection.provider !== "gitlab") return false;
+  return !!clean(connection.config.org || "", 200);
+}
+
 export function remoteMismatchWarning(remoteUrl: string | undefined, connection: TaskConnection): string | undefined {
   const raw = clean(remoteUrl, 300);
   if (!raw || (connection.provider !== "github" && connection.provider !== "gitlab")) return undefined;

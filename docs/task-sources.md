@@ -132,6 +132,28 @@ O efeito depende de haver fluxo:
 Uma tarefa já acompanhada por **outro** fluxo é recusada com motivo: dois acompanhamentos do mesmo
 ticket é o estado incoerente que o início já impedia.
 
+## A IA e as tarefas (em qualquer máquina)
+
+A IA da sessão tem as ferramentas `jarvis_task_search` / `get` / `create`. Elas existem em **qualquer
+máquina pareada** — até a TSK-11 só existiam em sessão da máquina do Hub, e numa sessão remota a IA
+simplesmente não tinha ferramenta de tarefa.
+
+Como funciona, e o que isso garante:
+
+- A máquina **encaminha a intenção** ao Hub e recebe o resultado. Ela nunca vê token, `config` de
+  conexão nem `secretRef` — o segredo não sai do Hub.
+- O Hub resolve a conexão pelo **vínculo do projeto daquela máquina**. Uma máquina só alcança as
+  contas dos projetos que estão nela: a Luby não cria issue no board de um projeto que só existe no
+  Desktop.
+- **Criar** mantém as travas de sempre: identidade verificada, preview nominal e aprovação na sua
+  tela (salvo `autoApprove` do projeto). Quando a conexão é GitHub/GitLab com org declarada e o
+  `git remote` do projeto **não pôde ser lido**, a criação deixa de ser auto-aprovável — ausência de
+  prova não é prova de ausência.
+- **Falha fechada**: Hub desconectado, projeto sem fonte, conta não vinculada ou tempo esgotado viram
+  recusa **com motivo**, nunca lista vazia.
+- Desligar numa máquina: `JARVIS_TASK_BRIDGE=0` no `runner.env` dela (nasce ligada). Enquanto está
+  ligada, a máquina avisa na sessão, uma vez por sessão.
+
 ## Várias tarefas de uma vez → várias subsessões
 
 Na lista do painel cada item tem uma **marca** (☐). Marcadas 1..N tarefas, o botão **▶ Abrir N
