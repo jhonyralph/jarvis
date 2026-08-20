@@ -1,3 +1,10 @@
+# [0.29.0](https://github.com/jhonyralph/jarvis/compare/v0.28.3...v0.29.0) (2026-08-20)
+
+
+### Features
+
+* **tarefas:** fonte provider abre listando, em vez de só buscando ([9ddc02d](https://github.com/jhonyralph/jarvis/commit/9ddc02de2b5534bbd9102e82c0d51968af475d81))
+
 ## [0.28.3](https://github.com/jhonyralph/jarvis/compare/v0.28.2...v0.28.3) (2026-08-20)
 
 
