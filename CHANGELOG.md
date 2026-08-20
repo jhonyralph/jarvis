@@ -1,3 +1,10 @@
+## [0.28.3](https://github.com/jhonyralph/jarvis/compare/v0.28.2...v0.28.3) (2026-08-20)
+
+
+### Bug Fixes
+
+* **update:** o Hub deixa de mandar máquina andar para trás ([d63b48f](https://github.com/jhonyralph/jarvis/commit/d63b48fd245778a4e40cde140625387950417fb7))
+
 ## [0.28.2](https://github.com/jhonyralph/jarvis/compare/v0.28.1...v0.28.2) (2026-08-20)
 
 
