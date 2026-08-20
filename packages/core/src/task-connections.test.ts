@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, remoteCheckApplies, publicTaskConnections } from "./task-connections.js";
-import { fetchProviderIdentity, searchProviderTasks, listProviderTasks, getProviderTask, createProviderTask, sanitizeSecrets, adfToText, TASK_PROVIDERS, type FetchLike } from "./task-providers.js";
+import { fetchProviderIdentity, searchProviderTasks, listProviderTasks, listProviderStates, getProviderTask, createProviderTask, sanitizeSecrets, adfToText, TASK_PROVIDERS, type FetchLike } from "./task-providers.js";
 
 const fake = (routes: Record<string, unknown | ((init?: any) => unknown)>): { fetchFn: FetchLike; calls: Array<{ url: string; init?: any }> } => {
   const calls: Array<{ url: string; init?: any }> = [];
@@ -251,4 +251,81 @@ test("org da conexao restringe a lista, e tier 2 recusa em vez de mentir lista v
   assert.match(routes.calls[0].url, /^https:\/\/api\.github\.com\/orgs\/acme\/issues/);
   // Lista vazia de um provedor sem implementacao seria indistinguivel de "voce nao tem tarefas".
   await assert.rejects(() => listProviderTasks("trello", { config: {}, secret: "a", secret2: "b", fetchFn: routes.fetchFn }), /tier 2/);
+});
+
+/* ── Os estados REAIS do board ────────────────────────────────────────────────────────────────────
+   O filtro fala a lingua do board (escolha do dono) em vez de um vocabulario normalizado que
+   inventaria "em andamento" onde GitHub so tem aberta/fechada. */
+
+test("estados do Linear saem na ordem do BOARD, nao na do campo position", async () => {
+  // Formato tirado de uma conta real: `position` vale DENTRO do tipo, nao entre tipos. Ordenar so
+  // por ele produzia "Triage > Backlog > In Progress > Done > Canceled > In Review", que nao e
+  // board nenhum — Done no meio e In Review depois de Canceled.
+  const routes = fake({
+    "https://api.linear.app/graphql": { data: { workflowStates: { nodes: [
+      { id: "s3", name: "In Progress", type: "started", position: 1, team: { key: "ENG" } },
+      { id: "s4", name: "Done", type: "completed", position: 2, team: { key: "ENG" } },
+      { id: "s5", name: "Canceled", type: "canceled", position: 3, team: { key: "ENG" } },
+      { id: "s6", name: "In Review", type: "started", position: 4, team: { key: "ENG" } },
+      { id: "s1", name: "Triage", type: "triage", position: 5, team: { key: "ENG" } },
+      { id: "s2", name: "Backlog", type: "backlog", position: 6, team: { key: "ENG" } },
+      { id: "x1", name: "Feito", type: "completed", position: 1, team: { key: "OUTRO" } },
+    ] } } },
+  });
+
+  const eng = await listProviderStates("linear", { config: {}, secret: "s", target: "ENG", fetchFn: routes.fetchFn });
+  assert.deepEqual(eng.map((x) => x.name), ["Triage", "Backlog", "In Progress", "In Review", "Done", "Canceled"],
+    "o tipo manda primeiro; a posicao so desempata dentro dele");
+  assert.equal(eng.some((x) => x.name === "Feito"), false, "estado de OUTRO time nao e estado deste board");
+});
+
+test("tipo desconhecido vai para o fim, em vez de se misturar com 'a fazer'", async () => {
+  // O catalogo de tipos do Linear cresce (`duplicate` apareceu depois). Colocar o desconhecido no
+  // inicio poria um estado terminal onde se procura trabalho por comecar.
+  const routes = fake({
+    "https://api.linear.app/graphql": { data: { workflowStates: { nodes: [
+      { id: "d", name: "Duplicate", type: "duplicate", position: 1, team: { key: "ENG" } },
+      { id: "t", name: "Triage", type: "triage", position: 9, team: { key: "ENG" } },
+    ] } } },
+  });
+  assert.deepEqual((await listProviderStates("linear", { config: {}, secret: "s", target: "ENG", fetchFn: routes.fetchFn })).map((x) => x.name), ["Triage", "Duplicate"]);
+});
+
+test("sem destino declarado, o Linear deduplica por nome — e a lista mistura times", async () => {
+  const routes = fake({
+    "https://api.linear.app/graphql": { data: { workflowStates: { nodes: [
+      { id: "a", name: "Done", type: "completed", position: 1, team: { key: "ENG" } },
+      { id: "b", name: "done", type: "completed", position: 1, team: { key: "OPS" } },
+      { id: "c", name: "Triage", type: "triage", position: 1, team: { key: "OPS" } },
+    ] } } },
+  });
+  const todos = await listProviderStates("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn });
+  assert.deepEqual(todos.map((x) => x.name), ["Triage", "Done"], "mesmo nome em dois times e UM estado para quem filtra");
+});
+
+test("GitHub e GitLab nao pagam rede: o board deles e aberta/fechada", async () => {
+  const routes = fake({});
+  assert.deepEqual((await listProviderStates("github", { config: {}, secret: "s", fetchFn: routes.fetchFn })).map((x) => x.id), ["open", "closed"]);
+  assert.deepEqual((await listProviderStates("gitlab", { config: {}, secret: "s", fetchFn: routes.fetchFn })).map((x) => x.id), ["opened", "closed"]);
+  assert.equal(routes.calls.length, 0, "pedir a rede para saber o que ja se sabe e latencia de graca");
+});
+
+test("Jira le os dois formatos: por projeto e da instancia", async () => {
+  const porProjeto = fake({
+    "https://acme.atlassian.net/rest/api/3/project/ABC/statuses": [
+      { name: "Bug", statuses: [{ id: "1", name: "To Do", statusCategory: { key: "new" } }, { id: "3", name: "Done", statusCategory: { key: "done" } }] },
+      { name: "Task", statuses: [{ id: "1", name: "To Do", statusCategory: { key: "new" } }] },
+    ],
+  });
+  const doProjeto = await listProviderStates("jira", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", target: "ABC", fetchFn: porProjeto.fetchFn });
+  assert.deepEqual(doProjeto.map((x) => x.name), ["To Do", "Done"], "o mesmo status em dois tipos de issue aparece uma vez");
+
+  const daInstancia = fake({ "https://acme.atlassian.net/rest/api/3/status": [{ id: "9", name: "Blocked", statusCategory: { key: "indeterminate" } }] });
+  const semAlvo = await listProviderStates("jira", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", fetchFn: daInstancia.fetchFn });
+  assert.deepEqual(semAlvo.map((x) => x.name), ["Blocked"]);
+  assert.match(daInstancia.calls[0].url, /rest\/api\/3\/status$/, "sem projeto declarado, a lista e da instancia");
+});
+
+test("tier 2 recusa os estados em vez de devolver lista vazia", async () => {
+  await assert.rejects(() => listProviderStates("notion", { config: {}, secret: "s", fetchFn: fake({}).fetchFn }), /tier 2/);
 });

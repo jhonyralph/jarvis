@@ -245,6 +245,73 @@ export async function listProviderTasks(providerId: string, input: ProviderCallI
   }
 }
 
+/** Um estado do board, como o PROVEDOR o chama. `type` e a familia dele quando existe. */
+export interface TaskState { id: string; name: string; type?: string }
+
+/**
+ * Os estados REAIS do board da conexao — para o filtro falar a lingua do board, e nao um vocabulario
+ * normalizado que inventa "em andamento" onde o tracker so tem aberta/fechada.
+ *
+ * `target` e o destino declarado no vinculo do projeto (chave do time no Linear, chave do projeto no
+ * Jira). Ele importa mais do que parece: uma conta real devolveu 49 estados no total e 13 no time que
+ * interessava. Sem destino, o fallback deduplica por nome — usavel, mas mistura times, e por isso a
+ * tela precisa dizer que configurar o destino melhora a lista.
+ *
+ * GitHub e GitLab nao pagam rede: issue la e aberta ou fechada, e isso e o board deles inteiro.
+ */
+export async function listProviderStates(providerId: string, input: ProviderCallInput & { target?: string }): Promise<TaskState[]> {
+  const f = input.fetchFn || defaultFetch;
+  const secrets = [input.secret, input.secret2 || ""].filter(Boolean);
+  const cfg = input.config || {};
+  const target = String(input.target || "").trim();
+  const j = (url: string, init?: Parameters<FetchLike>[1]) => call(f, secrets, url, { ...init, signal: input.signal });
+  switch (providerId) {
+    case "github": return [{ id: "open", name: "Open", type: "unstarted" }, { id: "closed", name: "Closed", type: "completed" }];
+    case "gitlab": return [{ id: "opened", name: "Opened", type: "unstarted" }, { id: "closed", name: "Closed", type: "completed" }];
+    case "jira": {
+      // Com projeto declarado, os estados vem DELE (por tipo de issue, com repeticao entre tipos);
+      // sem projeto, a lista da instancia inteira. Os dois sao endpoints documentados, e o formato
+      // difere — por isso a leitura aceita as duas formas em vez de assumir uma.
+      const url = target ? `${jiraBase(cfg)}/rest/api/3/project/${encodeURIComponent(target)}/statuses` : `${jiraBase(cfg)}/rest/api/3/status`;
+      const r = await j(url, { headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, accept: "application/json" } });
+      const cru: any[] = Array.isArray(r) ? r.flatMap((it: any) => (Array.isArray(it?.statuses) ? it.statuses : [it])) : [];
+      return dedupeStates(cru.map((it: any) => ({ id: String(it?.id ?? it?.name ?? ""), name: String(it?.name || ""), type: it?.statusCategory?.key || undefined })));
+    }
+    case "linear": {
+      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "{ workflowStates(first: 250) { nodes { id name type position team { key } } } }" }) });
+      const nodes: any[] = r?.data?.workflowStates?.nodes || [];
+      const doTime = target ? nodes.filter((n) => String(n?.team?.key || "").toUpperCase() === target.toUpperCase()) : nodes;
+      // Ordenar SO por `position` embaralha o board: medido numa conta real, saía "Triage > Backlog >
+      // In Progress > Done > Canceled > Duplicate > In Review > ...". O `position` do Linear vale
+      // DENTRO do tipo, nao entre tipos — entao o tipo manda primeiro, e a posicao desempata.
+      const ordenados = [...doTime].sort((a, b) => rankLinearState(a?.type) - rankLinearState(b?.type) || (Number(a?.position) || 0) - (Number(b?.position) || 0));
+      const mapeados = ordenados.map((n) => ({ id: String(n?.id || ""), name: String(n?.name || ""), type: n?.type || undefined }));
+      return target ? mapeados.filter((x) => x.id && x.name) : dedupeStates(mapeados);
+    }
+    default: throw new Error(`estados do board ainda nao implementados para ${providerId} (tier 2 — identidade so)`);
+  }
+}
+
+/** Como o Linear empilha os tipos no board. Tipo desconhecido (o catalogo dele cresce) vai para o
+ *  fim em vez de se misturar com "a fazer" — errar para o lado de nao mentir sobre a ordem. */
+const ORDEM_ESTADO_LINEAR = ["triage", "backlog", "unstarted", "started", "completed", "canceled"];
+const rankLinearState = (tipo: unknown): number => {
+  const i = ORDEM_ESTADO_LINEAR.indexOf(String(tipo || "").toLowerCase());
+  return i < 0 ? ORDEM_ESTADO_LINEAR.length : i;
+};
+
+/** Mesmo nome em times/tipos diferentes e UM estado para quem filtra: o primeiro vence e mantem a ordem. */
+function dedupeStates(states: TaskState[]): TaskState[] {
+  const vistos = new Set<string>();
+  const out: TaskState[] = [];
+  for (const st of states) {
+    const chave = st.name.trim().toLowerCase();
+    if (!st.id || !chave || vistos.has(chave)) continue;
+    vistos.add(chave); out.push({ ...st, name: st.name.trim() });
+  }
+  return out;
+}
+
 /** Carrega UMA tarefa pela chave normalizada do Jarvis ("owner/repo#12", "ABC-1", "PRI-824"). */
 export async function getProviderTask(providerId: string, key: string, input: ProviderCallInput): Promise<TaskItem | null> {
   const f = input.fetchFn || defaultFetch;
