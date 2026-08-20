@@ -1412,7 +1412,7 @@ const runnerLabels: Record<string, string> = (() => { try { return JSON.parse(re
 for (const runnerId of Object.keys(runnerLabels)) if (runnerId !== "local") mirrorExecutionStore(runnerId);
 function saveRunnerLabels(): void { try { writeJsonAtomic(RUNNERS_FILE, runnerLabels, { pretty: true }); } catch { /* ignore */ } }
 interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastSeen: number; local: boolean; }
-interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; awaitingSince?: number; stalled?: boolean; failures?: number; scriptSha256?: string; scriptRanSha256?: string; scriptFromHub?: boolean; stalledNotifiedAt?: number; /** Last out-of-band phase the runner's detached updater phoned home (Fase 2 UPD-01): even when the runner process dies mid-update and never sends update_done, this records WHERE it died. */ lastPhase?: string; lastReportAt?: number; /** Últimas linhas do log do updater na falha — o rastro que diz QUAL comando quebrou, não só que algo quebrou. */ lastLogTail?: string; }
+interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; awaitingSince?: number; stalled?: boolean; failures?: number; lastNote?: string; scriptSha256?: string; scriptRanSha256?: string; scriptFromHub?: boolean; stalledNotifiedAt?: number; /** Last out-of-band phase the runner's detached updater phoned home (Fase 2 UPD-01): even when the runner process dies mid-update and never sends update_done, this records WHERE it died. */ lastPhase?: string; lastReportAt?: number; /** Últimas linhas do log do updater na falha — o rastro que diz QUAL comando quebrou, não só que algo quebrou. */ lastLogTail?: string; }
 const UPDATE_RETRY_MS = Math.max(30_000, Number(process.env.JARVIS_UPDATE_RETRY_SEC || 300) * 1000);
 // A machine that applied an update and reported ok goes to "awaiting_restart" and should reconnect on
 // the new commit within a normal restart window. Offline PAST this = the restart/updater hung (an
@@ -1814,6 +1814,9 @@ function machineList(ws?: WebSocket): any[] {
       id: r.id, label: runnerLabels[r.id] || r.info.host || r.id, host: r.info.host, os: r.info.os,
       agents: r.local ? (localAgentsReady ? localAgents : agents.names()) : (r.info.agents || []), agentDescriptors: r.info.agentDescriptors || [],
       protocolVersion: r.info.protocolVersion || 1, compatible: (r.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION,
+      // O NÚMERO do outro lado: "incompatível" sem dizer com o quê deixa o dono sem saber o tamanho
+      // do atraso — nem se a máquina está andando entre uma tentativa e outra.
+      hubProtocolVersion: RUNNER_PROTOCOL_VERSION,
       online, local: !!r.local, commit, hubCommit, build, hubBuild, stale, offlineMs, updatePending: pendingRunnerUpdates[r.id] || null,
     };
   });
@@ -1910,9 +1913,13 @@ function normalizePendingRunnerUpdate(rc: RunnerConn): PendingRunnerUpdate | nul
   pending.state = "queued";
   pending.fromCommit = undefined;
   pending.lastAttemptAt = undefined;
-  pending.lastError = `alvo anterior ${previousTarget} substituído por ${target}`;
+  // Reapontar NÃO é falhar. Enquanto isso morava em `lastError`, a tela lia o campo como defeito e
+  // anunciava "falhou" para uma máquina que estava só seguindo um alvo novo. E a falha ANTERIOR se
+  // referia a um alvo que não existe mais: mantê-la seria acusar um problema já sem sujeito.
+  pending.lastNote = `alvo anterior ${previousTarget} substituído por ${target}`;
+  pending.lastError = undefined; pending.lastLogTail = undefined; pending.lastPhase = undefined; pending.failures = 0;
   savePendingRunnerUpdates();
-  updateMachineNotice(rc.id, { state: "queued", queued: true, ok: false, log: pending.lastError });
+  updateMachineNotice(rc.id, { state: "queued", queued: true, ok: false, log: pending.lastNote });
   return pending;
 }
 function deliverPendingRunnerUpdate(rc: RunnerConn, opts?: { force?: boolean; allowBlocked?: boolean; retryNow?: boolean }): boolean {

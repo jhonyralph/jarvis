@@ -1110,6 +1110,24 @@ test("máquina que falhou no update mostra a falha, mesmo com a entrega bem-suce
   assert.match(comLog, /7bf2394.*81c78ea/s, "com de-onde → para-onde, que é o que diz se ela está atrás");
 });
 
+// Reapontar o alvo NÃO é falhar. O Hub guardava esse recado no MESMO campo do erro, e a tela — que
+// desde hoje mostra falha com destaque — passou a anunciar "falhou" para uma máquina que só estava
+// seguindo um alvo novo depois de um rebase.
+test("mudar o alvo do update é recado, não falha", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  sock.deliver({ t: "machines", machines: [
+    { id: "local", label: "Servidor", local: true, online: true },
+    { id: "luby", label: "Luby", local: false, online: false, protocolVersion: 11, hubProtocolVersion: 15, compatible: false,
+      updatePending: { state: "queued", targetCommit: "16aca20", lastNote: "alvo anterior ec887ec substituído por 16aca20" } },
+  ] });
+
+  const html = String(client.el("updMachines").innerHTML || "")
+    + client.el("updMachines").children.map((c: any) => `${c.innerHTML || ""} ${c.textContent || ""}`).join(" ");
+  assert.doesNotMatch(html, /falhou/, "recado não pode virar falha: " + html.slice(0, 200));
+  assert.match(html, /alvo anterior ec887ec/, "mas o recado aparece — ele explica por que o alvo mudou");
+});
+
 // ── TSK-12: a seção de MCP por máquina em Configurações → 🎯 Tarefas.
 test("MCP por máquina: caminho REAL de cada uma, e formulário só onde ele vai gravar", async () => {
   const client = loadClient();

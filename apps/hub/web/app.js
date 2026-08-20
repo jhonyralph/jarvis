@@ -2361,7 +2361,7 @@
           <span style="color:var(--text);font-weight:600">${costFmt(s.usage)}</span></div>`; }); }
       h+='<div class="sec" style="margin:6px 0 4px">Máquinas</div>';
       mm.forEach(x=>{ const badges=[]; if(x.local)badges.push('<span class="mtag">servidor</span>'); if(!x.online)badges.push(`<span class="mtag">offline${x.offlineMs>60000?` há ${Math.round(x.offlineMs/60000)}m`:''}</span>`);
-        if(x.online&&Array.isArray(x.agents)&&!x.agents.length)badges.push('<span class="mtag warn">⚠ sem IA</span>'); if(x.compatible===false)badges.push('<span class="mtag warn">⚠ protocolo incompatível</span>'); if(x.stale)badges.push('<span class="mtag warn">⚠ desatualizada</span>');
+        if(x.online&&Array.isArray(x.agents)&&!x.agents.length)badges.push('<span class="mtag warn">⚠ sem IA</span>'); if(x.compatible===false)badges.push('<span class="mtag warn" title="Máquina autenticada, mas em quarentena de atualização: nenhuma sessão, arquivo ou IA é roteada até ela reiniciar no protocolo atual. É por isso que ela não aparece como online.">⚠ protocolo '+(x.protocolVersion||'?')+' → '+(x.hubProtocolVersion||'atual')+' (em quarentena)</span>'); if(x.stale)badges.push('<span class="mtag warn">⚠ desatualizada</span>');
         if(x.active>0)badges.push(`<span class="mtag" style="color:#22c55e">▶ ${x.active}</span>`);
         h+=`<div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid var(--line)">
           <span class="mdot ${x.online?'on':'off'}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.label||x.id)}${(x.build||x.commit)?` <span class="mut" style="font-size:10.5px">${fmtBuild(x.build,x.commit)}</span>`:''}</span>${badges.join(' ')}</div>`; });
@@ -4799,10 +4799,13 @@
           // O relatório do updater (fase, erro, log) só era lido quando o estado era `blocked`. Com o
           // estado em `sent`, a tela dizia "solicitação entregue" — verdade e inútil: a ENTREGA
           // funcionou, o que falhou foi a execução do outro lado, e o Hub já sabia disso.
+          // `lastError` é FALHA; `lastNote` é recado (reapontar alvo, por exemplo). Enquanto os dois
+          // dividiam o mesmo campo, a tela chamava de falha o que era só o Hub mudando de alvo.
           const falhou=!!String(u.lastError||'').trim();
+          const recado=String(u.lastNote||'').trim();
           updMach[mm.id]={label:mm.label,state:falhou?'fail':state,dirty:state==='blocked',
             why:falhou?('falhou'+(u.lastPhase?' em '+u.lastPhase:'')+': '+String(u.lastError).replace(/^\[[^\]]*\]\s*/,''))
-              :state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':(mm.online?'aguardando nova tentativa':'offline — atualização guardada'),
+              :state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':((mm.online?'aguardando nova tentativa':'offline — atualização guardada')+(recado?' · '+recado:'')),
             tail:String(u.lastLogTail||''),failures:Number(u.failures||0),at:Number(u.lastReportAt||0),alvo:String(u.targetCommit||''),de:String(u.fromCommit||'')};}); if(currentSession==null){ const ac=availableMachineCaps(); if(!currentAgent||!ac.some(c=>c.name===currentAgent)) currentAgent=(ac[0]||machineCaps()[0]||{}).name||currentAgent; syncModelEffort(); } renderUpdMachines(); renderUpdate(); renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(settingsPanelOpen('dispositivos')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
           if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }
