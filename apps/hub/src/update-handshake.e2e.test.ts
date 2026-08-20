@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import WebSocket from "ws";
 import { RUNNER_PROTOCOL_VERSION } from "@jarvis/protocol";
+import { UPDATE_MAX_DELIVERIES } from "@jarvis/core";
 
 const pExecFile = promisify(execFile);
 /** Reserva N portas livres DE UMA VEZ: mantém todos os sockets abertos enquanto escolhe, e só então
@@ -124,6 +125,29 @@ test("old/offline runners retain an update until restart and commit verification
     const afterStale = JSON.parse(readFileSync(join(home, ".jarvis", "hub", "pending-runner-updates.json"), "utf8"));
     assert.equal(afterStale[staleId], undefined, "stale pending target is cleared when runner is already on the current Hub commit");
     alreadyCurrent.ws.close();
+
+    // Disjuntor da ENTREGA. Caso real (20/08): a máquina recebia o update, o updater rodava até o fim,
+    // mas o runner não subia depois — então `update_done` nunca chegava, o pedido ficava em "sent", e
+    // cada reconexão provocava outra entrega. 33 ciclos, derrubando a máquina em cada um, sem aviso.
+    // Contar FALHAS não pegaria: todo ciclo "deu certo". O que denuncia é entregar sem o pedido andar.
+    const loopId = "runner-delivery-loop-e2e";
+    const quarantined = await connectRunner(port, { runnerId: loopId, host: "loop-old", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION - 1, commit: "old0000" });
+    const firstLoop = await quarantined.box.take((m) => m.t === "update");
+    quarantined.ws.close(); await new Promise((r) => setTimeout(r, 150));
+    for (let i = 2; i <= UPDATE_MAX_DELIVERIES; i++) {
+      const again = await connectRunner(port, { runnerId: loopId, host: "loop", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION, commit: "old0000" });
+      const resent = await again.box.take((m) => m.t === "update");
+      assert.equal(resent.requestId, firstLoop.requestId, `entrega ${i} tem de ser o MESMO pedido — é o que caracteriza o círculo`);
+      again.ws.close(); await new Promise((r) => setTimeout(r, 150));
+    }
+    const looping = await connectRunner(port, { runnerId: loopId, host: "loop", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION, commit: "old0000" });
+    await looping.box.take((m) => m.t === "welcome");
+    await assert.rejects(() => looping.box.take((m) => m.t === "update", 600), /timed out|frame timeout/, "passado o teto, o Hub para de reenviar em vez de derrubar a máquina de novo");
+    const afterLoop = JSON.parse(readFileSync(join(home, ".jarvis", "hub", "pending-runner-updates.json"), "utf8"));
+    assert.equal(afterLoop[loopId].deliveries, UPDATE_MAX_DELIVERIES, "o contador é de ENTREGAS do mesmo pedido, não de falhas");
+    assert.equal(afterLoop[loopId].stalled, true, "parar em silêncio seria trocar um problema invisível por outro");
+    assert.match(String(afterLoop[loopId].lastError), /círculo/);
+    looping.ws.close();
 
     const future = await connectRunner(port, { runnerId: "runner-future-e2e", host: "future", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION + 1, commit: first.targetCommit });
     const rejected = await future.box.take((m) => m.t === "reject" || m.t === "update");

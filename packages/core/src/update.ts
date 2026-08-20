@@ -163,6 +163,47 @@ export function runnerSelfUpdateDecision(
   return { update: true, reason: `${status.behind} commit(s) atrás de origin`, targetCommit };
 }
 
+/**
+ * Disjuntor da ENTREGA feita pelo Hub.
+ *
+ * O runner já tem disjuntor para o auto-update dele (`autonomousUpdateAttempt`), e o comentário de lá
+ * diz que o pedido do Hub não passa por ali porque "é decisão explícita". A decisão é explícita UMA
+ * vez; trinta reenvios não são trinta decisões.
+ *
+ * O caso real: máquina no commit alvo, updater rodando até o fim, mas o runner não conseguia subir
+ * depois (dependência quebrada) — então nunca mandava `update_done`, o registro ficava em `sent`, e a
+ * cada reconexão o Hub entregava de novo. 33 ciclos, ~20s cada, derrubando a máquina em cada um. O
+ * watchdog existente não pega isso: ele vigia `awaiting_restart` offline, e este caso nunca chega lá.
+ *
+ * Contar FALHAS não serviria — aqui cada ciclo "dá certo". O que denuncia o círculo é outra coisa:
+ * entregas do MESMO pedido sem que ele avance de estado.
+ *
+ * Não há escape aqui de propósito: reabrir é zerar o contador, e isso é decisão do dono (o Hub
+ * zera quando o dono enfileira forçado). Um parâmetro `forced` nesta função seria um segundo
+ * caminho para a mesma coisa — e o `force` interno que o Hub usa para reparo automático de
+ * mesmo-SHA cairia nele sem querer, reabrindo o círculo exatamente na máquina que o disjuntor
+ * existe para proteger.
+ */
+export interface UpdateDeliveryDecision { deliver: boolean; stalled: boolean; reason: string }
+
+/** Teto de entregas do mesmo pedido antes de o Hub parar e chamar o dono. */
+export const UPDATE_MAX_DELIVERIES = 5;
+
+export function runnerUpdateDeliveryDecision(input: {
+  /** quantas vezes ESTE requestId já foi entregue */
+  deliveries?: number;
+  max?: number;
+}): UpdateDeliveryDecision {
+  const max = Math.max(1, input.max ?? UPDATE_MAX_DELIVERIES);
+  const feitas = Math.max(0, Number(input.deliveries) || 0);
+  if (feitas < max) return { deliver: true, stalled: false, reason: `entrega ${feitas + 1} de ${max}` };
+  return {
+    deliver: false,
+    stalled: true,
+    reason: `entregue ${feitas}× sem concluir — parei de reenviar (círculo)`,
+  };
+}
+
 /** Tentativas de auto-update por alvo, persistidas pelo runner (~/.jarvis/update-attempts.json). */
 export interface UpdateAttemptRecord { target?: string; failures?: number; at?: number }
 

@@ -1128,6 +1128,45 @@ test("mudar o alvo do update é recado, não falha", async () => {
   assert.match(html, /alvo anterior ec887ec/, "mas o recado aparece — ele explica por que o alvo mudou");
 });
 
+// O Hub agora PARA de reenviar quando o mesmo pedido é entregue vezes demais sem a máquina concluir.
+// Parar em silêncio trocaria um problema invisível (o círculo) por outro (a máquina nunca atualiza e
+// ninguém sabe): a tela tem de dizer que o reenvio foi pausado e oferecer como reabri-lo.
+test("update em círculo: o painel diz que o reenvio parou e oferece a saída", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  sock.deliver({ t: "machines", machines: [
+    { id: "local", label: "Servidor", local: true, online: true },
+    { id: "luby", label: "Luby", local: false, online: true, updatePending: {
+      state: "sent", targetCommit: "911b9e9", deliveries: 5, stalled: true,
+      lastError: "entregue 5× sem concluir — parei de reenviar (círculo)",
+    } },
+  ] });
+
+  const texto = String(client.el("updMachines").innerHTML || "")
+    + client.el("updMachines").children.map((c: any) => `${c.innerHTML || ""} ${c.textContent || ""}`).join(" ");
+  assert.match(texto, /reenvio pausado/, "o dono precisa ler que o Hub parou — não deduzir pelo silêncio: " + texto.slice(0, 300));
+  assert.doesNotMatch(texto, /solicitação entregue/, "a frase de entrega descreveria o círculo como progresso");
+  const nodes = (function walk(el: any): any[] { return (el.children || []).flatMap((c: any) => [c, ...walk(c)]); })(client.el("updMachines"));
+  const reenviar = nodes.find((b: any) => b.tagName === "BUTTON" && /reenviar/.test(String(b.textContent || "")));
+  assert.ok(reenviar, "sem esta saída, uma máquina que estourou o teto ficaria travada mesmo depois de consertada");
+});
+
+// `stalled` também é usado pelo watchdog do REINÍCIO (aplicou e não voltou). Ali reenviar não ajuda:
+// derrubaria de novo uma máquina que já aplicou. O estado é o que separa os dois casos.
+test("máquina que aplicou e não voltou não ganha botão de reenviar", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  sock.deliver({ t: "machines", machines: [
+    { id: "local", label: "Servidor", local: true, online: true },
+    { id: "luby", label: "Luby", local: false, online: false, updatePending: {
+      state: "awaiting_restart", targetCommit: "911b9e9", stalled: true, awaitingSince: 1_787_190_207_016,
+    } },
+  ] });
+
+  const nodes = (function walk(el: any): any[] { return (el.children || []).flatMap((c: any) => [c, ...walk(c)]); })(client.el("updMachines"));
+  assert.equal(nodes.find((b: any) => b.tagName === "BUTTON" && /reenviar/.test(String(b.textContent || ""))), undefined);
+});
+
 // ── TSK-12: a seção de MCP por máquina em Configurações → 🎯 Tarefas.
 test("MCP por máquina: caminho REAL de cada uma, e formulário só onde ele vai gravar", async () => {
   const client = loadClient();

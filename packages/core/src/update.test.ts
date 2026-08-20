@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autonomousUpdateAttempt, gitErrorDetail, resolveCommit, runnerSelfUpdateDecision, updateApply, updateCheck, updatePreflight, updateRollback } from "./update.js";
+import { autonomousUpdateAttempt, gitErrorDetail, resolveCommit, runnerSelfUpdateDecision, runnerUpdateDeliveryDecision, UPDATE_MAX_DELIVERIES, updateApply, updateCheck, updatePreflight, updateRollback } from "./update.js";
 
 const run = (cwd: string, command: string, args: string[] = []): string => String(execFileSync(command, args, { cwd, windowsHide: true, encoding: "utf8" })).trim();
 const git = (cwd: string, ...args: string[]): string => run(cwd, "git", args);
@@ -143,4 +143,49 @@ test("git updater is repeatable, transactional and detects dirty/divergent check
     if (priorHome === undefined) delete process.env.JARVIS_HOME; else process.env.JARVIS_HOME = priorHome;
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+/* ── Disjuntor da ENTREGA do Hub ──────────────────────────────────────────────────────────────────
+   Caso real (20/08): a Luby ficou no commit alvo, o updater rodava até o fim, mas o runner não subia
+   depois (dependência quebrada) — então `update_done` nunca chegava, o registro ficava em `sent`, e a
+   cada reconexão o Hub entregava outra vez. 33 ciclos de ~20s, derrubando a máquina em cada um, sem
+   ninguém ser avisado. Contar FALHAS não pegaria: cada ciclo "deu certo". */
+
+test("entregar é normal até o teto — e o motivo diz em que passo está", () => {
+  const primeira = runnerUpdateDeliveryDecision({ deliveries: 0 });
+  assert.equal(primeira.deliver, true);
+  assert.match(primeira.reason, /entrega 1 de 5/);
+
+  const ultima = runnerUpdateDeliveryDecision({ deliveries: UPDATE_MAX_DELIVERIES - 1 });
+  assert.equal(ultima.deliver, true, "a última ainda vai");
+});
+
+test("no teto, o Hub PARA de reenviar em vez de derrubar a máquina em círculo", () => {
+  const estourou = runnerUpdateDeliveryDecision({ deliveries: UPDATE_MAX_DELIVERIES });
+
+  assert.equal(estourou.deliver, false);
+  assert.equal(estourou.stalled, true);
+  // O motivo tem de dizer o que aconteceu, não só "bloqueado": é ele que aparece no painel.
+  assert.match(estourou.reason, /5×/);
+  assert.match(estourou.reason, /círculo/);
+});
+
+test("zerar o contador reabre o disjuntor — é a única saída, e é decisão do dono", () => {
+  // Sem esta saída, uma máquina que estourou o teto ficaria impedida de atualizar para sempre,
+  // inclusive depois de consertada. Quem zera é o Hub quando o dono enfileira forçado.
+  assert.equal(runnerUpdateDeliveryDecision({ deliveries: 0 }).deliver, true);
+  assert.equal(runnerUpdateDeliveryDecision({ deliveries: 0 }).stalled, false);
+});
+
+test("o teto é configurável e nunca cai abaixo de uma entrega", () => {
+  assert.equal(runnerUpdateDeliveryDecision({ deliveries: 1, max: 2 }).deliver, true);
+  assert.equal(runnerUpdateDeliveryDecision({ deliveries: 2, max: 2 }).deliver, false);
+  // max 0 significaria "nunca entregar" — um pedido que nasce morto, sem sinal nenhum para o dono.
+  assert.equal(runnerUpdateDeliveryDecision({ deliveries: 0, max: 0 }).deliver, true);
+});
+
+test("contador ausente ou inválido conta como zero, e não trava a primeira entrega", () => {
+  assert.equal(runnerUpdateDeliveryDecision({}).deliver, true);
+  assert.equal(runnerUpdateDeliveryDecision({ deliveries: -3 }).deliver, true);
+  assert.equal(runnerUpdateDeliveryDecision({ deliveries: Number.NaN }).deliver, true);
 });

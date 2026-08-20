@@ -4137,11 +4137,15 @@
             el.style.cssText='white-space:pre-wrap;font-size:11px;max-height:220px;overflow:auto;margin:6px 0 0;padding:6px;background:#0008;border-radius:6px;flex-basis:100%';
             el.textContent=(m.de?('de '+m.de+' → '+m.alvo+'\n\n'):'')+m.tail; aberto=el; d.appendChild(el); };
           d.appendChild(b); }
-        // Forçar so aparece quando o motivo E repo sujo — e descarta o trabalho local daquela maquina.
-        if((m.state==='fail'||m.state==='blocked')&&m.dirty){ const b=document.createElement('button'); b.type='button'; b.textContent='forçar';
-          b.title='Descarta as alterações locais dessa máquina (git reset --hard) e pega a última versão';
-          b.onclick=()=>{ if(!confirm('Descartar alterações locais em "'+(m.label||id)+'" e atualizar? Isso APAGA o que não estiver commitado NAQUELA máquina.'))return;
-            updMach[id]={...m,state:'wait',why:'forçando…',dirty:false}; renderUpdMachines(); tx({t:'update_apply',runnerId:id,force:true}); };
+        // Dois motivos distintos pedem o mesmo botao, e o aviso muda com o motivo: repo sujo descarta o
+        // trabalho local daquela maquina; disjuntor reabre o reenvio que o Hub tinha parado (e tambem
+        // descarta, porque vai forcado — por isso o aviso diz isso em vez de omitir).
+        if((m.state==='fail'||m.state==='blocked'||m.stalled)&&(m.dirty||m.stalled)){ const b=document.createElement('button'); b.type='button'; b.textContent=m.stalled?'reenviar':'forçar';
+          b.title=m.stalled?'O Hub parou de reenviar depois de várias entregas sem a máquina concluir. Reabre o envio — conserte a máquina antes.'
+            :'Descarta as alterações locais dessa máquina (git reset --hard) e pega a última versão';
+          b.onclick=()=>{ if(!confirm(m.stalled?('Reenviar a atualização para "'+(m.label||id)+'"? O Hub parou depois de várias entregas sem conclusão; se a máquina não foi consertada, o círculo recomeça. Vai forçado: APAGA o que não estiver commitado NAQUELA máquina.')
+              :('Descartar alterações locais em "'+(m.label||id)+'" e atualizar? Isso APAGA o que não estiver commitado NAQUELA máquina.')))return;
+            updMach[id]={...m,state:'wait',why:m.stalled?'reenviando…':'forçando…',dirty:false,stalled:false}; renderUpdMachines(); tx({t:'update_apply',runnerId:id,force:true}); };
           d.appendChild(b); }
         E.updMachines.appendChild(d); } }
     function renderUpdate(){ if(!E.updStatus)return; const s=updState; const owner=authUser&&authUser.role==='owner';
@@ -4782,7 +4786,7 @@
           // Machine snapshots carry the durable queue keyed by runner id. Do not synthesize rows by
           // label here: the next snapshot would add the same machine under its id and duplicate it.
           updMach={}; renderUpdMachines(); }
-        else if(m.t==='update_machine'){ const pending=['queued','sent','awaiting_restart'].includes(m.state), verified=m.verified||m.state==='verified'; updMach[m.runnerId]={label:m.label,dirty:m.dirty,
+        else if(m.t==='update_machine'){ const pending=['queued','sent','awaiting_restart'].includes(m.state), verified=m.verified||m.state==='verified'; updMach[m.runnerId]={label:m.label,dirty:m.dirty,stalled:!!m.stalled,
             state:verified?'verified':(pending?m.state:(m.ok?'ok':(m.dirty?'blocked':'fail'))),
             why:verified?'reiniciou e versão confirmada':m.state==='queued'?'offline — atualização guardada':m.state==='sent'?'drenando e preparando':m.state==='awaiting_restart'?'preparada — aguardando reconexão':m.ok?(m.behind?'atualizada, reiniciando':'dependências verificadas'):(m.dirty?'repo sujo':(m.log||'').split(String.fromCharCode(10))[0].slice(0,60))};
           renderUpdMachines(); }
@@ -4803,8 +4807,14 @@
           // dividiam o mesmo campo, a tela chamava de falha o que era só o Hub mudando de alvo.
           const falhou=!!String(u.lastError||'').trim();
           const recado=String(u.lastNote||'').trim();
-          updMach[mm.id]={label:mm.label,state:falhou?'fail':state,dirty:state==='blocked',
-            why:falhou?('falhou'+(u.lastPhase?' em '+u.lastPhase:'')+': '+String(u.lastError).replace(/^\[[^\]]*\]\s*/,''))
+          // `stalled` cobre dois casos diferentes e o estado os separa: em `awaiting_restart` e o
+          // watchdog do REINICIO (aplicou e nao voltou); fora dele e o disjuntor da ENTREGA (o Hub
+          // parou de reenviar). So o segundo pede o botao de reenviar — no primeiro, reenviar so
+          // derrubaria de novo uma maquina que ja aplicou.
+          const parou=!!u.stalled&&state!=='awaiting_restart';
+          updMach[mm.id]={label:mm.label,state:falhou?'fail':state,dirty:state==='blocked',stalled:parou,
+            why:parou?('reenvio pausado — '+String(u.lastError||'entregas demais sem a máquina concluir').replace(/^\[[^\]]*\]\s*/,''))
+              :falhou?('falhou'+(u.lastPhase?' em '+u.lastPhase:'')+': '+String(u.lastError).replace(/^\[[^\]]*\]\s*/,''))
               :state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':((mm.online?'aguardando nova tentativa':'offline — atualização guardada')+(recado?' · '+recado:'')),
             tail:String(u.lastLogTail||''),failures:Number(u.failures||0),at:Number(u.lastReportAt||0),alvo:String(u.targetCommit||''),de:String(u.fromCommit||'')};}); if(currentSession==null){ const ac=availableMachineCaps(); if(!currentAgent||!ac.some(c=>c.name===currentAgent)) currentAgent=(ac[0]||machineCaps()[0]||{}).name||currentAgent; syncModelEffort(); } renderUpdMachines(); renderUpdate(); renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(settingsPanelOpen('dispositivos')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
