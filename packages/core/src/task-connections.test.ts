@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskConnectionStore, resolveTaskConnection, remoteMismatchWarning, remoteCheckApplies, publicTaskConnections } from "./task-connections.js";
-import { fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, sanitizeSecrets, adfToText, TASK_PROVIDERS, type FetchLike } from "./task-providers.js";
+import { fetchProviderIdentity, searchProviderTasks, listProviderTasks, getProviderTask, createProviderTask, sanitizeSecrets, adfToText, TASK_PROVIDERS, type FetchLike } from "./task-providers.js";
 
 const fake = (routes: Record<string, unknown | ((init?: any) => unknown)>): { fetchFn: FetchLike; calls: Array<{ url: string; init?: any }> } => {
   const calls: Array<{ url: string; init?: any }> = [];
@@ -190,4 +190,65 @@ test("payload público: nome de env var vai, VALOR de segredo nunca — nem esco
   assert.equal(publico[1].config.note, "[REDIGIDO]");
   assert.equal(publico[0].envOk, true);
   assert.equal(publico[2].envOk, false, "segredo ausente vira booleano, não silêncio");
+});
+
+/* ── "As MINHAS tarefas abertas" ──────────────────────────────────────────────────────────────────
+   Um projeto com fonte `provider` abria so com uma caixa de busca vazia: quem tinha a conta certa,
+   verificada e vinculada, mesmo assim nao via tarefa nenhuma e concluia que a integracao falhou.
+   Listar nao e buscar com termo vazio — o criterio e "atribuida a MIM e ainda aberta", que nenhum
+   termo expressa. */
+
+test("listar tarefas do provedor pede as MINHAS abertas, em cada tier 1", async () => {
+  const routes = fake({
+    "https://api.github.com/issues": [
+      { number: 12, title: "Login social", body: "corpo", html_url: "https://github.com/acme/api/issues/12", state: "open", repository: { full_name: "acme/api" } },
+      { number: 13, title: "PR aberto", html_url: "https://github.com/acme/api/pull/13", state: "open", repository: { full_name: "acme/api" }, pull_request: { url: "x" } },
+    ],
+    "https://gitlab.com/api/v4/issues": [{ iid: 5, title: "Bug", web_url: "https://gitlab.com/acme/app/-/issues/5", state: "opened", references: { full: "acme/app#5" } }],
+    "https://acme.atlassian.net/rest/api/3/search": { issues: [{ key: "ABC-1", fields: { summary: "Tarefa", status: { name: "In Progress" } } }] },
+    "https://api.linear.app/graphql": { data: { viewer: { assignedIssues: { nodes: [{ identifier: "ENG-904", title: "Insight sumido", url: "https://linear.app/acme/issue/ENG-904", state: { name: "Triage" } }] } } } },
+  });
+
+  const gh = await listProviderTasks("github", { config: {}, secret: "s", fetchFn: routes.fetchFn });
+  assert.equal(gh.length, 1, "pull request nao e tarefa: o endpoint devolve os dois juntos");
+  assert.equal(gh[0].key, "acme/api#12", "a chave sai igual a da busca, que le repository_url");
+
+  const gl = await listProviderTasks("gitlab", { config: {}, secret: "s", fetchFn: routes.fetchFn });
+  assert.equal(gl[0].key, "acme/app#5");
+  const ji = await listProviderTasks("jira", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", fetchFn: routes.fetchFn });
+  assert.equal(ji[0].key, "ABC-1");
+  const li = await listProviderTasks("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn });
+  assert.equal(li[0].key, "ENG-904");
+
+  // O criterio "minhas e abertas" tem de estar na PERGUNTA, nao num filtro depois: filtrar aqui
+  // gastaria o teto de resultados com tarefa que ja acabou.
+  const url = (prefixo: string) => routes.calls.find((c) => c.url.startsWith(prefixo))!;
+  assert.match(url("https://api.github.com/issues").url, /filter=assigned&state=open/);
+  assert.match(url("https://gitlab.com/api/v4/issues").url, /scope=assigned_to_me&state=opened/);
+  assert.match(String(JSON.parse(url("https://acme.atlassian.net/rest/api/3/search").init.body).jql), /assignee = currentUser\(\) AND statusCategory != Done/);
+  const linearBody = String(JSON.parse(url("https://api.linear.app/graphql").init.body).query);
+  assert.match(linearBody, /viewer \{ assignedIssues/);
+  assert.match(linearBody, /completedAt: \{ null: true \}/);
+});
+
+test("a lista nao carrega descricao — ela custa caro e nao cabe na linha", async () => {
+  const enorme = "x".repeat(38_000);
+  const routes = fake({
+    "https://api.github.com/issues": [{ number: 12, title: "T", body: enorme, html_url: "https://github.com/acme/api/issues/12", state: "open", repository: { full_name: "acme/api" } }],
+    "https://api.linear.app/graphql": { data: { viewer: { assignedIssues: { nodes: [{ identifier: "ENG-904", title: "T", url: "u", state: { name: "Triage" } }] } } } },
+  });
+
+  const gh = await listProviderTasks("github", { config: {}, secret: "s", fetchFn: routes.fetchFn });
+  assert.equal(gh[0].description, undefined, "38 KB por item viajariam a cada abertura do painel");
+  // E o Linear nem PEDE o campo: economia na origem, nao no mapeamento.
+  await listProviderTasks("linear", { config: {}, secret: "s", fetchFn: routes.fetchFn });
+  assert.doesNotMatch(String(JSON.parse(routes.calls.at(-1)!.init.body).query), /description/);
+});
+
+test("org da conexao restringe a lista, e tier 2 recusa em vez de mentir lista vazia", async () => {
+  const routes = fake({ "https://api.github.com/orgs/acme/issues": [] });
+  await listProviderTasks("github", { config: { org: "acme" }, secret: "s", fetchFn: routes.fetchFn });
+  assert.match(routes.calls[0].url, /^https:\/\/api\.github\.com\/orgs\/acme\/issues/);
+  // Lista vazia de um provedor sem implementacao seria indistinguivel de "voce nao tem tarefas".
+  await assert.rejects(() => listProviderTasks("trello", { config: {}, secret: "a", secret2: "b", fetchFn: routes.fetchFn }), /tier 2/);
 });

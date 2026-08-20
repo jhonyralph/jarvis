@@ -1273,6 +1273,82 @@ test("TSK-03: uma listagem boa limpa o motivo anterior", async () => {
   assert.equal(client.localTaskError(), "", "resposta boa não pode deixar aviso velho na tela");
 });
 
+// ── A lista que faltava na fonte `provider` ─────────────────────────────────────────────────────
+// Projeto com Linear vinculado e verificado abria so com uma caixa de busca vazia: nenhuma lista,
+// nenhum estado vazio, e o botao Buscar sem texto nao fazia nada. O dono concluia, com razao, que a
+// integracao nao funcionava — enquanto a conexao respondia perfeitamente.
+async function drawerComConexao(): Promise<{ client: any; sock: any; nodes: (d?: any) => any[]; drawer: () => any }> {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  sock.deliver({ t: "task_connections", providers: [{ id: "linear", label: "Linear" }], bindings: [], mcpMachines: [],
+    connections: [{ id: "linear:pallium", provider: "linear", label: "Pallium", identity: { id: "u1", login: "jonathan.campos@luby.com.br" } }] });
+  sock.deliver({ t: "task_binding", sessionId: "s-wf", cwd: "/p", binding: { tracker: "linear", connectionId: "linear:pallium" },
+    source: { kind: "provider", tracker: "linear", ready: true, connectionId: "linear:pallium" } });
+  const nodes = (d?: any): any[] => {
+    const out: any[] = [];
+    const walk = (el: any): void => { for (const c of el.children || []) { out.push(c); walk(c); } };
+    walk(d || client.buildTaskDrawer());
+    return out;
+  };
+  return { client, sock, nodes, drawer: () => client.buildTaskDrawer() };
+}
+const acha = (ns: any[], re: RegExp): any => ns.find((el) => re.test(String(el.innerHTML || el.textContent || "")));
+
+test("fonte provider oferece MINHAS tarefas, sem precisar adivinhar o termo de busca", async () => {
+  const { sock, nodes, drawer } = await drawerComConexao();
+
+  const botao = acha(nodes(), /Minhas tarefas/);
+  assert.ok(botao, "sem isto, a unica porta era buscar — e buscar pressupoe ja saber o que procurar");
+  botao.onclick();
+  const pedido = sock.sent.find((m: any) => m.t === "task_provider_list");
+  assert.ok(pedido, "o clique pergunta ao Hub");
+  assert.equal(pedido.sessionId, "s-wf");
+
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", connection: { id: "linear:pallium", label: "Pallium" },
+    results: [{ tracker: "linear", key: "ENG-904", title: "AI-generated category insight missing", url: "https://linear.app/x/ENG-904", state: "Triage" }] });
+
+  const arvore = drawer();
+  assert.ok(acha(nodes(arvore), /ENG-904/), "a tarefa aparece na lista: " + String(arvore.innerHTML || "").slice(0, 200));
+  assert.ok(acha(nodes(arvore), /Triage/), "com o estado, que e o que diz se vale pegar");
+});
+
+test("escolher da lista arma a tarefa e busca a INTEGRA dela", async () => {
+  const { client, sock, nodes, drawer } = await drawerComConexao();
+  acha(nodes(), /Minhas tarefas/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [{ tracker: "linear", key: "ENG-904", title: "Insight sumido", url: "u", state: "Triage" }] });
+
+  acha(nodes(drawer()), /ENG-904/).onclick();
+
+  const armada = client.taskArmFor("local", "s-wf");
+  assert.ok(armada, "sem fluxo rodando, a escolha fica guardada para o proximo");
+  assert.equal(armada.task.key, "ENG-904");
+  // A lista vem sem descricao de proposito; a integra da ESCOLHIDA chega pelo caminho que ja
+  // alimenta a faixa e o Resumir. Sem este pedido, a tarefa entraria no fluxo so com o titulo.
+  const carga = sock.sent.find((m: any) => m.t === "task_load");
+  assert.ok(carga, "a descricao completa precisa vir de algum lugar");
+  assert.equal(carga.key, "ENG-904");
+});
+
+test("lista vazia diz de quem e a conta, em vez de parecer quebrada", async () => {
+  const { sock, nodes, drawer } = await drawerComConexao();
+  acha(nodes(), /Minhas tarefas/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [] });
+
+  const texto = String(drawer().innerHTML || "") + nodes().map((n: any) => String(n.textContent || "")).join(" ");
+  assert.match(texto, /Nenhuma tarefa aberta atribuida a @jonathan\.campos@luby\.com\.br/,
+    "vazio calado e indistinguivel de falha — foi assim que o erro passou despercebido");
+});
+
+test("erro do provedor aparece na lista, nao no silencio", async () => {
+  const { sock, nodes, drawer } = await drawerComConexao();
+  acha(nodes(), /Minhas tarefas/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [], error: "HTTP 401: [REDACTED]" });
+
+  const texto = String(drawer().innerHTML || "") + nodes().map((n: any) => String(n.textContent || "")).join(" ");
+  assert.match(texto, /HTTP 401/);
+});
+
 // TSK-04 (fatia D): fonte ÚNICA declarada por projeto. O cliente não reimplementa a regra — ele
 // desenha a fonte que o Hub resolveu, e trocar de fonte tem que trocar a LISTA na hora.
 test("TSK-04: trocar a fonte do projeto descarta a lista da fonte antiga", async () => {

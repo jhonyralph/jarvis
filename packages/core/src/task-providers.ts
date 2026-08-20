@@ -156,6 +156,13 @@ export function adfToText(node: unknown, cap = 4000): string {
 }
 
 const ghHeaders = (secret: string): Record<string, string> => ({ authorization: `Bearer ${secret}`, "user-agent": "jarvis", accept: "application/vnd.github+json" });
+/** `owner/repo` de uma issue do GitHub. A busca devolve `repository_url`; a lista de atribuídas
+ *  devolve `repository` inteiro — a chave do Jarvis tem de sair igual pelos dois caminhos, senão a
+ *  MESMA tarefa vira duas identidades diferentes conforme a tela por onde ela entrou. */
+const ghRepoOf = (it: any): string => {
+  const m = /repos\/([^/]+\/[^/]+)\/issues/.exec(String(it?.repository_url || "")) || /github\.com\/([^/]+\/[^/]+)\//.exec(String(it?.html_url || ""));
+  return String(it?.repository?.full_name || (m ? m[1] : "?"));
+};
 
 /** Busca por texto no provedor da conexão. Tier 2 → erro claro, nunca resultado vazio mentiroso. */
 export async function searchProviderTasks(providerId: string, query: string, input: ProviderCallInput): Promise<TaskItem[]> {
@@ -169,10 +176,7 @@ export async function searchProviderTasks(providerId: string, query: string, inp
     case "github": {
       const scope = cfg.org ? ` org:${cfg.org}` : "";
       const r = await j(`https://api.github.com/search/issues?q=${encodeURIComponent(`${q} is:issue${scope}`)}&per_page=10`, { headers: ghHeaders(input.secret) });
-      return (r.items || []).map((it: any) => {
-        const m = /repos\/([^/]+\/[^/]+)\/issues/.exec(String(it.repository_url || "")) || /github\.com\/([^/]+\/[^/]+)\//.exec(String(it.html_url || ""));
-        return { tracker: "github", key: `${m ? m[1] : "?"}#${it.number}`, title: String(it.title || ""), description: (it.body || undefined) as string | undefined, url: it.html_url, state: it.state };
-      });
+      return (r.items || []).map((it: any) => ({ tracker: "github", key: `${ghRepoOf(it)}#${it.number}`, title: String(it.title || ""), description: (it.body || undefined) as string | undefined, url: it.html_url, state: it.state }));
     }
     case "gitlab": {
       const r = await j(`${gitlabBase(cfg)}/api/v4/issues?search=${encodeURIComponent(q)}&per_page=10&scope=all`, { headers: { authorization: `Bearer ${input.secret}` } });
@@ -188,6 +192,56 @@ export async function searchProviderTasks(providerId: string, query: string, inp
       return nodes.map((it: any) => ({ tracker: "linear", key: String(it.identifier || ""), title: String(it.title || ""), description: it.description || undefined, url: it.url, state: it?.state?.name }));
     }
     default: throw new Error(`busca ainda não implementada para ${providerId} (tier 2 — identidade só)`);
+  }
+}
+
+/**
+ * "As MINHAS tarefas abertas" no provedor da conexão.
+ *
+ * Buscar exige saber o que procurar. Uma fonte `provider` abria com uma caixa de busca vazia — e nada
+ * mais — enquanto `local` e `mcp` abrem listando; quem tinha a conta certa, verificada e vinculada
+ * mesmo assim não via tarefa nenhuma, e concluía que a integração não funcionava.
+ *
+ * Listar não é busca com termo vazio: o critério aqui é "atribuída a MIM e ainda não fechada", que
+ * nenhum termo de busca expressa. Por isso é operação própria, e o filtro vai no SERVIDOR do provedor
+ * — filtrar depois gastaria o teto de resultados com tarefa que já acabou.
+ *
+ * A lista NÃO traz descrição, de propósito. Uma linha de lista mostra chave, título e estado; a
+ * descrição só serve quando a tarefa é ESCOLHIDA — e aí `getProviderTask` traz a íntegra. Medição
+ * real neste board: 83 KB para 5 itens, uma única descrição com 38 KB. E o cache de tarefas corta
+ * em 4000 caracteres na gravação, então o excedente nem sobrevivia à viagem.
+ */
+export async function listProviderTasks(providerId: string, input: ProviderCallInput & { limit?: number }): Promise<TaskItem[]> {
+  const f = input.fetchFn || defaultFetch;
+  const secrets = [input.secret, input.secret2 || ""].filter(Boolean);
+  const cfg = input.config || {};
+  const limit = Math.min(50, Math.max(1, Math.trunc(Number(input.limit)) || 25));
+  const j = (url: string, init?: Parameters<FetchLike>[1]) => call(f, secrets, url, { ...init, signal: input.signal });
+  switch (providerId) {
+    case "github": {
+      // `/issues` (ou `/orgs/{org}/issues`) é o endpoint de "atribuídas ao usuário autenticado". Ele
+      // devolve PULL REQUEST junto — e PR não é tarefa, então sai daqui como a busca faz com `is:issue`.
+      const base = cfg.org ? `https://api.github.com/orgs/${encodeURIComponent(cfg.org)}/issues` : "https://api.github.com/issues";
+      const r = await j(`${base}?filter=assigned&state=open&per_page=${limit}`, { headers: ghHeaders(input.secret) });
+      return (Array.isArray(r) ? r : []).filter((it: any) => !it?.pull_request)
+        .map((it: any) => ({ tracker: "github", key: `${ghRepoOf(it)}#${it.number}`, title: String(it.title || ""), url: it.html_url, state: it.state }));
+    }
+    case "gitlab": {
+      const r = await j(`${gitlabBase(cfg)}/api/v4/issues?scope=assigned_to_me&state=opened&per_page=${limit}`, { headers: { authorization: `Bearer ${input.secret}` } });
+      return (Array.isArray(r) ? r : []).map((it: any) => ({ tracker: "gitlab", key: `${String(it?.references?.full || "").replace(/#\d+$/, "") || it.project_id}#${it.iid}`, title: String(it.title || ""), url: it.web_url, state: it.state }));
+    }
+    case "jira": {
+      const r = await j(`${jiraBase(cfg)}/rest/api/3/search`, { method: "POST", headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, "content-type": "application/json" }, body: JSON.stringify({ jql: "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC", maxResults: limit, fields: ["summary", "status"] }) });
+      return (r.issues || []).map((it: any) => ({ tracker: "jira", key: String(it.key || ""), title: String(it?.fields?.summary || ""), url: `${jiraBase(cfg)}/browse/${it.key}`, state: it?.fields?.status?.name }));
+    }
+    case "linear": {
+      // Query conferida contra a API real: `filter` com completedAt/canceledAt nulos exclui concluída
+      // e cancelada do lado do Linear, e `orderBy: updatedAt` põe o que se mexeu por último em cima.
+      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "query($n:Int!){ viewer { assignedIssues(first:$n, orderBy: updatedAt, filter: { completedAt: { null: true }, canceledAt: { null: true } }) { nodes { identifier title url state { name } } } } }", variables: { n: limit } }) });
+      const nodes = r?.data?.viewer?.assignedIssues?.nodes || [];
+      return nodes.map((it: any) => ({ tracker: "linear", key: String(it.identifier || ""), title: String(it.title || ""), url: it.url, state: it?.state?.name }));
+    }
+    default: throw new Error(`lista de tarefas ainda não implementada para ${providerId} (tier 2 — identidade só)`);
   }
 }
 

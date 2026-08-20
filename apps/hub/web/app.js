@@ -1157,7 +1157,7 @@
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
     // o cache acelera, nunca decide o que é verdade.
-    function openSession(id,runnerId){ if(!id)return; wfLocalErr=''; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfTaskSource=null; wfLocalFiles=null; wfLocalShow=false; wfFanoutClear(); setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
+    function openSession(id,runnerId){ if(!id)return; wfLocalErr=''; askPending.delete(sessionStateKey(id,runnerId||selectedRunner())); wfRun=null; if(E.wfRun){E.wfRun.classList.add('hidden');E.wfRun.innerHTML='';} try{renderWfStep();}catch(e){} wfTaskBinding=null; wfTaskSource=null; wfLocalFiles=null; wfLocalShow=false; wfProvList=null; wfProvErr=''; wfProvShow=false; wfFanoutClear(); setTimeout(()=>{ if(authUser&&authUser.role==='owner'){ tx({t:'workflow_runs',sessionId:id}); tx({t:'task_binding_get',sessionId:id}); } tx({t:'workflow_list'}); },60);
       if(typeof findState!=='undefined'&&findState)closeFind(); if(typeof findRegion!=='undefined')findRegion='chat';  // abriu sessão → foco no chat; fecha barra órfã
       // visão unificada: a sessão carrega runnerId — troca a máquina roteada para a dona ANTES de abrir
       // (o hub processa as mensagens em ordem, então o open já cai na máquina certa).
@@ -4716,13 +4716,14 @@
           // cache local (senão .md de um projeto de pasta sobreviveriam num projeto de provedor) e,
           // se o painel está aberto na nova fonte, pede a lista dela.
           const changed=!before||before!==(wfTaskSource&&wfTaskSource.kind)||beforeDir!==(wfTaskSource&&(wfTaskSource.featuresDir||wfTaskSource.mcpServer));
-          if(changed){ wfLocalFiles=null; wfLocalErr=''; wfSearchResults=null; wfFanoutClear();
+          if(changed){ wfLocalFiles=null; wfLocalErr=''; wfSearchResults=null; wfProvList=null; wfProvErr=''; wfFanoutClear();
             if(wfTaskSource&&wfTaskSource.featuresDir) wfLocalDir=wfTaskSource.featuresDir;
             if(wfLocalShow&&wfTaskSource&&wfTaskSource.kind==='local'&&wfTaskSource.ready) tx({t:'task_local_list',sessionId:currentSession});
           }
           wfRerender();
         } }
         else if(m.t==='task_local_list'){ if(m.sessionId===currentSession){ wfLocalErr=String(m.error||''); wfLocalFiles=m.files||[]; wfLocalDir=m.dir||wfLocalDir; if(wfLocalShow) wfRerender(); } }
+        else if(m.t==='task_provider_results'){ if(m.sessionId===currentSession){ wfProvErr=String(m.error||''); wfProvList=m.results||[]; if(wfProvShow) wfRerender(); } }
         else if(m.t==='task_meta'){ wfTaskMeta[wfMetaKey({tracker:m.tracker,key:m.key})]=m.meta||null; renderWfRun(); }
         else if(m.t==='task_connections'){ wfConnections=m.connections||[]; wfProviders=m.providers||[];
           tskBindings=m.bindings||[]; tskMcpMachines=m.mcpMachines||[];
@@ -5260,6 +5261,9 @@
     // Fluxo por tarefa (F1/F3): vínculo do projeto, arquivos locais de feature, cache de meta e a
     // tarefa ARMADA (vale para o próximo fluxo iniciado nesta sessão; persiste por sessão).
     let wfTaskBinding=null, wfLocalFiles=null, wfLocalDir='docs/features', wfLocalShow=false;
+    // Lista do PROVEDOR ("minhas tarefas abertas"). Espelha wfLocalFiles/wfLocalShow de proposito:
+    // mesma forma para a fonte que mora fora da maquina, para as duas telas se comportarem igual.
+    let wfProvList=null, wfProvErr='', wfProvShow=false;
     // D — a FONTE resolvida pelo Hub (uma só por projeto): {kind:'none'|'local'|'provider', ready,
     // code, reason, featuresDir}. O cliente NÃO reimplementa a regra: só desenha a fonte que veio e,
     // quando ela não pode servir, mostra o motivo com o conserto a um clique.
@@ -5975,6 +5979,34 @@
         mkb('⚙',()=>{ wfConnManage=true; wfRerender(); },'Gerenciar o cofre de conexões');
         p.appendChild(bRow);
         if(conn){
+          // A lista que faltava. Fica ANTES da busca porque e a resposta para "quais sao as minhas
+          // tarefas?" — buscar pressupoe ja saber o que procurar, e era so isso que existia aqui.
+          const pf=document.createElement('button'); pf.type='button'; pf.className='opt';
+          pf.innerHTML='📋 Minhas tarefas <span class="r">'+esc(conn.label)+'</span>';
+          pf.title='Atribuidas a '+(conn.identity?('@'+conn.identity.login):'esta conta')+' e ainda nao fechadas';
+          pf.onclick=()=>{ wfProvShow=true; if(!wfProvList) tx({t:'task_provider_list',sessionId:currentSession}); wfRerender(); };
+          p.appendChild(pf);
+          if(wfProvShow){
+            const rp=document.createElement('button'); rp.type='button'; rp.className='wfact'; rp.style.cssText='margin:0 2px 6px';
+            rp.textContent='Atualizar lista'; rp.title='Perguntar de novo ao '+conn.label;
+            rp.onclick=(ev)=>{ ev.stopPropagation(); wfProvList=null; wfProvErr=''; tx({t:'task_provider_list',sessionId:currentSession}); wfRerender(); };
+            p.appendChild(rp);
+            if(wfProvErr){ const e=document.createElement('div'); e.className='mut'; e.style.cssText='font-size:11.5px;padding:0 2px 6px;color:#f5b544'; e.textContent='\u26A0 '+wfProvErr; p.appendChild(e); }
+            else if(!wfProvList){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent='Carregando...'; p.appendChild(d); }
+            // Lista vazia calada e indistinguivel de "quebrou": diz de quem e a conta e que nao ha nada.
+            else if(!wfProvList.length){ const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:0 2px 6px'; d.textContent='Nenhuma tarefa aberta atribuida a '+(conn.identity?('@'+conn.identity.login):'esta conta')+' em '+conn.label+'.'; p.appendChild(d); }
+            else wfProvList.slice(0,25).forEach(it=>{
+              const task={tracker:it.tracker,key:it.key,title:it.title,url:it.url||''};
+              wfTaskPick(p,task,esc(it.key)+' \u00B7 '+esc(String(it.title||'').slice(0,60))+(it.state?' <span class="r">'+esc(it.state)+'</span>':''),()=>{
+                wfProvShow=false;
+                wfUseTask(task,{title:it.title,url:it.url||''},it.key+' \u00B7 '+it.title);
+                // A lista vem SEM descricao (uma delas media 38 KB). A integra da tarefa ESCOLHIDA
+                // chega por aqui, que e o caminho que ja alimenta a faixa e o Resumir.
+                tx({t:'task_load',sessionId:currentSession,key:it.key});
+                wfRerender();
+              });
+            });
+          }
           const sRow=document.createElement('div'); sRow.style.cssText='display:flex;gap:6px;padding:0 2px 6px';
           const sInp=document.createElement('input'); sInp.type='text'; sInp.placeholder='🔎 buscar em '+esc(conn.label); sInp.style.cssText='flex:1;min-width:120px';
           const sBtn=document.createElement('button'); sBtn.type='button'; sBtn.className='wfact'; sBtn.textContent='Buscar';
