@@ -5257,6 +5257,23 @@
     // Redesenhar o painel do fluxo depois de uma resposta do Hub (conexões, arquivos, busca, marcas).
     // Existe como função própria porque o painel tem UMA casa — a faixa — e o resto do código não
     // precisa saber disso: quando a superfície mudou de lugar, foi este ponto que mudou, e só ele.
+    // A faixa e reconstruida INTEIRA a cada render (innerHTML='' + appendChild), e quem rola e o
+    // corpo `.wfsteps`. Corpo novo nasce no topo — entao marcar uma tarefa no fim de uma lista de
+    // board jogava a pessoa de volta ao comeco a cada clique. Guardamos a posicao do corpo anterior
+    // e devolvemos ao novo. Referencia direta em vez de querySelector: o corpo que acabou de ser
+    // montado e sempre este, sem depender de o seletor achar o elemento certo na arvore.
+    let wfStepsEl=null, wfStepsFor='';
+    function wfMountBody(body){
+      // A posicao volta so para a MESMA conversa. `currentSession` e reatribuido por seis caminhos
+      // diferentes (abrir, criar, trocar de maquina, apagar a atual...), entao um reset amarrado a um
+      // deles esqueceria os outros; comparar a chave e verdadeiro em todos. Rolagem de outra conversa
+      // seria pior que voltar ao topo: a lista pareceria posicionada por alguem.
+      const chave=sessionStateKey(currentSession||'',currentSessionRunner||'local');
+      const y=(wfStepsEl&&wfStepsFor===chave)?(wfStepsEl.scrollTop||0):0;
+      E.wfRun.appendChild(body); wfStepsEl=body; wfStepsFor=chave;
+      // So depois de estar no DOM: antes disso o elemento nao tem altura, e scrollTop e ignorado.
+      if(y) body.scrollTop=y;
+    }
     function wfRerender(){ renderWfRun(); }
     // Fluxo por tarefa (F1/F3): vínculo do projeto, arquivos locais de feature, cache de meta e a
     // tarefa ARMADA (vale para o próximo fluxo iniciado nesta sessão; persiste por sessão).
@@ -5449,7 +5466,7 @@
         +'</div></div>';
       // O resto do painel (trocar de fluxo, gaveta de Tarefa com fonte/pasta/arquivos) só é montado
       // com a faixa aberta: fechada, ele nem existe no DOM — e não paga render a cada frame do Hub.
-      if(wfOpen){ const body=document.createElement('div'); body.className='wfsteps'; body.style.marginTop='2px'; wfPanelBody(body); E.wfRun.appendChild(body); }
+      if(wfOpen){ const body=document.createElement('div'); body.className='wfsteps'; body.style.marginTop='2px'; wfPanelBody(body); wfMountBody(body); }
       // Fluxo longo (o Forge mostra 14 fases) nasce rolado no começo e esconde justamente onde você está.
       try{ const c=E.wfRun.querySelector('.wfph.cur'); if(c) c.scrollIntoView({block:'nearest',inline:'center'}); }catch(e){}
     }
@@ -5478,7 +5495,7 @@
         +(def?'<button class="wfact wf-begin" type="button" title="Começar este fluxo no primeiro passo">Iniciar</button>':'')
         +(def?'<button class="wfact wf-auto" type="button" title="'+(wfAutoStart.enabled?'Parar de iniciar este fluxo sozinho em cada sessão NOVA (não mexe nas sessões de agora)':'Voltar a iniciar este fluxo sozinho em cada sessão nova')+'">auto: '+(wfAutoStart.enabled?'ON':'off')+'</button>':'')
         +'<button class="wfact wf-dismiss" type="button" title="Fechar a faixa — nada é iniciado">⌄</button></span></div>';
-      const body=document.createElement('div'); body.className='wfsteps'; wfPanelBody(body); E.wfRun.appendChild(body);
+      const body=document.createElement('div'); body.className='wfsteps'; wfPanelBody(body); wfMountBody(body);
     }
     // Ligar/desligar o início automático de onde ele é VISÍVEL. A chave é do dono da máquina e vale
     // para toda sessão nova; por isso o toast diz o alcance em vez de só piscar "salvo".

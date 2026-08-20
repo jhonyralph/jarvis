@@ -56,6 +56,8 @@ interface ClientHandle {
   // TSK-01: o chip 🧭 abre a faixa em vez do seletor quando há fluxo ativo.
   wfSetRun(run: any): void;
   wfClickChip(): void;
+  wfBody(): any;
+  wfRerender(): void;
   wfExpanded(): boolean;
   askPendingCount(sessionId: string, runnerId?: string): number;
   localTaskError(): string;
@@ -203,6 +205,8 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   wfSetDefs: (defs)=>{ wfDefs=defs; renderWfRun(); },
   wfSetRun: (run)=>{ wfRun=run; wfOpen=false; renderWfRun(); },
   wfClickChip: ()=>E.wfStepBtn.onclick({preventDefault(){},stopPropagation(){}}),
+  wfBody: ()=>wfStepsEl,
+  wfRerender: ()=>wfRerender(),
   wfExpanded: ()=>wfOpen,
   askPendingCount: (sid,rid)=>(askPending.get(sessionStateKey(sid,rid||"local"))||{count:0}).count,
   get recentsHtml(){ return E.recents.children.map(c=>String(c.innerHTML||'')); },
@@ -1271,6 +1275,45 @@ test("TSK-03: uma listagem boa limpa o motivo anterior", async () => {
   client.socket().deliver({ t: "task_local_list", runnerId: "runner-b", sessionId: "s-remota", dir: "docs/features", files: [{ key: "docs/features/a.md", title: "A" }], cached: false, scannedAt: 2 });
 
   assert.equal(client.localTaskError(), "", "resposta boa não pode deixar aviso velho na tela");
+});
+
+// ── Rolagem preservada ao repintar a faixa ──────────────────────────────────────────────────────
+// A faixa se reconstroi inteira a cada render, e o corpo que rola nasce novo — ou seja, no topo.
+// Marcar uma tarefa no fim de uma lista de board devolvia a pessoa ao comeco a cada clique, o que
+// torna selecao multipla em board grande praticamente inviavel.
+test("marcar tarefa nao joga a lista de volta para o topo", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-wf", "local");
+  client.wfClickChip();
+
+  const corpo = client.wfBody();
+  assert.ok(corpo, "a faixa aberta monta o corpo que rola");
+  corpo.scrollTop = 120;
+
+  client.wfRerender();   // e o que todo clique de marcar/desmarcar dispara
+
+  const novo = client.wfBody();
+  assert.notEqual(novo, corpo, "o corpo e mesmo outro objeto — o render nao reaproveita");
+  assert.equal(novo.scrollTop, 120, "e a posicao veio junto");
+});
+
+test("trocar de sessao NAO herda a rolagem da conversa anterior", async () => {
+  const client = loadClient();
+  await authenticate(client, MACHINES);
+  client.setSession("s-a", "local");
+  client.wfClickChip();
+  client.wfBody().scrollTop = 200;
+
+  // A faixa CONTINUA aberta ao trocar de conversa (wfClickChip aqui a fecharia): o proximo render
+  // monta um corpo novo, e e nele que a rolagem antiga nao pode reaparecer.
+  client.setSession("s-b", "local");
+  client.wfRerender();
+
+  // Restaurar aqui poria a lista de OUTRA conversa numa posicao que ninguem escolheu.
+  const outro = client.wfBody();
+  assert.ok(outro, "a faixa segue aberta e monta o corpo da nova conversa");
+  assert.notEqual(outro.scrollTop, 200);
 });
 
 // ── A lista que faltava na fonte `provider` ─────────────────────────────────────────────────────
