@@ -1,3 +1,15 @@
+# [0.30.0](https://github.com/jhonyralph/jarvis/compare/v0.29.0...v0.30.0) (2026-08-20)
+
+
+### Bug Fixes
+
+* **fluxo:** marcar tarefa para de jogar a lista de volta ao topo ([d0dc450](https://github.com/jhonyralph/jarvis/commit/d0dc45068e66a3637216c833c302d9488e3284d7))
+
+
+### Features
+
+* **tarefas:** estados reais do board, para o filtro falar a língua dele ([7ed9054](https://github.com/jhonyralph/jarvis/commit/7ed9054ee8b6be95952ff3e0708766e80fc440e0))
+
 # [0.29.0](https://github.com/jhonyralph/jarvis/compare/v0.28.3...v0.29.0) (2026-08-20)
 
 
