@@ -43,7 +43,11 @@ function Report([string]$Phase, [bool]$Ok, [string]$ErrText) {
   try {
     $tail = (@($Log.ToArray() | Select-Object -Last 25) -join "\`n")
     $payload = @{ runnerId = $RunnerId; requestId = $RequestId; token = $Token; targetCommit = $Target; phase = $Phase; ok = $Ok; error = $ErrText; logTail = $tail } | ConvertTo-Json -Depth 3 -Compress
-    Invoke-RestMethod -Uri $ReportUrl -Method Post -Body $payload -ContentType 'application/json' -TimeoutSec 4 | Out-Null
+    # Corpo em BYTES UTF-8: com string, o Windows PowerShell 5.1 serializa em Latin-1 e o relatório
+    # chega ao Hub com acento quebrado ("código" vira "c?digo") — justo na única frase que
+    # explica por que a máquina não atualizou.
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+    Invoke-RestMethod -Uri $ReportUrl -Method Post -Body $bytes -ContentType 'application/json; charset=utf-8' -TimeoutSec 4 | Out-Null
   } catch {}
 }
 # NÃO nomear o parâmetro "$Args": \$args é variável AUTOMÁTICA do PowerShell (os argumentos não

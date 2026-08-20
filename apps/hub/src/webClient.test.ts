@@ -1077,6 +1077,39 @@ test("provedor sem conexão só oferece o que resolve a falta — o resto fica d
   assert.equal(vincular.disabled, false, "e o caminho que resolve a falta continua clicável");
 });
 
+// ── Visibilidade do update: o relatório do updater existia em disco e NÃO chegava na tela. Com o
+// estado em `sent`, o painel dizia "solicitação entregue" enquanto o registro ao lado guardava
+// "git saiu com código 1" — e foi preciso ler o JSON à mão para descobrir por que uma máquina
+// passou semanas sem atualizar.
+test("máquina que falhou no update mostra a falha, mesmo com a entrega bem-sucedida", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  sock.deliver({ t: "machines", machines: [
+    { id: "local", label: "Servidor", local: true, online: true },
+    { id: "luby", label: "Luby", local: false, online: false, updatePending: {
+      state: "sent", targetCommit: "81c78ea", fromCommit: "7bf2394", failures: 4,
+      lastPhase: "restarting", lastError: "[restarting] git saiu com código 1",
+      lastLogTail: "'git help -a' … ERRO na preparação: git saiu com código 1", lastReportAt: 1_787_190_207_016,
+    } },
+  ] });
+
+  const html = String(client.el("updMachines").innerHTML || "")
+    + client.el("updMachines").children.map((c: any) => `${c.innerHTML || ""} ${c.textContent || ""}`).join(" ");
+  assert.match(html, /falhou em restarting/, "a fase e o erro aparecem: " + html.slice(0, 300));
+  assert.match(html, /git saiu com código 1/);
+  assert.doesNotMatch(html, /solicitação entregue/, "a frase otimista não pode cobrir a falha");
+  assert.match(html, /4 tentativas/, "repetição vira 'está em loop', que é outra decisão");
+  // O rastro do updater é o que identifica a CAUSA — fica atrás de um clique, mas existe.
+  const nodes = (function walk(el: any): any[] { return (el.children || []).flatMap((c: any) => [c, ...walk(c)]); })(client.el("updMachines"));
+  const verLog = nodes.find((b: any) => b.tagName === "BUTTON" && /ver log/.test(String(b.textContent || "")));
+  assert.ok(verLog, "existe como abrir o log daquela máquina");
+  verLog.onclick();
+  const comLog = (function walk(el: any): any[] { return (el.children || []).flatMap((c: any) => [c, ...walk(c)]); })(client.el("updMachines"))
+    .map((n: any) => String(n.textContent || "")).join(" ");
+  assert.match(comLog, /ERRO na prepara/, "o rastro do updater aparece");
+  assert.match(comLog, /7bf2394.*81c78ea/s, "com de-onde → para-onde, que é o que diz se ela está atrás");
+});
+
 // ── TSK-12: a seção de MCP por máquina em Configurações → 🎯 Tarefas.
 test("MCP por máquina: caminho REAL de cada uma, e formulário só onde ele vai gravar", async () => {
   const client = loadClient();

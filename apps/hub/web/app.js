@@ -4121,7 +4121,22 @@
       for(const id of ids){ const m=updMach[id]; const d=document.createElement('div');
         d.className='updm '+(m.state==='ok'||m.state==='verified'?'ok':m.state==='fail'||m.state==='blocked'?'fail':'wait');
         const icon=m.state==='ok'||m.state==='verified'?'✓':m.state==='fail'||m.state==='blocked'?'✗':m.state==='queued'?'◷':'⏳';
-        d.innerHTML='<span>'+icon+'</span><span class="nm">'+esc(m.label||id)+'</span>'+(m.why?'<span class="why">'+esc(m.why)+'</span>':'');
+        // Tentativas + horário transformam "falhou" em "está em loop" — que é outra decisão.
+        const repeticao=m.failures>1?(' · '+m.failures+' tentativas'):'';
+        const quando=m.at?(' · '+new Date(m.at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})):'';
+        d.innerHTML='<span>'+icon+'</span><span class="nm">'+esc(m.label||id)+'</span>'+(m.why?'<span class="why">'+esc(m.why+repeticao+quando)+'</span>':'');
+        // O RASTRO do updater é o que identifica a causa (foi ele que mostrou o `git` sem argumentos).
+        // Fica atrás de um clique porque são 1500 caracteres, mas existir na tela é o que importa.
+        if(m.tail){ const b=document.createElement('button'); b.type='button'; b.textContent='ver log';
+          b.title='Últimas linhas do updater NAQUELA máquina, como ela reportou';
+          // O estado do toggle é DELE, não do DOM: perguntar ao documento se o elemento existe para
+          // decidir um booleano próprio é uma ida a mais que só pode discordar de si mesma.
+          let aberto=null;
+          b.onclick=()=>{ if(aberto){ aberto.remove(); aberto=null; return; }
+            const el=document.createElement('pre'); el.className='updlog';
+            el.style.cssText='white-space:pre-wrap;font-size:11px;max-height:220px;overflow:auto;margin:6px 0 0;padding:6px;background:#0008;border-radius:6px;flex-basis:100%';
+            el.textContent=(m.de?('de '+m.de+' → '+m.alvo+'\n\n'):'')+m.tail; aberto=el; d.appendChild(el); };
+          d.appendChild(b); }
         // Forçar so aparece quando o motivo E repo sujo — e descarta o trabalho local daquela maquina.
         if((m.state==='fail'||m.state==='blocked')&&m.dirty){ const b=document.createElement('button'); b.type='button'; b.textContent='forçar';
           b.title='Descarta as alterações locais dessa máquina (git reset --hard) e pega a última versão';
@@ -4780,7 +4795,15 @@
         else if(m.t==='mention_list'){ if(findState&&findState.mode==='finder'){ findFinderRender(m.files||[]); return; } fileList=m.files||[]; if(trigOpen()&&trigMode==='file'){ trigItems=fileList.slice(0,50); trigIdx=trigItems.length?0:-1; renderTrig(); } }
         else if(m.t==='worktree_preview'){ if(pendingPreview){ const f=pendingPreview; pendingPreview=null; f(m.candidates||[]); } }
         else if(m.t==='browser_event'){ if(m.event){ designEvent(m.event.kind||'browser',{url:m.event.url,runnerId:m.runnerId,pageId:m.event.pageId}); } }
-        else if(m.t==='machines'){ machines=m.machines||[]; machines.forEach(mm=>{ const u=mm.updatePending;if(!u){const prior=updMach[mm.id];if(prior&&['queued','sent','awaiting_restart'].includes(prior.state)&&mm.online&&!mm.stale)updMach[mm.id]={label:mm.label,state:'verified',why:'reiniciou e versão confirmada'};return;} const state=u.state||'queued';updMach[mm.id]={label:mm.label,state,dirty:state==='blocked',why:state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':(mm.online?'aguardando nova tentativa':'offline — atualização guardada')};}); if(currentSession==null){ const ac=availableMachineCaps(); if(!currentAgent||!ac.some(c=>c.name===currentAgent)) currentAgent=(ac[0]||machineCaps()[0]||{}).name||currentAgent; syncModelEffort(); } renderUpdMachines(); renderUpdate(); renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(settingsPanelOpen('dispositivos')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
+        else if(m.t==='machines'){ machines=m.machines||[]; machines.forEach(mm=>{ const u=mm.updatePending;if(!u){const prior=updMach[mm.id];if(prior&&['queued','sent','awaiting_restart'].includes(prior.state)&&mm.online&&!mm.stale)updMach[mm.id]={label:mm.label,state:'verified',why:'reiniciou e versão confirmada'};return;} const state=u.state||'queued';
+          // O relatório do updater (fase, erro, log) só era lido quando o estado era `blocked`. Com o
+          // estado em `sent`, a tela dizia "solicitação entregue" — verdade e inútil: a ENTREGA
+          // funcionou, o que falhou foi a execução do outro lado, e o Hub já sabia disso.
+          const falhou=!!String(u.lastError||'').trim();
+          updMach[mm.id]={label:mm.label,state:falhou?'fail':state,dirty:state==='blocked',
+            why:falhou?('falhou'+(u.lastPhase?' em '+u.lastPhase:'')+': '+String(u.lastError).replace(/^\[[^\]]*\]\s*/,''))
+              :state==='blocked'?(u.lastError||'atualização bloqueada'):state==='awaiting_restart'?'preparada — aguardando reconexão':state==='sent'?'solicitação entregue':(mm.online?'aguardando nova tentativa':'offline — atualização guardada'),
+            tail:String(u.lastLogTail||''),failures:Number(u.failures||0),at:Number(u.lastReportAt||0),alvo:String(u.targetCommit||''),de:String(u.fromCommit||'')};}); if(currentSession==null){ const ac=availableMachineCaps(); if(!currentAgent||!ac.some(c=>c.name===currentAgent)) currentAgent=(ac[0]||machineCaps()[0]||{}).name||currentAgent; syncModelEffort(); } renderUpdMachines(); renderUpdate(); renderMachines(); updateOfflineBanner(); if(currentMachine==='all') tx({t:'listAll'}); if(settingsPanelOpen('dispositivos')) tx({t:'sec_state'}); if(E.settings&&!E.settings.classList.contains('hidden')&&authUser&&authUser.role==='owner') fillRoutineMachines();
           // restaura a máquina remota selecionada antes do reload (senão volta pro servidor)
           if(restoringMachine){ if(machines.some(x=>x.id===currentMachine)){ tx({t:'runner',runnerId:currentMachine}); } else { restoringMachine=false; currentMachine='local'; try{localStorage.removeItem('jarvis_machine');}catch{} } } }
         else if(m.t==='terminal_opened'){ const rec=ensureTerm(m.terminal,m.runnerId||selectedRunner()); if(rec)toast('⌘ Terminal aberto em '+termMachineLabel(rec.runnerId)); }

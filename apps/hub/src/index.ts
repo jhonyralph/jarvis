@@ -1412,7 +1412,7 @@ const runnerLabels: Record<string, string> = (() => { try { return JSON.parse(re
 for (const runnerId of Object.keys(runnerLabels)) if (runnerId !== "local") mirrorExecutionStore(runnerId);
 function saveRunnerLabels(): void { try { writeJsonAtomic(RUNNERS_FILE, runnerLabels, { pretty: true }); } catch { /* ignore */ } }
 interface RunnerConn { id: string; ws: WebSocket | null; info: RunnerInfo; lastSeen: number; local: boolean; }
-interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; awaitingSince?: number; stalled?: boolean; stalledNotifiedAt?: number; /** Last out-of-band phase the runner's detached updater phoned home (Fase 2 UPD-01): even when the runner process dies mid-update and never sends update_done, this records WHERE it died. */ lastPhase?: string; lastReportAt?: number; /** Últimas linhas do log do updater na falha — o rastro que diz QUAL comando quebrou, não só que algo quebrou. */ lastLogTail?: string; }
+interface PendingRunnerUpdate { requestId: string; targetCommit: string; requestedAt: number; state: "queued" | "sent" | "awaiting_restart" | "blocked"; force?: boolean; fromCommit?: string; lastAttemptAt?: number; lastError?: string; awaitingSince?: number; stalled?: boolean; failures?: number; stalledNotifiedAt?: number; /** Last out-of-band phase the runner's detached updater phoned home (Fase 2 UPD-01): even when the runner process dies mid-update and never sends update_done, this records WHERE it died. */ lastPhase?: string; lastReportAt?: number; /** Últimas linhas do log do updater na falha — o rastro que diz QUAL comando quebrou, não só que algo quebrou. */ lastLogTail?: string; }
 const UPDATE_RETRY_MS = Math.max(30_000, Number(process.env.JARVIS_UPDATE_RETRY_SEC || 300) * 1000);
 // A machine that applied an update and reported ok goes to "awaiting_restart" and should reconnect on
 // the new commit within a normal restart window. Offline PAST this = the restart/updater hung (an
@@ -1966,6 +1966,10 @@ function recordRunnerUpdateReport(runnerId: string, r: { requestId?: string; pha
     pending.lastPhase = phase; pending.lastReportAt = Date.now();
     if (failed && detail) pending.lastError = `[${phase}] ${detail}`.slice(0, 3000);
     if (failed && tail) pending.lastLogTail = tail;
+    // Contar as falhas é o que transforma "falhou" em "está em LOOP". Uma máquina que tenta e falha
+    // a cada reinício parece, num relatório só, igual a uma que falhou uma vez — e as duas pedem
+    // ações diferentes: esperar contra intervir.
+    if (failed) pending.failures = (pending.failures || 0) + 1;
     savePendingRunnerUpdates();
   }
   updateMachineNotice(runnerId, { state: pending?.state, phase, ok: r.ok !== false, log: failed ? detail : `updater: ${phase}` });
