@@ -1,3 +1,10 @@
+## [0.28.1](https://github.com/jhonyralph/jarvis/compare/v0.28.0...v0.28.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **update:** reapontar o alvo é recado, não falha ([a84ab11](https://github.com/jhonyralph/jarvis/commit/a84ab116b83a25ddd437a901fe7197e178e9b219))
+
 # [0.28.0](https://github.com/jhonyralph/jarvis/compare/v0.27.0...v0.28.0) (2026-08-20)
 
 
