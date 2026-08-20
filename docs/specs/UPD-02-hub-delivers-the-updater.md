@@ -3,7 +3,7 @@ feature_id: UPD-02-hub-delivers-the-updater
 tldr: "O Hub entrega o script de atualização — para que um defeito no updater deixe de ser incorrigível na máquina que o tem."
 title: "O Hub entrega o updater (fim da armadilha do auto-conserto)"
 owner: "Jonathan / Claude"
-status: awaiting_approval
+status: approved
 risk_level: high
 stack: node
 services_affected: [hub, runner, protocol]
@@ -14,7 +14,7 @@ links:
   roadmap: "Diagnóstico do update travado da Luby, 2026-08-19"
   design: "Chat em 2026-08-19"
   adr: "N/A — mas §3 mexe no modelo de confiança e merece registro"
-approval_evidence: "Usuário em 2026-08-19, após o diagnóstico: 'os dois' (visibilidade no painel + a armadilha)."
+approval_evidence: "Usuário em 2026-08-19: 'os dois' (visibilidade + armadilha) e depois 'Aprovar e implementar'. Desvio implementado e justificado: o Hub entrega o CORPO do script, não o script inteiro — ele não conhece root/pid/token daquela máquina, e o cabeçalho segue local."
 ---
 
 # Executable spec

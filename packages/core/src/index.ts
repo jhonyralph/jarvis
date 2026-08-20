@@ -54,6 +54,7 @@ export * from "./task-source-command.js";
 export * from "./task-mcp.js";
 export * from "./task-fanout.js";
 export * from "./task-bridge.js";
+export * from "./windows-updater-script.js";
 export * from "./secret-vault.js";
 export * from "./framework.js";
 export * from "./framework-frontmatter.js";

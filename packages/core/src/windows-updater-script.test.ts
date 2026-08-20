@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detachedWindowsRunnerUpdateScript, psQuote } from "./windows-updater-script.js";
+import { detachedWindowsRunnerUpdateScript, windowsUpdaterHeader, windowsUpdaterBody, psQuote } from "./windows-updater-script.js";
 
 const script = detachedWindowsRunnerUpdateScript({
   requestId: "req-1", targetCommit: "abc1234", root: "C:\\Users\\x\\jarvis",
@@ -100,4 +100,52 @@ test("PowerShell real: os helpers entregam os argumentos ao git", { skip: skipRe
     });
     assert.match(out, /OK:\S+/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+/* ── UPD-02: o CORPO viaja, o CABEÇALHO é da máquina ──────────────────────────────────────────── */
+
+const ENTRADA = {
+  requestId: "req-1", targetCommit: "abc1234", root: "C:/jarvis", resultFile: "C:/r.json",
+  receiptFile: "C:/rec.json", logFile: "C:/log.txt", lockFile: "C:/lock.json", pid: 4242,
+  // Valores DISTINGUÍVEIS de propósito: "tok" casaria com a variável `$Token` que o corpo usa — e a
+  // asserção passaria a acusar o uso legítimo em vez do vazamento do valor.
+  force: false, reportUrl: "http://127.0.0.1:4577/runner-update-report",
+  runnerId: "MAQUINA-XYZ-9", token: "SEGREDO-XYZ-9",
+};
+
+test("o corpo não carrega NADA da máquina — é por isso que ele pode viajar", () => {
+  const corpo = windowsUpdaterBody();
+
+  // Se algum caminho, pid ou token vazasse para o corpo, o script do Hub escreveria na máquina errada
+  // (ou não escreveria em lugar nenhum) — e o hash deixaria de significar "a mesma lógica".
+  for (const local of ["C:/jarvis", "C:/r.json", "C:/rec.json", "C:/log.txt", "C:/lock.json", "4242", "MAQUINA-XYZ-9", "SEGREDO-XYZ-9"]) {
+    assert.equal(corpo.includes(local), false, `o corpo vazou algo local: ${local}`);
+  }
+  // E ele é estável: dois chamados, mesmo texto — senão o hash mudaria a cada entrega.
+  assert.equal(corpo, windowsUpdaterBody());
+});
+
+test("o cabeçalho carrega o que é da máquina, e o script inteiro é cabeçalho + corpo", () => {
+  const cabecalho = windowsUpdaterHeader(ENTRADA);
+
+  assert.match(cabecalho, /\$Root = 'C:\/jarvis'/);
+  assert.match(cabecalho, /\$RunnerPid = 4242/);
+  assert.equal(detachedWindowsRunnerUpdateScript(ENTRADA), cabecalho + windowsUpdaterBody());
+});
+
+test("o script executado se identifica: hash e origem entram no relatório", () => {
+  const script = detachedWindowsRunnerUpdateScript({ ...ENTRADA, scriptSha256: "deadbeef", fromHub: true });
+
+  assert.match(script, /\$ScriptSha = 'deadbeef'/);
+  assert.match(script, /\$ScriptFromHub = \$true/);
+  // Sem isso, depois da UPD-02 um "falhou" não diria QUAL updater falhou — o do Hub ou o local.
+  assert.match(script, /scriptSha256 = \$ScriptSha/);
+  assert.match(script, /scriptFromHub = \$ScriptFromHub/);
+});
+
+test("um corpo trocado muda o hash — que é o ponto da conferência", async () => {
+  const { createHash } = await import("node:crypto");
+  const sha = (t: string): string => createHash("sha256").update(t, "utf8").digest("hex");
+
+  assert.notEqual(sha(windowsUpdaterBody()), sha(windowsUpdaterBody() + "\n# alterado"));
 });

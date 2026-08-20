@@ -34,6 +34,7 @@ import {
   TerminalManager,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
   LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, featureFileContent, featureFileName, createTaskViaMcp,
+  windowsUpdaterHeader, windowsUpdaterBody,
   listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile,
   validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION,
   type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type UpdateStatus, type UpdateAttemptRecord, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
@@ -43,7 +44,7 @@ import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
 import { RUNNER_PROTOCOL_VERSION, type ContextActor, type HubToRunner, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
 import { confirmBoot, writeBootState } from "./boot-health.js";
-import { detachedWindowsRunnerUpdateScript } from "./windows-updater-script.js";
+
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/+$/, "");
 const HUB_URL = HUB + "/runner";
@@ -275,6 +276,9 @@ const TASK_BRIDGE_ON = String(process.env.JARVIS_TASK_BRIDGE ?? "1") !== "0";
 // TSK-12 — configurar a allowlist de MCP DESTA máquina pela tela. Nasce ligada; `=0` no runner.env
 // devolve a postura antiga (só quem tem acesso ao disco daqui configura).
 const TASK_MCP_REMOTE_EDIT = String(process.env.JARVIS_TASK_MCP_REMOTE_EDIT ?? "1") !== "0";
+// UPD-02 — usar o corpo do updater entregue pelo Hub. Nasce ligado; `=0` devolve a postura antiga
+// (só o que esta máquina gerou roda aqui), e é também a saída se algum dia isso der errado.
+const UPDATER_FROM_HUB = String(process.env.JARVIS_UPDATER_FROM_HUB ?? "1") !== "0";
 const TASK_TOKEN = randomBytes(24).toString("hex");
 const TASK_TIMEOUT_MS = 60 * 1000;
 const pendingTaskCalls = new Map<string, { timer: ReturnType<typeof setTimeout>; settle: (payload: unknown) => void }>();
@@ -419,7 +423,21 @@ async function handoffWindowsRunnerUpdate(m: any, known?: UpdateStatus): Promise
     // BOM UTF-8 (﻿): o script tem comentários acentuados e é rodado por `powershell.exe` (PS 5.1),
     // que, sem BOM, decodifica como CP1252 e transforma chars de 3 bytes (— …) em aspas fantasma que
     // quebram o parser — o updater morreria "antes da 1ª linha". Mesmo motivo do fix dos launchers.
-    writeFileSync(scriptPath, "﻿" + detachedWindowsRunnerUpdateScript({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), lockFile: UPDATE_LOCK_FILE, pid: process.pid, force: !!m.force, reportUrl: UPDATE_REPORT_URL, runnerId: RUNNER_ID, token: TOKEN }), "utf8");
+    // UPD-02: o CORPO do updater pode vir do Hub. Confere o hash ANTES de gravar — conteúdo que não
+    // bate com o anunciado não roda, e a máquina cai no corpo local, que é o comportamento de sempre
+    // (e a rota de rollback). O cabeçalho é sempre local: root, pid e token são dela.
+    const recebido = typeof m.script === "string" ? m.script : "";
+    const anunciado = typeof m.scriptSha256 === "string" ? m.scriptSha256 : "";
+    const confere = !!recebido && !!anunciado && createHash("sha256").update(recebido, "utf8").digest("hex") === anunciado;
+    const doHub = confere && UPDATER_FROM_HUB;
+    if (recebido && !doHub) console.warn(`[runner] updater do Hub NÃO usado (${!UPDATER_FROM_HUB ? "JARVIS_UPDATER_FROM_HUB=0" : "hash divergente"}) — seguindo com o corpo local`);
+    const corpo = doHub ? recebido : windowsUpdaterBody();
+    const corpoSha = createHash("sha256").update(corpo, "utf8").digest("hex");
+    const cabecalho = windowsUpdaterHeader({ requestId, targetCommit, root: RUNNER_ROOT, resultFile: UPDATE_RESULT_FILE, receiptFile: UPDATE_RECEIPT_FILE, logFile: join(JDIR, "runner-update.log"), lockFile: UPDATE_LOCK_FILE, pid: process.pid, force: !!m.force, reportUrl: UPDATE_REPORT_URL, runnerId: RUNNER_ID, token: TOKEN, scriptSha256: corpoSha, fromHub: doHub });
+    // O que EXECUTOU fica em disco, com o hash no nome do relatório: auditar depois não pode depender
+    // de o processo ter sobrevivido para contar o que rodou.
+    writeFileSync(scriptPath, "﻿" + cabecalho + corpo, "utf8");
+    console.log(`[runner] updater ${doHub ? "do Hub" : "local"} sha256=${corpoSha.slice(0, 12)} → ${scriptPath}`);
     // Spawnar "powershell.exe" direto com detached:true não sobrevive de forma confiável à saída
     // do processo pai no Windows (PS 5.1) — o updater podia morrer em silêncio antes da 1ª linha
     // (era a causa do incidente anterior: lock órfão, notebook offline ~30min). Rotear por

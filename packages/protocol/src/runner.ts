@@ -20,7 +20,7 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
  *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
  *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
  *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
-export const RUNNER_PROTOCOL_VERSION = 14;
+export const RUNNER_PROTOCOL_VERSION = 15;
 
 /**
  * Em qual versão cada CAPACIDADE entrou. Comparar com número solto espalha a regra pelo código, e
@@ -33,6 +33,7 @@ export const RUNNER_CAPABILITY_SINCE = {
   /** ponte de tarefas (a IA daquela máquina) */ taskBridge: 12,
   /** configurar o task-mcp.json pela tela */ taskMcpConfig: 13,
   /** criar tarefa na fonte da própria máquina */ taskSourceWrite: 14,
+  /** o CORPO do updater vem do Hub, conferido por hash (UPD-02) */ updaterFromHub: 15,
 } as const;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
@@ -358,7 +359,10 @@ export type HubToRunner =
   /** `requestId` correlates a durable Hub deployment; old runners may ignore the extra fields.
    *  force discards local changes on disposable child machines and may be persisted by the Hub
    *  for offline fleet updates. The Hub's own checkout remains conservative unless forced there. */
-  | { t: "update"; requestId?: string; targetCommit?: string; force?: boolean }
+  /** UPD-02 — `script` é o CORPO do updater (a lógica), gerado pelo HUB e conferido por
+   *  `scriptSha256` antes de rodar. Ausente, ou hash divergente, a máquina usa o próprio — que é
+   *  o comportamento de sempre e também a rota de rollback. */
+  | { t: "update"; requestId?: string; targetCommit?: string; force?: boolean; script?: string; scriptSha256?: string }
   /** Ask this machine for dev-server preview URLs under a session's cwd (Design Mode). */
   | { t: "preview_query"; reqId: string; sessionId: string }
   /** Interactive terminal control. Only Hubs should send these; authz is enforced at the Hub. */

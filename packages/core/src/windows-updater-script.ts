@@ -11,7 +11,27 @@ export function psQuote(value: string): string {
   return "'" + value.replace(/'/g, "''") + "'";
 }
 
-export function detachedWindowsRunnerUpdateScript(input: { requestId: string; targetCommit: string; root: string; resultFile: string; receiptFile: string; logFile: string; lockFile: string; pid: number; force: boolean; reportUrl: string; runnerId: string; token: string }): string {
+export interface WindowsUpdaterInput {
+  requestId: string; targetCommit: string; root: string; resultFile: string; receiptFile: string;
+  logFile: string; lockFile: string; pid: number; force: boolean; reportUrl: string; runnerId: string; token: string;
+  /** UPD-02 — hash do CORPO que está sendo executado, e se ele veio do Hub. Vai no relatório de cada
+   *  fase: sem isso, "falhou" não diz QUAL updater falhou, e é a primeira pergunta depois desta fatia. */
+  scriptSha256?: string;
+  fromHub?: boolean;
+}
+
+/**
+ * UPD-02 — o script destacado é montado em DUAS partes, e a divisão não é estética:
+ *
+ *  • CABEÇALHO: caminhos, pid e token DAQUELA máquina. Só ela sabe — o Hub não conhece o `root`
+ *    dela, nem o pid do processo que vai morrer. Sempre gerado localmente.
+ *  • CORPO: a lógica (fetch, reset, npm ci, restart, relatório). É aqui que mora qualquer defeito —
+ *    e era isto que ficava incorrigível quando a máquina em código velho gerava o próprio script.
+ *
+ * O Hub entrega o CORPO, com hash. É a menor parte que resolve a armadilha inteira: a máquina segue
+ * dona do que é dela, e o que quebra passa a ser substituível de fora.
+ */
+export function windowsUpdaterHeader(input: WindowsUpdaterInput): string {
   return `
 $ErrorActionPreference = 'Stop'
 $Root = ${psQuote(input.root)}
@@ -27,6 +47,19 @@ $ReportUrl = ${psQuote(input.reportUrl)}
 $RunnerId = ${psQuote(input.runnerId)}
 $Token = ${psQuote(input.token)}
 $TaskName = 'JarvisRunner'
+$ScriptSha = ${psQuote(input.scriptSha256 || "")}
+$ScriptFromHub = ${input.fromHub ? "$true" : "$false"}
+`;
+}
+
+/** O script inteiro: cabeçalho local + corpo (o recebido do Hub, quando houver). */
+export function detachedWindowsRunnerUpdateScript(input: WindowsUpdaterInput, body = windowsUpdaterBody()): string {
+  return windowsUpdaterHeader(input) + body;
+}
+
+/** A LÓGICA do updater — sem nada específico de máquina, para poder viajar e ser conferida por hash. */
+export function windowsUpdaterBody(): string {
+  return `
 $Log = New-Object System.Collections.Generic.List[string]
 
 function Add-Log([string]$Text) { $script:Log.Add($Text) }
@@ -42,7 +75,7 @@ function Report([string]$Phase, [bool]$Ok, [string]$ErrText) {
   if (-not $ReportUrl) { return }
   try {
     $tail = (@($Log.ToArray() | Select-Object -Last 25) -join "\`n")
-    $payload = @{ runnerId = $RunnerId; requestId = $RequestId; token = $Token; targetCommit = $Target; phase = $Phase; ok = $Ok; error = $ErrText; logTail = $tail } | ConvertTo-Json -Depth 3 -Compress
+    $payload = @{ runnerId = $RunnerId; requestId = $RequestId; token = $Token; targetCommit = $Target; phase = $Phase; ok = $Ok; error = $ErrText; logTail = $tail; scriptSha256 = $ScriptSha; scriptFromHub = $ScriptFromHub } | ConvertTo-Json -Depth 3 -Compress
     # Corpo em BYTES UTF-8: com string, o Windows PowerShell 5.1 serializa em Latin-1 e o relatório
     # chega ao Hub com acento quebrado ("código" vira "c?digo") — justo na única frase que
     # explica por que a máquina não atualizou.
