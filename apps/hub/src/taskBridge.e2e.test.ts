@@ -211,6 +211,10 @@ test("ponte de tarefas: a máquina que pede é a máquina que decide qual projet
     runner?.close();
     ws?.close();
     await stopChild(hub.process);
-    rmSync(home, { recursive: true, force: true });
+    // No Windows o `taskkill` volta ANTES de o SO soltar os handles do processo morto, e a faxina
+    // estoura com EBUSY — falhando um teste cujo assunto é o comportamento do Hub, não o momento em
+    // que o sistema libera arquivo. Tenta de novo e, se ainda assim não der, ignora: pasta temporária
+    // que sobrou é lixo, não resultado.
+    try { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* temp é descartável */ }
   }
 });
