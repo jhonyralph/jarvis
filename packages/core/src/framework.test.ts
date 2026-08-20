@@ -11,7 +11,7 @@ import { join } from "node:path";
 const {
   readCanonicalFramework, materializeFramework, readReceipt,
   normalizeFrameworkPreference, FRAMEWORK_PREFERENCES, installFrameworkStarterPack,
-  deleteFrameworkFolder, assertSafeFolderPath,
+  deleteFrameworkFolder, assertSafeFolderPath, writeFrameworkFile, pruneFrameworkResidue,
 } = await import("./framework.js");
 
 function seedCanonical(root: string): void {
@@ -167,4 +167,79 @@ test("a fronteira de segurança continua valendo para workflows/", () => {
     assert.deepEqual(deleteFrameworkFolder("flows", dst).removed, ["flows/x.json"]);
     assert.equal(existsSync(join(dst, "flows")), false);
   } finally { rmSync(dst, { recursive: true, force: true }); }
+});
+
+// ── Resíduo de escrita (.bak/.tmp) NÃO é conteúdo do framework.
+// O estrago era composto: o `.bak` entrava no manifesto, ia para a máquina destino, era escrito com
+// backup e virava `.bak.bak` na publicação seguinte — inflando hash, tokens e pacote a cada rodada.
+// E `flows/x.json.bak` era lido como mais um fluxo, com o mesmo nome, na lista do painel.
+
+test("manifesto ignora .bak/.tmp — resíduo no disco não muda o hash", () => {
+  const src = mkdtempSync(join(tmpdir(), "jf-res-"));
+  try {
+    seedCanonical(src);
+    const limpo = readCanonicalFramework(src);
+    writeFileSync(join(src, "commands", "plan.md.bak"), "Plan ANTIGO.");
+    writeFileSync(join(src, "commands", "plan.md.tmp"), "escrita interrompida");
+    writeFileSync(join(src, "instructions.md.bak"), "regras velhas");
+
+    const sujo = readCanonicalFramework(src);
+    assert.deepEqual(sujo.files.map((f) => f.path).sort(), limpo.files.map((f) => f.path).sort());
+    assert.equal(sujo.hash, limpo.hash, "resíduo no disco não pode mexer na identidade do conteúdo");
+  } finally { rmSync(src, { recursive: true, force: true }); }
+});
+
+test("escrever um arquivo do framework não deixa .bak — nem na origem, nem no destino", () => {
+  const src = mkdtempSync(join(tmpdir(), "jf-nobak-src-"));
+  const dst = mkdtempSync(join(tmpdir(), "jf-nobak-dst-"));
+  try {
+    seedCanonical(src);
+    writeFrameworkFile("commands/plan.md", "Plan v1.", src);
+    writeFrameworkFile("commands/plan.md", "Plan v2.", src);   // 2ª escrita: é aqui que o .bak nascia
+    assert.equal(existsSync(join(src, "commands", "plan.md.bak")), false);
+    assert.equal(readFileSync(join(src, "commands", "plan.md"), "utf8"), "Plan v2.");
+
+    materializeFramework(readCanonicalFramework(src, 1), { machineRoot: dst });
+    materializeFramework(readCanonicalFramework(src, 2), { machineRoot: dst });
+    assert.equal(existsSync(join(dst, "commands", "plan.md.bak")), false, "sem backup do backup na máquina destino");
+  } finally { rmSync(src, { recursive: true, force: true }); rmSync(dst, { recursive: true, force: true }); }
+});
+
+test("a faxina remove o resíduo já gravado, e preserva o .bak do recibo", () => {
+  const root = mkdtempSync(join(tmpdir(), "jf-prune-"));
+  try {
+    seedCanonical(root);
+    mkdirSync(join(root, "flows"), { recursive: true });
+    writeFileSync(join(root, "flows", "pipeline.json"), "{}");
+    writeFileSync(join(root, "flows", "pipeline.json.bak"), "{}");
+    writeFileSync(join(root, "flows", "pipeline.json.bak.bak"), "{}");
+    writeFileSync(join(root, "commands", "plan.md.tmp"), "x");
+    writeFileSync(join(root, ".receipt.json"), "{}");
+    writeFileSync(join(root, ".receipt.json.bak"), "{}");
+
+    const removed = pruneFrameworkResidue(root);
+
+    assert.equal(removed, 3, "os dois resíduos de flows + o .tmp de commands");
+    assert.equal(existsSync(join(root, "flows", "pipeline.json")), true, "o conteúdo fica");
+    assert.equal(existsSync(join(root, "flows", "pipeline.json.bak")), false);
+    assert.equal(existsSync(join(root, "flows", "pipeline.json.bak.bak")), false);
+    // O recibo não é conteúdo republicável: o .bak dele ainda é o fallback de leitura.
+    assert.equal(existsSync(join(root, ".receipt.json.bak")), true, "o backup do recibo não é lixo");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("materializar limpa o resíduo mesmo quando a máquina já está em dia", () => {
+  const src = mkdtempSync(join(tmpdir(), "jf-mat-src-"));
+  const dst = mkdtempSync(join(tmpdir(), "jf-mat-dst-"));
+  try {
+    seedCanonical(src);
+    const manifest = readCanonicalFramework(src, 1);
+    materializeFramework(manifest, { machineRoot: dst });
+    writeFileSync(join(dst, "commands", "plan.md.bak"), "sobra da regra antiga");
+
+    const again = materializeFramework(manifest, { machineRoot: dst });
+
+    assert.equal(again.skipped, true, "o recibo bate: nada é reescrito");
+    assert.equal(existsSync(join(dst, "commands", "plan.md.bak")), false, "e ainda assim o resíduo sai");
+  } finally { rmSync(src, { recursive: true, force: true }); rmSync(dst, { recursive: true, force: true }); }
 });

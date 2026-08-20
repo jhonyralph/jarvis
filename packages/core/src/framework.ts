@@ -93,11 +93,22 @@ function toAbs(root: string, relPosix: string): string {
   return join(root, ...relPosix.split("/"));
 }
 
+/** Resíduo de escrita atômica — NUNCA conteúdo. Ver `isWriteResidue` para o porquê. */
+const WRITE_RESIDUE = /\.(bak|tmp)$/i;
+/**
+ * `.bak`/`.tmp` são rastro de `writeTextAtomic`, não arquivos do framework. Enquanto entravam no
+ * manifesto, o estrago se multiplicava a cada publicação: o `.bak` virava conteúdo, era escrito na
+ * máquina destino, ganhava o PRÓPRIO `.bak` (`X.md.bak.bak`), inflava hash, tokens e pacote — e um
+ * `flows/pipeline-sdlc.json.bak` era lido como mais um fluxo, com o mesmo nome, na lista do painel.
+ */
+export function isWriteResidue(name: string): boolean { return WRITE_RESIDUE.test(name); }
+
 function collectDir(dir: string, root: string, out: FrameworkFile[]): void {
   let entries: import("node:fs").Dirent[];
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const d of entries) {
     if (d.name.startsWith(".")) continue;
+    if (isWriteResidue(d.name)) continue;
     const abs = join(dir, d.name);
     if (d.isDirectory()) { collectDir(abs, root, out); continue; }
     if (!d.isFile()) continue;
@@ -150,6 +161,9 @@ function existingRelPaths(root: string): string[] {
 export function materializeFramework(manifest: FrameworkManifest, opts: { machineRoot?: string } = {}): MaterializeResult {
   const root = opts.machineRoot ?? frameworkRoot();
   for (const f of manifest.files) assertSafeRelPath(f.path);
+  // Antes do atalho do recibo: uma máquina JÁ em dia continuaria carregando o resíduo que a regra
+  // antiga escreveu nela, e ele nunca sairia — o atalho existe justamente para não reescrever nada.
+  pruneFrameworkResidue(root);
   const prior = readReceipt(root);
   if (prior && prior.hash === manifest.hash) {
     return { version: prior.version, hash: prior.hash, written: 0, removed: 0, skipped: true };
@@ -161,7 +175,7 @@ export function materializeFramework(manifest: FrameworkManifest, opts: { machin
     try { rmSync(toAbs(root, rel), { force: true }); removed++; } catch { /* best effort */ }
   }
   let written = 0;
-  for (const f of manifest.files) { writeTextAtomic(toAbs(root, assertSafeRelPath(f.path)), f.content); written++; }
+  for (const f of manifest.files) { writeTextAtomic(toAbs(root, assertSafeRelPath(f.path)), f.content, { backup: false }); written++; }
   writeJsonAtomic(receiptPath(root), { version: manifest.version, hash: manifest.hash, at: Date.now() } satisfies FrameworkReceipt, { pretty: true });
   return { version: manifest.version, hash: manifest.hash, written, removed, skipped: false };
 }
@@ -202,8 +216,39 @@ export function frameworkContentHash(text: string): string { return sha256(text)
 /** Write one canonical file (path-guarded). Returns the normalized POSIX rel path actually written. */
 export function writeFrameworkFile(relPath: string, content: string, root = frameworkRoot()): string {
   const safe = assertSafeRelPath(relPath);
-  writeTextAtomic(toAbs(root, safe), content);
+  // Sem `.bak`: a escrita já é atômica (tmp + fsync + rename), então o primário nunca fica pela
+  // metade, e a versão anterior deste conteúdo não vive aqui — vive no manifesto do Hub, que
+  // republica. Guardar cópia local só criava lixo que a leitura confundia com conteúdo.
+  writeTextAtomic(toAbs(root, safe), content, { backup: false });
   return safe;
+}
+
+/**
+ * Faxina do resíduo que a regra antiga deixou no disco. Só varre as pastas de CONTEÚDO — o
+ * `.receipt.json.bak` fica, porque ele ainda é o fallback de leitura do recibo (`readJson`), e
+ * apagá-lo trocaria lixo por perda de recuperação.
+ *
+ * Não é migração de dado: é remover cópia de algo que o Hub republica. Por isso pode rodar em
+ * qualquer boot, quantas vezes for.
+ */
+export function pruneFrameworkResidue(root = frameworkRoot()): number {
+  let removed = 0;
+  const walk = (dir: string): void => {
+    let entries: import("node:fs").Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const d of entries) {
+      const abs = join(dir, d.name);
+      if (d.isDirectory()) { if (!d.name.startsWith(".")) walk(abs); continue; }
+      if (!d.isFile() || d.name.startsWith(".") || !isWriteResidue(d.name)) continue;
+      try { rmSync(abs, { force: true }); removed++; } catch { /* best effort */ }
+    }
+  };
+  for (const top of ["commands", "skills", "flows", "reference"]) walk(join(root, top));
+  for (const suffix of [".bak", ".tmp"]) {
+    const stray = join(root, `instructions.md${suffix}`);
+    if (existsSync(stray)) { try { rmSync(stray, { force: true }); removed++; } catch { /* best effort */ } }
+  }
+  return removed;
 }
 
 /** Delete one canonical file (path-guarded). No-op-safe. */

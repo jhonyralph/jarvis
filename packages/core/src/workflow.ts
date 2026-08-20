@@ -202,6 +202,17 @@ export function workflowToFile(def: WorkflowDefinition): { path: string; content
 }
 
 /** Lê um fluxo de um arquivo do framework; devolve null quando o conteúdo não é utilizável. */
+/**
+ * Dois arquivos declarando o MESMO fluxo viram uma entrada só. Nasceu do resíduo `.bak` entrando no
+ * manifesto (`flows/x.json`, `.json.bak`, `.json.bak.bak` = o mesmo fluxo três vezes na lista), mas a
+ * regra vale por si: id é identidade. Vence o primeiro na ordem de leitura (alfabética por caminho),
+ * que é o arquivo sem sufixo.
+ */
+export function dedupeWorkflowsById<T extends { id: string }>(defs: T[]): T[] {
+  const seen = new Set<string>();
+  return defs.filter((d) => (seen.has(d.id) ? false : (seen.add(d.id), true)));
+}
+
 export function workflowFromFile(content: string): WorkflowDefinition | null {
   try {
     const parsed = JSON.parse(String(content));

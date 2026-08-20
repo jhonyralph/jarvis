@@ -2,7 +2,7 @@
  *  as três convenções que realmente convivem no framework do usuário. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, workflowPath } from "./workflow.js";
+import { parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, workflowPath, dedupeWorkflowsById } from "./workflow.js";
 
 const EVIDENCE_STYLE = `---
 name: evidence-driven-delivery
@@ -140,4 +140,20 @@ test("ida e volta para arquivo do framework", () => {
   assert.deepEqual(back, wf);
   assert.equal(workflowFromFile("{lixo"), null, "conteúdo inválido não derruba nada");
   assert.equal(workflowFromFile('{"id":"x","steps":[]}'), null, "fluxo sem passos não conta");
+});
+
+// O painel mostrava "Pipeline de engenharia (F1–F14)" três vezes: `flows/x.json`, `.json.bak` e
+// `.json.bak.bak` viravam três definições do MESMO fluxo. O resíduo saiu do manifesto, mas id é
+// identidade — a lista não pode depender disso para não repetir.
+test("dedupeWorkflowsById: o mesmo id aparece uma vez, e vence o primeiro lido", () => {
+  const defs = [
+    { id: "pipeline", name: "Pipeline", path: "flows/pipeline.json" },
+    { id: "pipeline", name: "Pipeline", path: "flows/pipeline.json.bak" },
+    { id: "hotfix", name: "Hotfix", path: "flows/hotfix.json" },
+    { id: "pipeline", name: "Pipeline", path: "flows/pipeline.json.bak.bak" },
+  ];
+
+  const out = dedupeWorkflowsById(defs);
+
+  assert.deepEqual(out.map((d) => d.path), ["flows/pipeline.json", "flows/hotfix.json"]);
 });
