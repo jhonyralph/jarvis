@@ -79,6 +79,7 @@ interface ClientHandle {
   dlgCancel(): void;
   taskArmFor(runnerId: string, sessionId: string): any;
   buildTaskDrawer(): any;
+  buildPanelBody(): any;
   // TSK-08 (fatia H): a fila de itens DENTRO de uma execução.
   openWork(id: string): void;
   workQueueHtml(): string;
@@ -228,6 +229,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   dlgCancel: ()=>dlgClose(null),
   taskArmFor: (rid,sid)=>{ try{ return JSON.parse(localStorage.getItem('jarvis_task_arm')||'{}')[rid+' '+sid]||null; }catch(e){ return null; } },
   buildTaskDrawer: ()=>{ const p=document.createElement('div'); buildWfTaskSection(p); return p; },
+  buildPanelBody: ()=>{ const p=document.createElement('div'); wfPanelBody(p); return p; },
   openWork: (id)=>{ openWorkPanel(); openWorkNode(id); },
   workQueueHtml: ()=>String(E.workQueue.innerHTML||''),
   workQueue: ()=>workQueueItems(workSelected).map(it=>({id:it.node.executionId,title:String(it.node.title||''),bucket:it.bucket,label:it.label,why:it.why})),
@@ -1427,6 +1429,29 @@ test("busca com campo vazio VOLTA para a lista, em vez de nao fazer nada", async
   assert.ok(sock.sent.filter((m: any) => m.t === "task_provider_list").length >= 2, "limpar a busca traz a lista de volta");
 });
 
+test("a busca tambem carrega mais, e acumula", async () => {
+  const { client, sock, nos } = await comConexao();
+  ache(nos(), /Escolher tarefa/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [ENG904], states: ESTADOS });
+
+  const inp = nos(client.wfModalCard()).find((n: any) => n.tagName === "INPUT");
+  inp.value = "insight";
+  nos(client.wfModalCard()).find((n: any) => String(n.textContent || "") === "Buscar").onclick();
+  sock.deliver({ t: "task_search_results", sessionId: "s-wf", query: "insight", results: [ENG904], cursor: "cur-2" });
+
+  const mais = nos(client.wfModalCard()).find((n: any) => /Carregar mais/.test(String(n.textContent || "")));
+  assert.ok(mais, "board tem milhares de itens: 10 resultados eram uma amostra que parecia a resposta");
+  mais.onclick();
+  const pedido = sock.sent.filter((m: any) => m.t === "task_search").at(-1);
+  assert.equal(pedido.cursor, "cur-2");
+  assert.equal(pedido.query, "insight", "a proxima pagina e do MESMO termo");
+
+  sock.deliver({ t: "task_search_results", sessionId: "s-wf", query: "insight", results: [{ ...ENG904, key: "ENG-357", title: "Outra" }] });
+  const texto = nos(client.wfModalCard()).map((n: any) => String(n.innerHTML || "")).join(" ");
+  assert.match(texto, /ENG-904/, "a pagina 1 da busca continua na tela");
+  assert.match(texto, /ENG-357/);
+});
+
 test("vazio e erro sao ditos, nao silenciados", async () => {
   const { client, sock, nos } = await comConexao();
   ache(nos(), /Escolher tarefa/).onclick();
@@ -1438,6 +1463,38 @@ test("vazio e erro sao ditos, nao silenciados", async () => {
   sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [], error: "HTTP 401: [REDACTED]" });
   texto = nos(client.wfModalCard()).map((n: any) => String(n.textContent || "")).join(" ");
   assert.match(texto, /HTTP 401/);
+});
+
+// ── A selecao visivel no painel do fluxo ────────────────────────────────────────────────────────
+// As marcadas viviam so dentro da lista onde foram marcadas: fechado o modal, ou trocado o filtro, a
+// selecao sumia da tela e continuava valendo. Marcar cinco e nao ver nenhuma e o caminho curto para
+// abrir cinco conversas erradas.
+test("tarefas marcadas para subsessao aparecem no painel do fluxo", async () => {
+  const { client, sock, nos } = await comConexao();
+  ache(nos(), /Escolher tarefa/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [ENG904], states: ESTADOS });
+
+  // A caixinha ao lado da tarefa e o que marca para subsessao.
+  const marca = nos(client.wfModalCard()).find((n: any) => n.className === "wfact wf-fanmark");
+  assert.ok(marca, "a lista do modal oferece marcar");
+  marca.onclick({ stopPropagation() {} });
+
+  const painel = nos(client.buildPanelBody()).map((n: any) => String(n.innerHTML || n.textContent || "")).join(" ");
+  assert.match(painel, /1 marcada\(s\) para subsessao/, "o painel do fluxo mostra a selecao: " + painel.slice(0, 200));
+  assert.match(painel, /ENG-904/);
+});
+
+test("desmarcar do painel e o par de marcar da lista", async () => {
+  const { client, sock, nos } = await comConexao();
+  ache(nos(), /Escolher tarefa/).onclick();
+  sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [ENG904], states: ESTADOS });
+  nos(client.wfModalCard()).find((n: any) => n.className === "wfact wf-fanmark").onclick({ stopPropagation() {} });
+
+  // Sem isto, tirar uma da selecao obrigaria a reabrir o modal e achar a tarefa de novo.
+  const chip = nos(client.buildPanelBody()).find((n: any) => /ENG-904 ×/.test(String(n.textContent || "")));
+  assert.ok(chip, "cada marcada tem como sair");
+  chip.onclick();
+  assert.equal(nos(client.buildPanelBody()).some((n: any) => /marcada\(s\) para subsessao/.test(String(n.textContent || ""))), false, "sem marcas, a faixa some");
 });
 
 // TSK-04 (fatia D): fonte ÚNICA declarada por projeto. O cliente não reimplementa a regra — ele

@@ -223,8 +223,8 @@ async function serveTaskBridge(ctx: { runnerId: string; sessionId: string; op: s
           const t = providerSignal();
           try {
             if (op === "search") {
-              const results = await searchProviderTasks(resolved.connection.provider, String(args.query || ""), { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
-              reply({ ok: true, connection: resolved.connection.label, results: results.slice(0, 10) });
+              const pagina = await searchProviderTasks(resolved.connection.provider, String(args.query || ""), { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
+              reply({ ok: true, connection: resolved.connection.label, results: pagina.tasks });
             } else {
               const item = await getProviderTask(resolved.connection.provider, String(args.key || ""), { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
               if (item) taskMeta.merge(item.tracker, item.key, { title: item.title, description: item.description, url: item.url });
@@ -7417,8 +7417,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if ("refusal" in resolved) { send(ws, { t: "task_search_results", sessionId: msg.sessionId, results: [], error: resolved.refusal.message, code: resolved.refusal.code }); return; }
       const t = providerSignal();
       try {
-        const results = await searchProviderTasks(resolved.connection.provider, msg.query, { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, signal: t.signal });
-        send(ws, { t: "task_search_results", sessionId: msg.sessionId, results: results.slice(0, 10), connection: { id: resolved.connection.id, label: resolved.connection.label, identity: resolved.connection.identity || null } });
+        const cursorBusca = typeof msg.cursor === "string" ? msg.cursor : "";
+        const pagina = await searchProviderTasks(resolved.connection.provider, msg.query, { config: resolved.connection.config, secret: resolved.secret, secret2: resolved.secret2, cursor: cursorBusca, signal: t.signal });
+        send(ws, { t: "task_search_results", sessionId: msg.sessionId, results: pagina.tasks, cursor: pagina.cursor, query: msg.query, connection: { id: resolved.connection.id, label: resolved.connection.label, identity: resolved.connection.identity || null } });
       } catch (e: any) { send(ws, { t: "task_search_results", sessionId: msg.sessionId, results: [], error: String(e?.message ?? e) }); }
       finally { t.finish(); }
       return;

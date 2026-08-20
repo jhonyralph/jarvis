@@ -164,34 +164,64 @@ const ghRepoOf = (it: any): string => {
   return String(it?.repository?.full_name || (m ? m[1] : "?"));
 };
 
-/** Busca por texto no provedor da conexão. Tier 2 → erro claro, nunca resultado vazio mentiroso. */
-export async function searchProviderTasks(providerId: string, query: string, input: ProviderCallInput): Promise<TaskItem[]> {
+/**
+ * Busca por texto no provedor da conexao, uma pagina por vez.
+ *
+ * Board tem milhares de itens e a busca voltava 10, sem jeito de ver o resto: um termo generico
+ * ("insight", "login") devolvia uma amostra que parecia a resposta inteira. O `cursor` e o mesmo
+ * contrato opaco da listagem — quem chama devolve a string que recebeu, sem saber de qual provedor
+ * ela veio. Tier 2 -> erro claro, nunca resultado vazio mentiroso.
+ */
+export async function searchProviderTasks(providerId: string, query: string, input: ProviderCallInput & { limit?: number; cursor?: string }): Promise<TaskPage> {
   const f = input.fetchFn || defaultFetch;
   const secrets = [input.secret, input.secret2 || ""].filter(Boolean);
   const cfg = input.config || {};
   const q = String(query || "").trim().slice(0, 200);
-  if (!q) return [];
+  if (!q) return { tasks: [] };
+  const limit = Math.min(50, Math.max(1, Math.trunc(Number(input.limit)) || 10));
+  const cursor = String(input.cursor || "").trim().slice(0, 400);
+  const pagina = Math.max(1, Math.trunc(Number(cursor)) || 1);
   const j = (url: string, init?: Parameters<FetchLike>[1]) => call(f, secrets, url, { ...init, signal: input.signal });
   switch (providerId) {
     case "github": {
       const scope = cfg.org ? ` org:${cfg.org}` : "";
-      const r = await j(`https://api.github.com/search/issues?q=${encodeURIComponent(`${q} is:issue${scope}`)}&per_page=10`, { headers: ghHeaders(input.secret) });
-      return (r.items || []).map((it: any) => ({ tracker: "github", key: `${ghRepoOf(it)}#${it.number}`, title: String(it.title || ""), description: (it.body || undefined) as string | undefined, url: it.html_url, state: it.state }));
+      const r = await j(`https://api.github.com/search/issues?q=${encodeURIComponent(`${q} is:issue${scope}`)}&per_page=${limit}&page=${pagina}`, { headers: ghHeaders(input.secret) });
+      const items = r.items || [];
+      const total = Number(r.total_count);
+      return {
+        tasks: items.map((it: any) => ({ tracker: "github", key: `${ghRepoOf(it)}#${it.number}`, title: String(it.title || ""), description: (it.body || undefined) as string | undefined, url: it.html_url, state: it.state })),
+        cursor: items.length && (Number.isFinite(total) ? pagina * limit < total : items.length >= limit) ? String(pagina + 1) : undefined,
+      };
     }
     case "gitlab": {
-      const r = await j(`${gitlabBase(cfg)}/api/v4/issues?search=${encodeURIComponent(q)}&per_page=10&scope=all`, { headers: { authorization: `Bearer ${input.secret}` } });
-      return (Array.isArray(r) ? r : []).map((it: any) => ({ tracker: "gitlab", key: `${String(it?.references?.full || "").replace(/#\d+$/, "") || it.project_id}#${it.iid}`, title: String(it.title || ""), description: it.description || undefined, url: it.web_url, state: it.state }));
+      const r = await j(`${gitlabBase(cfg)}/api/v4/issues?search=${encodeURIComponent(q)}&per_page=${limit}&page=${pagina}&scope=all`, { headers: { authorization: `Bearer ${input.secret}` } });
+      const cru = Array.isArray(r) ? r : [];
+      return {
+        tasks: cru.map((it: any) => ({ tracker: "gitlab", key: `${String(it?.references?.full || "").replace(/#\d+$/, "") || it.project_id}#${it.iid}`, title: String(it.title || ""), description: it.description || undefined, url: it.web_url, state: it.state })),
+        cursor: cru.length >= limit ? String(pagina + 1) : undefined,
+      };
     }
     case "jira": {
-      const r = await j(`${jiraBase(cfg)}/rest/api/3/search`, { method: "POST", headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, "content-type": "application/json" }, body: JSON.stringify({ jql: `text ~ ${JSON.stringify(q)} ORDER BY updated DESC`, maxResults: 10, fields: ["summary", "description", "status"] }) });
-      return (r.issues || []).map((it: any) => ({ tracker: "jira", key: String(it.key || ""), title: String(it?.fields?.summary || ""), description: adfToText(it?.fields?.description) || undefined, url: `${jiraBase(cfg)}/browse/${it.key}`, state: it?.fields?.status?.name }));
+      const startAt = Math.max(0, Math.trunc(Number(cursor)) || 0);
+      const r = await j(`${jiraBase(cfg)}/rest/api/3/search`, { method: "POST", headers: { authorization: `Basic ${b64(`${cfg.email}:${input.secret}`)}`, "content-type": "application/json" }, body: JSON.stringify({ jql: `text ~ ${JSON.stringify(q)} ORDER BY updated DESC`, maxResults: limit, startAt, fields: ["summary", "description", "status"] }) });
+      const issues = r.issues || [];
+      const total = Number(r?.total);
+      const proximo = startAt + issues.length;
+      return {
+        tasks: issues.map((it: any) => ({ tracker: "jira", key: String(it.key || ""), title: String(it?.fields?.summary || ""), description: adfToText(it?.fields?.description) || undefined, url: `${jiraBase(cfg)}/browse/${it.key}`, state: it?.fields?.status?.name })),
+        cursor: issues.length && (Number.isFinite(total) ? proximo < total : issues.length >= limit) ? String(proximo) : undefined,
+      };
     }
     case "linear": {
-      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "query($q:String!){ searchIssues(term:$q, first:10){ nodes { identifier title description url state { name } } } }", variables: { q } }) });
-      const nodes = r?.data?.searchIssues?.nodes || [];
-      return nodes.map((it: any) => ({ tracker: "linear", key: String(it.identifier || ""), title: String(it.title || ""), description: it.description || undefined, url: it.url, state: it?.state?.name }));
+      const r = await j("https://api.linear.app/graphql", { method: "POST", headers: { authorization: input.secret, "content-type": "application/json" }, body: JSON.stringify({ query: "query($q:String!,$n:Int!,$c:String){ searchIssues(term:$q, first:$n, after:$c){ pageInfo { hasNextPage endCursor } nodes { identifier title description url state { name } } } }", variables: { q, n: limit, c: cursor || null } }) });
+      const conexao = r?.data?.searchIssues;
+      const nodes = conexao?.nodes || [];
+      return {
+        tasks: nodes.map((it: any) => ({ tracker: "linear", key: String(it.identifier || ""), title: String(it.title || ""), description: it.description || undefined, url: it.url, state: it?.state?.name })),
+        cursor: conexao?.pageInfo?.hasNextPage ? String(conexao.pageInfo.endCursor || "") || undefined : undefined,
+      };
     }
-    default: throw new Error(`busca ainda não implementada para ${providerId} (tier 2 — identidade só)`);
+    default: throw new Error(`busca ainda nao implementada para ${providerId} (tier 2 — identidade so)`);
   }
 }
 

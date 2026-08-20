@@ -65,13 +65,13 @@ test("tier 1: busca/carrega/cria com URLs e corpos corretos; tier 2 recusa com e
     "https://acme.atlassian.net/rest/api/3/search": { issues: [{ key: "ABC-1", fields: { summary: "Tarefa", status: { name: "To Do" }, description: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "descrição adf" }] }] } } }] },
     "https://api.linear.app/graphql": (init: any) => {
       const body = JSON.parse(init.body);
-      if (String(body.query).includes("searchIssues")) return { data: { searchIssues: { nodes: [{ identifier: "PRI-824", title: "Voz", description: "d", url: "https://linear.app/acme/issue/PRI-824", state: { name: "In Progress" } }] } } };
+      if (String(body.query).includes("searchIssues")) return { data: { searchIssues: { pageInfo: { hasNextPage: false }, nodes: [{ identifier: "PRI-824", title: "Voz", description: "d", url: "https://linear.app/acme/issue/PRI-824", state: { name: "In Progress" } }] } } };
       if (String(body.query).includes("teams(")) return { data: { teams: { nodes: [{ id: "team-uuid" }] } } };
       return { data: { issueCreate: { issue: { identifier: "PRI-900", url: "https://linear.app/acme/issue/PRI-900" } } } };
     },
   });
   const gh = await searchProviderTasks("github", "login", { config: { org: "acme" }, secret: "s", fetchFn: routes.fetchFn });
-  assert.equal(gh[0].key, "acme/api#12");
+  assert.equal(gh.tasks[0].key, "acme/api#12");
   assert.ok(routes.calls[0].url.includes("org%3Aacme"), "org da conexão restringe a busca");
 
   const got = await getProviderTask("github", "acme/api#12", { config: {}, secret: "s", fetchFn: routes.fetchFn });
@@ -79,7 +79,7 @@ test("tier 1: busca/carrega/cria com URLs e corpos corretos; tier 2 recusa com e
   await assert.rejects(() => getProviderTask("github", "12", { config: {}, secret: "s", fetchFn: routes.fetchFn }), /owner\/repo#numero/);
 
   const jira = await searchProviderTasks("jira", "tarefa", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", fetchFn: routes.fetchFn });
-  assert.equal(jira[0].description, "descrição adf", "descrição ADF vira texto plano");
+  assert.equal(jira.tasks[0].description, "descrição adf", "descrição ADF vira texto plano");
 
   const li = await getProviderTask("linear", "pri-824", { config: {}, secret: "s", fetchFn: routes.fetchFn });
   assert.equal(li!.key, "PRI-824", "match exato do identificador, sem depender de caixa");
@@ -409,4 +409,39 @@ test("Jira le as duas formas de resposta da instancia", async () => {
 
 test("tier 2 recusa os estados em vez de devolver lista vazia", async () => {
   await assert.rejects(() => listProviderStates("notion", { config: {}, secret: "s", fetchFn: fake({}).fetchFn }), /tier 2/);
+});
+
+/* ── A BUSCA tambem pagina ───────────────────────────────────────────────────────────────────────
+   Ela voltava 10 e nao havia como ver o resto: um termo generico devolvia uma amostra que parecia a
+   resposta inteira, e a pessoa concluia que a tarefa nao estava no board. */
+
+test("busca devolve cursor enquanto houver resultado, em cada tier 1", async () => {
+  const gh = fake({ "https://api.github.com/search/issues": { total_count: 30, items: [{ number: 1, title: "T", html_url: "https://github.com/acme/api/issues/1", state: "open", repository_url: "https://api.github.com/repos/acme/api" }] } });
+  const p1 = await searchProviderTasks("github", "login", { config: {}, secret: "s", limit: 1, fetchFn: gh.fetchFn });
+  assert.equal(p1.cursor, "2", "o proprio provedor diz quantos existem no total");
+  assert.match(gh.calls[0].url, /page=1/);
+  await searchProviderTasks("github", "login", { config: {}, secret: "s", limit: 1, cursor: p1.cursor, fetchFn: gh.fetchFn });
+  assert.match(gh.calls[1].url, /page=2/);
+
+  const li = fake({ "https://api.linear.app/graphql": { data: { searchIssues: { pageInfo: { hasNextPage: true, endCursor: "cur-2" }, nodes: [{ identifier: "ENG-904", title: "T", url: "u", state: { name: "Triage" } }] } } } });
+  const lp = await searchProviderTasks("linear", "insight", { config: {}, secret: "s", cursor: "cur-1", fetchFn: li.fetchFn });
+  assert.equal(lp.cursor, "cur-2");
+  assert.equal(JSON.parse(li.calls[0].init.body).variables.c, "cur-1", "o cursor volta como `after`");
+
+  const ji = fake({ "https://acme.atlassian.net/rest/api/3/search": { total: 4, issues: [{ key: "ABC-1", fields: { summary: "T", status: { name: "To Do" } } }, { key: "ABC-2", fields: { summary: "T", status: { name: "To Do" } } }] } });
+  const jp = await searchProviderTasks("jira", "tarefa", { config: { baseUrl: "https://acme.atlassian.net", email: "e@x" }, secret: "s", limit: 2, fetchFn: ji.fetchFn });
+  assert.equal(jp.cursor, "2", "no Jira o cursor e o deslocamento");
+});
+
+test("busca no fim da lista nao promete pagina que nao existe", async () => {
+  const gh = fake({ "https://api.github.com/search/issues": { total_count: 1, items: [{ number: 1, title: "T", html_url: "https://github.com/acme/api/issues/1", state: "open", repository_url: "https://api.github.com/repos/acme/api" }] } });
+  assert.equal((await searchProviderTasks("github", "x", { config: {}, secret: "s", limit: 1, fetchFn: gh.fetchFn })).cursor, undefined);
+
+  const li = fake({ "https://api.linear.app/graphql": { data: { searchIssues: { pageInfo: { hasNextPage: false }, nodes: [] } } } });
+  assert.equal((await searchProviderTasks("linear", "x", { config: {}, secret: "s", fetchFn: li.fetchFn })).cursor, undefined);
+
+  // Termo vazio continua sendo lista vazia SEM ida de rede: e a tela que decide voltar para a lista.
+  const nada = fake({});
+  assert.deepEqual(await searchProviderTasks("linear", "   ", { config: {}, secret: "s", fetchFn: nada.fetchFn }), { tasks: [] });
+  assert.equal(nada.calls.length, 0);
 });

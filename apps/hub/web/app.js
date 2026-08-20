@@ -4741,7 +4741,9 @@
           if(settingsPanelOpen('tarefas')) renderTaskSettings();
           wfRerender(); }
         else if(m.t==='task_search_results'){ wfSearchResults=m;
-          if(wfModal&&m.sessionId===currentSession){ wfModal.busy=false; wfModal.err=String(m.error||''); wfModal.list=m.results||[]; wfModal.cursor=''; wfModalRender(); }
+          if(wfModal&&m.sessionId===currentSession){ wfModal.busy=false; wfModal.err=String(m.error||'');
+            wfModal.list=(wfModal.pedindoMais&&wfModal.list)?wfModal.list.concat(m.results||[]):(m.results||[]);
+            wfModal.pedindoMais=false; wfModal.cursor=String(m.cursor||''); wfModal.modo='busca'; wfModalRender(); }
           wfRerender(); }
         else if(m.t==='task_mcp_config_set'){ toast(m.ok?'Servidor MCP salvo naquela máquina.':('MCP: '+(m.error||'falhou'))); }
         else if(m.t==='task_mcp_test'){ toast(m.ok?('Servidor respondeu: '+(m.count||0)+' tarefa(s)'+((m.sample||[]).length?' — ex.: '+m.sample[0]:'')):('Teste falhou: '+(m.error||''))); }
@@ -5320,8 +5322,15 @@
     }
     function wfModalSearch(q){
       if(!wfModal||!q) return;
-      wfModal.busy=true; wfModal.modo='busca'; wfModal.q=q; wfModal.err=''; wfModal.list=null; wfModal.cursor='';
+      wfModal.busy=true; wfModal.modo='busca'; wfModal.q=q; wfModal.err=''; wfModal.list=null; wfModal.cursor=''; wfModal.pedindoMais=false;
       tx({t:'task_search',sessionId:currentSession,query:q});
+      wfModalRender();
+    }
+    /** Proxima pagina da BUSCA. Mesmo contrato opaco da lista: o cursor volta como veio. */
+    function wfModalSearchMore(){
+      if(!wfModal||!wfModal.cursor||wfModal.busy) return;
+      wfModal.busy=true; wfModal.pedindoMais=true;
+      tx({t:'task_search',sessionId:currentSession,query:wfModal.q,cursor:wfModal.cursor});
       wfModalRender();
     }
     function wfModalRender(){
@@ -5384,10 +5393,12 @@
       rodape.appendChild(conta);
       // "Carregar mais" so aparece quando o provedor DISSE que ha mais. Botao sempre visivel viraria
       // uma promessa que termina em lista vazia.
-      if(wfModal.cursor&&wfModal.modo==='lista'){
+      if(wfModal.cursor){
         const mais=document.createElement('button'); mais.type='button'; mais.className='wfact';
         mais.textContent=wfModal.busy?'Carregando...':'Carregar mais'; mais.disabled=!!wfModal.busy;
-        mais.onclick=wfModalMore; rodape.appendChild(mais);
+        // Board tem milhares de itens: a busca voltava 10 e um termo generico ("insight", "login")
+        // devolvia uma amostra que parecia a resposta inteira.
+        mais.onclick=wfModal.modo==='busca'?wfModalSearchMore:wfModalMore; rodape.appendChild(mais);
       }
       c.appendChild(rodape);
     }
@@ -6202,8 +6213,30 @@
     // O CORPO da faixa expandida — a única superfície do fluxo. Antes isto era um popover ancorado no
     // chip: ele se fechava ao primeiro clique fora, empilhava por cima da faixa que mostrava a mesma
     // coisa, e a escolha de fonte/pasta/arquivo só existia lá dentro.
+    /** As tarefas marcadas para subsessao, no painel do FLUXO. Elas viviam so dentro da lista onde
+     *  foram marcadas: fechado o modal, ou trocado o filtro, a selecao sumia da tela e continuava
+     *  valendo. Marcar cinco e nao ver nenhuma e o caminho curto para abrir cinco conversas erradas. */
+    function wfFanoutStrip(p){
+      const marcadas=wfFanoutList();
+      if(!marcadas.length) return;
+      const box=document.createElement('div'); box.className='wf-fanstrip';
+      box.style.cssText='display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:4px 2px 6px;border-bottom:1px solid rgba(127,127,127,.25);margin-bottom:4px';
+      const t=document.createElement('span'); t.className='mut'; t.style.cssText='font-size:11.5px';
+      t.textContent='\uD83D\uDDC2 '+marcadas.length+' marcada(s) para subsessao:'; box.appendChild(t);
+      marcadas.forEach(tk=>{
+        // Desmarcar daqui e o par de marcar la: sem isso, tirar uma da selecao obrigaria a reabrir o
+        // modal, achar a tarefa de novo e clicar na caixinha.
+        const chip=document.createElement('button'); chip.type='button'; chip.className='wfact';
+        chip.textContent=(tk.key||tk.title||'?')+' \u00D7';
+        chip.title='Desmarcar '+(tk.title||tk.key||'');
+        chip.onclick=()=>{ wfFanoutToggle(tk); wfRerender(); };
+        box.appendChild(chip);
+      });
+      p.appendChild(box);
+    }
     function wfPanelBody(p){
       if(wfConnManage){ buildWfConnManage(p); return; }   // no modo gerenciar, o corpo é só o cofre
+      wfFanoutStrip(p);
       const defs=wfDefs||[];
       if(!defs.length){
         const d=document.createElement('div'); d.className='mut'; d.style.cssText='font-size:11.5px;padding:2px;max-width:280px';
