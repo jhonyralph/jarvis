@@ -1339,9 +1339,22 @@ function connect(): void {
         const agentName = explicitAgent || (seed.agent && agents.names().includes(seed.agent) ? seed.agent : agents.default);
         const permissionMode = normalizePermissionMode(typeof m.permissionMode === "string" ? m.permissionMode : undefined) ?? seed.permissionMode;
         const id = randomUUID();
-        const s = store.ensure(id, { agent: agentName, cwd, permissionMode });
+        // Fan-out (protocolo 16): titulo, sessao-mae e a mensagem semeada vem do Hub. A subsessao
+        // nasce AQUI, no disco da maquina do projeto — criar no Hub poria a conversa da tarefa numa
+        // maquina que nao e a dela, que e justamente o engano que a listagem por projeto tirou.
+        const titulo = typeof m.title === "string" && m.title.trim() ? m.title.trim().slice(0, 60) : undefined;
+        const mae = typeof m.parentSessionId === "string" && m.parentSessionId ? m.parentSessionId : undefined;
+        const s = store.ensure(id, { agent: agentName, cwd, permissionMode, ...(titulo ? { title: titulo } : {}), ...(mae ? { parentSessionId: mae } : {}) });
+        if (typeof m.seed === "string" && m.seed.trim()) store.add(id, { role: "assistant", text: m.seed, ts: Date.now(), agent: "jarvis" });
         send({ t: "history", reqId: m.reqId, sessionId: id, title: s.title, agent: s.agent, cwd: s.cwd, writable: true, total: 0, messages: [], model: seed.model, effort: seed.effort, permissionMode: s.permissionMode });
         pushSessions();
+        return;
+      }
+      // O recado da mae do fan-out ("abri N conversas"). NAO e turno: nada vai para a IA, so entra
+      // no historico — sem isso, N conversas apareceriam na lista e a que as pediu nao teria linha
+      // nenhuma sobre elas.
+      if (m.t === "session_note" && typeof m.sessionId === "string" && typeof m.text === "string") {
+        if (store.get(m.sessionId) && m.text.trim()) { store.add(m.sessionId, { role: "assistant", text: m.text, ts: Date.now(), agent: "jarvis" }); pushSessions(); }
         return;
       }
       if (m.t === "readfile" && typeof m.path === "string") { send({ t: "filecontent", reqId: m.reqId, ...readProjectFile(m.path, m.cwd) }); return; }

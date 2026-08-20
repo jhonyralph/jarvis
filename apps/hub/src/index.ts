@@ -681,6 +681,28 @@ function gitRemoteUrl(cwd: string): Promise<string | undefined> {
  */
 const pendingGitRemote = new Map<string, { timer: NodeJS.Timeout; settle: (url?: string) => void }>();
 const GIT_REMOTE_TIMEOUT_MS = 4_000;
+/** Sessoes remotas criadas para o fan-out, esperando o `history` que confirma o id daquela maquina. */
+const pendingRemoteSession = new Map<string, (sessionId?: string) => void>();
+const REMOTE_SESSION_TIMEOUT_MS = 15_000;
+/**
+ * Cria UMA subsessao na maquina da sessao-mae e devolve o id que ELA gerou.
+ *
+ * O fan-out nascia so no Hub porque as filhas saiam de `store.ensure` daqui. Para uma sessao remota
+ * isso poria a conversa da tarefa numa maquina que nao e a do projeto — o mesmo engano que a fatia C
+ * tirou da listagem. Com o protocolo 16 a maquina cria, nomeia, registra a mae e semeia a mensagem;
+ * o Hub so pede e anota o id.
+ */
+function createRemoteSession(rc: RunnerConn, input: { agent?: string; cwd?: string; title?: string; parentSessionId?: string; seed?: string }): Promise<string | undefined> {
+  if (!rc.ws) return Promise.resolve(undefined);
+  const reqId = "fan-" + randomUUID();
+  return new Promise((done) => {
+    const settle = (sessionId?: string): void => { if (!pendingRemoteSession.has(reqId)) return; pendingRemoteSession.delete(reqId); clearTimeout(timer); done(sessionId); };
+    const timer = setTimeout(() => settle(undefined), REMOTE_SESSION_TIMEOUT_MS);
+    (timer as { unref?: () => void }).unref?.();
+    pendingRemoteSession.set(reqId, settle);
+    if (!sendToRunner(rc, { t: "new", reqId, agent: input.agent, cwd: input.cwd, title: input.title, parentSessionId: input.parentSessionId, seed: input.seed })) settle(undefined);
+  });
+}
 function gitRemoteOf(runnerId: string, cwd: string): Promise<string | undefined> {
   if (!cwd) return Promise.resolve(undefined);
   if (runnerId === LOCAL_ID) return gitRemoteUrl(cwd);
@@ -2528,6 +2550,11 @@ function relayRunner(rc: RunnerConn, m: any): void {
       for (const snapshot of invalidated) removeSessionExecutionAndMemory(rc.id, snapshot.sessionId);
     }
     send(request.socket, { t: "deleted", sessionId: m.sessionId, ids: accepted, ok: accepted.length === request.sessionIds.length, okCount: accepted.length });
+    return;
+  }
+  // O `history` de uma criacao do fan-out volta para quem pediu (o Hub), nao para uma tela.
+  if (m.t === "history" && typeof m.reqId === "string" && pendingRemoteSession.has(m.reqId)) {
+    pendingRemoteSession.get(m.reqId)!(typeof m.sessionId === "string" ? m.sessionId : undefined);
     return;
   }
   if (m.t === "history") {
@@ -7186,9 +7213,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "task_fanout_plan" && typeof msg.sessionId === "string") {
       if (!requireOwner(ws)) return;
       const refuse = (error: string): void => { send(ws, { t: "task_fanout_plan", sessionId: msg.sessionId, ok: false, tasks: [], error }); };
-      // A recusa de máquina remota vem ANTES de decidir: interpretar primeiro e recusar na hora de
-      // abrir cobraria uma chamada de modelo por um pedido que nunca poderia ser atendido.
-      if (activeRunner(ws) !== LOCAL_ID) { refuse("abrir subsessões ainda só funciona em sessão desta máquina (o Hub)"); return; }
+      // A recusa vem ANTES de decidir: interpretar primeiro e recusar na hora de abrir cobraria uma
+      // chamada de modelo por um pedido que nunca poderia ser atendido. Máquina em protocolo < 16 não
+      // sabe criar a subsessão com nome, mãe e mensagem semeada — e criar aqui poria a conversa da
+      // tarefa numa máquina que não é a do projeto.
+      const fanRunner = activeRunner(ws);
+      if (fanRunner !== LOCAL_ID) {
+        const rcFan = runners.get(fanRunner);
+        const protoFan = rcFan?.info.protocolVersion || 1;
+        if (!rcFan?.ws) { refuse("a máquina desta sessão está offline — as subsessões nascem nela"); return; }
+        if (protoFan < RUNNER_CAPABILITY_SINCE.fanoutOnRunner) { refuse(`a máquina desta sessão está no protocolo ${protoFan}; abrir subsessões nela exige ${RUNNER_CAPABILITY_SINCE.fanoutOnRunner} — atualize-a`); return; }
+      }
       // O modelo é chamado UMA vez, e só por dentro de resolveFanoutTasks: é a porta única que faz o
       // "zero chamadas com item marcado" ser uma propriedade do código, não uma promessa do comentário.
       const interpret = async (prompt: string): Promise<string> => {
@@ -7216,35 +7251,51 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // lista que ninguém confirmou. O usuário revê e confirma de novo.
       if (!plan || Date.now() - plan.at > FANOUT_PLAN_TTL_MS) { fanoutPlans.delete(msg.planId); fail("o plano expirou — confirme de novo quantas subsessões abrir"); return; }
       fanoutPlans.delete(msg.planId);   // um plano confirmado abre UMA vez (duplo clique não duplica sessão)
-      const parent = store.get(plan.sessionId);
-      // Só na máquina do Hub: a sessão de um runner remoto vive no disco DELE, e criar a filha aqui
-      // colocaria a subsessão numa máquina que não é a do projeto — o engano que a fatia C tirou da
-      // listagem. Recusa com motivo é melhor que abrir no lugar errado.
-      if (plan.runnerId !== LOCAL_ID) { fail("abrir subsessões ainda só funciona em sessão desta máquina (o Hub)"); return; }
+      const remoto = plan.runnerId !== LOCAL_ID;
+      const rcPlan = remoto ? runners.get(plan.runnerId) : undefined;
+      if (remoto && !rcPlan?.ws) { fail("a máquina desta sessão está offline — as subsessões nascem nela"); return; }
+      if (remoto && (rcPlan!.info.protocolVersion || 1) < RUNNER_CAPABILITY_SINCE.fanoutOnRunner) { fail("a máquina desta sessão está antiga demais para abrir subsessões — atualize-a"); return; }
+      // A sessão-mãe vive no disco de QUEM a roda: no Hub, no store daqui; num runner, no dele.
+      const parent = remoto ? runnerSessionState.get(plan.runnerId)?.get(plan.sessionId) : store.get(plan.sessionId);
       if (!parent) { fail("a sessão de origem não existe mais"); return; }
-      if (store.isHidden(plan.sessionId)) { fail("sessão interna não abre subsessões"); return; }
-      const cwd = parent.cwd || CWD;
+      if (!remoto && store.isHidden(plan.sessionId)) { fail("sessão interna não abre subsessões"); return; }
+      const cwd = (parent as { cwd?: string }).cwd || (remoto ? "" : CWD);
+      const tituloMae = String((parent as { title?: string }).title || "");
+      const agenteMae = (parent as { agent?: string }).agent;
       const opened: Array<{ sessionId: string; title: string; tracker: string; key: string }> = [];
       for (const task of plan.res.tasks) {
-        const id = randomUUID();
-        // agent/cwd herdados da mãe: a subsessão é do MESMO projeto — deixar cair no default do Hub
-        // abriria a conversa da tarefa noutra pasta, com outra IA, sem ninguém pedir.
-        const child = store.ensure(id, { agent: parent.agent, cwd, title: task.title.slice(0, 60), parentSessionId: plan.sessionId });
-        store.add(id, { role: "assistant", text: fanoutSeedMessage(task, plan.res.origin || "selection", parent.title), ts: Date.now(), agent: "jarvis" });
-        opened.push({ sessionId: id, title: child.title, tracker: task.tracker, key: task.key });
+        // agent/cwd herdados da mãe: a subsessão é do MESMO projeto — deixar cair no default abriria
+        // a conversa da tarefa noutra pasta, com outra IA, sem ninguém pedir.
+        const titulo = task.title.slice(0, 60);
+        const semente = fanoutSeedMessage(task, plan.res.origin || "selection", tituloMae);
+        if (remoto) {
+          const id = await createRemoteSession(rcPlan!, { agent: agenteMae, cwd, title: titulo, parentSessionId: plan.sessionId, seed: semente });
+          // Uma que não nasceu não vira silêncio: as que nasceram seguem, e o total dirá a diferença.
+          if (id) opened.push({ sessionId: id, title: titulo, tracker: task.tracker, key: task.key });
+        } else {
+          const id = randomUUID();
+          const child = store.ensure(id, { agent: agenteMae, cwd, title: titulo, parentSessionId: plan.sessionId });
+          store.add(id, { role: "assistant", text: semente, ts: Date.now(), agent: "jarvis" });
+          opened.push({ sessionId: id, title: child.title, tracker: task.tracker, key: task.key });
+        }
       }
+      if (remoto && !opened.length) { fail("a máquina não conseguiu abrir nenhuma subsessão"); return; }
       // A mãe registra o que abriu. Sem isso, N conversas aparecem na lista e o histórico de quem as
       // pediu não tem nenhuma linha sobre elas. Vai por `broadcast` (e não só para quem pediu) porque
       // o recado é da CONVERSA: quem estiver com ela aberta noutro aparelho precisa ver na hora.
       if (opened.length) {
         const at = Date.now();
         const text = fanoutParentMessage(plan.res, opened);
-        store.add(plan.sessionId, { role: "assistant", text, ts: at, agent: "jarvis" });
+        // O recado é da CONVERSA, e ela mora onde roda: no Hub entra no store daqui; num runner, o
+        // `session_note` anexa no disco dele. Gravar sempre aqui deixaria a mãe remota sem nenhuma
+        // linha sobre as N conversas que ela pediu.
+        if (remoto) sendToRunner(rcPlan!, { t: "session_note", sessionId: plan.sessionId, text });
+        else store.add(plan.sessionId, { role: "assistant", text, ts: at, agent: "jarvis" });
         broadcast(plan.sessionId, { t: "message", message: { sessionId: plan.sessionId, role: "assistant", text, ts: at, agent: "jarvis" } });
       }
-      auth.audit("task_fanout", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${plan.sessionId}: ${opened.length} subsessão(ões) · ${plan.res.origin}` });
+      auth.audit("task_fanout", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: plan.runnerId, detail: `${plan.sessionId}: ${opened.length} subsessão(ões) · ${plan.res.origin}` });
       pushSessions();
-      send(ws, { t: "task_fanout_opened", ok: true, sessionId: plan.sessionId, runnerId: LOCAL_ID, origin: plan.res.origin, sessions: opened, interpretedFrom: plan.res.interpretedFrom });
+      send(ws, { t: "task_fanout_opened", ok: true, sessionId: plan.sessionId, runnerId: plan.runnerId, origin: plan.res.origin, sessions: opened, interpretedFrom: plan.res.interpretedFrom });
       return;
     }
     if (msg.t === "task_meta_get" && typeof msg.tracker === "string" && typeof msg.key === "string") {

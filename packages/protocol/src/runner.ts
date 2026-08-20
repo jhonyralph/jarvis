@@ -20,7 +20,7 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
  *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
  *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
  *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
-export const RUNNER_PROTOCOL_VERSION = 15;
+export const RUNNER_PROTOCOL_VERSION = 16;
 
 /**
  * Em qual versão cada CAPACIDADE entrou. Comparar com número solto espalha a regra pelo código, e
@@ -34,6 +34,7 @@ export const RUNNER_CAPABILITY_SINCE = {
   /** configurar o task-mcp.json pela tela */ taskMcpConfig: 13,
   /** criar tarefa na fonte da própria máquina */ taskSourceWrite: 14,
   /** o CORPO do updater vem do Hub, conferido por hash (UPD-02) */ updaterFromHub: 15,
+  /** abrir subsessoes na MAQUINA da sessao, e nao so no Hub */ fanoutOnRunner: 16,
 } as const;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
@@ -324,7 +325,13 @@ export type HubToRunner =
    *  servidor (`server`) — a receita (comando, env, segredo) vive na allowlist do disco de lá. */
   | { t: "task_mcp_list"; reqId: string; sessionId: string; server?: string; refresh?: boolean }
   /** create a fresh managed session on the runner (reply: history with the new id) */
-  | { t: "new"; reqId: string; agent?: string; cwd?: string; permissionMode?: PermissionMode }
+  /** `title`, `parentSessionId` e `seed` existem para o fan-out: a subsessao nasce ja com nome, com
+   *  a mae registrada e com a mensagem que explica de que tarefa ela veio. Sem eles, o Hub teria de
+   *  criar a sessao no PROPRIO disco — e a conversa nasceria numa maquina que nao e a do projeto. */
+  | { t: "new"; reqId: string; agent?: string; cwd?: string; permissionMode?: PermissionMode; title?: string; parentSessionId?: string; seed?: string }
+  /** Anexa uma mensagem a uma sessao que JA existe naquela maquina (o recado da mae do fan-out).
+   *  Nao e um turno: nada e enviado para a IA, so entra no historico. */
+  | { t: "session_note"; sessionId: string; text: string }
   /** folder browser for the "new conversation" dialog (reply: dirs) */
   | { t: "listdir"; reqId: string; path?: string; files?: boolean }
   /** change agent/cwd of a not-yet-started session (reply: history) */
