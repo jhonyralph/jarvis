@@ -149,6 +149,21 @@ test("old/offline runners retain an update until restart and commit verification
     assert.match(String(afterLoop[loopId].lastError), /círculo/);
     looping.ws.close();
 
+    // A guarda "a máquina já contém o alvo?" tem um jeito silencioso de dar errado: invertida, ela
+    // conclui que TODA máquina atrasada já tem o alvo e para de entregar — o Hub ficaria MUDO em vez
+    // de em círculo, que é o defeito pior porque não deixa rastro. Uma máquina em HEAD~1 (commit real,
+    // que este Hub conhece, ao contrário dos "old0000" dos outros casos) tem de continuar recebendo.
+    const behindId = "runner-behind-e2e";
+    const anterior = (await pExecFile("git", ["rev-parse", "--short", "HEAD~1"], { cwd: root })).stdout.trim();
+    const quarentena = await connectRunner(port, { runnerId: behindId, host: "atrasado-old", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION - 1, commit: anterior });
+    const pedido = await quarentena.box.take((m) => m.t === "update");
+    quarentena.ws.close(); await new Promise((r) => setTimeout(r, 150));
+    const atrasado = await connectRunner(port, { runnerId: behindId, host: "atrasado", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION, commit: anterior });
+    await atrasado.box.take((m) => m.t === "welcome");
+    const reentrega = await atrasado.box.take((m) => m.t === "update");
+    assert.equal(reentrega.requestId, pedido.requestId, "estar ATRÁS do alvo não pode ser confundido com estar à frente dele");
+    atrasado.ws.close();
+
     const future = await connectRunner(port, { runnerId: "runner-future-e2e", host: "future", os: "test", agents: ["mock"], protocolVersion: RUNNER_PROTOCOL_VERSION + 1, commit: first.targetCommit });
     const rejected = await future.box.take((m) => m.t === "reject" || m.t === "update");
     assert.equal(rejected.t, "reject", "a newer runner protocol must never be auto-downgraded");

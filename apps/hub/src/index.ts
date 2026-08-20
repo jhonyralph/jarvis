@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, RUNNER_CAPABILITY_SINCE, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -1640,6 +1640,8 @@ const commitMatches = (actual: string, target: string) => { const a = (actual ||
 let updateStatus: any = { supported: true, behind: 0 };
 async function refreshUpdate(doBroadcast = true): Promise<void> {
   try { updateStatus = await updateCheck(UPDATE_ROOT, true); } catch (e: any) { updateStatus = { supported: false, error: String(e?.message ?? e) }; }
+  // O fetch pode ter trazido o commit em que alguma máquina está: "não sei" de antes vira resposta.
+  runnerHasTargetCache.clear();
   if (doBroadcast) broadcastAll({ t: "update_status", status: updateStatus });
 }
 /** Apply the Hub update and restart (via the service manager) so the new code takes effect. Drains
@@ -2022,7 +2024,22 @@ function recordRunnerUpdateReport(runnerId: string, r: { requestId?: string; pha
   // phoning home every few seconds can't spam notifications.
   if (failed && prevPhase !== phase) notifyEvent("machine", `${label}: falha na atualização (${phase})`, detail || "O updater reportou falha antes de concluir.");
 }
-function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
+// "A máquina já contém o alvo?" — a resposta custa um `git merge-base` e só muda quando o commit
+// dela ou o alvo mudam; um `fetch` novo pode mudar o que este checkout conhece, e por isso
+// refreshUpdate limpa o cache. O Set evita duas perguntas em voo para a mesma máquina (registro e
+// varredura de retarget podem cair aqui juntos).
+const runnerHasTargetCache = new Map<string, boolean | null>();
+const verifyingRunnerUpdate = new Set<string>();
+async function runnerAlreadyHasTarget(runnerCommit: string, target: string): Promise<boolean | null> {
+  const chave = `${runnerCommit}->${target}`;
+  const conhecido = runnerHasTargetCache.get(chave);
+  if (conhecido !== undefined) return conhecido;
+  const resposta = await commitContains(UPDATE_ROOT, target, runnerCommit);
+  if (runnerHasTargetCache.size > 200) runnerHasTargetCache.clear();
+  runnerHasTargetCache.set(chave, resposta);
+  return resposta;
+}
+async function verifyOrDeliverRunnerUpdate(rc: RunnerConn): Promise<void> {
   const pending = normalizePendingRunnerUpdate(rc); if (!pending) return;
   if (pending.state === "blocked") return;
   const receipt = rc.info.updateReceipt, clean = !!rc.info.commit && !rc.info.commit.includes("+dirty"), changedCommit = !!pending.fromCommit && !commitMatches(pending.fromCommit, pending.targetCommit);
@@ -2031,6 +2048,39 @@ function verifyOrDeliverRunnerUpdate(rc: RunnerConn): void {
     delete pendingRunnerUpdates[rc.id]; savePendingRunnerUpdates();
     auth.audit("update_machine_verified", { runnerId: rc.id, detail: `${runnerLabels[rc.id] || rc.info.host || rc.id}: ${rc.info.commit || pending.targetCommit}` });
     updateMachineNotice(rc.id, { ok: true, verified: true, state: "verified", behind: 1, log: `reiniciou e reconectou em ${rc.info.commit || pending.targetCommit}` }); flushQueuesForRunner(rc.id); return;
+  }
+  // Entregar um alvo que a máquina JÁ ULTRAPASSOU é pedir para ela voltar: o updater dela recusa,
+  // faz rollback e o ciclo recomeça — mas só depois de já tê-la derrubado (84 ciclos na Luby, com o
+  // Hub em 911b9e9 e ela em 9f2697c). O Hub tem o repositório e sabe responder isso ANTES de mandar.
+  const commitDela = (rc.info.commit || "").replace("+dirty", "");
+  if (commitDela && !commitMatches(commitDela, pending.targetCommit)) {
+    if (verifyingRunnerUpdate.has(rc.id)) return;
+    verifyingRunnerUpdate.add(rc.id);
+    let temAlvo: boolean | null = null;
+    try { temAlvo = await runnerAlreadyHasTarget(commitDela, pending.targetCommit); }
+    finally { verifyingRunnerUpdate.delete(rc.id); }
+    // O mundo pode ter mudado enquanto o git respondia: decidir sobre um pedido que não existe mais
+    // seria agir sobre um alvo sem sujeito.
+    const atual = pendingRunnerUpdates[rc.id];
+    if (!atual || atual.requestId !== pending.requestId) return;
+    const decisao = runnerUpdateTargetDecision({ runnerHasTarget: temAlvo, clean, protocolMatches: (rc.info.protocolVersion || 1) === RUNNER_PROTOCOL_VERSION });
+    const label = runnerLabels[rc.id] || rc.info.host || rc.id;
+    if (decisao.clear) {
+      delete pendingRunnerUpdates[rc.id]; savePendingRunnerUpdates();
+      const detalhe = `${commitDela} ${decisao.reason} (${atual.targetCommit})`;
+      auth.audit("update_machine_verified", { runnerId: rc.id, detail: `${label}: ${detalhe}` });
+      log.info("update_target_ahead", { runnerId: rc.id, label, runnerCommit: commitDela, targetCommit: atual.targetCommit });
+      updateMachineNotice(rc.id, { ok: true, verified: true, state: "verified", behind: 0, log: `está em ${commitDela}, que ${decisao.reason}` });
+      flushQueuesForRunner(rc.id); return;
+    }
+    if (!decisao.deliver) {
+      if (atual.lastNote !== decisao.reason) {
+        atual.lastNote = decisao.reason; savePendingRunnerUpdates();
+        log.warn("update_target_ahead_held", { runnerId: rc.id, label, runnerCommit: commitDela, targetCommit: atual.targetCommit, motivo: decisao.reason });
+        updateMachineNotice(rc.id, { ok: false, state: atual.state, queued: true, log: decisao.reason });
+      }
+      return;
+    }
   }
   deliverPendingRunnerUpdate(rc, { retryNow: true });
 }
@@ -2041,7 +2091,7 @@ function sweepRetargetPendingUpdates(): void {
   for (const id of Object.keys(pendingRunnerUpdates)) {
     const rc = runners.get(id);
     if (!rc) continue;
-    if (rc.ws && rc.ws.readyState === WebSocket.OPEN) verifyOrDeliverRunnerUpdate(rc);
+    if (rc.ws && rc.ws.readyState === WebSocket.OPEN) void verifyOrDeliverRunnerUpdate(rc);
     else normalizePendingRunnerUpdate(rc);
   }
 }
@@ -2967,7 +3017,7 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       broadcastMachines();
       const registered = runners.get(rid)!;
       if (info.updateResult && typeof info.updateResult.requestId === "string") completePendingRunnerUpdate(registered, info.updateResult);
-      verifyOrDeliverRunnerUpdate(registered);
+      void verifyOrDeliverRunnerUpdate(registered);
       deliverPendingFrameworkPublish(registered); // a reconnecting machine picks up any queued Framework publish
       return;
     }

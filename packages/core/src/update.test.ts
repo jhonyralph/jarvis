@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autonomousUpdateAttempt, gitErrorDetail, resolveCommit, runnerSelfUpdateDecision, runnerUpdateDeliveryDecision, UPDATE_MAX_DELIVERIES, updateApply, updateCheck, updatePreflight, updateRollback } from "./update.js";
+import { autonomousUpdateAttempt, commitContains, gitErrorDetail, resolveCommit, runnerUpdateTargetDecision, runnerSelfUpdateDecision, runnerUpdateDeliveryDecision, UPDATE_MAX_DELIVERIES, updateApply, updateCheck, updatePreflight, updateRollback } from "./update.js";
 
 const run = (cwd: string, command: string, args: string[] = []): string => String(execFileSync(command, args, { cwd, windowsHide: true, encoding: "utf8" })).trim();
 const git = (cwd: string, ...args: string[]): string => run(cwd, "git", args);
@@ -188,4 +188,56 @@ test("contador ausente ou inválido conta como zero, e não trava a primeira ent
   assert.equal(runnerUpdateDeliveryDecision({}).deliver, true);
   assert.equal(runnerUpdateDeliveryDecision({ deliveries: -3 }).deliver, true);
   assert.equal(runnerUpdateDeliveryDecision({ deliveries: Number.NaN }).deliver, true);
+});
+
+/* ── O Hub nao pode mandar uma maquina ANDAR PARA TRAS ────────────────────────────────────────────
+   Caso real (20/08): o Hub em 911b9e9 pediu 84 vezes que a Luby fosse para 911b9e9 enquanto ela ja
+   estava em 9f2697c — um commit mais novo. O updater dela recusa ("checkout possui 1 commit(s) fora
+   do alvo solicitado"), faz rollback, e o ciclo recomeca; o rollback de um deles ainda estourou
+   ENOTEMPTY no npm ci. Ela so consegue reclamar DEPOIS de ter sido derrubada — quem podia responder
+   antes era o Hub, que tem o repositorio. */
+
+test("commitContains responde sobre o histórico — e diz 'não sei' em vez de chutar", async () => {
+  const base = mkdtempSync(join(tmpdir(), "jarvis-ancestor-"));
+  const repo = join(base, "repo");
+  try {
+    mkdirSync(repo); git(repo, "init", "-b", "main");
+    git(repo, "config", "user.name", "Jarvis Test"); git(repo, "config", "user.email", "jarvis@example.invalid");
+    writeFileSync(join(repo, "a.txt"), "1"); git(repo, "add", "."); git(repo, "commit", "-m", "c1");
+    const c1 = git(repo, "rev-parse", "HEAD");
+    writeFileSync(join(repo, "a.txt"), "2"); git(repo, "add", "."); git(repo, "commit", "-m", "c2");
+    const c2 = git(repo, "rev-parse", "HEAD");
+
+    assert.equal(await commitContains(repo, c1, c2), true, "c2 veio depois de c1");
+    assert.equal(await commitContains(repo, c2, c1), false, "e o contrário não é verdade");
+    assert.equal(await commitContains(repo, c1, c1), true, "um commit contém a si mesmo");
+    // O caso que importa: afirmar "não contém" sobre um commit que este checkout NÃO TEM seria
+    // inventar um fato — e o Hub decidiria bloquear a atualização em cima dessa invenção.
+    assert.equal(await commitContains(repo, c1, "9".repeat(40)), null);
+    assert.equal(await commitContains(repo, "9".repeat(40), c2), null);
+    assert.equal(await commitContains(repo, c1, "não-é-um-commit"), null);
+  } finally { try { rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* Windows solta os handles do git com atraso */ } }
+});
+
+test("máquina à frente do alvo: o Hub não entrega o retrocesso", () => {
+  const limpa = runnerUpdateTargetDecision({ runnerHasTarget: true, clean: true, protocolMatches: true });
+  assert.equal(limpa.deliver, false);
+  assert.equal(limpa.clear, true, "ela TEM o código que o pedido existia para levar — o pedido acabou");
+
+  const suja = runnerUpdateTargetDecision({ runnerHasTarget: true, clean: false, protocolMatches: true });
+  assert.equal(suja.deliver, false, "entregar só produziria a recusa do updater e mais um rollback");
+  assert.equal(suja.clear, false, "mas não se declara verificada uma máquina com trabalho local solto");
+  assert.match(suja.reason, /alterações locais/);
+
+  const protocolo = runnerUpdateTargetDecision({ runnerHasTarget: true, clean: true, protocolMatches: false });
+  assert.equal(protocolo.deliver, false);
+  assert.equal(protocolo.clear, false, "protocolo divergente segue sendo pendência real, mesmo com o código lá");
+});
+
+test("não saber onde a máquina está sai pelo caminho de hoje, não pelo bloqueio", () => {
+  // Travar por desconhecimento deixaria sem atualização justamente a máquina que está num commit
+  // que este checkout ainda não buscou — trocaria um loop visível por uma máquina esquecida.
+  assert.equal(runnerUpdateTargetDecision({ runnerHasTarget: null, clean: true, protocolMatches: true }).deliver, true);
+  assert.equal(runnerUpdateTargetDecision({ runnerHasTarget: false, clean: true, protocolMatches: true }).deliver, true);
+  assert.equal(runnerUpdateTargetDecision({ runnerHasTarget: null, clean: false, protocolMatches: false }).clear, false);
 });

@@ -85,6 +85,52 @@ export async function resolveCommit(root: string, ref: string): Promise<string> 
   catch { return ""; }
 }
 
+/** `true` quando `ancestor` esta contido no historico de `descendant` (ou e ele mesmo). `null`
+ *  quando ESTE checkout nao conhece um dos dois — ali nao da para afirmar nada, e responder "nao"
+ *  seria inventar um fato sobre um repositorio que nao temos inteiro. */
+export async function commitContains(root: string, ancestor: string, descendant: string): Promise<boolean | null> {
+  const a = await resolveCommit(root, ancestor), d = await resolveCommit(root, descendant);
+  if (!a || !d) return null;
+  if (a === d) return true;
+  // `merge-base --is-ancestor` sai 1 para "nao" e outros codigos para erro de verdade: confundir os
+  // dois transformaria uma falha de git em "a maquina nao tem o alvo", que e uma afirmacao.
+  try { await git(root, ["merge-base", "--is-ancestor", a, d]); return true; }
+  catch (e: any) { return e?.code === 1 ? false : null; }
+}
+
+/**
+ * O Hub esta prestes a entregar um alvo. A maquina ja passou dele?
+ *
+ * Caso real (20/08): o Hub ficou pedindo 84 vezes que a Luby fosse para `911b9e9` enquanto ela ja
+ * estava em `9f2697c`, um commit MAIS NOVO. O updater dela recusa corretamente ("checkout possui 1
+ * commit(s) fora do alvo solicitado" — updateApply acima), faz rollback, e o ciclo recomeca. Só que
+ * ela so consegue reclamar DEPOIS de ter sido derrubada: quem podia ter respondido antes era o Hub,
+ * que tem o repositorio em maos.
+ *
+ * `runnerHatTarget === null` (o Hub nao conhece o commit dela) sai pelo caminho de hoje de proposito:
+ * travar a entrega por desconhecimento deixaria sem atualizacao justamente a maquina que esta em um
+ * commit que este checkout ainda nao buscou.
+ */
+export function runnerUpdateTargetDecision(input: {
+  /** a maquina ja contem o commit alvo? `null` = o Hub nao sabe */
+  runnerHasTarget: boolean | null;
+  /** checkout dela sem alteracoes locais */
+  clean: boolean;
+  protocolMatches: boolean;
+}): { deliver: boolean; clear: boolean; reason: string } {
+  if (input.runnerHasTarget !== true) return { deliver: true, clear: false, reason: "" };
+  // Contem o alvo, limpa e no protocolo certo: ela TEM o codigo que o pedido existia para levar.
+  // Aqui nao cabe a exigencia de recibo que o reparo de mesmo-SHA faz — ali a duvida e se o update
+  // chegou a rodar; aqui a maquina esta num commit DIFERENTE e mais novo, entao ela andou.
+  if (input.clean && input.protocolMatches) return { deliver: false, clear: true, reason: "já contém o alvo — não há o que entregar" };
+  return {
+    deliver: false, clear: false,
+    reason: input.clean
+      ? "está à frente do alvo, mas em outro protocolo — entregar seria pedir para ela voltar"
+      : "está à frente do alvo e com alterações locais — entregar seria pedir para ela voltar e descartá-las",
+  };
+}
+
 async function dependencyManifestsChanged(root: string, from: string, to: string): Promise<boolean> {
   const files = await git(root, [
     "diff", "--name-only", from, to, "--",
