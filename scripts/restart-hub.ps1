@@ -43,6 +43,22 @@ function Set-Status([string]$s) {
   try { "$([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))  $s" | Set-Content -Encoding UTF8 -Path $status } catch { }
 }
 
+# Se o Hub virou SERVICO (scripts\install-service.ps1), o SCM e quem manda: Restart-Service para,
+# sobe e ja aplica a politica de recuperacao. Toda a ginastica abaixo -- matar a porta, achar
+# supervisor, disparar tarefa -- existe porque o Agendador de Tarefas nao para o Hub de verdade.
+$svc = Get-Service -Name 'JarvisHub' -ErrorAction SilentlyContinue
+if ($svc) {
+  Set-Status 'reiniciando o servico JarvisHub...'
+  try { Restart-Service -Name 'JarvisHub' -Force -ErrorAction Stop } catch { Set-Status "FALHOU ao reiniciar o servico: $($_.Exception.Message)"; exit 1 }
+  for ($i = 0; $i -lt 60; $i++) {
+    Start-Sleep -Seconds 2
+    $c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    if ($c) { Set-Status "OK: Hub no ar na porta $port (pid $($c.OwningProcess), servico)"; exit 0 }
+  }
+  Set-Status "FALHOU: servico JarvisHub reiniciado mas nada escutando na $port em ~120s. Veja ~/.jarvis/hub.log"
+  exit 1
+}
+
 Set-Status 'iniciando: derrubando o Hub atual na porta 4577...'
 $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
 if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }

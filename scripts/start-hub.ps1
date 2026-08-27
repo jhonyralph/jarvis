@@ -4,6 +4,10 @@
 # matando a porta 4577 pra aplicar código novo — o loop ressuscita em segundos.
 # Como tsx roda direto do source, o restart já pega o código atualizado. Instância
 # única garantida pelo teste da porta 4577. Log em ~/.jarvis/hub.log.
+# -Once: roda o corpo UMA vez e retorna, para quem supervisiona ser o SCM (serviço do Windows) em
+# vez do `while($true)` daqui. Ver ops/windows-service/JarvisService.cs. Sem o parâmetro, o
+# comportamento antigo (Agendador de Tarefas + laço próprio) continua idêntico.
+param([switch]$Once)
 $ErrorActionPreference = 'Continue'
 $root = Split-Path $PSScriptRoot -Parent            # ...\jarvis
 $hub  = Join-Path $root 'apps\hub'
@@ -63,8 +67,8 @@ Set-Location $hub
 # pro npm se o tsx não estiver hoisted na raiz.
 $tsx = Join-Path $root 'node_modules\tsx\dist\cli.mjs'
 # Loop de supervisão: NUNCA sai. Cada iteração (re)sobe o Hub em foreground. Quando o node encerra,
-# registra e reinicia após um pequeno backoff.
-while ($true) {
+# registra e reinicia após um pequeno backoff. Com -Once o laço dá UMA volta: quem religa é o SCM.
+do {
   Import-HubEnv   # relê hub.env a cada subida → mudanças de env valem no próximo restart
   # Limpa STT órfão da instância anterior: o node é morto com -Force (no restart) e o Windows NÃO
   # mata o filho Python (whisper_service), que fica segurando ~1.5GB do modelo. Sem isso, cada
@@ -90,6 +94,7 @@ while ($true) {
   # PS (ex.: um logger próprio do app gravando UTF-8), sem reintroduzir esse travamento.
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\hub\src\index.ts" *>> $log }
   else { Log 'tsx nao encontrado na raiz — caindo pro npm'; & npm.cmd start *>> $log }
+  if ($Once) { Log 'hub encerrou — devolvendo ao SCM'; break }
   Log 'hub encerrou — reiniciando em 3s'
   Start-Sleep -Seconds 3
-}
+} while ($true)
