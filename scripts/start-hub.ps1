@@ -70,7 +70,7 @@ while ($true) {
   # mata o filho Python (whisper_service), que fica segurando ~1.5GB do modelo. Sem isso, cada
   # restart deixa um órfão e a RAM enche. Rodar aqui garante um único STT por subida.
   Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match 'whisper_service' } |
+    Where-Object { $_.CommandLine -match 'whisper_service|piper_service|embed_service|voice_cli' } |
     ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Log "STT orfao encerrado (pid $($_.ProcessId))" } catch {} }
   # Reaper de agentes órfãos: um turno cujo processo PAI (o Hub) morreu segue rodando e CUSTANDO crédito
   # — o abort só dispara com o pai vivo, e nada mais o mata (foi o codex de 3 dias achado na análise).

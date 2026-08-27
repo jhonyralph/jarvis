@@ -150,7 +150,6 @@ export function focusStep(run: WorkflowRun, stepId: string, opts: { now: number 
   const out = clone(run);
   const target = out.steps.find((s) => s.id === stepId);
   if (!target) return out;
-  if (target.state !== "pending") { target.state = "pending"; delete target.at; delete target.by; }
   out.currentStepId = stepId;
   if (out.status === "done") out.status = "active";
   out.updatedAt = opts.now;

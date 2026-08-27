@@ -2071,7 +2071,7 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, signal?: A
     p.on("close", (code) => {
       if (wasAborted()) reject(new Error(ABORTED));
       else if (code === 0) resolve(out);
-      else reject(new Error(err.trim() || out.trim() || `${cmd} exited with ${code}`));
+      else reject(new Error(cliErrorMessage(err.trim() || out.trim(), `${cmd} exited with ${code}`)));
     });
   });
 }
@@ -2105,7 +2105,7 @@ function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLi
       if (wasAborted()) { reject(new Error(ABORTED)); return; }
       if (buf.trim()) onLine(buf);
       if (code === 0) resolve(out);
-      else reject(new Error(err.trim() || out.trim() || `${cmd} exited with ${code}`));
+      else reject(new Error(cliErrorMessage(err.trim() || out.trim(), `${cmd} exited with ${code}`)));
     });
   });
 }

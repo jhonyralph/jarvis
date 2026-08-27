@@ -50,7 +50,7 @@ if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyCo
 # STT órfão: o Python (whisper_service) é filho do node do hub; matar o node com -Force NÃO mata o
 # filho no Windows, e ele fica segurando ~1.5GB do modelo. Encerra o órfão (o novo hub sobe o seu).
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -match 'whisper_service' } |
+  Where-Object { $_.CommandLine -match 'whisper_service|piper_service|embed_service|voice_cli' } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 # Garante que HÁ um supervisor de pé para religar o node. Ordem de preferência:

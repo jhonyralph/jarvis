@@ -188,15 +188,54 @@ function stableTitle(id: string, latestAi: string, fallback: string): string {
   return next;
 }
 
+/** Título nativo JÁ conhecido, SEM tocar no transcript. Existe porque a lista de sessões chamava
+ *  `nativeHistory` — que faz `readFileSync` do jsonl INTEIRO (até 29 MB) — para usar UM campo: eram
+ *  417 MB relidos e ~4,5 s por montagem da lista, multiplicado por cliente conectado e cobrado duas
+ *  vezes por turno. O cache já é alimentado por `stableTitle` sempre que a sessão é de fato aberta;
+ *  sem entrada, quem chama fica com o título que já tinha. */
+export function nativeTitleCached(id: string): string | undefined {
+  return titleText(loadTitles()[id] || "") || undefined;
+}
+
+/**
+ * Qual é o PROJETO de uma sessão nativa quando o `cwd` muda ao longo do arquivo.
+ *
+ * O Claude Code grava `cwd` em cada evento, e ele muda em dois casos bem diferentes:
+ *
+ *  - a conversa navegou para uma SUBPASTA do mesmo projeto (`ia-framework` → `ia-framework/cli`):
+ *    continua sendo o mesmo projeto, e trocar o rótulo aqui partiria o grupo da lista em dois;
+ *  - a sessão foi retomada em OUTRO projeto (`PriorityCustomer` → `pallium-app`): aí o projeto de
+ *    verdade é o novo — o antigo é só onde ela nasceu.
+ *
+ * Ficar com o primeiro (o que se fazia) mostrava o título mais recente ao lado do projeto mais
+ * antigo: a linha dizia "PriorityCustomer" com conteúdo de `pallium-app`. Pior que rótulo errado na
+ * lista, esse mesmo `cwd` é o que retoma a sessão e o que resolve a fonte de tarefas — trabalho real
+ * ia acontecer na pasta errada, em silêncio.
+ */
+export function resolveNativeCwd(first: string, last: string): string {
+  const a = String(first || "").trim(), b = String(last || "").trim();
+  if (!b) return a;
+  if (!a) return b;
+  const norm = (v: string): string => v.replace(/[\\/]+/g, "/").replace(/\/+$/, "");
+  // No Windows o caminho é case-insensitive; em FS sensível a caso, "Api" e "api" são pastas
+  // diferentes de verdade — comparar sempre em minúsculas juntaria projetos distintos lá.
+  const key = (v: string): string => (process.platform === "win32" ? norm(v).toLowerCase() : norm(v));
+  const ka = key(a), kb = key(b);
+  if (kb === ka) return a;
+  // Subpasta do mesmo projeto: a raiz continua sendo o projeto.
+  if (kb.startsWith(ka + "/")) return a;
+  return b;
+}
+
 function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
   const head = readHead(path);
   if (!head) return null;
   if (isClaudeSidechainOnlyHead(head)) return null;
   const id = basename(path).replace(/\.jsonl$/i, "");
-  let firstUser = "", cwd = "";
+  let firstUser = "", cwd = "", lastCwd = "";
   eachLine(head, (o) => {
     if (o.type === "user" || o.type === "assistant") {
-      if (!cwd && typeof o.cwd === "string") cwd = o.cwd;
+      if (typeof o.cwd === "string" && o.cwd) { if (!cwd) cwd = o.cwd; lastCwd = o.cwd; }
       if (!firstUser && o.type === "user" && typeof o.message?.content === "string") {
         const t = o.message.content.trim();
         if (t && !isInjected(t)) firstUser = t;
@@ -210,9 +249,12 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
   eachLine(readTail(path), (o) => {
     if (o.type === "ai-title" && o.aiTitle) aiTitle = o.aiTitle;
     else if (o.type === "custom-title" && o.customTitle) customTitle = o.customTitle;
+    // O `cwd` mais recente vive na mesma cauda que o título — ler os dois da mesma passada evita que
+    // a linha mostre título novo com projeto velho, que era exatamente o sintoma.
+    else if ((o.type === "user" || o.type === "assistant") && typeof o.cwd === "string" && o.cwd) lastCwd = o.cwd;
   });
   const title = stableTitle("claude:" + id, aiTitle, customTitle || firstUser);
-  return { id: "claude:" + id, title, agent: "claude-code", cwd, count: 0, source: "native" };
+  return { id: "claude:" + id, title, agent: "claude-code", cwd: resolveNativeCwd(cwd, lastCwd), count: 0, source: "native" };
 }
 
 function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
@@ -232,6 +274,14 @@ function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
     }
   });
   if (internalSubagent) return null;
+  // Mesma regra do Claude: o Codex grava o `cwd` no `session_meta` (nascimento) e, em versões novas,
+  // também em `turn_context` a cada turno. Retomada em outro projeto tem que mudar o projeto.
+  let lastCwd = "";
+  eachLine(readTail(path), (o) => {
+    const c = o?.payload?.cwd;
+    if (typeof c === "string" && c) lastCwd = c;
+  });
+  cwd = resolveNativeCwd(cwd, lastCwd);
   if (cwd && /[\\/]\.jarvis[\\/]oneshot/i.test(cwd)) return null; // Jarvis's own one-shot (summary/digest/voice) — not a real session
   if (!id) {
     const m = basename(path).match(/([0-9a-f]{8}-[0-9a-f-]+)\.jsonl$/i);
@@ -867,6 +917,6 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
     ? stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text || "Sessão Claude")
     : (codexTitle || titleText(messages.find((m) => m.role === "user")?.text || "") || "Sessão Codex");
   const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title, messages, inputTokens: f.claude ? inputContextOf(lastUsage) : codexInput, contextWindowTokens: !f.claude ? Number(lastUsage?.model_context_window) || undefined : undefined, model: lastModel || undefined, effort: lastEffort || undefined };
-  if (stamp) { if (histCache.size > 24) histCache.clear(); histCache.set(ckey, { key: stamp, data }); }
+  if (stamp) { histCache.delete(ckey); if (histCache.size >= 24) histCache.delete(histCache.keys().next().value as string); histCache.set(ckey, { key: stamp, data }); }
   return data;
 }

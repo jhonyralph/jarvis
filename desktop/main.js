@@ -12,6 +12,8 @@
 
 const { app, BrowserWindow, shell, ipcMain, webContents } = require("electron")
 const path = require("node:path")
+const http = require("node:http")
+const { spawn } = require("node:child_process")
 const { registerBrowserIpc } = require("./src/browser/register-browser-ipc")
 const { registerUpdaterIpc } = require("./src/updater/register-updater-ipc")
 const { createTray } = require("./src/control/tray")
@@ -50,11 +52,40 @@ function quitApp() {
   app.quit()
 }
 
+// Falha de carga pintava a janela de `backgroundColor` e pronto: preto, para sempre, sem UMA palavra
+// — o unico sinal era um console.log do processo main, invisivel quando o app abre pelo atalho. Numa
+// maquina que NAO e a do Hub (a env vazia cai no loopback dela mesma) isso e garantido.
+let showingError = false
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])) }
+function showErrorPage(code, desc) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const dica = hubTarget.usedFallback
+    ? `<div class="hint"><b>Esta maquina esta usando o endereco padrao</b> porque <code>JARVIS_APP_HUB_URL</code> nao esta definida.
+       Se o Hub roda em OUTRA maquina, aponte o app para ela e reabra pelo tray:
+       <pre>powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1 -HubUrl "http://SEU-HUB:4577"</pre></div>`
+    : ""
+  const html = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Jarvis</title>
+    <style>body{margin:0;background:#0b0b0d;color:#e6e6e6;font:15px/1.6 system-ui,Segoe UI,sans-serif;
+    display:flex;align-items:center;justify-content:center;height:100vh}
+    .c{max-width:640px;padding:32px}h1{font-size:20px;margin:0 0 12px}
+    .u{color:#7ecbff;word-break:break-all}.e{color:#ff9b9b}
+    .hint{margin-top:20px;padding:14px;background:#17171b;border-left:3px solid #7ecbff;border-radius:4px;font-size:13px}
+    pre{white-space:pre-wrap;word-break:break-all;background:#0f0f12;padding:10px;border-radius:4px;font-size:12px}
+    .r{margin-top:18px;color:#8a8a8a;font-size:13px}</style>
+    <div class="c"><h1>Nao consegui falar com o Hub</h1>
+    <p>Tentei carregar <span class="u">${esc(HUB_URL)}</span></p>
+    <p class="e">Erro ${esc(code)}${desc ? " &mdash; " + esc(desc) : ""}</p>
+    ${dica}<p class="r">Continuo tentando sozinho. Assim que o Hub responder, esta tela sai.</p></div></html>`
+  showingError = true
+  mainWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html)).catch(() => {})
+}
+
 function scheduleReload() {
   if (reloadTimer) return
   reloadTimer = setTimeout(() => {
     reloadTimer = null
     if (mainWindow && !mainWindow.isDestroyed()) {
+      showingError = false
       mainWindow.loadURL(HUB_URL).catch(() => {})
     }
   }, reloadDelay)
@@ -108,11 +139,12 @@ function createWindow(show = true) {
   })
 
   mainWindow.webContents.on("did-finish-load", () => {
+    if (showingError) return          // a tela de erro nao conta como conexao: nao zera o backoff
     reloadDelay = RELOAD_BASE_MS // reset backoff once we're connected
   })
-  mainWindow.webContents.on("did-fail-load", (_e, errorCode, _desc, _url, isMainFrame) => {
+  mainWindow.webContents.on("did-fail-load", (_e, errorCode, desc, _url, isMainFrame) => {
     // -3 is ERR_ABORTED (e.g. a redirect) — not a real failure.
-    if (isMainFrame && errorCode !== -3) scheduleReload()
+    if (isMainFrame && errorCode !== -3) { showErrorPage(errorCode, desc); scheduleReload() }
   })
 
   // Closing the window HIDES it to the tray (Jarvis keeps running in the background); real quit is the
@@ -125,6 +157,27 @@ function createWindow(show = true) {
   })
 
   mainWindow.loadURL(HUB_URL).catch(() => scheduleReload())
+}
+
+// O app nunca subiu nada: so apontava para uma URL. Abrir o Jarvis sem Hub no ar nao serve para nada.
+// Quem cria o processo e o Agendador de Tarefas, entao o Hub NAO e filho do Electron e sobrevive ao
+// `app.quit()` por construcao — e nada aqui pode mata-lo na saida (ver `window-all-closed` no fim).
+function ensureHubUp() {
+  if (process.platform !== "win32") return           // so o Windows tem a tarefa JarvisHub
+  let host = ""
+  try { host = new URL(HUB_URL).hostname } catch { return }
+  if (!["127.0.0.1", "localhost", "::1"].includes(host)) return   // Hub remoto nao e nosso para subir
+  const req = http.get(`${HUB_URL.replace(/\/+$/, "")}/health`, { timeout: 1500 }, (res) => { res.resume() })
+  const start = () => {
+    try {
+      spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        "-Command", "Start-ScheduledTask -TaskName 'JarvisHub'"],
+        { detached: true, stdio: "ignore", windowsHide: true }).unref()
+      console.log("[jarvis] Hub fora do ar — disparei a tarefa JarvisHub")
+    } catch (e) { console.error("[jarvis] nao consegui disparar JarvisHub:", e && e.message) }
+  }
+  req.on("timeout", () => { req.destroy(); start() })
+  req.on("error", start)
 }
 
 // Single instance: pressing Windows→Jarvis (or launching again) focuses the running tray app instead
@@ -145,6 +198,7 @@ app.whenReady().then(() => {
     getWindow: () => mainWindow,
   })
   // Launched at login (or with --tray) → start hidden in the tray; otherwise show the window.
+  try { ensureHubUp() } catch (e) { console.error("[jarvis] ensureHubUp:", e && e.message) }   // fire-and-forget: nunca bloqueia a janela
   const startHidden = process.argv.includes("--tray") || app.getLoginItemSettings().wasOpenedAtLogin
   createWindow(!startHidden)
   try { tray = createTray({ showWindow, quit: quitApp }) } catch (e) { console.error("[jarvis] tray falhou:", e && e.message) }

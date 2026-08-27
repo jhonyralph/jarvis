@@ -33,7 +33,7 @@ import { retargetTarget } from "./update-retarget.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
-import { listNative, nativeHistory, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
+import { listNative, nativeHistory, nativeTitleCached, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
 import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, listProviderTasks, listProviderStates, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
@@ -1181,7 +1181,7 @@ function send(ws: WebSocket, obj: unknown): void {
 function broadcastOn(runnerId: string, sessionId: string, obj: unknown): void {
   const frame = obj && typeof obj === "object" && !Array.isArray(obj) ? { ...(obj as Record<string, unknown>), runnerId } : obj;
   const s = JSON.stringify(frame);
-  for (const c of clientsOn(runnerId)) if (c.readyState === c.OPEN && subs.get(c) === sessionId && canAccessSession(c, runnerId, sessionId)) c.send(s);
+  for (const c of clientsAuthorizedFor(runnerId)) if (c.readyState === c.OPEN && subs.get(c) === sessionId && canAccessSession(c, runnerId, sessionId)) c.send(s);
 }
 function broadcast(sessionId: string, obj: unknown): void { broadcastOn(LOCAL_ID, sessionId, obj); }
 /** to every UI client (skips runner sockets) */
@@ -1207,7 +1207,7 @@ function broadcastAskState(runnerId: string, sid: string, count: number | null, 
     ? { t: "ask_cleared", runnerId, sessionId: sid }
     : { t: "ask_pending", runnerId, sessionId: sid, count, at: at || Date.now() };
   const raw = JSON.stringify(frame);
-  for (const c of clientsOn(runnerId)) if (c.readyState === c.OPEN && canAccessSession(c, runnerId, sid)) c.send(raw);
+  for (const c of clientsAuthorizedFor(runnerId)) if (c.readyState === c.OPEN && canAccessSession(c, runnerId, sid)) c.send(raw);
 }
 function clearPendingAsk(runnerId: string, sid: string): void {
   const key = decisionKey(runnerId, sid), wasAsking = asking.delete(key);
@@ -1221,9 +1221,10 @@ function sendPendingAsk(ws: WebSocket, runnerId: string, sid: string): void {
   if (asking.has(key)) send(ws, { t: "asking", runnerId, sessionId: sid, on: true });
   const pa = pendingAsks.get(runnerId, sid); if (pa) send(ws, { t: "ask", runnerId, sessionId: sid, questions: pa.questions });
 }
-// runs/sessions are per-machine: only clients viewing the LOCAL machine get local ones.
+// runs são per-machine no CONTEÚDO (o frame carrega runnerId), não na entrega: a visão unificada
+// precisa dos runs de TODAS as máquinas que o cliente pode usar, não só da que está em foco.
 function broadcastRuns(): void {
-  for (const c of clientsOn(LOCAL_ID)) if (c.readyState === c.OPEN) {
+  for (const c of clientsAuthorizedFor(LOCAL_ID)) if (c.readyState === c.OPEN) {
     send(c, { t: "runs", runnerId: LOCAL_ID, active: [...activeRuns].filter((sid) => canAccessSession(c, LOCAL_ID, sid)) });
   }
 }
@@ -1508,7 +1509,7 @@ function bumpRunnerActiveEpoch(runnerId: string, sid: string): number {
 }
 function broadcastRunnerRuns(runnerId: string): void {
   const active = [...(runnerActive.get(runnerId) || new Set<string>())];
-  for (const c of clientsOn(runnerId)) send(c, { t: "runs", runnerId, active: active.filter((sid) => canAccessSession(c, runnerId, sid)) });
+  for (const c of clientsAuthorizedFor(runnerId)) send(c, { t: "runs", runnerId, active: active.filter((sid) => canAccessSession(c, runnerId, sid)) });
 }
 function markRunnerSessionActive(runnerId: string, sid: string): void {
   if (!runnerId || !sid) return;
@@ -1814,6 +1815,18 @@ function holdForHubUpdate(ws: WebSocket, msg: any): boolean {
   }
   send(ws, { t: "error", message: "Hub drenando para atualização — esta ação fica disponível após reconectar" });
   return true;
+}
+/** Client sockets that MAY receive events for a machine, INDEPENDENTE da máquina que estão vendo.
+ *  `clientsOn` (a máquina em foco) vinha sendo usado como filtro de ENTREGA: na visão unificada
+ *  "todas as máquinas" a bolinha de execução/pendência só aparecia para a última máquina selecionada,
+ *  e trocar de máquina cortava em silêncio o stream de uma sessão que seguia rodando na anterior.
+ *  Roteamento não é autorização: cada chamador continua filtrando por frame (`subs`,
+ *  `canAccessSession`); o gate por MÁQUINA fica aqui, senão alargar a entrega vazaria a existência
+ *  de trabalho em uma máquina que o principal nunca recebeu acesso. */
+function clientsAuthorizedFor(runnerId: string): WebSocket[] {
+  const out: WebSocket[] = [];
+  for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w) && canUseRunner(w, runnerId)) out.push(w); }
+  return out;
 }
 /** Client sockets (not runner sockets) currently viewing a given machine. */
 function clientsOn(runnerId: string): WebSocket[] {
@@ -3123,8 +3136,10 @@ function syncTails(): void {
 function nativeDisplayTitleForSession(s: any): string {
   try {
     const key = nativeSessionKeysForManaged(s)[0] || null;
-    const h = key ? nativeHistory(key) : null;
-    return h?.title || s.title;
+    // SÓ o cache de títulos. Aqui se chamava `nativeHistory`, que reparseia o transcript INTEIRO de
+    // CADA sessão da lista para ler um único campo — 417 MB e ~4,5 s por montagem, ×cliente e 2× por
+    // turno, com o event loop do Hub parado o tempo todo.
+    return (key ? nativeTitleCached(key) : undefined) || s.title;
   } catch {
     return s.title;
   }
@@ -3348,7 +3363,12 @@ async function runRoutine(r: Routine, approved = false, actorOverride?: ContextA
 }
 /** Owner-only routine management (list / add / update / delete / run-now). */
 function handleRoutineMsg(ws: WebSocket, msg: any): boolean {
-  const manageable = (routine: Routine, principalId: string): boolean => routine.principalId ? auth.sameIdentity(routine.principalId, principalId) : !auth.AUTH_ENABLED && principalId === "local";
+  // Rotina LEGADA (sem principalId) ficava invisível E indeletável com a auth ligada: sumia da lista
+  // mas o agendador seguia disparando, e `runRoutine` a recusava toda vez — 146 avisos no log, com o
+  // `lastRunAt` avançando como se tivesse rodado. Todos os call sites de `listMsg`/update/del/run
+  // passam por `requireOwner`, então mostrá-la ao dono não expõe rotina de terceiro; e a RECUSA de
+  // EXECUTAR continua de pé, que é o que impede dar trabalho de fundo a uma identidade adivinhada.
+  const manageable = (routine: Routine, principalId: string): boolean => routine.principalId ? auth.sameIdentity(routine.principalId, principalId) : (auth.AUTH_ENABLED || principalId === "local");
   const listMsg = (principalId: string) => ({ t: "routines" as const, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "local do Hub", routines: routines.list().filter((routine) => manageable(routine, principalId)).map(({ principalId: _principalId, deviceId: _deviceId, ...r }) => ({ ...r, label: scheduleLabel(r) })) });
   if (msg.t === "routines") { const owner = requireOwner(ws); if (!owner) return true; send(ws, listMsg(owner.userId)); return true; }
   if (msg.t === "routine_validate") { if (!requireOwner(ws)) return true; const cron = String(msg.cron || ""); send(ws, { t: "cron_validation", cron, ...validateCron(cron) }); return true; }
@@ -5559,7 +5579,9 @@ async function sendInitialState(ws: WebSocket): Promise<void> {
   // Sem isto, um reload / abrir em outro computador vendo uma sessão remota perdia o selo "em execução"
   // na sidebar e o botão de parar — o stream do chat volta via turn-resume, mas o estado "ocupado" não.
   for (const [rid, set] of runnerActive) {
-    if (rid !== LOCAL_ID && set.size && canUseRunner(ws, rid)) send(ws, { t: "runs", runnerId: rid, active: [...set].filter((sid) => canAccessSession(ws, rid, sid)) });
+    // Sem `active: []` para runner OCIOSO, uma bolinha acesa antes da reconexão nunca apagava:
+    // o cliente só limpa `activeRunsByRunner[rid]` quando recebe a lista nova, mesmo vazia.
+    if (rid !== LOCAL_ID && canUseRunner(ws, rid)) send(ws, { t: "runs", runnerId: rid, active: [...set].filter((sid) => canAccessSession(ws, rid, sid)) });
   }
   await sendVoiceState(ws);
 }
@@ -5794,7 +5816,7 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
 /** Wake-word control + speaker-identification / voice-gate messages, lifted from the router VERBATIM.
  *  Returns true if it handled `msg`. Behavior-preserving (same relative order at the call site). */
 async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
-  if (msg.t === "wake_hello") { wakeClients.add(ws); send(ws, { t: "wake_state", enabled: wakeEnabled }); return true; }
+  if (msg.t === "wake_hello") { clearUnauthTimer(ws); wakeClients.add(ws); send(ws, { t: "wake_state", enabled: wakeEnabled }); return true; }
   if (msg.t === "wake") { if (!requireOwner(ws)) return true; wakeEnabled = !!msg.enabled; for (const c of wakeClients) send(c, { t: "wake_state", enabled: wakeEnabled }); broadcastAll({ t: "wake_state", enabled: wakeEnabled }); return true; }
   if (msg.t === "wake_event") { broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return true; }
   if (msg.t === "speakers") { await sendVoiceState(ws); return true; }
@@ -5853,7 +5875,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
   // Drop connections that never authenticate (idle unauth hoarding). Cleared on auth.
   if (auth.AUTH_ENABLED) {
     unauthTimers.set(ws, setTimeout(() => {
-      if (!fullyAuthed(ws)) { try { send(ws, { t: "unauth", reason: "tempo de autenticação esgotado", claimed: auth.isClaimed() }); ws.close(); } catch { /* ignore */ } }
+      if (!fullyAuthed(ws)) { try { ws.close(1013, "hub ocupado"); } catch { /* ignore */ } }
     }, 20000));
   }
   const _wsConnectedAt = Date.now();
@@ -6964,7 +6986,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (task.key) taskMeta.merge(task.tracker, task.key, { title: task.title || String(pastedMeta.title || ""), description: String(pastedMeta.description || ""), url: task.url || String(pastedMeta.url || "") });
         // Ponto de entrada opcional: o seletor do composer manda o passo escolhido ("quero TDD").
         const startAtStepId = typeof msg.stepId === "string" && msg.stepId ? msg.stepId : undefined;
-        const existing = task.key ? workflowRuns.forTask(task.tracker, task.key) : undefined;
+        const existing = (task.key ? workflowRuns.forTask(task.tracker, task.key) : undefined)
+          ?? workflowRuns.activeForSession(sessionId)[0];
         if (existing) {                                   // mesma tarefa já acompanhada: apenas liga a sessão
           let linked = linkSession(existing, sessionId, Date.now());
           // Reusar o acompanhamento não pode ignorar o passo que a pessoa acabou de escolher.

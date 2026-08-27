@@ -1036,6 +1036,16 @@
     function sessionStateKey(sid,runner){ return (runner||selectedRunner())+'\0'+(sid||''); }
     function sessionRunner(){ return currentSession?(currentSessionRunner||selectedRunner()):selectedRunner(); }
     function sessionValue(state,sid,runner){ return state[sessionStateKey(sid,runner)]; }
+    // Rascunho digitado quando NAO ha sessao (criando uma nova, ou nenhuma selecionada). Sem este
+    // slot, `oninput` nao persistia nada e a restauracao escrevia '' por cima do que a pessoa tinha
+    // acabado de digitar: salvar era guardado por `prevSession!=null`, restaurar nao era. A chave
+    // nao pode colidir com uma real, e toda chave real contem o separador entre runner e sessao.
+    const PENDING_DRAFT='pending-draft-sem-sessao';
+    function adoptDraftFor(sid,runner){
+      const own=sessionValue(draftBySession,sid,runner); if(own) return own;
+      const pend=draftBySession[PENDING_DRAFT];
+      if(pend){ delete draftBySession[PENDING_DRAFT]; draftBySession[sessionStateKey(sid,runner)]=pend; saveDrafts(); return pend; }
+      return ''; }
     const histCache=new Map(); const HIST_CACHE_MAX=12; let openingSession=null, pendingNewSession=null;
     const personalTurnSuggestions=new Map(), personalProactiveNotifications=new Map();
     function cacheHist(m){ if(!m||!m.sessionId)return; const key=sessionStateKey(m.sessionId,m.runnerId||selectedRunner()); histCache.delete(key); histCache.set(key,m);
@@ -1152,7 +1162,7 @@
       const txt=document.createElement('span'); txt.textContent=busy(id)?'Reconstruindo atividade em andamento...':'Carregando histórico...';
       work.appendChild(spin); work.appendChild(txt); row.appendChild(work); E.log.appendChild(row); forceBottomSoon();
       curFiles=[]; renderFiles(); closeFilePanel(); renderRecents(); closePop();
-      if(switchingSession){ E.input.value=sessionValue(draftBySession,id,targetRunner)||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(id,targetRunner); }
+      if(switchingSession){ E.input.value=adoptDraftFor(id,targetRunner); E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(id,targetRunner); }
       renderNativeChip(); setHash(currentSession); refreshComposer();
     }
     // Ponto único de troca de sessão: pinta do cache (se houver) e pede a versão fresca sempre —
@@ -1196,7 +1206,7 @@
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = '🔗 Sessão nativa da máquina'+(currentAgent?' ('+esc(currentAgent)+')':'');
       E.input.disabled=false; E.sendBtn.disabled=false; E.mic.disabled=false; E.input.placeholder='Fale ou digite…';
-      if(switchingSession){ E.input.value=sessionValue(draftBySession,m.sessionId,targetRunner)||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(m.sessionId,targetRunner); }
+      if(switchingSession){ E.input.value=adoptDraftFor(m.sessionId,targetRunner); E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(m.sessionId,targetRunner); }
       curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession);
       { const savedAsk=getAsk(m.sessionId,sessionRunner()); if(savedAsk&&savedAsk.length&&!askActive) renderAskCard(savedAsk,sessionRunner()); }   // restaura decision-card pendente (lock/reload)
       if(!stagingActive) tx({t:'stage_state',sessionId:m.sessionId});   // restaura painel de refino de voz, se houver (lock/reload)
@@ -4565,7 +4575,9 @@
     setInterval(()=>{if(!E.workPanel.classList.contains('hidden')&&[...workNodes.values()].some(n=>n.state==='running')){renderWorkTree(true);renderWorkQueue();const n=workNodes.get(workSelected);if(n)E.workNodeState.textContent=workNodeStatusText(n);}},5000);
 
     // ---------- ws ----------
-    function tx(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+    // Devolve se o frame REALMENTE saiu. Antes descartava em silencio com o socket fora do ar e,
+    // como o composer ja tinha sido limpo e o rascunho apagado, o texto evaporava sem nenhum aviso.
+    function tx(o){ if(!ws||ws.readyState!==1) return false; ws.send(JSON.stringify(o)); return true; }
     function frameRunner(m){ return (m&&m.runnerId)||selectedRunner(); }
     function currentFrame(m,sid){ return (sid||(m&&m.sessionId))===currentSession&&frameRunner(m)===currentSessionRunner; }
     // Card ÚNICO de progresso do Debate, atualizado em lugar (a IA é one-shot: feedback por IA concluída
@@ -5230,12 +5242,13 @@
     // id de mensagem p/ idempotência: o runner executa um turnId no máximo uma vez (re-entrega do
     // MESMO frame reusa o id e é ignorada). Cada submit gera um id novo (dois envios = dois turnos).
     const uid=()=>{ try{ return crypto.randomUUID(); }catch(e){ return 'm'+Date.now()+Math.random().toString(36).slice(2,8); } };
-    function sendMsgTo(sid,text,atts){ if(!sid)return; const msgId=uid(), body=text||'(anexo)'; lastWasVoice=false;
+    function sendMsgTo(sid,text,atts){ if(!sid)return false; const msgId=uid(), body=text||'(anexo)'; lastWasVoice=false;
       if(askActive&&sid===currentSession){ const runner=askActive.runnerId||sessionRunner(); try{askActive.card.remove();}catch(e){} askActive=null; askVoice=false; clearAsk(sid,runner); tx({t:'ask_clear',sessionId:sid}); }
       const askKey=askStateKey(sid); if(askingSids.delete(askKey)) tx({t:'ask_clear',sessionId:sid}); bumpSession(sid); markJustSent(sid);
       if(sid===currentSession){ stick=true; addOptimisticUser(sid,msgId,body,atts||[]); if(!curStarted){ curStarted=true; renderControls(); } showPending(); }
-      tx({t:'send',text:body,speak,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
-      refreshComposer(); }
+      const sent=tx({t:'send',text:body,speak,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
+      if(!sent&&sid===currentSession) dropOptimisticUser(sid,currentSessionRunner,msgId);
+      refreshComposer(); return sent; }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
     // Sugestão "executar ação": roda em uma sessão NOVA com a config de IA/modelo/esforço do chat atual,
     // SEM sair da sessão de origem. O servidor cria a sessão e responde `sendNewResult` com o id — a
@@ -5249,6 +5262,16 @@
     function onTurnEnd(sid,runner){ if(!sid)return; const rid=runner||sessionRunner(), key=sessionStateKey(sid,rid); justSent.delete(key); delete stopping[key];
       const runs=activeRunsByRunner[rid]||[]; if(runs.includes(sid)){ activeRunsByRunner[rid]=runs.filter(id=>id!==sid); if(rid===sessionRunner())activeRuns=activeRunsByRunner[rid]; }
       if(sid===currentSession&&rid===currentSessionRunner) updateStopStatus(); refreshComposer(); }
+    // O frame nao saiu: devolve texto+anexos ao composer AGORA. Antes a unica recuperacao era a barra
+    // "Mensagem nao enviada", que so aparece ao REABRIR a sessao — depois de a pessoa ja ter concluido
+    // que perdeu o que escreveu.
+    function undoSend(sid,text,atts,mid){
+      if(sid&&mid){ const q=queueOf(sid,currentSessionRunner); const i=q.findIndex(x=>x.msgId===mid); if(i>=0){ q.splice(i,1); renderQueue(); } }
+      E.input.value=text||''; E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px';
+      if(Array.isArray(atts)&&atts.length){ attachments=atts.slice(); renderAttach(); }
+      if(sid){ draftBySession[sessionStateKey(sid,currentSessionRunner)]=E.input.value; saveDrafts(); }
+      toast('Sem conexao com o Hub. Nada foi enviado, e o texto voltou para o composer.');
+      refreshComposer(); }
     function clearQueue(){ if(currentSession){ queueBySession[sessionStateKey(currentSession,currentSessionRunner)]=[]; tx({t:'clearqueue',sessionId:currentSession}); } refreshComposer(); }
     // ── Acompanhamento de fluxo (F2/F3/F5/F6): onde estou, marcar, avançar e pular com confirmação.
     // Regra combinada: NÃO se avança enquanto há turno em execução; pular fases pede confirmação aqui
@@ -6433,9 +6456,12 @@
         return; }
       if(text.startsWith('!')) pushBang(text.slice(1).split('\n')[0].trim());   // guarda no histórico do "!"
       const atts=attachments.slice(); E.input.value=''; E.input.style.height='auto'; attachments=[]; if(currentSession) delete attachmentsBySession[sessionStateKey(currentSession,currentSessionRunner)]; renderAttach();
+      // Copia de recuperacao ANTES de apagar o rascunho, e valendo para os DOIS ramos: o de fila nunca
+      // chamava setRestorable, entao uma mensagem enfileirada com o socket fora sumia sem copia nenhuma.
+      setRestorable(currentSession,text,atts);
       if(currentSession){ delete draftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
-      if(busy(currentSession)){ const mid=uid(); queueOf(currentSession).push({text:text||'(anexo)',atts,msgId:mid}); renderQueue(); bumpSession(currentSession); tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),msgId:mid}); return; }
-      setRestorable(currentSession,text,atts); sendMsgTo(currentSession,text||'(anexo)',atts); };
+      if(busy(currentSession)){ const mid=uid(); queueOf(currentSession).push({text:text||'(anexo)',atts,msgId:mid}); renderQueue(); bumpSession(currentSession); const okq=tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),msgId:mid}); if(!okq) undoSend(currentSession,text,atts,mid); return; }
+      if(!sendMsgTo(currentSession,text||'(anexo)',atts)) undoSend(currentSession,text,atts,null); };
     E.stopBtn.onclick=()=>{
       stopTTS();   // parar o turno também silencia qualquer áudio em reprodução
       if(askActive){   // interromper a DECISÃO → dispensa o card e devolve o composer pra digitar manualmente
@@ -6526,7 +6552,7 @@
       const token=homonym?((it.agent==='jarvis'?'jarvis:':'native:')+it.name):it.name;
       E.input.value=v.slice(0,at.start)+'/'+token+' '+v.slice(at.end); closeTrig(); E.input.dispatchEvent(new Event('input')); try{E.input.focus();}catch(e){} }
 
-    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; syncComposerActions(); if(currentSession) draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; updateTrig(); updateSolutionCount(); };
+    E.input.oninput=()=>{ E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; syncComposerActions(); draftBySession[currentSession?sessionStateKey(currentSession,currentSessionRunner):PENDING_DRAFT]=E.input.value; updateTrig(); updateSolutionCount(); };
     E.input.onkeydown=(e)=>{
       if(trigOpen()){
         if(e.key==='ArrowDown'){ e.preventDefault(); moveTrig(1); return; }
