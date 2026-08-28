@@ -21,6 +21,12 @@
   servico, CONFIRMA pela porta 4577 e so entao promove para Automatico e desativa a tarefa. Se a
   confirmacao falhar, desfaz tudo e devolve a tarefa ao ar.
 
+  DIREITO DE LOGON. Rodar como uma conta de usuario nao depende so da senha: o Windows exige
+  SeServiceLogonRight ("Fazer logon como um servico") para aquela conta, e o sc.exe NAO concede
+  esse direito - so a UI do services.msc concede junto. Sem ele o Start-Service falha com uma
+  mensagem generica e o motivo real fica escondido no evento 7041 do log do Sistema. Este script
+  concede o direito via LSA antes de subir o servico.
+
   Uso (PowerShell COMO ADMINISTRADOR):
     .\scripts\install-service.ps1              # Hub
     .\scripts\install-service.ps1 -Runner      # Hub + Runner
@@ -51,12 +57,17 @@ function Remove-Svc([string]$n) {
 
 # ---------------------------------------------------------------- desinstalar
 if ($Uninstall) {
-  foreach ($n in @($SVC_HUB, $SVC_RUN)) { if (Get-Svc $n) { Write-Host "removendo servico $n"; Remove-Svc $n } }
+  $removidos = @()
+  foreach ($n in @($SVC_HUB, $SVC_RUN)) { if (Get-Svc $n) { Write-Host "removendo servico $n"; Remove-Svc $n; $removidos += $n } }
   foreach ($n in @($SVC_HUB, $SVC_RUN)) {
     $t = Get-Tsk $n
-    if ($t -and $t.State -eq 'Disabled') {
-      Enable-ScheduledTask -TaskName $n | Out-Null
-      Start-ScheduledTask -TaskName $n
+    if (-not $t) { continue }
+    if ($t.State -eq 'Disabled') { Enable-ScheduledTask -TaskName $n | Out-Null }
+    # Reativar nao basta: remover o servico levou o processo junto, entao a tarefa tem que RODAR
+    # agora. Sem isto, uma instalacao interrompida no meio (servico criado, tarefa so PARADA)
+    # saia daqui sem Hub nenhum ate o proximo logon.
+    if ($t.State -eq 'Disabled' -or $removidos -contains $n) {
+      Start-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue
       Write-Host "tarefa $n reativada"
     }
   }
@@ -82,6 +93,61 @@ Write-Host "O servico vai rodar como $account (necessario para as credenciais e 
 $sec = Read-Host "Senha do Windows de $account" -AsSecureString
 $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
 if (-not $plain) { Write-Host 'senha vazia - abortado' -ForegroundColor Red; exit 1 }
+
+# --------------------------------------- direito "Fazer logon como um servico"
+# O sc.exe GRAVA a senha, mas NAO concede SeServiceLogonRight - so a UI do services.msc concede
+# junto. Sem esse direito o SCM recusa o logon e o Start-Service falha com uma mensagem generica
+# ("nao pode ser iniciado"); o motivo real so aparece no evento 7041 do log do Sistema.
+# Concedido aqui via LSA (LsaAddAccountRights): cirurgico e idempotente, e nao mexe no resto da
+# politica local - diferente do roundtrip export/import do secedit. Vale na hora, sem reboot.
+if (-not ('JarvisLsa' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class JarvisLsa {
+  [StructLayout(LayoutKind.Sequential)]
+  struct LSA_UNICODE_STRING { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct LSA_OBJECT_ATTRIBUTES {
+    public int Length; public IntPtr RootDirectory; public IntPtr ObjectName;
+    public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService;
+  }
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern uint LsaOpenPolicy(IntPtr system, ref LSA_OBJECT_ATTRIBUTES oa, uint access, out IntPtr policy);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern uint LsaAddAccountRights(IntPtr policy, byte[] sid, LSA_UNICODE_STRING[] rights, uint count);
+  [DllImport("advapi32.dll")] static extern uint LsaClose(IntPtr policy);
+  [DllImport("advapi32.dll")] static extern int LsaNtStatusToWinError(uint status);
+  public static void Grant(byte[] sid, string right) {
+    var oa = new LSA_OBJECT_ATTRIBUTES();
+    oa.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES));
+    IntPtr policy;
+    uint st = LsaOpenPolicy(IntPtr.Zero, ref oa, 0x0010 | 0x0800, out policy);  // CREATE_ACCOUNT|LOOKUP_NAMES
+    if (st != 0) throw new System.ComponentModel.Win32Exception(LsaNtStatusToWinError(st));
+    var r = new LSA_UNICODE_STRING[1];
+    r[0].Buffer = Marshal.StringToHGlobalUni(right);
+    r[0].Length = (ushort)(right.Length * 2);
+    r[0].MaximumLength = (ushort)(right.Length * 2 + 2);
+    try {
+      st = LsaAddAccountRights(policy, sid, r, 1);
+      if (st != 0) throw new System.ComponentModel.Win32Exception(LsaNtStatusToWinError(st));
+    } finally { Marshal.FreeHGlobal(r[0].Buffer); LsaClose(policy); }
+  }
+}
+'@
+}
+try {
+  $sid  = (New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier])
+  $sidB = New-Object byte[] $sid.BinaryLength
+  $sid.GetBinaryForm($sidB, 0)
+  [JarvisLsa]::Grant($sidB, 'SeServiceLogonRight')
+  Write-Host "direito 'Fazer logon como um servico' concedido a $account." -ForegroundColor DarkGray
+} catch {
+  Write-Host "nao consegui conceder 'Fazer logon como um servico' a $account" -ForegroundColor Red
+  Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host 'conceda a mao: secpol.msc > Politicas Locais > Atribuicao de direitos de usuario.' -ForegroundColor Yellow
+  exit 1
+}
 
 $ps = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
 
@@ -112,18 +178,41 @@ if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyCo
 Start-Sleep 3
 
 Write-Host 'subindo o servico e confirmando na porta 4577...'
-Start-Service $SVC_HUB
+# $ErrorActionPreference='Stop' faz um Start-Service recusado ABORTAR o script - e ai o rollback
+# abaixo nunca roda, deixando voce sem Hub (tarefa ja parada, servico morto). Por isso o try.
+$startErr = $null
+try { Start-Service $SVC_HUB } catch { $startErr = $_ }
 $ok = $false
-for ($i = 0; $i -lt 60; $i++) {          # ate 120s: o boot deste Hub ja levou 94s uma vez
-  Start-Sleep 2
-  if (Get-NetTCPConnection -LocalPort 4577 -State Listen -ErrorAction SilentlyContinue) { $ok = $true; break }
+if (-not $startErr) {
+  for ($i = 0; $i -lt 60; $i++) {        # ate 120s: o boot deste Hub ja levou 94s uma vez
+    Start-Sleep 2
+    if (Get-NetTCPConnection -LocalPort 4577 -State Listen -ErrorAction SilentlyContinue) { $ok = $true; break }
+  }
 }
 
 if (-not $ok) {
   Write-Host ''
   Write-Host 'O servico NAO subiu. Desfazendo para nao te deixar sem Hub.' -ForegroundColor Red
+  if ($startErr) { Write-Host "  erro: $($startErr.Exception.Message)" -ForegroundColor Red }
+  # A mensagem do Start-Service e generica de proposito; o motivo do SCM esta no log do Sistema.
+  try {
+    Get-WinEvent -FilterHashtable @{
+      LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7000, 7041
+      StartTime = (Get-Date).AddMinutes(-5)
+    } -ErrorAction Stop | Select-Object -First 2 | ForEach-Object {
+      $motivo = (($_.Message -split '\r?\n') | Where-Object { $_.Trim() } | Select-Object -First 2) -join ' '
+      Write-Host "  [SCM $($_.Id)] $motivo" -ForegroundColor DarkGray
+    }
+  } catch { Write-Host '  (nao consegui ler o log do Sistema)' -ForegroundColor DarkGray }
   Remove-Svc $SVC_HUB
-  if ($taskHub) { Start-ScheduledTask -TaskName $SVC_HUB; Write-Host 'tarefa agendada devolvida ao ar.' -ForegroundColor Yellow }
+  if ($taskHub) {
+    # Se uma migracao anterior deu certo, a tarefa esta Disabled - e ai Start-ScheduledTask sozinho
+    # falha e, com ErrorActionPreference='Stop', aborta o proprio rollback. Reabilita antes.
+    Enable-ScheduledTask -TaskName $SVC_HUB -ErrorAction SilentlyContinue | Out-Null
+    Start-ScheduledTask -TaskName $SVC_HUB -ErrorAction SilentlyContinue
+    if ((Get-Tsk $SVC_HUB).State -ne 'Disabled') { Write-Host 'tarefa agendada devolvida ao ar.' -ForegroundColor Yellow }
+    else { Write-Host "ATENCAO: nao devolvi a tarefa. Suba o Hub a mao: $root\scripts\start-hub.ps1" -ForegroundColor Red }
+  }
   Write-Host "veja $hubLog" -ForegroundColor Yellow
   exit 1
 }
@@ -136,9 +225,26 @@ if ($Runner) {
   Write-Host "criando servico $SVC_RUN..."
   New-JarvisService $SVC_RUN 'start-runner.ps1' $runLog 'Jarvis Runner'
   $taskRun = Get-Tsk $SVC_RUN
-  if ($taskRun) { Stop-ScheduledTask -TaskName $SVC_RUN -ErrorAction SilentlyContinue; Disable-ScheduledTask -TaskName $SVC_RUN | Out-Null }
-  Set-Service $SVC_RUN -StartupType Automatic
-  Start-Service $SVC_RUN
+  if ($taskRun) { Stop-ScheduledTask -TaskName $SVC_RUN -ErrorAction SilentlyContinue }
+  # Mesma ordem do Hub: sobe, CONFIRMA, e so entao desativa a tarefa. Antes a tarefa era desativada
+  # primeiro, e um Start-Service que falhasse abortava o script - sem servico E sem tarefa.
+  $runErr = $null
+  try { Start-Service $SVC_RUN } catch { $runErr = $_ }
+  Start-Sleep 3
+  if ($runErr -or (Get-Svc $SVC_RUN).Status -ne 'Running') {
+    Write-Host 'O Runner NAO subiu. Desfazendo so o Runner (o Hub segue no ar).' -ForegroundColor Red
+    if ($runErr) { Write-Host "  erro: $($runErr.Exception.Message)" -ForegroundColor Red }
+    Remove-Svc $SVC_RUN
+    if ($taskRun) {
+      Enable-ScheduledTask -TaskName $SVC_RUN -ErrorAction SilentlyContinue | Out-Null
+      Start-ScheduledTask -TaskName $SVC_RUN -ErrorAction SilentlyContinue
+      Write-Host 'tarefa agendada JarvisRunner devolvida ao ar.' -ForegroundColor Yellow
+    }
+    Write-Host "veja $runLog" -ForegroundColor Yellow
+  } else {
+    Set-Service $SVC_RUN -StartupType Automatic
+    if ($taskRun) { Disable-ScheduledTask -TaskName $SVC_RUN | Out-Null; Write-Host 'tarefa agendada JarvisRunner desativada (o servico assumiu).' }
+  }
 }
 
 $plain = $null
