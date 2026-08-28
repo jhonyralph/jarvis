@@ -32,7 +32,7 @@ import {
   type SessionContinuity,
   type SupportLevel,
 } from "./agent-contract.js";
-import { codexChildRollouts } from "./codex-executions.js";
+import { codexChildRollouts, codexChildRolloutsAsync, type CodexChildRollout } from "./codex-executions.js";
 import { BACKGROUND_JOB_STEERING } from "./background-jobs.js";
 import { ensurePermissionBridge } from "./permission-bridge.js";
 import { ensureTaskBridge } from "./task-bridge.js";
@@ -1350,9 +1350,9 @@ export class CodexAdapter implements AgentAdapter {
         patchSeen.add(key); onEvent(ev);
       }
     };
-    const emitChildren = (): void => {
-      if (!onEvent || !(threadId || prev)) return;
-      for (const child of codexChildRollouts(threadId || prev!, { sinceMs: scanStartedAt })) {
+    const projectChildren = (children: CodexChildRollout[]): void => {
+      if (!onEvent) return;
+      for (const child of children) {
         const before = childSeen.get(child.id);
         if (!before) onEvent({ kind: "execution_spawn", providerId: child.id, node: { title: child.title, role: child.role || child.nickname, depth: child.depth, startedAt: child.startedAt, kind: "agent" } });
         for (let i = before?.activities || 0; i < child.activities.length; i++) onEvent({ kind: "execution_activity", providerId: child.id, event: { ...child.activities[i], providerEvent: `snapshot:${i}` } });
@@ -1362,11 +1362,40 @@ export class CodexAdapter implements AgentAdapter {
         childSeen.set(child.id, { activities: child.activities.length, state: child.state, usage: usageKey });
       }
     };
-    let activityTimer: ReturnType<typeof setInterval> | undefined;
-    const emitActivity = (): void => { emitChildren(); emitPatches(); };
+    const emitChildren = (): void => {
+      if (!onEvent || !(threadId || prev)) return;
+      projectChildren(codexChildRollouts(threadId || prev!, { sinceMs: scanStartedAt }));
+    };
+    const emitChildrenAsync = async (): Promise<void> => {
+      if (!onEvent || !(threadId || prev)) return;
+      projectChildren(await codexChildRolloutsAsync(threadId || prev!, { sinceMs: scanStartedAt }));
+    };
+    let activityTimer: ReturnType<typeof setTimeout> | undefined;
+    let activityStarted = false, activityStopped = false;
+    // Tique que NAO empilha: so reagenda DEPOIS de terminar. Com setInterval, um tique mais lento
+    // que o intervalo enfileirava o proximo e o event loop nunca abria uma janela — foi assim que
+    // uma varredura pesada de rollouts travou o Hub inteiro (toda requisicao HTTP esperando ~4 s,
+    // ate as estaticas). Aqui um tique lento reduz a frequencia; nao congela o processo.
+    const scheduleActivity = (delay = 750): void => {
+      if (activityStopped) return;
+      activityTimer = setTimeout(() => {
+        void (async () => {
+          try {
+            if (activityStopped) return;
+            await emitChildrenAsync();
+            if (!activityStopped) emitPatches();
+          } catch { /* atividade e best-effort: nunca derruba o turno */ }
+          finally { scheduleActivity(); }
+        })();
+      }, delay);
+      activityTimer.unref?.();
+    };
     const startActivityPolling = (): void => {
-      if (!onEvent || activityTimer || !(threadId || prev)) return;
-      emitActivity(); activityTimer = setInterval(emitActivity, 750); activityTimer.unref?.();
+      if (!onEvent || activityStarted || activityStopped || !(threadId || prev)) return;
+      activityStarted = true;
+      // O primeiro tique tambem entra na corrente (delay 0) em vez de rodar sincrono: com o cache
+      // frio ele e justamente o mais caro, e era ele que segurava o event loop na largada.
+      scheduleActivity(0);
     };
 
     const emitItem = (it: any, isCompleted: boolean): void => {
@@ -1419,7 +1448,10 @@ export class CodexAdapter implements AgentAdapter {
         ? await runStream("codex", args, cwd, text, handleLine, opts?.signal)
         : await run("codex", args, cwd, text, opts?.signal);
     } finally {
-      if (activityTimer) clearInterval(activityTimer);
+      // O flush final continua SINCRONO de proposito: com o cache quente ele le so os bytes novos,
+      // e assim os ultimos eventos da crianca saem antes de a funcao retornar.
+      activityStopped = true;
+      if (activityTimer) clearTimeout(activityTimer);
       emitChildren();
       emitPatches(true);
     }
