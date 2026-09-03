@@ -1,3 +1,18 @@
+# [0.32.0](https://github.com/jhonyralph/jarvis/compare/v0.31.0...v0.32.0) (2026-08-28)
+
+
+### Bug Fixes
+
+* **codex:** a varredura de rollouts para de reler 522 MB a cada 750 ms ([97c0062](https://github.com/jhonyralph/jarvis/commit/97c006263f132c272b02837a5f91c83d7c2c8bd5))
+* **decisao:** pendencia de decisao para de ficar acesa para sempre ([e6faa6e](https://github.com/jhonyralph/jarvis/commit/e6faa6e7c11284d351e01b41838bd33d0b766851))
+* **sessoes:** a lista para de reparsear 417MB, e o composer para de comer o que voce digitou ([3c9eb68](https://github.com/jhonyralph/jarvis/commit/3c9eb68c3dcd400d607afedec4d972658d8cdc51))
+* **windows:** o servico do Hub nao subia porque faltava o direito de logon ([cf01e38](https://github.com/jhonyralph/jarvis/commit/cf01e385d0d11627b35c592307eff9f900625a7d))
+
+
+### Features
+
+* **windows:** Hub e Runner viram servico do Windows, como ja eram no Linux e no mac ([fbddb25](https://github.com/jhonyralph/jarvis/commit/fbddb257098aa299f3c604eff0ffc54ddacde148))
+
 # [0.31.0](https://github.com/jhonyralph/jarvis/compare/v0.30.0...v0.31.0) (2026-08-20)
 
 
