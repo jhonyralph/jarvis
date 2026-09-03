@@ -3582,11 +3582,15 @@
     let fwMachineStatus={};
     function fwStateLabel(st){ return ({materialized:'✓ materializado',current:'✓ já atual',sent:'enviado',queued:'na fila',needs_update:'⚠ máquina desatualizada',error:'⚠ erro',offline:'offline',pronta:'pronta',fonte:'fonte (esta máquina)'})[st]||st; }
     function renderFwStatus(){ const ids=Object.keys(fwMachineStatus); E.fwStatus.innerHTML=ids.length?ids.map(id=>'<div>'+esc(fwMachineStatus[id].label)+' — '+esc(fwStateLabel(fwMachineStatus[id].state))+'</div>').join(''):'—'; }
-    if(E.setFwPref) E.setFwPref.onchange=()=>tx({t:'set_framework_cfg',preference:E.setFwPref.value});
+    function saveFrameworkPreferences(btn,patch){
+      tx(Object.assign({t:'set_framework_cfg'},patch||{preference:E.setFwPref.value,autoStartFlows:E.setFwAutoFlow&&E.setFwAutoFlow.checked,applyInstructions:E.setFwApplyInstr&&E.setFwApplyInstr.checked}));
+      if(btn) settingsMarkSaved(btn,'Framework salvo.');
+    }
+    if(E.setFwPref) E.setFwPref.onchange=()=>saveFrameworkPreferences(null,{preference:E.setFwPref.value});
     // Chave de desligar do dono da máquina: o pacote declara o fluxo padrão, mas quem decide se
     // ele entra sozinho nas sessões é quem está na frente do chat.
-    if(E.setFwAutoFlow) E.setFwAutoFlow.onchange=()=>tx({t:'set_framework_cfg',autoStartFlows:E.setFwAutoFlow.checked});
-    if(E.setFwApplyInstr) E.setFwApplyInstr.onchange=()=>tx({t:'set_framework_cfg',applyInstructions:E.setFwApplyInstr.checked});
+    if(E.setFwAutoFlow) E.setFwAutoFlow.onchange=()=>saveFrameworkPreferences(null,{autoStartFlows:E.setFwAutoFlow.checked});
+    if(E.setFwApplyInstr) E.setFwApplyInstr.onchange=()=>saveFrameworkPreferences(null,{applyInstructions:E.setFwApplyInstr.checked});
     if(E.fwSeed) E.fwSeed.onclick=()=>fwSend('Verificando pacote base',{t:'framework_seed_preview'},E.fwSeed);
     if(E.fwImport) E.fwImport.onclick=()=>fwSend('Verificando instruções desta máquina',{t:'framework_import_native_preview'},E.fwImport);
     if(E.fwPublish) E.fwPublish.onclick=()=>{ E.fwStatus.textContent='Publicando…'; fwSend('Publicando nas máquinas',{t:'publish_framework'},E.fwPublish); };
@@ -4121,7 +4125,7 @@
     // resumo/digest one-shot config (roda no Hub; barato por padrão)
     let sumCfg={agent:'claude-code',model:'haiku',effort:'low',fastMode:false};
     function fillSumSelects(){ if(!E.setSumAgent||!caps.length)return; const local=machines.find(m=>m.id==='local'), names=local&&Array.isArray(local.agents)?local.agents:caps.map(c=>c.name), available=caps.filter(c=>names.includes(c.name)); fillSel(E.setSumAgent,available.map(c=>({id:c.name,label:c.label||c.name})),available.some(c=>c.name===sumCfg.agent)?sumCfg.agent:(available[0]||{}).name); const c=localCapsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,sumCfg.model); const m=(c.models||[]).find(x=>x.id===E.setSumModel.value); fillSel(E.setSumEffort,(m&&m.efforts)||[],sumCfg.effort); setFastCheckbox(E.setSumFastMode,E.setSumAgent.value,sumCfg.fastMode); }
-    function saveSum(){ const fastMode=checkedFast(E.setSumFastMode); sumCfg=Object.assign({},sumCfg,{agent:E.setSumAgent.value,model:E.setSumModel.value,effort:E.setSumEffort.value,fastMode}); tx({t:'set_summary_cfg',agent:E.setSumAgent.value,model:E.setSumModel.value,effort:E.setSumEffort.value,fastMode}); }
+    function saveSum(btn){ const fastMode=checkedFast(E.setSumFastMode); sumCfg=Object.assign({},sumCfg,{agent:E.setSumAgent.value,model:E.setSumModel.value,effort:E.setSumEffort.value,fastMode}); tx({t:'set_summary_cfg',agent:E.setSumAgent.value,model:E.setSumModel.value,effort:E.setSumEffort.value,fastMode}); if(btn) settingsMarkSaved(btn,'Roteamento salvo.'); }
     E.setSumAgent.onchange=()=>{ const fastMode=checkedFast(E.setSumFastMode), c=localCapsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,c.defaultModel); const m=(c.models||[]).find(x=>x.id===E.setSumModel.value); fillSel(E.setSumEffort,(m&&m.efforts)||[],m&&m.defaultEffort); setFastCheckbox(E.setSumFastMode,E.setSumAgent.value,fastMode); saveSum(); };
     E.setSumModel.onchange=()=>{ const fastMode=checkedFast(E.setSumFastMode); fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); setFastCheckbox(E.setSumFastMode,E.setSumAgent.value,fastMode); saveSum(); };
     E.setSumEffort.onchange=saveSum;
@@ -4243,11 +4247,19 @@
       saveCfg(); syncModelEffort(); renderPushCfg();
       // Salvar NÃO fecha: mexer em várias abas de configuração exigia reabrir tudo a cada ajuste.
       // O feedback vira o próprio botão (e o toast), então continua claro que gravou.
-      const label=btn&&btn.textContent; if(btn){ btn.textContent='Salvo ✓'; setTimeout(()=>{ if(btn.isConnected) btn.textContent=label||'Salvar'; },1600); } toast('Configurações salvas.'); }
+      settingsMarkSaved(btn,'Configurações salvas.'); }
     // Cada aba salvável tem o SEU botão Salvar (Opção A): sem rodapé duplicando Salvar/Fechar. O save
     // é o mesmo (persiste os campos gerais de uma vez); fechar é só o X do cabeçalho. Painéis pessoais,
-    // framework, rota, dispositivos e atualização têm as próprias ações/auto-save.
-    function settingsInstallPanelSaves(){ ['geral','voz','notif','automacao'].forEach(name=>{ const panel=E.settings&&E.settings.querySelector('.spanel[data-panel="'+name+'"]'); if(!panel||panel.querySelector('.settings-panel-actions'))return; const wrap=document.createElement('div'); wrap.className='settings-panel-actions'; const btn=document.createElement('button'); btn.type='button'; btn.className='set-save'; btn.textContent='Salvar'; btn.onclick=()=>settingsSaveGeneral(btn); wrap.appendChild(btn); panel.appendChild(wrap); }); }
+    // dispositivos e atualização têm ações próprias.
+    function settingsMarkSaved(btn,msg){ const label=btn&&btn.textContent; if(btn){ btn.textContent='Salvo ✓'; setTimeout(()=>{ if(btn.isConnected) btn.textContent=label||'Salvar'; },1600); } toast(msg||'Configurações salvas.'); }
+    function settingsInstallPanelSaves(){ [
+      ['geral',settingsSaveGeneral],
+      ['voz',settingsSaveGeneral],
+      ['notif',settingsSaveGeneral],
+      ['automacao',settingsSaveGeneral],
+      ['framework',saveFrameworkPreferences,'#frameworkSettings'],
+      ['rota',saveSum]
+    ].forEach(([name,handler,targetSel])=>{ const panel=E.settings&&E.settings.querySelector('.spanel[data-panel="'+name+'"]'), target=panel&&(targetSel?panel.querySelector(targetSel):panel); if(!target||target.querySelector(':scope > .settings-panel-actions'))return; const wrap=document.createElement('div'); wrap.className='settings-panel-actions'; const btn=document.createElement('button'); btn.type='button'; btn.className='set-save'; btn.textContent='Salvar'; btn.onclick=()=>handler(btn); wrap.appendChild(btn); target.appendChild(wrap); }); }
     settingsInstallPanelSaves();
     if(E.setX) E.setX.onclick=()=>{ E.settings.classList.add('hidden'); restoreFocusAfterModal(E.settings); }; // fechar (único), no canto do card
 
