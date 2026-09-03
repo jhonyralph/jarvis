@@ -1,3 +1,10 @@
+# [0.33.0](https://github.com/jhonyralph/jarvis/compare/v0.32.0...v0.33.0) (2026-09-03)
+
+
+### Features
+
+* add fast mode support ([ca57a1a](https://github.com/jhonyralph/jarvis/commit/ca57a1a5e5f0b99477f3f16e704973fb3276634e))
+
 # [0.32.0](https://github.com/jhonyralph/jarvis/compare/v0.31.0...v0.32.0) (2026-08-28)
 
 
