@@ -1,3 +1,10 @@
+## [0.33.1](https://github.com/jhonyralph/jarvis/compare/v0.33.0...v0.33.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* add explicit settings save buttons ([a6ac2da](https://github.com/jhonyralph/jarvis/commit/a6ac2da646e9cc21a304ffa92eb36c5bcabb6aaf))
+
 # [0.33.0](https://github.com/jhonyralph/jarvis/compare/v0.32.0...v0.33.0) (2026-09-03)
 
 
