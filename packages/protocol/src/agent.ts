@@ -45,6 +45,8 @@ export interface AgentCapabilities {
   remote: boolean;
   modelCatalog: ModelCatalogKind;
   modelControl: ModelControl;
+  /** Provider-supported faster execution tier for the same selected model/effort, if exposed. */
+  fastMode?: boolean;
 }
 
 export interface ModelDescriptor {
@@ -90,6 +92,7 @@ export interface UsageRecord {
   source: string;
   model?: string;
   effort?: string;
+  fastMode?: boolean;
 }
 
 export interface ToolEvent {

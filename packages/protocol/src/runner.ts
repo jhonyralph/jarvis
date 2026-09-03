@@ -120,6 +120,7 @@ export interface RunnerMsg {
     source?: string;
     model?: string;
     effort?: string;
+    fastMode?: boolean;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
@@ -306,7 +307,7 @@ export type HubToRunner =
       contextPrefix?: string;
       agent?: string;
       cwd?: string;
-      opts?: { model?: string; effort?: string; permissionMode?: PermissionMode };
+      opts?: { model?: string; effort?: string; fastMode?: boolean; permissionMode?: PermissionMode };
       /** idempotency key — the Runner executes a given turnId at most once (dedupes re-delivery:
        *  client resend on reconnect, queue re-flush, WS redelivery). See @jarvis/core createSeenSet. */
       turnId?: string;
@@ -315,6 +316,7 @@ export type HubToRunner =
       speaker?: string;
       model?: string;
       effort?: string;
+      fastMode?: boolean;
       actor?: ContextActor;
     }
   | { t: "list" }

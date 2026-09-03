@@ -786,17 +786,17 @@ function mirrorExecutionStore(runnerId: string): ExecutionStore {
 
 // Summary/digest one-shot config — cheap by default (it's a light task), user-tunable in Settings.
 const SUMMARY_FILE = join(JARVIS_DIR, "summary.json");
-const summaryCfg: { agent: string; model: string; effort: string } = (() => {
-  const d = { agent: process.env.JARVIS_SEARCH_AGENT || "claude-code", model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low" };
+const summaryCfg: { agent: string; model: string; effort: string; fastMode?: boolean } = (() => {
+  const d = { agent: process.env.JARVIS_SEARCH_AGENT || "claude-code", model: process.env.JARVIS_SUMMARY_MODEL || process.env.JARVIS_SEARCH_MODEL || "haiku", effort: "low", fastMode: process.env.JARVIS_SUMMARY_FAST === "1" };
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(SUMMARY_FILE, "utf8")) }; } catch { return d; }
 })();
 function saveSummaryCfg(): void { try { writeJsonAtomic(SUMMARY_FILE, summaryCfg, { pretty: true }); } catch { /* ignore */ } }
 // Voz ambiente (staging): política de escalada de modelo + modelos rápido/upgrade. Persistido.
 // escalate: "ask" (avisa e pede autorização por voz) | "auto" (sobe sozinho) | "<modelId>" (sobe pra esse).
 const VOICE_CFG_FILE = join(JARVIS_DIR, "voice-cfg.json");
-const voiceCfg: { agent: string; model?: string; effort?: string; escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number; voice?: string } = (() => {
+const voiceCfg: { agent: string; model?: string; effort?: string; fastMode?: boolean; escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number; voice?: string } = (() => {
   // relevance: "on" (padrão — filtra falas que não são comando/relacionadas antes de despachar) | "off".
-  const d = { agent: process.env.JARVIS_WAKE_AGENT || DEFAULT_AGENT, model: process.env.JARVIS_WAKE_MODEL || undefined, effort: process.env.JARVIS_WAKE_EFFORT || undefined, escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high", relevance: (process.env.JARVIS_VOICE_RELEVANCE || "on") };
+  const d = { agent: process.env.JARVIS_WAKE_AGENT || DEFAULT_AGENT, model: process.env.JARVIS_WAKE_MODEL || undefined, effort: process.env.JARVIS_WAKE_EFFORT || undefined, fastMode: process.env.JARVIS_VOICE_FAST_MODE === "1", escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high", relevance: (process.env.JARVIS_VOICE_RELEVANCE || "on") };
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(VOICE_CFG_FILE, "utf8")) }; } catch { return d; }
 })();
 function saveVoiceCfg(): void { try { writeJsonAtomic(VOICE_CFG_FILE, voiceCfg, { pretty: true }); } catch { /* ignore */ } }
@@ -1142,10 +1142,11 @@ let voiceGate = typeof voiceCfg.gate === "boolean" ? voiceCfg.gate : process.env
 let voiceThreshold: number | undefined = typeof voiceCfg.threshold === "number" ? voiceCfg.threshold : (process.env.JARVIS_VOICE_THRESHOLD ? Number(process.env.JARVIS_VOICE_THRESHOLD) : undefined);
 // proactive-voice session setup: which agent/model/effort/folder the wake session
 // uses, and a task held while we ask the user "continuar ou nova sessão?".
-const voiceConfig: { agent: string; model?: string; effort?: string; cwd: string } = {
+const voiceConfig: { agent: string; model?: string; effort?: string; fastMode?: boolean; cwd: string } = {
   agent: voiceCfg.agent,
   model: voiceCfg.model,
   effort: voiceCfg.effort,
+  fastMode: voiceCfg.fastMode,
   cwd: process.env.JARVIS_WAKE_CWD || CWD,
 };
 let voicePending: { task: string } | null = null;
@@ -1157,7 +1158,11 @@ let voiceResolve: { task: string; speak: boolean; speaker?: string; suggestId?: 
 const VOICE_HINT = /\b(modelo|model|esfor[çc]o|effort|pasta|diret[óo]rio|folder|sess[ãa]o|nov[ao]|continu|seguir|trocar|usar?|use|come[çc]ar)\b/i;
 const PT_EFFORT: Record<string, string> = { minimal: "mínimo", low: "baixo", medium: "médio", high: "alto", xhigh: "muito alto", max: "máximo", ultra: "ultra", ultracode: "ultracode" };
 
-async function compatibleAgentOpts(agent: AgentAdapter, requestedModel?: string, requestedEffort?: string): Promise<SendOpts> {
+function supportsFastMode(agentName: string): boolean {
+  return agentName === "codex" || agentName === "claude-code";
+}
+
+async function compatibleAgentOpts(agent: AgentAdapter, requestedModel?: string, requestedEffort?: string, fastMode?: boolean): Promise<SendOpts> {
   const caps = await agent.capabilities();
   const model = requestedModel && caps.models.some((m) => m.id === requestedModel) ? requestedModel : undefined;
   const selected = model ? caps.models.find((m) => m.id === model) : undefined;
@@ -1165,8 +1170,10 @@ async function compatibleAgentOpts(agent: AgentAdapter, requestedModel?: string,
   // Every caller of this helper is an internal analysis oneShot (routing, summary, decision-detection,
   // relevance, preflight, digest) — pure text-in/text-out that never calls MCP tools. Disable MCP so
   // we don't pay server startup/handshake latency + cost on each one. See SendOpts.noMcp.
-  return { model, effort, noMcp: true };
+  return { model, effort, fastMode: !!fastMode && supportsFastMode(agent.name), noMcp: true };
 }
+const summaryAgentOpts = (agent: AgentAdapter): Promise<SendOpts> => compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort, summaryCfg.fastMode);
+const voiceFastAgentOpts = (agent: AgentAdapter, model = voiceCfg.fastModel, effort = voiceCfg.fastEffort): Promise<SendOpts> => compatibleAgentOpts(agent, model, effort, voiceCfg.fastMode);
 const summaryAgent = (): AgentAdapter => agents.has(summaryCfg.agent) ? agents.get(summaryCfg.agent) : agents.searchAgent();
 
 function voiceMentionsCatalog(text: string, desc: Awaited<ReturnType<AgentRegistry["describe"]>>): boolean {
@@ -1790,6 +1797,7 @@ function holdForHubUpdate(ws: WebSocket, msg: any): boolean {
       atts: Array.isArray(atts) ? atts : [],
       model: typeof msg.model === "string" ? msg.model : undefined,
       effort: typeof msg.effort === "string" ? msg.effort : undefined,
+      fastMode: msg.fastMode === true,
       auto: autoFlags(msg.auto),
       runnerId: queueRunnerId,
       msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
@@ -2591,7 +2599,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
         session: {
           agent: m.agent, cwd: m.cwd, title: m.title, native, writable: m.writable, nativeId: m.nativeId,
           sessionCost: su.costUsd, sessionUsage: su,
-          inputTokens: m.inputTokens || su.contextTokens, contextWindowTokens: m.contextWindowTokens || su.contextWindowTokens,
+          inputTokens: m.inputTokens ?? su.contextTokens, contextWindowTokens: m.contextWindowTokens ?? su.contextWindowTokens,
           model: m.model || su.model, effort: m.effort || su.effort, permissionMode: m.permissionMode,
         },
         total: m.total,
@@ -3229,7 +3237,7 @@ async function speechForReply(replyText: string): Promise<string> {
   const prompt = `Resuma em 1 a 3 frases CURTAS e faladas (português do Brasil, sem markdown, sem listas, sem código) o texto abaixo — como quem conta o resultado em voz alta, direto ao ponto:\n\n${(replyText || "").slice(0, 4000)}`;
   try {
     const agent = summaryAgent();
-    const opts = await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort);
+    const opts = await summaryAgentOpts(agent);
     const reply = agent.oneShot ? await agent.oneShot(prompt, opts) : await agent.send("__speaksum__", prompt, process.cwd(), opts);
     addUsage("__spoken_summary__", agent.name, reply.usage);
     const s = speechify((reply.text || "").trim());
@@ -3300,11 +3308,12 @@ function runOwnedManagedTurn(sid: string, input: ManagedTurnInput): Promise<void
 }
 
 /** One full turn against a session's agent: store+broadcast the user msg, get the reply, speak if asked. */
-async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; speak?: boolean; speaker?: string; speakAlso?: string[]; actor?: ContextActor }): Promise<void> {
+async function deliverTurn(sid: string, opts: { showText: string; agentText?: string; model?: string; effort?: string; fastMode?: boolean; speak?: boolean; speaker?: string; speakAlso?: string[]; actor?: ContextActor }): Promise<void> {
   const manifestAgentText = opts.agentText || opts.showText;
   const personal = opts.actor?.source === "user" ? await personalContextForChat(LOCAL_ID, sid, opts.showText, opts.actor) : undefined;
+  const sessionAgent = store.ensure(sid).agent;
   await runOwnedManagedTurn(sid, {
-    showText: opts.showText, agentText: personal ? `${personal.contextPrefix}\n\n${manifestAgentText}` : manifestAgentText, manifestAgentText, model: opts.model, effort: opts.effort,
+    showText: opts.showText, agentText: personal ? `${personal.contextPrefix}\n\n${manifestAgentText}` : manifestAgentText, manifestAgentText, model: opts.model, effort: opts.effort, fastMode: opts.fastMode && supportsFastMode(sessionAgent),
     actor: opts.actor, speaker: opts.speaker, speak: opts.speak, speakAlso: opts.speakAlso,
     onError: (message, limit) => broadcast(sid, { t: "error", message, limit }),
   });
@@ -3446,7 +3455,7 @@ async function stageRefinePass(scope: StageScope, utterance: string, model: stri
   const e = staging.get(stageKey(scope))!;
   const prompt = buildRefinePrompt({ context: await stageContext(scope), turns: e.turns, utterance });
   const agent = agents.searchAgent();
-  const sendOpts = await compatibleAgentOpts(agent, model, effort);
+  const sendOpts = await voiceFastAgentOpts(agent, model, effort);
   const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__stage__", prompt, process.cwd(), sendOpts);
   addUsage(WAKE_SESSION, agent.name, reply.usage); // atribui usage/custo tipado à voz
   return parseRefine(reply.text);
@@ -3506,13 +3515,13 @@ async function stageConfirm(scope: StageScope): Promise<void> {
   if (!e?.draft) return;
   clearPendingAsk(scope.runnerId, scope.sessionId);
   if (scope.runnerId === LOCAL_ID) {
-    await deliverTurn(scope.sessionId, { showText: e.draft, speak: true, actor: scope.actor || { source: "user" } });
+    await deliverTurn(scope.sessionId, { showText: e.draft, fastMode: voiceCfg.fastMode, speak: true, actor: scope.actor || { source: "user" } });
     return;
   }
   const rc = runners.get(scope.runnerId), state = runnerSessionState.get(scope.runnerId)?.get(scope.sessionId);
   if (!rc?.ws) throw new Error("máquina da sessão de voz está offline");
   if (runnerUpdateDraining(scope.runnerId) || runnerActive.get(scope.runnerId)?.has(scope.sessionId)) {
-    enqueueChatTurn(scope.runnerId, scope.sessionId, { text: e.draft, atts: [], runnerId: scope.runnerId, msgId: randomUUID(), actor: { ...(scope.actor || {}), source: "queue" } });
+    enqueueChatTurn(scope.runnerId, scope.sessionId, { text: e.draft, atts: [], fastMode: voiceCfg.fastMode, runnerId: scope.runnerId, msgId: randomUUID(), actor: { ...(scope.actor || {}), source: "queue" } });
     return;
   }
   const agent = state?.agent || rc.info.agents[0];
@@ -3521,7 +3530,7 @@ async function stageConfirm(scope: StageScope): Promise<void> {
   const actor = scope.actor || { source: "user" as const };
   const personal = await personalContextForChat(scope.runnerId, scope.sessionId, e.draft, actor);
   const turnId = randomUUID();
-  if (!sendOwnedRunnerTurn(rc, scope.sessionId, turnId, actorPrincipalId(actor), { t: "send", text: e.draft, contextPrefix: personal?.contextPrefix, agent, actor })) {
+  if (!sendOwnedRunnerTurn(rc, scope.sessionId, turnId, actorPrincipalId(actor), { t: "send", text: e.draft, contextPrefix: personal?.contextPrefix, agent, fastMode: voiceCfg.fastMode && supportsFastMode(agent), actor })) {
     remoteSpeak.delete(scope.runnerId + "\0" + scope.sessionId);
     throw new Error("não foi possível enviar o refino de voz para a máquina");
   }
@@ -3544,7 +3553,7 @@ async function runVoiceTask(task: string, speak: boolean, speaker?: string): Pro
   if (sid === WAKE_SESSION && s.messages.length === 0) store.reconfigure(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd });
   // sessão vinculada usa o modelo/esforço DELA (undefined → prefs/default); só a de voz usa voiceConfig.
   // e o ÁUDIO também vai pro canal de voz (WAKE) quando vinculado a outra sessão, senão o wake listener não ouve.
-  await deliverTurn(sid, { showText: task, model: sid === WAKE_SESSION ? voiceConfig.model : undefined, effort: sid === WAKE_SESSION ? voiceConfig.effort : undefined, speak, speaker, speakAlso: sid !== WAKE_SESSION ? [WAKE_SESSION] : undefined, actor: { source: "user" } });
+  await deliverTurn(sid, { showText: task, model: sid === WAKE_SESSION ? voiceConfig.model : undefined, effort: sid === WAKE_SESSION ? voiceConfig.effort : undefined, fastMode: sid === WAKE_SESSION ? voiceConfig.fastMode : undefined, speak, speaker, speakAlso: sid !== WAKE_SESSION ? [WAKE_SESSION] : undefined, actor: { source: "user" } });
 }
 /** Wake sem contexto: sugere a sessão mais provável (memória semântica) e abre o overlay p/ decidir
  *  continuar nela ou criar nova. Sem sugestão forte → cai na sessão de voz (comportamento antigo). */
@@ -3580,7 +3589,7 @@ async function relevanceGate(text: string, context: string): Promise<boolean> {
   try {
     const agent = summaryAgent();
     if (!agent?.oneShot) return true;
-    const reply = await agent.oneShot(buildRelevancePrompt(text, context), await compatibleAgentOpts(agent, voiceCfg.fastModel, voiceCfg.fastEffort));
+    const reply = await agent.oneShot(buildRelevancePrompt(text, context), await voiceFastAgentOpts(agent));
     addUsage(WAKE_SESSION, agent.name, reply.usage);
     const v = parseRelevanceVerdict(String(reply?.text ?? ""));
     if (!v.relevant) console.log(`[voz] descartado (irrelevante${v.reason ? ": " + v.reason : ""}): "${text.slice(0, 60)}"`);
@@ -3594,7 +3603,7 @@ async function voicePreflight(rawText: string, context: string): Promise<{ text:
   try {
     const agent = summaryAgent();
     if (!agent?.oneShot) return { text: rawText, relevant: true };
-    const reply = await agent.oneShot(buildVoicePreflightPrompt(rawText, context), await compatibleAgentOpts(agent, voiceCfg.fastModel, voiceCfg.fastEffort));
+    const reply = await agent.oneShot(buildVoicePreflightPrompt(rawText, context), await voiceFastAgentOpts(agent));
     addUsage(WAKE_SESSION, agent.name, reply.usage);
     const r = parseVoicePreflight(String(reply?.text ?? ""), rawText);
     if (!r.relevant) console.log(`[voz] descartado (irrelevante): "${rawText.slice(0, 60)}"`);
@@ -3682,7 +3691,7 @@ const activityBuf = new Map<string, any[]>();
 // Fila POR MÁQUINA + SESSÃO, dona no HUB (não mais só no navegador): toda web vendo a sessão enxerga a MESMA
 // fila, e o flush roda no servidor quando o turno termina — sobrevive mesmo que o dispositivo que
 // enfileirou saia. Cada item guarda texto + anexos (+ model/effort do envio original).
-type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; model?: string; effort?: string; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor; queuedAt?: number };
+type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; model?: string; effort?: string; fastMode?: boolean; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor; queuedAt?: number };
 const queues = new Map<string, QueueItem[]>();
 // msgIds of queue items the user removed. A dequeue can land WHILE a flush is already mid-air: the
 // flush captures the items and clears the queue, then spends SECONDS in async routing (a CLI spawn)
@@ -3709,6 +3718,7 @@ function recordPendingInboundTurn(runnerId: string, sid: string, msg: any, text:
     sessionId: sid, text, atts: Array.isArray(msg.attachments) ? msg.attachments : [],
     model: typeof msg.model === "string" ? msg.model : undefined,
     effort: typeof msg.effort === "string" ? msg.effort : undefined,
+    fastMode: msg.fastMode === true,
     auto: autoFlags(msg.auto), msgId: id, actor, ts: Date.now(),
   });
   savePendingInboundTurns();
@@ -3732,7 +3742,7 @@ function loadPendingInboundTurns(): void {
 function recoverPendingInboundTurns(): void {
   for (const [id, item] of [...pendingInboundTurns]) {
     const q = queueOf(LOCAL_ID, item.sessionId);
-    if (!q.some((queued) => queued.msgId === id)) pushQueueItem(LOCAL_ID, item.sessionId, { text: item.text, atts: item.atts || [], model: item.model, effort: item.effort, auto: item.auto, msgId: id, actor: { ...(item.actor || {}), source: "queue" } });
+    if (!q.some((queued) => queued.msgId === id)) pushQueueItem(LOCAL_ID, item.sessionId, { text: item.text, atts: item.atts || [], model: item.model, effort: item.effort, fastMode: item.fastMode, auto: item.auto, msgId: id, actor: { ...(item.actor || {}), source: "queue" } });
     pendingInboundTurns.delete(id);
     broadcastQueue(LOCAL_ID, item.sessionId);
   }
@@ -4143,7 +4153,7 @@ async function decideAutomaticRoute(input: {
   try {
     const router = summaryAgent();
     if (!router.oneShot) throw new Error("agente de roteamento sem suporte one-shot");
-    const reply = await router.oneShot(buildAutoRoutePrompt(req), { ...(await compatibleAgentOpts(router, summaryCfg.model, summaryCfg.effort)), signal: ctrl.signal });
+    const reply = await router.oneShot(buildAutoRoutePrompt(req), { ...(await summaryAgentOpts(router)), signal: ctrl.signal });
     // Routing is deliberately accounted outside the conversation: it must appear in total usage,
     // but never inflate the target session's context/cost as if the main coding agent spent it.
     addUsage("__auto_route__", router.name, reply.usage);
@@ -4207,7 +4217,7 @@ async function decideCouncilRoute(input: {
   try {
     const router = summaryAgent();
     if (!router.oneShot) throw new Error("agente de roteamento sem suporte one-shot");
-    const reply = await router.oneShot(buildCouncilRoutePrompt(req), await compatibleAgentOpts(router, summaryCfg.model, summaryCfg.effort));
+    const reply = await router.oneShot(buildCouncilRoutePrompt(req), await summaryAgentOpts(router));
     addUsage("__council_route__", router.name, reply.usage);
     decision = parseCouncilRouteDecision(reply.text, req);
   } catch {
@@ -4504,7 +4514,7 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
     return (a.oneShot ? await a.oneShot(prompt, opts) : await a.send("__debate__", prompt, cwd, opts)) as any;
   };
   const oneShotAdapter = async (a: AgentAdapter, prompt: string): Promise<{ text: string; usage?: any }> => {
-    const opts = await compatibleAgentOpts(a, summaryCfg.model, summaryCfg.effort);
+    const opts = await summaryAgentOpts(a);
     return (a.oneShot ? await a.oneShot(prompt, opts) : await a.send("__debatejudge__", prompt, cwd, opts)) as any;
   };
 
@@ -4860,12 +4870,12 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
       }
       else emit(bridge.provider(ev));
     });
-    if (reply.usage || opts.model || opts.effort) reply.usage = { costKind: "unavailable", source: "Jarvis turn selection", ...reply.usage, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort };
+    if (reply.usage || opts.model || opts.effort || opts.fastMode) reply.usage = { costKind: "unavailable", source: "Jarvis turn selection", ...reply.usage, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort, fastMode: reply.usage?.fastMode || opts.fastMode || undefined };
     addUsage(sid, agent.name, reply.usage);
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: reply.usage?.model || opts.model, ms: Date.now() - t0, ok: true, ts: Date.now() });
     // Structured observability: one line per turn — trace it by turnId, with duration/tokens/cost so a
     // slow or expensive turn is diagnosable and prompt/cost trends are analyzable. Metadata only (no text).
-    log.info("turn", { traceId: turnId, sessionId: sid, agent: agent.name, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort, ms: Date.now() - t0, spawnMs: reply.usage?.spawnMs, workMs: reply.usage?.workMs, inputTokens: reply.usage?.inputTokens, outputTokens: reply.usage?.outputTokens, contextTokens: reply.usage?.contextTokens, costUsd: reply.usage?.costUsd, replyChars: (reply.text || "").length, ok: true });
+    log.info("turn", { traceId: turnId, sessionId: sid, agent: agent.name, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort, fastMode: reply.usage?.fastMode || opts.fastMode || undefined, ms: Date.now() - t0, spawnMs: reply.usage?.spawnMs, workMs: reply.usage?.workMs, inputTokens: reply.usage?.inputTokens, outputTokens: reply.usage?.outputTokens, contextTokens: reply.usage?.contextTokens, costUsd: reply.usage?.costUsd, replyChars: (reply.text || "").length, ok: true });
     if (reply.usage) emit(bridge.usage(reply.usage));
     emit(bridge.completed(reply.text));
     // Surface the just-bound native session id (real claude/codex session) so the UI chip appears live.
@@ -4914,7 +4924,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
       throw e;
     }
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: opts.model, ms: Date.now() - t0, ok: false, ts: Date.now() });
-    log.warn("turn", { traceId: turnId, sessionId: sid, agent: agent.name, model: opts.model, effort: opts.effort, ms: Date.now() - t0, ok: false, error: String((e as any)?.message ?? e).slice(0, 300) });
+    log.warn("turn", { traceId: turnId, sessionId: sid, agent: agent.name, model: opts.model, effort: opts.effort, fastMode: opts.fastMode || undefined, ms: Date.now() - t0, ok: false, error: String((e as any)?.message ?? e).slice(0, 300) });
     if (!sequencer.terminal) emit(bridge.failed(String((e as any)?.message ?? e), "PROVIDER_ERROR"));
     notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid, notificationTargetForSession(LOCAL_ID, sid));
     throw e;
@@ -4997,6 +5007,7 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
   const policy = items.at(-1);
   const model = policy?.model;
   const effort = policy?.effort;
+  const fastMode = policy?.fastMode === true;
   const automatic = policy?.auto || { agent: false, model: false, effort: false };
   const actor = policy?.actor ? { ...policy.actor, source: "queue" as const } : { source: "queue" as const };
   clearPendingAsk(rid || LOCAL_ID, sid);
@@ -5017,13 +5028,13 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
         if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o envio");
         const currentAgent = hist?.agent || state?.agent || rc.info.agents[0];
         if (!currentAgent) throw new Error("nenhuma IA disponível nesta máquina");
-        const decision = await decideAutomaticRoute({ runnerId, sid, text, started: /^(claude:|codex:)/.test(sid) || Number(hist?.total) > 0 || state?.started === true, currentAgent, currentModel: model || (automatic.model ? su.model : undefined), currentEffort: effort, flags: automatic, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens, notify: (frame) => { for (const c of clientsOn(rid)) if (subs.get(c) === sid && canAccessSession(c, rid, sid)) send(c, frame); } });
+        const decision = await decideAutomaticRoute({ runnerId, sid, text, started: /^(claude:|codex:)/.test(sid) || Number(hist?.total) > 0 || state?.started === true, currentAgent, currentModel: model || (automatic.model ? su.model : undefined), currentEffort: effort, flags: automatic, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [], recent: (hist?.messages || []).filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6), contextTokens: hist?.inputTokens ?? su.contextTokens, contextWindowTokens: hist?.contextWindowTokens ?? su.contextWindowTokens, notify: (frame) => { for (const c of clientsOn(rid)) if (subs.get(c) === sid && canAccessSession(c, rid, sid)) send(c, frame); } });
         if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o roteamento");
         const personal = await personalContextForChat(rid, sid, text, actor, () => refreshSessionDispatchAuthorization(lease));
         if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
         if (abortIfCancelled()) return; // usuário removeu o item durante o preflight — não despacha
         const turnId = (items.find((q) => q.msgId)?.msgId) || randomUUID();
-        const ok = sendOwnedRunnerTurn(rc, sid, turnId, actorPrincipalId(actor), { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, opts: { permissionMode: remoteSessionModes.get(rc.id + " " + sid) }, actor });
+        const ok = sendOwnedRunnerTurn(rc, sid, turnId, actorPrincipalId(actor), { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, fastMode: fastMode && supportsFastMode(decision.agent), opts: { permissionMode: remoteSessionModes.get(rc.id + " " + sid) }, actor });
         if (!ok) throw new Error("não foi possível enviar a fila para a máquina");
         dispatched = true;
         markRunnerSessionActive(rid, sid);
@@ -5041,13 +5052,13 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
     if (abortIfCancelled()) return; // usuário removeu o item durante o preflight — não despacha
     if (isNativeId(sid)) {
       let _tDispatch = 0;
-      await deliverNativeTurn(null, sid, text, { model: decision.model, effort: decision.effort, attachments: atts, actor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease), onDispatch: () => { dispatched = true; _tDispatch = Date.now(); } });
+      await deliverNativeTurn(null, sid, text, { model: decision.model, effort: decision.effort, fastMode: fastMode && supportsFastMode(decision.agent), attachments: atts, actor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease), onDispatch: () => { dispatched = true; _tDispatch = Date.now(); } });
       log.debug("flush_timing", { sessionId: sid, native: true, auto: needsAuto(automatic), routeMs: _tRoute - _t0, personalMs: _tPersonal - _tRoute, toDispatchMs: (_tDispatch || Date.now()) - _tPersonal, totalMs: Date.now() - _t0 });
       return;
     }
     const { agentText, showText, images, files } = buildAttachments(atts, text);
     dispatched = true;
-    await runOwnedManagedTurn(sid, { showText, agentText: personal ? `${personal.contextPrefix}\n\n${agentText}` : agentText, manifestAgentText: agentText, model: decision.model, effort: decision.effort, images, files, turnId: items.find((q) => q.msgId)?.msgId, actor, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
+    await runOwnedManagedTurn(sid, { showText, agentText: personal ? `${personal.contextPrefix}\n\n${agentText}` : agentText, manifestAgentText: agentText, model: decision.model, effort: decision.effort, fastMode: fastMode && supportsFastMode(decision.agent), images, files, turnId: items.find((q) => q.msgId)?.msgId, actor, onError: (message, limit) => broadcast(sid, { t: "error", message, limit }) });
   } catch (e: any) {
     if (!dispatched) restoreItems();
     broadcastOn(runnerId, sid, { t: "error", message: String(e?.message ?? e) });
@@ -5146,7 +5157,7 @@ async function correctTranscript(text: string): Promise<string> {
     const prompt =
       "Você corrige transcrições de VOZ (pt/en/es) de um assistente de desenvolvimento. Conserte SOMENTE erros de reconhecimento — em especial termos técnicos em inglês ditos dentro do português (Docker, Kubernetes, git, commit, push, deploy, runner, hub, endpoint, API, Claude, Codex, PowerShell, etc.). NÃO responda, NÃO comente, NÃO traduza, NÃO adicione nada: devolva APENAS o texto corrigido, no mesmo idioma. Se já estiver correto, devolva idêntico.\n\nTranscrição:\n" +
       text;
-    const reply = await agent.oneShot(prompt, await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort));
+    const reply = await agent.oneShot(prompt, await summaryAgentOpts(agent));
     addUsage(WAKE_SESSION, agent.name, reply.usage);
     const fixed = String(reply?.text ?? "").trim();
     return fixed || text;
@@ -5178,7 +5189,7 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
       "- NÃO inclua 'Outros' (a UI adiciona).\n" +
       'Se a resposta NÃO pede decisão, devolva {"questions":[]}. Responda APENAS o JSON.\n\nRESPOSTA:\n' +
       t.slice(0, 4000);
-    const reply = await agent.oneShot(prompt, await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort));
+    const reply = await agent.oneShot(prompt, await summaryAgentOpts(agent));
     addUsage("__decision_detection__", agent.name, reply.usage);
     const m = String(reply?.text ?? "").match(/\{[\s\S]*\}/);
     if (!m) return [];
@@ -5255,7 +5266,7 @@ async function interpretAskVoice(transcript: string, question: string, options: 
       "O usuário respondeu POR VOZ a uma pergunta com opções. Mapeie a fala para as opções.\n" +
       `Pergunta: ${question}\nOpções:\n${list}\nMulti-seleção: ${multi ? "sim" : "não"}\nFala: "${t}"\n` +
       'Responda JSON: {"action":"choose"|"other","indices":[índices],"other":"texto livre"}. Se a fala casa com opção(ões), use "choose" e os índices (um só se não for multi). Se é instrução/algo fora das opções, use "other" com o texto. Só o JSON.';
-    const r = await agent.oneShot(prompt, await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort));
+    const r = await agent.oneShot(prompt, await summaryAgentOpts(agent));
     const m = String(r?.text ?? "").match(/\{[\s\S]*\}/);
     if (!m) return { action: "other", other: t };
     const o = JSON.parse(m[0]);
@@ -5269,7 +5280,7 @@ async function interpretAskVoice(transcript: string, question: string, options: 
   }
 }
 
-async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; actor?: ContextActor; contextPrefix?: string; authorize?: () => boolean; onDispatch?: () => void }): Promise<void> {
+async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string, opts: { model?: string; effort?: string; fastMode?: boolean; speak?: boolean; speaker?: string; attachments?: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; actor?: ContextActor; contextPrefix?: string; authorize?: () => boolean; onDispatch?: () => void }): Promise<void> {
   const info = nativeInfo(sid);
   if (!info) { if (ws) send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
   if (info.agent !== "claude-code" && info.agent !== "codex") { if (ws) send(ws, { t: "error", message: "este adapter não oferece retomada nativa importada" }); return; }
@@ -5302,7 +5313,7 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   nativeTurnPaused.add(sid);
   try {
     const principalId = opts.actor?.userId || captureSessionOwnerGeneration(LOCAL_ID, sid).principalId || "local";
-    const reply = await executionPrincipalContext.run(principalId, () => agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, turnId }));
+    const reply = await executionPrincipalContext.run(principalId, () => agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, fastMode: opts.fastMode && supportsFastMode(agent.name), turnId }));
     if (opts.speak) {
       const spoken = await speechForReply(reply.text);
       if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
@@ -5452,7 +5463,7 @@ async function summarizeAndSpeak(ws: WebSocket, sid: string, speak: boolean): Pr
     `referente ao último comando enviado. Vá direto ao ponto; NÃO resuma a conversa inteira.\n\n` +
     `Título: ${title}\n\nÚltimo comando: ${lastU.slice(0, 800)}\n\nÚltima resposta: ${lastA.slice(0, 2500)}`;
   const agent = summaryAgent();
-    const sendOpts = await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort);
+    const sendOpts = await summaryAgentOpts(agent);
   let text = "";
   try {
     const reply = await ackThenWork(
@@ -5510,7 +5521,7 @@ async function digestAndSpeak(ws: WebSocket, speak: boolean): Promise<void> {
         `"0 em execução" significa apenas que nada está rodando agora — NUNCA diga que estão inativas, offline ou desconectadas):\n${remoteLines}`
       : "");
   const agent = summaryAgent();
-    const sendOpts = await compatibleAgentOpts(agent, summaryCfg.model, summaryCfg.effort);
+    const sendOpts = await summaryAgentOpts(agent);
   let text = "";
   try {
     const reply = agent.oneShot ? await agent.oneShot(prompt, sendOpts) : await agent.send("__digest__", prompt, process.cwd(), sendOpts);
@@ -5788,6 +5799,7 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
     const nextEffort = typeof msg.effort === "string" ? (msg.effort || undefined) : voiceCfg.effort;
     if (nextEffort && !modelInfo?.efforts.includes(nextEffort)) { send(ws, { t: "error", message: `esforço de voz inválido para ${nextModel || nextAgent}: ${nextEffort}` }); return true; }
     voiceCfg.agent = voiceConfig.agent = nextAgent; voiceCfg.model = voiceConfig.model = nextModel; voiceCfg.effort = voiceConfig.effort = nextEffort;
+    if (typeof msg.fastMode === "boolean" || !supportsFastMode(nextAgent)) voiceCfg.fastMode = voiceConfig.fastMode = msg.fastMode === true && supportsFastMode(nextAgent);
     if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; if (typeof msg.relevance === "string") voiceCfg.relevance = msg.relevance;
     saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: { ...voiceCfg } }); return true; }
   // --- catálogo de vozes / timbre falado (Gap 6): listar, trocar e ouvir prévia. Trocar é do dono
@@ -6288,17 +6300,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           clearPendingAsk(ar, sid);
           auth.audit("send", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: ar, detail: `${sid}: ${String(msg.text).slice(0, 80)}` });
           if (runnerUpdateDraining(ar)) {
-            enqueueChatTurn(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+            enqueueChatTurn(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, fastMode: msg.fastMode === true, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
             send(ws, { t: "queued", runnerId: ar, sessionId: sid, text: msg.text, update: true, message: "Máquina drenando para atualização — mensagem ficou na fila." }); return;
           }
           const turnActor = actorOf(ws);
           if (sessionDispatchBusy(ar, sid)) {
-            pushQueueItem(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+            pushQueueItem(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, fastMode: msg.fastMode === true, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
             broadcastQueue(ar, sid); saveQueues(); void maybeFlushQueue(ar, sid, false); send(ws, { t: "queued", runnerId: ar, sessionId: sid, text: msg.text }); return;
           }
           const lease = reserveSessionDispatch(ar, sid, actorPrincipalId(turnActor), "send");
           if (!lease) {
-            enqueueChatTurn(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: { ...turnActor, source: "queue" } });
+            enqueueChatTurn(ar, sid, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, fastMode: msg.fastMode === true, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: { ...turnActor, source: "queue" } });
             send(ws, { t: "queued", runnerId: ar, sessionId: sid, text: msg.text }); return;
           }
           try {
@@ -6320,7 +6332,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
             currentEffort: typeof msg.effort === "string" ? msg.effort : undefined,
             flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [],
             recent: Array.isArray(hist?.messages) ? hist.messages.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role, text: String(m.text || "") })) : [],
-            contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens,
+            contextTokens: hist?.inputTokens ?? su.contextTokens, contextWindowTokens: hist?.contextWindowTokens ?? su.contextWindowTokens,
             notify: (frame) => { for (const c of clientsOn(rc.id)) if (subs.get(c) === sid && canAccessSession(c, rc.id, sid)) send(c, frame); },
           });
           if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o roteamento");
@@ -6329,7 +6341,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           const personal = await personalContextForChat(ar, sid, msg.text, turnActor, () => refreshSessionDispatchAuthorization(lease));
           if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
           const turnId = (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID();
-          if (!sendOwnedRunnerTurn(rc, sid, turnId, actorPrincipalId(turnActor), { t: "send", text: msg.text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort, permissionMode: remoteSessionModes.get(rc.id + " " + sid) }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker: typeof msg.speaker === "string" ? msg.speaker : undefined, actor: turnActor })) {
+          if (!sendOwnedRunnerTurn(rc, sid, turnId, actorPrincipalId(turnActor), { t: "send", text: msg.text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort, fastMode: msg.fastMode === true && supportsFastMode(decision.agent), permissionMode: remoteSessionModes.get(rc.id + " " + sid) }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker: typeof msg.speaker === "string" ? msg.speaker : undefined, actor: turnActor })) {
             remoteSpeak.delete(ar + "\0" + sid);
             send(ws, { t: "error", message: "não foi possível enviar para a máquina" }); return;
           }
@@ -6512,7 +6524,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const su = sessionUsage(s.id), nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
       const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
       const files = [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))];
-      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: nh?.title || s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens || su.contextTokens, contextWindowTokens: nh?.contextWindowTokens || su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort, permissionMode: sessionPermissionMode(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
+      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: nh?.title || s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens ?? su.contextTokens, contextWindowTokens: nh?.contextWindowTokens ?? su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort, permissionMode: sessionPermissionMode(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
       replayActivity(ws, LOCAL_ID, s.id);
       replayRoute(ws, LOCAL_ID, s.id);
       sendPendingAsk(ws, LOCAL_ID, s.id);
@@ -6688,6 +6700,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       summaryCfg.agent = agentName;
       if (model) summaryCfg.model = model.id;
       if (model?.efforts.length) summaryCfg.effort = model.efforts.includes(requestedEffort) ? requestedEffort : (model.defaultEffort || model.efforts[0]);
+      if (typeof msg.fastMode === "boolean" || !supportsFastMode(agentName)) summaryCfg.fastMode = msg.fastMode === true && supportsFastMode(agentName);
       saveSummaryCfg();
       send(ws, { t: "summary_cfg", cfg: summaryCfg, agents: await agents.describe() });
       return;
@@ -7251,7 +7264,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // "zero chamadas com item marcado" ser uma propriedade do código, não uma promessa do comentário.
       const interpret = async (prompt: string): Promise<string> => {
         const a = summaryAgent();
-        const opts = await compatibleAgentOpts(a, summaryCfg.model, summaryCfg.effort);
+        const opts = await summaryAgentOpts(a);
         const r = (a.oneShot ? await a.oneShot(prompt, opts) : await a.send("__taskfanout__", prompt, CWD, opts)) as { text?: string; usage?: any };
         addUsage(`__taskfanout__:${msg.sessionId}`, a.name, r.usage);
         return String(r?.text || "");
@@ -7334,7 +7347,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!body.trim()) { send(ws, { t: "error", message: "Resumir: a tarefa não tem descrição carregada" }); return; }
       try {
         const a = summaryAgent();
-        const opts = await compatibleAgentOpts(a, summaryCfg.model, summaryCfg.effort);
+        const opts = await summaryAgentOpts(a);
         const prompt = `Resuma a tarefa a seguir para quem vai trabalhar nela agora: objetivo, critérios de aceite (explícitos ou implícitos) e riscos/armadilhas. No máximo 8 linhas, em português.\n\n${body.slice(0, 6000)}`;
         const r = (a.oneShot ? await a.oneShot(prompt, opts) : await a.send("__tasksum__", prompt, CWD, opts)) as { text?: string; usage?: any };
         addUsage(`__tasksum__:${msg.tracker}:${msg.key}`, a.name, r.usage);
@@ -8038,7 +8051,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (!s) { send(ws, { t: "error", message: "sessão não encontrada" }); return; }
       const turnActor = actorOf(ws);
       const queueTurn = (): void => {
-        enqueueChatTurn(LOCAL_ID, s.id, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: { ...turnActor, source: "queue" } });
+        enqueueChatTurn(LOCAL_ID, s.id, { text: msg.text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, fastMode: msg.fastMode === true, auto: autoFlags(msg.auto), msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: { ...turnActor, source: "queue" } });
         void maybeFlushQueue(LOCAL_ID, s.id, false);
         send(ws, { t: "queued", runnerId: LOCAL_ID, sessionId: s.id, text: msg.text });
       };
@@ -8055,7 +8068,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!sessionDispatchAuthorized(lease, ws) || !store.get(s.id)) throw new Error("a autorização da sessão mudou durante o roteamento");
         const personal = await personalContextForChat(LOCAL_ID, s.id, msg.text, turnActor, () => refreshSessionDispatchAuthorization(lease));
         if (!sessionDispatchAuthorized(lease, ws) || !store.get(s.id)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
-        await runOwnedManagedTurn(s.id, { showText: msg.text, agentText: personal ? `${personal.contextPrefix}\n\n${msg.text}` : msg.text, manifestAgentText: msg.text, model: decision.model, effort: decision.effort, actor: turnActor, onError: (message) => send(ws, { t: "error", message }) });
+        await runOwnedManagedTurn(s.id, { showText: msg.text, agentText: personal ? `${personal.contextPrefix}\n\n${msg.text}` : msg.text, manifestAgentText: msg.text, model: decision.model, effort: decision.effort, fastMode: msg.fastMode === true && supportsFastMode(decision.agent), actor: turnActor, onError: (message) => send(ws, { t: "error", message }) });
       } finally {
         activeRuns.delete(s.id); broadcastRuns();
         if (queueOf(LOCAL_ID, s.id).length) pendingDispatchFlush.add(scopedSessionKey(LOCAL_ID, s.id));
@@ -8087,6 +8100,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         atts: Array.isArray(msg.attachments) ? msg.attachments : [],
         model: typeof msg.model === "string" ? msg.model : undefined,
         effort: typeof msg.effort === "string" ? msg.effort : undefined,
+        fastMode: msg.fastMode === true,
         auto: autoFlags(msg.auto),
         msgId: typeof msg.msgId === "string" ? msg.msgId : undefined,
         actor: { ...turnActor, source: "queue" },
@@ -8100,7 +8114,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "enqueue" && typeof msg.sessionId === "string" && (typeof msg.text === "string" || Array.isArray(msg.attachments))) {
       const rid = activeRunner(ws);
       if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; }
-      pushQueueItem(rid, msg.sessionId, { text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+      pushQueueItem(rid, msg.sessionId, { text: typeof msg.text === "string" ? msg.text : "(anexo)", atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, fastMode: msg.fastMode === true, auto: autoFlags(msg.auto), runnerId: rid !== LOCAL_ID ? rid : undefined, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
       broadcastQueue(rid, msg.sessionId); saveQueues(); void maybeFlushQueue(rid, msg.sessionId, false); return;
     }
     if (msg.t === "dequeue" && typeof msg.sessionId === "string" && (typeof msg.msgId === "string" || typeof msg.index === "number")) {
@@ -8363,20 +8377,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!rc || !rc.ws || rc.ws.readyState !== 1) { send(ws, { t: "error", message: "máquina offline" }); return; }
         let remoteSid = isNativeId(sid) ? (managedRunnerSessionForNative(rc.id, sid) || sid) : sid;
         if (runnerUpdateDraining(ar)) {
-          enqueueChatTurn(ar, remoteSid, { text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+          enqueueChatTurn(ar, remoteSid, { text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, fastMode: msg.fastMode === true, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
           send(ws, { t: "queued", runnerId: ar, sessionId: remoteSid, text, voice: true, update: true, message: "Máquina drenando para atualização — mensagem ficou na fila." });
           return;
         }
         const turnActor = actorOf(ws);
         if (sessionDispatchBusy(ar, remoteSid)) {
-          pushQueueItem(ar, remoteSid, { text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
+          pushQueueItem(ar, remoteSid, { text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, fastMode: msg.fastMode === true, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: actorOf(ws, "queue") });
           broadcastQueue(ar, remoteSid); saveQueues(); void maybeFlushQueue(ar, remoteSid, false);
           send(ws, { t: "queued", runnerId: ar, sessionId: remoteSid, text, voice: true });
           return;
         }
         const lease = reserveSessionDispatch(ar, remoteSid, actorPrincipalId(turnActor), "voice");
         if (!lease) {
-          enqueueChatTurn(ar, remoteSid, { text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: { ...turnActor, source: "queue" } });
+          enqueueChatTurn(ar, remoteSid, { text, atts: Array.isArray(msg.attachments) ? msg.attachments : [], model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, fastMode: msg.fastMode === true, auto: autoFlags(msg.auto), runnerId: ar, msgId: typeof msg.msgId === "string" ? msg.msgId : undefined, actor: { ...turnActor, source: "queue" } });
           send(ws, { t: "queued", runnerId: ar, sessionId: remoteSid, text, voice: true }); return;
         }
         try {
@@ -8398,7 +8412,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           currentEffort: typeof msg.effort === "string" ? msg.effort : undefined,
           flags, descriptors: rc.info.agentDescriptors || [], available: rc.info.agents || [],
           recent: Array.isArray(hist?.messages) ? hist.messages.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role, text: String(m.text || "") })) : [],
-          contextTokens: hist?.inputTokens || su.contextTokens, contextWindowTokens: hist?.contextWindowTokens || su.contextWindowTokens,
+          contextTokens: hist?.inputTokens ?? su.contextTokens, contextWindowTokens: hist?.contextWindowTokens ?? su.contextWindowTokens,
           notify: (frame) => { for (const c of clientsOn(rc.id)) if (subs.get(c) === remoteSid && canAccessSession(c, rc.id, remoteSid)) send(c, frame); },
         });
         if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o roteamento");
@@ -8407,7 +8421,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const personal = await personalContextForChat(ar, remoteSid, text, turnActor, () => refreshSessionDispatchAuthorization(lease));
         if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
         const turnId = (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID();
-        if (!sendOwnedRunnerTurn(rc, remoteSid, turnId, actorPrincipalId(turnActor), { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort, permissionMode: remoteSessionModes.get(rc.id + " " + remoteSid) }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, actor: turnActor })) {
+        if (!sendOwnedRunnerTurn(rc, remoteSid, turnId, actorPrincipalId(turnActor), { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort, fastMode: msg.fastMode === true && supportsFastMode(decision.agent), permissionMode: remoteSessionModes.get(rc.id + " " + remoteSid) }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, actor: turnActor })) {
           remoteSpeak.delete(ar + "\0" + remoteSid);
           send(ws, { t: "error", message: "não foi possível enviar para a máquina" });
           return;
@@ -8432,6 +8446,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         atts: Array.isArray(msg.attachments) ? msg.attachments : [],
         model: typeof msg.model === "string" ? msg.model : undefined,
         effort: typeof msg.effort === "string" ? msg.effort : undefined,
+        fastMode: msg.fastMode === true,
         auto: autoFlags(msg.auto),
         runnerId: rid !== LOCAL_ID ? rid : undefined,
         // Every queued item needs a stable id so it's removable by msgId + cancellable mid-flush.
@@ -8467,7 +8482,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!sessionDispatchAuthorized(lease, ws)) throw new Error("a autorização da sessão mudou durante o roteamento");
         const personal = await personalContextForChat(LOCAL_ID, sid, text, turnActor, () => refreshSessionDispatchAuthorization(lease));
         if (!sessionDispatchAuthorized(lease, ws)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
-        await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], actor: turnActor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease, ws) });
+        await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, fastMode: msg.fastMode === true && supportsFastMode(decision.agent), speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], actor: turnActor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease, ws) });
         clearPendingInboundTurn(inboundKey);
         return;
       }
@@ -8500,6 +8515,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         showText, agentText: personal ? `${personal.contextPrefix}\n\n${manifestAgentText}` : manifestAgentText, manifestAgentText,
         model: decision.model,
         effort: decision.effort,
+        fastMode: msg.fastMode === true && supportsFastMode(decision.agent),
         speaker, images, files, speak: !!msg.speak,
         turnId: typeof msg.msgId === "string" ? msg.msgId : undefined,
         actor: turnActor,

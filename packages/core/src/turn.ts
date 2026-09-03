@@ -10,6 +10,7 @@ export interface TurnUsage {
   source?: string;
   model?: string;
   effort?: string;
+  fastMode?: boolean;
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;
@@ -81,7 +82,7 @@ export interface TurnCtx {
   broadcast(sid: string, msg: unknown): void;
   pushSessions(): void;
   now(): number;
-  runAgentTurn(sid: string, agentName: string, agentText: string, cwd: string, opts: { model?: string; effort?: string; turnId?: string }): Promise<TurnReply>;
+  runAgentTurn(sid: string, agentName: string, agentText: string, cwd: string, opts: { model?: string; effort?: string; fastMode?: boolean; turnId?: string }): Promise<TurnReply>;
   buildContextManifest?(input: {
     turnId: string;
     sid: string;
@@ -118,6 +119,7 @@ export interface ManagedTurnInput {
   manifestAgentText?: string;
   model?: string;
   effort?: string;
+  fastMode?: boolean;
   speaker?: string;
   images?: string[];
   files?: Array<{ name: string; content?: string }>;
@@ -145,6 +147,7 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
   const runAgent = pick?.switched ? pick.agent : session.agent;
   const runModel = pick?.switched ? pick.model : o.model;
   const runEffort = pick?.switched ? pick.effort : o.effort;
+  const runFastMode = pick?.switched ? undefined : o.fastMode;
   const agentName = ctx.resolveAgentName(runAgent);
   const turnId = o.turnId || randomUUID();
   const agentText = o.agentText ?? o.showText;
@@ -163,8 +166,8 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
   if (pick?.switched && pick.note) ctx.notice?.(sid, pick.note);
 
   // One attempt against a given AI, persisting the assistant message + speaking on success.
-  const attempt = async (agent: string, model?: string, effort?: string): Promise<void> => {
-    const reply = await ctx.runAgentTurn(sid, agent, agentText, session.cwd, { model, effort, turnId });
+  const attempt = async (agent: string, model?: string, effort?: string, fastMode?: boolean): Promise<void> => {
+    const reply = await ctx.runAgentTurn(sid, agent, agentText, session.cwd, { model, effort, fastMode, turnId });
     ctx.add(sid, {
       role: "assistant", text: reply.text, ts: ctx.now(), agent: ctx.resolveAgentName(agent),
       activity: reply.activity, usage: reply.usage,
@@ -176,7 +179,7 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
   };
 
   try {
-    await attempt(runAgent, runModel, runEffort);
+    await attempt(runAgent, runModel, runEffort, runFastMode);
   } catch (e: unknown) {
     const message = String((e as { message?: unknown } | null)?.message ?? e);
     const limit = isLimitError(message);
@@ -186,7 +189,7 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
       if (fb && fb.agent !== runAgent) {
         ctx.notice?.(sid, fb.note || `IA ${runAgent} sem crédito — refazendo com ${fb.agent}.`);
         try {
-          await attempt(fb.agent, fb.model, fb.effort);
+          await attempt(fb.agent, fb.model, fb.effort, undefined);
           return;
         } catch (e2: unknown) {
           const m2 = String((e2 as { message?: unknown } | null)?.message ?? e2);

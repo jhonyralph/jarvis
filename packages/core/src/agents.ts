@@ -190,6 +190,7 @@ export interface AgentReply {
     source?: string;
     model?: string;
     effort?: string;
+    fastMode?: boolean;
     /** CLI process timing (ms), when the adapter streams: spawn->first output line ("slow to
      *  START" — CLI/MCP cold start) vs. first line->final result ("slow to WORK" — real generation/
      *  tool-loop time). Splits the turn's opaque total into a diagnosable pair. */
@@ -242,6 +243,8 @@ export interface SendOpts {
   /** Per-turn permission mode chosen in the UI; overrides the global JARVIS_AGENT_PERMISSION_MODE.
    *  Canonical values; legacy strings are normalized (see normalizePermissionMode). */
   permissionMode?: PermissionMode;
+  /** Request the provider's faster execution tier for this turn when the adapter supports it. */
+  fastMode?: boolean;
   /** Abort the underlying agent process (user hit "parar"). Rejects the send with ABORTED. */
   signal?: AbortSignal;
   /** Provider-neutral continuity for CLIs without a safely addressable native session. The current
@@ -258,6 +261,15 @@ export interface SendOpts {
    * paying the MCP server startup/handshake on every one is wasted latency + cost. Adapters that
    * can't honor it ignore it (best-effort). */
   noMcp?: boolean;
+}
+
+function codexFastModeArgs(opts?: SendOpts): string[] {
+  const tier = safeIdent(process.env.JARVIS_CODEX_FAST_SERVICE_TIER) || "priority";
+  return opts?.fastMode ? ["--enable", "fast_mode", "-c", `service_tier="${tier}"`] : [];
+}
+
+function usageWithFast<T extends AgentReply["usage"]>(usage: T, opts?: SendOpts): T {
+  return usage && opts?.fastMode ? ({ ...usage, fastMode: true } as T) : usage;
 }
 
 type ManagedInvocation = NonNullable<SendOpts["managed"]>;
@@ -827,7 +839,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
         cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
         commands: true, skills: true, mcp: true, oneShot: true, remote: true,
-        modelCatalog: "runtime", modelControl: "per_turn", sessionContinuity: "native_id", toolLifecycle: "start_only",
+        modelCatalog: "runtime", modelControl: "per_turn", sessionContinuity: "native_id", toolLifecycle: "start_only", fastMode: true,
       },
       caps, source: "cli",
     });
@@ -853,9 +865,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     let permCleanup: (() => void) | undefined;
     if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
     else {
+      const fastBare = opts?.fastMode === true;
       // Non-managed turns only: teach the agent to hand long tasks to Jarvis's durable background jobs
       // (the Hub parses the ```jarvis-run block from the reply). Managed/subagent turns are isolated.
-      if (process.env.JARVIS_BG_JOBS !== "off") args.push("--append-system-prompt", BACKGROUND_JOB_STEERING);
+      // Claude --bare is intentionally lean and is mutually exclusive with prompt/MCP extras.
+      if (fastBare) args.push("--bare");
+      if (!fastBare && process.env.JARVIS_BG_JOBS !== "off") args.push("--append-system-prompt", BACKGROUND_JOB_STEERING);
       const mode = effectivePermissionMode(opts);
       args.push(...permissionArgs("claude-code", mode));
       // Pontes MCP por sessão — a "configuração zero por IA" do plano de conexões: TAREFAS
@@ -871,7 +886,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         const bridgePath = ensurePermissionBridge().replace(/\\/g, "/");
         mcpServers.jarvisperm = { command: "node", args: [bridgePath], env: { JARVIS_PERM_URL: process.env.JARVIS_PERM_URL, JARVIS_PERM_TOKEN: process.env.JARVIS_PERM_TOKEN, JARVIS_PERM_SESSION: sessionId } };
       }
-      if (Object.keys(mcpServers).length) {
+      if (!fastBare && Object.keys(mcpServers).length) {
         const cfgPath = join(tmpdir(), `jarvismcp_${randomUUID()}.json`);
         writeFileSync(cfgPath, JSON.stringify({ mcpServers }));
         permCleanup = () => { try { unlinkSync(cfgPath); } catch { /* already gone */ } };
@@ -967,7 +982,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           if (o.result && !finalText) finalText = o.result;
           if (o.is_error) streamError = cliErrorMessage(o.result, "claude error");
           tResult = Date.now();
-          usage = { costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? tResult - tFirstLine : undefined };
+          usage = usageWithFast({ costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? tResult - tFirstLine : undefined }, opts);
         }
       }, opts?.signal);
       // The turn ended while async subagents were still unresolved. The tracker will mark them
@@ -994,7 +1009,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (json.session_id) this.bindSession(sessionId, json.session_id);
     return {
       text: json.result ?? "",
-      usage: { costUsd: json.total_cost_usd, inputTokens: inputContext(json.usage), contextTokens: inputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model },
+      usage: usageWithFast({ costUsd: json.total_cost_usd, inputTokens: inputContext(json.usage), contextTokens: inputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model }, opts),
     };
     } finally { if (permCleanup) permCleanup(); }
   }
@@ -1002,14 +1017,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async oneShot(text: string, opts?: SendOpts): Promise<AgentReply> {
     validateModelSelection(await this.capabilities(), opts);
     const args = ["-p", "--output-format", "json"]; // prompt via stdin — see send()
+    if (opts?.fastMode) args.push("--bare");
     args.push(...permissionArgs("claude-code", effectivePermissionMode(opts)));
-    if (opts?.noMcp) args.push("--strict-mcp-config"); // no --mcp-config ⇒ load zero MCP servers
+    if (opts?.noMcp && !opts?.fastMode) args.push("--strict-mcp-config"); // no --mcp-config ⇒ load zero MCP servers
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
     const raw = await run(this.bin, args, ONESHOT_CWD, text); // stateless + isolated cwd (excluded from native list)
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(cliErrorMessage(json.result, "claude error"));
-    return { text: json.result ?? "", usage: { costUsd: json.total_cost_usd, inputTokens: claudeInputContext(json.usage), contextTokens: claudeInputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model } };
+    return { text: json.result ?? "", usage: usageWithFast({ costUsd: json.total_cost_usd, inputTokens: claudeInputContext(json.usage), contextTokens: claudeInputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model }, opts) };
   }
 }
 
@@ -1294,7 +1310,7 @@ export class CodexAdapter implements AgentAdapter {
         nativeSessions: true, nativeResume: true, files: true, diffs: true, usage: true,
         cost: "estimated_api_equivalent", attachments: ["text", "file", "image"],
         commands: true, skills: true, mcp: true, oneShot: true, remote: true,
-        modelCatalog: "runtime", modelControl: "per_turn", sessionContinuity: "native_id", toolLifecycle: "full",
+        modelCatalog: "runtime", modelControl: "per_turn", sessionContinuity: "native_id", toolLifecycle: "full", fastMode: true,
       },
       caps, source: "cli",
     });
@@ -1311,6 +1327,7 @@ export class CodexAdapter implements AgentAdapter {
     const args = prev ? ["exec", "resume", prev, "--json"] : ["exec", "--cd", cwd, "--json"];
     if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
     else args.push(...permissionArgs("codex", effectivePermissionMode(opts)));
+    args.push(...codexFastModeArgs(opts));
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
@@ -1459,7 +1476,7 @@ export class CodexAdapter implements AgentAdapter {
 
     const afterTelemetry = codexThreadTelemetry(threadId || prev);
     if (rawUsage) usage = codexUsage(rawUsage, beforeTelemetry?.total, afterTelemetry);
-    if (usage) usage = { ...usage, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? (tResult || Date.now()) - tFirstLine : undefined };
+    if (usage) usage = usageWithFast({ ...usage, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? (tResult || Date.now()) - tFirstLine : undefined }, opts);
     this.started.add(sessionId);
     if (streamError && !finalParts.length) throw new Error(streamError);
     if (threadId && threadId !== prev) this.bindSession(sessionId, threadId);
@@ -1471,6 +1488,7 @@ export class CodexAdapter implements AgentAdapter {
     // run in ONESHOT_CWD (excluded from the native list) so throwaway prompts don't litter the sidebar
     const args = ["exec", "--cd", ONESHOT_CWD, "--json"];
     args.push(...permissionArgs("codex", effectivePermissionMode(opts)));
+    args.push(...codexFastModeArgs(opts));
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
@@ -1479,7 +1497,7 @@ export class CodexAdapter implements AgentAdapter {
     for (const line of out.split(/\r?\n/)) {
       let o: any; try { o = JSON.parse(line); } catch { continue; }
       if (o.type === "item.completed" && o.item?.type === "agent_message" && o.item.text) textParts.push(String(o.item.text));
-      if (o.type === "turn.completed" && o.usage) usage = { ...codexUsage(o.usage), model: opts?.model };
+      if (o.type === "turn.completed" && o.usage) usage = usageWithFast({ ...codexUsage(o.usage), model: opts?.model }, opts);
       if (o.type === "turn.failed" || o.type === "error") throw new Error(o.error?.message || o.message || "codex error");
     }
     return { text: textParts.join("\n\n").trim(), usage };

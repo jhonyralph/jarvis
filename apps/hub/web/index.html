@@ -1475,7 +1475,7 @@
             <button type="button" id="cwdBtn" class="pill" title="Pasta de trabalho">📁 <span class="cap" id="cwdName">—</span></button>
             <button type="button" id="modelBtn" class="pill" title="Modelo"><span class="mi" aria-hidden="true">◈</span><span class="cap" id="modelName">—</span></button>
             <button type="button" id="effortBtn" class="pill" title="Esforço / capacidade">⚡ <span class="cap" id="effortName">—</span></button>
-            <button type="button" id="solutionBtn" class="pill" title="Espaço de Soluções: conselho, benchmark, revisão paralela, auditoria e debate">🧠 <span class="cap" id="solutionName">—</span></button>
+            <button type="button" id="solutionBtn" class="pill" title="Espaço de Soluções: conselho, benchmark, revisão paralela, auditoria e debate">🧠 <span class="cap" id="solutionName">Soluções</span></button>
             <button type="button" id="wfStepBtn" class="pill hidden" title="Passo do fluxo que este envio ataca">🧭 <span class="cap" id="wfStepName">—</span></button>
             <button type="button" id="speak" class="ghost" title="Falar respostas (voz)">🔇</button>
           </div>
@@ -1789,6 +1789,7 @@
           <label><span data-i18n="lblAgent">Agente padrão</span> <select id="setAgent"></select></label>
           <label><span data-i18n="lblModel">Modelo padrão</span> <select id="setModel"></select></label>
           <label><span data-i18n="lblEffort">Esforço padrão</span> <select id="setEffort"></select></label>
+          <label class="row"><input type="checkbox" id="setFastMode"> <span data-i18n="lblDefaultFastMode">Modo rápido por padrão</span></label>
           <label class="row"><input type="checkbox" id="setSlash" checked> <span data-i18n="lblSlash">Autocomplete e sugestões ao digitar “/”, “@”, “#” e “!”</span></label>
           <div id="fallbackSettings" class="hidden">
             <div class="sec" style="margin-top:10px">IA secundária (limite/crédito)</div>
@@ -1963,6 +1964,7 @@
             <label>Modelo da voz<select id="setVoiceModel"></select></label>
             <label>Esforço da voz<select id="setVoiceEffort"></select></label>
           </div>
+          <label class="row"><input type="checkbox" id="setVoiceFastMode"> <span data-i18n="lblVoiceFastMode">Modo rápido para voz e refino</span></label>
           <label class="row"><input type="checkbox" id="setVoice"> <span data-i18n="lblSpeakDefault">Falar as respostas por padrão</span></label>
           <label style="margin-top:4px"><span data-i18n="lblVoiceTimbre">Voz falada (timbre)</span></label>
           <div id="voiceCatalog" style="display:flex;flex-direction:column;gap:6px;margin:2px 0 6px"><span class="mut">carregando vozes…</span></div>
@@ -2185,6 +2187,7 @@
           <label>IA <select id="setSumAgent"></select></label>
           <label>Modelo <select id="setSumModel"></select></label>
           <label>Esforço <select id="setSumEffort"></select></label>
+          <label class="row"><input type="checkbox" id="setSumFastMode"> <span data-i18n="lblRouteFastMode">Modo rápido para análises internas</span></label>
         </section>
 
         <section class="spanel hidden" data-panel="uso">

@@ -896,7 +896,7 @@ async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter,
         }
       } else emit(bridge.provider(ev));
     });
-    if (reply.usage || opts.model || opts.effort) reply.usage = { costKind: "unavailable", source: "Jarvis turn selection", ...reply.usage, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort };
+    if (reply.usage || opts.model || opts.effort || opts.fastMode) reply.usage = { costKind: "unavailable", source: "Jarvis turn selection", ...reply.usage, model: reply.usage?.model || opts.model, effort: reply.usage?.effort || opts.effort, fastMode: reply.usage?.fastMode || opts.fastMode || undefined };
     if (reply.usage) emit(bridge.usage(reply.usage));
     emit(bridge.completed(reply.text));
     return { ...reply, activity };
@@ -1030,12 +1030,12 @@ async function doSend(
         },
         runAgentTurn: async (sid, name, agentText, turnCwd, turnOpts) => {
           const selected = agents.get(name);
-          return executeRunnerAgentTurn(sid, selected, agentText, turnCwd, turnOpts, ctrl);
+          return executeRunnerAgentTurn(sid, selected, agentText, turnCwd, { ...turnOpts, fastMode: opts?.fastMode }, ctrl);
         },
         afterStored: (sid, storedTurnId) => send({ t: "activity_committed", sessionId: sid, turnId: storedTurnId }),
       };
       await runManagedTurn(ctx, sessionId, {
-        showText: built.showText, agentText: agentInput, manifestAgentText, model: opts?.model, effort: opts?.effort, turnId: effectiveTurnId,
+        showText: built.showText, agentText: agentInput, manifestAgentText, model: opts?.model, effort: opts?.effort, fastMode: opts?.fastMode, turnId: effectiveTurnId,
         actor, speaker, images: built.images, files: built.files,
         onError: (message) => {
           if (!(ctrl.signal.aborted || message === ABORTED)) send({ t: "error", message });
@@ -1419,7 +1419,7 @@ function connect(): void {
         { const pm = normalizePermissionMode(typeof m.opts?.permissionMode === "string" ? m.opts.permissionMode : undefined); if (pm) setSessionPermissionMode(m.sessionId, pm); }
         await doSend(
           m.sessionId, String(m.text ?? ""), m.agent, m.cwd,
-          { model: m.model ?? m.opts?.model, effort: m.effort ?? m.opts?.effort, permissionMode: normalizePermissionMode(typeof m.opts?.permissionMode === "string" ? m.opts.permissionMode : undefined) },
+          { model: m.model ?? m.opts?.model, effort: m.effort ?? m.opts?.effort, fastMode: (m.fastMode ?? m.opts?.fastMode) === true, permissionMode: normalizePermissionMode(typeof m.opts?.permissionMode === "string" ? m.opts.permissionMode : undefined) },
           Array.isArray(m.attachments) ? m.attachments : [],
           typeof m.turnId === "string" ? m.turnId : undefined,
           typeof m.speaker === "string" ? m.speaker : undefined,

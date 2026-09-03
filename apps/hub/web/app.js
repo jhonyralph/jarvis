@@ -17,12 +17,12 @@
     } catch {}
     const $ = (id) => document.getElementById(id);
     const E = ['log','dot','title','roBanner','offlineBar','aiBtn','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
-      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workQueue','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','tskConns','tskBindings','tskMcp','tskAddConn','solutionBtn','solutionName','solutionBar','solBarMode','solBarMeta','solBarOff','solutionChars','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceEscalate','setVoiceRelevance',
+      'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workQueue','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','tskConns','tskBindings','tskMcp','tskAddConn','solutionBtn','solutionName','solutionBar','solBarMode','solBarMeta','solBarOff','solutionChars','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setFastMode','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceFastMode','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','setFwAutoFlow','setFwApplyInstr','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwDir','fwDirBtn','fwTplBtn','fwReset','fwUpdates','fwCatBtn','fwCatalog','fwWfBtn','fwWorkflows','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','wfRun','wfStepBtn','wfStepName','bgJobs','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
       'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
-      'setSumAgent','setSumModel','setSumEffort','updStatus','updActions','updAll','updApply','updCheck','updMachines',
+      'setSumAgent','setSumModel','setSumEffort','setSumFastMode','updStatus','updActions','updAll','updApply','updCheck','updMachines',
       'appUpdBar','appUpdBox','appUpdStatus','appUpdCheck','appUpdInstall',
       'filePanel','fileName','fileMeta','fileBody','fileStat','fileView','fileFmt','fileCopy','fileFull','fileClose','annoSend','annoCount','annoBar','annoSelLbl','annoAdd','annoCancelSel','fileResize','fileResizeV','fileLayoutSw','fileTabs','tabChatBtn','tabFileBtn','nativeChip',
       'designBtn','designPanel','designUrl','designDetect','designOpen','designGrab','designClose','designHost','designCompose','designSel','designCount','designClear','designSelList','designNote','designCoverage','designSend','designCancel','designStatus',
@@ -151,7 +151,7 @@
     // do card que o desenha, porque `refreshComposer` o consulta e roda antes daquele trecho do arquivo.
     const debateBySession={};
     // ---- config (persisted; refresh não perde estado) ----
-    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, silenceSec:1.8, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec', treeOpen:false, fileLayout:'side' }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, silenceSec:1.8, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec', treeOpen:false, fileLayout:'side', fastMode:false }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     // Location is never appended to chat frames. It is collected only after a per-purpose consent
     // and sent through the personal-context protocol with a short expiry.
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
@@ -169,6 +169,9 @@
     I18N.pt.lblSlash='Autocomplete e sugestões ao digitar “/”, “@”, “#” e “!”';
     I18N.en.lblSlash='Autocomplete and suggestions when typing “/”, “@”, “#” and “!”';
     I18N.es.lblSlash='Autocompletado y sugerencias al escribir “/”, “@”, “#” y “!”';
+    Object.assign(I18N.pt,{lblFastMode:'Modo rápido',lblDefaultFastMode:'Modo rápido por padrão',lblVoiceFastMode:'Modo rápido para voz e refino',lblRouteFastMode:'Modo rápido para análises internas',fastOn:'ligado',fastOff:'desligado'});
+    Object.assign(I18N.en,{lblFastMode:'Fast mode',lblDefaultFastMode:'Fast mode by default',lblVoiceFastMode:'Fast mode for voice and refine',lblRouteFastMode:'Fast mode for internal analysis',fastOn:'on',fastOff:'off'});
+    Object.assign(I18N.es,{lblFastMode:'Modo rápido',lblDefaultFastMode:'Modo rápido por defecto',lblVoiceFastMode:'Modo rápido para voz y refinamiento',lblRouteFastMode:'Modo rápido para análisis internos',fastOn:'activo',fastOff:'inactivo'});
     I18N.pt.secDefaults='Chat'; I18N.en.secDefaults='Chat'; I18N.es.secDefaults='Chat';
     Object.assign(I18N.pt,{swShort:'Soluções',swName:'Espaço de Soluções',swNameAlt:'Solution Workspace',swModeCouncil:'Conselho',swModeBenchmark:'Benchmark',swModeReview:'Revisão',swModeAudit:'Auditoria',swModeDebate:'Debate',swHelpCouncil:'Delibera com várias lentes e publica uma síntese com veredito, dissensos, riscos e próximo passo.',swHelpBenchmark:'Compara soluções concorrentes para a mesma tarefa. Pode escrever em worktrees isoladas e promove a melhor.',swHelpReview:'Roda revisores independentes em paralelo para encontrar achados complementares. Não edita arquivos.',swHelpAudit:'Revisão formal com foco em severidade, evidências, risco e plano de ação. Não edita arquivos.',swHelpDebate:'Discussão iterativa entre 2+ IAs, com réplicas cruzadas, até um juiz declarar consenso ou atingir o teto de rodadas.',swNative:'Espaço de Soluções ainda não grava resultado em sessão nativa.',swTitle:'Espaço de Soluções: Conselho, Benchmark, Revisão paralela, Auditoria e Debate',swStarted:'Rodada iniciada — acompanhe em Trabalhos.'});
     Object.assign(I18N.en,{swShort:'Solutions',swName:'Solution Workspace',swNameAlt:'Espaço de Soluções',swModeCouncil:'Council',swModeBenchmark:'Benchmark',swModeReview:'Review',swModeAudit:'Audit',swModeDebate:'Debate',swHelpCouncil:'Deliberates through multiple lenses and publishes a synthesis with verdict, dissent, risks and next step.',swHelpBenchmark:'Compares competing solutions for the same task. Can write in isolated worktrees and promote the best result.',swHelpReview:'Runs independent reviewers in parallel to find complementary findings. Does not edit files.',swHelpAudit:'Formal review focused on severity, evidence, risk and action plan. Does not edit files.',swHelpDebate:'Iterative discussion between 2+ AIs with cross rebuttals, until a judge declares consensus or the round cap is reached.',swNative:'Solution Workspace cannot write back to native sessions yet.',swTitle:'Solution Workspace: Council, Benchmark, Parallel Review, Audit and Debate',swStarted:'Workspace run started — follow it in Work.'});
@@ -610,7 +613,7 @@
     Object.assign(I18N.pt,{hAi:'Agrupa agente, modelo e esforço da IA para a próxima mensagem.'});
     Object.assign(I18N.en,{hAi:'Groups AI agent, model and effort for the next message.'});
     Object.assign(I18N.es,{hAi:'Agrupa IA, modelo y esfuerzo para el próximo mensaje.'});
-    const HELP_TARGETS={newSess:'hNewSess',settingsBtn:'hSettings',searchBtn:'hSearch',digestBtn:'hDigest',workBtn:'hWork',personalBtn:'hPersonal',termMenuBtn:'hTerminal',usageBtn:'hUsage',qrUrl:'hMobile',secDevices:'hDevices',updCheck:'hUpdate',sumHdr:'hSummary',termBtn:'hTerminal',treeBtn:'hFiles',optsBtn:'hOptions',attach:'hAttach',designBtn:'hDesign',solutionBtn:'hSolutions',settingsHelpBtn:'settingsHelpBtnTitle',aiBtn:'hAi',agentBtn:'hAgent',cwdBtn:'hCwd',modelBtn:'hModel',effortBtn:'hEffort',speak:'hSpeak',stopBtn:'hStop',sendBtn:'hSend',setLang:'hLang',setAgent:'hDefaultAgent',setModel:'hDefaultModel',setEffort:'hDefaultEffort',setSlash:'hSlash',setVoiceAgent:'hVoiceAgent',setVoiceModel:'hVoiceAgent',setVoiceEffort:'hVoiceAgent',voiceCatalog:'hVoiceTimbre',setVoice:'hSpeak',setContinue:'lblContinue',setWake:'hWakeLocked',setNoise:'hNoise',setGate:'hVoiceGate',setPush:'hNotifPlatforms',setBioLock:'hBio',routinesSection:'hRoutineUse',rtCron:'hRoutineUse',rtAdd:'hRoutineUse',setPolicyMode:'hPolicy',setPolicyPersonalContext:'hPolicyPersonalContext',policySettings:'hPolicy',frameworkSettings:'hFramework'};
+    const HELP_TARGETS={newSess:'hNewSess',settingsBtn:'hSettings',searchBtn:'hSearch',digestBtn:'hDigest',workBtn:'hWork',personalBtn:'hPersonal',termMenuBtn:'hTerminal',usageBtn:'hUsage',qrUrl:'hMobile',secDevices:'hDevices',updCheck:'hUpdate',sumHdr:'hSummary',termBtn:'hTerminal',treeBtn:'hFiles',optsBtn:'hOptions',attach:'hAttach',designBtn:'hDesign',solutionBtn:'hSolutions',settingsHelpBtn:'settingsHelpBtnTitle',aiBtn:'hAi',agentBtn:'hAgent',cwdBtn:'hCwd',modelBtn:'hModel',effortBtn:'hEffort',speak:'hSpeak',stopBtn:'hStop',sendBtn:'hSend',setLang:'hLang',setAgent:'hDefaultAgent',setModel:'hDefaultModel',setEffort:'hDefaultEffort',setFastMode:'hDefaultEffort',setSlash:'hSlash',setVoiceAgent:'hVoiceAgent',setVoiceModel:'hVoiceAgent',setVoiceEffort:'hVoiceAgent',setVoiceFastMode:'hVoiceAgent',voiceCatalog:'hVoiceTimbre',setVoice:'hSpeak',setContinue:'lblContinue',setWake:'hWakeLocked',setNoise:'hNoise',setGate:'hVoiceGate',setPush:'hNotifPlatforms',setBioLock:'hBio',routinesSection:'hRoutineUse',rtCron:'hRoutineUse',rtAdd:'hRoutineUse',setPolicyMode:'hPolicy',setPolicyPersonalContext:'hPolicyPersonalContext',policySettings:'hPolicy',frameworkSettings:'hFramework',setSumFastMode:'hEffort'};
     const HELP_ICON_IDS=new Set();
     const SETTINGS_PANEL_HELP={
       geral:{title:'settingsHelpGeneralTitle',body:'hGeneral',items:['language','hDefaultAgent','hDefaultModel','hDefaultEffort','hSlash']},
@@ -1182,13 +1185,14 @@
       const targetRunner=m.runnerId||selectedRunner(), prevSession=currentSession, prevRunner=currentSessionRunner, switchingSession=prevSession!==m.sessionId||prevRunner!==targetRunner;
       if(switchingSession && prevSession!=null){ draftBySession[sessionStateKey(prevSession,prevRunner)]=E.input.value; saveDrafts(); stashAttachments(prevSession,prevRunner); }
       currentSession=m.sessionId; currentSessionRunner=targetRunner; lastByMachine[currentMachine]=m.sessionId; unread.delete(sessionStateKey(m.sessionId,targetRunner)); updateOfflineBanner();
-      currentAgent=(m.session||{}).agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=(m.session||{}).cwd||''; curNative=!!(m.session||{}).native;
-      sessDeclModel=(m.session||{}).model||null; sessDeclEffort=(m.session||{}).effort||null; lastRouteReason='';   // modelo/esforço reais da sessão da máquina (só nativas mandam)
+      const sess=m.session||{};
+      currentAgent=sess.agent||m.agent||availableMachineCaps()[0]?.name||caps[0]?.name; curCwd=sess.cwd||m.cwd||''; curNative=!!sess.native||/^(claude:|codex:)/.test(m.sessionId||'');
+      sessDeclModel=sess.model||m.model||null; sessDeclEffort=sess.effort||m.effort||null; lastRouteReason='';   // modelo/esforço reais da sessão da máquina (só nativas mandam)
       // Adopt the server's permission-mode seed (new session: inherited/config; existing: stored) into
       // this session's pref so the picker reflects it — without clobbering an explicit local choice.
-      { const spm=(m.session||{}).permissionMode; if(spm){ const key=sessionStateKey(m.sessionId,targetRunner), pr=Object.assign({},sessionValue(sessionPrefs,m.sessionId,targetRunner)||{}); if(!pr.permissionMode){ pr.permissionMode=spm; sessionPrefs[key]=pr; saveSessionPrefs(); } } }
+      { const spm=sess.permissionMode||m.permissionMode; if(spm){ const key=sessionStateKey(m.sessionId,targetRunner), pr=Object.assign({},sessionValue(sessionPrefs,m.sessionId,targetRunner)||{}); if(!pr.permissionMode){ pr.permissionMode=spm; sessionPrefs[key]=pr; saveSessionPrefs(); } } }
       if(curCwd && !curNative){cfg.lastCwd=curCwd;saveCfg();} curStarted=(m.messages||[]).length>0; maybeRestoreTree();
-      E.title.textContent=(m.session||{}).title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearLimitBanner(); clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; debateProgressEl=null; debateProgressId=null; E.log.innerHTML='';
+      E.title.textContent=sess.title||m.title||'Sessão'; refreshTitleInfo(); syncModelEffort(); clearLimitBanner(); clearPending(); streamErr(); seenAgentEvents.clear(); liveTurnId=null; debateProgressEl=null; debateProgressId=null; E.log.innerHTML='';
       askActive=null; askVoice=false; askPendingVoice=false;   // troca de sessão encerra qualquer card/wizard de decisão
       updateStopStatus();   // reflete o "parando…" da sessão ATUAL (por sessão, não global)
       const msgs=m.messages||[], frag=document.createDocumentFragment(); // render em lote (1 reflow) — leve no mobile
@@ -1201,13 +1205,13 @@
         const lastMsg=msgs[msgs.length-1];
         if(lastMsg && lastMsg.role==='assistant') clearRestorable(m.sessionId); else showRestoreBar(m.sessionId);
       }
-      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); closeFilePanel(); lastInputTokens=(m.session||{}).inputTokens||0; lastContextWindow=(m.session||{}).contextWindowTokens||0; sessCost=(m.session||{}).sessionCost||0; sessUsage=(m.session||{}).sessionUsage||null; updUsagePill(); renderRecents(); closePop();
-      curNativeWritable=curNative&&!!(m.session||{}).writable;
+      curFiles=(m.files||[]).slice(); filesShown=12; renderFiles(); closeFilePanel(); resetUsageMeter({inputTokens:sess.inputTokens??m.inputTokens,contextWindowTokens:sess.contextWindowTokens??m.contextWindowTokens,sessionCost:sess.sessionCost??m.sessionCost,sessionUsage:sess.sessionUsage??m.sessionUsage}); renderRecents(); closePop();
+      curNativeWritable=curNative&&!!(sess.writable??m.writable);
       E.roBanner.classList.toggle('hidden',!curNative);
       E.roBanner.innerHTML = '🔗 Sessão nativa da máquina'+(currentAgent?' ('+esc(currentAgent)+')':'');
       E.input.disabled=false; E.sendBtn.disabled=false; E.mic.disabled=false; E.input.placeholder='Fale ou digite…';
       if(switchingSession){ E.input.value=adoptDraftFor(m.sessionId,targetRunner); E.input.style.height='auto'; E.input.style.height=E.input.scrollHeight+'px'; restoreAttachments(m.sessionId,targetRunner); }
-      curNativeId=(!curNative && (m.session||{}).nativeId) ? (m.session||{}).nativeId : ''; renderNativeChip(); setHash(currentSession);
+      curNativeId=(!curNative && (sess.nativeId||m.nativeId)) ? (sess.nativeId||m.nativeId) : ''; renderNativeChip(); setHash(currentSession);
       { const savedAsk=getAsk(m.sessionId,sessionRunner()); if(savedAsk&&savedAsk.length&&!askActive) renderAskCard(savedAsk,sessionRunner()); }   // restaura decision-card pendente (lock/reload)
       if(!stagingActive) tx({t:'stage_state',sessionId:m.sessionId});   // restaura painel de refino de voz, se houver (lock/reload)
       renderPersonalTurnSuggestionForCurrent(true);
@@ -1438,7 +1442,7 @@
       const f=document.createElement('div'); f.className='strdone';
       f.innerHTML=`<span class="dchk">✓</span><span>Concluído · ${tstr}</span>`+(usageCostText(usage)?` · <span class="dcost">${usageCostText(usage)}</span>`:'');
       strEl.appendChild(f);
-      if(usage){ E.usage.textContent=usageSummary(usage); const context=usage.contextTokens||usage.inputTokens; if(context){lastInputTokens=context; if(usage.contextWindowTokens)lastContextWindow=usage.contextWindowTokens; updUsagePill();} }
+      if(usage){ E.usage.textContent=usageSummary(usage); applyUsageMeter(usage); }
       rememberStreamAssistant(finalText||streamTextRaw,sid,runner);
       streamFinish(); autoScroll(); }
     function streamCancelled(reason){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
@@ -1994,7 +1998,7 @@
     function selectMachine(id){ const mm=document.getElementById('mmenu'); if(mm)mm.classList.add('hidden'); if(id===currentMachine) return;
       if(currentSession!=null){ draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; saveDrafts(); }
       stashAttachments(currentSession,currentSessionRunner);
-      currentMachine=id; restoringMachine=false; openingSession=null; try{localStorage.setItem('jarvis_machine',id);}catch{} currentSession=null; currentSessionRunner=id==='all'?(routedMachine||'local'):id; activeRuns=activeRunsByRunner[currentSessionRunner]||[]; curStarted=false; attachments=[]; renderAttach(); clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; refreshTitleInfo(); curNativeId=''; renderNativeChip(); setHash(''); renderMachines();
+      currentMachine=id; restoringMachine=false; openingSession=null; try{localStorage.setItem('jarvis_machine',id);}catch{} currentSession=null; currentSessionRunner=id==='all'?(routedMachine||'local'):id; activeRuns=activeRunsByRunner[currentSessionRunner]||[]; curStarted=false; attachments=[]; renderAttach(); clearQueue(); resetUsageMeter(); E.log.innerHTML=''; E.title.textContent='—'; refreshTitleInfo(); curNativeId=''; renderNativeChip(); setHash(''); renderMachines();
       if(id==='all'){ tx({t:'listAll'}); } else { routedMachine=id; tx({t:'runner',runnerId:id}); } updateOfflineBanner(); }
     // Per-session offline indicator: a persistent banner when the machine this session lives on is
     // offline, so the user knows WHY a turn won't go through (distinct from the transient "interrompido"
@@ -2016,10 +2020,19 @@
     function fillSel(sel,items,val){ sel.innerHTML=''; items.forEach(x=>{const o=document.createElement('option'); const isStr=typeof x==='string'; o.value=isStr?x:x.id; o.textContent=isStr?x:(x.label||x.id); if(o.value===val)o.selected=true; sel.appendChild(o);}); sel.classList.toggle('hidden',!items.length); }
     const selectableModels=c=>(c.models||[]).filter(m=>m.selectable!==false);
     const modelControlOf=c=>c.modelControl||(c.capabilities&&c.capabilities.modelControl)||((c.models||[]).some(m=>m.selectable!==false)?'per_turn':'none');
+  const FAST_AGENT_NAMES=new Set(['codex','claude-code']);
+  function fastModeCapOf(c,agentName){ const name=String(agentName||(c&&c.name)||''); return !!((c&&c.fastMode)||(c&&c.capabilities&&c.capabilities.fastMode)||FAST_AGENT_NAMES.has(name)); }
+  function agentSupportsFastMode(agentName){
+    const name=String(agentName||'');
+    if(FAST_AGENT_NAMES.has(name))return true;
+    return [capsFor(name),localCapsFor(name),...caps,...machineCaps()].some(c=>c&&(!name||c.name===name)&&fastModeCapOf(c,name));
+  }
+  function checkedFast(el){ return !!(el&&el.checked&&!el.disabled); }
+  function setFastCheckbox(el,agentName,value){ if(!el)return; const ok=agentSupportsFastMode(agentName); el.disabled=!ok; el.checked=!!value&&ok; el.title=ok?'Usa a camada rápida do provedor quando disponível.':'Modo rápido disponível para Codex e Claude Code.'; }
     const modelObj=(agent,id)=>{ if(!id)return null; const ms=capsFor(agent).models||[]; return ms.find(m=>m.id===id)||null; };
     function fillEfforts(effSel,agent,modelId,val){ const m=modelObj(agent,modelId); const efs=(m&&m.efforts)||[]; fillSel(effSel,efs, (efs.includes(val)&&val)||(m&&m.defaultEffort)||efs[0]); }
     // footer pill state: model/effort vary per-message; agent/folder lock once the session starts
-    let curModel=null, curEffort=null, curCwd='', curStarted=false, curMode=null;
+    let curModel=null, curEffort=null, curFastMode=false, curCwd='', curStarted=false, curMode=null;
     // Durable session-defaults config (mirrors ~/.jarvis/session-defaults.json on the Hub); the "no
     // session open" mode pick edits its global default, matching the model/effort "vira padrão" UX.
     let sdDoc={global:{},projects:[]};
@@ -2063,6 +2076,7 @@
       const efs=effortsFor(currentAgent,curModel);
       const okE=e=>e&&efs.includes(e);
       curEffort = pref.effort===AUTO_EFFORT?null:(okE(pref.effort)?pref.effort : (okE(sessDeclEffort)?sessDeclEffort : (okE(cfg.effort)?cfg.effort : ((modelObj(currentAgent,curModel)||{}).defaultEffort||null))));
+      curFastMode = agentSupportsFastMode(currentAgent) && (typeof pref.fastMode==='boolean'?pref.fastMode:!!cfg.fastMode);
       curMode = pref.permissionMode || (currentSession==null ? ((sdDoc.global&&sdDoc.global.permissionMode)||null) : null);
       renderControls(); }
     function renderControls(){
@@ -2071,11 +2085,15 @@
       E.cwdName.textContent=base(curCwd)||'—';
       const c=capsFor(currentAgent), control=modelControlOf(c), perTurn=control==='per_turn';
       E.modelName.textContent=perTurn?(curModel?modelLabel(currentAgent,curModel):('Automático'+(sessDeclModel?' · '+modelLabel(currentAgent,sessDeclModel):''))):(control==='configuration_only'?'Configurado na IA':'Automático');
-      E.effortName.textContent=curEffort?effLabel(curEffort):('Automático'+(sessDeclEffort?' · '+effLabel(sessDeclEffort):''));
+      E.effortName.textContent=(curEffort?effLabel(curEffort):('Automático'+(sessDeclEffort?' · '+effLabel(sessDeclEffort):'')))+(curFastMode?' · Rápido':'');
       if(typeof updUsagePill==='function') updUsagePill();
       E.agentBtn.classList.toggle('lock',curStarted||curNative); E.cwdBtn.classList.toggle('lock',curStarted||curNative);
-      E.modelBtn.classList.toggle('lock',!perTurn); E.effortBtn.classList.toggle('lock',!perTurn||!effortsFor(currentAgent,curModel).length);
+      const fastCap=agentSupportsFastMode(currentAgent), effortAvailable=effortsFor(currentAgent,curModel).length>0;
+      E.modelBtn.classList.toggle('lock',!perTurn); E.effortBtn.classList.toggle('lock',!perTurn||(!effortAvailable&&!fastCap));
+      E.effortBtn.classList.toggle('on',!!curFastMode);
+      if(E.aiBtn){ E.aiBtn.classList.toggle('on',!!curFastMode); E.aiBtn.textContent=curFastMode?'🤖⚡':'🤖'; E.aiBtn.title=curFastMode?'IA: agente, modelo, esforço e modo rápido ligado':'IA: agente, modelo e esforço'; E.aiBtn.setAttribute('aria-label',E.aiBtn.title); }
       E.modelBtn.title=perTurn?(lastRouteReason||'Modelo por mensagem'):(control==='configuration_only'?'Modelo definido na configuração da própria IA':'A IA escolhe o modelo');
+      E.effortBtn.title=curFastMode?'Esforço · modo rápido ligado':'Esforço por mensagem';
       E.agentBtn.title=(curStarted||curNative)?'Agente (travado)':'Agente / IA — clique para trocar (só em sessão nova)';
       E.cwdBtn.title=(curStarted||curNative)?((curCwd||'')+' — travada'):((curCwd||'')+' — clique para escolher (só em sessão nova)'); }
 
@@ -2104,7 +2122,7 @@
       let agent=opts.agent||cfg.agent||currentAgent||(caps[0]||{}).name; if(!avail.includes(agent)) agent=avail[0]||agent;
       const cwd=opts.cwd!=null?opts.cwd:(target==='local'?(cfg.lastCwd||''):'');
       if(currentSession!=null){ draftBySession[sessionStateKey(currentSession,currentSessionRunner)]=E.input.value; saveDrafts(); stashAttachments(currentSession,currentSessionRunner); }
-      pendingNewSession={runnerId:target,agent,cwd,at:Date.now()}; creatingSession=true; currentSession=null; currentSessionRunner=target; activeRuns=activeRunsByRunner[target]||[]; curStarted=false; curNative=false; curNativeWritable=false; curNativeId=''; attachments=[]; renderAttach(); clearQueue(); updateOfflineBanner(); setHash('');
+      pendingNewSession={runnerId:target,agent,cwd,at:Date.now()}; creatingSession=true; currentSession=null; currentSessionRunner=target; activeRuns=activeRunsByRunner[target]||[]; curStarted=false; curNative=false; curNativeWritable=false; curNativeId=''; attachments=[]; renderAttach(); clearQueue(); resetUsageMeter(); updateOfflineBanner(); setHash('');
       E.title.textContent='Criando sessão...'; refreshTitleInfo(); E.log.innerHTML=''; tx({t:'new',agent,cwd}); closeSide(); }
     E.newSess.onclick=()=>startNewSession();
 
@@ -2200,7 +2218,7 @@
         E.solutionBtn.disabled=!usable;
         E.solutionBtn.title=!currentSession?t('tOpenFirst'):(curNative?t('swNative'):(on?(solutionModeLabel(c.mode)+' — '+solutionSummary()):t('swTitle')));
       }
-      if(E.solutionName)E.solutionName.textContent=on?solutionModeLabel(c.mode):'—';
+      if(E.solutionName)E.solutionName.textContent=on?solutionModeLabel(c.mode):t('swShort');
       if(E.solutionBar)E.solutionBar.classList.toggle('hidden',!on);
       if(E.composer)E.composer.classList.toggle('sol-armed',on);   // esconde agente/modelo/esforço: quem manda é a config da rodada
       if(on){
@@ -2869,8 +2887,10 @@
       o.innerHTML=esc(mm.label||mm.id)+(mm.id===curModel?'<span class="r">atual</span>':'');
       o.onclick=()=>{ closePop(); const efs=effortsFor(currentAgent,mm.id); if(defaultScope){ cfg.model=mm.id; if(cfg.effort&&!efs.includes(cfg.effort))cfg.effort=''; saveCfg(); syncModelEffort(); return; } const pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.model=mm.id; if(pref.effort&&pref.effort!==AUTO_EFFORT&&!efs.includes(pref.effort))pref.effort=AUTO_EFFORT; sessionPrefs[prefKey]=pref; saveSessionPrefs(); syncModelEffort(); }; p.appendChild(o); }); }
 
-    function buildEffortPop(p){ const efs=effortsFor(currentAgent,curModel); p.appendChild(ph('Esforço · '+(currentAgent||'')));
-      if(!efs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent='sem níveis para este modelo'; p.appendChild(d); return; }
+    function buildEffortPop(p){ const efs=effortsFor(currentAgent,curModel), fastCap=agentSupportsFastMode(currentAgent); p.appendChild(ph('Esforço · '+(currentAgent||'')));
+      const saveFastMode=(value)=>{ curFastMode=!!value&&fastCap; if(currentSession==null){ cfg.fastMode=curFastMode; saveCfg(); renderControls(); return; } const key=sessionStateKey(currentSession,currentSessionRunner), pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.fastMode=curFastMode; sessionPrefs[key]=pref; saveSessionPrefs(); renderControls(); };
+      if(fastCap){ const fb=document.createElement('button'); fb.type='button'; fb.className='opt'+(curFastMode?' sel':''); fb.setAttribute('aria-pressed',String(!!curFastMode)); fb.innerHTML='⚡ '+esc(t('lblFastMode'))+'<span class="r">'+esc(curFastMode?t('fastOn'):t('fastOff'))+'</span>'; fb.onclick=()=>{ saveFastMode(!curFastMode); closePop(); }; p.appendChild(fb); }
+      if(!efs.length){ const d=document.createElement('div'); d.className='mut'; d.textContent=fastCap?'Este modelo não expõe níveis de esforço.':'sem níveis para este modelo'; p.appendChild(d); return; }
       if(currentSession==null){ const n=document.createElement('div'); n.className='mut'; n.style.cssText='padding:0 2px 8px;font-size:11.5px'; n.textContent='Sem sessão aberta: este esforço vira padrão para a próxima sessão.'; p.appendChild(n); }
       const saveEffort=(value)=>{ curEffort=value; if(currentSession==null){ cfg.effort=value||''; saveCfg(); renderControls(); return; } const key=sessionStateKey(currentSession,currentSessionRunner), pref=Object.assign({},sessionValue(sessionPrefs,currentSession,currentSessionRunner)||{}); pref.effort=value==null?AUTO_EFFORT:value; sessionPrefs[key]=pref; saveSessionPrefs(); renderControls(); };
       // Automático is a routing mode, not a point below "Mínimo" on the effort scale.
@@ -2987,6 +3007,28 @@
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
     let lastInputTokens=0, lastContextWindow=0, planUsage=null, planStatus=null, planKey='', sessCost=0, sessUsage=null, costTotalAll=0;
+    function applyUsageMeter(usage){
+      if(!usage)return;
+      const rawContext=usage.contextTokens??usage.inputTokens;
+      if(rawContext!=null){ const context=Number(rawContext); if(Number.isFinite(context)&&context>=0) lastInputTokens=context; }
+      const win=Number(usage.contextWindowTokens)||0;
+      if(Number.isFinite(win)&&win>0) lastContextWindow=win;
+      if(usage.model)sessDeclModel=usage.model;
+      if(usage.effort)sessDeclEffort=usage.effort;
+      updUsagePill();
+    }
+    function resetUsageMeter(session){
+      lastInputTokens=0; lastContextWindow=0; sessCost=0; sessUsage=null;
+      if(session&&typeof session==='object'){
+        const rawContext=session.inputTokens??session.contextTokens;
+        const win=Number(session.contextWindowTokens)||0;
+        if(rawContext!=null){ const context=Number(rawContext); if(Number.isFinite(context)&&context>=0) lastInputTokens=context; }
+        if(Number.isFinite(win)&&win>0) lastContextWindow=win;
+        sessCost=Number(session.sessionCost)||0;
+        sessUsage=session.sessionUsage||null;
+      }
+      updUsagePill();
+    }
     // Custo da sessão como PARCELA do total acumulado — um $ isolado (ainda mais num plano, onde é só
     // um equivalente-API, não dinheiro real) não dá pra comparar; % do total dá.
     function sessCostRow(){
@@ -2997,8 +3039,9 @@
         +(costTotalAll>0?`<div class="umut ureset">total acumulado (todas as sessões): Σ$${costTotalAll.toFixed(2)} · classes separadas em Uso & custo</div>`:'');
     }
     function modelContext(){ return lastContextWindow||((modelObj(currentAgent,curModel||sessDeclModel)||{}).context||0); }
+    function contextSourceLabel(){ if(lastContextWindow)return'janela reportada pela IA'; if(modelContext())return'janela estimada pelo catálogo do modelo'; return''; }
     function ctxPct(){ const c=modelContext(); return c?Math.min(100,Math.round(lastInputTokens/c*100)):0; }
-    function updUsagePill(){ if(!E.usageName)return; E.usageName.textContent=(modelContext()&&lastInputTokens)?ctxPct()+'%':'—'; }
+    function updUsagePill(){ if(!E.usageName)return; E.usageName.textContent=modelContext()?ctxPct()+'%':'—'; }
     const kfmt=n=>n>=1e6?(n/1e6).toFixed(n%1e6?1:0)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n||0);
     function fmtReset(iso){ if(!iso)return''; const d=new Date(iso),now=new Date(),mins=Math.round((d-now)/60000);
       if(mins<=0)return'já'; if(mins<60)return`em ${mins}min`; const h=Math.floor(mins/60),m=mins%60;
@@ -3006,8 +3049,8 @@
     const ubar=(pct,color)=>`<div class="ubar"><span style="width:${Math.min(100,pct||0)}%;background:${color}"></span></div>`;
     function buildUsagePop(p){ popMode='usage'; p.classList.add('usage-pop'); const c=modelContext();
       let h='<div class="upop"><div class="uh">Janela de contexto</div>';
-      if(c&&lastInputTokens){ const pc=ctxPct(); h+=`<div class="urow"><span>${kfmt(lastInputTokens)} / ${kfmt(c)}</span><b>${pc}%</b></div>`+ubar(pc, pc>85?'#f85149':pc>60?'#e3b341':'#3fb950'); }
-      else h+='<div class="umut">envie uma mensagem para medir</div>';
+      if(c){ const pc=ctxPct(); h+=`<div class="urow"><span>${kfmt(lastInputTokens)} / ${kfmt(c)}</span><b>${pc}%</b></div>`+ubar(pc, pc>85?'#f85149':pc>60?'#e3b341':'#3fb950')+`<div class="umut">${esc(contextSourceLabel())}${lastInputTokens?'':' · envie uma mensagem para sincronizar tokens reais'}</div>`; }
+      else h+='<div class="umut">a IA ainda não reportou janela de contexto, e o catálogo do modelo não tem esse dado</div>';
       h+='<div class="uh" style="margin-top:12px">Custo da sessão</div><div id="usessc">'+sessCostRow()+'</div>';
       h+='<div class="uh" style="margin-top:12px">Limites do plano</div><div id="uplan" class="umut uloading">consultando o provedor…</div></div>';
       const usageRunner=currentMachine==='all'?routedMachine:currentMachine, usageAgent=currentAgent||availableMachineCaps()[0]?.name||caps[0]?.name||'';
@@ -3447,6 +3490,7 @@
     E.settingsBtn.onclick=()=>{ E.settings.classList.remove('hidden'); const mc=availableMachineCaps(); fillSel(E.setAgent,mc.map(c=>({id:c.name,label:c.label||c.name})),cfg.agent||currentAgent); const c=mc.find(x=>x.name===E.setAgent.value)||capsFor(E.setAgent.value);
       const sm=selectableModels(c), defaultModel=(sm.some(m=>m.id===cfg.model)&&cfg.model)||(sm.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(sm[0]||{}).id||'';
       fillSel(E.setModel,modelControlOf(c)==='per_turn'?sm:[],defaultModel); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value,cfg.effort);
+      setFastCheckbox(E.setFastMode,E.setAgent.value,cfg.fastMode);
       E.setVoice.checked=cfg.voice; E.setContinue.checked=cfg.continue; E.setContinueSec.value=cfg.continueSec; if(E.setSilenceSec)E.setSilenceSec.value=cfg.silenceSec; E.setWake.checked=cfg.wake; E.setNoise.checked=cfg.noise; if(E.setSlash)E.setSlash.checked=(cfg.slashMenu!==false); E.setPush.checked=!!cfg.push; if(E.setBioLock)E.setBioLock.checked=!!cfg.bioLock; E.pushDone.checked=(cfg.pushEvents||[]).includes('done'); E.pushError.checked=(cfg.pushEvents||[]).includes('error'); E.pushMachine.checked=(cfg.pushEvents||[]).includes('machine'); E.pushMode.value=cfg.pushMode||'each'; E.pushEvery.value=cfg.pushEvery||15; renderPushCfg(); requestPushStatus(); E.setGate.checked=cfg.voiceGate; renderSpk(); tx({t:'speakers'}); tx({t:'list_voices'});
       fillSumSelects(); tx({t:'summary_cfg'});
       renderUpdate(); E.updStatus.textContent='Verificando…'; tx({t:'update_check'});
@@ -3985,7 +4029,8 @@
     if(E.fwEditModal) E.fwEditModal.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.stopPropagation(); fwCloseEdit(false); } });
     addEventListener('beforeunload',e=>{ if(E.fwEditModal && !E.fwEditModal.classList.contains('hidden') && fwEditDirtyNow()){ e.preventDefault(); e.returnValue=''; return ''; } });
     if(E.setLang) E.setLang.onchange=()=>setLang(E.setLang.value);
-    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value), ms=selectableModels(c), model=(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.setModel,modelControlOf(c)==='per_turn'?ms:[],model); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); };
+    E.setAgent.onchange=()=>{ const c=capsFor(E.setAgent.value), ms=selectableModels(c), model=(ms.some(m=>m.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.setModel,modelControlOf(c)==='per_turn'?ms:[],model); fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value); setFastCheckbox(E.setFastMode,E.setAgent.value,E.setFastMode&&E.setFastMode.checked); };
+    if(E.setFastMode) E.setFastMode.onchange=()=>{ setFastCheckbox(E.setFastMode,E.setAgent.value,E.setFastMode.checked); cfg.fastMode=checkedFast(E.setFastMode); saveCfg(); syncModelEffort(); };
     // IA secundária (fallback de limite/crédito) — owner.
     const fbFmt=(ms)=>{ try{ return new Date(ms).toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}); }catch(e){ return ''; } };
     function fillFallbackModels(agent,model,effort){ const c=capsFor(agent), ms=selectableModels(c); const m=(model&&ms.some(x=>x.id===model)&&model)||(ms.some(x=>x.id===c.defaultModel)&&c.defaultModel)||(ms[0]||{}).id||''; fillSel(E.fallbackModel,modelControlOf(c)==='per_turn'?ms:[],m); fillEfforts(E.fallbackEffort,agent,E.fallbackModel.value,effort); }
@@ -4060,25 +4105,27 @@
     E.rtCronExamples.onclick=e=>{ const b=e.target.closest('[data-cron]'); if(!b)return; E.rtCron.value=b.dataset.cron; validateRoutineCron(); };
     // ---------- config do refino por voz (escalada de modelo) ----------
     let currentVoiceCfg={};
-    function fillVoiceModels(cfg){ const c=localCapsFor(E.setVoiceAgent.value), models=selectableModels(c); fillSel(E.setVoiceModel,models,(cfg&&cfg.model)||c.defaultModel||(models[0]||{}).id||''); const m=models.find(x=>x.id===E.setVoiceModel.value); fillSel(E.setVoiceEffort,(m&&m.efforts)||[],(cfg&&cfg.effort)||(m&&m.defaultEffort)||''); }
-    function saveVoiceModelCfg(){ tx({t:'set_voice_cfg',agent:E.setVoiceAgent.value,model:E.setVoiceModel.value,effort:E.setVoiceEffort.value}); }
+    function fillVoiceModels(cfg){ const c=localCapsFor(E.setVoiceAgent.value), models=selectableModels(c); fillSel(E.setVoiceModel,models,(cfg&&cfg.model)||c.defaultModel||(models[0]||{}).id||''); const m=models.find(x=>x.id===E.setVoiceModel.value); fillSel(E.setVoiceEffort,(m&&m.efforts)||[],(cfg&&cfg.effort)||(m&&m.defaultEffort)||''); const fm=cfg&&typeof cfg.fastMode==='boolean'?cfg.fastMode:currentVoiceCfg.fastMode; setFastCheckbox(E.setVoiceFastMode,E.setVoiceAgent.value,fm); }
+    function saveVoiceModelCfg(){ const fastMode=checkedFast(E.setVoiceFastMode); currentVoiceCfg=Object.assign({},currentVoiceCfg,{agent:E.setVoiceAgent.value,model:E.setVoiceModel.value,effort:E.setVoiceEffort.value,fastMode}); tx({t:'set_voice_cfg',agent:E.setVoiceAgent.value,model:E.setVoiceModel.value,effort:E.setVoiceEffort.value,fastMode}); }
     function renderVoiceCfg(cfg){ if(!E.setVoiceEscalate)return; currentVoiceCfg=cfg||{}; const local=machines.find(m=>m.id==='local'), names=local&&Array.isArray(local.agents)?local.agents:caps.map(c=>c.name), available=caps.filter(c=>names.includes(c.name)); fillSel(E.setVoiceAgent,available.map(c=>({id:c.name,label:c.label||c.name})),cfg.agent||currentAgent); fillVoiceModels(cfg); const models=(localCapsFor(E.setVoiceAgent.value).models||[]).map(x=>x.id);
       const opts=[['ask','Sempre perguntar'],['auto','Automático (deixar decidir)']].concat(models.map(m=>[m,'Sempre: '+m]));
       E.setVoiceEscalate.innerHTML=''; opts.forEach(([v,l])=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; if(v===((cfg&&cfg.escalate)||'ask')) o.selected=true; E.setVoiceEscalate.appendChild(o); });
       if(E.setVoiceRelevance) E.setVoiceRelevance.checked=((cfg&&cfg.relevance)||'on')!=='off'; }
     E.setVoiceEscalate.onchange=()=>tx({t:'set_voice_cfg',escalate:E.setVoiceEscalate.value});
-    E.setVoiceAgent.onchange=()=>{ fillVoiceModels({}); saveVoiceModelCfg(); };
-    E.setVoiceModel.onchange=()=>{ fillVoiceModels({model:E.setVoiceModel.value}); saveVoiceModelCfg(); };
+    E.setVoiceAgent.onchange=()=>{ fillVoiceModels({fastMode:checkedFast(E.setVoiceFastMode)}); saveVoiceModelCfg(); };
+    E.setVoiceModel.onchange=()=>{ fillVoiceModels({model:E.setVoiceModel.value,fastMode:checkedFast(E.setVoiceFastMode)}); saveVoiceModelCfg(); };
     E.setVoiceEffort.onchange=saveVoiceModelCfg;
+    if(E.setVoiceFastMode) E.setVoiceFastMode.onchange=saveVoiceModelCfg;
     if(E.setVoiceRelevance) E.setVoiceRelevance.onchange=()=>tx({t:'set_voice_cfg',relevance:E.setVoiceRelevance.checked?'on':'off'});
     E.setModel.onchange=()=>fillEfforts(E.setEffort,E.setAgent.value,E.setModel.value);
     // resumo/digest one-shot config (roda no Hub; barato por padrão)
-    let sumCfg={agent:'claude-code',model:'haiku',effort:'low'};
-    function fillSumSelects(){ if(!E.setSumAgent||!caps.length)return; const local=machines.find(m=>m.id==='local'), names=local&&Array.isArray(local.agents)?local.agents:caps.map(c=>c.name), available=caps.filter(c=>names.includes(c.name)); fillSel(E.setSumAgent,available.map(c=>({id:c.name,label:c.label||c.name})),available.some(c=>c.name===sumCfg.agent)?sumCfg.agent:(available[0]||{}).name); const c=localCapsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,sumCfg.model); const m=(c.models||[]).find(x=>x.id===E.setSumModel.value); fillSel(E.setSumEffort,(m&&m.efforts)||[],sumCfg.effort); }
-    function saveSum(){ tx({t:'set_summary_cfg',agent:E.setSumAgent.value,model:E.setSumModel.value,effort:E.setSumEffort.value}); }
-    E.setSumAgent.onchange=()=>{ const c=localCapsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,c.defaultModel); const m=(c.models||[]).find(x=>x.id===E.setSumModel.value); fillSel(E.setSumEffort,(m&&m.efforts)||[],m&&m.defaultEffort); saveSum(); };
-    E.setSumModel.onchange=()=>{ fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); saveSum(); };
+    let sumCfg={agent:'claude-code',model:'haiku',effort:'low',fastMode:false};
+    function fillSumSelects(){ if(!E.setSumAgent||!caps.length)return; const local=machines.find(m=>m.id==='local'), names=local&&Array.isArray(local.agents)?local.agents:caps.map(c=>c.name), available=caps.filter(c=>names.includes(c.name)); fillSel(E.setSumAgent,available.map(c=>({id:c.name,label:c.label||c.name})),available.some(c=>c.name===sumCfg.agent)?sumCfg.agent:(available[0]||{}).name); const c=localCapsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,sumCfg.model); const m=(c.models||[]).find(x=>x.id===E.setSumModel.value); fillSel(E.setSumEffort,(m&&m.efforts)||[],sumCfg.effort); setFastCheckbox(E.setSumFastMode,E.setSumAgent.value,sumCfg.fastMode); }
+    function saveSum(){ const fastMode=checkedFast(E.setSumFastMode); sumCfg=Object.assign({},sumCfg,{agent:E.setSumAgent.value,model:E.setSumModel.value,effort:E.setSumEffort.value,fastMode}); tx({t:'set_summary_cfg',agent:E.setSumAgent.value,model:E.setSumModel.value,effort:E.setSumEffort.value,fastMode}); }
+    E.setSumAgent.onchange=()=>{ const fastMode=checkedFast(E.setSumFastMode), c=localCapsFor(E.setSumAgent.value); fillSel(E.setSumModel,c.models,c.defaultModel); const m=(c.models||[]).find(x=>x.id===E.setSumModel.value); fillSel(E.setSumEffort,(m&&m.efforts)||[],m&&m.defaultEffort); setFastCheckbox(E.setSumFastMode,E.setSumAgent.value,fastMode); saveSum(); };
+    E.setSumModel.onchange=()=>{ const fastMode=checkedFast(E.setSumFastMode); fillEfforts(E.setSumEffort,E.setSumAgent.value,E.setSumModel.value); setFastCheckbox(E.setSumFastMode,E.setSumAgent.value,fastMode); saveSum(); };
     E.setSumEffort.onchange=saveSum;
+    if(E.setSumFastMode) E.setSumFastMode.onchange=saveSum;
     let adaptivePolicyDoc=null;
     let adaptiveApprovalEl=null;
     function renderAdaptiveApprovals(items){
@@ -4180,7 +4227,7 @@
         tx({t:'set_execution_cfg',enabled:E.setExecEnabled.checked,retentionDays:+E.setExecRetention.value,maxEvents:+E.setExecMaxEvents.value,maxConcurrency:+E.setExecConcurrency.value,maxDepth:+E.setExecDepth.value,defaultWrite:E.setExecDefaultWrite.checked,worktreeRoot:(E.setExecWorktree.value||'').trim()}); }
       if(isOwner&&adaptivePolicyDoc){ const doc=collectAdaptivePolicy(); if(!doc)return; tx({t:'set_adaptive_policy',doc,sessionId:currentSession}); }
       if(E.setGate.checked && !speakers.length){ addErr('Cadastre sua voz antes de exigir voz cadastrada (senão o modo voz fica bloqueado).'); E.setGate.checked=false; }
-      Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,voice:E.setVoice.checked,
+      Object.assign(cfg,{agent:E.setAgent.value,model:E.setModel.value,effort:E.setEffort.value,fastMode:!!(E.setFastMode&&E.setFastMode.checked&&!E.setFastMode.disabled),voice:E.setVoice.checked,
       continue:E.setContinue.checked,continueSec:+E.setContinueSec.value||30,silenceSec:(E.setSilenceSec?(+E.setSilenceSec.value||1.8):1.8),wake:E.setWake.checked,noise:E.setNoise.checked,voiceGate:E.setGate.checked,bioLock:!!(E.setBioLock&&E.setBioLock.checked),slashMenu:!E.setSlash||E.setSlash.checked});
       if(!slashOn()) closeTrig();
       saveCfg(); speak=cfg.voice; setSpeakBtn(); tx({t:'wake',enabled:cfg.wake}); tx({t:'voicecfg',gate:cfg.voiceGate});
@@ -4193,7 +4240,7 @@
         // Ja inscrito: so atualiza as prefs — re-inscrever trocaria o endpoint a toa.
         else if(wantPush&&cfg.push){ await updatePushPrefs(pp); }
       }catch(e){ cfg.push=false; if(E.setPush)E.setPush.checked=false; toast('Falha ao salvar notificações: '+(e&&e.message?e.message:e)); }
-      saveCfg(); renderPushCfg();
+      saveCfg(); syncModelEffort(); renderPushCfg();
       // Salvar NÃO fecha: mexer em várias abas de configuração exigia reabrir tudo a cada ajuste.
       // O feedback vira o próprio botão (e o toast), então continua claro que gravou.
       const label=btn&&btn.textContent; if(btn){ btn.textContent='Salvo ✓'; setTimeout(()=>{ if(btn.isConnected) btn.textContent=label||'Salvar'; },1600); } toast('Configurações salvas.'); }
@@ -4236,6 +4283,7 @@
       const cap=(caps||[]).find(c=>c.name===currentAgent); add('🤖','Agente',(cap&&(cap.label||cap.name))||currentAgent);
       const model=curModel||sessDeclModel; add('🧠','Modelo', model?modelLabel(currentAgent,model):'Automático');
       const eff=curEffort||sessDeclEffort; if(eff) add('🎚️','Esforço', effLabel(eff));
+      if(curFastMode) add('⚡','Modo rápido','Ligado');
       const runner=currentSessionRunner||selectedRunner(); if((machines&&machines.length>1)||(runner&&runner!=='local')) add('🖥️','Máquina', machineLabel(runner));
       if(curCwd) add('📁','Pasta', projectLabelOf(curCwd), {sub:curCwd});
       const s=(sessions||[]).find(x=>x.id===currentSession); if(s&&s.updatedAt) add('🕑','Atualizada', relTimeLabel(s.updatedAt), {sub:new Date(s.updatedAt).toLocaleString('pt-BR')});
@@ -4910,7 +4958,7 @@
           else if(/^tool_/.test(ev.kind)&&ev.tool){ const t=ev.tool; streamTool(t.name,t.summary,t.callId,t.parentId,t.path,t.adds,t.dels,t.rows,t.detail,t.status,t.error,ev.executionId,!!t.background); if(t.path)touchFile(t.path,/Edit$|^Write$/.test(t.name)?(t.name==='Write'?'write':'edit'):'read',t.adds,t.dels); }
           else if(ev.kind==='text_delta'||ev.kind==='text_block'){ clearRestorable(m.sessionId); streamText(ev.text||'',ev.parentId||(ev.tool&&ev.tool.parentId),ev.executionId); }
           else if(ev.kind==='plan') streamTool('Plan',ev.plan&&ev.plan.title||ev.text||'Plano atualizado',null,null,null,0,0,null,null,'completed');
-          else if(ev.kind==='usage'){ turnUsage=ev.usage||turnUsage; if(ev.usage){E.usage.textContent=usageSummary(ev.usage);if(ev.usage.contextTokens||ev.usage.inputTokens)lastInputTokens=ev.usage.contextTokens||ev.usage.inputTokens;if(ev.usage.contextWindowTokens)lastContextWindow=ev.usage.contextWindowTokens;if(ev.usage.model)sessDeclModel=ev.usage.model;if(ev.usage.effort)sessDeclEffort=ev.usage.effort;renderControls();updUsagePill();} }
+          else if(ev.kind==='usage'){ turnUsage=ev.usage||turnUsage; if(ev.usage){E.usage.textContent=usageSummary(ev.usage);applyUsageMeter(ev.usage);renderControls();} }
           else if(ev.kind==='completed'){ const runner=frameRunner(m); clearRestorable(m.sessionId,runner); if(typeof m.sessionCost==='number'){sessCost=m.sessionCost;sessUsage=m.sessionUsage||sessUsage;} streamDone(ev.text,turnUsage,{sessionId:m.sessionId,runner}); onTurnEnd(m.sessionId,runner); }
           else if(ev.kind==='cancelled'){ streamCancelled(ev.text); onTurnEnd(m.sessionId,frameRunner(m)); }
           else if(ev.kind==='failed'){ streamErr(ev.text); onTurnEnd(m.sessionId,frameRunner(m)); } }
@@ -4940,11 +4988,11 @@
           else { d=trackLooseActivityEl(fk?toolGroupEl([item],true,toolOpts(null,item)):(rk?repeatGroupEl([item],true):toolRowEl(m.name,m.summary||m.name||'',m.path,m.adds,m.dels,true,m.rows,m.detail,toolOpts(null,item)))); if(k){looseActivityGroups[k]=d;looseLastGroupKey=k;}else looseLastGroupKey=''; if(pendingEl)E.log.insertBefore(d,pendingEl);else E.log.appendChild(d); }
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
           autoScroll(); }
-        else if(m.t==='usage'){ if(currentFrame(m)&&m.usage){ E.usage.textContent=usageSummary(m.usage); if(m.usage.contextTokens||m.usage.inputTokens)lastInputTokens=m.usage.contextTokens||m.usage.inputTokens;if(m.usage.contextWindowTokens)lastContextWindow=m.usage.contextWindowTokens;updUsagePill(); } }
+        else if(m.t==='usage'){ if(currentFrame(m)&&m.usage){ E.usage.textContent=usageSummary(m.usage); applyUsageMeter(m.usage); } }
         else if(m.t==='usage_info'){ planUsage=m.plan||null; planStatus=m.planStatus||null; planKey=(m.runnerId||'local')+'\0'+(m.agent||''); if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
         else if(m.t==='session'){ if(currentFrame(m) && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
         else if(m.t==='deleted'){ const deleted=Array.isArray(m.ids)?m.ids:[], inCur=deleted.includes(currentSession);
-          if(inCur){ currentSession=null; clearQueue(); E.log.innerHTML=''; E.title.textContent='—'; refreshTitleInfo(); curNativeId=''; renderNativeChip(); setHash(''); }
+          if(inCur){ currentSession=null; clearQueue(); resetUsageMeter(); E.log.innerHTML=''; E.title.textContent='—'; refreshTitleInfo(); curNativeId=''; renderNativeChip(); setHash(''); }
           deleted.forEach(id=>{ const key=sessionStateKey(id,sessionRunner()); if(sessionPrefs[key])delete sessionPrefs[key]; if(sessionRunner()==='local'&&sessionPrefs[id])delete sessionPrefs[id]; }); saveSessionPrefs();
           if(!m.ok) toast(t('tDelFail')); }
         else if(m.t==='tts'){ if(m.for==='ask'){ if(!m.sessionId||currentFrame(m))askVoicePlayAndListen(m.audio); } else if(currentFrame(m)) playTTS(m.audio,!!m.closing); }
@@ -5087,7 +5135,7 @@
           // O usuário grava, vê "transcrevendo…" e a mensagem entra na fila para rodar no próximo turno.
           const sessionBusy=busy(currentSession);
           status('busy', sessionBusy ? '🎧 transcrevendo para a fila…' : '🎧 transcrevendo…');   // Gap 5: feedback claro durante o STT
-          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
+          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; syncComposerActions(); if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?t('spListeningAns'):t('spListening')); if(auto)tx({t:'wake_event',phase:'capturing',sessionId:currentSession});
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ resumeWakeAfterRecording(wakePaused); const msg=t('wakeMicError')+': '+micErrorText(e); addErr(msg); toast(msg); tx({t:'wake_event',phase:'mic_error',sessionId:currentSession,error:String((e&&e.message)||e)}); recording=false; status(''); } }
@@ -5246,7 +5294,7 @@
       if(askActive&&sid===currentSession){ const runner=askActive.runnerId||sessionRunner(); try{askActive.card.remove();}catch(e){} askActive=null; askVoice=false; clearAsk(sid,runner); tx({t:'ask_clear',sessionId:sid}); }
       const askKey=askStateKey(sid); if(askingSids.delete(askKey)) tx({t:'ask_clear',sessionId:sid}); bumpSession(sid); markJustSent(sid);
       if(sid===currentSession){ stick=true; addOptimisticUser(sid,msgId,body,atts||[]); if(!curStarted){ curStarted=true; renderControls(); } showPending(); }
-      const sent=tx({t:'send',text:body,speak,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
+      const sent=tx({t:'send',text:body,speak,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
       if(!sent&&sid===currentSession) dropOptimisticUser(sid,currentSessionRunner,msgId);
       refreshComposer(); return sent; }
     function sendMsg(text,atts){ sendMsgTo(currentSession,text,atts); }   // compat
@@ -5255,7 +5303,7 @@
     // sessão aparece no histórico/execuções e o toast oferece um atalho pra abri-la quando quiser.
     function suggestionTitleFrom(action,ref){ const s=String(action||'').replace(/\s+/g,' ').trim(); return String((ref&&ref.title)||s||'Nova sessão').slice(0,60); }
     function launchSuggestionInNewSession(action,ref){ if(!action){ toast('Sem ação para executar'); return; }
-      tx({t:'sendNew',text:action,agent:currentAgent,cwd:curCwd,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession||''),msgId:uid(),title:suggestionTitleFrom(action,ref),ref:(ref&&ref.id)?{sessionId:ref.id,runnerId:ref.runnerId||'local'}:undefined});
+      tx({t:'sendNew',text:action,agent:currentAgent,cwd:curCwd,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession||''),msgId:uid(),title:suggestionTitleFrom(action,ref),ref:(ref&&ref.id)?{sessionId:ref.id,runnerId:ref.runnerId||'local'}:undefined});
       toast('▶ Executando em nova sessão…'); }
     // Fim de turno de uma sessão. O FLUSH da fila agora é do SERVIDOR (flushQueue no hub): ele
     // envia a fila acumulada e re-transmite {t:queue}/{t:message}. Aqui só destravamos o composer.
@@ -6460,7 +6508,7 @@
       // chamava setRestorable, entao uma mensagem enfileirada com o socket fora sumia sem copia nenhuma.
       setRestorable(currentSession,text,atts);
       if(currentSession){ delete draftBySession[sessionStateKey(currentSession,currentSessionRunner)]; saveDrafts(); }   // o texto saiu do composer (enviado/enfileirado) → não é mais rascunho
-      if(busy(currentSession)){ const mid=uid(); queueOf(currentSession).push({text:text||'(anexo)',atts,msgId:mid}); renderQueue(); bumpSession(currentSession); const okq=tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),msgId:mid}); if(!okq) undoSend(currentSession,text,atts,mid); return; }
+      if(busy(currentSession)){ const mid=uid(); queueOf(currentSession).push({text:text||'(anexo)',atts,msgId:mid}); renderQueue(); bumpSession(currentSession); const okq=tx({t:'enqueue',sessionId:currentSession,text:text||'(anexo)',attachments:atts,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),msgId:mid}); if(!okq) undoSend(currentSession,text,atts,mid); return; }
       if(!sendMsgTo(currentSession,text||'(anexo)',atts)) undoSend(currentSession,text,atts,null); };
     E.stopBtn.onclick=()=>{
       stopTTS();   // parar o turno também silencia qualquer áudio em reprodução
