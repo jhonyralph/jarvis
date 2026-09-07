@@ -1,3 +1,15 @@
+# [0.34.0](https://github.com/jhonyralph/jarvis/compare/v0.33.1...v0.34.0) (2026-09-07)
+
+
+### Bug Fixes
+
+* membro sem máquina, app sem Hub e custo do Codex por modelo ([d1d7e1e](https://github.com/jhonyralph/jarvis/commit/d1d7e1e97b04185256af29014a55f97ef3bc9929))
+
+
+### Features
+
+* **desktop:** configurar o endereço do Hub dentro do app ([b25fe93](https://github.com/jhonyralph/jarvis/commit/b25fe938b8472bb1345374666fc923b34428baaa))
+
 ## [0.33.1](https://github.com/jhonyralph/jarvis/compare/v0.33.0...v0.33.1) (2026-09-03)
 
 
