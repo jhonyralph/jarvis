@@ -221,11 +221,15 @@ export function authenticate(token: string, meta?: { ip?: string; ua?: string })
 }
 
 // ---- devices management ----
-export function listDevices(): Array<Omit<Device, "tokenHash"> & { role: Role; userName: string }> {
+/** `runners` is what the device may actually USE: "*" for an owner, the explicit allowlist for a
+ *  member. Without it the owner UI could show a role but not the access behind it — which is how a
+ *  member could sit there authenticated with an empty allowlist and no way for anyone to see why
+ *  every machine answered "sem acesso a esta máquina". */
+export function listDevices(): Array<Omit<Device, "tokenHash"> & { role: Role; userName: string; runners: "*" | string[] }> {
   return data.devices.map((d) => {
     const u = data.users.find((x) => x.id === d.userId);
     const { tokenHash, ...pub } = d;
-    return { ...pub, role: u?.role || "member", userName: u?.name || "?" };
+    return { ...pub, role: u?.role || "member", userName: u?.name || "?", runners: allowedRunners(d.userId) };
   });
 }
 export function pruneExpiredDevices(now = Date.now()): Array<{ id: string; userId: string }> {
@@ -239,7 +243,11 @@ export function pruneExpiredDevices(now = Date.now()): Array<{ id: string; userI
   return expired.map(({ id, userId }) => ({ id, userId }));
 }
 /** Change a device's role (owner/member). Refuses to demote the last owner. */
-export function setDeviceRole(deviceId: string, role: Role): boolean {
+/** `runners` only applies when demoting to member: it is the one moment the caller can choose the
+ *  machine allowlist in the same action. Omitted ⇒ keep whatever the user already had (never widen
+ *  silently); a first-time member therefore lands on an empty list, which every admin surface now
+ *  renders explicitly instead of leaving the person locked out with no visible reason. */
+export function setDeviceRole(deviceId: string, role: Role, runners?: string[]): boolean {
   const dev = data.devices.find((d) => d.id === deviceId);
   if (!dev) return false;
   const user = data.users.find((u) => u.id === dev.userId);
@@ -248,9 +256,12 @@ export function setDeviceRole(deviceId: string, role: Role): boolean {
     if (data.users.filter((u) => u.role === "owner").length <= 1) return false; // keep at least one owner
   }
   user.role = role;
-  if (role === "member" && !data.grants[user.id]) data.grants[user.id] = [];
+  if (role === "member") {
+    if (runners) data.grants[user.id] = [...new Set(runners.filter((r): r is string => typeof r === "string" && !!r))];
+    else if (!data.grants[user.id]) data.grants[user.id] = [];
+  }
   save(data);
-  audit("set_role", { deviceId, detail: `${dev.label} -> ${role}` });
+  audit("set_role", { deviceId, detail: `${dev.label} -> ${role}${role === "member" ? ` (máquinas: ${data.grants[user.id]?.length ? data.grants[user.id].join(",") : "nenhuma"})` : ""}` });
   return true;
 }
 
@@ -282,7 +293,28 @@ export function canAccessRunner(userId: string, runnerId: string): boolean {
   const a = allowedRunners(userId);
   return a === "*" || a.includes(runnerId);
 }
-export function setGrants(userId: string, runners: string[]): void { data.grants[userId] = runners; save(data); }
+export function setGrants(userId: string, runners: string[]): void {
+  data.grants[userId] = [...new Set(runners.filter((r): r is string => typeof r === "string" && !!r))];
+  save(data);
+}
+
+/** Set a MEMBER's machine allowlist addressing the DEVICE (what every admin surface actually holds).
+ *  Returns false for an unknown device and for an owner — an owner already has "*", so silently
+ *  writing a narrower list would create a grant that only takes effect on a later demotion. */
+export function setDeviceGrants(deviceId: string, runners: string[]): boolean {
+  const dev = data.devices.find((d) => d.id === deviceId);
+  if (!dev) return false;
+  const user = data.users.find((u) => u.id === dev.userId);
+  if (!user || user.role === "owner") return false;
+  setGrants(user.id, runners);
+  audit("set_grants", { deviceId, userId: user.id, detail: `${dev.label} -> ${runners.length ? runners.join(",") : "(nenhuma máquina)"}` });
+  return true;
+}
+
+/** The userId behind a device — admin surfaces address devices, grants are stored per user. */
+export function userIdOfDevice(deviceId: string): string | undefined {
+  return data.devices.find((d) => d.id === deviceId)?.userId;
+}
 
 // ---- identity (the human behind the principals) ----
 /** Personal isolation exists to keep an INVITED person out of someone else's transcript — never to

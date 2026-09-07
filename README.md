@@ -373,7 +373,8 @@ the repo. Owner-editable execution settings are additionally persisted in
 | `JARVIS_ADMIN_PORT` | `4578` | Loopback-only admin API |
 | `JARVIS_AGENT` | `claude-code` | Default adapter: `claude-code`, `codex`, `gemini`, `cursor`, `copilot`, `opencode`, `cline`, `qwen`, `continue`, `kiro`, `antigravity` or `aider`. `antigravity` detects the official `agy` TUI but is not executable until a public headless contract exists; `mock` is test-only unless explicitly enabled |
 | `JARVIS_AGENT_PERMISSION_MODE` | `full-access` | `full-access` injects the provider's unattended/bypass flags. `provider-default` omits them and delegates sandbox/approval behavior to the CLI (which may refuse or wait in headless mode) |
-| `JARVIS_CODEX_PRICE_IN` / `_CACHED` / `_OUT` | estimativa Jarvis v1 | USD por 1M tokens para o equivalente estimado do Codex; defina `JARVIS_CODEX_PRICING_VERSION` para identificar a tabela usada |
+| `JARVIS_CODEX_PRICE_IN` / `_CACHED` / `_OUT` | tabela por modelo | O custo do Codex é estimado por **modelo** (`packages/core/src/codex-pricing.ts`), incluindo sobretaxa de contexto longo e multiplicador do tier Fast. Definir qualquer um destes força uma tarifa **plana** (USD por 1M tokens) para todos os modelos, sem multiplicadores. Modelo fora da tabela não recebe custo (`tokens_only`) em vez de uma estimativa errada; `JARVIS_CODEX_PRICING_VERSION` identifica a tabela usada |
+| `JARVIS_CODEX_LONG_CONTEXT_MODE` | `whole` | Como estimar a sobretaxa acima do limiar de input do modelo: `whole` reprecifica o prompt inteiro (leitura literal, nunca subestima) ou `excess` só o excedente. Trocar apenas depois de medir contra uma fatura real |
 | `JARVIS_AUTH` | `on` | Device auth. **Only** turn this off on a trusted private network |
 | `JARVIS_CWD` | process cwd | Default working directory for agents |
 | `JARVIS_VOICE` | — | Voice id. Piper models use ids like `en_GB-alan-medium`; optional OpenAI profiles use ids like `openai:jarvis-br` |

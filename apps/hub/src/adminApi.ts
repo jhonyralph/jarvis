@@ -28,6 +28,12 @@ export interface AdminCtx {
   restartHub: () => void;
   dropRevoked: () => void;
   refreshPrincipalRole: (deviceId: string, role: auth.Role) => void;
+  /** Re-send every connected client its OWN machine list — a grant change alters what each socket
+   *  is allowed to see, so the picker must not keep showing a machine the member just lost (or hide
+   *  one they just gained). The per-message `canUseRunner` guard remains the authority. */
+  broadcastMachines: () => void;
+  /** Every machine id that can appear in a member's allowlist (local Hub + known runners). */
+  machineIds: () => string[];
   /** RunnerConn registry (structural: .id / .local / .ws are read) */
   runners: Map<string, { id: string; local: boolean; ws: WebSocket | null }>;
   runnerLabels: Record<string, string>;
@@ -90,8 +96,12 @@ export function startAdminApi(ctx: AdminCtx): void {
           const b = await body();
           const role = b.role === "owner" ? "owner" : "member";
           const ttlSec = Math.min(Math.max(Number(b.ttlSec) || 86400, 60), 30 * 86400);
-          const { code, invite } = auth.mintInvite("cli", { role, runners: [], ttlSec });
-          return json(200, { code, link: inviteLink(code), invite });
+          // `runners` was hardcoded to [] here, so EVERY member invite minted from the CLI produced a
+          // device that authenticated and then hit "sem acesso a esta máquina" on every machine, with
+          // no surface anywhere to repair it. The caller now chooses the allowlist.
+          const runners = Array.isArray(b.runners) ? b.runners.filter((x: unknown): x is string => typeof x === "string") : [];
+          const { code, invite } = auth.mintInvite("cli", { role, runners, ttlSec });
+          return json(200, { code, link: inviteLink(code), invite, runners: role === "owner" ? "*" : runners });
         }
         if (req.method === "POST" && url === "/admin/runner-token") {
           const b = await body();
@@ -108,7 +118,23 @@ export function startAdminApi(ctx: AdminCtx): void {
           return json(200, { enabled: auth.hasPassphrase() });
         }
         if (req.method === "POST" && url === "/admin/revoke") { const b = await body(); const ok = typeof b.deviceId === "string" && auth.revokeDevice(b.deviceId); ctx.dropRevoked(); return json(200, { ok: !!ok }); }
-        if (req.method === "POST" && url === "/admin/device-role") { const b = await body(); const role = b.role === "owner" ? "owner" : "member"; const ok = typeof b.deviceId === "string" && auth.setDeviceRole(b.deviceId, role); if (ok) ctx.refreshPrincipalRole(b.deviceId, role); return json(200, { ok: !!ok, role }); }
+        if (req.method === "POST" && url === "/admin/device-role") {
+          const b = await body(); const role = b.role === "owner" ? "owner" : "member";
+          const runners = Array.isArray(b.runners) ? b.runners.filter((x: unknown): x is string => typeof x === "string") : undefined;
+          const ok = typeof b.deviceId === "string" && auth.setDeviceRole(b.deviceId, role, role === "member" ? runners : undefined);
+          if (ok) { ctx.refreshPrincipalRole(b.deviceId, role); ctx.broadcastMachines(); }
+          const granted = ok && role === "member" ? auth.allowedRunners(auth.userIdOfDevice(b.deviceId) || "") : (role === "owner" ? "*" : undefined);
+          return json(200, { ok: !!ok, role, runners: granted });
+        }
+        if (req.method === "POST" && url === "/admin/device-grants") {
+          const b = await body();
+          const runners = Array.isArray(b.runners) ? b.runners.filter((x: unknown): x is string => typeof x === "string") : [];
+          const ok = typeof b.deviceId === "string" && auth.setDeviceGrants(b.deviceId, runners);
+          if (ok) ctx.broadcastMachines();
+          return json(ok ? 200 : 400, ok ? { ok: true, runners } : { ok: false, error: "dispositivo não encontrado ou é dono (o dono já acessa todas as máquinas)" });
+        }
+        // Which machine ids exist to grant — the vocabulary /admin/device-grants expects.
+        if (req.method === "GET" && url === "/admin/machines") return json(200, { machines: ctx.machineIds() });
         if (req.method === "POST" && url === "/admin/revoke-all") { const n = auth.listDevices().length; for (const d of auth.listDevices()) auth.revokeDevice(d.id); ctx.dropRevoked(); return json(200, { revoked: n }); }
         json(404, { error: "not found" });
       } catch (e: any) { json(500, { error: String(e?.message ?? e) }); }

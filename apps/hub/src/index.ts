@@ -5694,8 +5694,22 @@ function handleSecurityMsg(ws: WebSocket, msg: any): boolean {
   }
   if (msg.t === "sec_set_role" && typeof msg.deviceId === "string" && (msg.role === "owner" || msg.role === "member")) {
     if (!requireOwner(ws)) return true;
-    if (auth.setDeviceRole(msg.deviceId, msg.role)) refreshPrincipalRole(msg.deviceId, msg.role);
-    else send(ws, { t: "error", message: "não é possível (precisa de ao menos 1 dono)" });
+    // Demoting to member carries the machine allowlist in the SAME action: a member with an empty
+    // allowlist can authenticate and then do nothing anywhere ("sem acesso a esta máquina" on every
+    // machine), so the role change and the access it implies must be decided together.
+    const runners = Array.isArray(msg.runners) ? msg.runners.filter((x: any) => typeof x === "string") : undefined;
+    if (auth.setDeviceRole(msg.deviceId, msg.role, msg.role === "member" ? runners : undefined)) {
+      refreshPrincipalRole(msg.deviceId, msg.role);
+      broadcastMachines();
+    } else send(ws, { t: "error", message: "não é possível (precisa de ao menos 1 dono)" });
+    secState(ws);
+    return true;
+  }
+  if (msg.t === "sec_set_grants" && typeof msg.deviceId === "string" && Array.isArray(msg.runners)) {
+    if (!requireOwner(ws)) return true;
+    const runners = msg.runners.filter((x: any) => typeof x === "string");
+    if (auth.setDeviceGrants(msg.deviceId, runners)) broadcastMachines();
+    else send(ws, { t: "error", message: "dispositivo não encontrado ou é dono (o dono já acessa todas as máquinas)" });
     secState(ws);
     return true;
   }
@@ -8545,7 +8559,9 @@ startAdminApi({ updateRoot: UPDATE_ROOT, port: PORT, applyHubUpdate, rollbackHub
   if (hubUpdateInProgress) return { ok: false, busy: true, log: "outra atualização já está em andamento" };
   hubUpdateInProgress = true; const drainError = await drainHubForUpdate(); const result = drainError ? { ok: false, log: drainError } : await updateRollback(UPDATE_ROOT);
   if (result.ok) scheduleRestart(); else hubUpdateInProgress = false; return result;
-}, queueAllRunnerUpdates: queueAllRemoteRunnerUpdates, restartHub: scheduleRestart, dropRevoked, refreshPrincipalRole, runners, runnerLabels, runnerSessions, sendToRunner });
+}, queueAllRunnerUpdates: queueAllRemoteRunnerUpdates, restartHub: scheduleRestart, dropRevoked, refreshPrincipalRole, broadcastMachines,
+   machineIds: () => [...new Set([LOCAL_ID, ...runners.keys(), ...Object.keys(runnerLabels)])],
+   runners, runnerLabels, runnerSessions, sendToRunner });
 
 void refreshLocalAgents();
 setInterval(() => void refreshLocalAgents(), 300_000); // every 5 min; probes are version/login-status checks, never inference turns

@@ -2446,10 +2446,33 @@
     function secRow(html){ const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #ffffff12'; const i=document.createElement('div'); i.style.cssText='flex:1;min-width:0'; i.innerHTML=html; r.appendChild(i); return r; }
     function renderSec(m){
       const devs=m.devices||[], me=m.me;
+      // Vocabulário de máquinas que um membro pode receber — mesmas fontes da seção "Máquinas".
+      const machineOpts=[]; const addOpt=(id,label)=>{ if(id&&!machineOpts.some(o=>o.id===id)) machineOpts.push({id,label:label||id}); };
+      if(m.localMachine) addOpt(m.localMachine.id, m.localMachine.label||'Servidor');
+      (m.runnerTokens||[]).forEach(rt=>addOpt(rt.runnerId, rt.label));
       E.secDevices.innerHTML = devs.length ? '' : 'Nenhum dispositivo.';
       devs.forEach(d=>{ const soon=d.expiresAt&&d.expiresAt-Date.now()<86400000; const exp = d.expiresAt ? (' · <span style="'+(soon?'color:#e3b341':'opacity:.55')+'">acesso '+(d.expiresAt<=Date.now()?'expirado':'expira em '+fmtIn(d.expiresAt))+'</span>') : ' · <span style="opacity:.4">permanente</span>';
         const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(d.label||'Dispositivo')+(d.id===me?' <span style="opacity:.6">(este)</span>':'')+' · '+esc(d.role||'')+'</div><div style="opacity:.55">'+esc(d.userName||'')+' · visto '+fmtAgo(d.lastSeen)+exp+(d.ip?(' · '+esc(d.ip)):'')+'</div>');
-        const rb=document.createElement('button'); rb.className='ghost'; rb.style.flex='none'; rb.textContent=d.role==='owner'?'→ membro':'→ dono'; rb.title='Alterar papel'; rb.onclick=()=>tx({t:'sec_set_role',deviceId:d.id,role:d.role==='owner'?'member':'owner'}); row.appendChild(rb);
+        // Um membro sem máquina liberada autentica e depois recebe "sem acesso a esta máquina" em
+        // TUDO, sem nada na tela explicando por quê. As fichas abaixo tornam o allowlist visível e
+        // editável em um clique — antes disso não existia superfície nenhuma para preenchê-lo.
+        if(d.role==='member'){
+          const granted=Array.isArray(d.runners)?d.runners:[];
+          const wrap=document.createElement('div'); wrap.style.cssText='display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;align-items:center';
+          const note=document.createElement('span'); note.style.cssText='font-size:11px;margin-right:2px;'+(granted.length?'opacity:.5':'color:#f85149');
+          note.textContent = !machineOpts.length ? 'Nenhuma máquina cadastrada.' : (granted.length?'máquinas:':'sem acesso a nenhuma máquina —');
+          wrap.appendChild(note);
+          machineOpts.forEach(opt=>{ const on=granted.includes(opt.id);
+            const c=document.createElement('button'); c.type='button'; c.className='ghost';
+            c.style.cssText='flex:none;padding:2px 9px;font-size:11px;border-radius:999px;'+(on?'background:#1f6feb33;border-color:#1f6feb;color:#cfe3ff':'opacity:.55');
+            c.textContent=(on?'✓ ':'+ ')+opt.label; c.title=(on?'Remover acesso a ':'Dar acesso a ')+opt.label;
+            c.onclick=()=>tx({t:'sec_set_grants',deviceId:d.id,runners:on?granted.filter(x=>x!==opt.id):[...granted,opt.id]});
+            wrap.appendChild(c); });
+          row.firstChild.appendChild(wrap);
+        }
+        // Rebaixar preserva as máquinas que o aparelho já usava (virar membro tira a gestão de
+        // dispositivos, não deveria tirar o acesso em silêncio); as fichas acima permitem estreitar.
+        const rb=document.createElement('button'); rb.className='ghost'; rb.style.flex='none'; rb.textContent=d.role==='owner'?'→ membro':'→ dono'; rb.title='Alterar papel'; rb.onclick=()=>tx(d.role==='owner'?{t:'sec_set_role',deviceId:d.id,role:'member',runners:machineOpts.map(o=>o.id)}:{t:'sec_set_role',deviceId:d.id,role:'owner'}); row.appendChild(rb);
         if(d.id!==me){ const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_device',deviceId:d.id}); row.appendChild(b); }
         E.secDevices.appendChild(row); });
       const inv=m.invites||[];

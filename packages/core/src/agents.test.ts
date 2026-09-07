@@ -251,18 +251,66 @@ test("codexConfigModel reads a top-level model=, ignoring models inside tables",
 });
 
 // --- Codex usage: tokens → estimated $ (Codex reports tokens, never a price) ---
-test("codexUsage extracts tokens and estimates cost from the default rates", () => {
+test("codexUsage extracts tokens and prices them from the model's own row", () => {
   // input_tokens is the FULL turn input (incl. cached) — the context-window figure the gauge needs.
-  const u = codexUsage({ input_tokens: 1000, cached_input_tokens: 0, output_tokens: 100 });
+  const u = codexUsage({ input_tokens: 1000, cached_input_tokens: 0, output_tokens: 100 }, undefined, undefined, { model: "gpt-5.6-luna" });
   assert.equal(u!.inputTokens, 1000);
   assert.equal(u!.outputTokens, 100);
-  // default: 1.25/1M in, 10/1M out → (1000*1.25 + 100*10)/1e6 = 0.00225
+  // ballpark row: 1.25/1M in, 10/1M out → (1000*1.25 + 100*10)/1e6 = 0.00225
   assert.ok(Math.abs(u!.costUsd! - 0.00225) < 1e-9, `got ${u!.costUsd}`);
+  assert.equal(u!.costKind, "estimated_api_equivalent");
 });
-test("codexUsage bills the cached prefix cheaper (default = 1/10 of input)", () => {
-  const u = codexUsage({ input_tokens: 1000, cached_input_tokens: 1000, output_tokens: 0 });
-  // all input cached → 1000 * (1.25/10) / 1e6 = 0.000125
+test("codexUsage bills the cached prefix cheaper", () => {
+  const u = codexUsage({ input_tokens: 1000, cached_input_tokens: 1000, output_tokens: 0 }, undefined, undefined, { model: "gpt-5.6-luna" });
+  // all input cached → 1000 * 0.125 / 1e6 = 0.000125
   assert.ok(Math.abs(u!.costUsd! - 0.000125) < 1e-9, `got ${u!.costUsd}`);
+});
+test("codexUsage reports tokens_only instead of guessing a price for an unknown model", () => {
+  // The whole point of item A: a model with no defensible rate must NOT be silently under-reported.
+  for (const opts of [undefined, { model: "gpt-7-unreleased" }]) {
+    const u = codexUsage({ input_tokens: 1000, cached_input_tokens: 0, output_tokens: 100 }, undefined, undefined, opts);
+    assert.equal(u!.costUsd, undefined, `model ${opts?.model ?? "(none)"} must not be priced`);
+    assert.equal(u!.costKind, "tokens_only");
+    assert.equal(u!.inputTokens, 1000, "tokens are still measured and reported");
+    assert.equal(u!.outputTokens, 100);
+    assert.match(u!.source!, /sem preço/);
+  }
+});
+test("codexUsage applies Astra's long-context surcharge and fast-tier multiplier", () => {
+  const turn = { input_tokens: 400_000, cached_input_tokens: 0, output_tokens: 60_000 };
+  // 400k > 272k ⇒ whole prompt at 2x input and 1.5x output: (400k*20 + 60k*75)/1e6 = 12.50
+  const long = codexUsage(turn, undefined, undefined, { model: "gpt-6-astra" });
+  assert.ok(Math.abs(long!.costUsd! - 12.5) < 1e-9, `got ${long!.costUsd}`);
+  assert.match(long!.source!, /contexto longo/);
+  // Same turn under the threshold pays the base rate: (200k*10 + 60k*50)/1e6 = 5.00
+  const short = codexUsage({ input_tokens: 200_000, cached_input_tokens: 0, output_tokens: 60_000 }, undefined, undefined, { model: "gpt-6-astra" });
+  assert.ok(Math.abs(short!.costUsd! - 5) < 1e-9, `got ${short!.costUsd}`);
+  // Fast tier doubles the applicable rate — it stacks on top of the long-context surcharge.
+  const fast = codexUsage(turn, undefined, undefined, { model: "gpt-6-astra", fastMode: true });
+  assert.ok(Math.abs(fast!.costUsd! - 25) < 1e-9, `got ${fast!.costUsd}`);
+  assert.match(fast!.source!, /fast ×2/);
+});
+test("codexUsage prices the SAME turn differently per model (the global rate could not)", () => {
+  const turn = { input_tokens: 100_000, cached_input_tokens: 0, output_tokens: 10_000 };
+  const astra = codexUsage(turn, undefined, undefined, { model: "gpt-6-astra" });   // (100k*10 + 10k*50)/1e6
+  const sol = codexUsage(turn, undefined, undefined, { model: "gpt-5.6-sol" });     // (100k*4  + 10k*20)/1e6
+  assert.ok(Math.abs(astra!.costUsd! - 1.5) < 1e-9, `astra ${astra!.costUsd}`);
+  assert.ok(Math.abs(sol!.costUsd! - 0.6) < 1e-9, `sol ${sol!.costUsd}`);
+  assert.ok(astra!.costUsd! > sol!.costUsd!, "Astra must not be indistinguishable from Sol");
+});
+test("codexUsage tests the long-context threshold against the real prompt, not the billed delta", () => {
+  // Resumed thread: this turn's delta is small, but the prompt actually sent was 400k — the provider
+  // surcharges the PROMPT, so a small delta on a huge context must still price at the higher rate.
+  const telemetry = codexTelemetryFromLines([
+    JSON.stringify({ type: "turn_context", payload: { model: "gpt-6-astra" } }),
+    JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 400_000, cached_input_tokens: 0, output_tokens: 10_000 }, last_token_usage: { input_tokens: 400_000, cached_input_tokens: 0, output_tokens: 1_000 }, model_context_window: 1_050_000 } } }),
+  ]);
+  const u = codexUsage(telemetry!.total, { input_tokens: 390_000, cached_input_tokens: 0, output_tokens: 9_000 }, telemetry);
+  assert.equal(u!.inputTokens, 10_000, "cost is billed on the delta");
+  assert.equal(u!.model, "gpt-6-astra", "the model comes from rollout telemetry");
+  // delta 10k input / 1k output, surcharged: (10k*20 + 1k*75)/1e6 = 0.275
+  assert.ok(Math.abs(u!.costUsd! - 0.275) < 1e-9, `got ${u!.costUsd}`);
+  assert.match(u!.source!, /contexto longo/);
 });
 test("codexUsage honors env-configurable prices and ignores an empty turn", () => {
   process.env.JARVIS_CODEX_PRICE_IN = "2"; process.env.JARVIS_CODEX_PRICE_OUT = "20"; process.env.JARVIS_CODEX_PRICE_CACHED = "0";

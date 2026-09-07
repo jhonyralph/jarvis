@@ -49,3 +49,45 @@ test("nunca lança, seja qual for a entrada", () => {
     assert.doesNotThrow(() => normalizeHubUrl(value));
   }
 });
+
+/**
+ * Descoberta pelo runner. Numa máquina que só roda runner não existe Hub em 127.0.0.1:4577, então
+ * o fallback padrão produz uma janela que nunca carrega — e o endereço certo já está no disco,
+ * porque é por ele que o runner se conecta.
+ */
+const { readRunnerHubUrl } = createRequire(import.meta.url)("./hub-url.js");
+const fakeHome = (content) => ({ home: "/h", join: (...p) => p.join("/"), readFile: (f) => {
+  assert.equal(f, "/h/.jarvis/runner.env", "lê o runner.env do usuário");
+  if (content == null) throw new Error("ENOENT");
+  return content;
+} });
+
+test("lê JARVIS_HUB do runner.env e o normalizador converte ws→http", () => {
+  const raw = readRunnerHubUrl(fakeHome('JARVIS_HUB=wss://jarvis.ts.net\nJARVIS_TOKEN=x\nJARVIS_LABEL="Este PC"\n'));
+  assert.equal(raw, "wss://jarvis.ts.net");
+  assert.equal(normalizeHubUrl(raw).url, "https://jarvis.ts.net");
+  assert.equal(normalizeHubUrl(raw).usedFallback, false, "endereço descoberto não é fallback");
+});
+
+test("tolera o BOM que o PowerShell 5 escreve com -Encoding UTF8", () => {
+  assert.equal(readRunnerHubUrl(fakeHome('﻿JARVIS_HUB=ws://10.0.0.2:4577\n')), "ws://10.0.0.2:4577");
+});
+
+test("tolera espaços, aspas e chaves fora de ordem", () => {
+  assert.equal(readRunnerHubUrl(fakeHome('JARVIS_TOKEN=abc\n  JARVIS_HUB = "wss://a.ts.net"  \n')), "wss://a.ts.net");
+  assert.equal(readRunnerHubUrl(fakeHome("JARVIS_HUB='ws://b.ts.net'\n")), "ws://b.ts.net");
+});
+
+test("arquivo ausente, vazio ou sem a chave devolve undefined — nunca lança", () => {
+  assert.equal(readRunnerHubUrl(fakeHome(null)), undefined, "ENOENT é o caso normal fora de um runner");
+  assert.equal(readRunnerHubUrl(fakeHome("")), undefined);
+  assert.equal(readRunnerHubUrl(fakeHome("JARVIS_TOKEN=x\n")), undefined);
+  assert.equal(readRunnerHubUrl(fakeHome("JARVIS_HUB=\n")), undefined, "chave vazia não vira URL");
+  assert.equal(readRunnerHubUrl(fakeHome('JARVIS_HUB=""\n')), undefined);
+  assert.doesNotThrow(() => readRunnerHubUrl(fakeHome(12345)));
+});
+
+test("não confunde uma chave parecida com JARVIS_HUB", () => {
+  assert.equal(readRunnerHubUrl(fakeHome("JARVIS_HUB_EXTRA=ws://x\n")), undefined);
+  assert.equal(readRunnerHubUrl(fakeHome("MEU_JARVIS_HUB=ws://x\nJARVIS_HUB=ws://certo\n")), "ws://certo");
+});

@@ -60,13 +60,28 @@ test("hubWentOffline: fires only on a present-hub up→down edge", () => {
   assert.equal(hubWentOffline(null, down), false);
 });
 
-test("action builders: fixed task name, safe args, log paths", () => {
+test("action builders: servico OU tarefa no MESMO comando, args seguros, caminhos de log", () => {
   assert.match(logPath("hub"), /[\\/]\.jarvis[\\/]hub\.log$/);
   assert.match(logPath("runner"), /runner\.log$/);
-  assert.deepEqual(taskControlArgs("JarvisRunner", "start").slice(-1), ["Start-ScheduledTask -TaskName 'JarvisRunner'"]);
-  assert.deepEqual(taskControlArgs("JarvisRunner", "stop").slice(-1), ["Stop-ScheduledTask -TaskName 'JarvisRunner'"]);
-  assert.match(taskStateArgs("JarvisRunner").at(-1), /Get-ScheduledTask -TaskName 'JarvisRunner'/);
-  assert.match(runnerSelfUpdateArgs("C:/repo", "JarvisRunner").at(-1), /git fetch --tags origin; git pull --ff-only/);
+  // Um comando so, que decide em tempo de execucao. Os dois ramos sao obrigatorios: sem o de
+  // servico, maquina migrada perde o botao de ligar (foi o bug — a migracao desativa a tarefa
+  // homonima e Start-ScheduledTask numa tarefa Disabled falha calado); sem o de tarefa, maquina
+  // nao migrada perde o dela.
+  const start = taskControlArgs("JarvisRunner", "start").at(-1);
+  assert.match(start, /Get-Service -Name 'JarvisRunner'/);
+  assert.match(start, /Start-Service -Name 'JarvisRunner'/);
+  assert.match(start, /Start-ScheduledTask -TaskName 'JarvisRunner'/);
+  const stop = taskControlArgs("JarvisRunner", "stop").at(-1);
+  assert.match(stop, /Stop-Service -Name 'JarvisRunner'/);
+  assert.match(stop, /Stop-ScheduledTask -TaskName 'JarvisRunner'/);
+  const state = taskStateArgs("JarvisRunner").at(-1);
+  assert.match(state, /Get-Service -Name 'JarvisRunner'/);
+  assert.match(state, /Get-ScheduledTask -TaskName 'JarvisRunner'/);
+  assert.match(state, /'Running'/, "o vocabulario da tarefa e o contrato dos parsers a jusante");
+  const upd = runnerSelfUpdateArgs("C:/repo", "JarvisRunner").at(-1);
+  assert.match(upd, /git fetch --tags origin; git pull --ff-only/);
+  assert.match(upd, /Restart-Service -Name 'JarvisRunner' -Force/);
+  assert.match(upd, /Start-ScheduledTask -TaskName 'JarvisRunner'/);
 });
 
 test("repoRootFromTaskArguments extracts the repo root from the task's -File path", () => {
@@ -75,11 +90,22 @@ test("repoRootFromTaskArguments extracts the repo root from the task's -File pat
   assert.equal(repoRootFromTaskArguments("nada aqui"), "");
 });
 
-test("runnerService(win32): scheduled-task specs (unchanged behavior)", () => {
+test("repoRootFromTaskArguments tambem le o binPath de um SERVICO, nao so os Arguments da tarefa", () => {
+  // taskActionArgs passou a devolver PathName quando ha servico. Os dois formatos carregam o mesmo
+  // -File "<root>\\scripts\\start-runner.ps1", entao um parser so serve aos dois.
+  const binPath = '"C:\\Users\\J\\.jarvis\\bin\\JarvisService.exe" JarvisRunner "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"'
+    + ' "C:\\Users\\J\\Workspace\\jarvis" "C:\\Users\\J\\.jarvis\\runner.log" -NoProfile -NonInteractive -ExecutionPolicy Bypass'
+    + ' -File "C:\\Users\\J\\Workspace\\jarvis\\scripts\\start-runner.ps1" -Once';
+  assert.equal(repoRootFromTaskArguments(binPath), "C:\\Users\\J\\Workspace\\jarvis");
+});
+
+test("runnerService(win32): um spec cobre servico e tarefa; parsers inalterados", () => {
   const s = runnerService("win32");
   assert.equal(s.kind, "win");
   assert.equal(s.defPath, null);
-  assert.deepEqual(s.controlSpec("start").args.slice(-1), ["Start-ScheduledTask -TaskName 'JarvisRunner'"]);
+  const start = s.controlSpec("start").args.at(-1);
+  assert.match(start, /Start-Service -Name 'JarvisRunner'/);
+  assert.match(start, /Start-ScheduledTask -TaskName 'JarvisRunner'/);
   assert.equal(s.parsePresent("Running"), true);
   assert.equal(s.parsePresent("  "), false);
   assert.equal(s.parseRunning("Running"), true);

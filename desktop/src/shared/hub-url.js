@@ -51,7 +51,40 @@ function normalizeHubUrl(raw, fallback = DEFAULT_HUB_URL) {
   return { url: parsed.origin, usedFallback: false };
 }
 
-module.exports = { normalizeHubUrl, DEFAULT_HUB_URL };
+/**
+ * Endereço do Hub que o RUNNER desta máquina já usa (`~/.jarvis/runner.env`, chave `JARVIS_HUB`).
+ *
+ * Por que existe: numa máquina que só roda runner NÃO existe Hub em `127.0.0.1:4577`, então o
+ * fallback padrão garante uma janela que nunca carrega. E o endereço certo já está no disco — é
+ * como o runner se conecta. Sem isto, toda máquina de runner nova nasce com o app quebrado até
+ * alguém lembrar de rodar o instalador com `-HubUrl`.
+ *
+ * O valor é `ws(s)://…`, que `normalizeHubUrl` já converte para `http(s)`.
+ *
+ * Nunca lança: arquivo ausente/ilegível/vazio devolve undefined e o chamador segue para o padrão.
+ * `readFile`/`home` são injetáveis para teste.
+ */
+function readRunnerHubUrl({ readFile, home, join } = {}) {
+  try {
+    const nodeFs = readFile ? null : require("node:fs");
+    const nodeOs = home ? null : require("node:os");
+    const nodePath = join ? null : require("node:path");
+    const base = home || nodeOs.homedir();
+    const file = (join || nodePath.join)(base, ".jarvis", "runner.env");
+    const text = readFile ? readFile(file) : nodeFs.readFileSync(file, "utf8");
+    // install-runner.ps1 grava com `Set-Content -Encoding UTF8`, que no PowerShell 5 significa
+    // UTF-8 COM BOM — o BOM cola na primeira chave e quebraria um `^JARVIS_HUB=` ingênuo.
+    const clean = String(text || "").replace(/^﻿/, "");
+    const line = /^[ \t]*JARVIS_HUB[ \t]*=[ \t]*(.+)$/m.exec(clean);
+    if (!line) return undefined;
+    const value = line[1].trim().replace(/^["']|["']$/g, "").trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+module.exports = { normalizeHubUrl, DEFAULT_HUB_URL, readRunnerHubUrl };
 
 // CLI para os scripts de instalação (.ps1/.sh) validarem o valor SEM reimplementar a regra — três
 // cópias da mesma validação divergiriam na primeira mudança.

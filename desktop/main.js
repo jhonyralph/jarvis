@@ -21,11 +21,19 @@ const { createTray } = require("./src/control/tray")
 // Where the live Hub UI lives. Same env name as the Capacitor shell (mobile/capacitor.config.ts).
 // Normalizado/validado: um valor em formato errado não falha alto — o app entraria no loop de
 // reconexão e ficaria numa tela vazia sem dizer o porquê (ver src/shared/hub-url.js).
-const { normalizeHubUrl } = require("./src/shared/hub-url")
-const hubTarget = normalizeHubUrl(process.env.JARVIS_APP_HUB_URL)
+// Ordem de resolução: env explícita > o Hub que o RUNNER desta máquina já usa > loopback.
+// O passo do meio existe porque numa máquina só-runner não há Hub em 127.0.0.1:4577: o padrão
+// garantia uma janela que nunca carrega, enquanto o endereço certo estava em ~/.jarvis/runner.env.
+const { normalizeHubUrl, readRunnerHubUrl } = require("./src/shared/hub-url")
+const hubFromEnv = String(process.env.JARVIS_APP_HUB_URL || "").trim()
+const hubFromRunner = hubFromEnv ? "" : (readRunnerHubUrl() || "")
+const hubTarget = normalizeHubUrl(hubFromEnv || hubFromRunner)
 const HUB_URL = hubTarget.url
+/** De onde saiu o endereço — a tela de erro precisa dizer a verdade em vez de mandar configurar
+ *  uma env que talvez já esteja certa. */
+const HUB_SOURCE = hubTarget.usedFallback ? "padrão" : (hubFromEnv ? "JARVIS_APP_HUB_URL" : "runner desta máquina (~/.jarvis/runner.env)")
 if (hubTarget.warning) console.warn(`[jarvis] ${hubTarget.warning}`)
-console.log(`[jarvis] Hub: ${HUB_URL}${hubTarget.usedFallback ? " (padrão — defina JARVIS_APP_HUB_URL para um Hub remoto)" : ""}`)
+console.log(`[jarvis] Hub: ${HUB_URL} (${HUB_SOURCE})${hubTarget.usedFallback ? " — defina JARVIS_APP_HUB_URL para um Hub remoto" : ""}`)
 
 // Retry loading the Hub UI with backoff — the Hub may still be starting, or a remote Hub may be
 // briefly unreachable on the tailnet. We never fabricate state; we just keep trying to connect.
@@ -59,10 +67,14 @@ let showingError = false
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])) }
 function showErrorPage(code, desc) {
   if (!mainWindow || mainWindow.isDestroyed()) return
+  // `scripts\install-desktop.ps1` precisa da barra DUPLICADA: num template literal `\i` é um escape
+  // desconhecido e o JS o engole, imprimindo "scriptsinstall-desktop.ps1" — um comando que não roda,
+  // justamente na tela cuja única função é destravar quem está preso.
   const dica = hubTarget.usedFallback
-    ? `<div class="hint"><b>Esta maquina esta usando o endereco padrao</b> porque <code>JARVIS_APP_HUB_URL</code> nao esta definida.
+    ? `<div class="hint"><b>Esta maquina esta usando o endereco padrao</b> porque <code>JARVIS_APP_HUB_URL</code> nao esta definida
+       e nao achei um runner configurado aqui (<code>~/.jarvis/runner.env</code>).
        Se o Hub roda em OUTRA maquina, aponte o app para ela e reabra pelo tray:
-       <pre>powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1 -HubUrl "http://SEU-HUB:4577"</pre></div>`
+       <pre>powershell -ExecutionPolicy Bypass -File scripts\\install-desktop.ps1 -HubUrl "http://SEU-HUB:4577"</pre></div>`
     : ""
   const html = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Jarvis</title>
     <style>body{margin:0;background:#0b0b0d;color:#e6e6e6;font:15px/1.6 system-ui,Segoe UI,sans-serif;
@@ -73,7 +85,7 @@ function showErrorPage(code, desc) {
     pre{white-space:pre-wrap;word-break:break-all;background:#0f0f12;padding:10px;border-radius:4px;font-size:12px}
     .r{margin-top:18px;color:#8a8a8a;font-size:13px}</style>
     <div class="c"><h1>Nao consegui falar com o Hub</h1>
-    <p>Tentei carregar <span class="u">${esc(HUB_URL)}</span></p>
+    <p>Tentei carregar <span class="u">${esc(HUB_URL)}</span> <span style="opacity:.6">(origem: ${esc(HUB_SOURCE)})</span></p>
     <p class="e">Erro ${esc(code)}${desc ? " &mdash; " + esc(desc) : ""}</p>
     ${dica}<p class="r">Continuo tentando sozinho. Assim que o Hub responder, esta tela sai.</p></div></html>`
   showingError = true
@@ -163,7 +175,7 @@ function createWindow(show = true) {
 // Quem cria o processo e o Agendador de Tarefas, entao o Hub NAO e filho do Electron e sobrevive ao
 // `app.quit()` por construcao — e nada aqui pode mata-lo na saida (ver `window-all-closed` no fim).
 function ensureHubUp() {
-  if (process.platform !== "win32") return           // so o Windows tem a tarefa JarvisHub
+  if (process.platform !== "win32") return           // so o Windows tem servico/tarefa JarvisHub
   let host = ""
   try { host = new URL(HUB_URL).hostname } catch { return }
   if (!["127.0.0.1", "localhost", "::1"].includes(host)) return   // Hub remoto nao e nosso para subir
@@ -171,9 +183,13 @@ function ensureHubUp() {
   const start = () => {
     try {
       spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-        "-Command", "Start-ScheduledTask -TaskName 'JarvisHub'"],
+        // Servico quando existe, tarefa quando nao. A migracao para servico do Windows DESATIVA a
+        // tarefa homonima, e `Start-ScheduledTask` numa tarefa Disabled falha calado — era por isso
+        // que abrir o Jarvis so dizia "nada rodando" em vez de subir o Hub. Decidido em tempo de
+        // execucao para servir maquina migrada e nao migrada com o mesmo comando.
+        "-Command", "if (Get-Service -Name 'JarvisHub' -ErrorAction SilentlyContinue) { Start-Service -Name 'JarvisHub' } else { Start-ScheduledTask -TaskName 'JarvisHub' }"],
         { detached: true, stdio: "ignore", windowsHide: true }).unref()
-      console.log("[jarvis] Hub fora do ar — disparei a tarefa JarvisHub")
+      console.log("[jarvis] Hub fora do ar — disparei o JarvisHub (servico ou tarefa)")
     } catch (e) { console.error("[jarvis] nao consegui disparar JarvisHub:", e && e.message) }
   }
   req.on("timeout", () => { req.destroy(); start() })

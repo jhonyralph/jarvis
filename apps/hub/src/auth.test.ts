@@ -141,3 +141,68 @@ test("allowedRunners accepts identities as well as raw device logins", () => {
   assert.deepEqual(auth.allowedRunners(`u:${member.userId}`), auth.allowedRunners(member.userId));
   assert.equal(auth.canAccessRunner(`u:${member.userId}`, "runner-A"), auth.canAccessRunner(member.userId, "runner-A"));
 });
+
+/**
+ * Machine grants. The member role shipped with `setGrants` implemented but never called from any
+ * surface: no `sec_*` message, no admin route, and the CLI invite hardcoded `runners: []`. A member
+ * could therefore authenticate and then be refused on EVERY machine ("sem acesso a esta máquina"),
+ * with the allowlist invisible to the owner — indistinguishable from the app being broken.
+ */
+test("listDevices exposes the access behind the role, not just the role", () => {
+  const owner = auth.listDevices().find((d) => d.role === "owner")!;
+  assert.equal(owner.runners, "*", "o dono acessa todas as máquinas");
+  const guest = auth.redeem(auth.mintInvite(owner.userId, { role: "member", runners: ["runner-A"], ttlSec: 3600 }).code, "Visível");
+  const row = auth.listDevices().find((d) => d.id === guest.deviceId)!;
+  assert.deepEqual(row.runners, ["runner-A"], "o allowlist do membro aparece no painel do dono");
+});
+
+test("setDeviceGrants fills the allowlist that previously had no surface at all", () => {
+  const owner = auth.listDevices().find((d) => d.role === "owner")!;
+  const guest = auth.redeem(auth.mintInvite(owner.userId, { role: "member", ttlSec: 3600 }).code, "Sem acesso");
+  // Exactly the state that looked like a broken app: authenticated, and refused everywhere.
+  assert.deepEqual(auth.allowedRunners(guest.user.id), []);
+  assert.equal(auth.canAccessRunner(guest.user.id, "local"), false);
+
+  assert.equal(auth.setDeviceGrants(guest.deviceId, ["local", "runner-A", "local"]), true);
+  assert.deepEqual(auth.allowedRunners(guest.user.id), ["local", "runner-A"], "duplicatas são normalizadas");
+  assert.equal(auth.canAccessRunner(guest.user.id, "local"), true);
+  assert.equal(auth.canAccessRunner(guest.user.id, "runner-Z"), false);
+  assert.deepEqual(auth.listDevices().find((d) => d.id === guest.deviceId)!.runners, ["local", "runner-A"]);
+
+  assert.equal(auth.setDeviceGrants(guest.deviceId, []), true, "revogar tudo é explícito e permitido");
+  assert.deepEqual(auth.allowedRunners(guest.user.id), []);
+  assert.equal(auth.setDeviceGrants("dispositivo-que-nao-existe", ["local"]), false);
+  assert.equal(auth.setDeviceGrants(owner.id, ["local"]), false, "dono já é '*' — gravar lista estreita seria uma bomba-relógio");
+  assert.equal(auth.allowedRunners(owner.userId), "*", "e o dono continua com tudo");
+  assert.equal(auth.userIdOfDevice(guest.deviceId), guest.user.id);
+  assert.equal(auth.userIdOfDevice("nao-existe"), undefined);
+});
+
+test("demoting an owner carries the machine allowlist in the same action", () => {
+  const owner = auth.listDevices().find((d) => d.role === "owner")!;
+  const second = auth.redeem(auth.mintInvite(owner.userId, { role: "owner", ttlSec: 3600 }).code, "Segundo dono");
+  assert.equal(auth.allowedRunners(second.user.id), "*");
+
+  // Sem lista explícita, um primeiro rebaixamento cai em [] — é o estado que trancou o usuário.
+  assert.equal(auth.setDeviceRole(second.deviceId, "member"), true);
+  assert.deepEqual(auth.allowedRunners(second.user.id), []);
+
+  // Com lista, o papel e o acesso são decididos juntos (o que a UI passa a fazer no botão "→ membro").
+  assert.equal(auth.setDeviceRole(second.deviceId, "owner"), true);
+  assert.equal(auth.setDeviceRole(second.deviceId, "member", ["local", "runner-A"]), true);
+  assert.deepEqual(auth.allowedRunners(second.user.id), ["local", "runner-A"]);
+
+  // Promover e rebaixar de novo SEM lista preserva o que já havia — nunca zera calado.
+  assert.equal(auth.setDeviceRole(second.deviceId, "owner"), true);
+  assert.equal(auth.allowedRunners(second.user.id), "*", "enquanto é dono, vale o curinga");
+  assert.equal(auth.setDeviceRole(second.deviceId, "member"), true);
+  assert.deepEqual(auth.allowedRunners(second.user.id), ["local", "runner-A"], "o allowlist anterior sobrevive");
+});
+
+test("the last owner cannot be demoted, so the Hub is never left unmanageable", () => {
+  for (const d of auth.listDevices()) if (d.role === "owner") auth.setDeviceRole(d.id, "member", ["local"]);
+  const owners = auth.listDevices().filter((d) => d.role === "owner");
+  assert.equal(owners.length, 1, "sobra exatamente um dono");
+  assert.equal(auth.setDeviceRole(owners[0].id, "member"), false);
+  assert.equal(auth.listDevices().find((d) => d.id === owners[0].id)!.role, "owner");
+});

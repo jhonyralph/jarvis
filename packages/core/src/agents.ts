@@ -33,6 +33,7 @@ import {
   type SupportLevel,
 } from "./agent-contract.js";
 import { codexChildRollouts, codexChildRolloutsAsync, type CodexChildRollout } from "./codex-executions.js";
+import { estimateCodexCost } from "./codex-pricing.js";
 import { BACKGROUND_JOB_STEERING } from "./background-jobs.js";
 import { ensurePermissionBridge } from "./permission-bridge.js";
 import { ensureTaskBridge } from "./task-bridge.js";
@@ -1029,26 +1030,34 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 }
 
-/** Codex reports TOKENS, never a price — so estimate a cost from configurable per-1M rates and the
- *  "custo" column works for Codex exactly like Claude (both render as ~$, i.e. approximate). Override
- *  the rates for your plan via env (JARVIS_CODEX_PRICE_IN/_CACHED/_OUT, USD per 1M tokens); the
- *  defaults are GPT-5-class ballpark figures, NOT a quoted OpenAI price. `input_tokens` already
- *  includes the cached prefix — it's the FULL turn input, which is exactly the context-window figure
- *  the usage gauge needs (same role as Claude's fresh+cache_creation+cache_read sum). */
-export function codexUsage(u: any, previous?: any, telemetry?: CodexTelemetry): AgentReply["usage"] | undefined {
+/** Codex reports TOKENS, never a price — so estimate a cost and the "custo" column works for Codex
+ *  exactly like Claude (both render as ~$, i.e. approximate). Rates come from the PER-MODEL table in
+ *  `codex-pricing.ts` (see `docs/research/astra-6-teardown.md` item A): a single global rate could not
+ *  tell `gpt-6-astra` apart from `gpt-5.6-sol`, and could not express Astra's long-context surcharge
+ *  or its fast-tier multiplier. A model with no defensible price yields NO cost (`tokens_only`) rather
+ *  than a silent ~8x under-report; `JARVIS_CODEX_PRICE_*` still overrides everything, flatly.
+ *  `input_tokens` already includes the cached prefix — it's the FULL turn input, which is exactly the
+ *  context-window figure the usage gauge needs (same role as Claude's fresh+cache_creation+cache_read
+ *  sum). The cost is billed on the per-turn DELTA, while the long-context threshold is tested against
+ *  the turn's real prompt size (`last_token_usage`), which is what the provider actually surcharges. */
+export function codexUsage(u: any, previous?: any, telemetry?: CodexTelemetry, opts?: SendOpts): AgentReply["usage"] | undefined {
   if (!u) return undefined;
   const input = Math.max(0, (u.input_tokens || 0) - (previous?.input_tokens || 0));
   const cached = Math.max(0, (u.cached_input_tokens || 0) - (previous?.cached_input_tokens || 0));
   const output = Math.max(0, (u.output_tokens || 0) - (previous?.output_tokens || 0));
   if (!input && !output) return undefined;
-  const envNum = (v: string | undefined, d: number): number => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
-  const pIn = envNum(process.env.JARVIS_CODEX_PRICE_IN, 1.25);            // USD / 1M non-cached input
-  const pCached = envNum(process.env.JARVIS_CODEX_PRICE_CACHED, pIn / 10); // cached input bills cheaper
-  const pOut = envNum(process.env.JARVIS_CODEX_PRICE_OUT, 10);            // USD / 1M output (incl. reasoning)
-  const costUsd = (Math.max(0, input - cached) * pIn + cached * pCached + output * pOut) / 1e6;
-  const pricing = process.env.JARVIS_CODEX_PRICING_VERSION || "jarvis-ballpark-v1";
   const currentInput = telemetry?.last?.input_tokens || input || undefined;
-  return { costUsd, inputTokens: input || undefined, cachedInputTokens: cached || undefined, contextTokens: currentInput, contextWindowTokens: telemetry?.contextWindow, outputTokens: output || undefined, costKind: "estimated_api_equivalent", source: `codex exec --json token delta × JARVIS_CODEX_PRICE_* (${pricing})`, model: telemetry?.model };
+  const model = telemetry?.model || opts?.model;
+  const estimate = estimateCodexCost({
+    inputTokens: input, cachedInputTokens: cached, outputTokens: output,
+    promptTokens: currentInput, model, fastMode: opts?.fastMode === true,
+  });
+  return {
+    costUsd: estimate.costUsd, inputTokens: input || undefined, cachedInputTokens: cached || undefined,
+    contextTokens: currentInput, contextWindowTokens: telemetry?.contextWindow, outputTokens: output || undefined,
+    costKind: estimate.costUsd === undefined ? "tokens_only" : "estimated_api_equivalent",
+    source: `codex exec --json token delta × ${estimate.source}`, model,
+  };
 }
 
 export interface CodexTelemetry {
@@ -1475,7 +1484,7 @@ export class CodexAdapter implements AgentAdapter {
     if (!onEvent) for (const line of out.split("\n")) { const t = line.trim(); if (t) handleLine(t); }
 
     const afterTelemetry = codexThreadTelemetry(threadId || prev);
-    if (rawUsage) usage = codexUsage(rawUsage, beforeTelemetry?.total, afterTelemetry);
+    if (rawUsage) usage = codexUsage(rawUsage, beforeTelemetry?.total, afterTelemetry, opts);
     if (usage) usage = usageWithFast({ ...usage, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? (tResult || Date.now()) - tFirstLine : undefined }, opts);
     this.started.add(sessionId);
     if (streamError && !finalParts.length) throw new Error(streamError);
@@ -1497,7 +1506,9 @@ export class CodexAdapter implements AgentAdapter {
     for (const line of out.split(/\r?\n/)) {
       let o: any; try { o = JSON.parse(line); } catch { continue; }
       if (o.type === "item.completed" && o.item?.type === "agent_message" && o.item.text) textParts.push(String(o.item.text));
-      if (o.type === "turn.completed" && o.usage) usage = usageWithFast({ ...codexUsage(o.usage), model: opts?.model }, opts);
+      // Stateless one-shot: no rollout telemetry, so the model (and therefore the price row) comes
+      // from opts — codexUsage now stamps it, instead of the cost being computed model-blind first.
+      if (o.type === "turn.completed" && o.usage) usage = usageWithFast(codexUsage(o.usage, undefined, undefined, opts), opts);
       if (o.type === "turn.failed" || o.type === "error") throw new Error(o.error?.message || o.message || "codex error");
     }
     return { text: textParts.join("\n\n").trim(), usage };

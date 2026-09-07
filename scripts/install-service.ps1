@@ -21,6 +21,12 @@
   servico, CONFIRMA pela porta 4577 e so entao promove para Automatico e desativa a tarefa. Se a
   confirmacao falhar, desfaz tudo e devolve a tarefa ao ar.
 
+  CONTROLE SEM ELEVACAO. O ACL padrao de um servico da ao usuario interativo apenas CONSULTA, entao
+  ligar/desligar passaria a exigir admin — e a tarefa agendada que este servico substitui era do
+  PROPRIO usuario e nao exigia. Sem devolver isso, a migracao TIRA do app a capacidade de subir o
+  Hub sozinho e sobra so "nada rodando, inicie o hub/runner". O script concede START/STOP a conta
+  no ACL do servico (sc sdset). Nao e afrouxamento: o servico ja RODA com essa identidade.
+
   DIREITO DE LOGON. Rodar como uma conta de usuario nao depende so da senha: o Windows exige
   SeServiceLogonRight ("Fazer logon como um servico") para aquela conta, e o sc.exe NAO concede
   esse direito - so a UI do services.msc concede junto. Sem ele o Start-Service falha com uma
@@ -151,6 +157,25 @@ try {
 
 $ps = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
 
+function Grant-ServiceControl([string]$name, [string]$sidValue) {
+  # O ACL padrao de um servico da ao usuario interativo so consulta:
+  #   (A;;CCLCSWLOCRRC;;;IU)   <- sem RP (SERVICE_START) e sem WP (SERVICE_STOP)
+  # Com isso, Start-Service/Stop-Service num PowerShell normal falham com acesso negado, e o
+  # desktop (que so sabia disparar a tarefa, do proprio usuario) perde a capacidade de subir o Hub.
+  # Esta ACE devolve exatamente o que a tarefa agendada ja dava. Nunca pode derrubar a instalacao.
+  try {
+    $sd = (& sc.exe sdshow $name 2>$null | Where-Object { $_.Trim() }) -join ''
+    if ($sd -notmatch 'D:') { Write-Host "  aviso: nao li o ACL de $name - controle vai exigir elevacao" -ForegroundColor Yellow; return }
+    if ($sd -like "*$sidValue*") { return }                    # ja concedido: idempotente
+    $ace = "(A;;CCLCSWRPWPLORC;;;$sidValue)"                   # consultar + interrogar + iniciar + parar
+    # A ACE entra no FIM do DACL (D:), antes de um eventual SACL (S:).
+    $novo = if ($sd -match '^(.*?)(S:.*)$') { $matches[1] + $ace + $matches[2] } else { $sd + $ace }
+    & sc.exe sdset $name $novo | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Host "  aviso: nao gravei o ACL de $name - controle vai exigir elevacao" -ForegroundColor Yellow }
+    else { Write-Host "  $name pode ser ligado e parado por $account sem elevacao." -ForegroundColor DarkGray }
+  } catch { Write-Host "  aviso: ACL de $name nao ajustado ($($_.Exception.Message))" -ForegroundColor Yellow }
+}
+
 function New-JarvisService([string]$name, [string]$script, [string]$log, [string]$display) {
   Remove-Svc $name
   $q = [char]34
@@ -161,6 +186,7 @@ function New-JarvisService([string]$name, [string]$script, [string]$log, [string
   # Recuperacao automatica: e isto que aposenta o while($true) do supervisor.
   & sc.exe failure $name reset= 86400 actions= restart/5000/restart/10000/restart/30000 | Out-Null
   & sc.exe failureflag $name 1 | Out-Null
+  Grant-ServiceControl $name $sid.Value
 }
 
 Write-Host ''
