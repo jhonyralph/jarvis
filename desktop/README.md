@@ -41,9 +41,38 @@ npm install            # pulls Electron; verify with `npm run doctor`
 JARVIS_APP_HUB_URL="https://jarvis.your-tailnet.ts.net" npm start
 ```
 
-Without `JARVIS_APP_HUB_URL` it points at `http://127.0.0.1:4577` (a Hub on this machine). The
-window loads the live Hub UI, so a web change you deploy on the Hub is instantly live here — just
-reload. Only **native** changes (this shell) need a repackage.
+The window loads the live Hub UI, so a web change you deploy on the Hub is instantly live here —
+just reload. Only **native** changes (this shell) need a repackage.
+
+### Where the address comes from
+
+You do **not** have to set an env var. The shell resolves the Hub in this order — the rule lives in
+[`src/shared/hub-config.js`](src/shared/hub-config.js) and is unit-tested there:
+
+| # | Source | When it applies |
+|---|---|---|
+| 1 | **Saved in the app** (`hub-config.json` in Electron's `userData`) | you typed it on the setup screen — the most explicit, most recent action |
+| 2 | `JARVIS_APP_HUB_URL` | the env the installer writes with `-HubUrl` |
+| 3 | **This machine's runner** (`~/.jarvis/runner.env` → `JARVIS_HUB`) | a runner box already knows the Hub — that's how it connects |
+| 4 | `http://127.0.0.1:4577` | last resort: a Hub on this same machine |
+
+A malformed value never consumes its turn — the next valid source wins, and the skipped one is
+reported instead of swallowed.
+
+### Fixing the address without leaving the app
+
+If the window can't reach the Hub it now opens **the setup screen** (`src/setup/setup.html`) instead
+of a blank window: it shows which address it tried and where that address came from, lists every
+candidate it found on the machine, and lets you **type a new one, test it, and reconnect** — no
+PowerShell, no reinstall. The same screen is always available from the tray:
+**Configurar endereço do Hub…**.
+
+Saving writes `hub-config.json` and reconnects immediately (no restart). **Usar o padrão do sistema**
+clears it and hands precedence back to the env/runner/default chain.
+
+> Kept in `src/setup/` on purpose: `electron-builder.yml` packages `main.js`, `preload.js` and
+> `src/**/*`. A file at the desktop root would not ship in the installer, so the recovery screen
+> would exist only in a dev run.
 
 ### `JARVIS_APP_HUB_URL` format
 

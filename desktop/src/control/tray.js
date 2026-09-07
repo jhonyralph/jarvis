@@ -7,7 +7,7 @@ const { trayTemplate } = require("./status.js");
 const { dataUrl } = require("./tray-icons.js");
 const { startControl } = require("./register-control-ipc.js");
 
-function createTray({ showWindow, quit }) {
+function createTray({ showWindow, quit, openHubSetup }) {
   const iconFor = (level) => nativeImage.createFromDataURL(dataUrl(level)).resize({ width: 16, height: 16 });
   const notify = (title, body) => {
     if (!Notification.isSupported()) return;
@@ -24,6 +24,7 @@ function createTray({ showWindow, quit }) {
     const a = control && control.actions;
     switch (id) {
       case "open": return showWindow();
+      case "hub-config": return openHubSetup && openHubSetup();
       case "hub-restart": notify("Jarvis", "Reiniciando o Hub…"); return a && a.restartHub();
       case "update-runners": notify("Jarvis", "Enviando atualização às máquinas…"); return a && a.updateRunners();
       case "runner-start": return a && a.runnerControl("start");

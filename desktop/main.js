@@ -21,19 +21,30 @@ const { createTray } = require("./src/control/tray")
 // Where the live Hub UI lives. Same env name as the Capacitor shell (mobile/capacitor.config.ts).
 // Normalizado/validado: um valor em formato errado não falha alto — o app entraria no loop de
 // reconexão e ficaria numa tela vazia sem dizer o porquê (ver src/shared/hub-url.js).
-// Ordem de resolução: env explícita > o Hub que o RUNNER desta máquina já usa > loopback.
-// O passo do meio existe porque numa máquina só-runner não há Hub em 127.0.0.1:4577: o padrão
-// garantia uma janela que nunca carrega, enquanto o endereço certo estava em ~/.jarvis/runner.env.
+// Ordem de resolução (regra única em src/shared/hub-config.js, testada lá):
+//   o que o usuário salvou NO APP > env JARVIS_APP_HUB_URL > Hub do runner desta máquina > loopback.
+// O passo do runner existe porque numa máquina só-runner não há Hub em 127.0.0.1:4577; o primeiro
+// existe porque, sem ele, corrigir o endereço exigia sair do app e rodar PowerShell.
 const { normalizeHubUrl, readRunnerHubUrl } = require("./src/shared/hub-url")
-const hubFromEnv = String(process.env.JARVIS_APP_HUB_URL || "").trim()
-const hubFromRunner = hubFromEnv ? "" : (readRunnerHubUrl() || "")
-const hubTarget = normalizeHubUrl(hubFromEnv || hubFromRunner)
-const HUB_URL = hubTarget.url
-/** De onde saiu o endereço — a tela de erro precisa dizer a verdade em vez de mandar configurar
- *  uma env que talvez já esteja certa. */
-const HUB_SOURCE = hubTarget.usedFallback ? "padrão" : (hubFromEnv ? "JARVIS_APP_HUB_URL" : "runner desta máquina (~/.jarvis/runner.env)")
-if (hubTarget.warning) console.warn(`[jarvis] ${hubTarget.warning}`)
-console.log(`[jarvis] Hub: ${HUB_URL} (${HUB_SOURCE})${hubTarget.usedFallback ? " — defina JARVIS_APP_HUB_URL para um Hub remoto" : ""}`)
+const { readSavedHubUrl, resolveHubTarget } = require("./src/shared/hub-config")
+const { registerSetupIpc, probe } = require("./src/setup/register-setup-ipc")
+
+/** Estado mutável: salvar um endereço novo na tela de configuração re-resolve tudo sem reiniciar. */
+let hubTarget = { url: "http://127.0.0.1:4577", source: "fallback", sourceLabel: "padrão", usedFallback: true, candidates: [] }
+/** Último erro de carga, para a tela de configuração explicar o que aconteceu. */
+let lastLoadError
+function resolveHub() {
+  hubTarget = resolveHubTarget({
+    saved: readSavedHubUrl(app.getPath("userData")),
+    env: process.env.JARVIS_APP_HUB_URL,
+    runner: readRunnerHubUrl(),
+    normalize: normalizeHubUrl,
+  })
+  if (hubTarget.warning) console.warn(`[jarvis] ${hubTarget.warning}`)
+  console.log(`[jarvis] Hub: ${hubTarget.url} (${hubTarget.sourceLabel})`)
+  return hubTarget
+}
+const hubUrl = () => hubTarget.url
 
 // Retry loading the Hub UI with backoff — the Hub may still be starting, or a remote Hub may be
 // briefly unreachable on the tailnet. We never fabricate state; we just keep trying to connect.
@@ -60,48 +71,59 @@ function quitApp() {
   app.quit()
 }
 
-// Falha de carga pintava a janela de `backgroundColor` e pronto: preto, para sempre, sem UMA palavra
-// — o unico sinal era um console.log do processo main, invisivel quando o app abre pelo atalho. Numa
-// maquina que NAO e a do Hub (a env vazia cai no loopback dela mesma) isso e garantido.
+// Falha de carga pintava a janela de `backgroundColor` e pronto: preto, para sempre, sem UMA palavra.
+// Depois virou uma tela de texto que só EXPLICAVA o problema e mandava rodar PowerShell. Agora é uma
+// tela que RESOLVE: setup.html edita o endereço, testa a conexão e reconecta sem sair do app — a
+// primeira coisa que alguém precisa fazer numa máquina onde o app ainda não sabe onde fica o Hub.
 let showingError = false
-function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])) }
-function showErrorPage(code, desc) {
+function showSetupPage(code, desc) {
   if (!mainWindow || mainWindow.isDestroyed()) return
-  // `scripts\install-desktop.ps1` precisa da barra DUPLICADA: num template literal `\i` é um escape
-  // desconhecido e o JS o engole, imprimindo "scriptsinstall-desktop.ps1" — um comando que não roda,
-  // justamente na tela cuja única função é destravar quem está preso.
-  const dica = hubTarget.usedFallback
-    ? `<div class="hint"><b>Esta maquina esta usando o endereco padrao</b> porque <code>JARVIS_APP_HUB_URL</code> nao esta definida
-       e nao achei um runner configurado aqui (<code>~/.jarvis/runner.env</code>).
-       Se o Hub roda em OUTRA maquina, aponte o app para ela e reabra pelo tray:
-       <pre>powershell -ExecutionPolicy Bypass -File scripts\\install-desktop.ps1 -HubUrl "http://SEU-HUB:4577"</pre></div>`
-    : ""
-  const html = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Jarvis</title>
-    <style>body{margin:0;background:#0b0b0d;color:#e6e6e6;font:15px/1.6 system-ui,Segoe UI,sans-serif;
-    display:flex;align-items:center;justify-content:center;height:100vh}
-    .c{max-width:640px;padding:32px}h1{font-size:20px;margin:0 0 12px}
-    .u{color:#7ecbff;word-break:break-all}.e{color:#ff9b9b}
-    .hint{margin-top:20px;padding:14px;background:#17171b;border-left:3px solid #7ecbff;border-radius:4px;font-size:13px}
-    pre{white-space:pre-wrap;word-break:break-all;background:#0f0f12;padding:10px;border-radius:4px;font-size:12px}
-    .r{margin-top:18px;color:#8a8a8a;font-size:13px}</style>
-    <div class="c"><h1>Nao consegui falar com o Hub</h1>
-    <p>Tentei carregar <span class="u">${esc(HUB_URL)}</span> <span style="opacity:.6">(origem: ${esc(HUB_SOURCE)})</span></p>
-    <p class="e">Erro ${esc(code)}${desc ? " &mdash; " + esc(desc) : ""}</p>
-    ${dica}<p class="r">Continuo tentando sozinho. Assim que o Hub responder, esta tela sai.</p></div></html>`
+  lastLoadError = code === undefined ? undefined : `erro ${code}${desc ? " — " + desc : ""}`
   showingError = true
-  mainWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html)).catch(() => {})
+  // Fica em src/setup/ e não na raiz de propósito: o electron-builder empacota `main.js`,
+  // `preload.js` e `src/**/*` — um arquivo solto na raiz NÃO entraria no instalador, e a tela de
+  // recuperação existiria só no `npm start` de desenvolvimento.
+  mainWindow.loadFile(path.join(__dirname, "src", "setup", "setup.html")).catch((e) => {
+    // Se até a tela de recuperação falhar, o pior desfecho possível é a janela preta de novo. Um
+    // texto mínimo, sem arquivo e sem script, ainda diz onde mexer.
+    console.error("[jarvis] setup.html não carregou:", e && e.message)
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
+    const html = `<!doctype html><meta charset="utf-8"><title>Jarvis</title>
+      <body style="margin:0;background:#0b0b0d;color:#e6e6e6;font:15px/1.6 system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh">
+      <div style="max-width:620px;padding:32px">
+      <h1 style="font-size:19px;margin:0 0 10px">Não consegui falar com o Hub</h1>
+      <p>Tentei <b style="color:#7ecbff;word-break:break-all">${esc(hubUrl())}</b> (${esc(hubTarget.sourceLabel)})${lastLoadError ? " — " + esc(lastLoadError) : ""}.</p>
+      <p style="color:#9aa4b2;font-size:13.5px">A tela de configuração não abriu. Use o ícone do Jarvis na bandeja →
+      <b>Configurar endereço do Hub…</b>, ou defina <code>JARVIS_APP_HUB_URL</code>.</p></div>`
+    mainWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html)).catch(() => {})
+  })
 }
 
+// Antes isto recarregava a URL do Hub às cegas a cada backoff. Com uma tela de configuração no lugar
+// da tela de texto isso virou um bug: o recarregamento arrancava o usuário do formulário no meio da
+// digitação. Agora o backoff só SONDA o /health; a janela só é trocada quando o Hub responde de
+// verdade — o "assim que o Hub responder, esta tela sai" continua valendo, sem atropelar ninguém.
 function scheduleReload() {
   if (reloadTimer) return
-  reloadTimer = setTimeout(() => {
+  reloadTimer = setTimeout(async () => {
     reloadTimer = null
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      showingError = false
-      mainWindow.loadURL(HUB_URL).catch(() => {})
-    }
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    const alive = await probe(hubUrl(), 3000)
+    if (alive.ok) { showingError = false; lastLoadError = undefined; mainWindow.loadURL(hubUrl()).catch(() => {}) }
+    else scheduleReload()
   }, reloadDelay)
   reloadDelay = Math.min(reloadDelay * 2, RELOAD_MAX_MS)
+}
+
+/** Re-resolve a precedência e conecta já — usado pela tela de configuração ao salvar/limpar/tentar. */
+function rereadAndReload() {
+  resolveHub()
+  if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null }
+  reloadDelay = RELOAD_BASE_MS
+  if (!mainWindow || mainWindow.isDestroyed()) return createWindow(true)
+  showingError = false
+  lastLoadError = undefined
+  mainWindow.loadURL(hubUrl()).catch(() => {})
 }
 
 function createWindow(show = true) {
@@ -141,7 +163,7 @@ function createWindow(show = true) {
   // Any navigation to a DIFFERENT origin than the Hub goes to the system browser too.
   mainWindow.webContents.on("will-navigate", (event, url) => {
     try {
-      if (new URL(url).origin !== new URL(HUB_URL).origin) {
+      if (new URL(url).origin !== new URL(hubUrl()).origin) {
         event.preventDefault()
         void shell.openExternal(url)
       }
@@ -156,7 +178,7 @@ function createWindow(show = true) {
   })
   mainWindow.webContents.on("did-fail-load", (_e, errorCode, desc, _url, isMainFrame) => {
     // -3 is ERR_ABORTED (e.g. a redirect) — not a real failure.
-    if (isMainFrame && errorCode !== -3) { showErrorPage(errorCode, desc); scheduleReload() }
+    if (isMainFrame && errorCode !== -3) { showSetupPage(errorCode, desc); scheduleReload() }
   })
 
   // Closing the window HIDES it to the tray (Jarvis keeps running in the background); real quit is the
@@ -168,7 +190,7 @@ function createWindow(show = true) {
     mainWindow = null
   })
 
-  mainWindow.loadURL(HUB_URL).catch(() => scheduleReload())
+  mainWindow.loadURL(hubUrl()).catch(() => scheduleReload())
 }
 
 // O app nunca subiu nada: so apontava para uma URL. Abrir o Jarvis sem Hub no ar nao serve para nada.
@@ -177,9 +199,9 @@ function createWindow(show = true) {
 function ensureHubUp() {
   if (process.platform !== "win32") return           // so o Windows tem servico/tarefa JarvisHub
   let host = ""
-  try { host = new URL(HUB_URL).hostname } catch { return }
+  try { host = new URL(hubUrl()).hostname } catch { return }
   if (!["127.0.0.1", "localhost", "::1"].includes(host)) return   // Hub remoto nao e nosso para subir
-  const req = http.get(`${HUB_URL.replace(/\/+$/, "")}/health`, { timeout: 1500 }, (res) => { res.resume() })
+  const req = http.get(`${hubUrl().replace(/\/+$/, "")}/health`, { timeout: 1500 }, (res) => { res.resume() })
   const start = () => {
     try {
       spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -204,6 +226,14 @@ app.on("second-instance", () => showWindow())
 
 app.whenReady().then(() => {
   if (!HAS_LOCK) return
+  resolveHub() // precisa do app pronto para `getPath("userData")`; define o alvo antes da 1a janela
+  registerSetupIpc({
+    ipcMain,
+    userDataDir: app.getPath("userData"),
+    hubState: () => hubTarget,
+    lastError: () => lastLoadError,
+    rereadAndReload,
+  })
   registerBrowserIpc({ ipcMain, webContents })
   // Auto-update is driven by the web UI (banner + "check" + "restart and install"), so the user
   // sees it in the same place as everything else instead of a native dialog. Packaged builds only;
@@ -217,7 +247,14 @@ app.whenReady().then(() => {
   try { ensureHubUp() } catch (e) { console.error("[jarvis] ensureHubUp:", e && e.message) }   // fire-and-forget: nunca bloqueia a janela
   const startHidden = process.argv.includes("--tray") || app.getLoginItemSettings().wasOpenedAtLogin
   createWindow(!startHidden)
-  try { tray = createTray({ showWindow, quit: quitApp }) } catch (e) { console.error("[jarvis] tray falhou:", e && e.message) }
+  try {
+    tray = createTray({
+      showWindow, quit: quitApp,
+      // Abre a tela de endereço a pedido, não só depois de uma falha de carga: dá para corrigir o
+      // Hub mesmo com a janela conectada em outro (ou escondida no tray).
+      openHubSetup: () => { showWindow(); showSetupPage() },
+    })
+  } catch (e) { console.error("[jarvis] tray falhou:", e && e.message) }
   updater.checkOnBoot()
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(true); else showWindow()

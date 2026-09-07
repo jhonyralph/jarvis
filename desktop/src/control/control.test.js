@@ -142,3 +142,31 @@ test("repoRootFromUnixService: extracts the repo root from a plist OR a systemd 
   assert.equal(repoRootFromUnixService("ExecStart=/bin/sh /home/j/jarvis/scripts/start-runner.sh"), "/home/j/jarvis");
   assert.equal(repoRootFromUnixService("sem caminho"), "");
 });
+
+/**
+ * "Abrir Jarvis" e "Configurar endereço do Hub" precisam existir mesmo quando a máquina não tem
+ * NADA local: é exatamente a máquina que só usa o Jarvis de outra, e era a que ficava sem caminho
+ * nenhum para dizer onde o Hub fica.
+ */
+test("menu: abrir e configurar o Hub existem mesmo sem Hub/Runner local", () => {
+  const nada = classify({ hasHub: false, hubReachable: false, hasRunnerTask: false, runnerRunning: null });
+  const t = trayTemplate(nada);
+  const abrir = t.find((i) => i.id === "open");
+  assert.equal(abrir.enabled, true, "a janela é um cliente: abre mesmo sem Hub local");
+  const cfg = t.find((i) => i.id === "hub-config");
+  assert.ok(cfg, "sempre há como configurar o endereço");
+  assert.equal(cfg.enabled, true);
+});
+
+test("menu: configurar o Hub está em TODOS os estados", () => {
+  const estados = [
+    { hasHub: false, hubReachable: false, hasRunnerTask: true, runnerRunning: false },
+    { hasHub: true, hubReachable: true, hasRunnerTask: true, runnerRunning: true },
+    { hasHub: true, hubReachable: false, hasRunnerTask: false, runnerRunning: null },
+  ];
+  for (const s of estados) {
+    const t = trayTemplate(classify(s));
+    assert.ok(ids(t).includes("hub-config"), `faltou hub-config em ${JSON.stringify(s)}`);
+    assert.equal(t.find((i) => i.id === "open").enabled, true);
+  }
+});

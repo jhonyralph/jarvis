@@ -36,10 +36,12 @@ From the cloned repo:
 ./scripts/install-runner.sh -h "wss://<hub>/" -t "<token>" -l "Meu Mac"
 ```
 
-The installer: verifies Node >=22, confirms this is a Git clone whose `origin`
-is reachable non-interactively, installs from the lockfile, validates the
-checkout, writes `~/.jarvis/runner.env` (Hub + token + label), and registers an
-autostart service:
+**The installer runs `npm ci` for you** — you do not need a separate `npm install`
+step. Concretely it: verifies Node >=22, confirms this is a Git clone whose
+`origin` is reachable non-interactively, runs `npm ci` (or `npm install` when
+there is no `package-lock.json`) **from the repo root, not from a sub-package**,
+runs `npm run update:verify` to validate the checkout, writes
+`~/.jarvis/runner.env` (Hub + token + label), and registers an autostart service:
 
 - **Windows** — Task Scheduler task `JarvisRunner` (at logon, auto-restart).
 - **macOS** — launchd agent `com.jarvis.runner` (`~/Library/LaunchAgents`).
@@ -47,6 +49,46 @@ autostart service:
   to run without an active login).
 
 The machine then appears in the Hub's machine selector. Pick it to run agents there.
+
+### Running it by hand (no service)
+
+Useful to debug a machine that will not register. From the repo root:
+
+```sh
+npm install          # or `npm ci` — from the ROOT, once per clone
+npm run start:runner # reads ~/.jarvis/runner.env, stays in the foreground
+```
+
+`npm run start:runner` is the same entry point the service uses, so if it works
+here and not as a service, the problem is the service registration — not the runner.
+
+## What you actually have to configure
+
+Short answer: **three values, and the installer writes all three.** The runner
+reads ~25 environment variables, but everything except these has a working default
+— you are not expected to set them, and `~/.jarvis/runner.env` is the only file
+that normally exists:
+
+| Variable | Required? | Default | What happens if it is missing |
+|---|---|---|---|
+| `JARVIS_HUB` | **yes** for a remote Hub | `ws://127.0.0.1:4577` | it dials a Hub on *this* machine and never finds yours |
+| `JARVIS_TOKEN` | **yes** while Hub auth is on (the default) | *(empty)* | the Hub refuses the registration; the runner logs a warning naming this file |
+| `JARVIS_LABEL` | no (cosmetic) | the hostname | the machine shows up with a less friendly name |
+
+Everything else (`JARVIS_AGENT`, `JARVIS_CWD`, `JARVIS_EXECUTION_*`,
+`JARVIS_TERMINAL_MAX`, `JARVIS_RUNNER_OUTAGE_ABORT_SEC`, …) is a **tuning knob with
+a default** — see [docs/environment.md](environment.md) for the complete table.
+Leave them alone unless you have a reason.
+
+### The desktop app on a runner machine
+
+A runner box has **no Hub of its own**, so the desktop app must be told where the
+Hub is. It now works this out by itself: with no `JARVIS_APP_HUB_URL` it reads
+`JARVIS_HUB` from the very `~/.jarvis/runner.env` the installer just wrote (the
+`ws(s)://` address is converted to `http(s)://`). If it still cannot connect, the
+app opens a **setup screen** where you type the address, test it and reconnect —
+also reachable any time from the tray: **Configurar endereço do Hub…**. See
+[desktop/README.md](../desktop/README.md#where-the-address-comes-from).
 
 ## Managing
 

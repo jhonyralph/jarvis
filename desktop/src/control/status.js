@@ -50,7 +50,10 @@ function hubWentOffline(prev, next) {
  */
 function trayTemplate(st, opts = {}) {
   const items = [];
-  items.push({ id: "open", label: "Abrir Jarvis", enabled: st.hub.present || st.runnerOnly });
+  // Sempre habilitado: a janela é um CLIENTE, e pode apontar para um Hub remoto. Enquanto isto
+  // dependia de haver Hub/Runner local, uma máquina que só usa o Jarvis de outra máquina não
+  // conseguia nem abrir a janela para dizer onde o Hub fica — e a janela hoje tem essa tela.
+  items.push({ id: "open", label: "Abrir Jarvis", enabled: true });
   items.push({ type: "separator" });
 
   if (st.hub.present) {
@@ -74,6 +77,9 @@ function trayTemplate(st, opts = {}) {
     items.push({ type: "separator" });
   }
 
+  // Sempre presente: é o conserto de "o app abre e não carrega nada", e quem precisa dele é
+  // justamente quem não tem Hub local para o menu mostrar.
+  items.push({ id: "hub-config", label: "Configurar endereço do Hub…", enabled: true });
   items.push({ id: "login", label: "Iniciar no logon", type: "checkbox", checked: !!opts.openAtLogin, enabled: true });
   items.push({ id: "quit", label: "Sair", enabled: true });
   return items;

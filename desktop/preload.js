@@ -25,6 +25,17 @@ const bridge = {
   capabilities: {
     designMode: true,
     autoUpdate: true,
+    hubConfig: true,
+  },
+  // Endereço do Hub editável DENTRO do app (setup.html). Sem isto, uma máquina onde ninguém rodou o
+  // instalador com -HubUrl não tinha como ser corrigida pela janela — só saindo do app e indo ao
+  // PowerShell. `test` roda no main porque de lá não há CORS nem origem atrapalhando o GET.
+  hub: {
+    get: () => ipcRenderer.invoke("jarvis:hub:get"),
+    set: (url) => ipcRenderer.invoke("jarvis:hub:set", url),
+    test: (url) => ipcRenderer.invoke("jarvis:hub:test", url),
+    clear: () => ipcRenderer.invoke("jarvis:hub:clear"),
+    retry: () => ipcRenderer.invoke("jarvis:hub:retry"),
   },
   // Design Mode (Phase 1). The web UI creates the <webview> and passes its webContentsId; main does
   // the privileged work (inject picker, capturePage). See src/browser/register-browser-ipc.js.
