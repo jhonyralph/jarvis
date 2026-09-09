@@ -4845,7 +4845,14 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   localExecutionAborts.set(tracker.rootExecutionId, ctrl);
   const emit = (event: AgentEvent, project = true): void => {
     if (buf.length < 600) buf.push(event);
-    if (project) tracker?.handleAgentEvent(event);
+    // Projetar no journal NAO pode derrubar o turno. O runner ja tratava assim; aqui nao, e por isso
+    // um evento recusado pela validacao do envelope virava `uncaughtException` no Hub. Pior: o throw
+    // acontecia ANTES do broadcast, entao a falha de projecao tambem sumia com o evento no chat.
+    // Agora o painel perde aquele evento (e o log diz qual), mas a conversa continua inteira.
+    if (project) {
+      try { tracker?.handleAgentEvent(event); }
+      catch (error) { console.warn(`[hub] falha ao projetar execução ${tracker?.rootExecutionId || turnId} (${event.kind}):`, String(error)); }
+    }
     broadcast(sid, { t: "agent_event", sessionId: sid, event, sessionCost: costOf(sid), sessionUsage: sessionUsage(sid) });
   };
   try {
