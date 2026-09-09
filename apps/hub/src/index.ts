@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, nativeTitleCached, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, listProviderTasks, listProviderStates, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, tournamentCandidateResults, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, listProviderTasks, listProviderStates, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, runDebate, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, RUNNER_CAPABILITY_SINCE, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -2690,6 +2690,30 @@ function relayRunner(rc: RunnerConn, m: any): void {
     return;
   }
   if (m.t === "message") { for (const c of clientsOn(rc.id)) if (canAccessSession(c, rc.id, m.sessionId)) send(c, { t: "message", runnerId: rc.id, message: { sessionId: m.sessionId, ...m.message } }); return; }
+  // Debate na máquina: o Hub repassa os frames e acompanha a janela de recado, que é o que decide
+  // se um `send` normal daquela sessão vira recado ou turno.
+  if (m.t === "debate_started") {
+    remoteLiveDebates.set(remoteDebateKey(rc.id, m.sessionId), { debateId: m.debateId, canSay: true });
+    for (const c of clientsOn(rc.id)) if (canAccessSession(c, rc.id, m.sessionId)) send(c, { ...m, runnerId: rc.id });
+    return;
+  }
+  if (m.t === "debate_progress") {
+    if (m.phase === "done") remoteLiveDebates.delete(remoteDebateKey(rc.id, m.sessionId));
+    else remoteLiveDebates.set(remoteDebateKey(rc.id, m.sessionId), { debateId: m.debateId, canSay: m.canSay === true });
+    for (const c of clientsOn(rc.id)) if (canAccessSession(c, rc.id, m.sessionId)) send(c, { ...m, runnerId: rc.id });
+    return;
+  }
+  if (m.t === "debate_said") {
+    const pend = pendingDebateSay.get(m.reqId);
+    pendingDebateSay.delete(m.reqId);
+    const target = pend?.ws;
+    if (target && target.readyState === target.OPEN) {
+      send(target, { t: "debate_said", ok: m.ok, runnerId: rc.id, sessionId: m.sessionId, debateId: m.debateId, pending: m.pending, msgId: m.msgId, message: m.message });
+      // O ack falado é acessório: o recado já está anotado na máquina.
+      if (pend?.speak && m.ok) void synthesize(m.message, VOICE).then((wav) => send(target, { t: "tts", sessionId: m.sessionId, audio: wav.toString("base64"), text: m.message })).catch(() => { /* ack falado é acessório */ });
+    }
+    return;
+  }
   if (m.t === "activity") { for (const c of clientsOn(rc.id)) if (canAccessSession(c, rc.id, m.sessionId)) send(c, { t: "activity", runnerId: rc.id, sessionId: m.sessionId, name: m.name, summary: m.summary, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, background: m.background }); return; }
   if (m.t === "runs") {
     const prev = runnerActive.get(rc.id) || new Set<string>();
@@ -3001,7 +3025,7 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
   }, 20000);
   // drop runners that never register (token) within 20s
   const regTimer = setTimeout(() => { if (!rid) { try { ws.close(1008, "no register"); } catch { /* ignore */ } } }, 20000);
-  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); denyPendingPermissionsFor(rid); console.log(`[hub] runner offline: ${rid}`); noteRunnerOffline(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
+  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); denyPendingPermissionsFor(rid); console.log(`[hub] runner offline: ${rid}`); for (const k of [...remoteLiveDebates.keys()]) if (k.startsWith(rid + "\u0000")) remoteLiveDebates.delete(k); noteRunnerOffline(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
   ws.on("error", () => { /* close handles cleanup */ });
   ws.on("message", (raw) => {
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
@@ -4292,16 +4316,6 @@ async function startLocalCouncil(ws: WebSocket, input: {
   });
 }
 
-/** Lê estado/custo/tokens de cada candidato do execution store (mesmo caminho do councilFinalSummary),
- *  para alimentar a seleção determinística do vencedor. */
-function tournamentCandidateResults(source: ExecutionStore, rootExecutionId: string, candidateTaskIds: string[], scores: Map<string, number>): TournamentCandidateResult[] {
-  return candidateTaskIds.map((taskId) => {
-    const node = source.findNode(managedChildExecutionId(rootExecutionId, taskId))?.node;
-    const m = node?.metrics?.self;
-    const tokens = (m?.inputTokens || 0) + (m?.outputTokens || 0);
-    return { id: taskId, state: (node?.state as ManagedTaskState) ?? "queued", score: scores.get(taskId), costUsd: m?.costUsd, tokens: tokens || undefined };
-  });
-}
 /** Solution Workspace local: fan-out da MESMA tarefa para N candidatos + consolidador/juiz.
  *  Espelha startLocalCouncil (mesma malha ManagedExecution/store/broadcast). */
 async function startLocalTournament(ws: WebSocket, input: { sessionId: string; task: string; competitors: TournamentCompetitor[]; criteria?: string; write?: boolean; mode?: SolutionWorkspaceMode }): Promise<void> {
@@ -4543,85 +4557,66 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
       try { executionOwnership.remove(LOCAL_ID, debateId); } catch { /* nada reivindicado */ }
     }
   }
-  // `interjected` viaja no frame de progresso para o card do chat dizer "2 recados nesta rodada" —
-  // confirmação de que o recado virou prompt, sem poluir a conversa com mais uma mensagem.
-  let interjected = 0;
-  const emitDebateProgress = (round: number, phase: string, states: Array<{ label: string; state: string }>, rootExecutionId?: string): void => {
-    const frame = { t: "debate_progress", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, round, maxRounds, phase, rootExecutionId, debaters: states, interjected, canSay: !live.closed };
+  // `interjected` viaja no frame para o card dizer "2 recados nesta rodada" — confirmação de que o
+  // recado virou prompt, sem poluir a conversa com mais uma mensagem.
+  const emitDebateProgress = (round: number, phase: string, states: Array<{ label: string; state: string }>, interjected: number): void => {
+    const frame = { t: "debate_progress", runnerId: LOCAL_ID, sessionId: input.sessionId, debateId, round, maxRounds, phase, rootExecutionId: useManaged ? debateId : undefined, debaters: states, interjected, canSay: !live.closed };
     live.lastProgress = frame;
     broadcast(input.sessionId, frame);
   };
   try {
-    for (let round = 1; round <= maxRounds; round++) {
-      if (ctrl.signal.aborted) { failed = true; break; }
-      const prev = new Map(responses.map((r) => [r.id, r.text]));
-      const prevResponses = responses;
-      const roundState = debaters.map((d) => ({ label: d.label, state: "running" as string }));
-      // Interjeição: o que o usuário mandou desde a rodada anterior entra AGORA, no prompt de todos os
-      // participantes. Drenar aqui (e não durante a rodada) é o que garante que todo mundo debata o
-      // MESMO material — injetar no meio deixaria uma IA com o recado e as outras sem.
-      const recados = live.pending.splice(0);
-      interjected = recados.length;
-      const promptFor = (d: DebateDebater): string => round === 1
-        ? buildDebateOpeningPrompt(topic, recados)
-        : buildDebateRebuttalPrompt(topic, round, prev.get(d.id) || "", prevResponses.filter((r) => r.id !== d.id), recados);
-      if (useManaged) {
-        emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })), debateId);
-        // Ids de tarefa carregam a rodada: a raiz é a mesma o debate inteiro, e ids repetidos seriam
-        // recusados no preflight (mesmo executionId derivado).
-        const plan: ManagedExecutionPlan = { rootExecutionId: debateId, runnerId: LOCAL_ID, tasks: debaters.map((d) => ({ id: `r${round}-${d.id}`, title: `${d.label} · rodada ${round}`, prompt: promptFor(d), agent: d.agent, cwd, depth: 1, write: false, model: d.model, effort: d.effort })) };
-        const report = await localManagedExecution.run(plan, {
-          continueRoot: true,
-          phase: { id: `r${round}`, title: `Rodada ${round}/${maxRounds}` },
-          policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy({ maxConcurrency: debaters.length, maxDepth: 2, maxTasks: debaters.length }, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd }).policy)),
-          signal: ctrl.signal,
-        });
-        const byId = new Map(report.tasks.map((rec) => [rec.task.id, rec]));
-        report.tasks.forEach((rec) => addUsage(usageKey, rec.task.agent, rec.usage));
-        responses = debaters.map((d, i) => { const rec = byId.get(`r${round}-${d.id}`); const ok = rec?.state === "succeeded"; const text = (rec?.summary || "").trim(); if (!ok) failed = true; roundState[i].state = ok ? "done" : "failed"; return { id: d.id, label: d.label, text: ok && text ? text : `(falha: ${rec?.error || rec?.state || "sem resposta"})` }; });
-        emitDebateProgress(round, "judging", roundState.map((p) => ({ ...p })), debateId);
-      } else {
-        emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p })));
-        responses = await Promise.all(debaters.map(async (d, i) => {
-          const prompt = promptFor(d);
-          try { const reply = await oneShotBy(d.agent, prompt, d.model, d.effort); addUsage(usageKey, d.agent, reply.usage); roundState[i].state = "done"; emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p }))); return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" }; }
-          catch (e: any) { failed = true; roundState[i].state = "failed"; emitDebateProgress(round, "debating", roundState.map((p) => ({ ...p }))); return { id: d.id, label: d.label, text: "(falha: " + String(e?.message ?? e) + ")" }; }
+    // O LAÇO vive no core (packages/core/src/debate-run.ts): é o MESMO processo aqui e na máquina
+    // remota. Daqui saem só os efeitos colaterais do Hub.
+    const result = await runDebate({
+      postAssistant,
+      emitProgress: (p) => emitDebateProgress(p.round, p.phase, p.debaters, p.interjected),
+      drainInterjections: () => live.pending.splice(0),
+      allInterjections: () => [...live.all],
+      closeInterjections: () => { live.closed = true; },
+      runRound: async ({ round, promptFor, onState }) => {
+        if (useManaged) {
+          // Ids de tarefa carregam a rodada: a raiz é a mesma o debate inteiro, e ids repetidos
+          // seriam recusados no preflight (mesmo executionId derivado).
+          const plan: ManagedExecutionPlan = { rootExecutionId: debateId, runnerId: LOCAL_ID, tasks: debaters.map((d) => ({ id: `r${round}-${d.id}`, title: `${d.label} · rodada ${round}`, prompt: promptFor(d), agent: d.agent, cwd, depth: 1, write: false, model: d.model, effort: d.effort })) };
+          const report = await localManagedExecution.run(plan, {
+            continueRoot: true,
+            phase: { id: `r${round}`, title: `Rodada ${round}/${maxRounds}` },
+            policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy({ maxConcurrency: debaters.length, maxDepth: 2, maxTasks: debaters.length }, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd }).policy)),
+            signal: ctrl.signal,
+          });
+          const byId = new Map(report.tasks.map((rec) => [rec.task.id, rec]));
+          report.tasks.forEach((rec) => addUsage(usageKey, rec.task.agent, rec.usage));
+          let anyFailed = false;
+          const states: string[] = [];
+          const roundResponses = debaters.map((d) => {
+            const rec = byId.get(`r${round}-${d.id}`);
+            const ok = rec?.state === "succeeded";
+            const text = (rec?.summary || "").trim();
+            if (!ok) anyFailed = true;
+            states.push(ok ? "done" : "failed");
+            return { id: d.id, label: d.label, text: ok && text ? text : `(falha: ${rec?.error || rec?.state || "sem resposta"})` };
+          });
+          return { responses: roundResponses, failed: anyFailed, states };
+        }
+        let anyFailed = false;
+        const states: string[] = debaters.map(() => "running");
+        const roundResponses = await Promise.all(debaters.map(async (d, i) => {
+          try { const reply = await oneShotBy(d.agent, promptFor(d), d.model, d.effort); addUsage(usageKey, d.agent, reply.usage); states[i] = "done"; onState(i, "done"); return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" }; }
+          catch (e: any) { anyFailed = true; states[i] = "failed"; onState(i, "failed"); return { id: d.id, label: d.label, text: "(falha: " + String(e?.message ?? e) + ")" }; }
         }));
-        emitDebateProgress(round, "judging", roundState.map((p) => ({ ...p })));
-      }
-      roundsDone = round;
-      // Cancelou no meio da rodada: chamar o juiz aqui é uma chamada paga para avaliar respostas que
-      // são "(falha: cancelado)" — e o parecer ainda acabaria publicado numa etapa já cancelada. O
-      // laço só reavaliava o abort no topo, então isso acontecia toda vez. Registra o que a rodada
-      // produziu (sem veredito, que `formatDebateRoundMessage` trata como opcional) e encerra.
-      if (ctrl.signal.aborted) { failed = true; postAssistant(formatDebateRoundMessage(round, responses)); break; }
-      let verdict: DebateVerdict = { converged: false, confidence: 0, reason: "" };
-      try { const judge = summaryAgent(); const jr = await oneShotAdapter(judge, buildDebateJudgePrompt(topic, round, responses)); addUsage(usageKey, judge.name, jr.usage); verdict = parseDebateVerdict(jr.text); }
-      catch { verdict = { converged: false, confidence: 0, reason: "juiz indisponível" }; }
-      // O juiz é one-shot (não vira execução), então o parecer dele só existiria no chat. Publicado na
+        return { responses: roundResponses, failed: anyFailed, states };
+      },
+      oneShotJudge: async (prompt) => { const judge = summaryAgent(); const r = await oneShotAdapter(judge, prompt); addUsage(usageKey, judge.name, r.usage); return r.text || ""; },
+      // O juiz é one-shot (não vira execução), então o parecer só existiria no chat. Publicado na
       // fase, cada rodada do painel diz por que o debate parou ali — ou por que continuou.
-      if (useManaged) localManagedExecution.publishSummary(debateId, managedPhaseExecutionId(debateId, `r${round}`), `Juiz: ${verdict.converged ? "consenso" : "ainda diverge"} (confiança ${(verdict.confidence * 100).toFixed(0)}%) — ${verdict.reason}`);
-      postAssistant(formatDebateRoundMessage(round, responses, verdict));
-      if (verdict.converged) { converged = true; break; }
-    }
-    // Acabaram as rodadas: não há mais onde encaixar um recado novo, então a janela de interjeição
-    // fecha AQUI e o chat volta a ser turno normal. Fechar antes de montar a síntese evita o ack
-    // mentiroso ("entra na próxima etapa") para quem escrever enquanto o sintetizador já está rodando.
-    live.closed = true;
-    let summary: string | undefined;
-    if (!ctrl.signal.aborted) {
-      emitDebateProgress(roundsDone, "synthesizing", []);
-      // A síntese recebe TODOS os recados (não só os da última rodada): é o único lugar onde um recado
-      // que chegou tarde demais para virar rodada ainda é respondido.
-      try { const synth = summaryAgent(); const sr = await oneShotAdapter(synth, buildDebateSynthesisPrompt(topic, responses, { converged, rounds: roundsDone, interjections: live.all })); addUsage(usageKey, synth.name, sr.usage); summary = sr.text; }
-      catch { summary = undefined; }
-    }
-    const finalText = formatDebateFinalMessage({ rounds: roundsDone, maxRounds, converged, debaters: debaters.map((d) => d.label), summary, failed: failed || ctrl.signal.aborted });
-    postAssistant(finalText);
+      publishRoundVerdict: (round, verdict) => { if (useManaged) localManagedExecution.publishSummary(debateId, managedPhaseExecutionId(debateId, `r${round}`), `Juiz: ${verdict.converged ? "consenso" : "ainda diverge"} (confiança ${(verdict.confidence * 100).toFixed(0)}%) — ${verdict.reason}`); },
+      get aborted() { return ctrl.signal.aborted; },
+    }, { topic, debaters, maxRounds });
+    roundsDone = result.rounds; converged = result.converged; failed = result.failed;
     // A IA da sessão não viu NADA disto (as rodadas são one-shot fora do transcript nativo dela). Sem
     // esta linha, o debate acaba e a conversa seguinte começa do zero: "que debate?". Só quando houve
     // rodada — um debate que morreu antes de produzir posição não é contexto, é ruído.
-    if (roundsDone > 0) addSessionBriefing(input.sessionId, `🗣️ Debate · tema: ${input.topic.split(/\r?\n/)[0].slice(0, 120)}`, finalText);
+    if (roundsDone > 0) addSessionBriefing(input.sessionId, `🗣️ Debate · tema: ${input.topic.split(/\r?\n/)[0].slice(0, 120)}`, result.finalText);
     // Cancelado com recado ainda na fila: ele não virou rodada e não houve síntese para respondê-lo.
     // Dizer isso é obrigação — sumir em silêncio é exatamente o bug que a interjeição veio corrigir.
     if (ctrl.signal.aborted && live.pending.length) postAssistant(`_Observação: ${live.pending.length} recado(s) enviado(s) durante o debate não foram usados — o debate foi cancelado antes da rodada seguinte._`);
@@ -4629,7 +4624,7 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
     failed = true;
     send(ws, { t: "error", message: "Debate: " + String(error?.message ?? error) });
   } finally {
-    emitDebateProgress(roundsDone, "done", []);
+    emitDebateProgress(roundsDone, "done", [], 0);
     // O terminal da raiz é de quem a abriu: as ondas só encerram a própria fase.
     if (useManaged) {
       const state = ctrl.signal.aborted ? "cancelled" : failed ? "failed" : "succeeded";
@@ -4642,6 +4637,44 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
     if (localExecutionAborts.get(debateId) === ctrl) localExecutionAborts.delete(debateId);
     broadcastRuns();
   }
+}
+
+
+/* --------------------------------------------------------- Debate em OUTRA maquina
+ * O debate remoto roda no runner (o laço é o mesmo, do core). Aqui o Hub guarda só o que precisa
+ * para o chat continuar sendo a porta de entrada de recado: qual sessão remota tem debate vivo e
+ * se ele ainda aceita recado. A fonte é o próprio frame de progresso que o runner emite.
+ */
+const remoteLiveDebates = new Map<string, { debateId: string; canSay: boolean }>();
+const remoteDebateKey = (runnerId: string, sessionId: string): string => runnerId + "\u0000" + sessionId;
+function remoteDebateOpen(runnerId: string, sessionId: string): { debateId: string; canSay: boolean } | undefined {
+  // Exige a máquina CONECTADA: se ela caiu no meio do debate, o mapa fica velho e o caminho
+  // implícito trataria uma mensagem normal como recado — que falha e some. Perder texto do usuário
+  // é o bug que a interjeição veio corrigir; não pode voltar por aqui.
+  if (!runners.get(runnerId)?.ws) { remoteLiveDebates.delete(remoteDebateKey(runnerId, sessionId)); return undefined; }
+  const d = remoteLiveDebates.get(remoteDebateKey(runnerId, sessionId));
+  return d && d.canSay ? d : undefined;
+}
+/** Quem pediu o recado, para o ack (e o TTS) voltar para o socket certo quando o runner responder. */
+const pendingDebateSay = new Map<string, { ws: WebSocket; speak: boolean; at: number }>();
+function forwardDebateSay(ws: WebSocket, runnerId: string, sessionId: string, text: string, speak: boolean, msgId?: string): void {
+  const rc = runners.get(runnerId);
+  const recado = text.trim().slice(0, DEBATE_INTERJECTION_MAX_CHARS);
+  if (!rc?.ws || !recado) {
+    send(ws, { t: "debate_said", ok: false, runnerId, sessionId, msgId, message: "Nenhum debate aceitando recado nesta sessão." });
+    return;
+  }
+  const reqId = `debatesay-${randomUUID()}`;
+  pendingDebateSay.set(reqId, { ws, speak, at: Date.now() });
+  // Limpeza preguiçosa: um ack perdido (máquina caiu no meio) não pode vazar entrada para sempre.
+  for (const [k, v] of pendingDebateSay) if (Date.now() - v.at > 120_000) pendingDebateSay.delete(k);
+  if (!sendToRunner(rc, { t: "debate_interject", reqId, sessionId, text: recado, msgId })) {
+    pendingDebateSay.delete(reqId);
+    send(ws, { t: "debate_said", ok: false, runnerId, sessionId, msgId, message: "não foi possível enviar o recado para a máquina" });
+    return;
+  }
+  const _p = principalOf(ws);
+  auth.audit("debate_say", { userId: _p?.userId, deviceId: _p?.deviceId, runnerId, detail: recado.slice(0, 80) });
 }
 
 async function startRemoteCouncil(ws: WebSocket, rc: RunnerConn, input: {
@@ -4684,6 +4717,102 @@ async function startRemoteCouncil(ws: WebSocket, rc: RunnerConn, input: {
     send(ws, { t: "error", message: "não foi possível iniciar Conselho na máquina" }); return;
   }
   send(ws, { t: "council_started", runnerId: rc.id, sessionId: input.sessionId, rootExecutionId: built.rootExecutionId, mode: route.mode, reason: route.reason });
+}
+
+/** Espaço de Soluções na MÁQUINA da sessão. Espelha startRemoteCouncil: o Hub monta o plano e
+ *  mantém a posse da execução; quem roda os candidatos é a máquina, porque é lá que estão os CLIs,
+ *  o repositório e as worktrees. */
+
+/** Debate na MÁQUINA da sessão. O Hub contextualiza o tema com o histórico remoto, é dono do
+ *  debateId (e da posse da execução) e despacha; quem escolhe os debatentes é a máquina, porque
+ *  disponibilidade de CLI é fato local dela. */
+async function startRemoteDebate(ws: WebSocket, rc: RunnerConn, input: {
+  sessionId: string;
+  topic: string;
+  agents?: string[];
+  effortLevel: EffortLevel;
+  maxRounds?: number;
+  includeContext: boolean;
+}): Promise<void> {
+  if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: "Debate ainda não grava resultado em sessão nativa" }); return; }
+  if (isInternalExecutionSession(rc.id, input.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita Debate" }); return; }
+  if (!rc.ws || rc.ws.readyState !== WebSocket.OPEN) { send(ws, { t: "error", message: "máquina offline" }); return; }
+  const proto = rc.info.protocolVersion || 1;
+  if (proto < RUNNER_CAPABILITY_SINCE.debateOnRunner) {
+    send(ws, { t: "error", message: `esta máquina está no protocolo ${proto}; Debate nela exige ${RUNNER_CAPABILITY_SINCE.debateOnRunner} — atualize-a` });
+    return;
+  }
+  const hist = await runnerHistory(rc, input.sessionId, { ws });
+  const state = runnerSessionState.get(rc.id)?.get(input.sessionId);
+  const cwd = String(hist?.cwd || state?.cwd || "");
+  if (!cwd) { send(ws, { t: "error", message: "não foi possível identificar a pasta da sessão remota" }); return; }
+  const recent = Array.isArray(hist?.messages)
+    ? hist.messages.filter((m: any) => m?.role === "user" || m?.role === "assistant").slice(-6).map((m: any) => ({ role: m.role as "user" | "assistant", text: String(m.text || "") }))
+    : [];
+  const topic = councilTopic(input.topic, recent, input.includeContext);
+  const maxRounds = clampDebateRounds(input.maxRounds);
+  const debateId = "debate:" + randomUUID();
+  const effortPt = input.effortLevel === "max" ? "máximo" : input.effortLevel === "high" ? "alto" : "médio";
+  // Sem contagem de IAs: quem escolhe os debatentes é a máquina, e mentir um número aqui seria pior
+  // do que omitir. O frame `debate_started` traz a lista real assim que ela existe.
+  const requestText = `🗣️ Debate (até ${maxRounds} rodadas, esforço ${effortPt}): ${input.topic.split(/\r?\n/)[0].slice(0, 200)}`;
+  const policy = boundedManagedPolicy(mergeAdaptiveManagedPolicy({ maxDepth: 2 }, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd }).policy));
+  auth.audit("debate_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: rc.id, detail: `${debateId}: teto ${maxRounds}` });
+  executionOwnership.claim(rc.id, debateId, socketPrincipalId(ws));
+  const requestId = `debate-${randomUUID()}`;
+  if (!sendToRunner(rc, { t: "debate_start", requestId, sessionId: input.sessionId, debateId, requestText, topic, agents: input.agents, effortLevel: input.effortLevel, maxRounds, policy })) {
+    executionOwnership.remove(rc.id, debateId);
+    send(ws, { t: "error", message: "não foi possível iniciar Debate na máquina" });
+    return;
+  }
+}
+
+async function startRemoteTournament(ws: WebSocket, rc: RunnerConn, input: {
+  sessionId: string;
+  task: string;
+  explicitCompetitors: TournamentCompetitor[];
+  count: number;
+  model?: string;
+  effort?: string;
+  criteria?: string;
+  write?: boolean;
+  mode: SolutionWorkspaceMode;
+}): Promise<void> {
+  const flowLabel = input.mode === "benchmark" ? "Benchmark" : input.mode === "audit" ? "Auditoria" : "Revisão paralela";
+  if (!executionCfg.enabled) { send(ws, { t: "error", message: `${flowLabel} exige Trabalhos habilitado` }); return; }
+  if (isNativeId(input.sessionId)) { send(ws, { t: "error", message: `${flowLabel} ainda não grava resultado em sessão nativa` }); return; }
+  if (isInternalExecutionSession(rc.id, input.sessionId)) { send(ws, { t: "error", message: `sessão interna não aceita ${flowLabel}` }); return; }
+  if (!rc.ws || rc.ws.readyState !== WebSocket.OPEN) { send(ws, { t: "error", message: "máquina offline" }); return; }
+  // Máquina antiga responde com o motivo em vez de falhar calada — mesmo portão do fan-out.
+  const proto = rc.info.protocolVersion || 1;
+  if (proto < RUNNER_CAPABILITY_SINCE.tournamentOnRunner) {
+    send(ws, { t: "error", message: `esta máquina está no protocolo ${proto}; ${flowLabel} nela exige ${RUNNER_CAPABILITY_SINCE.tournamentOnRunner} — atualize-a` });
+    return;
+  }
+  const hist = await runnerHistory(rc, input.sessionId, { ws });
+  const state = runnerSessionState.get(rc.id)?.get(input.sessionId);
+  const cwd = String(hist?.cwd || state?.cwd || "");
+  if (!cwd) { send(ws, { t: "error", message: "não foi possível identificar a pasta da sessão remota" }); return; }
+  // Os candidatos rodam NA MÁQUINA: o agente padrão tem que ser o dela, não o do Hub — senão o
+  // plano nomearia um CLI que não existe do outro lado.
+  const preferredAgent = String(hist?.agent || state?.agent || rc.info.agents?.[0] || "");
+  if (!preferredAgent) { send(ws, { t: "error", message: `${flowLabel}: a máquina não reportou nenhuma IA disponível` }); return; }
+  const competitors: TournamentCompetitor[] = input.explicitCompetitors.length >= 2
+    ? input.explicitCompetitors
+    : Array.from({ length: input.count }, (_v, i) => ({ agent: preferredAgent, model: input.model, effort: input.effort, label: `${preferredAgent} #${i + 1}` }));
+  let built;
+  try { built = buildTournamentPlan({ runnerId: rc.id, sessionId: input.sessionId, cwd, task: input.task, competitors, criteria: input.criteria, write: input.write, mode: input.mode }); }
+  catch (e: any) { send(ws, { t: "error", message: `${flowLabel}: ` + String(e?.message ?? e) }); return; }
+  const requestId = `tournament-${randomUUID()}`;
+  const requestText = `🧪 ${flowLabel} (${competitors.length} candidatos): ${input.task.split(/\r?\n/)[0].slice(0, 200)}`;
+  const policy = boundedManagedPolicy(mergeAdaptiveManagedPolicy(built.policy, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd }).policy));
+  auth.audit("tournament_start", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: rc.id, detail: `${built.rootExecutionId}: ${input.mode} · ${competitors.length} cand.` });
+  executionOwnership.claim(rc.id, built.rootExecutionId, socketPrincipalId(ws));
+  if (!sendToRunner(rc, { t: "tournament_start", requestId, sessionId: input.sessionId, requestText, mode: input.mode, judgeTaskId: built.judgeTaskId, candidateTaskIds: built.candidateTaskIds, title: built.title, plan: built.plan, policy })) {
+    executionOwnership.remove(rc.id, built.rootExecutionId);
+    send(ws, { t: "error", message: `não foi possível iniciar ${flowLabel} na máquina` }); return;
+  }
+  send(ws, { t: "tournament_started", runnerId: rc.id, sessionId: input.sessionId, rootExecutionId: built.rootExecutionId, mode: input.mode });
 }
 /** Reconcile a hub session against its bound NATIVE transcript. If the hub was killed mid-turn
  *  (restart, crash), the provider CLI child can keep running as an orphan
@@ -6658,17 +6787,24 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       return;
     }
     // Debate iterativo (modo do Conselho): rodadas de réplica cruzada entre 2+ IAs até o juiz declarar
-    // consenso ou atingir o teto. LOCAL-only por enquanto (mesma limitação do Torneio).
+    // consenso ou atingir o teto. Roda na MÁQUINA da sessão: local pelo caminho de baixo, remoto por
+    // `debate_start` no runner. O laço é o mesmo dos dois lados (core/debate-run.ts).
     if (msg.t === "debate_start" && typeof msg.sessionId === "string" && typeof msg.topic === "string") {
-      if (activeRunner(ws) !== LOCAL_ID) { send(ws, { t: "error", message: "Debate por enquanto roda só na máquina servidora" }); return; }
-      await startLocalDebate(ws, {
+      const dRunnerId = activeRunner(ws);
+      const dInput = {
         sessionId: msg.sessionId,
         topic: msg.topic.slice(0, 20_000),
         includeContext: msg.includeContext !== false,
         effortLevel: normalizeEffortLevel(msg.effortLevel),
         agents: Array.isArray(msg.agents) ? msg.agents.filter((x: any) => typeof x === "string").slice(0, 12) : undefined,
         maxRounds: typeof msg.maxRounds === "number" ? msg.maxRounds : undefined,
-      });
+      };
+      if (dRunnerId === LOCAL_ID) await startLocalDebate(ws, dInput);
+      else {
+        const rc = runners.get(dRunnerId);
+        if (!rc) { send(ws, { t: "error", message: "máquina desconhecida" }); return; }
+        await startRemoteDebate(ws, rc, dInput);
+      }
       return;
     }
     // Interjeição: recado do usuário para o debate em andamento (rota EXPLÍCITA do cliente, que já sabe
@@ -6678,7 +6814,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "debate_say" && typeof msg.text === "string") {
       const sid = (typeof msg.sessionId === "string" && msg.sessionId) || subs.get(ws) || "";
       const recado = msg.text.trim();
-      const live = sid && activeRunner(ws) === LOCAL_ID ? debateOpenForInterjection(sid) : undefined;
+      const sayRunner = activeRunner(ws);
+      // Debate remoto: quem guarda a fila de recado é a máquina, então o Hub só encaminha.
+      if (sid && sayRunner !== LOCAL_ID) { forwardDebateSay(ws, sayRunner, sid, msg.text, msg.speak === true, typeof msg.msgId === "string" ? msg.msgId : undefined); return; }
+      const live = sid ? debateOpenForInterjection(sid) : undefined;
       if (!live || !recado) {
         send(ws, { t: "debate_said", ok: false, runnerId: LOCAL_ID, sessionId: sid, text: msg.text, message: "Nenhum debate aceitando recado nesta sessão." });
         return;
@@ -6686,24 +6825,36 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       await acceptDebateInterjection(live, ws, recado, msg.speak === true);
       return;
     }
-    // Espaço de Soluções: Benchmark/Revisão/Auditoria local com N candidatos + consolidador.
-    // LOCAL-only por enquanto (o caminho remoto exigiria handler no runner, como o council).
+    // Espaço de Soluções: Benchmark/Revisão/Auditoria com N candidatos + consolidador, na MÁQUINA
+    // da sessão — o Hub monta o plano, a máquina executa (mesmo desenho do council).
     if (msg.t === "tournament_start" && typeof msg.sessionId === "string" && typeof msg.task === "string") {
       const mode = SOLUTION_WORKSPACE_MODES.includes(msg.mode) ? msg.mode as SolutionWorkspaceMode : "benchmark";
       const flowLabel = mode === "benchmark" ? "Benchmark" : mode === "audit" ? "Auditoria" : "Revisão paralela";
-      if (activeRunner(ws) !== LOCAL_ID) { send(ws, { t: "error", message: `${flowLabel} só roda na máquina local por enquanto` }); return; }
       const task = msg.task.slice(0, 20_000).trim();
       if (!task) { send(ws, { t: "error", message: `${flowLabel}: tarefa vazia` }); return; }
-      // competitors explícitos, ou N cópias do agente da sessão (default 3, clamp 2..6).
-      const sAgent = store.get(msg.sessionId)?.agent || agents.default;
-      let competitors: TournamentCompetitor[] = Array.isArray(msg.competitors)
+      // competitors explícitos, ou N cópias do agente da SESSÃO (default 3, clamp 2..6). A sessão
+      // pode viver em OUTRA máquina, então o agente padrão é resolvido dentro de cada caminho, com
+      // a lista da máquina certa — o Hub não sabe quais CLIs existem do outro lado.
+      const explicit: TournamentCompetitor[] = Array.isArray(msg.competitors)
         ? msg.competitors.filter((c: any) => c && typeof c.agent === "string").map((c: any) => ({ agent: c.agent, model: typeof c.model === "string" ? c.model : undefined, effort: typeof c.effort === "string" ? c.effort : undefined, label: typeof c.label === "string" ? c.label : undefined }))
         : [];
-      if (competitors.length < 2) {
-        const count = Math.min(6, Math.max(2, Number(msg.count) || 3));
-        competitors = Array.from({ length: count }, (_v, i) => ({ agent: sAgent, model: typeof msg.model === "string" ? msg.model : undefined, effort: typeof msg.effort === "string" ? msg.effort : undefined, label: `${sAgent} #${i + 1}` }));
+      const count = Math.min(6, Math.max(2, Number(msg.count) || 3));
+      const tModel = typeof msg.model === "string" ? msg.model : undefined;
+      const tEffort = typeof msg.effort === "string" ? msg.effort : undefined;
+      const criteria = typeof msg.criteria === "string" ? msg.criteria : undefined;
+      const write = msg.write !== false;
+      const tRunnerId = activeRunner(ws);
+      if (tRunnerId === LOCAL_ID) {
+        const sAgent = store.get(msg.sessionId)?.agent || agents.default;
+        const competitors: TournamentCompetitor[] = explicit.length >= 2
+          ? explicit
+          : Array.from({ length: count }, (_v, i) => ({ agent: sAgent, model: tModel, effort: tEffort, label: `${sAgent} #${i + 1}` }));
+        await startLocalTournament(ws, { sessionId: msg.sessionId, task, competitors, criteria, write, mode });
+      } else {
+        const rc = runners.get(tRunnerId);
+        if (!rc) { send(ws, { t: "error", message: "máquina desconhecida" }); return; }
+        await startRemoteTournament(ws, rc, { sessionId: msg.sessionId, task, explicitCompetitors: explicit, count, model: tModel, effort: tEffort, criteria, write, mode });
       }
-      await startLocalTournament(ws, { sessionId: msg.sessionId, task, competitors, criteria: typeof msg.criteria === "string" ? msg.criteria : undefined, write: msg.write !== false, mode });
       return;
     }
     // summary/digest one-shot config (which agent/model/effort — cheap by default)
@@ -8300,9 +8451,17 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // restart — só que o debate não sobrevive ao restart, e aí a mensagem viraria outra coisa.
     // `!comando` fica de fora: ele EXECUTA um shell (expandBang) e virar recado o engoliria em silêncio.
     // Vira o turno normal que sempre foi — o debate segue rodando em paralelo.
-    if (activeRunner(ws) === LOCAL_ID && text.trim() && !text.trimStart().startsWith("!")) {
-      const live = debateOpenForInterjection(sid);
-      if (live) { await acceptDebateInterjection(live, ws, text, msg.speak === true, typeof msg.msgId === "string" ? msg.msgId : undefined); return; }
+    if (text.trim() && !text.trimStart().startsWith("!")) {
+      const implicitRunner = activeRunner(ws);
+      const msgIdIn = typeof msg.msgId === "string" ? msg.msgId : undefined;
+      if (implicitRunner === LOCAL_ID) {
+        const live = debateOpenForInterjection(sid);
+        if (live) { await acceptDebateInterjection(live, ws, text, msg.speak === true, msgIdIn); return; }
+      } else if (remoteDebateOpen(implicitRunner, sid)) {
+        // Mesma regra do debate local, só que a janela de recado vive na máquina.
+        forwardDebateSay(ws, implicitRunner, sid, text, msg.speak === true, msgIdIn);
+        return;
+      }
     }
     const inboundActor = actorOf(ws);
     const inboundKey = recordPendingInboundTurn(activeRunner(ws), sid, msg, text, inboundActor);

@@ -41,6 +41,7 @@ export * from "./activity-replay.js";
 export * from "./council.js";
 export * from "./tournament.js";
 export * from "./debate.js";
+export * from "./debate-run.js";
 export * from "./session-briefing.js";
 export * from "./effort.js";
 export * from "./workflow.js";

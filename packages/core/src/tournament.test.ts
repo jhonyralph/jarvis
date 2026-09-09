@@ -5,7 +5,9 @@ import {
   formatTournamentFinalMessage,
   parseJudgeScores,
   selectTournamentWinner,
+  tournamentCandidateResults,
 } from "./tournament.js";
+import { managedChildExecutionId } from "./managed-execution.js";
 
 const competitors = [
   { agent: "claude-code", model: "sonnet" },
@@ -148,4 +150,29 @@ test("formatTournamentFinalMessage renders winner, work id and ranking", () => {
   assert.match(text, /`tournament:1`/);
   assert.match(text, /candidato-1.*\(vencedor\).*88/);
   assert.match(text, /Boa solucao/);
+});
+
+test("tournamentCandidateResults lê estado/custo/tokens por candidato — o MESMO cálculo no Hub e no Runner", () => {
+  // Vive no core justamente porque as duas máquinas precisam do mesmo resultado: o Hub quando a
+  // Revisão roda local, o Runner quando roda nele. Se divergir, o vencedor muda com a máquina.
+  const root = "root-1";
+  const nodes = new Map<string, any>([
+    [managedChildExecutionId(root, "c1"), { node: { state: "succeeded", metrics: { self: { inputTokens: 10, outputTokens: 5, costUsd: 0.02 } } } }],
+    [managedChildExecutionId(root, "c2"), { node: { state: "failed", metrics: { self: {} } } }],
+  ]);
+  const source = { findNode: (id: string) => nodes.get(id) };
+
+  const results = tournamentCandidateResults(source, root, ["c1", "c2", "c3"], new Map([["c1", 9]]));
+
+  assert.deepEqual(results.map((r) => r.id), ["c1", "c2", "c3"], "a ordem dos candidatos é preservada");
+  assert.equal(results[0].state, "succeeded");
+  assert.equal(results[0].tokens, 15, "entrada + saída");
+  assert.equal(results[0].costUsd, 0.02);
+  assert.equal(results[0].score, 9);
+  assert.equal(results[1].state, "failed");
+  assert.equal(results[1].tokens, undefined, "zero tokens vira ausente, não 0 — é o que o formatador espera");
+  // Candidato sem nó ainda não começou. Tem que virar "queued", e não um buraco que quebre a seleção.
+  assert.equal(results[2].state, "queued");
+  assert.equal(results[2].score, undefined);
+  assert.equal(selectTournamentWinner(results).winnerId, "c1", "só o que teve sucesso concorre");
 });

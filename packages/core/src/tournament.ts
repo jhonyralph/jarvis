@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { managedChildExecutionId } from "./managed-execution.js";
 import type { ManagedExecutionPlan, ManagedExecutionTask, ManagedTaskState } from "./execution-orchestrator.js";
 import type { ManagedExecutionPolicyInput } from "./execution-policy.js";
 
@@ -292,4 +293,31 @@ export function formatTournamentFinalMessage(input: {
     rankLines,
     input.summary?.trim() ? `\n${input.summary.trim()}` : "",
   ].filter(Boolean).join("\n");
+}
+
+/** O mínimo que o cálculo abaixo precisa de um execution store. Existe para este módulo NÃO
+ *  depender do `ExecutionStore` concreto: Hub e Runner têm cada um o seu, e acoplar aqui criaria
+ *  import cruzado sem ganho. */
+export interface TournamentNodeSource {
+  findNode(executionId: string): { node: { state?: unknown; metrics?: { self?: { inputTokens?: number; outputTokens?: number; costUsd?: number } } } } | undefined;
+}
+
+/** Lê estado/custo/tokens de cada candidato do execution store, para alimentar a seleção
+ *  determinística do vencedor.
+ *
+ *  Vive no core porque as DUAS máquinas precisam do MESMO cálculo: o Hub quando a Revisão roda
+ *  local, o Runner quando roda nele. Duas cópias divergiriam na primeira mudança — que é a razão
+ *  pela qual a validação de endereço do Hub também foi centralizada. */
+export function tournamentCandidateResults(
+  source: TournamentNodeSource,
+  rootExecutionId: string,
+  candidateTaskIds: string[],
+  scores: Map<string, number>,
+): TournamentCandidateResult[] {
+  return candidateTaskIds.map((taskId) => {
+    const node = source.findNode(managedChildExecutionId(rootExecutionId, taskId))?.node;
+    const m = node?.metrics?.self;
+    const tokens = (m?.inputTokens || 0) + (m?.outputTokens || 0);
+    return { id: taskId, state: (node?.state as ManagedTaskState) ?? "queued", score: scores.get(taskId), costUsd: m?.costUsd, tokens: tokens || undefined };
+  });
 }

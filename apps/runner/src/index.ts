@@ -31,13 +31,17 @@ import {
   ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
   pendingActivityReplay,
   formatCouncilFinalMessage, managedChildExecutionId,
+  formatTournamentFinalMessage, parseJudgeScores, selectTournamentWinner, tournamentCandidateResults,
+  runDebate, clampDebateRounds, normalizeEffortLevel, resolveEffortLevel, managedPhaseExecutionId,
+  DEBATE_INTERJECTION_MAX_CHARS,
   TerminalManager,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
   LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, featureFileContent, featureFileName, createTaskViaMcp,
   windowsUpdaterHeader, windowsUpdaterBody,
   listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile,
   validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION,
-  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type UpdateStatus, type UpdateAttemptRecord, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument,
+  type AgentAdapter, type SendOpts, type TurnCtx, type AgentEvent, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type UpdateResult, type UpdateStatus, type UpdateAttemptRecord, type MemoryAppendPreview, type PermissionMode, type SessionDefaultsDocument, type SolutionWorkspaceMode,
+  type DebateDebater, type DebateHost, type DebateRoundOutcome, type DebateVerdict,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
 
@@ -794,6 +798,247 @@ function handleCouncilStart(command: {
     });
 }
 
+
+/** Espaço de Soluções NESTA máquina. Espelha handleCouncilStart: o Hub montou o plano e é dono da
+ *  posse; aqui rodam os candidatos e o juiz, e a mensagem final entra no store DESTA máquina —
+ *  é onde a sessão vive. O cálculo do vencedor vem do core, o mesmo que o Hub usa no caminho local. */
+function handleTournamentStart(command: {
+  requestId: string;
+  sessionId: string;
+  requestText: string;
+  mode: SolutionWorkspaceMode;
+  judgeTaskId: string;
+  candidateTaskIds: string[];
+  title?: string;
+  plan: ManagedExecutionPlan;
+  policy?: ManagedExecutionPolicyInput;
+}): void {
+  const flowLabel = command.mode === "benchmark" ? "Benchmark" : command.mode === "audit" ? "Auditoria" : "Revisão paralela";
+  if (store.isHidden(command.sessionId)) { send({ t: "error", reqId: command.requestId, message: `sessão interna não aceita ${flowLabel}` }); return; }
+  if (isNativeId(command.sessionId)) { send({ t: "error", reqId: command.requestId, message: `${flowLabel} ainda não grava resultado em sessão nativa` }); return; }
+  const s = store.get(command.sessionId);
+  if (!s) { send({ t: "error", reqId: command.requestId, message: "sessão não encontrada" }); return; }
+  const at = Date.now();
+  store.add(command.sessionId, { role: "user", text: command.requestText, ts: at, agent: "jarvis" });
+  send({ t: "message", sessionId: command.sessionId, message: { role: "user", text: command.requestText, ts: at, agent: "jarvis" } });
+  pushSessions();
+
+  const ctrl = new AbortController();
+  managedRuns.add(command.plan.rootExecutionId); executionAborts.set(command.plan.rootExecutionId, ctrl); pushRuns();
+  void runnerManagedExecution.run(command.plan, { title: command.title, policy: command.policy, signal: ctrl.signal })
+    .then((report) => {
+      const judgeSummary = councilFinalSummary(command.plan.rootExecutionId, command.judgeTaskId);
+      const verdict = parseJudgeScores(judgeSummary);
+      const scores = new Map(verdict.scores.map((sc) => [sc.id, sc.score]));
+      const results = tournamentCandidateResults(executionStore, command.plan.rootExecutionId, command.candidateTaskIds, scores);
+      const outcome = selectTournamentWinner(results, { declaredWinnerId: verdict.declaredWinnerId });
+      const text = formatTournamentFinalMessage({ rootExecutionId: command.plan.rootExecutionId, outcome, summary: report.state === "succeeded" ? judgeSummary : undefined, mode: command.mode });
+      const ts = Date.now();
+      store.add(command.sessionId, { role: "assistant", text, ts, agent: "jarvis" });
+      send({ t: "message", sessionId: command.sessionId, message: { role: "assistant", text, ts, agent: "jarvis" } });
+      pushSessions();
+    })
+    .catch((error) => send({ t: "error", reqId: command.requestId, message: `${flowLabel}: ` + String((error as Error)?.message || error) }))
+    .finally(() => {
+      managedRuns.delete(command.plan.rootExecutionId);
+      if (executionAborts.get(command.plan.rootExecutionId) === ctrl) executionAborts.delete(command.plan.rootExecutionId);
+      pushRuns();
+    });
+}
+
+
+/* ------------------------------------------------------------------ Debate NESTA maquina
+ * O LAÇO é o do core (runDebate) — o mesmo que o Hub usa quando a sessão é dele. O que muda aqui
+ * são só os efeitos colaterais e, principalmente, QUEM ESCOLHE OS DEBATENTES: disponibilidade de
+ * CLI é fato desta máquina, então o Hub não teria como decidir sem chutar.
+ */
+interface RunnerLiveDebate {
+  debateId: string;
+  sessionId: string;
+  pending: string[];
+  all: string[];
+  closed: boolean;
+}
+const liveDebates = new Map<string, RunnerLiveDebate>();
+function liveDebateForSession(sessionId: string): RunnerLiveDebate | undefined {
+  let found: RunnerLiveDebate | undefined;
+  for (const d of liveDebates.values()) if (d.sessionId === sessionId) found = d;
+  return found;
+}
+
+/** Opções compatíveis com o que a IA realmente oferece. Meta-análise pura: MCP desligado, como no Hub. */
+async function debateAgentOpts(agent: AgentAdapter, requestedModel?: string, requestedEffort?: string): Promise<SendOpts> {
+  const caps = await agent.capabilities();
+  const model = requestedModel && caps.models.some((m) => m.id === requestedModel) ? requestedModel : undefined;
+  const selected = model ? caps.models.find((m) => m.id === model) : undefined;
+  const effort = requestedEffort && selected?.efforts.includes(requestedEffort) ? requestedEffort : undefined;
+  return { model, effort, noMcp: true };
+}
+
+/** Recado do usuário para o debate vivo desta máquina. Publica no chat daqui (o Hub relaya) e
+ *  enfileira para a próxima rodada; a síntese ainda responde o que chegou tarde. */
+function handleDebateInterject(m: { reqId: string; sessionId: string; text: string; msgId?: string }): void {
+  const live = liveDebateForSession(m.sessionId);
+  const recado = String(m.text || "").trim().slice(0, DEBATE_INTERJECTION_MAX_CHARS);
+  if (!live || live.closed || !recado) {
+    send({ t: "debate_said", reqId: m.reqId, ok: false, sessionId: m.sessionId, msgId: m.msgId, message: "Nenhum debate aceitando recado nesta sessão." });
+    return;
+  }
+  live.pending.push(recado);
+  live.all.push(recado);
+  const ts = Date.now();
+  const shown = `💬 Recado ao debate: ${recado}`;
+  store.add(live.sessionId, { role: "user", text: shown, ts, agent: "jarvis" });
+  send({ t: "message", sessionId: live.sessionId, message: { role: "user", text: shown, ts, agent: "jarvis" } });
+  pushSessions();
+  send({ t: "debate_said", reqId: m.reqId, ok: true, sessionId: live.sessionId, debateId: live.debateId, pending: live.pending.length, msgId: m.msgId, message: "Recado anotado — entra na próxima etapa do debate (a rodada seguinte, ou o veredito final se o debate fechar antes)." });
+}
+
+async function handleDebateStart(command: {
+  requestId: string;
+  sessionId: string;
+  debateId: string;
+  requestText: string;
+  topic: string;
+  agents?: string[];
+  effortLevel: string;
+  maxRounds: number;
+  policy?: ManagedExecutionPolicyInput;
+}): Promise<void> {
+  const fail = (message: string): void => { send({ t: "error", reqId: command.requestId, message }); };
+  if (store.isHidden(command.sessionId)) { fail("sessão interna não aceita Debate"); return; }
+  if (isNativeId(command.sessionId)) { fail("Debate ainda não grava resultado em sessão nativa"); return; }
+  const s = store.get(command.sessionId);
+  if (!s) { fail("sessão não encontrada"); return; }
+
+  // Seleção NESTA máquina: 2+ IAs distintas, disponíveis e com one-shot. Cada uma usa o SEU modelo
+  // default e o esforço mapeado para a escala dela.
+  const effortLevel = normalizeEffortLevel(command.effortLevel);
+  const wanted = new Set((command.agents || []).filter(Boolean));
+  const debaters: DebateDebater[] = [];
+  let idx = 0;
+  for (const name of agents.names()) {
+    if (wanted.size && !wanted.has(name)) continue;
+    const a = agents.get(name);
+    if (!a.oneShot) continue;
+    try { if (!(await a.available())) continue; } catch { continue; }
+    let model: string | undefined, effort: string | undefined;
+    try { const caps = await a.capabilities(); const m = caps.models.find((x) => x.id === (caps as any).defaultModel) || caps.models[0]; model = m?.id; effort = resolveEffortLevel(effortLevel, m?.efforts, (m as any)?.defaultEffort); }
+    catch { /* a IA decide */ }
+    debaters.push({ id: `p${++idx}`, agent: name, model, effort, label: name });
+  }
+  if (debaters.length < 2) { fail("Debate exige ao menos 2 IAs disponíveis nesta máquina (com suporte a análise one-shot)"); return; }
+
+  const maxRounds = clampDebateRounds(command.maxRounds);
+  const cwd = s.cwd || CWD;
+  const debateId = command.debateId;
+  const at = Date.now();
+  store.add(command.sessionId, { role: "user", text: command.requestText, ts: at, agent: "jarvis" });
+  send({ t: "message", sessionId: command.sessionId, message: { role: "user", text: command.requestText, ts: at, agent: "jarvis" } });
+  pushSessions();
+
+  const ctrl = new AbortController();
+  managedRuns.add(debateId); executionAborts.set(debateId, ctrl); pushRuns();
+  const live: RunnerLiveDebate = { debateId, sessionId: command.sessionId, pending: [], all: [], closed: false };
+  liveDebates.set(debateId, live);
+  send({ t: "debate_started", sessionId: command.sessionId, debateId, debaters: debaters.map((d) => d.label), maxRounds });
+
+  let useManaged = false;
+  if (EXECUTIONS_ENABLED) {
+    try { await runnerManagedExecution.openRoot({ rootExecutionId: debateId, runnerId: RUNNER_ID, cwd, title: `🗣️ Debate · ${command.topic.split(/\r?\n/)[0].slice(0, 120)}` }); useManaged = true; }
+    catch (error) { console.error(`[runner] debate ${debateId} sem trabalho gerenciado: ${String((error as Error)?.message || error)}`); }
+  }
+  const emitProgress = (round: number, phase: string, states: Array<{ label: string; state: string }>, interjected: number): void => {
+    send({ t: "debate_progress", sessionId: command.sessionId, debateId, round, maxRounds, phase, rootExecutionId: useManaged ? debateId : undefined, debaters: states, interjected, canSay: !live.closed });
+  };
+  const postAssistant = (text: string): void => {
+    const ts = Date.now();
+    store.add(command.sessionId, { role: "assistant", text, ts, agent: "jarvis" });
+    send({ t: "message", sessionId: command.sessionId, message: { role: "assistant", text, ts, agent: "jarvis" } });
+    pushSessions();
+  };
+  // O juiz é o primeiro debatente: já provamos que existe aqui e que faz one-shot. Escolher pela
+  // config do Hub nomearia uma IA que pode não estar instalada nesta máquina.
+  const judge = agents.get(debaters[0].agent);
+
+  let converged = false, failed = false, roundsDone = 0;
+  const host: DebateHost = {
+    postAssistant,
+    emitProgress: (p) => emitProgress(p.round, p.phase, p.debaters, p.interjected),
+    drainInterjections: () => live.pending.splice(0),
+    allInterjections: () => [...live.all],
+    closeInterjections: () => { live.closed = true; },
+    runRound: async ({ round, promptFor, onState }): Promise<DebateRoundOutcome> => {
+      if (useManaged) {
+        const plan: ManagedExecutionPlan = { rootExecutionId: debateId, runnerId: RUNNER_ID, tasks: debaters.map((d) => ({ id: `r${round}-${d.id}`, title: `${d.label} · rodada ${round}`, prompt: promptFor(d), agent: d.agent, cwd, depth: 1, write: false, model: d.model, effort: d.effort })) };
+        const report = await runnerManagedExecution.run(plan, {
+          continueRoot: true,
+          phase: { id: `r${round}`, title: `Rodada ${round}/${maxRounds}` },
+          policy: { ...(command.policy || {}), maxConcurrency: debaters.length, maxDepth: 2, maxTasks: debaters.length },
+          signal: ctrl.signal,
+        });
+        const byId = new Map(report.tasks.map((rec) => [rec.task.id, rec]));
+        let anyFailed = false;
+        const states: string[] = [];
+        const responses = debaters.map((d) => {
+          const rec = byId.get(`r${round}-${d.id}`);
+          const ok = rec?.state === "succeeded";
+          const text = (rec?.summary || "").trim();
+          if (!ok) anyFailed = true;
+          states.push(ok ? "done" : "failed");
+          return { id: d.id, label: d.label, text: ok && text ? text : `(falha: ${rec?.error || rec?.state || "sem resposta"})` };
+        });
+        return { responses, failed: anyFailed, states };
+      }
+      let anyFailed = false;
+      const states: string[] = debaters.map(() => "running");
+      const responses = await Promise.all(debaters.map(async (d, i) => {
+        try {
+          const a = agents.get(d.agent);
+          const opts = await debateAgentOpts(a, d.model, d.effort);
+          const reply = a.oneShot ? await a.oneShot(promptFor(d), opts) : await a.send("__debate__", promptFor(d), cwd, opts);
+          states[i] = "done"; onState(i, "done");
+          return { id: d.id, label: d.label, text: (reply.text || "").trim() || "(sem resposta)" };
+        } catch (e: any) {
+          anyFailed = true; states[i] = "failed"; onState(i, "failed");
+          return { id: d.id, label: d.label, text: "(falha: " + String(e?.message ?? e) + ")" };
+        }
+      }));
+      return { responses, failed: anyFailed, states };
+    },
+    oneShotJudge: async (prompt) => {
+      const opts = await debateAgentOpts(judge);
+      const reply = judge.oneShot ? await judge.oneShot(prompt, opts) : await judge.send("__debatejudge__", prompt, cwd, opts);
+      return reply.text || "";
+    },
+    publishRoundVerdict: (round, verdict: DebateVerdict) => {
+      if (useManaged) runnerManagedExecution.publishSummary(debateId, managedPhaseExecutionId(debateId, `r${round}`), `Juiz: ${verdict.converged ? "consenso" : "ainda diverge"} (confiança ${(verdict.confidence * 100).toFixed(0)}%) — ${verdict.reason}`);
+    },
+    get aborted() { return ctrl.signal.aborted; },
+  };
+
+  try {
+    const result = await runDebate(host, { topic: command.topic, debaters, maxRounds });
+    roundsDone = result.rounds; converged = result.converged; failed = result.failed;
+    if (ctrl.signal.aborted && live.pending.length) postAssistant(`_Observação: ${live.pending.length} recado(s) enviado(s) durante o debate não foram usados — o debate foi cancelado antes da rodada seguinte._`);
+  } catch (error: any) {
+    failed = true;
+    fail("Debate: " + String(error?.message ?? error));
+  } finally {
+    emitProgress(roundsDone, "done", [], 0);
+    if (useManaged) {
+      const state = ctrl.signal.aborted ? "cancelled" : failed ? "failed" : "succeeded";
+      const outcome = converged ? `Consenso em ${roundsDone} rodada(s)` : `Sem consenso em ${roundsDone} rodada(s)`;
+      try { runnerManagedExecution.closeRoot(debateId, state, `${outcome} · ${debaters.length} IAs`); }
+      catch (error) { console.error(`[runner] debate ${debateId} não encerrou o trabalho: ${String((error as Error)?.message || error)}`); }
+    }
+    liveDebates.delete(debateId);
+    managedRuns.delete(debateId);
+    if (executionAborts.get(debateId) === ctrl) executionAborts.delete(debateId);
+    pushRuns();
+  }
+}
+
 type ExecutionControlCommand = Extract<HubToRunner, { t: "execution_control" }>;
 type ExecutionControlResult = Extract<RunnerToHub, { t: "execution_control_result" }>;
 const CONTROL_RESULTS_FILE = join(JDIR, "execution-control-results.json");
@@ -1279,6 +1524,16 @@ function connect(): void {
       if (m.t === "council_start" && typeof m.requestId === "string" && typeof m.sessionId === "string" && m.plan && typeof m.plan === "object") {
         if (!EXECUTIONS_ENABLED) { send({ t: "error", reqId: m.requestId, message: "acompanhamento de trabalhos está desabilitado neste Runner" }); return; }
         handleCouncilStart(m as any); return;
+      }
+      if (m.t === "tournament_start" && typeof m.requestId === "string" && typeof m.sessionId === "string" && m.plan && typeof m.plan === "object") {
+        if (!EXECUTIONS_ENABLED) { send({ t: "error", reqId: m.requestId, message: "acompanhamento de trabalhos está desabilitado neste Runner" }); return; }
+        handleTournamentStart(m as any); return;
+      }
+      if (m.t === "debate_start" && typeof m.requestId === "string" && typeof m.sessionId === "string" && typeof m.topic === "string") {
+        void handleDebateStart(m as any); return;
+      }
+      if (m.t === "debate_interject" && typeof m.reqId === "string" && typeof m.sessionId === "string" && typeof m.text === "string") {
+        handleDebateInterject(m as any); return;
       }
       if (m.t === "framework_publish" && typeof m.requestId === "string" && typeof m.hash === "string" && Array.isArray(m.files)) {
         // Materialize the published Framework Jarvis onto this machine (idempotent by hash). The core

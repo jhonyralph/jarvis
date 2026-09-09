@@ -20,7 +20,7 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
  *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
  *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
  *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
-export const RUNNER_PROTOCOL_VERSION = 16;
+export const RUNNER_PROTOCOL_VERSION = 17;
 
 /**
  * Em qual versão cada CAPACIDADE entrou. Comparar com número solto espalha a regra pelo código, e
@@ -35,6 +35,8 @@ export const RUNNER_CAPABILITY_SINCE = {
   /** criar tarefa na fonte da própria máquina */ taskSourceWrite: 14,
   /** o CORPO do updater vem do Hub, conferido por hash (UPD-02) */ updaterFromHub: 15,
   /** abrir subsessoes na MAQUINA da sessao, e nao so no Hub */ fanoutOnRunner: 16,
+  /** Espaco de Solucoes (Benchmark/Revisao/Auditoria) na MAQUINA da sessao */ tournamentOnRunner: 17,
+  /** Debate iterativo na MAQUINA da sessao, com recado ao vivo */ debateOnRunner: 17,
 } as const;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
@@ -240,6 +242,9 @@ export type RunnerToHub =
   /** @deprecated v1 compatibility during rolling upgrades. */
   | { t: "stream"; sessionId: string; agent?: string; ev: RunnerStreamEvent }
   | { t: "message"; sessionId: string; message: RunnerMsg }
+  | { t: "debate_started"; sessionId: string; debateId: string; debaters: string[]; maxRounds: number }
+  | { t: "debate_progress"; sessionId: string; debateId: string; round: number; maxRounds: number; phase: string; rootExecutionId?: string; debaters: Array<{ label: string; state: string }>; interjected: number; canSay: boolean }
+  | { t: "debate_said"; reqId: string; ok: boolean; sessionId: string; debateId?: string; pending?: number; msgId?: string; message: string }
   | { t: "activity"; sessionId: string; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[]; background?: boolean }
   | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; mtimeMs?: number; truncated?: boolean; error?: string; image?: boolean; mime?: string }
   /** directory listing for the folder browser (reply to Hub->Runner "listdir").
@@ -346,6 +351,15 @@ export type HubToRunner =
   | { t: "usage"; reqId: string; agent?: string }
   /** Start a Jarvis Conselho workflow and persist the final synthesis into this managed session. */
   | { t: "council_start"; requestId: string; sessionId: string; requestText: string; mode: "quick" | "technical" | "critical" | "deep"; finalTaskId: string; title?: string; plan: ManagedExecutionPlanWire; policy?: ManagedExecutionPolicyWire }
+  // Espaco de Solucoes na maquina da sessao. Mesmo formato do council: o Hub monta o plano (e e
+  // dono da posse da execucao), a maquina executa e publica a mensagem final no store DELA.
+  | { t: "tournament_start"; requestId: string; sessionId: string; requestText: string; mode: "benchmark" | "review" | "audit"; judgeTaskId: string; candidateTaskIds: string[]; title?: string; plan: ManagedExecutionPlanWire; policy?: ManagedExecutionPolicyWire }
+  // Debate na maquina da sessao. Diferente do council/tournament, o Hub NAO monta plano: quem
+  // escolhe os debatentes e o juiz e a maquina, porque disponibilidade de CLI e fato local dela.
+  // O Hub manda o tema ja contextualizado (historico remoto) e o debateId, de que ele e dono.
+  | { t: "debate_start"; requestId: string; sessionId: string; debateId: string; requestText: string; topic: string; agents?: string[]; effortLevel: string; maxRounds: number; policy?: ManagedExecutionPolicyWire }
+  // Recado do usuario para o debate em andamento naquela maquina.
+  | { t: "debate_interject"; reqId: string; sessionId: string; text: string; msgId?: string }
   /** Publish a Framework Jarvis snapshot to this machine; the Runner materializes it and replies
    *  framework_published. Content-addressed by `hash` — a machine already on that hash is a no-op. */
   | { t: "framework_publish"; requestId: string; version: number; hash: string; files: Array<{ path: string; content: string }> }
