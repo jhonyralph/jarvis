@@ -37,11 +37,20 @@ printf '  -> typecheck\n'
 npm run --silent typecheck || fail 'typecheck falhou'
 
 printf '  -> testes\n'
-npm test --silent >/dev/null 2>&1 || {
-  # roda de novo mostrando a saída: o resumo silencioso não ajuda a consertar
-  npm test
-  fail 'testes falharam'
-}
+if ! npm test --silent >/dev/null 2>&1; then
+  # A primeira rodada falhou. Roda de novo MOSTRANDO a saída — o resumo silencioso não ajuda a
+  # consertar — e o resultado DELA é que decide.
+  #
+  # Antes o `fail` vinha SEMPRE, mesmo quando a segunda rodada passava. Resultado observado: um
+  # "[pre-push] BLOQUEADO: testes falharam" impresso logo abaixo de um "# fail 0", com o push
+  # barrado por ruído. A suíte tem e2e sensível a porta/timing sob carga (o flake conhecido é
+  # apps/hub/src/update-handshake.e2e.test.ts, que passa isolado em ~12s).
+  #
+  # Uma quebra de verdade falha nas DUAS rodadas e continua barrando — que é o ponto do gate.
+  printf '\n[pre-push] a primeira rodada falhou; repetindo com a saída visível\n\n'
+  npm test || fail 'testes falharam nas DUAS rodadas'
+  printf '\n[pre-push] a segunda rodada passou — primeira tratada como flake, seguindo\n'
+fi
 
 # app.js não é coberto pelo tsc e é o arquivo que mais mexemos — um erro de sintaxe aqui derruba a
 # UI inteira e só apareceria no navegador.
