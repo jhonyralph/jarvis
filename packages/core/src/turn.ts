@@ -130,10 +130,15 @@ export interface ManagedTurnInput {
   onError(message: string, limit: boolean): void;
 }
 
+/** Reconhece erro de credito/limite na mensagem da CLI. `session limit` esta aqui porque e a
+ *  redacao da Anthropic ("You've hit your session limit - resets 12:50am"): sem ela o turno caia
+ *  como falha generica, sem troca para a IA secundaria e sem registro de exaustao. Os qualificadores
+ *  sao enumerados de proposito — aceitar qualquer palavra antes de "limit" pegaria "time limit"
+ *  (timeout) e bloquearia a IA primaria ate a meia-noite por engano. */
 export function isLimitError(message: string): boolean {
   const text = String(message || "").replace(/\s+/g, " ").trim();
   if (!text) return false;
-  return /\b(rate limit|usage limit|quota|insufficient quota|credit(?:s)? (?:exhausted|limit|spent|depleted)|limit (?:reached|exceeded|hit)|(?:exceeded|reached|hit) (?:the )?(?:usage |rate |credit )?limit)\b/i.test(text);
+  return /\b(rate limit|usage limit|quota|insufficient quota|credit(?:s)? (?:exhausted|limit|spent|depleted)|session limit|limit (?:reached|exceeded|hit)|(?:exceeded|reached|hit) (?:the |your )?(?:usage |rate |credit |session )?limit)\b/i.test(text);
 }
 
 export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnInput): Promise<void> {

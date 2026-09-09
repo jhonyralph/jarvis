@@ -999,7 +999,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         // rodando" — o marcador ⚠ facilita achar essas linhas em hub.log com um grep.
         console.warn(`[claude-cli]${tail > 2000 ? " ⚠" : ""} spawn->1a-linha=${tFirstLine ? tFirstLine - tSpawn : -1}ms spawn->result=${tResult - tSpawn}ms result->fechou=${tail}ms total=${tClose - tSpawn}ms (sessão ${sessionId})`);
       }
-      if (streamError) throw new Error(streamError);
+      // Mesma regra do caminho do Codex (abaixo): um erro NO FIM do stream nao pode descartar uma
+      // resposta que ja chegou inteira. A CLI da Claude marca `is_error` quando corta o turno por
+      // limite de sessao, e o texto ja produzido esta em `finalText` — falhar aqui apagava trabalho
+      // concluido e mostrava a notificacao da CLI como se fosse a causa da falha.
+      // Ainda falha quando nao ha conteudo, ou quando o unico conteudo E a propria mensagem de erro
+      // (`finalText` cai para `o.result` logo acima) — ai um "sucesso" seria mentira.
+      const usableText = finalText.trim();
+      if (streamError && (!usableText || usableText === streamError.trim())) throw new Error(streamError);
       if (sessionOut) this.bindSession(sessionId, sessionOut);
       return { text: finalText, usage };
     }

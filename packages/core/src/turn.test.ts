@@ -122,6 +122,14 @@ test("limit detection ignores normal provider telemetry", () => {
   assert.equal(isLimitError("rate limit exceeded"), true);
   assert.equal(isLimitError("usage limit reached"), true);
   assert.equal(isLimitError("insufficient quota"), true);
+  // A redacao REAL da Anthropic. Sem ela o turno caia como falha generica: sem troca para a IA
+  // secundaria, sem registro de exaustao, e a mensagem crua da CLI virando a causa da falha.
+  assert.equal(isLimitError("You've hit your session limit · resets 12:50am (America/Sao_Paulo)"), true);
+  assert.equal(isLimitError("hit your usage limit"), true);
+  // O outro lado: qualificador aberto pegaria timeout e bloquearia a IA primaria ate a meia-noite
+  // por engano. Limite de TEMPO nao e limite de credito.
+  assert.equal(isLimitError("o processo excedeu o time limit"), false);
+  assert.equal(isLimitError("connection refused"), false);
 });
 
 test("attachment builder preserves text files and turns images into readable paths/previews", () => {
