@@ -1,3 +1,16 @@
+# [0.35.0](https://github.com/jhonyralph/jarvis/compare/v0.34.0...v0.35.0) (2026-09-09)
+
+
+### Bug Fixes
+
+* **limite:** turno concluido para de ser marcado como falha ao bater o limite de sessao ([fa247fb](https://github.com/jhonyralph/jarvis/commit/fa247fb96ff24938a35c04a670bdc2df94561886))
+* **trabalhos:** projetar um evento invalido no journal deixa de derrubar o turno no Hub ([f32c3f6](https://github.com/jhonyralph/jarvis/commit/f32c3f67ad12ec38702fba7e6866e9daccb5952e))
+
+
+### Features
+
+* **maquinas:** Espaco de Solucoes e Debate passam a rodar em qualquer maquina ([8c3776f](https://github.com/jhonyralph/jarvis/commit/8c3776f163d3b58e81e8ff2eedf528d38e05ce22))
+
 # [0.34.0](https://github.com/jhonyralph/jarvis/compare/v0.33.1...v0.34.0) (2026-09-07)
 
 
