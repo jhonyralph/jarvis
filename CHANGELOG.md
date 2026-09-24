@@ -1,3 +1,10 @@
+# [0.36.0](https://github.com/jhonyralph/jarvis/compare/v0.35.0...v0.36.0) (2026-09-24)
+
+
+### Features
+
+* **hub:** turno para de travar no pipe, cancelar preserva o historico e o wake exige segredo local ([9c4222e](https://github.com/jhonyralph/jarvis/commit/9c4222e8876c800436ff3a76364d8759e1b054dd))
+
 # [0.35.0](https://github.com/jhonyralph/jarvis/compare/v0.34.0...v0.35.0) (2026-09-09)
 
 
