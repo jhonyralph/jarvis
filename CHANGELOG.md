@@ -1,3 +1,10 @@
+# [0.37.0](https://github.com/jhonyralph/jarvis/compare/v0.36.0...v0.37.0) (2026-09-24)
+
+
+### Features
+
+* **historico:** turno que sumiu volta do transcript do agente ([bd94dbf](https://github.com/jhonyralph/jarvis/commit/bd94dbfba4cfbd079b13b5ee21157a3acf271f4f))
+
 # [0.36.0](https://github.com/jhonyralph/jarvis/compare/v0.35.0...v0.36.0) (2026-09-24)
 
 
