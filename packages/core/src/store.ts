@@ -21,6 +21,9 @@ export interface StoredMessage {
   /** assistant only: o turno foi interrompido antes de terminar. A mensagem é o que a IA já tinha
    *  produzido — guardada de propósito, para o cancelamento não apagar o trabalho do histórico. */
   interrupted?: boolean;
+  /** Turno reconstruído do transcript do provedor porque tinha sumido do store (history-gaps.ts).
+   *  Marcado de propósito: o conteúdo é real, mas a rota até aqui não foi a normal. */
+  restored?: boolean;
   usage?: {
     costUsd?: number;
     costKind?: "billed" | "estimated_api_equivalent" | "subscription_included" | "tokens_only" | "unavailable";
@@ -287,6 +290,23 @@ export class Store {
 
   history(id: string): StoredMessage[] {
     return this.data[id]?.messages ?? [];
+  }
+
+  /** Reinsere turnos recuperados do transcript nativo, em ordem de tempo (ver history-gaps.ts).
+   *
+   *  Diferente de `add`, isto escreve no MEIO do histórico, então reescreve o JSONL inteiro em vez
+   *  de anexar — é a mesma operação de `dropLastUser`, e pela mesma razão: append-only só serve
+   *  enquanto o tempo anda para frente. Nada é substituído; o que já estava no store continua sendo
+   *  a verdade e o restaurado apenas preenche o buraco. Devolve quantas mensagens entraram. */
+  insertRestored(id: string, messages: StoredMessage[]): number {
+    const s = this.data[id];
+    if (!s || !messages.length) return 0;
+    const restored = messages.map((m) => ({ ...m, restored: true as const }));
+    s.messages = [...s.messages, ...restored].sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+    s.updatedAt = s.messages.at(-1)?.ts ?? s.updatedAt;
+    this.rewriteMessages(id, s.messages);
+    this.flush();
+    return restored.length;
   }
 
   /** Remove the trailing USER message — a turn the user cancelled before any reply, "taking it back"

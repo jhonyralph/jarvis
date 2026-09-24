@@ -218,3 +218,35 @@ test("ensure não reescreve a mãe de uma sessão que já existe", () => {
     assert.equal(s.childrenOf("mae-2").length, 0);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+test("insertRestored reinsere turno no MEIO do historico e sobrevive ao reload", () => {
+  // Recuperacao de turno perdido (ver history-gaps.ts): escrever no meio exige reescrever o JSONL,
+  // porque append-only so funciona enquanto o tempo anda para frente.
+  const d = mkdtempSync(join(tmpdir(), "jarvis-store-restore-"));
+  try {
+    const s = new Store({ agent: "codex", cwd: "/repo" }, d);
+    s.ensure("s1");
+    s.add("s1", { role: "user", text: "segunda pergunta", ts: 300 });
+    s.add("s1", { role: "assistant", text: "segunda resposta", ts: 400 });
+
+    const n = s.insertRestored("s1", [
+      { role: "user", text: "PRIMEIRA pergunta, que tinha sumido", ts: 100 },
+      { role: "assistant", text: "PRIMEIRA resposta", ts: 200, activity: [{ kind: "tool_completed" }] },
+    ]);
+    assert.equal(n, 2);
+
+    const h = s.history("s1");
+    assert.deepEqual(h.map((m) => m.ts), [100, 200, 300, 400], "entra em ordem de tempo, nao no fim");
+    assert.equal(h[0].restored, true, "a origem fica marcada");
+    assert.equal(h[2].restored, undefined, "o que ja estava nao e remarcado");
+    assert.deepEqual(h[1].activity, [{ kind: "tool_completed" }]);
+
+    // O JSONL foi REESCRITO (nao anexado): um Store novo le exatamente a mesma ordem.
+    const reaberto = new Store({ agent: "codex", cwd: "/repo" }, d);
+    assert.deepEqual(reaberto.history("s1").map((m) => m.text), h.map((m) => m.text));
+    assert.equal(reaberto.history("s1")[0].restored, true);
+
+    assert.equal(s.insertRestored("s1", []), 0);
+    assert.equal(s.insertRestored("inexistente", [{ role: "user", text: "x", ts: 1 }]), 0);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

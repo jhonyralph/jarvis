@@ -947,6 +947,9 @@
         // Turno parado no meio: o histórico guarda o que a IA já tinha feito, então precisa DIZER que
         // está incompleto — senão um parcial passa por resposta final. Mesma marca do bloco ao vivo.
         if(m.interrupted){ const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ interrompido'; d.appendChild(n); }
+        // Turno que tinha sumido e voltou do transcript do provedor: o conteúdo é real, mas a rota
+        // até aqui não foi a normal — dizer isso é mais honesto do que fingir que nunca faltou.
+        if(m.restored){ const n=document.createElement('div'); n.className='usage'; n.textContent='↺ recuperado do histórico do agente'; d.appendChild(n); }
         const fn=followupNoticeEl(m); if(fn)d.appendChild(fn); } return d; }
     // Réplica ESTÁTICA (histórico) do que streamTool/streamText/ensureSubAgent fazem AO VIVO — mesma
     // estrutura visual (caixas de subagente com contagem, linhas de ferramenta), mas com estado local
