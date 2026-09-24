@@ -25,7 +25,7 @@ const { createTray } = require("./src/control/tray")
 //   o que o usuário salvou NO APP > env JARVIS_APP_HUB_URL > Hub do runner desta máquina > loopback.
 // O passo do runner existe porque numa máquina só-runner não há Hub em 127.0.0.1:4577; o primeiro
 // existe porque, sem ele, corrigir o endereço exigia sair do app e rodar PowerShell.
-const { normalizeHubUrl, readRunnerHubUrl } = require("./src/shared/hub-url")
+const { normalizeHubUrl, readRunnerHubUrl, DEFAULT_HUB_URL } = require("./src/shared/hub-url")
 const { readSavedHubUrl, resolveHubTarget } = require("./src/shared/hub-config")
 const { registerSetupIpc, probe } = require("./src/setup/register-setup-ipc")
 
@@ -33,10 +33,17 @@ const { registerSetupIpc, probe } = require("./src/setup/register-setup-ipc")
 let hubTarget = { url: "http://127.0.0.1:4577", source: "fallback", sourceLabel: "padrão", usedFallback: true, candidates: [] }
 /** Último erro de carga, para a tela de configuração explicar o que aconteceu. */
 let lastLoadError
-function resolveHub() {
+/** Esta maquina HOSPEDA um Hub? So o loopback responder prova isso — e prova barato (recusa de
+ *  conexao volta na hora quando nao ha nada escutando). Nunca lanca: sem resposta = nao hospeda. */
+async function detectLocalHub() {
+  try { return (await probe(DEFAULT_HUB_URL, 1500)).ok ? DEFAULT_HUB_URL : undefined }
+  catch { return undefined }
+}
+async function resolveHub() {
   hubTarget = resolveHubTarget({
     saved: readSavedHubUrl(app.getPath("userData")),
     env: process.env.JARVIS_APP_HUB_URL,
+    localHub: await detectLocalHub(),
     runner: readRunnerHubUrl(),
     normalize: normalizeHubUrl,
   })
@@ -108,6 +115,7 @@ function scheduleReload() {
   reloadTimer = setTimeout(async () => {
     reloadTimer = null
     if (!mainWindow || mainWindow.isDestroyed()) return
+    await resolveHub() // o Hub local pode ter subido agora; ele tem precedencia sobre o do runner
     const alive = await probe(hubUrl(), 3000)
     if (alive.ok) { showingError = false; lastLoadError = undefined; mainWindow.loadURL(hubUrl()).catch(() => {}) }
     else scheduleReload()
@@ -116,8 +124,8 @@ function scheduleReload() {
 }
 
 /** Re-resolve a precedência e conecta já — usado pela tela de configuração ao salvar/limpar/tentar. */
-function rereadAndReload() {
-  resolveHub()
+async function rereadAndReload() {
+  await resolveHub()
   if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null }
   reloadDelay = RELOAD_BASE_MS
   if (!mainWindow || mainWindow.isDestroyed()) return createWindow(true)
@@ -198,10 +206,11 @@ function createWindow(show = true) {
 // `app.quit()` por construcao — e nada aqui pode mata-lo na saida (ver `window-all-closed` no fim).
 function ensureHubUp() {
   if (process.platform !== "win32") return           // so o Windows tem servico/tarefa JarvisHub
-  let host = ""
-  try { host = new URL(hubUrl()).hostname } catch { return }
-  if (!["127.0.0.1", "localhost", "::1"].includes(host)) return   // Hub remoto nao e nosso para subir
-  const req = http.get(`${hubUrl().replace(/\/+$/, "")}/health`, { timeout: 1500 }, (res) => { res.resume() })
+  // Sonda o LOOPBACK, nao `hubUrl()`: desde que a janela passou a poder apontar para outro endereco,
+  // olhar para a URL configurada fazia a maquina do Hub parar de subir o proprio Hub — bastava o
+  // endereco resolvido ser o nome do tailnet (que e ESTA maquina). Numa maquina so-runner o comando
+  // abaixo nao acha servico nem tarefa e nao faz nada: o custo e um powershell que sai em branco.
+  const req = http.get(`${DEFAULT_HUB_URL}/health`, { timeout: 1500 }, (res) => { res.resume() })
   const start = () => {
     try {
       spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -224,9 +233,9 @@ const HAS_LOCK = app.requestSingleInstanceLock()
 if (!HAS_LOCK) app.quit()
 app.on("second-instance", () => showWindow())
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!HAS_LOCK) return
-  resolveHub() // precisa do app pronto para `getPath("userData")`; define o alvo antes da 1a janela
+  await resolveHub() // precisa do app pronto para `getPath("userData")`; define o alvo antes da 1a janela
   registerSetupIpc({
     ipcMain,
     userDataDir: app.getPath("userData"),

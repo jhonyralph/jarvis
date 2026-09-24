@@ -1708,7 +1708,7 @@
       </div>
       <div class="personal-query-reference">
         <label><span data-i18n="referencePoint">Ponto de referência</span><select id="personalReference"><option value="auto" data-i18n="referenceAutomatic">Usar localização disponível</option><option value="region" data-i18n="referenceRegion">Informar região</option></select></label>
-        <label id="personalRegionRow" class="hidden"><span data-i18n="regionOrAddress">Região ou endereço</span><input id="personalRegion" type="search" maxlength="256" autocomplete="street-address" data-i18n-ph="regionOrAddressPh" placeholder="Ex.: Savassi, Belo Horizonte"></label>
+        <label id="personalRegionRow" class="hidden"><span data-i18n="regionOrAddress">Região ou endereço</span><input id="personalRegion" type="search" maxlength="256" autocomplete="street-address" data-i18n-ph="regionOrAddressPh" placeholder="Ex.: Centro, São Paulo"></label>
         <button id="personalRegionResolve" class="ghost hidden" type="button" data-i18n="findRegion">Localizar região</button>
       </div>
       <div id="personalReferenceHint" class="personal-note" role="status" aria-live="polite" data-i18n="referenceFallback">Se a localização atual não estiver disponível, escolha um favorito ou informe uma região.</div>
@@ -2212,6 +2212,8 @@
             <div id="secRunners" class="mut" style="font-size:12px">—</div>
             <div class="sec">Gerar convite (pessoa / navegador)</div>
             <div class="mut" style="font-size:12px;margin-bottom:6px">Crie um convite e compartilhe o link/código. Quem abrir vira um dispositivo conectado (revogável).</div>
+            <label>Nome do convite <input id="secInviteLabel" placeholder="ex.: Notebook do João, Celular da Ana" autocomplete="off" maxlength="40"></label>
+            <div class="mut" style="font-size:11px;margin:-4px 0 6px">Vira o nome do dispositivo quando o convite for resgatado. Em branco, o aparelho se nomeia sozinho (&ldquo;Windows&rdquo;, &ldquo;Android&rdquo;).</div>
             <label>Papel <select id="secRole"><option value="member">Membro</option><option value="owner">Dono</option></select></label>
             <label>Validade do acesso <select id="secTtl"><option value="3600">1 hora</option><option value="86400" selected>1 dia</option><option value="604800">7 dias</option><option value="2592000">1 mês</option><option value="7776000">3 meses</option><option value="31536000">1 ano</option><option value="0">Sem expiração</option></select></label>
             <div class="row"><button id="secGen" type="button">Gerar convite</button></div>

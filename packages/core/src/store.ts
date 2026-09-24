@@ -18,6 +18,9 @@ export interface StoredMessage {
   images?: string[]; // served URLs (/pasted/<file>) of pasted/attached images, shown inline
   files?: Array<{ name: string; content?: string; path?: string; size?: number; binary?: boolean; mime?: string }>; // non-image attachments; large/binary content is path-only
   activity?: unknown[]; // assistant only: the buffered live stream events (tool/text/thinking, incl. sub-agent parentId) for that turn — lets a reload rebuild the SAME activity blocks (incl. finished sub-agents) instead of just the final text
+  /** assistant only: o turno foi interrompido antes de terminar. A mensagem é o que a IA já tinha
+   *  produzido — guardada de propósito, para o cancelamento não apagar o trabalho do histórico. */
+  interrupted?: boolean;
   usage?: {
     costUsd?: number;
     costKind?: "billed" | "estimated_api_equivalent" | "subscription_included" | "tokens_only" | "unavailable";

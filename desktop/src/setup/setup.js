@@ -46,7 +46,10 @@ function renderCandidates(state) {
 function applyState(state) {
   if (!state) return;
   $("url").value = state.saved || "";
-  $("url").placeholder = state.url || "https://meu-hub.ts.net";
+  // Exemplo GENÉRICO, nunca o endereço real desta instalação: o placeholder é texto de exemplo, e o
+  // endereço em uso já aparece — com a origem — na lista "Endereços que encontrei nesta máquina".
+  // Ecoar o endereço verdadeiro aqui só o espalhava por prints e gravações de tela.
+  $("url").placeholder = "https://meu-hub.ts.net";
   renderCandidates(state);
   const err = $("err");
   if (state.lastError) {

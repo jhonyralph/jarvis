@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, isClaudeAsyncAgentLaunch, parseClaudeTaskNotification, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions } from "./agents.js";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, isClaudeAsyncAgentLaunch, parseClaudeTaskNotification, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions, settleOnExit } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("native continuity rejects one provider thread bound to multiple Jarvis sessions", () => {
@@ -534,4 +534,83 @@ test("plain assistant text is never parsed as a task-notification", () => {
 test("a batch of notifications in one injected turn closes each child independently", () => {
   const both = parseClaudeTaskNotification(`${NOTIFICATION}\n<task-notification><tool-use-id>toolu_02</tool-use-id><status>failed</status><summary>boom</summary></task-notification>`);
   assert.deepEqual(both.map((d) => [d.providerId, d.state]), [["toolu_013vHNuj2WnMBzfGyiXLRnJ9", "succeeded"], ["toolu_02", "failed"]]);
+});
+
+test("boundToolError poe teto no erro de ferramenta, preservando inicio E fim", async () => {
+  const { boundToolError, TOOL_ERROR_MAX_CHARS } = await import("./agents.js");
+  // Curto passa intacto — nenhum erro normal e afetado.
+  assert.equal(boundToolError("falhou: arquivo nao encontrado"), "falhou: arquivo nao encontrado");
+  assert.equal(boundToolError(undefined), undefined);
+  assert.equal(boundToolError(null), undefined);
+
+  // O caso medido em producao: 1,14 MB num unico tool_failed, gravado inline na mensagem e enviado
+  // ao cliente a CADA carga de historico.
+  const gigante = "INICIO-DO-ERRO" + "x".repeat(1_200_000) + "CAUSA-REAL-NO-FIM";
+  const cortado = boundToolError(gigante)!;
+  assert.ok(cortado.length < TOOL_ERROR_MAX_CHARS + 300, "cabe no teto (+ a marca de corte)");
+  assert.ok(cortado.length < gigante.length / 100, "reduz em mais de 100x");
+  assert.ok(cortado.startsWith("INICIO-DO-ERRO"), "mantem o comeco (tipo do erro)");
+  assert.ok(cortado.endsWith("CAUSA-REAL-NO-FIM"), "mantem o fim — e onde costuma estar a causa");
+  assert.match(cortado, /caracteres omitidos pelo Jarvis/, "o corte e declarado, nao silencioso");
+});
+
+test("withConfiguredModel: o modelo escolhido no config.toml nao some quando a CLI nao o publica", async () => {
+  const { withConfiguredModel } = await import("./agents.js");
+  // Caso real: config.toml pede gpt-6-astra, mas o catalogo da CLI 0.146.0 so vai ate gpt-5.6.
+  const catalogo = [
+    { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: ["low", "high"] },
+    { id: "gpt-5.5", label: "GPT-5.5", efforts: ["low", "high"] },
+  ];
+  const com = withConfiguredModel(catalogo, "gpt-6-astra");
+  assert.equal(com.length, 3);
+  assert.equal(com[0].id, "gpt-6-astra", "entra PRIMEIRO — e a escolha declarada da pessoa");
+  assert.equal(com[0].source, "config", "marcado como vindo do config, nao do provedor");
+  assert.equal(com[0].effortsVerified, false, "esforcos nao confirmados pelo provedor");
+  assert.equal(com[0].contextVerified, false);
+
+  // Ja no catalogo: nada muda, e nao duplica.
+  const semDup = withConfiguredModel(catalogo, "gpt-5.5");
+  assert.equal(semDup, catalogo, "mesma referencia — sem copia desnecessaria");
+
+  // Sem config: lista intacta.
+  assert.equal(withConfiguredModel(catalogo, undefined), catalogo);
+
+  // Catalogo vazio (CLI fora do ar) + config: sobra o configurado, que era o comportamento do catch.
+  assert.deepEqual(withConfiguredModel([], "gpt-6-astra").map((m) => m.id), ["gpt-6-astra"]);
+});
+
+// --- fim de processo: `exit` manda, `close` é só um bônus -----------------------------------------
+// Regressão do incidente de 2026-09-23 (sessão codex 6fda1c58): `close` só dispara quando o filho
+// saiu E todo stdio herdado fechou. Três dev servers que o agente deixou de pé herdaram o pipe e
+// seguraram a ponta de escrita; o turno ficou "rodando" por 2h15 depois de a resposta estar pronta,
+// e foi descartado no fim. Estes testes fixam a regra nova: quem encerra o turno é o `exit`.
+
+test("turno encerra no exit mesmo quando um neto segura o pipe e o close nunca vem", async () => {
+  const handlers = new Map<string, (...a: any[]) => void>();
+  const emitter = { on: (ev: string, fn: (...a: any[]) => void) => handlers.set(ev, fn) };
+  let destroyed = 0;
+  const p = { stdout: { destroy: () => { destroyed++; } }, stderr: { destroy: () => { destroyed++; } } };
+  const seen: Array<{ code: number | null; drained: boolean }> = [];
+  settleOnExit(p, emitter, (code, drained) => seen.push({ code, drained }), 5);
+
+  handlers.get("exit")!(0);                                    // processo morreu...
+  assert.deepEqual(seen, [], "não encerra na hora: ainda pode haver bytes no buffer do pipe");
+  await new Promise((r) => setTimeout(r, 25));                 // ...e o `close` nunca chega
+  assert.deepEqual(seen, [{ code: 0, drained: false }]);
+  assert.equal(destroyed, 2, "solta a nossa ponta do pipe que o neto órfão mantinha aberta");
+});
+
+test("close normal continua ganhando, e sem destruir o stdio no meio da drenagem", async () => {
+  const handlers = new Map<string, (...a: any[]) => void>();
+  const emitter = { on: (ev: string, fn: (...a: any[]) => void) => handlers.set(ev, fn) };
+  let destroyed = 0;
+  const p = { stdout: { destroy: () => { destroyed++; } }, stderr: { destroy: () => { destroyed++; } } };
+  const seen: Array<{ code: number | null; drained: boolean }> = [];
+  settleOnExit(p, emitter, (code, drained) => seen.push({ code, drained }), 5);
+
+  handlers.get("exit")!(3);
+  handlers.get("close")!(3);                                   // chegou dentro da janela
+  await new Promise((r) => setTimeout(r, 25));
+  assert.deepEqual(seen, [{ code: 3, drained: true }], "encerra UMA vez só, pelo caminho drenado");
+  assert.equal(destroyed, 0, "o pipe fechou sozinho — nada a destruir");
 });

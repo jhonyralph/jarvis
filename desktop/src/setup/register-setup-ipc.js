@@ -53,7 +53,9 @@ function friendly(e) {
  * @param {string} deps.userDataDir  onde o hub-config.json é gravado
  * @param {() => object} deps.hubState  estado resolvido atual (url/source/sourceLabel/candidates)
  * @param {() => string|undefined} deps.lastError  último erro de carga, para a tela explicar
- * @param {() => void} deps.rereadAndReload  re-resolve a precedência e recarrega a janela
+ * @param {() => Promise<void>} deps.rereadAndReload  re-resolve a precedência e recarrega a janela.
+ *        É assíncrono porque a precedência sonda o loopback (o Hub desta máquina vem antes do
+ *        endereço do runner); sem esperar, a tela devolveria o estado ANTERIOR à sua própria ação.
  */
 function registerSetupIpc({ ipcMain, userDataDir, hubState, lastError, rereadAndReload }) {
   const state = () => ({ ...hubState(), saved: readSavedHubUrl(userDataDir) || "", lastError: lastError() });
@@ -71,17 +73,17 @@ function registerSetupIpc({ ipcMain, userDataDir, hubState, lastError, rereadAnd
     if (r.usedFallback) return { ok: false, error: r.warning || "endereço vazio" };
     // Guarda a URL já normalizada: o que a tela mostra depois é exatamente o que o app vai carregar.
     if (!writeSavedHubUrl(userDataDir, r.url)) return { ok: false, error: "não consegui gravar a configuração" };
-    rereadAndReload();
+    await rereadAndReload();
     return { ok: true, url: r.url, state: state() };
   });
 
-  ipcMain.handle("jarvis:hub:clear", () => {
+  ipcMain.handle("jarvis:hub:clear", async () => {
     if (!writeSavedHubUrl(userDataDir, "")) return { ok: false, error: "não consegui gravar a configuração" };
-    rereadAndReload();
+    await rereadAndReload();
     return { ok: true, state: state() };
   });
 
-  ipcMain.handle("jarvis:hub:retry", () => { rereadAndReload(); return { ok: true }; });
+  ipcMain.handle("jarvis:hub:retry", async () => { await rereadAndReload(); return { ok: true }; });
 }
 
 module.exports = { registerSetupIpc, probe, friendly };

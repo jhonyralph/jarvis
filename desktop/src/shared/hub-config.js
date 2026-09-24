@@ -55,12 +55,14 @@ function writeSavedHubUrl(dir, hubUrl, { writeFile, mkdir, join } = {}) {
 const SOURCE_LABELS = {
   app: "configurado no app",
   env: "JARVIS_APP_HUB_URL",
+  local: "Hub desta máquina (127.0.0.1)",
   runner: "runner desta máquina (~/.jarvis/runner.env)",
   fallback: "padrão",
 };
 
 /**
- * Precedência: **o que o usuário salvou no app** > env > Hub do runner desta máquina > loopback.
+ * Precedência: **o que o usuário salvou no app** > env > Hub DESTA máquina > Hub do runner desta
+ * máquina > loopback.
  *
  * O valor salvo no app vem primeiro de propósito: é a ação mais explícita e mais recente que
  * alguém pode tomar, e é a única disponível para quem só tem a janela na frente. Para não virar
@@ -68,12 +70,19 @@ const SOURCE_LABELS = {
  * janela mostra qual está valendo — além do botão que limpa a escolha local e devolve a precedência
  * para o sistema.
  *
+ * `localHub` (a sondagem do loopback, feita por quem chama) vem ANTES do runner porque numa máquina
+ * que HOSPEDA o Hub as duas origens são o mesmo Hub — mas com endereços diferentes, e o token do
+ * dispositivo mora no localStorage de UMA origem. Preferir o endereço do runner ali trocava a
+ * origem da janela e derrubava a sessão: o app voltava a pedir código de convite numa máquina onde
+ * ninguém tinha mudado nada. Numa máquina só-runner o loopback não responde e a regra não muda.
+ *
  * `normalize` é o `normalizeHubUrl` do módulo vizinho (injetado para manter este arquivo sem ciclo).
  */
-function resolveHubTarget({ saved, env, runner, normalize }) {
+function resolveHubTarget({ saved, env, localHub, runner, normalize }) {
   const raw = [
     { source: "app", value: saved },
     { source: "env", value: env },
+    { source: "local", value: localHub },
     { source: "runner", value: runner },
   ].map((c) => ({ ...c, value: typeof c.value === "string" ? c.value.trim() : "" }));
 

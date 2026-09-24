@@ -14,8 +14,8 @@
 import { createServer } from "node:http";
 import { spawn, execFile } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID, randomBytes, createHash } from "node:crypto";
-import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
+import { randomUUID, randomBytes, createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync, rmSync, chmodSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join, normalize, dirname, basename, relative, resolve, sep } from "node:path";
 import QRCode from "qrcode";
@@ -35,7 +35,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, nativeHistory, nativeTitleCached, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, tournamentCandidateResults, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, listProviderTasks, listProviderStates, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, runDebate, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, tournamentCandidateResults, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, listProviderTasks, listProviderStates, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, runDebate, mergeActiveRunSessions, trimMessageActivity, attachPartialTurn, turnProducedWork, ACTIVITY_PAGE_DEFAULT, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, RUNNER_CAPABILITY_SINCE, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -309,6 +309,10 @@ const LOCAL_ID = "local";
 let VOICE = process.env.JARVIS_VOICE || "en_GB-alan-medium";
 // cap how many messages we send/render on open — long sessions were heavy on mobile
 const HISTORY_CAP = Number(process.env.JARVIS_HISTORY_CAP || 120);
+// Eventos de atividade por mensagem na carga de historico. O `activity` e 92% da massa das sessoes
+// (145,9 MB de 158,7 MB medidos nesta instalacao) e viajava inteiro a cada abertura de conversa.
+// O restante volta sob demanda por `activity_all` — corte com paginacao, nao perda.
+const ACTIVITY_CAP = Number(process.env.JARVIS_ACTIVITY_CAP || ACTIVITY_PAGE_DEFAULT);
 
 // Agnostic registry — every agent is registered; clients pick per message.
 const DEFAULT_AGENT = process.env.JARVIS_AGENT || "claude-code";
@@ -640,7 +644,7 @@ function taskConnectionsFrame(): Record<string, unknown> {
         runnerId: rc.id,
         label: rc.info.label || rc.info.host || rc.id,
         servers: Array.isArray(rc.info.taskMcpServers) ? rc.info.taskMcpServers : [],
-        // O caminho vem DA MÁQUINA. Enquanto vinha daqui, uma Luby Linux exibia o caminho do Windows
+        // O caminho vem DA MÁQUINA. Enquanto vinha daqui, uma máquina Linux exibia o caminho do Windows
         // do Hub como se fosse o dela — mesma família de engano da fatia C.
         configFile: rc.info.taskMcpConfigFile || "",
         known: Array.isArray(rc.info.taskMcpServers),
@@ -944,19 +948,23 @@ const MIME: Record<string, string> = {
 // HTML's single inline <script> runs under a per-response NONCE (no 'unsafe-inline'
 // for scripts), so an injected inline script can't execute — real XSS mitigation,
 // which matters because a device token lives in the page's localStorage.
-function csp(nonce?: string): string {
+function csp(nonce?: string, host?: string): string {
   const script = nonce ? `script-src 'self' 'nonce-${nonce}'` : "script-src 'self'";
+  // `ws: wss:` liberava QUALQUER host: um XSS teria um cano pronto para fora. A UI so abre socket
+  // para a propria origem (`new WebSocket(location.host)`), entao a lista e o proprio host — nomeado
+  // em vez de so `'self'` porque navegador antigo (Safari < 15.4) nao casava ws:// com 'self'.
+  const sockets = host && /^[A-Za-z0-9._:[\]-]+$/.test(host) ? ` ws://${host} wss://${host}` : "";
   return `default-src 'self'; ${script}; style-src 'self' 'unsafe-inline'; ` +
-    "connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self' blob: data:; " +
+    `connect-src 'self'${sockets}; img-src 'self' data:; media-src 'self' blob: data:; ` +
     "font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 }
-function secHeaders(nonce?: string): Record<string, string> {
+function secHeaders(nonce?: string, host?: string): Record<string, string> {
   return {
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
     "referrer-policy": "no-referrer",
     "permissions-policy": "microphone=(self), camera=(), geolocation=(self)",
-    "content-security-policy": csp(nonce),
+    "content-security-policy": csp(nonce, host),
   };
 }
 const PASTED_DIR = join(homedir(), ".jarvis", "pasted");
@@ -1100,7 +1108,7 @@ const server = createServer((req, res) => {
   if (ext === ".html") {
     const nonce = randomBytes(16).toString("base64");
     const html = readFileSync(file, "utf8").replace(/<script(?![^>]*\bsrc=)/gi, `<script nonce="${nonce}"`);
-    res.writeHead(200, { ...secHeaders(nonce), "content-type": MIME[ext], "cache-control": "no-cache, must-revalidate" });
+    res.writeHead(200, { ...secHeaders(nonce, String(req.headers.host || "")), "content-type": MIME[ext], "cache-control": "no-cache, must-revalidate" });
     res.end(html);
     return;
   }
@@ -1231,8 +1239,12 @@ function sendPendingAsk(ws: WebSocket, runnerId: string, sid: string): void {
 // runs são per-machine no CONTEÚDO (o frame carrega runnerId), não na entrega: a visão unificada
 // precisa dos runs de TODAS as máquinas que o cliente pode usar, não só da que está em foco.
 function broadcastRuns(): void {
+  // Duas fontes, um so frame: turno normal marca a sessao em `activeRuns`; trabalho gerenciado
+  // (Conselho / Espaco de Solucoes / Debate) e registrado pelo id da EXECUCAO, carregando a sessao
+  // junto. Sem unir aqui, um Conselho rodava com a conversa apagada — que era o sintoma relatado.
+  const ativas = mergeActiveRunSessions(activeRuns, localManagedRuns.values());
   for (const c of clientsAuthorizedFor(LOCAL_ID)) if (c.readyState === c.OPEN) {
-    send(c, { t: "runs", runnerId: LOCAL_ID, active: [...activeRuns].filter((sid) => canAccessSession(c, LOCAL_ID, sid)) });
+    send(c, { t: "runs", runnerId: LOCAL_ID, active: ativas.filter((sid) => canAccessSession(c, LOCAL_ID, sid)) });
   }
 }
 // single-flight global para operações de voz (resumo/digest): só 1 por vez em toda a instância,
@@ -1359,8 +1371,34 @@ function fullyAuthed(ws: WebSocket): boolean { if (!auth.AUTH_ENABLED) return tr
 function clearUnauthTimer(ws: WebSocket): void { const t = unauthTimers.get(ws); if (t) { clearTimeout(t); unauthTimers.delete(ws); } }
 function uaOf(req: any): string | undefined { const ua = req?.headers?.["user-agent"]; return typeof ua === "string" ? ua.slice(0, 200) : undefined; }
 function clientMeta(req: any): { ip: string; ua?: string } { return { ip: guard.clientIp(req), ua: uaOf(req) }; }
+// ---- wake listener: loopback is NOT proof of "processo desta maquina" ----
+// O Hub normalmente fica atras de `tailscale serve` / proxy reverso, que disca 127.0.0.1 — entao
+// TODO cliente remoto chega como loopback (docs/multi-runner.md 4a diz exatamente isso ao recusar
+// auto-trust de loopback). E WebSocket nao tem CORS: qualquer pagina aberta no navegador desta
+// maquina abre ws://127.0.0.1:4577 sozinha. Com o portao valendo so pelo IP, as tres mensagens de
+// wake — que injetam texto na sessao de voz, e `!comando` ali EXECUTA um shell (expandBang) —
+// ficavam abertas para qualquer par do tailnet e para qualquer site que o dono visitasse.
+// O listener e um processo LOCAL: ele le ~/.jarvis, entao um segredo por boot num arquivo 0600 e
+// um muro que nem o par proxyado nem a pagina web escalam. Mesmo desenho de PERM_TOKEN/TASK_BRIDGE_TOKEN.
+const WAKE_TOKEN = randomBytes(24).toString("hex");
+const WAKE_TOKEN_FILE = join(JARVIS_DIR, "wake-token");
+try {
+  mkdirSync(JARVIS_DIR, { recursive: true });
+  writeFileSync(WAKE_TOKEN_FILE, WAKE_TOKEN + "\n", { mode: 0o600 });
+  try { chmodSync(WAKE_TOKEN_FILE, 0o600); } catch { /* Windows: o ACL do perfil e a protecao real */ }
+} catch (e: any) {
+  console.error(`[hub] nao consegui gravar ${WAKE_TOKEN_FILE}: ${String(e?.message ?? e)} — o "Hey Jarvis" desta maquina nao vai autenticar.`);
+}
+process.env.JARVIS_WAKE_TOKEN = WAKE_TOKEN;
+/** Comparacao em tempo constante; comprimento diferente sai antes porque timingSafeEqual lanca. */
+function wakeTokenOk(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const a = Buffer.from(value), b = Buffer.from(WAKE_TOKEN);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 function isLocalWakeMsg(ip: string, msg: any): boolean {
   if (!guard.isLoopback(ip)) return false;
+  if (!wakeTokenOk(msg?.wakeToken)) return false;
   if (msg.t === "wake_hello" || msg.t === "wake_event") return true;
   return msg.t === "send" && msg.sessionId === WAKE_SESSION && msg.speak === true && typeof msg.text === "string";
 }
@@ -1780,7 +1818,7 @@ const RUNNER_OPS = new Set(["list", "open", "send", "new", "listdir", "configure
 // is selected — they never take the remote-forward path. These were NOT in RUNNER_OPS, so a member
 // without local access reached them: `sendTo` executes a turn ON THE HUB (normally full-access),
 // and search/summary read every local session. Gate them on LOCAL_ID like any other machine op.
-const LOCAL_OPS = new Set(["sendTo", "sendNew", "search"]);
+const LOCAL_OPS = new Set(["sendTo", "sendNew", "search", "activity_all"]);
 // Ops that act on the CURRENTLY SELECTED machine (local by default, or a remote the member may see):
 // the hub-owned queue flushes to it, cancel routes to it, summarize pulls its history. Gate on the
 // active runner so a member may drive only a machine they were granted.
@@ -2093,7 +2131,7 @@ async function verifyOrDeliverRunnerUpdate(rc: RunnerConn): Promise<void> {
     updateMachineNotice(rc.id, { ok: true, verified: true, state: "verified", behind: 1, log: `reiniciou e reconectou em ${rc.info.commit || pending.targetCommit}` }); flushQueuesForRunner(rc.id); return;
   }
   // Entregar um alvo que a máquina JÁ ULTRAPASSOU é pedir para ela voltar: o updater dela recusa,
-  // faz rollback e o ciclo recomeça — mas só depois de já tê-la derrubado (84 ciclos na Luby, com o
+  // faz rollback e o ciclo recomeça — mas só depois de já tê-la derrubado (84 ciclos numa máquina remota, com o
   // Hub em 911b9e9 e ela em 9f2697c). O Hub tem o repositório e sabe responder isso ANTES de mandar.
   const commitDela = (rc.info.commit || "").replace("+dirty", "");
   if (commitDela && !commitMatches(commitDela, pending.targetCommit)) {
@@ -2603,7 +2641,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
           model: m.model || su.model, effort: m.effort || su.effort, permissionMode: m.permissionMode,
         },
         total: m.total,
-        messages: messages.map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity, contextManifest: x.contextManifest })),
+        messages: messages.map((x: any) => ({ sessionId: m.sessionId, role: x.role, text: x.text, ts: x.ts, agent: x.agent || m.agent, speaker: x.speaker, images: x.images, files: x.files, usage: x.usage, name: x.name, detail: x.detail, path: x.path, adds: x.adds, dels: x.dels, rows: x.rows, activity: x.activity, contextManifest: x.contextManifest, interrupted: x.interrupted })),
         files: m.files,
       });
       replayRoute(request.socket, rc.id, m.sessionId); replayActivity(request.socket, rc.id, m.sessionId);
@@ -2946,7 +2984,15 @@ function broadcastExecutionConnection(runnerId: string, state: "online" | "offli
 }
 
 const managedWorktrees = new ManagedWorktreeManager(executionCfg.worktreeRoot);
-const localManagedRuns = new Set<string>();
+// rootExecutionId -> sessionId do CHAT (quando o trabalho nasceu de uma conversa).
+//
+// Era um Set de rootExecutionId. Como `broadcastRuns` publica IDS DE SESSAO, os dois lados falavam
+// vocabularios diferentes e a conversa NUNCA acendia "em progresso" durante Conselho, Espaco de
+// Solucoes ou Debate — so a contagem da lista de maquinas mexia. Guardar a sessao junto e o que
+// permite unir as duas fontes na hora de publicar.
+//
+// `execution_delegate` nao nasce de uma conversa: entra com `undefined` e apenas conta.
+const localManagedRuns = new Map<string, string | undefined>();
 function managedSecurityFor(agent: string, write: boolean): ManagedExecutionSecurity | undefined {
   if (agent === "mock" && process.env.JARVIS_ENABLE_MOCK === "1" && !write) return { commitPrevention: "provider_config", readOnlyEnforcement: "provider_sandbox" };
   if (agent === "claude-code") return { commitPrevention: "provider_config", readOnlyEnforcement: write ? undefined : "provider_sandbox" };
@@ -2992,7 +3038,7 @@ function startLocalManagedExecution(input: { requestId: string; title?: string; 
   const ctrl = new AbortController();
   try { executionOwnership.claim(LOCAL_ID, input.plan.rootExecutionId, input.principalId); }
   catch (error) { finish({ t: "execution_delegate_result", requestId: input.requestId, ok: false, error: String((error as Error)?.message || error) }); return; }
-  localManagedRuns.add(input.plan.rootExecutionId); localExecutionAborts.set(input.plan.rootExecutionId, ctrl);
+  localManagedRuns.set(input.plan.rootExecutionId, undefined); localExecutionAborts.set(input.plan.rootExecutionId, ctrl);
   void localManagedExecution.run(input.plan, {
     title: input.title, policy: boundedManagedPolicy(input.policy), signal: ctrl.signal,
     onAccepted: (rootExecutionId) => finish({ t: "execution_delegate_result", requestId: input.requestId, ok: true, rootExecutionId }),
@@ -4292,7 +4338,7 @@ async function startLocalCouncil(ws: WebSocket, input: {
   executionOwnership.claim(LOCAL_ID, built.rootExecutionId, socketPrincipalId(ws));
 
   const ctrl = new AbortController();
-  localManagedRuns.add(built.rootExecutionId); localExecutionAborts.set(built.rootExecutionId, ctrl); broadcastRuns();
+  localManagedRuns.set(built.rootExecutionId, input.sessionId); localExecutionAborts.set(built.rootExecutionId, ctrl); broadcastRuns();
   void localManagedExecution.run(built.plan, {
     title: built.title, policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy(built.policy, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: s.cwd || CWD }).policy)),
     signal: ctrl.signal,
@@ -4338,7 +4384,7 @@ async function startLocalTournament(ws: WebSocket, input: { sessionId: string; t
   executionOwnership.claim(LOCAL_ID, built.rootExecutionId, socketPrincipalId(ws));
 
   const ctrl = new AbortController();
-  localManagedRuns.add(built.rootExecutionId); localExecutionAborts.set(built.rootExecutionId, ctrl); broadcastRuns();
+  localManagedRuns.set(built.rootExecutionId, input.sessionId); localExecutionAborts.set(built.rootExecutionId, ctrl); broadcastRuns();
   void localManagedExecution.run(built.plan, {
     title: built.title, policy: boundedManagedPolicy(mergeAdaptiveManagedPolicy(built.policy, resolveAdaptivePolicy(adaptivePolicyDoc, { cwd: s.cwd || CWD }).policy)),
     signal: ctrl.signal,
@@ -4515,7 +4561,7 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
 
   const debateId = "debate:" + randomUUID();
   const ctrl = new AbortController();
-  localManagedRuns.add(debateId); localExecutionAborts.set(debateId, ctrl); broadcastRuns();
+  localManagedRuns.set(debateId, input.sessionId); localExecutionAborts.set(debateId, ctrl); broadcastRuns();
   // A partir daqui a sessão tem um debate vivo: o chat dela vira a porta de entrada de recados
   // (interjeição), até a síntese fechar a janela. Removido no `finally`, inclusive em erro/cancelamento.
   const live: LiveDebate = { debateId, sessionId: input.sessionId, pending: [], all: [], closed: false };
@@ -4532,18 +4578,10 @@ async function startLocalDebate(ws: WebSocket, input: { sessionId: string; topic
     return (a.oneShot ? await a.oneShot(prompt, opts) : await a.send("__debatejudge__", prompt, cwd, opts)) as any;
   };
 
-  let responses: DebaterResponse[] = [];
   let converged = false, failed = false, roundsDone = 0;
-  // Progresso ao vivo. Com Trabalhos habilitado, o DEBATE INTEIRO é um único trabalho principal (raiz
-  // aberta antes da 1ª rodada) e cada rodada entra nele como uma FASE, com os debatentes pendurados
-  // nela: quem gerencia é o trabalho, as rodadas e suas sessões são o subnível. Antes cada rodada
-  // abria uma raiz própria e o painel mostrava N "trabalhos principais" soltos para um debate só —
-  // e nenhum deles era cancelável, porque o abort estava registrado no id do debate, que não existia
-  // como raiz. As ferramentas/subagentes seguem streamando e o texto integral volta em
-  // report.tasks[].summary (= reply.text). Sem Trabalhos (ou se a raiz não abrir), cai no one-shot
-  // anterior (progresso por IA no card). O juiz e a síntese seguem one-shot (são meta-chamadas de
-  // resumo, não produzem subagentes) — o veredito de cada rodada é publicado no nó da fase.
-  // `phase:'done'` no finally remove o card; `rootExecutionId` liga o botão "ver em Trabalhos".
+  // Com Trabalhos habilitado, o DEBATE INTEIRO é um único trabalho principal (raiz aberta antes da
+  // 1ª rodada) e cada rodada entra nele como uma FASE, com os debatentes pendurados nela. Sem
+  // Trabalhos (ou se a raiz não abrir), cai no one-shot: progresso por IA no card.
   let useManaged = false;
   if (executionCfg.enabled) {
     try {
@@ -5057,12 +5095,17 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
       if (requestedAt) cancelRequestedAt.delete(sid);
       log.info("turn_cancel", { traceId: turnId, sessionId: sid, agent: agent.name, teardownMs: requestedAt ? Date.now() - requestedAt : undefined, totalMs: Date.now() - t0 });
       if (!sequencer.terminal) emit(bridge.cancelled("Cancelada por solicitação do usuário."));
+      // Cancelar interrompe o TRABALHO, não apaga o que já foi feito: o parcial viaja no erro para
+      // runManagedTurn persistir. Sem isto, parar um turno de uma hora apagava a hora inteira —
+      // incluindo a pergunta, porque o cliente pedia `dropLast` logo em seguida.
+      attachPartialTurn(e, buf);
       throw e;
     }
     metrics.record({ runnerId: LOCAL_ID, agent: agent.name, model: opts.model, ms: Date.now() - t0, ok: false, ts: Date.now() });
     log.warn("turn", { traceId: turnId, sessionId: sid, agent: agent.name, model: opts.model, effort: opts.effort, fastMode: opts.fastMode || undefined, ms: Date.now() - t0, ok: false, error: String((e as any)?.message ?? e).slice(0, 300) });
     if (!sequencer.terminal) emit(bridge.failed(String((e as any)?.message ?? e), "PROVIDER_ERROR"));
     notifyEvent("error", store.get(sid)?.title || "Sessão", String((e as any)?.message ?? e), sid, notificationTargetForSession(LOCAL_ID, sid));
+    attachPartialTurn(e, buf);   // idem ao cancelamento: falhar no meio não pode apagar o que já rodou
     throw e;
   } finally {
     if (localExecutionAborts.get(tracker.rootExecutionId) === ctrl) localExecutionAborts.delete(tracker.rootExecutionId);
@@ -5815,8 +5858,18 @@ function handleSecurityMsg(ws: WebSocket, msg: any): boolean {
     const raw = Number(msg.ttlSec);
     const ttlSec = raw === 0 ? 0 : Math.min(Math.max(raw || 86400, 60), 365 * 86400);
     const runners = Array.isArray(msg.runners) ? msg.runners.filter((x: any) => typeof x === "string") : [];
-    const { code, invite } = auth.mintInvite(p.userId, { role, runners, ttlSec });
+    const { code, invite } = auth.mintInvite(p.userId, { role, runners, ttlSec, label: msg.label });
     send(ws, { t: "sec_invite_created", code, invite });
+    secState(ws);
+    return true;
+  }
+  // Renomear um aparelho já pareado. O rótulo que ele traz no resgate é um palpite do navegador
+  // ("Windows", "Android"), então uma instalação com várias máquinas do mesmo sistema vira uma lista
+  // de homônimos — impossível decidir qual revogar. Nomear é a única coisa que desfaz esse empate,
+  // e vale para os que JÁ existem (renomear um convite não alcançaria quem já entrou).
+  if (msg.t === "sec_rename_device" && typeof msg.deviceId === "string" && typeof msg.label === "string") {
+    if (!requireOwner(ws)) return true;
+    if (!auth.renameDevice(msg.deviceId, msg.label)) send(ws, { t: "error", message: "dispositivo não encontrado ou nome vazio" });
     secState(ws);
     return true;
   }
@@ -5867,7 +5920,7 @@ function handleSecurityMsg(ws: WebSocket, msg: any): boolean {
   // --- machines (runners): mint a per-machine token / revoke one (owner) ---
   if (msg.t === "mint_runner") {
     const p = requireOwner(ws); if (!p) return true;
-    const label = (typeof msg.label === "string" && msg.label.trim()) ? msg.label.trim().slice(0, 40) : "Nova máquina";
+    const label = auth.cleanLabel(msg.label, "Nova máquina");
     const rid = "m-" + randomUUID().slice(0, 8);
     const token = auth.mintRunnerToken(rid, label);
     auth.audit("mint_runner", { userId: p.userId, detail: label });
@@ -6030,7 +6083,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
   // Remote runners dial the "/runner" path; everything else is a UI client.
   if (String(req?.url || "").startsWith("/runner")) { handleRunnerConnection(ws, ip); return; }
   // Optional Origin allowlist (public deployments); no-op unless JARVIS_ALLOWED_ORIGINS set.
-  if (!guard.originAllowed(req)) { try { ws.close(1008, "origin not allowed"); } catch { /* ignore */ } return; }
+  if (!guard.originAllowed(req)) {
+    console.warn(`[hub] socket recusado: Origin ${String(req?.headers?.origin || "?")} nao e a origem deste Hub (Host ${String(req?.headers?.host || "?")}). Se for um cliente legitimo, liste-a em JARVIS_ALLOWED_ORIGINS.`);
+    auth.audit("origin_reject", { ip, detail: `origin ${String(req?.headers?.origin || "?")} host ${String(req?.headers?.host || "?")}` });
+    try { ws.close(1008, "origin not allowed"); } catch { /* ignore */ }
+    return;
+  }
   // Fail-closed on plaintext when JARVIS_REQUIRE_TLS=on (public deployments).
   if (guard.tlsRequiredButMissing(req)) { try { send(ws, { t: "unauth", reason: "conexão exige HTTPS/WSS" }); ws.close(1008, "tls required"); } catch { /* ignore */ } return; }
   maybeWarnInsecure(req);
@@ -6404,7 +6462,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (msg.t === "rename_runner" && typeof msg.runnerId === "string" && typeof msg.label === "string") {
       if (!requireOwner(ws)) return;
-      runnerLabels[msg.runnerId] = msg.label.slice(0, 40); saveRunnerLabels(); broadcastMachines(); secState(ws); return;
+      const label = auth.cleanLabel(msg.label);
+      if (!label) { send(ws, { t: "error", message: "nome vazio" }); return; }
+      runnerLabels[msg.runnerId] = label; saveRunnerLabels(); broadcastMachines(); secState(ws);
+      auth.audit("rename_runner", { userId: principalOf(ws)?.userId, runnerId: msg.runnerId, detail: label });
+      return;
     }
     // unified "all machines" view: aggregate local + every online runner's sessions (tagged).
     if (msg.t === "listAll") {
@@ -6674,7 +6736,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const su = sessionUsage(s.id), nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
       const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
       const files = [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))];
-      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: nh?.title || s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens ?? su.contextTokens, contextWindowTokens: nh?.contextWindowTokens ?? su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort, permissionMode: sessionPermissionMode(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP), files });
+      send(ws, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: nh?.title || s.title, nativeId: nid, sessionCost: costOf(s.id), sessionUsage: su, inputTokens: nh?.inputTokens ?? su.contextTokens, contextWindowTokens: nh?.contextWindowTokens ?? su.contextWindowTokens, model: nh?.model || su.model || lastUsage?.model, effort: nh?.effort || su.effort || lastUsage?.effort, permissionMode: sessionPermissionMode(s.id) }, total: all.length, messages: all.slice(-HISTORY_CAP).map((m) => trimMessageActivity(m, ACTIVITY_CAP)), files });
       replayActivity(ws, LOCAL_ID, s.id);
       replayRoute(ws, LOCAL_ID, s.id);
       sendPendingAsk(ws, LOCAL_ID, s.id);
@@ -6855,6 +6917,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!rc) { send(ws, { t: "error", message: "máquina desconhecida" }); return; }
         await startRemoteTournament(ws, rc, { sessionId: msg.sessionId, task, explicitCompetitors: explicit, count, model: tModel, effort: tEffort, criteria, write, mode });
       }
+      return;
+    }
+    // Paginacao do activity: a carga de historico manda so os ultimos eventos de CADA mensagem
+    // (ver trimMessageActivity). Aqui volta o array COMPLETO de UMA mensagem, sob demanda, quando
+    // alguem abre o bloco — sem isto o corte seria perda de informacao, e nao paginacao.
+    //
+    // So para sessao LOCAL: numa sessao remota o activity completo vive no disco DAQUELA maquina, e
+    // servir isso exigiria mais uma ida ao runner. Por isso o corte tambem NAO e aplicado ao
+    // historico remoto — ele continua vindo inteiro, exatamente como antes.
+    if (msg.t === "activity_all" && typeof msg.sessionId === "string" && typeof msg.ts === "number") {
+      const alvo = activeRunner(ws);
+      if (alvo !== LOCAL_ID) { send(ws, { t: "activity_all", runnerId: alvo, sessionId: msg.sessionId, ts: msg.ts, activity: [], error: "paginação de atividade ainda não vem de outra máquina" }); return; }
+      const encontrada = store.history(msg.sessionId).find((m) => (m as { ts?: number }).ts === msg.ts) as { activity?: unknown[] } | undefined;
+      send(ws, { t: "activity_all", runnerId: LOCAL_ID, sessionId: msg.sessionId, ts: msg.ts, activity: Array.isArray(encontrada?.activity) ? encontrada.activity : [] });
       return;
     }
     // summary/digest one-shot config (which agent/model/effort — cheap by default)
@@ -8337,7 +8413,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "flushqueue" && typeof msg.sessionId === "string") { const rid = activeRunner(ws); if (isInternalExecutionSession(rid, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não aceita fila do chat" }); return; } void maybeFlushQueue(rid, msg.sessionId, false); return; }
     // "voltar" mensagem cancelada: tira a última mensagem do usuário do store (sessão do hub) pra
     // ela não reaparecer no reload. Nativa não dá (o transcript é do claude) — some só na tela.
-    if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; } if (!isNativeId(msg.sessionId)) { activityBuf.delete(scopedSessionKey(LOCAL_ID, msg.sessionId)); store.dropLastUser(msg.sessionId); pushSessions(); } return; }
+    // "Desfazer o envio" só vale enquanto NADA foi feito. O servidor é quem decide, porque é ele que
+    // tem o registro do turno: se a IA já rodou comando, editou arquivo ou publicou texto, apagar a
+    // pergunta levava junto todo esse trabalho (o parcial já foi persistido no cancelamento).
+    if (msg.t === "dropLast" && typeof msg.sessionId === "string") { if (store.isHidden(msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; } if (!isNativeId(msg.sessionId)) { const bufKey = scopedSessionKey(LOCAL_ID, msg.sessionId); const worked = turnProducedWork(activityBuf.get(bufKey)); activityBuf.delete(bufKey); if (!worked) { store.dropLastUser(msg.sessionId); pushSessions(); } } return; }
     // The user answered/dismissed a decision card → forget the pending questions for that session.
     if (msg.t === "ask_clear" && typeof msg.sessionId === "string") {
       const runnerId = activeRunner(ws);

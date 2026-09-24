@@ -204,11 +204,11 @@ export function nativeTitleCached(id: string): string | undefined {
  *
  *  - a conversa navegou para uma SUBPASTA do mesmo projeto (`ia-framework` → `ia-framework/cli`):
  *    continua sendo o mesmo projeto, e trocar o rótulo aqui partiria o grupo da lista em dois;
- *  - a sessão foi retomada em OUTRO projeto (`PriorityCustomer` → `pallium-app`): aí o projeto de
+ *  - a sessão foi retomada em OUTRO projeto (`ProjetoBeta` → `projeto-alfa`): aí o projeto de
  *    verdade é o novo — o antigo é só onde ela nasceu.
  *
  * Ficar com o primeiro (o que se fazia) mostrava o título mais recente ao lado do projeto mais
- * antigo: a linha dizia "PriorityCustomer" com conteúdo de `pallium-app`. Pior que rótulo errado na
+ * antigo: a linha dizia "ProjetoBeta" com conteúdo de `projeto-alfa`. Pior que rótulo errado na
  * lista, esse mesmo `cwd` é o que retoma a sessão e o que resolve a fonte de tarefas — trabalho real
  * ia acontecer na pasta errada, em silêncio.
  */

@@ -485,6 +485,28 @@ export interface AgentEventBridge {
 }
 
 /** Single provider-progress → canonical-event boundary used by both Hub and Runner. */
+/** Teto de tamanho para o `error` de uma ferramenta que falhou.
+ *
+ *  POR QUE: esse campo era o UNICO da atividade sem limite, e vai inline na mensagem da sessao —
+ *  ou seja, viaja para o cliente toda vez que o historico carrega. Medido numa instalacao real: um
+ *  unico `tool_failed` com 1,14 MB, 26 deles somando 3,96 MB numa mensagem de 4,31 MB, numa sessao
+ *  de 18,1 MB com apenas 21 mensagens. `detail` e `summary` ja saem cortados na origem; este nao.
+ *
+ *  Corta o MEIO, nao a cauda: o comeco traz o tipo do erro e a cauda costuma trazer a causa real
+ *  (a ultima linha do stack, a mensagem do processo). Guardar so o inicio jogaria fora justamente o
+ *  que se procura ao abrir um erro. */
+export const TOOL_ERROR_MAX_CHARS = 8_000;
+const TOOL_ERROR_HEAD = 5_000;
+const TOOL_ERROR_TAIL = 2_500;
+
+export function boundToolError(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const text = String(value);
+  if (text.length <= TOOL_ERROR_MAX_CHARS) return text;
+  const omitidos = text.length - TOOL_ERROR_HEAD - TOOL_ERROR_TAIL;
+  return `${text.slice(0, TOOL_ERROR_HEAD)}\n\n[... ${omitidos} caracteres omitidos pelo Jarvis: erro de ferramenta acima de ${TOOL_ERROR_MAX_CHARS} caracteres ...]\n\n${text.slice(-TOOL_ERROR_TAIL)}`;
+}
+
 export function createAgentEventBridge(turnId: string, sequencer: EventSequencer): AgentEventBridge {
   let anonymousTool = 0;
   const tool = (ev: StreamEvent) => ({
@@ -493,7 +515,9 @@ export function createAgentEventBridge(turnId: string, sequencer: EventSequencer
     summary: ev.summary || ev.name || "Ferramenta",
     detail: ev.detail,
     status: ev.status || "started" as const,
-    parentId: ev.parentId, path: ev.path, adds: ev.adds, dels: ev.dels, rows: ev.rows, error: ev.error,
+    parentId: ev.parentId, path: ev.path, adds: ev.adds, dels: ev.dels, rows: ev.rows,
+    // Unico campo da atividade sem teto ate aqui — e o que mais pesa no historico. Ver boundToolError.
+    error: boundToolError(ev.error),
   });
   return {
     accepted: () => sequencer.next("accepted"),
@@ -984,6 +1008,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           if (o.is_error) streamError = cliErrorMessage(o.result, "claude error");
           tResult = Date.now();
           usage = usageWithFast({ costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? tResult - tFirstLine : undefined }, opts);
+          // O `result` É o fim do turno (ver o comentário de tSpawn acima: o resto é teardown do CLI).
+          // Devolver `true` dá ao claude o mesmo prazo de saída que o codex — antes disso a espera
+          // pelo `close` era ilimitada, e um neto segurando o pipe pendurava o turno para sempre.
+          return true;
         }
       }, opts?.signal);
       // The turn ended while async subagents were still unresolved. The tracker will mark them
@@ -1235,6 +1263,21 @@ export function codexConfigModel(tomlText?: string): string | undefined {
   } catch { return undefined; }
 }
 
+/** Garante que o modelo escolhido pela pessoa em `~/.codex/config.toml` apareca na lista, mesmo
+ *  quando o catalogo da CLI nao o publica.
+ *
+ *  POR QUE: o catalogo vem de `codex debug models`, e uma CLI desatualizada simplesmente nao lista
+ *  um modelo recem-lancado. Ate aqui, `model = "..."` no config so era honrado SE o catalogo
+ *  confirmasse — entao o modelo escolhido explicitamente sumia do seletor sem nenhuma explicacao, e
+ *  "Sincronizar modelos" nao ajudava, porque a sincronizacao rele o MESMO catalogo.
+ *
+ *  Entra como `source: "config"`, sem esforcos nem contexto verificados: e uma escolha declarada
+ *  pela pessoa, nao um fato confirmado pelo provedor — e a UI ja distingue as duas coisas. */
+export function withConfiguredModel(models: ModelInfo[], cfgModel?: string): ModelInfo[] {
+  if (!cfgModel || models.some((m) => m.id === cfgModel)) return models;
+  return [{ id: cfgModel, label: cfgModel, efforts: [], effortsVerified: false, contextVerified: false, source: "config" }, ...models];
+}
+
 /** Native OpenAI Codex, headless (`codex exec`). Requires `codex login`. */
 export class CodexAdapter implements AgentAdapter {
   readonly name = "codex";
@@ -1287,9 +1330,9 @@ export class CodexAdapter implements AgentAdapter {
     try {
       const out = await run("codex", ["debug", "models"], homedir(), "");
       ({ models, modelMigrations } = mapCatalog(JSON.parse(out.slice(out.indexOf("{"))).models));
-    } catch {
-      if (cfgModel) models = [{ id: cfgModel, label: cfgModel, efforts: [], effortsVerified: false, contextVerified: false, source: "config" }];
-    }
+    } catch { /* catalogo indisponivel: sobra o que a pessoa configurou, logo abaixo */ }
+    // O modelo do config.toml SEMPRE aparece — inclusive quando a CLI ainda nao o publica.
+    models = withConfiguredModel(models, cfgModel);
     // The UI always resolves a concrete model and passes `-m` — so THIS default is what actually
     // runs. Honor the user's own `model = "…"` in ~/.codex/config.toml when it names a live or
     // explicitly configured model; otherwise leave the picker on auto instead of inventing a fallback.
@@ -1450,7 +1493,10 @@ export class CodexAdapter implements AgentAdapter {
     // — codex's NDJSON lifecycle mirrors Claude's closely enough to reuse the exact same timestamps.
     const tSpawn = Date.now();
     let tFirstLine = 0, tResult = 0;
-    const handleLine = (line: string): void => {
+    // Devolve `true` na linha que ANUNCIA o fim do turno — ver runStream(): a partir dela o CLI tem
+    // um prazo para sair sozinho. `turn.completed`/`turn.failed` são as últimas linhas do NDJSON do
+    // codex; o que vem depois é teardown (notify, MCP stdio, telemetria), sem valor para o turno.
+    const handleLine = (line: string): boolean | void => {
       if (!tFirstLine) tFirstLine = Date.now();
       let o: any; try { o = JSON.parse(line); } catch { return; }
       switch (o.type) {
@@ -1464,8 +1510,8 @@ export class CodexAdapter implements AgentAdapter {
             startActivityPolling();
           }
           break;
-        case "turn.completed": if (o.usage) rawUsage = o.usage; tResult = Date.now(); break;
-        case "turn.failed": case "error": streamError = o.error?.message || o.message || streamError; break;
+        case "turn.completed": if (o.usage) rawUsage = o.usage; tResult = Date.now(); return true;
+        case "turn.failed": case "error": streamError = o.error?.message || o.message || streamError; return o.type === "turn.failed";
         case "item.started": emitItem(o.item, false); break;
         case "item.completed": emitItem(o.item, true); break;
       }
@@ -2089,6 +2135,53 @@ function tempTextFile(prefix: string, text: string): { path: string; cleanup: ()
   return { path, cleanup: () => { try { unlinkSync(path); } catch { /* already gone */ } } };
 }
 
+/** Janela que o Jarvis ainda dá ao `close` DEPOIS de o processo ter saído, só para drenar o que
+ *  sobrou no buffer do pipe.
+ *
+ *  POR QUE ISSO EXISTE: no Node, `close` só dispara quando o filho saiu **E** todo stdio herdado
+ *  fechou. Um NETO que herdou o pipe — um `npm run dev`/vite que o agente deixou de pé, um watcher,
+ *  um daemon — segura a ponta de escrita para sempre, e o turno ficava "rodando" eternamente mesmo
+ *  com o CLI já morto. Medido nesta instalação (2026-09-23, sessão codex 6fda1c58): o agente
+ *  terminou às 15:57 com a resposta pronta, três dev servers órfãos ficaram com o pipe, e o turno
+ *  só fechou 2h15 depois — quando os órfãos foram mortos à mão. A resposta foi descartada junto.
+ *
+ *  Depois do `exit` não falta mais NADA do trabalho: falta no máximo esvaziar o buffer. Por isso a
+ *  janela é curta e fixa — ela não espera o agente, espera bytes. */
+const STDIO_DRAIN_MS = 2_000;
+
+/** Tempo que o CLI ainda tem para sair sozinho DEPOIS de anunciar que o turno acabou.
+ *
+ *  O `close`/`exit` é o sinal do sistema operacional; este é o sinal do PROTOCOLO (o `turn.completed`
+ *  do codex, o `result` do claude). Quando o CLI declara fim e mesmo assim não morre — hook de
+ *  `notify`, MCP stdio que não encerra, teardown travado — não há mais nada a esperar: o Jarvis
+ *  derruba a árvore e entrega o que o agente já produziu, em vez de ficar pendurado para sempre. */
+const FINISHED_EXIT_GRACE_MS = 60_000;
+
+/** Encerra a Promise no `exit` do processo (com uma janela curta para drenar o pipe) em vez de
+ *  depender só do `close`. Ver STDIO_DRAIN_MS para o porquê. */
+export function settleOnExit(
+  p: { stdout: { destroy(): void } | null; stderr: { destroy(): void } | null },
+  emitter: { on: (ev: string, fn: (...a: any[]) => void) => unknown },
+  finish: (code: number | null, drained: boolean) => void,
+  drainMs = STDIO_DRAIN_MS,
+): void {
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const settle = (code: number | null, drained: boolean): void => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    if (!drained) { try { p.stdout?.destroy(); } catch { /* já fechado */ } try { p.stderr?.destroy(); } catch { /* já fechado */ } }
+    finish(code, drained);
+  };
+  emitter.on("close", (code: number | null) => settle(code, true));
+  emitter.on("exit", (code: number | null) => {
+    if (settled) return;
+    timer = setTimeout(() => settle(code, false), drainMs);
+    timer.unref?.();
+  });
+}
+
 export interface RunResult { code: number; stdout: string; stderr: string }
 /**
  * Raw spawn: resolves with the outcome and lets the caller judge it. Rejects only when the
@@ -2136,7 +2229,7 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, signal?: A
     p.on("error", reject);
     if (stdin) p.stdin!.write(stdin);
     p.stdin!.end();
-    p.on("close", (code) => {
+    settleOnExit(p, p, (code) => {
       if (wasAborted()) reject(new Error(ABORTED));
       else if (code === 0) resolve(out);
       else reject(new Error(cliErrorMessage(err.trim() || out.trim(), `${cmd} exited with ${code}`)));
@@ -2144,8 +2237,10 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, signal?: A
   });
 }
 
-/** Like run(), but calls onLine for each complete stdout line as it arrives (NDJSON stream). */
-function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<string> {
+/** Like run(), but calls onLine for each complete stdout line as it arrives (NDJSON stream).
+ *  `onLine` devolvendo `true` significa "o agente ANUNCIOU que o turno acabou": a partir daí o CLI
+ *  tem FINISHED_EXIT_GRACE_MS para sair sozinho, e depois disso a árvore é derrubada. */
+function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => boolean | void, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawnCli(cmd, args, cwd);
     const wasAborted = wireAbort(p, signal);
@@ -2155,6 +2250,14 @@ function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLi
     let out = "";
     let buf = "";
     let err = "";
+    // Armado quando o agente ANUNCIA o fim do turno (ver runStream doc). Só então existe prazo: antes
+    // disso o CLI pode legitimamente levar horas, e nenhum relógio do Jarvis tem o direito de opinar.
+    let finishedTimer: ReturnType<typeof setTimeout> | undefined;
+    const noteFinished = (): void => {
+      if (finishedTimer) return;
+      finishedTimer = setTimeout(() => killTree(p), FINISHED_EXIT_GRACE_MS);
+      finishedTimer.unref?.();
+    };
     p.stdout!.on("data", (d) => {
       buf += d.toString();
       let i: number;
@@ -2162,17 +2265,20 @@ function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLi
         const line = buf.slice(0, i);
         buf = buf.slice(i + 1);
         out += line + "\n";
-        if (line.trim()) onLine(line);
+        if (line.trim() && onLine(line) === true) noteFinished();
       }
     });
     p.stderr!.on("data", (d) => (err += d.toString()));
     p.on("error", reject);
     if (stdin) p.stdin!.write(stdin);
     p.stdin!.end();
-    p.on("close", (code) => {
+    settleOnExit(p, p, (code, drained) => {
+      if (finishedTimer) clearTimeout(finishedTimer);
       if (wasAborted()) { reject(new Error(ABORTED)); return; }
-      if (buf.trim()) onLine(buf);
-      if (code === 0) resolve(out);
+      if (drained && buf.trim()) onLine(buf);
+      // Saiu (ou foi derrubado) DEPOIS de anunciar o fim do turno: o trabalho existe e está em `out`.
+      // Tratar como falha aqui apagaria justamente a resposta que já tínhamos em mãos.
+      if (code === 0 || finishedTimer) resolve(out);
       else reject(new Error(cliErrorMessage(err.trim() || out.trim(), `${cmd} exited with ${code}`)));
     });
   });

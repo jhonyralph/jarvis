@@ -44,7 +44,7 @@ const CATALOG = [
     ["JARVIS_DEVICE_TTL_DAYS", { defaultValue: "0 (no idle expiry)", format: "non-negative number of days", description: "Revokes a device after the configured idle period.", example: "0" }],
     ["JARVIS_AUDIT_MAX_MB", { defaultValue: "5", format: "non-negative number in MB; 0 disables rotation", description: "Size threshold for one-generation audit log rotation.", example: "5" }],
     ["JARVIS_HISTORY_CAP", { defaultValue: "120", format: "positive integer", description: "Maximum message count sent when a session is opened.", example: "120" }],
-    ["JARVIS_ALLOWED_ORIGINS", { defaultValue: "empty (no allowlist)", format: "comma-separated HTTP(S) origins", description: "Optional Origin allowlist for UI clients.", example: "https://jarvis.example.invalid" }],
+    ["JARVIS_ALLOWED_ORIGINS", { defaultValue: "empty (same-origin only)", format: "comma-separated HTTP(S) origins", description: "Origin allowlist for browser UI clients. Empty means same-origin only: a browser may open the socket only when its page came from this Hub (WebSocket ignores CORS). Clients that send no Origin header (runner, CLI, MCP bridge) are unaffected.", example: "https://jarvis.example.invalid" }],
     ["JARVIS_REQUIRE_TLS", { defaultValue: "off", format: "on, 1 or true enables", description: "Rejects non-loopback plaintext requests when enabled.", example: "off" }],
     ["JARVIS_TRUST_PROXY", { defaultValue: "off", format: "on, 1 or true enables", description: "Trusts the first X-Forwarded-For value. Set only behind a trusted proxy.", example: "off" }],
     ["JARVIS_MAX_PAYLOAD_MB", { defaultValue: "20", format: "number; effective minimum 1 MB", description: "Maximum WebSocket payload size.", example: "20" }],

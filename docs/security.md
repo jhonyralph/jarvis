@@ -33,13 +33,15 @@ Trust boundaries:
 | Per-runner authz | owner/member roles; members limited to allow-listed machines | `auth.ts` |
 | Runner token | per-machine token to register a runner; hashed | `auth.ts` |
 | Brute-force throttle | per-IP failed-attempt limiter (10/min → exp backoff, ≤15 min) | `guard.ts` |
+| Scoped `connect-src` | CSP names this Hub's own host instead of `ws: wss:` (which allowed a socket to anywhere) | `index.ts` |
 | Unauth timeout | connections that never authenticate are dropped (20 s) | `index.ts` |
 | Connection caps | per-IP + global concurrent-connection limits | `guard.ts` |
 | Payload cap | oversized WS frames rejected (default 20 MB) without crashing | `guard.ts` |
 | Crash resilience | per-connection + process-level error nets — a stray error can't DoS the hub | `index.ts` |
 | Security headers | nonce-based CSP (no script `unsafe-inline`), `X-Frame-Options: DENY`, `nosniff`, referrer/permissions policy | `index.ts` |
 | CSP nonce | the one inline `<script>` runs under a per-response nonce → injected inline scripts can't execute (XSS → token theft mitigation) | `index.ts` |
-| Origin allowlist | optional Origin check for UI clients | `guard.ts` |
+| Same-origin sockets | a browser client may open the WS only when its page came from this Hub (WebSocket ignores CORS, so "any origin" let any site the owner visited dial the Hub). Clients with no `Origin` (runner/CLI/MCP) unaffected; `JARVIS_ALLOWED_ORIGINS` widens it explicitly | `guard.ts` |
+| Local wake secret | `wake_hello` / `wake_event` / the voice-session `send` are the only frames processed before login. They now require the per-boot secret in `~/.jarvis/wake-token` (0600) **in addition to** a loopback peer — loopback alone is not proof of a local process behind `tailscale serve` | `index.ts` |
 | Require-TLS | optional fail-closed: refuse non-loopback plaintext connections | `guard.ts` |
 | Device TTL | optional auto-revoke of a device token unused for N days | `auth.ts` |
 | Audit log | append-only attribution incl. failed/blocked auth with IP | `auth.ts` |
@@ -103,3 +105,10 @@ locally for convenience, or not (re-enter each page load). Recovery if forgotten
   [runner-sandbox.md](runner-sandbox.md) (`Dockerfile.runner`).
 - **CSP still allows inline styles** (`style-src 'unsafe-inline'`) — the UI uses
   `style="…"` attributes; low risk, could be tightened with hashed styles.
+- **Behind a proxy, every client is 127.0.0.1.** `tailscale serve` (and any reverse
+  proxy) dials loopback, so the per-IP throttle and the per-IP connection cap collapse
+  into a single bucket: one attacker's failures are counted against every legitimate
+  user, and the per-IP cap is skipped entirely for loopback. Set
+  `JARVIS_TRUST_PROXY=on` **only after confirming your proxy sets `X-Forwarded-For`**
+  (it is spoofable when nothing does). Nothing in the app trusts loopback for
+  authorization anymore — that was the wake bypass, fixed above.

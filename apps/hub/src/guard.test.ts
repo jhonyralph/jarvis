@@ -1,6 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { recordFail, blockedFor, recordSuccess, connOpen, connClose, stats, clientIp, isLoopback } from "./guard.js";
+import { recordFail, blockedFor, recordSuccess, connOpen, connClose, stats, clientIp, isLoopback, originAllowed } from "./guard.js";
+
+// Sem JARVIS_ALLOWED_ORIGINS (o caso de toda instalação normal) o padrão é MESMA ORIGEM: WebSocket
+// não passa por CORS, então "qualquer origem" deixava qualquer site que o dono visitasse discar o
+// Hub — inclusive o loopback, que a máquina do Hub sempre tem no ar.
+test("originAllowed: navegador só entra se a página veio deste Hub", () => {
+  const req = (origin: string, host: string) => ({ headers: { origin, host } });
+  assert.equal(originAllowed(req("https://hub.exemplo.ts.net", "hub.exemplo.ts.net")), true);
+  assert.equal(originAllowed(req("http://127.0.0.1:4577", "127.0.0.1:4577")), true, "a própria UI em loopback");
+  assert.equal(originAllowed(req("https://site-do-atacante.example", "127.0.0.1:4577")), false);
+  assert.equal(originAllowed(req("http://127.0.0.1:5500", "127.0.0.1:4577")), false, "outra porta é outra origem");
+  assert.equal(originAllowed(req("null", "127.0.0.1:4577")), false, "origem opaca (sandbox/file://) não entra");
+  assert.equal(originAllowed({ headers: { host: "127.0.0.1:4577" } }), true, "runner/CLI/MCP não mandam Origin");
+});
 
 test("clientIp strips the IPv4-mapped IPv6 prefix and falls back to '?'", () => {
   assert.equal(clientIp({ socket: { remoteAddress: "::ffff:1.2.3.4" } }), "1.2.3.4");

@@ -19,7 +19,7 @@
     const E = ['log','dot','title','roBanner','offlineBar','aiBtn','agentBtn','agentName','cwdBtn','cwdName','modelBtn','modelName','effortBtn','effortName','usageBtn','usageName','pop','speak','recents','moreBtn','files',
       'newSess','searchBtn','digestBtn','workBtn','workBadge','personalBtn','treeBtn','treePanel','treeClose','treeRootPath','treeBody','workPanel','workClose','workBack','workMax','workLive','workTree','workMachine','workSession','workAgent','workCrumb','workNodeTitle','workNodeState','workQueue','workDetailBody','workMore','workNew','workAnnounce','termBtn','termMenuBtn','termPanel','termTabs','termBody','termEmpty','termMeta','termNew','termMax','termClose','fleetBody','tskConns','tskBindings','tskMcp','tskAddConn','solutionBtn','solutionName','solutionBar','solBarMode','solBarMeta','solBarOff','solutionChars','canvasModal','canvasTitle','canvasBody','canvasClose','sumHdr','tabRec','tabFiles','recPane','filesPane','recCnt','filesCnt','filesMore','qrImg','qrUrl','searchModal','searchInput','searchResults','searchGo','searchClose','smLiteral','smSemantic','semanticScope','memScopeProject','memScopeAll','memReindex','memoryModal','memoryTarget','memoryNote','memoryMeta','memoryCancel','memoryApply','personalModal','personalModalTitle','personalClose','personalPurpose','personalQuery','personalRun','personalLocate','personalQueryStatus','personalReference','personalReferenceHint','personalRegionRow','personalRegion','personalRegionResolve','personalRegionResults','personalViewList','personalViewMap','personalResults','personalMap','personalDiagnostics','personalDiagnosticsCount','personalDiagnosticsBody','personalCalendarEditModal','personalCalendarEditHeading','personalCalendarEditClose','personalCalendarEditTitle','personalCalendarEditStart','personalCalendarEditEnd','personalCalendarEditLocation','personalCalendarEditDescription','personalCalendarEditCancel','personalCalendarEditPreview','personalActionModal','personalActionTitle','personalActionRisk','personalActionState','personalActionPreview','personalActionExpiry','personalActionClose','personalActionCancel','personalActionApprove','personalActionExecute','settingsBtn','settings','settingsHelpBtn','helpSheet','helpSheetTitle','helpSheetBody','helpSheetClose','setSearch','setSearchToggle','setSection','setLang','setAgent','setModel','setEffort','setFastMode','setVoice','voiceCatalog','setContinue','setContinueSec','setSilenceSec','setVoiceAgent','setVoiceModel','setVoiceEffort','setVoiceFastMode','setVoiceEscalate','setVoiceRelevance',
       'setWake','setNoise','setPush','setBioLock','setGate','setSlash','personalEnabled','personalPaused','personalContextPolicyAlert','personalLocationMode','personalPrecision','personalSettingsLocate','personalLocationStatus','personalNativeStatus','personalProactiveEnabled','personalProactiveStatus','personalProactivePolicyStatus','personalDisabledKinds','personalQuietStart','personalQuietEnd','personalMaxPerDay','personalCooldown','personalMinScore','personalSave','personalOpenQuery','personalSourceList','personalConsentList','personalSourceForm','personalSourceType','personalSourceLabel','personalSourceEndpoint','personalSourceSecret','personalSourceResources','personalSourceActions','personalSourceHint','personalSourceDiscovery','personalSourceAdvanced','personalSourceCertification','personalSourceFormat','personalSourceAccessRow','personalSourceAccess','personalSourceTimeZone','personalSourceAttribution','personalSourcePurposes','personalSourceArgs','personalSourceCwd','personalSourceAttributes','personalSourceServiceFields','personalSourceOutputSchemaRow','personalSourceOutputSchema','personalSourceEnvGroup','personalSourceEnvName','personalSourceEnvValue','personalSourceEnvAdd','personalSourceEnvList','personalSourceRemoteHttps','personalSourceEnabled','personalSourceSave','personalSourceReset','personalDataSummary','personalDataCategories','personalFavoriteList','personalFavoriteLabel','personalFavoriteAddress','personalFavoriteAliases','personalFavoritePurposes','personalFavoriteLat','personalFavoriteLng','personalFavoriteGeofence','personalFavoriteGeofenceRadius','personalFavoriteEnter','personalFavoriteExit','personalGeofenceStatus','personalFavoriteFindAddress','personalFavoriteAddressResults','personalFavoriteLocationStatus','personalFavoriteLocate','personalFavoriteReset','personalFavoriteSave','personalVehicleList','personalVehicleForm','personalVehicleId','personalVehicleLabel','personalVehicleConnectors','personalVehicleMaxPower','personalVehicleRange','personalVehicleMinPower','personalVehicleOperators','personalVehicleDefault','personalVehicleReset','personalVehicleSave','personalPreferenceList','personalPreferenceKey','personalPreferenceValue','personalPreferencePolarity','personalPreferencePurpose','personalPreferenceExpires','personalPreferenceEditorNote','personalPreferenceReset','personalPreferenceSave','personalObservationsDays','personalDecisionsDays','personalInferencesDays','personalKeepRawLocation','personalRetentionSave','personalExport','personalPrune','personalErase','personalEraseCategory','personalEraseCategoryButton','policySettings','policyNote','setPolicyMode','setPolicyMemoryTarget','setPolicyRisk','setPolicyUnknown','setPolicyCost','setPolicyTokens','setPolicyRepoWrites','setPolicyDiff','setPolicyAutoplay','setPolicyBackground','setPolicyPersonalContext','setPolicyProject','setPolicySession','setPolicyOverrides','pushCfg','pushDone','pushError','pushMachine','pushMode','pushEvery','pushEveryRow','pushStatus','pushRefresh','pushTest','routinesSection','routinesList','rtName','rtPrompt','rtRunner','rtAgent','rtModel','rtEffort','rtCwd','rtBrowse','rtCron','rtCronHelp','rtCronExamples','rtSpeak','rtCancel','rtAdd','spkList','setEnroll','executionSettings','setExecEnabled','setExecRetention','setExecMaxEvents','setExecConcurrency','setExecDepth','setExecDefaultWrite','setExecWorktree','execCfgNote','frameworkSettings','setFwPref','setFwAutoFlow','setFwApplyInstr','fwSeed','fwImport','fwNewFile','fwVersion','fwPublish','fwStatus','fwHealth','fwInventory','fwRefresh','fwLog','fwLogClear','fwEditModal','fwEditTitle','fwEditDirty','fwEditPathRow','fwEditPath','fwEditFinding','fwEditWrap','fwEditGutter','fwEditBody','fwEditDelete','fwEditCancel','fwEditSave','fwEditFmt','fwEditWrapBtn','fwEditMax','fwEditClose','fwEditView','fwDiffModal','fwDiffTitle','fwDiffClose','fwDiffBody','fwZip','fwZipBtn','fwGh','fwGhBtn','fwDir','fwDirBtn','fwTplBtn','fwReset','fwUpdates','fwCatBtn','fwCatalog','fwWfBtn','fwWorkflows','fwSources','fwPreview','fwPreviewTitle','fwPreviewBody','fwPreviewForceRow','fwPreviewForce','fwPreviewMode','fwPreviewApply','fwPreviewCancel','fallbackSettings','fallbackEnabled','fallbackAgent','fallbackModel','fallbackEffort','fallbackSave','fallbackBlocks','logSettings','logEnabled','logLevel','logRetention','logMaxMb','logSave','setCancel','setClose','setX','composer','input','cmdPop','mic','micCancel','attach','file','attachRow','wfRun','wfStepBtn','wfStepName','bgJobs','queueRow','scrollBtn','usage','limit','sendBtn','stopBtn',
-      'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll',
+      'secRole','secTtl','secGen','secOut','secInvites','secDevices','secRevokeAll','secInviteLabel',
       'secRunLabel','secRunGen','secRunOut','secRunners',
       'secPassStatus','secPass','secPassRemember','secPassSet','secPassClear','machineBar',
       'setSumAgent','setSumModel','setSumEffort','setSumFastMode','updStatus','updActions','updAll','updApply','updCheck','updMachines',
@@ -593,9 +593,9 @@
     I18N.pt.proactiveUnavailable='Abra o assistente para consultar dados atualizados e a procedência.';
     I18N.en.proactiveUnavailable='Open the assistant to query updated data and provenance.';
     I18N.es.proactiveUnavailable='Abre el asistente para consultar datos actualizados y su procedencia.';
-    Object.assign(I18N.pt,{referencePoint:'Ponto de referência',referenceAutomatic:'Usar localização disponível',referenceRegion:'Informar região',regionOrAddress:'Região ou endereço',regionOrAddressPh:'Ex.: Savassi, Belo Horizonte',findRegion:'Localizar região',referenceFallback:'Se a localização atual não estiver disponível, escolha um favorito ou informe uma região.',referenceFavoriteActive:'A consulta usará o favorito selecionado no lugar da localização atual.',referenceRegionActive:'Informe e localize uma região para esta consulta.',regionResults:'Regiões encontradas',favoriteReferences:'Locais favoritos',chooseRegion:'Usar esta região',regionResolved:'Região selecionada',noRegions:'Nenhuma região encontrada nas fontes autorizadas.'});
-    Object.assign(I18N.en,{referencePoint:'Reference point',referenceAutomatic:'Use available location',referenceRegion:'Enter a region',regionOrAddress:'Region or address',regionOrAddressPh:'Example: Downtown, Belo Horizonte',findRegion:'Find region',referenceFallback:'If current location is unavailable, choose a favorite or enter a region.',referenceFavoriteActive:'The query will use the selected favorite instead of current location.',referenceRegionActive:'Enter and resolve a region for this query.',regionResults:'Regions found',favoriteReferences:'Favorite places',chooseRegion:'Use this region',regionResolved:'Region selected',noRegions:'No region found in authorized sources.'});
-    Object.assign(I18N.es,{referencePoint:'Punto de referencia',referenceAutomatic:'Usar ubicación disponible',referenceRegion:'Indicar región',regionOrAddress:'Región o dirección',regionOrAddressPh:'Ej.: Savassi, Belo Horizonte',findRegion:'Localizar región',referenceFallback:'Si la ubicación actual no está disponible, elige un favorito o indica una región.',referenceFavoriteActive:'La consulta usará el favorito seleccionado en lugar de la ubicación actual.',referenceRegionActive:'Indica y localiza una región para esta consulta.',regionResults:'Regiones encontradas',favoriteReferences:'Lugares favoritos',chooseRegion:'Usar esta región',regionResolved:'Región seleccionada',noRegions:'No se encontró ninguna región en las fuentes autorizadas.'});
+    Object.assign(I18N.pt,{referencePoint:'Ponto de referência',referenceAutomatic:'Usar localização disponível',referenceRegion:'Informar região',regionOrAddress:'Região ou endereço',regionOrAddressPh:'Ex.: Centro, São Paulo',findRegion:'Localizar região',referenceFallback:'Se a localização atual não estiver disponível, escolha um favorito ou informe uma região.',referenceFavoriteActive:'A consulta usará o favorito selecionado no lugar da localização atual.',referenceRegionActive:'Informe e localize uma região para esta consulta.',regionResults:'Regiões encontradas',favoriteReferences:'Locais favoritos',chooseRegion:'Usar esta região',regionResolved:'Região selecionada',noRegions:'Nenhuma região encontrada nas fontes autorizadas.'});
+    Object.assign(I18N.en,{referencePoint:'Reference point',referenceAutomatic:'Use available location',referenceRegion:'Enter a region',regionOrAddress:'Region or address',regionOrAddressPh:'Example: Downtown, São Paulo',findRegion:'Find region',referenceFallback:'If current location is unavailable, choose a favorite or enter a region.',referenceFavoriteActive:'The query will use the selected favorite instead of current location.',referenceRegionActive:'Enter and resolve a region for this query.',regionResults:'Regions found',favoriteReferences:'Favorite places',chooseRegion:'Use this region',regionResolved:'Region selected',noRegions:'No region found in authorized sources.'});
+    Object.assign(I18N.es,{referencePoint:'Punto de referencia',referenceAutomatic:'Usar ubicación disponible',referenceRegion:'Indicar región',regionOrAddress:'Región o dirección',regionOrAddressPh:'Ej.: Centro, São Paulo',findRegion:'Localizar región',referenceFallback:'Si la ubicación actual no está disponible, elige un favorito o indica una región.',referenceFavoriteActive:'La consulta usará el favorito seleccionado en lugar de la ubicación actual.',referenceRegionActive:'Indica y localiza una región para esta consulta.',regionResults:'Regiones encontradas',favoriteReferences:'Lugares favoritos',chooseRegion:'Usar esta región',regionResolved:'Región seleccionada',noRegions:'No se encontró ninguna región en las fuentes autorizadas.'});
     Object.assign(I18N.pt,{mcpOutputSchema:'Schema de saída MCP (JSON)',mcpOutputSchemaPh:'{"type":"object","properties":{},"additionalProperties":false}',mcpOutputSchemaNote:'Objeto JSON fechado usado para validar o resultado de cada tool permitida.',stdioEnvironment:'Ambiente do processo stdio',environmentName:'Variável',environmentValue:'Novo valor',addEnvironment:'Adicionar',stdioEnvironmentNote:'Valores salvos não são exibidos. Variáveis sensíveis devem usar a variável de segredo acima.',envValueHidden:'valor oculto',envValuePending:'novo valor definido',removeEnvironment:'Remover variável',invalidEnvName:'Use um nome de variável de ambiente válido.',sensitiveEnvRejected:'Variáveis sensíveis devem usar a variável de segredo, não o ambiente comum.',envValueRequired:'Informe o novo valor da variável.',outputSchemaRequired:'Informe um outputSchema JSON para as tools MCP permitidas.',outputSchemaInvalid:'O outputSchema deve ser um JSON válido.',outputSchemaObject:'O outputSchema deve ser um objeto JSON.',outputSchemaClosed:'O outputSchema deve ser um objeto fechado, com properties e additionalProperties igual a false.',sourceConfigTooLarge:'A configuração da fonte excede o limite permitido.'});
     Object.assign(I18N.en,{mcpOutputSchema:'MCP output schema (JSON)',mcpOutputSchemaPh:'{"type":"object","properties":{},"additionalProperties":false}',mcpOutputSchemaNote:'Closed JSON object used to validate the result of every allowed tool.',stdioEnvironment:'Stdio process environment',environmentName:'Variable',environmentValue:'New value',addEnvironment:'Add',stdioEnvironmentNote:'Saved values are not displayed. Sensitive variables must use the secret variable above.',envValueHidden:'value hidden',envValuePending:'new value set',removeEnvironment:'Remove variable',invalidEnvName:'Use a valid environment variable name.',sensitiveEnvRejected:'Sensitive variables must use the secret variable, not the regular environment.',envValueRequired:'Enter the variable\'s new value.',outputSchemaRequired:'Provide a JSON outputSchema for the allowed MCP tools.',outputSchemaInvalid:'The outputSchema must be valid JSON.',outputSchemaObject:'The outputSchema must be a JSON object.',outputSchemaClosed:'The outputSchema must be a closed object with properties and additionalProperties set to false.',sourceConfigTooLarge:'The source configuration exceeds the allowed limit.'});
     Object.assign(I18N.es,{mcpOutputSchema:'Schema de salida MCP (JSON)',mcpOutputSchemaPh:'{"type":"object","properties":{},"additionalProperties":false}',mcpOutputSchemaNote:'Objeto JSON cerrado usado para validar el resultado de cada tool permitida.',stdioEnvironment:'Entorno del proceso stdio',environmentName:'Variable',environmentValue:'Nuevo valor',addEnvironment:'Agregar',stdioEnvironmentNote:'Los valores guardados no se muestran. Las variables sensibles deben usar la variable de secreto anterior.',envValueHidden:'valor oculto',envValuePending:'nuevo valor definido',removeEnvironment:'Eliminar variable',invalidEnvName:'Usa un nombre de variable de entorno válido.',sensitiveEnvRejected:'Las variables sensibles deben usar la variable de secreto, no el entorno común.',envValueRequired:'Indica el nuevo valor de la variable.',outputSchemaRequired:'Indica un outputSchema JSON para las tools MCP permitidas.',outputSchemaInvalid:'El outputSchema debe ser JSON válido.',outputSchemaObject:'El outputSchema debe ser un objeto JSON.',outputSchemaClosed:'El outputSchema debe ser un objeto cerrado, con properties y additionalProperties igual a false.',sourceConfigTooLarge:'La configuración de la fuente supera el límite permitido.'});
@@ -936,14 +936,17 @@
         if(m.files&&m.files.length){ const w=document.createElement('div'); w.className='msgfiles'; m.files.forEach(f=>{ const c=document.createElement('button'); c.type='button'; c.className='filechip'+(f.content==null?' nocontent':''); c.title=f.content==null?'Anexo grande demais para reabrir':'Abrir '+f.name; c.textContent='📎 '+f.name; c.onclick=()=>openAttachedFile(f); w.appendChild(c); }); d.appendChild(w); }
         const showTxt=m.text&&!((m.images&&m.images.length||m.files&&m.files.length)&&m.text==='(anexo)'); if(showTxt) d.appendChild(document.createTextNode(m.text)); const context=contextManifestEl(m.contextManifest); if(context)d.appendChild(context); }
       else { d.className='msg bot';
-        const af=(m.activity&&m.activity.length)?renderActivityBlock(m.activity):null;
+        const af=(m.activity&&m.activity.length)?renderActivityBlock(m.activity,{omitted:m.activityOmitted,sessionId:m.sessionId||currentSession,ts:m.ts}):null;
         if(af) d.appendChild(af);
         // Se o histórico já tem os blocos text_delta/text_block dentro de activity, renderiza esses
         // textos intercalados no fluxo e NÃO duplica a resposta final no fim. Adapters que só
         // publicam texto final continuam caindo aqui.
-        if(!(af&&af.dataset.rootText==='1')){
+        if(!(af&&af.dataset.rootText==='1')&&m.text){
           const tx=document.createElement('div'); tx.innerHTML=md(m.text); d.appendChild(tx);
         }
+        // Turno parado no meio: o histórico guarda o que a IA já tinha feito, então precisa DIZER que
+        // está incompleto — senão um parcial passa por resposta final. Mesma marca do bloco ao vivo.
+        if(m.interrupted){ const n=document.createElement('div'); n.className='usage'; n.textContent='⏹ interrompido'; d.appendChild(n); }
         const fn=followupNoticeEl(m); if(fn)d.appendChild(fn); } return d; }
     // Réplica ESTÁTICA (histórico) do que streamTool/streamText/ensureSubAgent fazem AO VIVO — mesma
     // estrutura visual (caixas de subagente com contagem, linhas de ferramenta), mas com estado local
@@ -994,8 +997,22 @@
           else if(/^tool_/.test(ev.kind)&&ev.tool) addTool({kind:'tool',name:ev.tool.name,summary:ev.tool.summary,detail:ev.tool.detail,path:ev.tool.path,adds:ev.tool.adds,dels:ev.tool.dels,rows:ev.tool.rows,toolId:ev.tool.callId,parentId:ev.tool.parentId,status:ev.tool.status,error:ev.tool.error,executionId:ev.executionId,background:!!ev.tool.background});
           else if(ev.kind==='plan') out.push({kind:'tool',name:'Plan',summary:ev.plan&&ev.plan.title||ev.text||'Plano atualizado',status:'completed',parentId:ev.parentId,executionId:ev.executionId});
         } else if(ev&&ev.kind==='tool') addTool({...ev}); else out.push(ev); }); return compactActivity(out); }
+    // Chave de UMA mensagem para a paginacao do activity. `|` basta: sessao e uuid, ts e numero.
+    function activityPageKey(sid,ts){ return String(sid)+'|'+String(ts); }
+    const pendingActivityPage=new Map();
     function renderActivityBlock(events,opts){
       const flow=document.createElement('div'); flow.className='strflow acthist';
+      // O historico chega com os ultimos eventos de cada mensagem (o Hub corta o resto para nao
+      // mandar megabytes a cada abertura). Aqui o que ficou de fora vira um botao — o corte tem que
+      // ser visivel e reversivel, senao seria perda silenciosa.
+      if(opts&&opts.omitted>0&&opts.sessionId&&opts.ts){
+        const mais=document.createElement('button'); mais.type='button'; mais.className='ghost actmore';
+        mais.textContent='\u25b8 carregar '+opts.omitted+' evento(s) anterior(es)';
+        mais.onclick=()=>{ mais.disabled=true; mais.textContent='carregando\u2026';
+          pendingActivityPage.set(activityPageKey(opts.sessionId,opts.ts),{flow,opts});
+          tx({t:'activity_all',sessionId:opts.sessionId,ts:opts.ts}); };
+        flow.appendChild(mais);
+      }
       const subAgents={}; let curTextEl=null, curTextRaw='', rootText=false;
       function closeTextBlock(){ curTextEl=null; curTextRaw=''; }
       function ensureSA(id,desc,executionId){ if(subAgents[id]){ if(desc)subAgents[id].title.textContent=desc; if(executionId)bindInlineWork(subAgents[id],executionId); return subAgents[id]; }
@@ -1445,6 +1462,10 @@
       if(usage){ E.usage.textContent=usageSummary(usage); applyUsageMeter(usage); }
       rememberStreamAssistant(finalText||streamTextRaw,sid,runner);
       streamFinish(); autoScroll(); }
+    // O turno já produziu trabalho VISÍVEL? `sawText` cobre a resposta em si; `strFlow` com filhos
+    // cobre ferramenta/raciocínio/plano. Espelha turnProducedWork() do servidor (turn.ts), que é quem
+    // decide de verdade se a pergunta pode ser desfeita — aqui é só para a tela não mentir.
+    function turnProducedWork(){ return !!(sawText||(strFlow&&strFlow.children&&strFlow.children.length)); }
     function streamCancelled(reason){ if(strTimer){clearInterval(strTimer);strTimer=null;} clearPending();
       if(currentSession) delete stopping[sessionStateKey(currentSession,currentSessionRunner)]; updateStopStatus();   // parou → limpa o "parando…" da sessão
       if(cleanCancel){ cleanCancel=false; if(strEl)strEl.remove(); streamFinish(); autoScroll(); return; }  // cancel limpo: a msg voltou ao input → sem bloco "interrompido"
@@ -2420,7 +2441,7 @@
     // O item de nav é owner-only via .snav-owner (settingsSetupNav); aqui só reagimos a uma troca de
     // papel com as configurações JÁ abertas, senão o painel continuaria listado para um membro.
     function updateOwnerUI(){ settingsOwnerVisibility(!!(authUser&&authUser.role==='owner')); }
-    E.secGen.onclick=()=>{ tx({t:'sec_invite', role:E.secRole.value, ttlSec:Number(E.secTtl.value)}); };
+    E.secGen.onclick=()=>{ tx({t:'sec_invite', role:E.secRole.value, ttlSec:Number(E.secTtl.value), label:(E.secInviteLabel&&E.secInviteLabel.value||'').trim()}); if(E.secInviteLabel)E.secInviteLabel.value=''; };
     let secRepoUrl='';
     E.secRunGen.onclick=()=>{ tx({t:'mint_runner', label:E.secRunLabel.value.trim()}); E.secRunLabel.value=''; };
     function copyBox(caption,text){ const w=document.createElement('div'); w.style.marginBottom='8px';
@@ -2443,6 +2464,9 @@
       else { revokeAllArmed=now; E.secRevokeAll.textContent='Confirmar? (toque de novo)'; setTimeout(()=>{ if(Date.now()-revokeAllArmed>=4000) E.secRevokeAll.textContent='Revogar todos os outros'; },4200); } };
     function fmtAgo(ts){ if(!ts)return'—'; const s=Math.floor((Date.now()-ts)/1000); if(s<60)return'agora'; if(s<3600)return Math.floor(s/60)+'min'; if(s<86400)return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d'; }
     function fmtIn(ts){ const s=Math.floor((ts-Date.now())/1000); if(s<=0)return'expirado'; if(s<3600)return Math.floor(s/60)+'min'; if(s<86400)return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d'; }
+    // O rótulo passa a ser um nome escolhido ("Notebook do João"), então a plataforma sai do nome e
+    // vira informação separada — senão renomear apagaria o único dado que dizia o que é o aparelho.
+    function uaPlatform(ua){ const u=String(ua||''); if(!u)return''; if(/android/i.test(u))return'Android'; if(/iphone/i.test(u))return'iPhone'; if(/ipad/i.test(u))return'iPad'; if(/windows/i.test(u))return'Windows'; if(/mac os x|macintosh/i.test(u))return'Mac'; if(/linux/i.test(u))return'Linux'; return''; }
     function secRow(html){ const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #ffffff12'; const i=document.createElement('div'); i.style.cssText='flex:1;min-width:0'; i.innerHTML=html; r.appendChild(i); return r; }
     function renderSec(m){
       const devs=m.devices||[], me=m.me;
@@ -2452,7 +2476,13 @@
       (m.runnerTokens||[]).forEach(rt=>addOpt(rt.runnerId, rt.label));
       E.secDevices.innerHTML = devs.length ? '' : 'Nenhum dispositivo.';
       devs.forEach(d=>{ const soon=d.expiresAt&&d.expiresAt-Date.now()<86400000; const exp = d.expiresAt ? (' · <span style="'+(soon?'color:#e3b341':'opacity:.55')+'">acesso '+(d.expiresAt<=Date.now()?'expirado':'expira em '+fmtIn(d.expiresAt))+'</span>') : ' · <span style="opacity:.4">permanente</span>';
-        const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(d.label||'Dispositivo')+(d.id===me?' <span style="opacity:.6">(este)</span>':'')+' · '+esc(d.role||'')+'</div><div style="opacity:.55">'+esc(d.userName||'')+' · visto '+fmtAgo(d.lastSeen)+exp+(d.ip?(' · '+esc(d.ip)):'')+'</div>');
+        // Nome da pessoa só aparece quando DIFERE do rótulo: em todo resgate os dois nascem iguais,
+        // e repetir "Windows · Windows" gastava a linha que devia distinguir um aparelho do outro.
+        // Nada que já esteja no título se repete embaixo: num aparelho ainda chamado "Windows" o
+        // rótulo, a pessoa e a plataforma são a MESMA palavra, e a linha inteira virava eco.
+        const plat=uaPlatform(d.ua), lbl=d.label||'';
+        const sub=[plat&&plat!==lbl?esc(plat):'',(d.userName&&d.userName!==lbl)?esc(d.userName):'','visto '+fmtAgo(d.lastSeen)].filter(Boolean).join(' · ');
+        const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(d.label||'Dispositivo')+(d.id===me?' <span style="opacity:.6">(este)</span>':'')+' · '+esc(d.role||'')+'</div><div style="opacity:.55">'+sub+exp+(d.ip?(' · '+esc(d.ip)):'')+'</div>');
         // Um membro sem máquina liberada autentica e depois recebe "sem acesso a esta máquina" em
         // TUDO, sem nada na tela explicando por quê. As fichas abaixo tornam o allowlist visível e
         // editável em um clique — antes disso não existia superfície nenhuma para preenchê-lo.
@@ -2472,12 +2502,16 @@
         }
         // Rebaixar preserva as máquinas que o aparelho já usava (virar membro tira a gestão de
         // dispositivos, não deveria tirar o acesso em silêncio); as fichas acima permitem estreitar.
+        // Renomear resolve os homônimos que JÁ existem — nomear o convite só alcança quem entrar depois.
+        const nb=document.createElement('button'); nb.className='ghost'; nb.style.flex='none'; nb.textContent='Renomear'; nb.title='Nomear este dispositivo';
+        nb.onclick=async()=>{ const v=await dialog({title:'Renomear dispositivo',input:true,value:d.label||'',placeholder:'ex.: Notebook do João'}); if(v&&v.trim()) tx({t:'sec_rename_device',deviceId:d.id,label:v.trim()}); };
+        row.appendChild(nb);
         const rb=document.createElement('button'); rb.className='ghost'; rb.style.flex='none'; rb.textContent=d.role==='owner'?'→ membro':'→ dono'; rb.title='Alterar papel'; rb.onclick=()=>tx(d.role==='owner'?{t:'sec_set_role',deviceId:d.id,role:'member',runners:machineOpts.map(o=>o.id)}:{t:'sec_set_role',deviceId:d.id,role:'owner'}); row.appendChild(rb);
         if(d.id!==me){ const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_device',deviceId:d.id}); row.appendChild(b); }
         E.secDevices.appendChild(row); });
       const inv=m.invites||[];
       E.secInvites.innerHTML = inv.length ? '' : 'Nenhum convite pendente.';
-      inv.forEach(i=>{ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+esc(i.role)+' · expira em '+fmtIn(i.expiresAt)+'</div>');
+      inv.forEach(i=>{ const row=secRow('<div style="color:#e8eef5;font-size:13px">'+(i.label?esc(i.label)+' · ':'<span style="opacity:.5">sem nome</span> · ')+esc(i.role)+' · expira em '+fmtIn(i.expiresAt)+'</div>');
         const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_invite',inviteId:i.id}); row.appendChild(b);
         E.secInvites.appendChild(row); });
       if(E.secPassStatus) E.secPassStatus.textContent = m.hasPass ? '✅ Configurada — pedida em novos logins.' : '⚪ Não configurada.';
@@ -2493,9 +2527,9 @@
           const b=document.createElement('button'); b.className='ghost'; b.textContent='Revogar'; b.style.flex='none'; b.onclick=()=>tx({t:'sec_revoke_runner',runnerId:rt.runnerId}); row.appendChild(b);
           E.secRunners.appendChild(row); }); }
     }
-    function showInvite(code){ const link=location.origin+'/#invite='+encodeURIComponent(code);
+    function showInvite(code,label){ const link=location.origin+'/#invite='+encodeURIComponent(code);
       E.secOut.classList.remove('hidden');
-      E.secOut.innerHTML='<div class="sec">Convite criado — compartilhe o link</div><div style="word-break:break-all;background:#131a22;border:1px solid #2a3542;border-radius:8px;padding:8px;font-size:12px;color:#e8eef5">'+esc(link)+'</div>';
+      E.secOut.innerHTML='<div class="sec">Convite'+(label?' “'+esc(label)+'”':'')+' criado — compartilhe o link</div><div style="word-break:break-all;background:#131a22;border:1px solid #2a3542;border-radius:8px;padding:8px;font-size:12px;color:#e8eef5">'+esc(link)+'</div>';
       const mk=(txt,val,ghost)=>{ const b=document.createElement('button'); b.type='button'; if(ghost)b.className='ghost'; b.textContent=txt; b.style.marginTop='6px'; if(ghost)b.style.marginLeft='6px';
         b.onclick=()=>{ (navigator.clipboard?navigator.clipboard.writeText(val):Promise.reject()).then(()=>{ const o=b.textContent; b.textContent='Copiado ✓'; setTimeout(()=>b.textContent=o,1500); }).catch(()=>toast(txt+': '+val)); }; return b; };
       E.secOut.appendChild(mk('Copiar link',link,false));
@@ -4760,7 +4794,7 @@
         else if(m.t==='authed'){ if(m.token){ authToken=m.token; localStorage.setItem('jarvis_token',authToken); } authUser=m.user||authUser; updateOwnerUI(); enter(); if(authUser&&authUser.role==='owner') tx({t:'background_jobs'}); }
         else if(m.t==='need_pass'){ if(m.error){ authPass=''; localStorage.removeItem('jarvis_pass'); showVerify(m.error); } else if(authPass){ tx({t:'verify',pass:authPass}); } else { showVerify(''); } }
         else if(m.t==='sec_state'){ renderSec(m); }
-        else if(m.t==='sec_invite_created'){ showInvite(m.code); }
+        else if(m.t==='sec_invite_created'){ showInvite(m.code,(m.invite||{}).label); }
         else if(m.t==='runner_token'){ showRunnerCmd(m.token,m.label); }
         else if(m.t==='pass_set'){ toast(m.enabled?'🔒 Senha do dono definida.':'Senha do dono removida.'); }
         else if(m.t==='summary_cfg'){ if(m.cfg) sumCfg=m.cfg; if(!E.settings.classList.contains('hidden')) fillSumSelects(); }
@@ -4953,6 +4987,19 @@
           const pick = exists(last)?last : (exists(h)?h : (sessions.find(s=>!isNative(s.id))||{}).id);
           if(pick) openSession(pick,currentMachine);
           else if(currentMachine==='local' && !hashSession()) E.newSess.onclick(); } }
+        else if(m.t==='activity_all'){
+          const chave=activityPageKey(m.sessionId,m.ts), alvo=pendingActivityPage.get(chave);
+          pendingActivityPage.delete(chave);
+          if(alvo){
+            if(m.error||!Array.isArray(m.activity)||!m.activity.length){
+              const b=alvo.flow.querySelector('.actmore'); if(b){ b.disabled=false; b.textContent=m.error||'não foi possível carregar os eventos anteriores'; }
+            } else {
+              // Sem `omitted`: o bloco novo ja tem tudo, entao nao pode oferecer "carregar" de novo.
+              const completo=renderActivityBlock(m.activity,{sessionId:m.sessionId,ts:m.ts});
+              if(alvo.flow.parentNode) alvo.flow.parentNode.replaceChild(completo,alvo.flow);
+            }
+          }
+        }
         else if(m.t==='history'){
           const historyRunner=m.runnerId||(pendingNewSession&&pendingNewSession.runnerId)||selectedRunner(), historyKey=sessionStateKey(m.sessionId,historyRunner); cacheHist({...m,runnerId:historyRunner});
           // Verdade nova sobre a sessão: esquece o debate que o cliente achava que estava vivo. Se ele
@@ -6556,7 +6603,10 @@
       // mensagem ao input (ou mostra o botão "voltar" se você já estava digitando). A FILA é
       // preservada (não some mais no parar).
       if(!currentSession)return; tx({t:'cancel',sessionId:currentSession}); justSent.delete(sessionStateKey(currentSession,currentSessionRunner)); askVoice=false; askPendingVoice=false;
-      if(getRestorable(currentSession)){
+      // Desfazer o envio SÓ enquanto a IA não fez nada. Se ela já publicou texto ou rodou qualquer
+      // coisa, a pergunta e o bloco de atividade FICAM na tela (marcados como interrompidos) — antes
+      // daqui, parar no meio de um turno longo apagava a pergunta e todo o trabalho junto com ela.
+      if(getRestorable(currentSession)&&!turnProducedWork()){
         const b=E.log.querySelectorAll('.msg.me'); const last=b[b.length-1]; if(last)last.remove();   // tira a mensagem cancelada do chat
         cleanCancel=true;                                                                            // o bloco de atividade some sem deixar "interrompido"
         if(!curNative) tx({t:'dropLast',sessionId:currentSession});                                  // hub: tira do store pra não voltar no reload

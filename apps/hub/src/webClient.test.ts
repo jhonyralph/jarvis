@@ -1094,7 +1094,7 @@ test("máquina que falhou no update mostra a falha, mesmo com a entrega bem-suce
   const sock = await authenticate(client, MACHINES);
   sock.deliver({ t: "machines", machines: [
     { id: "local", label: "Servidor", local: true, online: true },
-    { id: "luby", label: "Luby", local: false, online: false, updatePending: {
+    { id: "notebook", label: "Notebook", local: false, online: false, updatePending: {
       state: "sent", targetCommit: "81c78ea", fromCommit: "7bf2394", failures: 4,
       lastPhase: "restarting", lastError: "[restarting] git saiu com código 1",
       lastLogTail: "'git help -a' … ERRO na preparação: git saiu com código 1", lastReportAt: 1_787_190_207_016,
@@ -1126,7 +1126,7 @@ test("mudar o alvo do update é recado, não falha", async () => {
   const sock = await authenticate(client, MACHINES);
   sock.deliver({ t: "machines", machines: [
     { id: "local", label: "Servidor", local: true, online: true },
-    { id: "luby", label: "Luby", local: false, online: false, protocolVersion: 11, hubProtocolVersion: 15, compatible: false,
+    { id: "notebook", label: "Notebook", local: false, online: false, protocolVersion: 11, hubProtocolVersion: 15, compatible: false,
       updatePending: { state: "queued", targetCommit: "16aca20", lastNote: "alvo anterior ec887ec substituído por 16aca20" } },
   ] });
 
@@ -1144,7 +1144,7 @@ test("update em círculo: o painel diz que o reenvio parou e oferece a saída", 
   const sock = await authenticate(client, MACHINES);
   sock.deliver({ t: "machines", machines: [
     { id: "local", label: "Servidor", local: true, online: true },
-    { id: "luby", label: "Luby", local: false, online: true, updatePending: {
+    { id: "notebook", label: "Notebook", local: false, online: true, updatePending: {
       state: "sent", targetCommit: "911b9e9", deliveries: 5, stalled: true,
       lastError: "entregue 5× sem concluir — parei de reenviar (círculo)",
     } },
@@ -1166,7 +1166,7 @@ test("máquina que aplicou e não voltou não ganha botão de reenviar", async (
   const sock = await authenticate(client, MACHINES);
   sock.deliver({ t: "machines", machines: [
     { id: "local", label: "Servidor", local: true, online: true },
-    { id: "luby", label: "Luby", local: false, online: false, updatePending: {
+    { id: "notebook", label: "Notebook", local: false, online: false, updatePending: {
       state: "awaiting_restart", targetCommit: "911b9e9", stalled: true, awaitingSince: 1_787_190_207_016,
     } },
   ] });
@@ -1180,14 +1180,14 @@ test("MCP por máquina: caminho REAL de cada uma, e formulário só onde ele vai
   const client = loadClient();
   const sock = await authenticate(client, MACHINES);
   sock.deliver({ t: "task_connections", connections: [], providers: [], bindings: [], mcpMachines: [
-    { runnerId: "luby", label: "Luby", servers: ["linear"], configFile: "/home/luby/.jarvis/task-mcp.json", known: true, editable: true, online: true },
+    { runnerId: "notebook", label: "Notebook", servers: ["linear"], configFile: "/home/dev/.jarvis/task-mcp.json", known: true, editable: true, online: true },
     { runnerId: "antiga", label: "Antiga", servers: [], configFile: "", known: false, editable: false, online: true },
   ] });
   client.el("setSection").value = "tarefas";
   client.renderTaskSettings();
 
   const html = String(client.el("tskMcp").innerHTML || "") + client.el("tskMcp").children.map((c: any) => `${c.innerHTML || ""} ${c.textContent || ""}`).join(" ");
-  assert.match(html, /\/home\/luby\/\.jarvis\/task-mcp\.json/, "o caminho é o DA MÁQUINA, não o do Hub");
+  assert.match(html, /\/home\/dev\/\.jarvis\/task-mcp\.json/, "o caminho é o DA MÁQUINA, não o do Hub");
   assert.match(html, /só leitura/, "máquina que não pode ser configurada daqui diz isso");
   const botoes = (function walk(el: any): any[] { return (el.children || []).flatMap((c: any) => [c, ...walk(c)]); })(client.el("tskMcp"))
     .filter((b: any) => b.tagName === "BUTTON").map((b: any) => String(b.textContent || ""));
@@ -1330,9 +1330,9 @@ async function comConexao(): Promise<{ client: any; sock: any; nos: (raiz?: any)
   const sock = await authenticate(client, MACHINES);
   client.setSession("s-wf", "local");
   sock.deliver({ t: "task_connections", providers: [{ id: "linear", label: "Linear" }], bindings: [], mcpMachines: [],
-    connections: [{ id: "linear:pallium", provider: "linear", label: "Pallium", identity: { id: "u1", login: "jonathan.campos@luby.com.br" } }] });
-  sock.deliver({ t: "task_binding", sessionId: "s-wf", cwd: "/p", binding: { tracker: "linear", connectionId: "linear:pallium" },
-    source: { kind: "provider", tracker: "linear", ready: true, connectionId: "linear:pallium" } });
+    connections: [{ id: "linear:projeto-alfa", provider: "linear", label: "Projeto Alfa", identity: { id: "u1", login: "pessoa@example.invalid" } }] });
+  sock.deliver({ t: "task_binding", sessionId: "s-wf", cwd: "/p", binding: { tracker: "linear", connectionId: "linear:projeto-alfa" },
+    source: { kind: "provider", tracker: "linear", ready: true, connectionId: "linear:projeto-alfa" } });
   const nos = (raiz?: any): any[] => {
     const out: any[] = [];
     const walk = (el: any): void => { for (const c of el.children || []) { out.push(c); walk(c); } };
@@ -1457,7 +1457,7 @@ test("vazio e erro sao ditos, nao silenciados", async () => {
   ache(nos(), /Escolher tarefa/).onclick();
   sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [], states: ESTADOS });
   let texto = nos(client.wfModalCard()).map((n: any) => String(n.textContent || "")).join(" ");
-  assert.match(texto, /Nenhuma tarefa aberta atribuida a @jonathan\.campos@luby\.com\.br/,
+  assert.match(texto, /Nenhuma tarefa aberta atribuida a @pessoa@example\.invalid/,
     "vazio calado e indistinguivel de falha — foi assim que o erro passou despercebido");
 
   sock.deliver({ t: "task_provider_results", sessionId: "s-wf", results: [], error: "HTTP 401: [REDACTED]" });
@@ -1593,7 +1593,7 @@ test("TSK-06: frame difundido atualiza vínculos e máquinas sem nenhum pedido d
     connections: [{ id: "jira:acme", provider: "jira", label: "Jira ACME", secretRef: "JIRA_TOKEN", envOk: true, identity: { login: "jon" } }],
     providers: [],
     bindings: [{ project: "c:/proj", binding: { tracker: "mcp", mcpServer: "linear-local", updatedAt: 1 } }],
-    mcpMachines: [{ runnerId: "luby", label: "Luby", servers: ["linear-local"], known: true }],
+    mcpMachines: [{ runnerId: "notebook", label: "Notebook", servers: ["linear-local"], known: true }],
   });
 
   assert.equal(client.taskBindings().length, 1);
@@ -2042,4 +2042,50 @@ test("TSK-I: a gaveta 🎯 desenha a marca de cada item e o botão com o número
   assert.match(marcado, /Abrir 3 conversas/);
   assert.match(marcado, /seleção manda — a frase acima é ignorada/);
   assert.match(marcado, /☑/);
+});
+
+// ── Dispositivos & convites: a tela precisa DISTINGUIR aparelhos, não só listá-los.
+test("Dispositivos & convites: nome do convite, renomear aparelho e a plataforma como dado à parte", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  const hora = Date.now() + 3_600_000;
+  sock.deliver({ t: "sec_state", me: "d1", role: "owner", hasPass: false,
+    localMachine: { id: "local", label: "Servidor" }, runnerTokens: [], onlineRunners: [],
+    invites: [
+      { id: "i1", label: "Notebook do João", role: "member", expiresAt: hora },
+      { id: "i2", role: "member", expiresAt: hora },
+    ],
+    devices: [
+      // O caso real desta instalação: o rótulo nasceu do palpite do navegador e ficou igual ao da pessoa.
+      { id: "d1", label: "Windows", userName: "Windows", role: "owner", lastSeen: Date.now(), ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      { id: "d2", label: "Celular da Ana", userName: "Ana", role: "member", runners: ["local"], lastSeen: Date.now(), ua: "Mozilla/5.0 (Linux; Android 16; motorola) AppleWebKit/537.36" },
+    ] });
+
+  const varrer = (el: any): any[] => (el.children || []).flatMap((c: any) => [c, ...varrer(c)]);
+  const textoDe = (id: string) => [String(client.el(id).innerHTML || ""), ...varrer(client.el(id)).map((n) => `${n.innerHTML || ""} ${n.textContent || ""}`)].join(" ");
+
+  const convites = textoDe("secInvites");
+  assert.match(convites, /Notebook do João/, "o convite nomeado se apresenta pelo nome");
+  assert.match(convites, /sem nome/, "e o anônimo é marcado como tal, em vez de virar mais um 'member'");
+
+  const aparelhos = textoDe("secDevices");
+  assert.match(aparelhos, /Celular da Ana/);
+  assert.match(aparelhos, /Android/, "a plataforma vira dado à parte — renomear não pode apagá-la");
+  assert.match(aparelhos, /Windows/);
+  assert.equal((aparelhos.match(/Ana/g) || []).length >= 2, true, "pessoa e aparelho aparecem quando têm nomes diferentes");
+  // "Windows · Windows" era a linha que gastava o espaço de distinguir sem distinguir nada.
+  const linhaD1 = varrer(client.el("secDevices")).map((n) => String(n.innerHTML || "")).find((h) => h.includes("Windows")) || "";
+  assert.equal((linhaD1.match(/Windows/g) || []).length, 1, "rótulo e pessoa iguais não são repetidos");
+
+  const botoes = varrer(client.el("secDevices")).filter((n) => n.tagName === "BUTTON").map((b) => String(b.textContent || ""));
+  assert.equal(botoes.filter((t) => t === "Renomear").length, 2, "todo aparelho pode ser nomeado, inclusive os que já existiam");
+
+  // O nome digitado no formulário viaja no convite — sem isso o campo seria enfeite.
+  client.el("secInviteLabel").value = "  Tablet da recepção  ";
+  client.el("secRole").value = "member";
+  client.el("secTtl").value = "86400";
+  client.el("secGen").onclick();
+  const pedido = sock.sent.filter((m: any) => m.t === "sec_invite").pop();
+  assert.equal(pedido.label, "Tablet da recepção");
+  assert.equal(client.el("secInviteLabel").value, "", "o campo esvazia para o próximo convite não herdar o nome do anterior");
 });

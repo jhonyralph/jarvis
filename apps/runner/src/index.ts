@@ -21,7 +21,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import {
-  AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED,
+  AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, attachPartialTurn, turnProducedWork,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateCheck, updateApply, restartService, runnerSelfUpdateDecision, updatePreflight, autonomousUpdateAttempt, resolveCommit, readProjectFile, repoCommit, repoVersion, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, detectPreviewCandidates,
@@ -165,6 +165,8 @@ for (const snapshot of executionStore.rootsForSession()) for (const node of snap
   } catch { /* leave the last valid projection available for reconciliation */ }
 }
 const activeRuns = new Set<string>();
+/** Sessões cujo turno em andamento já produziu trabalho — ver o guard do `dropLast`. */
+const turnsWithWork = new Set<string>();
 const managedRuns = new Set<string>();
 let updateInProgress = false;
 const RUNNER_SELF_UPDATE_MS = (() => {
@@ -632,7 +634,7 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
       writable: true, total: all.length, nativeId: nid, inputTokens: nh?.inputTokens, contextWindowTokens: nh?.contextWindowTokens, model: nh?.model || lastUsage?.model, effort: nh?.effort || lastUsage?.effort, permissionMode: sessionPermissionMode(s.id),
       messages: all.map((m: any) => ({
         role: m.role, text: m.text, ts: m.ts, agent: m.agent, speaker: m.speaker,
-        images: m.images, files: m.files, activity: m.activity, usage: m.usage, contextManifest: m.contextManifest,
+        images: m.images, files: m.files, activity: m.activity, usage: m.usage, contextManifest: m.contextManifest, interrupted: m.interrupted,
       })),
       files: [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))],
       liveActivity: live?.events, liveState: live?.state, liveTurnId: live?.turnId,
@@ -1106,6 +1108,7 @@ async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter,
   const sequencer = createEventSequencer(turnId);
   const bridge = createAgentEventBridge(turnId, sequencer);
   const activity: AgentEvent[] = [];
+  turnsWithWork.delete(sessionId);
   const profile = EXECUTION_ADAPTER_PROFILES[selected.name as keyof typeof EXECUTION_ADAPTER_PROFILES];
   const rootExecutionId = executionRootId(RUNNER_ID, sessionId, turnId);
   const tracker = new ExecutionTracker(executionStore, {
@@ -1116,6 +1119,9 @@ async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter,
   executionAborts.set(tracker.rootExecutionId, ctrl);
   const emit = (event: AgentEvent, project = true): void => {
     if (activity.length < 600) activity.push(event);
+    // Marca a sessão assim que o turno produz trabalho de verdade: é o que o `dropLast` consulta para
+    // recusar apagar a pergunta. `activity` é truncado em 600 eventos; este sinal não pode ser.
+    if (turnProducedWork([event])) turnsWithWork.add(sessionId);
     if (project) {
       try { tracker?.handleAgentEvent(event); }
       catch (error) { console.warn(`[runner] falha ao projetar execução ${tracker?.rootExecutionId || turnId}:`, String(error)); }
@@ -1148,6 +1154,9 @@ async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter,
   } catch (e: any) {
     if (ctrl.signal.aborted || String(e?.message) === ABORTED) { if (!sequencer.terminal) emit(bridge.cancelled("Cancelada por solicitação do usuário.")); }
     else if (!sequencer.terminal) emit(bridge.failed(String(e?.message ?? e), "PROVIDER_ERROR"));
+    // Mesma regra do Hub: o que a IA já produziu viaja no erro para runManagedTurn PERSISTIR, em vez
+    // de o cancelamento apagar o turno inteiro do histórico desta máquina.
+    attachPartialTurn(e, activity);
     throw e;
   } finally {
     if (executionAborts.get(tracker.rootExecutionId) === ctrl) executionAborts.delete(tracker.rootExecutionId);
@@ -1747,8 +1756,13 @@ function connect(): void {
       if (m.t === "dropLast" && typeof m.sessionId === "string") {
         if (store.isHidden(m.sessionId)) { send({ t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; }
         if (!isNativeId(m.sessionId)) {
-          store.dropLastUser(m.sessionId);
-          pushSessions();
+          // "Desfazer o envio" só enquanto a IA não fez nada — ver o mesmo guard no Hub. Com trabalho
+          // feito, o parcial do assistente já é a última mensagem (e dropLastUser vira no-op); este
+          // guard cobre a corrida em que o dropLast chega antes de o parcial ser gravado.
+          if (!turnsWithWork.has(m.sessionId)) {
+            store.dropLastUser(m.sessionId);
+            pushSessions();
+          }
         }
         return;
       }

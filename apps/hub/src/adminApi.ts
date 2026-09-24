@@ -100,12 +100,14 @@ export function startAdminApi(ctx: AdminCtx): void {
           // device that authenticated and then hit "sem acesso a esta máquina" on every machine, with
           // no surface anywhere to repair it. The caller now chooses the allowlist.
           const runners = Array.isArray(b.runners) ? b.runners.filter((x: unknown): x is string => typeof x === "string") : [];
-          const { code, invite } = auth.mintInvite("cli", { role, runners, ttlSec });
+          // O nome também entra por aqui: um convite mintado pelo CLI cai na MESMA lista de
+          // pendentes da tela, e chegar sem nome ali é o que fazia todo mundo virar "member".
+          const { code, invite } = auth.mintInvite("cli", { role, runners, ttlSec, label: b.label });
           return json(200, { code, link: inviteLink(code), invite, runners: role === "owner" ? "*" : runners });
         }
         if (req.method === "POST" && url === "/admin/runner-token") {
           const b = await body();
-          const label = (typeof b.label === "string" && b.label) ? b.label : "runner";
+          const label = auth.cleanLabel(b.label, "runner");
           const rid = (typeof b.runnerId === "string" && b.runnerId) ? b.runnerId : ("m-" + randomUUID().slice(0, 8));
           const token = auth.mintRunnerToken(rid, label);
           const hubWs = PUBLIC_URL ? PUBLIC_URL.replace(/^http/, "ws") : `ws://<este-host>:${ctx.port}`;

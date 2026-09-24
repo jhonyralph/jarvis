@@ -186,10 +186,18 @@ Use only for runner cwd parity tests.`);
     inbox.send({ t: "cancel", sessionId: sid });
     const cancelledReplay = await inbox.take((m) => m.t === "agent_event" && m.sessionId === sid && m.event?.turnId === "e2e-live-replay" && m.event?.kind === "cancelled");
     assert.match(cancelledReplay.event.text, /solicitação do usuário/);
+    // Este turno JA TRABALHOU (dois Reads acima), entao "desfazer o envio" nao se aplica: o pedido
+    // de dropLast e recusado e o historico guarda a pergunta + o parcial marcado como interrompido.
+    // Ate 2026-09-23 era o contrario — o dropLast apagava a pergunta e o trabalho ia junto, e foi
+    // assim que uma sessao real perdeu um turno inteiro. O desfazer continua valendo quando nada foi
+    // produzido; esse caso e coberto em packages/core/src/turn.test.ts (sem custo de e2e).
     inbox.send({ t: "dropLast", sessionId: sid });
     inbox.send({ t: "open", sessionId: sid });
-    const cleanHistory = await inbox.take((m) => m.t === "history" && m.sessionId === sid && !m.messages?.some((message: any) => message.text === "[fixture:replay]"));
-    assert.equal(cleanHistory.messages.some((message: any) => message.text === "[fixture:replay]"), false);
+    const keptHistory = await inbox.take((m) => m.t === "history" && m.sessionId === sid && m.messages?.at(-1)?.interrupted === true);
+    assert.equal(keptHistory.messages.some((message: any) => message.text === "[fixture:replay]"), true, "cancelar nao pode apagar a pergunta de um turno que ja rodou");
+    const interrompida = keptHistory.messages.at(-1);
+    assert.equal(interrompida.role, "assistant");
+    assert.ok(interrompida.activity?.some((ev: any) => ev?.tool?.callId === "replay-read-1"), "o trabalho ja feito sobrevive no historico");
 
     const memoryFile = join(home, "AGENTS.md"), memoryNote = "isolamento HITL entre dispositivos";
     assert.equal(existsSync(memoryFile), false);

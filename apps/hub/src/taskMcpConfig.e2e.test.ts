@@ -148,7 +148,7 @@ async function fakeRunner(port: number, opts: { runnerId: string; protocolVersio
       runnerId: opts.runnerId, host: "maquina-de-teste", os: "linux", agents: ["mock"], agentDescriptors: [], agentUsage: {},
 
       protocolVersion: opts.protocolVersion ?? RUNNER_PROTOCOL_VERSION, version: "test", label: "Máquina de teste", taskBridge: true,
-      taskMcpServers: [], taskMcpConfigFile: opts.configFile ?? "/home/luby/.jarvis/task-mcp.json",
+      taskMcpServers: [], taskMcpConfigFile: opts.configFile ?? "/home/dev/.jarvis/task-mcp.json",
       taskMcpRemoteEdit: opts.remoteEdit !== false,
 
     },
@@ -162,7 +162,7 @@ async function fakeRunner(port: number, opts: { runnerId: string; protocolVersio
   ws.on("message", (raw) => {
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
     if (m?.t === "task_mcp_config" && typeof m.reqId === "string") {
-      inbox.send({ t: "task_mcp_config", reqId: m.reqId, configFile: opts.configFile ?? "/home/luby/.jarvis/task-mcp.json", schemaVersion: 1, servers: [] });
+      inbox.send({ t: "task_mcp_config", reqId: m.reqId, configFile: opts.configFile ?? "/home/dev/.jarvis/task-mcp.json", schemaVersion: 1, servers: [] });
       return;
     }
     if (m?.t === "task_mcp_config_set" && typeof m.reqId === "string") inbox.send({ t: "task_mcp_config_set", reqId: m.reqId, ok: true });
@@ -192,7 +192,7 @@ test("configurar MCP pela tela: o pedido vai para a máquina certa, e as guardas
     const cliente = new Inbox(ws);
     await cliente.take((m) => m.t === "version");
 
-    const nova = await fakeRunner(hubPort, { runnerId: "luby", configFile: "/home/luby/.jarvis/task-mcp.json" });
+    const nova = await fakeRunner(hubPort, { runnerId: "notebook", configFile: "/home/dev/.jarvis/task-mcp.json" });
     // "Antiga" é antes da CAPACIDADE, não "uma abaixo da atual": quando o protocolo subiu para 14, a
     // máquina em 13 continuava sabendo ser configurada — e o teste acusou o contrário.
     const velha = await fakeRunner(hubPort, { runnerId: "antiga", protocolVersion: RUNNER_CAPABILITY_SINCE.taskMcpConfig - 1 });
@@ -202,16 +202,16 @@ test("configurar MCP pela tela: o pedido vai para a máquina certa, e as guardas
 
     // 1) A tela mostra o caminho REAL de cada máquina - antes exibia o do Hub para todas.
     cliente.send({ t: "task_connections" });
-    const conexoes = await cliente.take((m) => m.t === "task_connections" && m.mcpMachines?.some((x: any) => x.runnerId === "luby"));
-    const luby = conexoes.mcpMachines.find((x: any) => x.runnerId === "luby");
-    assert.equal(luby.configFile, "/home/luby/.jarvis/task-mcp.json", "caminho da máquina, não o do Hub");
-    assert.equal(luby.editable, true);
+    const conexoes = await cliente.take((m) => m.t === "task_connections" && m.mcpMachines?.some((x: any) => x.runnerId === "notebook"));
+    const notebook = conexoes.mcpMachines.find((x: any) => x.runnerId === "notebook");
+    assert.equal(notebook.configFile, "/home/dev/.jarvis/task-mcp.json", "caminho da máquina, não o do Hub");
+    assert.equal(notebook.editable, true);
     assert.equal(conexoes.mcpMachines.find((x: any) => x.runnerId === "antiga").editable, false, "protocolo 12 não ganha formulário");
     assert.equal(conexoes.mcpMachines.find((x: any) => x.runnerId === "trancada").editable, false, "chave desligada lá não ganha formulário");
 
     // 2) Salvar numa máquina apta chega até ela e volta ok.
-    cliente.send({ t: "task_mcp_config_set", runnerId: "luby", name: "linear", server: { transport: { kind: "stdio", command: "npx" }, listTool: "list_issues" } });
-    const salvo = await cliente.take((m) => m.t === "task_mcp_config_set" && m.runnerId === "luby");
+    cliente.send({ t: "task_mcp_config_set", runnerId: "notebook", name: "linear", server: { transport: { kind: "stdio", command: "npx" }, listTool: "list_issues" } });
+    const salvo = await cliente.take((m) => m.t === "task_mcp_config_set" && m.runnerId === "notebook");
     assert.equal(salvo.ok, true, JSON.stringify(salvo));
 
     // 3) Protocolo antigo: recusa com motivo, sem encaminhar frame que morreria lá.

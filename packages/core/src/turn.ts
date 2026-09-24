@@ -71,9 +71,57 @@ export interface TurnStoredMessage {
   activity?: unknown[];
   usage?: TurnUsage;
   contextManifest?: ContextManifest;
+  /** Resposta que não chegou ao fim (turno cancelado). Persistida assim mesmo — ver attachPartialTurn. */
+  interrupted?: boolean;
 }
 
 export interface TurnReply { text: string; activity?: unknown[]; usage?: TurnUsage; }
+
+/** O que a IA já tinha produzido quando o turno foi interrompido. */
+export interface PartialTurn { text: string; activity: unknown[]; }
+
+/** Eventos que significam "o turno só foi ACEITO", não "a IA trabalhou". Cancelar durante esta
+ *  janela é o caso legítimo de devolver a mensagem ao composer: nada foi feito ainda. */
+const NO_WORK_EVENT_KINDS = new Set(["accepted", "started", "cancelled", "failed", "usage"]);
+
+/** `true` quando o turno chegou a produzir trabalho visível (texto, raciocínio, plano, ferramenta).
+ *  É o que separa "parei antes de começar" (dá para desfazer o envio) de "parei no meio de uma hora
+ *  de trabalho" (o histórico PRECISA sobreviver). */
+export function turnProducedWork(activity: unknown[] | undefined): boolean {
+  if (!Array.isArray(activity)) return false;
+  return activity.some((raw) => {
+    const kind = String((raw as { kind?: unknown } | null)?.kind ?? "");
+    return kind !== "" && !NO_WORK_EVENT_KINDS.has(kind);
+  });
+}
+
+/** Reconstrói o texto de nível raiz já publicado. Texto de SUB-AGENTE (`parentId`) fica de fora: é
+ *  raciocínio interno de outra conversa, não a resposta — a mesma regra dos adapters. */
+export function partialTurnFromActivity(activity: unknown[] | undefined): PartialTurn | undefined {
+  if (!turnProducedWork(activity)) return undefined;
+  let text = "";
+  for (const raw of activity as Array<Record<string, unknown>>) {
+    if (raw?.kind !== "text_delta" || raw?.parentId) continue;
+    text += String(raw.text ?? "");
+  }
+  return { text: text.trim(), activity: (activity as unknown[]).slice() };
+}
+
+const PARTIAL_TURN = Symbol.for("jarvis.partialTurn");
+
+/** Pendura em um erro de turno o que a IA já havia produzido, para quem trata o erro poder
+ *  PERSISTIR em vez de descartar. Antes disso, cancelar um turno jogava fora a pergunta e tudo o
+ *  que a IA tinha feito — incluindo horas de trabalho já concluído. */
+export function attachPartialTurn(error: unknown, activity: unknown[] | undefined): void {
+  const partial = partialTurnFromActivity(activity);
+  if (!partial || !error || typeof error !== "object") return;
+  (error as Record<symbol, unknown>)[PARTIAL_TURN] = partial;
+}
+
+export function partialTurnOf(error: unknown): PartialTurn | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  return (error as Record<symbol, unknown>)[PARTIAL_TURN] as PartialTurn | undefined;
+}
 
 export interface TurnCtx {
   ensure(sid: string): TurnSessionRef;
@@ -135,6 +183,41 @@ export interface ManagedTurnInput {
  *  como falha generica, sem troca para a IA secundaria e sem registro de exaustao. Os qualificadores
  *  sao enumerados de proposito — aceitar qualquer palavra antes de "limit" pegaria "time limit"
  *  (timeout) e bloquearia a IA primaria ate a meia-noite por engano. */
+/** Sessoes que devem aparecer como "em progresso" para o cliente.
+ *
+ *  Duas fontes, e ate agora so uma era publicada: o turno normal marca a SESSAO direto; um trabalho
+ *  gerenciado (Conselho, Espaco de Solucoes, Debate) e registrado pelo id da EXECUCAO e carrega a
+ *  sessao junto. Como o frame `runs` transporta ids de sessao, o trabalho gerenciado simplesmente
+ *  nao aparecia — a conversa ficava apagada enquanto um Conselho rodava nela.
+ *
+ *  Trabalho sem sessao (delegacao avulsa, que nao nasce de uma conversa) nao acende conversa
+ *  nenhuma: entra como `undefined` e e ignorado aqui. */
+/** Padrao de eventos por mensagem enviados na carga de historico. */
+export const ACTIVITY_PAGE_DEFAULT = 40;
+
+/** Corta o `activity` de UMA mensagem para os ultimos `cap` eventos, declarando quantos ficaram de
+ *  fora em `activityOmitted`.
+ *
+ *  POR QUE POR MENSAGEM, e nao "so as ultimas N mensagens": medido nesta instalacao, as sessoes
+ *  pesadas tem POUCAS mensagens com activity gigante — uma delas tem 20 mensagens e 11.024 eventos.
+ *  Paginar por mensagem quase nao ajudaria ali (11,4 MB -> 9,3 MB), enquanto cortar dentro da
+ *  mensagem leva a mesma sessao para 0,9 MB.
+ *
+ *  O corte e pelo FIM: os eventos recentes sao os que o cliente ainda pode receber ao vivo (e
+ *  precisa deduplicar por eventId) e os que descrevem o estado final do turno. O restante volta sob
+ *  demanda — nada e perdido, so nao viaja junto. */
+export function trimMessageActivity<T extends { activity?: unknown }>(message: T, cap = ACTIVITY_PAGE_DEFAULT): T & { activityOmitted?: number } {
+  const activity = message.activity;
+  if (!Array.isArray(activity) || activity.length <= cap) return message;
+  return { ...message, activity: activity.slice(-cap), activityOmitted: activity.length - cap };
+}
+
+export function mergeActiveRunSessions(turns: Iterable<string>, managed: Iterable<string | undefined>): string[] {
+  const out = new Set<string>(turns);
+  for (const sessionId of managed) if (sessionId) out.add(sessionId);
+  return [...out];
+}
+
 export function isLimitError(message: string): boolean {
   const text = String(message || "").replace(/\s+/g, " ").trim();
   if (!text) return false;
@@ -183,6 +266,21 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
     if (o.speak) await ctx.speak(sid, reply.text, o.speakAlso);
   };
 
+  // Um turno que morre no meio (cancelado pela pessoa, ou derrubado por erro) ainda costuma ter
+  // produzido trabalho REAL: comandos rodados, arquivos editados, texto já publicado. Guardar isso é
+  // o que diferencia "parei a conversa" de "perdi a conversa" — antes, o parcial era descartado e a
+  // própria pergunta era apagada logo em seguida, então o turno inteiro sumia do histórico.
+  const storePartial = (error: unknown, agent: string): void => {
+    const partial = partialTurnOf(error);
+    if (!partial) return;
+    ctx.add(sid, {
+      role: "assistant", text: partial.text, ts: ctx.now(), agent: ctx.resolveAgentName(agent),
+      activity: partial.activity, interrupted: true,
+    });
+    ctx.pushSessions();
+    ctx.afterStored?.(sid, turnId);
+  };
+
   try {
     await attempt(runAgent, runModel, runEffort, runFastMode);
   } catch (e: unknown) {
@@ -198,11 +296,13 @@ export async function runManagedTurn(ctx: TurnCtx, sid: string, o: ManagedTurnIn
           return;
         } catch (e2: unknown) {
           const m2 = String((e2 as { message?: unknown } | null)?.message ?? e2);
+          storePartial(e2, fb.agent);
           o.onError(m2, isLimitError(m2));
           return;
         }
       }
     }
+    storePartial(e, runAgent);
     o.onError(message, limit);
   }
 }

@@ -68,8 +68,12 @@ itself) runs a **Runner** that executes agents locally and streams back.
    **per-runner (allowlist)**. Owner sees all runners; members only the machines
    the owner shared. Since each runner is a shell, this grain is the security
    boundary for sharing.
-4c. **Connected devices:** the owner sees every device (label, last-seen, IP,
-   user-agent) and can revoke one or all; revoking kills that token immediately.
+4c. **Connected devices:** the owner sees every device (name, platform, last-seen,
+   IP) and can revoke one or all; revoking kills that token immediately. Names are
+   the owner's: an invite may carry one (it becomes the device's name on redeem) and
+   any device can be renamed afterwards. Without that the label was the browser's own
+   guess — every desktop called "Windows", which is a list you cannot act on. The
+   platform stays visible as a separate field, so naming never costs information.
 4d. **Containment (the honest limit):** sharing a runner = giving a shell on that
    machine. Chosen posture: **per-machine, explicit + audited** — share only what
    you accept giving shell to; every action is attributed in an append-only audit

@@ -30,6 +30,27 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from whisper_stt import transcribe  # noqa: E402  (warm, in-process)
 
 HUB_WS = os.environ.get("JARVIS_HUB_WS", "ws://127.0.0.1:4577")
+
+
+def _wake_token() -> str:
+    """Segredo por boot que prova que quem fala e um processo DESTA maquina.
+
+    Estar em 127.0.0.1 nao prova nada: o Hub costuma ficar atras de `tailscale serve`, que disca
+    loopback em nome de qualquer par do tailnet, e uma pagina web aberta aqui tambem alcanca
+    ws://127.0.0.1:4577 (WebSocket nao tem CORS). O Hub grava o segredo em ~/.jarvis/wake-token a
+    cada boot; so um processo local le esse arquivo. Sem ele o Hub trata estas mensagens como
+    qualquer outra e exige login — o listener nao tem dispositivo pareado, entao seria silencio.
+    """
+    value = os.environ.get("JARVIS_WAKE_TOKEN", "").strip()
+    if value:
+        return value
+    path = os.path.join(os.environ.get("JARVIS_HOME") or os.path.expanduser("~"), ".jarvis", "wake-token")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError as e:
+        print(f"[wake] sem token local ({path}): {e} — o Hub vai recusar a injecao de voz", flush=True)
+        return ""
 SESSION = os.environ.get("JARVIS_WAKE_SESSION", "voice")
 WAKE_NAME = os.environ.get("JARVIS_WAKE_MODEL", "hey_jarvis")
 WAKE_FILE = os.environ.get("JARVIS_WAKE_MODEL_FILE")  # optional custom .onnx (e.g. bare "Jarvis")
@@ -47,7 +68,7 @@ def start_ws():
     import websocket  # websocket-client
 
     def on_open(ws):
-        ws.send(json.dumps({"t": "wake_hello"}))
+        ws.send(json.dumps({"t": "wake_hello", "wakeToken": _wake_token()}))
         print("[wake] connected to hub", flush=True)
 
     def on_message(ws, raw):
@@ -162,7 +183,7 @@ def main():
             print("[wake] detected -> capturing", flush=True)
             if ws.ws:
                 try:
-                    ws.ws.send(json.dumps({"t": "wake_event", "phase": "capturing"}))
+                    ws.ws.send(json.dumps({"t": "wake_event", "phase": "capturing", "wakeToken": _wake_token()}))
                 except Exception:
                     pass
             model.reset()
@@ -177,7 +198,7 @@ def main():
             text = transcribe(wav_path, LANG).strip()
             print(f"[wake] heard ({speaker or '?'}): {text!r}", flush=True)
             if text and ws.ws:
-                ws.ws.send(json.dumps({"t": "send", "text": text, "speak": True, "sessionId": SESSION, "speaker": speaker}))
+                ws.ws.send(json.dumps({"t": "send", "text": text, "speak": True, "sessionId": SESSION, "speaker": speaker, "wakeToken": _wake_token()}))
     except KeyboardInterrupt:
         pass
     finally:

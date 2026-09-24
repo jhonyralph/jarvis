@@ -9,6 +9,7 @@
     .\scripts\jarvis.ps1 owner            # gera convite de DONO (recuperar acesso)
     .\scripts\jarvis.ps1 invite           # gera convite de MEMBRO
     .\scripts\jarvis.ps1 invite -ttl 3600 # convite de membro valido por 1h
+    .\scripts\jarvis.ps1 invite -label "Notebook do Joao"   # nomeia o convite (vira o nome do aparelho)
     .\scripts\jarvis.ps1 status           # dispositivos + convites pendentes
     .\scripts\jarvis.ps1 audit            # ultimas acoes (quem fez o que)
     .\scripts\jarvis.ps1 claimcode        # mostra o codigo de claim (se ainda sem dono)
@@ -39,8 +40,8 @@ function Show-Invite($r) {
 
 try {
   switch ($cmd) {
-    'owner'      { Show-Invite (Invoke-RestMethod -Method Post "$base/admin/invite" -Body (@{ role = 'owner'; ttlSec = $ttl } | ConvertTo-Json) -ContentType 'application/json') }
-    'invite'     { Show-Invite (Invoke-RestMethod -Method Post "$base/admin/invite" -Body (@{ role = 'member'; ttlSec = $ttl } | ConvertTo-Json) -ContentType 'application/json') }
+    'owner'      { Show-Invite (Invoke-RestMethod -Method Post "$base/admin/invite" -Body (@{ role = 'owner'; ttlSec = $ttl; label = $label } | ConvertTo-Json) -ContentType 'application/json') }
+    'invite'     { Show-Invite (Invoke-RestMethod -Method Post "$base/admin/invite" -Body (@{ role = 'member'; ttlSec = $ttl; label = $label } | ConvertTo-Json) -ContentType 'application/json') }
     'machine'    {
       $lbl = if ($label) { $label } else { 'runner' }
       $r = Invoke-RestMethod -Method Post "$base/admin/runner-token" -Body (@{ label = $lbl } | ConvertTo-Json) -ContentType 'application/json'

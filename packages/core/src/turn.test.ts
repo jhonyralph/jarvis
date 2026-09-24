@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildTurnAttachments, fileDiffFromMessages, imageDataUrl, isLimitError, runManagedTurn, touchedFilesFromMessages, type TurnStoredMessage } from "./index.js";
+import { buildTurnAttachments, fileDiffFromMessages, imageDataUrl, isLimitError, mergeActiveRunSessions, runManagedTurn, touchedFilesFromMessages, trimMessageActivity, turnProducedWork, partialTurnFromActivity, attachPartialTurn, partialTurnOf, type TurnStoredMessage } from "./index.js";
 
 test("managed lifecycle persists the same rich user and assistant history", async () => {
   const stored: TurnStoredMessage[] = [], broadcast: unknown[] = [];
@@ -191,4 +191,110 @@ test("File diffs are rebuilt provider-neutrally from persisted activity", () => 
   assert.equal(diff.dels, 1);
   assert.deepEqual(diff.rows?.map((r) => r.t + r.s), ["-old", "+new"]);
   assert.match(fileDiffFromMessages(messages, "missing.ts").error || "", /sem diff/);
+});
+
+test("mergeActiveRunSessions: trabalho gerenciado tambem acende a conversa", () => {
+  // O sintoma que isto trava: um Conselho/Revisao/Debate rodando com a conversa APAGADA, porque o
+  // frame `runs` transporta id de SESSAO e o trabalho gerenciado era registrado por id de EXECUCAO.
+  const ativas = mergeActiveRunSessions(["s-turno"], ["s-conselho", undefined, "s-turno"]);
+  assert.deepEqual(ativas.sort(), ["s-conselho", "s-turno"], "une as duas fontes e nao duplica");
+
+  // Delegacao avulsa nao nasce de conversa: nao pode acender sessao nenhuma.
+  assert.deepEqual(mergeActiveRunSessions([], [undefined, undefined]), []);
+
+  // Sem trabalho gerenciado, o comportamento anterior e preservado na integra.
+  assert.deepEqual(mergeActiveRunSessions(["a", "b"], []), ["a", "b"]);
+});
+
+test("trimMessageActivity corta pelo FIM e declara quantos ficaram de fora", () => {
+  const eventos = Array.from({ length: 100 }, (_v, i) => ({ eventId: `e${i}` }));
+  const cortada = trimMessageActivity({ role: "assistant", text: "oi", activity: eventos }, 40);
+
+  assert.equal((cortada.activity as unknown[]).length, 40);
+  assert.equal(cortada.activityOmitted, 60, "o corte e declarado, nao silencioso");
+  // Pelo FIM: os recentes sao os que ainda podem chegar AO VIVO e precisam ser deduplicados por
+  // eventId no cliente. Cortar pelo comeco quebraria essa deduplicacao.
+  assert.equal((cortada.activity as Array<{ eventId: string }>)[0].eventId, "e60");
+  assert.equal((cortada.activity as Array<{ eventId: string }>).at(-1)!.eventId, "e99");
+  assert.equal(cortada.text, "oi", "o resto da mensagem passa intacto");
+
+  // Abaixo do teto: objeto devolvido SEM alteracao e sem o campo de omissao.
+  const curta = { role: "assistant", activity: eventos.slice(0, 10) };
+  const igual = trimMessageActivity(curta, 40);
+  assert.equal(igual, curta, "mesma referencia — nao ha copia desnecessaria");
+  assert.equal(igual.activityOmitted, undefined);
+
+  // Mensagem sem activity nenhum nao pode quebrar.
+  const semActivity: { role: string; text: string; activity?: unknown } = { role: "user", text: "oi" };
+  assert.deepEqual(trimMessageActivity(semActivity, 40), { role: "user", text: "oi" });
+});
+
+// --- cancelar interrompe o trabalho; não apaga o que já foi feito --------------------------------
+// Regressão de 2026-09-23: parar um turno descartava tudo que a IA tinha produzido e o cliente ainda
+// pedia `dropLast`, que apagava a própria pergunta. Resultado: o turno inteiro — numa sessão real,
+// uma hora de trabalho — sumia do histórico sem deixar rastro.
+
+test("turnProducedWork separa 'parei antes de começar' de 'parei no meio do trabalho'", () => {
+  assert.equal(turnProducedWork(undefined), false);
+  assert.equal(turnProducedWork([]), false);
+  assert.equal(turnProducedWork([{ kind: "accepted" }, { kind: "started" }]), false, "só aceitar o turno não é trabalho");
+  assert.equal(turnProducedWork([{ kind: "accepted" }, { kind: "cancelled" }]), false, "o próprio cancelamento também não é");
+  assert.equal(turnProducedWork([{ kind: "started" }, { kind: "tool_started" }]), true);
+  assert.equal(turnProducedWork([{ kind: "text_delta", text: "oi" }]), true);
+  assert.equal(turnProducedWork([{ kind: "thinking" }]), true);
+});
+
+test("o parcial guarda a atividade inteira e só o texto de nível raiz", () => {
+  const activity = [
+    { kind: "accepted" }, { kind: "started" },
+    { kind: "text_delta", text: "Comecei" },
+    { kind: "text_delta", text: " a análise.", parentId: undefined },
+    { kind: "text_delta", text: "ruído do subagente", parentId: "sub-1" },
+    { kind: "tool_completed", tool: { name: "Bash" } },
+    { kind: "cancelled" },
+  ];
+  const partial = partialTurnFromActivity(activity);
+  assert.equal(partial?.text, "Comecei a análise.");
+  assert.equal(partial?.activity.length, activity.length, "a atividade vai INTEIRA: é ela que a tela reconstrói");
+  assert.equal(partialTurnFromActivity([{ kind: "accepted" }]), undefined);
+
+  const err = new Error("ABORTED");
+  attachPartialTurn(err, activity);
+  assert.equal(partialTurnOf(err)?.text, "Comecei a análise.");
+  assert.equal(partialTurnOf(new Error("x")), undefined);
+  assert.doesNotThrow(() => attachPartialTurn("não é objeto", activity));
+});
+
+test("um turno cancelado no meio do trabalho sobrevive no histórico, marcado como interrompido", async () => {
+  const stored: TurnStoredMessage[] = [];
+  const erros: string[] = [];
+  const cancelado = new Error("ABORTED");
+  attachPartialTurn(cancelado, [{ kind: "started" }, { kind: "text_delta", text: "resposta parcial" }, { kind: "tool_completed", tool: { name: "Bash" } }]);
+  await runManagedTurn({
+    ensure: () => ({ agent: "codex", cwd: "/repo" }), resolveAgentName: (x) => x,
+    add: (_sid, msg) => stored.push(msg), broadcast: () => {}, pushSessions: () => {},
+    now: () => 7, speak: async () => {},
+    runAgentTurn: async () => { throw cancelado; },
+  }, "s1", { showText: "faça o trabalho", onError: (m) => erros.push(m) });
+
+  assert.deepEqual(stored.map((m) => m.role), ["user", "assistant"], "a pergunta FICA e o parcial entra depois dela");
+  assert.equal(stored[0].text, "faça o trabalho");
+  assert.equal(stored[1].text, "resposta parcial");
+  assert.equal(stored[1].interrupted, true);
+  assert.equal((stored[1].activity || []).length, 3);
+  assert.deepEqual(erros, ["ABORTED"], "continua sendo reportado como erro do turno — só não apaga mais nada");
+});
+
+test("turno cancelado ANTES de a IA fazer qualquer coisa não inventa mensagem de assistente", async () => {
+  const stored: TurnStoredMessage[] = [];
+  const cancelado = new Error("ABORTED");
+  attachPartialTurn(cancelado, [{ kind: "accepted" }, { kind: "started" }]);
+  await runManagedTurn({
+    ensure: () => ({ agent: "codex", cwd: "/repo" }), resolveAgentName: (x) => x,
+    add: (_sid, msg) => stored.push(msg), broadcast: () => {}, pushSessions: () => {},
+    now: () => 7, speak: async () => {},
+    runAgentTurn: async () => { throw cancelado; },
+  }, "s1", { showText: "deixa pra lá", onError: () => {} });
+
+  assert.deepEqual(stored.map((m) => m.role), ["user"], "nada foi feito: o desfazer-envio do cliente segue válido");
 });

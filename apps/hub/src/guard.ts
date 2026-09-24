@@ -9,7 +9,8 @@
  *   JARVIS_MAX_CONN_PER_IP    max concurrent connections per IP (default 40)
  *   JARVIS_MAX_CONN           max concurrent connections total (default 800)
  *   JARVIS_MAX_PAYLOAD_MB     max WS message size in MB (default 20)
- *   JARVIS_ALLOWED_ORIGINS    comma-separated Origin allowlist for UI clients (default: any)
+ *   JARVIS_ALLOWED_ORIGINS    comma-separated Origin allowlist for UI clients (default: only
+ *                             the Hub's own origin; clients with no Origin header are unaffected)
  */
 const TRUST_PROXY = /^(on|1|true)$/i.test(process.env.JARVIS_TRUST_PROXY || "");
 const REQUIRE_TLS = /^(on|1|true)$/i.test(process.env.JARVIS_REQUIRE_TLS || "");
@@ -37,11 +38,26 @@ export function isInsecurePublic(req: any): boolean {
 /** With JARVIS_REQUIRE_TLS=on, non-loopback plaintext connections are refused (fail-closed). */
 export function tlsRequiredButMissing(req: any): boolean { return REQUIRE_TLS && isInsecurePublic(req); }
 
-/** Origin allowlist for UI clients (no-op unless JARVIS_ALLOWED_ORIGINS is set). */
+/**
+ * Quem pode ABRIR um socket de UI.
+ *
+ * WebSocket nao passa por CORS: qualquer pagina que o dono visitar consegue discar o Hub (inclusive
+ * `ws://127.0.0.1:4577`) e o navegador manda a conexao normalmente. A resposta ate fica invisivel
+ * para o site, mas o ENVIO nao — e mandar ja e o suficiente para qualquer rota que nao exija login.
+ * Por isso o padrao aqui deixou de ser "qualquer origem": um cliente de navegador so entra se a
+ * pagina dele veio DESTE Hub.
+ *
+ * Cliente que nao e navegador (runner, CLI, ponte MCP, o app Electron carregando a UI) nao manda
+ * `Origin` — esse caso continua liberado, senao a maquina remota nao registra.
+ * `JARVIS_ALLOWED_ORIGINS` continua sendo a lista explicita para quem serve a UI de outro nome.
+ */
 export function originAllowed(req: any): boolean {
-  if (!ALLOWED_ORIGINS.length) return true;
   const o = String(req?.headers?.origin || "");
-  return !o || ALLOWED_ORIGINS.includes(o);
+  if (!o) return true; // sem Origin = nao e navegador
+  if (ALLOWED_ORIGINS.length) return ALLOWED_ORIGINS.includes(o);
+  const host = String(req?.headers?.host || "");
+  if (!host) return false; // sem Host nao da para comparar: fecha
+  try { return new URL(o).host === host; } catch { return false; } // "null" (sandbox/file://) cai aqui
 }
 
 // ---- per-IP brute-force limiter for the auth handshake ----

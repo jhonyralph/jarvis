@@ -18,14 +18,32 @@ test("sem nenhuma origem, cai no loopback e se declara padrão", () => {
   assert.deepEqual(r.candidates, []);
 });
 
-test("precedência: app > env > runner", () => {
+test("precedência: app > env > Hub desta máquina > runner", () => {
   const app = "https://salvo.ts.net", env = "https://env.ts.net", runner = "wss://runner.ts.net";
-  assert.equal(resolve({ saved: app, env, runner }).url, "https://salvo.ts.net");
-  assert.equal(resolve({ saved: app, env, runner }).source, "app");
-  assert.equal(resolve({ env, runner }).url, "https://env.ts.net");
-  assert.equal(resolve({ env, runner }).source, "env");
+  const localHub = DEFAULT_HUB_URL;
+  assert.equal(resolve({ saved: app, env, localHub, runner }).url, "https://salvo.ts.net");
+  assert.equal(resolve({ saved: app, env, localHub, runner }).source, "app");
+  assert.equal(resolve({ env, localHub, runner }).url, "https://env.ts.net");
+  assert.equal(resolve({ env, localHub, runner }).source, "env");
   assert.equal(resolve({ runner }).url, "https://runner.ts.net", "ws(s) do runner vira http(s)");
   assert.equal(resolve({ runner }).source, "runner");
+});
+
+test("numa máquina que HOSPEDA o Hub, o loopback ganha do endereço do runner", () => {
+  // As duas origens são o MESMO Hub, mas o token do dispositivo vive no localStorage de uma origem
+  // só: preferir o endereço do runner aqui derrubava a sessão e a janela voltava a pedir código de
+  // convite numa máquina onde ninguém mudou nada.
+  const r = resolve({ localHub: DEFAULT_HUB_URL, runner: "wss://esta-maquina.ts.net" });
+  assert.equal(r.url, DEFAULT_HUB_URL);
+  assert.equal(r.source, "local");
+  assert.equal(r.usedFallback, false, "loopback ESCOLHIDO não é o mesmo que loopback por falta de opção");
+  assert.deepEqual(r.candidates.map((c) => c.source), ["local", "runner"], "a tela continua mostrando as duas");
+});
+
+test("máquina só-runner: sem Hub local, o endereço do runner continua valendo", () => {
+  const r = resolve({ localHub: undefined, runner: "wss://hub-remoto.ts.net" });
+  assert.equal(r.url, "https://hub-remoto.ts.net");
+  assert.equal(r.source, "runner");
 });
 
 test("um valor malformado NÃO consome a vez — a próxima origem válida assume", () => {

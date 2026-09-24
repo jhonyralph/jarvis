@@ -16,7 +16,7 @@ import {
 import { ExecutionStore } from "./execution-store.js";
 import { redactExecutionText } from "./execution-redact.js";
 import { cumulativeUsageDelta } from "./execution-usage.js";
-import type { StreamEvent } from "./agents.js";
+import { boundToolError, type StreamEvent } from "./agents.js";
 
 export interface ExecutionTurnMeta {
   runnerId: string;
@@ -60,7 +60,9 @@ function toolFromStream(ev: StreamEvent): ToolEvent {
   return { callId: ev.toolId || hashId("tool", JSON.stringify([ev.name, ev.summary, ev.detail, Date.now()])),
     name: ev.name || "Tool", summary: ev.summary || ev.name || "Ferramenta", detail: ev.detail,
     status: ev.status || "started", parentId: ev.parentId, path: ev.path, adds: ev.adds, dels: ev.dels,
-    rows: ev.rows, error: ev.error };
+    // Mesmo teto do bridge: este caminho alimenta os JOURNALS, que sao relidos inteiros no boot do
+    // ExecutionStore. Sem limite aqui, um unico erro de MB entrava tambem no disco de execucoes.
+    rows: ev.rows, error: boundToolError(ev.error) };
 }
 
 function redactedAgentEvent(event: AgentEvent): AgentEvent {

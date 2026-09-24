@@ -61,7 +61,7 @@ const DEVICE_TTL_MS = Math.max(0, Number(process.env.JARVIS_DEVICE_TTL_DAYS || 0
 export type Role = "owner" | "member";
 export interface User { id: string; role: Role; name: string; createdAt: number; }
 export interface Device { id: string; userId: string; label: string; tokenHash: string; createdAt: number; lastSeen: number; ip?: string; ua?: string; expiresAt?: number; }
-export interface Invite { id: string; codeHash: string; role: Role; runners: string[]; expiresAt: number; deviceTtlSec?: number; createdBy: string; createdAt: number; usedAt?: number; usedBy?: string; }
+export interface Invite { id: string; codeHash: string; label?: string; role: Role; runners: string[]; expiresAt: number; deviceTtlSec?: number; createdBy: string; createdAt: number; usedAt?: number; usedBy?: string; }
 export interface RunnerToken { runnerId: string; label: string; tokenHash: string; createdAt: number; lastSeen: number; bound?: boolean; }
 interface AuthData {
   version: 1;
@@ -94,6 +94,13 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const newToken = () => randomBytes(32).toString("base64url"); // ~43 chars
 const newCode = () => randomBytes(18).toString("base64url"); // ~24 chars, human-pasteable
 const newId = () => randomBytes(8).toString("hex");
+/** Rótulo humano: uma linha, sem espaço duplicado, limitado. É o mesmo saneamento para convite,
+ *  dispositivo e máquina — três lugares divergirem no limite é como um nome vira meia palavra num
+ *  lugar e um parágrafo no outro. Vazio devolve o fallback (nunca um rótulo em branco na tela). */
+export function cleanLabel(value: unknown, fallback = ""): string {
+  const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+  return text ? text.slice(0, 40) : fallback;
+}
 function hashEq(a: string, b: string): boolean {
   const x = Buffer.from(a), y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
@@ -133,7 +140,7 @@ export function claim(code: string, label: string, meta?: { ip?: string; ua?: st
 }
 
 // ---- invites (owner shares access) ----
-export function mintInvite(byUserId: string, opts: { role?: Role; runners?: string[]; ttlSec?: number }): { code: string; invite: Omit<Invite, "codeHash"> } {
+export function mintInvite(byUserId: string, opts: { role?: Role; runners?: string[]; ttlSec?: number; label?: string }): { code: string; invite: Omit<Invite, "codeHash"> } {
   const code = newCode();
   // ttlSec is the granted-access duration: it's how long the invited DEVICE keeps access AND
   // (capped at 1y) the window to redeem the code. ttlSec 0 = never expires (permanent device).
@@ -142,6 +149,9 @@ export function mintInvite(byUserId: string, opts: { role?: Role; runners?: stri
   const inv: Invite = {
     id: newId(),
     codeHash: sha(code),
+    // O nome é do DONO, não de quem resgata: é como ele reconhece o convite na lista de pendentes e,
+    // depois, o aparelho na lista de dispositivos. Sem isso a lista era "member · expira em 6h" x5.
+    label: cleanLabel(opts.label) || undefined,
     role: opts.role || "member",
     runners: opts.runners || [],
     expiresAt: Date.now() + (ttl > 0 ? Math.min(ttl, YEAR) : YEAR) * 1000,
@@ -151,7 +161,7 @@ export function mintInvite(byUserId: string, opts: { role?: Role; runners?: stri
   };
   data.invites.push(inv);
   save(data);
-  audit("mint_invite", { userId: byUserId, detail: `${inv.role} · ttl ${Math.round((inv.expiresAt - inv.createdAt) / 1000)}s` });
+  audit("mint_invite", { userId: byUserId, detail: `${inv.label ? `"${inv.label}" · ` : ""}${inv.role} · ttl ${Math.round((inv.expiresAt - inv.createdAt) / 1000)}s` });
   const { codeHash, ...pub } = inv;
   return { code, invite: pub };
 }
@@ -171,14 +181,18 @@ export function redeem(code: string, label: string, meta?: { ip?: string; ua?: s
   const h = sha(code);
   const inv = data.invites.find((i) => !i.usedAt && i.expiresAt > Date.now() && hashEq(i.codeHash, h));
   if (!inv) throw new Error("convite inválido ou expirado");
-  const user: User = { id: newId(), role: inv.role, name: label || "Convidado", createdAt: Date.now() };
-  const res = issueDevice(user, label, meta, inv.deviceTtlSec);
+  // Quem resgata manda um palpite do próprio navegador ("Windows", "Android") — foi assim que esta
+  // instalação ficou com quatro dispositivos chamados "Windows". Quando o dono nomeou o convite, o
+  // nome DELE vence: é o único que distingue as pessoas. Renomear depois continua possível.
+  const named = cleanLabel(inv.label) || cleanLabel(label) || "Convidado";
+  const user: User = { id: newId(), role: inv.role, name: named, createdAt: Date.now() };
+  const res = issueDevice(user, named, meta, inv.deviceTtlSec);
   if (inv.role === "member") data.grants[user.id] = [...(inv.runners || [])];
   inv.usedAt = Date.now();
   inv.usedBy = user.id;
   data.users.push(user);
   save(data);
-  audit("redeem", { userId: user.id, deviceId: res.deviceId, ip: meta?.ip, detail: `${inv.role} "${label}"` });
+  audit("redeem", { userId: user.id, deviceId: res.deviceId, ip: meta?.ip, detail: `${inv.role} "${named}"` });
   return res;
 }
 
@@ -262,6 +276,25 @@ export function setDeviceRole(deviceId: string, role: Role, runners?: string[]):
   }
   save(data);
   audit("set_role", { deviceId, detail: `${dev.label} -> ${role}${role === "member" ? ` (máquinas: ${data.grants[user.id]?.length ? data.grants[user.id].join(",") : "nenhuma"})` : ""}` });
+  return true;
+}
+
+/** Renomeia um dispositivo já pareado — a saída para os que já nasceram com o palpite do navegador.
+ *
+ *  Renomeia junto o USUÁRIO quando ele tem só este dispositivo (o caso de todo resgate: um convite
+ *  cria um usuário e um aparelho). Sem isso a ficha mostraria o nome novo e, do lado, o velho —
+ *  duas verdades para a mesma pessoa. Com dois ou mais aparelhos, o nome da pessoa fica intocado:
+ *  aí "o aparelho" e "a pessoa" são coisas diferentes de verdade. */
+export function renameDevice(deviceId: string, label: string): boolean {
+  const dev = data.devices.find((d) => d.id === deviceId);
+  const clean = cleanLabel(label);
+  if (!dev || !clean) return false;
+  const before = dev.label;
+  dev.label = clean;
+  const user = data.users.find((u) => u.id === dev.userId);
+  if (user && data.devices.filter((d) => d.userId === user.id).length === 1) user.name = clean;
+  save(data);
+  audit("rename_device", { deviceId, userId: dev.userId, detail: `"${before}" -> "${clean}"` });
   return true;
 }
 

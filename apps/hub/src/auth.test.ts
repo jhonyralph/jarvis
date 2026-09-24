@@ -206,3 +206,55 @@ test("the last owner cannot be demoted, so the Hub is never left unmanageable", 
   assert.equal(auth.setDeviceRole(owners[0].id, "member"), false);
   assert.equal(auth.listDevices().find((d) => d.id === owners[0].id)!.role, "owner");
 });
+
+test("cleanLabel: uma linha, sem espaço duplicado, limitado — e vazio cai no fallback", () => {
+  assert.equal(auth.cleanLabel("  Notebook   do  João \n"), "Notebook do João");
+  assert.equal(auth.cleanLabel("a".repeat(80)).length, 40, "um nome gigante não estoura a ficha");
+  assert.equal(auth.cleanLabel("   "), "", "só espaço é nome vazio");
+  assert.equal(auth.cleanLabel(undefined, "Nova máquina"), "Nova máquina");
+  assert.equal(auth.cleanLabel(123 as unknown as string), "", "só string vira rótulo");
+});
+
+test("o nome do convite batiza o dispositivo; sem nome, vale o palpite do aparelho", () => {
+  const owner = auth.listDevices().find((d) => d.role === "owner")!;
+  // Nomeado pelo dono: é ele quem sabe de quem é o aparelho no momento de convidar.
+  const nomeado = auth.mintInvite(owner.userId, { role: "member", runners: ["local"], label: "  Notebook do João  " });
+  assert.equal(nomeado.invite.label, "Notebook do João", "o nome é saneado ao ser guardado");
+  const entrou = auth.redeem(nomeado.code, "Windows");
+  const dispositivo = auth.listDevices().find((d) => d.id === entrou.deviceId)!;
+  assert.equal(dispositivo.label, "Notebook do João", "o nome do dono vence o palpite do navegador");
+  assert.equal(dispositivo.userName, "Notebook do João", "a pessoa e o aparelho não divergem no resgate");
+
+  // Sem nome no convite, nada muda em relação ao comportamento antigo.
+  const anonimo = auth.mintInvite(owner.userId, { role: "member", runners: ["local"] });
+  assert.equal(anonimo.invite.label, undefined);
+  const outro = auth.redeem(anonimo.code, "Android");
+  assert.equal(auth.listDevices().find((d) => d.id === outro.deviceId)!.label, "Android");
+});
+
+test("renomear desfaz o empate de homônimos que já existem", () => {
+  const owner = auth.listDevices().find((d) => d.role === "owner")!;
+  const { code } = auth.mintInvite(owner.userId, { role: "member", runners: ["local"] });
+  const alvo = auth.redeem(code, "Windows");
+
+  assert.equal(auth.renameDevice(alvo.deviceId, "  Desktop   da sala "), true);
+  const depois = auth.listDevices().find((d) => d.id === alvo.deviceId)!;
+  assert.equal(depois.label, "Desktop da sala");
+  assert.equal(depois.userName, "Desktop da sala", "com um aparelho só, a pessoa acompanha o nome");
+
+  assert.equal(auth.renameDevice(alvo.deviceId, "   "), false, "nome vazio não apaga o que existe");
+  assert.equal(auth.listDevices().find((d) => d.id === alvo.deviceId)!.label, "Desktop da sala");
+  assert.equal(auth.renameDevice("nao-existe", "X"), false);
+});
+
+test("renomear um aparelho não encosta na ficha de outra pessoa", () => {
+  const owner = auth.listDevices().find((d) => d.role === "owner")!;
+  const a = auth.redeem(auth.mintInvite(owner.userId, { role: "member", runners: ["local"], label: "Ana" }).code, "Windows");
+  const b = auth.redeem(auth.mintInvite(owner.userId, { role: "member", runners: ["local"], label: "Bruno" }).code, "Windows");
+  // Cada resgate cria a SUA pessoa: é por isso que renomear pode acertar os dois nomes sem risco.
+  assert.notEqual(auth.userIdOfDevice(a.deviceId), auth.userIdOfDevice(b.deviceId));
+  assert.equal(auth.renameDevice(a.deviceId, "Celular da Ana"), true);
+  const outro = auth.listDevices().find((d) => d.id === b.deviceId)!;
+  assert.equal(outro.label, "Bruno", "o aparelho do vizinho fica como estava");
+  assert.equal(outro.userName, "Bruno");
+});
