@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, isClaudeAsyncAgentLaunch, parseClaudeTaskNotification, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions, settleOnExit } from "./agents.js";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, isClaudeAsyncAgentLaunch, parseClaudeTaskNotification, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions, settleOnExit, codexHasPlanWindow } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("native continuity rejects one provider thread bound to multiple Jarvis sessions", () => {
@@ -613,4 +613,38 @@ test("close normal continua ganhando, e sem destruir o stdio no meio da drenagem
   await new Promise((r) => setTimeout(r, 25));
   assert.deepEqual(seen, [{ code: 3, drained: true }], "encerra UMA vez só, pelo caminho drenado");
   assert.equal(destroyed, 0, "o pipe fechou sozinho — nada a destruir");
+});
+
+// --- limites do plano quando NADA esta rodando ---------------------------------------------------
+// Sintoma relatado em 2026-09-25: o painel so mostrava os limites do Codex enquanto um turno estava
+// em andamento. Causa: `rate_limits` vive ao lado de `info` (nao dentro), e o parser exigia `info`;
+// somado a isso, os one-shots que o Jarvis dispara o tempo todo (titulo, roteamento) ficam no topo
+// por mtime e publicam `rate_limits` com todas as janelas NULAS.
+
+test("rate_limits e lido mesmo na linha de token_count que nao traz `info`", () => {
+  const t = codexTelemetryFromLines([
+    JSON.stringify({ type: "event_msg", payload: { type: "token_count", rate_limits: { plan_type: "pro", primary: { used_percent: 40, window_minutes: 300 } } } }),
+  ]);
+  assert.equal(codexHasPlanWindow(t?.rateLimits), true);
+  assert.equal(codexPlanUsage(t)!.fiveHour!.pct, 40);
+});
+
+test("token_count COM info continua preenchendo total/janela de contexto", () => {
+  const t = codexTelemetryFromLines([
+    JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 7 }, model_context_window: 200000 }, rate_limits: { primary: { used_percent: 1, window_minutes: 300 } } } }),
+  ]);
+  assert.equal(t!.total!.input_tokens, 7);
+  assert.equal(t!.contextWindow, 200000);
+  assert.equal(codexHasPlanWindow(t!.rateLimits), true);
+});
+
+test("janelas todas nulas sao AUSENCIA de dado, nao plano zerado", () => {
+  // Exatamente o que os one-shots de `~/.jarvis/oneshot` gravam.
+  const t = codexTelemetryFromLines([
+    JSON.stringify({ type: "event_msg", payload: { type: "token_count", rate_limits: { limit_id: "premium", primary: null, secondary: null, plan_type: null } } }),
+  ]);
+  assert.equal(codexHasPlanWindow(t?.rateLimits), false, "nao serve para o painel");
+  assert.equal(codexPlanUsage(t), null, "devolver objeto vazio faria a UI dizer 'sem dados' como se o provedor tivesse respondido");
+  assert.equal(codexHasPlanWindow(undefined), false);
+  assert.equal(codexHasPlanWindow({}), false);
 });

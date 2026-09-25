@@ -775,20 +775,32 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   /** Plan usage (5h / weekly windows) from the Claude OAuth usage endpoint. Cached ~30s. */
   async usage(): Promise<AgentUsage | null> {
     if (this.usageCache && Date.now() - this.usageCache.at < 30_000) return this.usageCache.data;
+    // Falha NÃO é cacheada e NÃO vira `null` silencioso: quem chama distingue "o provedor respondeu
+    // e não tem limite a informar" de "não consegui perguntar". Engolir os dois no mesmo `null`
+    // fazia o painel afirmar "nenhum limite foi reportado pelo provedor" quando a verdade era um
+    // token vencido, uma rede fora ou — medido nesta máquina — um proxy de TLS com certificado
+    // auto-assinado. A mensagem errada mandava procurar o problema no lugar errado.
     let data: AgentUsage | null = null;
+    const token = JSON.parse(readFileSync(join(homedir(), ".claude", ".credentials.json"), "utf8"))?.claudeAiOauth?.accessToken;
+    if (!token) throw new Error("claude: sem token OAuth em ~/.claude/.credentials.json (faça login no Claude Code)");
+    let res: Response;
     try {
-      const token = JSON.parse(readFileSync(join(homedir(), ".claude", ".credentials.json"), "utf8"))?.claudeAiOauth?.accessToken;
-      if (!token) throw new Error("no token");
-      const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+      res = await fetch("https://api.anthropic.com/api/oauth/usage", {
         headers: { authorization: `Bearer ${token}`, "anthropic-version": "2023-06-01", "anthropic-beta": "oauth-2025-04-20" },
       });
-      const j: any = await res.json();
-      const win = (w: any): UsageWindow | undefined => w ? usageWindowFromUsed(w.utilization, w.resets_at) : undefined;
-      data = { fiveHour: win(j.five_hour), sevenDay: win(j.seven_day) };
-      const extra: Array<{ label: string } & UsageWindow> = [];
-      for (const [k, label] of [["seven_day_opus", "Semanal · Opus"], ["seven_day_sonnet", "Semanal · Sonnet"]] as const) { const w = win(j[k]); if (w) extra.push({ label, ...w }); }
-      if (extra.length) data.extra = extra;
-    } catch { data = null; }
+    } catch (e: any) {
+      // `fetch failed` sozinho não diz nada; a causa (DNS, TLS, recusa) é que orienta o conserto.
+      throw new Error(`claude: falha ao consultar limites — ${String(e?.cause?.message || e?.message || e)}`);
+    }
+    if (!res.ok) throw new Error(`claude: provedor respondeu ${res.status} ao consultar limites`);
+    const j: any = await res.json();
+    const win = (w: any): UsageWindow | undefined => w ? usageWindowFromUsed(w.utilization, w.resets_at) : undefined;
+    data = { fiveHour: win(j.five_hour), sevenDay: win(j.seven_day) };
+    const extra: Array<{ label: string } & UsageWindow> = [];
+    for (const [k, label] of [["seven_day_opus", "Semanal · Opus"], ["seven_day_sonnet", "Semanal · Sonnet"]] as const) { const w = win(j[k]); if (w) extra.push({ label, ...w }); }
+    if (extra.length) data.extra = extra;
+    // Resposta válida porém sem nenhuma janela é ausência de informação, não "plano zerado".
+    if (!data.fiveHour && !data.sevenDay && !data.extra?.length) data = null;
     this.usageCache = { at: Date.now(), data };
     return data;
   }
@@ -1110,10 +1122,14 @@ export function codexTelemetryFromLines(lines: string[]): CodexTelemetry | undef
     let row: any; try { row = JSON.parse(line); } catch { continue; }
     if (row?.type === "turn_context" && row.payload?.model) out.model = String(row.payload.model);
     const p = row?.type === "event_msg" ? row.payload : undefined;
-    if (p?.type === "token_count" && p.info) {
-      out.total = p.info.total_token_usage || out.total;
-      out.last = p.info.last_token_usage || out.last;
-      out.contextWindow = Number(p.info.model_context_window) || out.contextWindow;
+    if (p?.type === "token_count") {
+      if (p.info) {
+        out.total = p.info.total_token_usage || out.total;
+        out.last = p.info.last_token_usage || out.last;
+        out.contextWindow = Number(p.info.model_context_window) || out.contextWindow;
+      }
+      // `rate_limits` é irmão de `info`, não filho — e existe em linhas que NÃO trazem `info`
+      // nenhum. Exigir `info` aqui descartava a linha inteira e, com ela, os limites da conta.
       out.rateLimits = p.rate_limits || out.rateLimits;
     }
   }
@@ -1134,6 +1150,57 @@ function codexThreadTelemetry(threadId?: string): CodexTelemetry | undefined {
   const file = codexThreadFile(threadId);
   if (!file) return undefined;
   try { return codexTelemetryFromLines(readFileSync(file, "utf8").split(/\r?\n/)); } catch { return undefined; }
+}
+
+/** Uma leitura de `rate_limits` só serve para o painel se tiver ALGUMA janela. */
+export function codexHasPlanWindow(rateLimits: any): boolean {
+  return !!(rateLimits && (rateLimits.primary || rateLimits.secondary));
+}
+
+/**
+ * Os limites do plano são da CONTA, não de uma conversa — então servem de qualquer rollout recente
+ * que os publique. Pegar cegamente o rollout mais recente (o que `codexThreadFile()` faz, e é certo
+ * para contexto/custo de UMA thread) falhava justamente quando nada estava rodando: o Jarvis faz
+ * one-shots o tempo todo (título, roteamento, sumário) em `~/.jarvis/oneshot`, e esses rollouts
+ * ficam no topo por mtime trazendo `rate_limits` com `primary`/`secondary` NULOS — sem janela
+ * nenhuma. Resultado: o painel só mostrava os limites enquanto um turno de verdade era o arquivo
+ * mais novo, e ficava "consultando o provedor…" o resto do tempo.
+ *
+ * Anda do mais recente para trás até achar um rollout com janela, lendo só a CAUDA de cada arquivo
+ * (o `token_count` mais novo está no fim, e um rollout pode ter dezenas de MB) e com teto de
+ * arquivos — varredura ampla de rollouts já travou o event loop deste Hub antes.
+ */
+const PLAN_SCAN_MAX_FILES = 40;
+const PLAN_TAIL_BYTES = 256 * 1024;
+/** Além disto a leitura descreve uma janela que já virou — a maior é a semanal. Mostrar "99% usado"
+ *  de duas semanas atrás como se fosse hoje é pior que não mostrar nada. */
+const PLAN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+
+function readTailLines(path: string, bytes = PLAN_TAIL_BYTES): string[] {
+  let fd: number | undefined;
+  try {
+    const size = statSync(path).size;
+    const len = Math.min(size, bytes);
+    if (!len) return [];
+    fd = openSync(path, "r");
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, size - len);
+    // A primeira linha pode estar cortada ao meio quando não lemos o arquivo inteiro.
+    const lines = buf.toString("utf8").split(/\r?\n/);
+    return len < size ? lines.slice(1) : lines;
+  } catch { return []; }
+  finally { if (fd !== undefined) try { closeSync(fd); } catch { /* já fechado */ } }
+}
+
+function codexPlanTelemetry(files = codexRolloutFiles(), now = Date.now()): CodexTelemetry | undefined {
+  for (const file of files.slice(0, PLAN_SCAN_MAX_FILES)) {
+    let mtime = 0;
+    try { mtime = statSync(file).mtimeMs; } catch { continue; }
+    if (now - mtime > PLAN_MAX_AGE_MS) break;   // a lista vem ordenada: daqui para trás só piora
+    const t = codexTelemetryFromLines(readTailLines(file));
+    if (codexHasPlanWindow(t?.rateLimits)) return t;
+  }
+  return undefined;
 }
 
 /** Authoritative file metadata emitted to the native rollout after apply_patch. */
@@ -1209,6 +1276,11 @@ export function codexPlanUsage(t?: CodexTelemetry): AgentUsage | null {
   const result: AgentUsage = { label: rl.plan_type ? `Codex · ${rl.plan_type}` : "Codex", source: "Codex rollout token_count.rate_limits", extra: [] };
   for (const w of windows) { if (w.minutes === 300) result.fiveHour = w.usage; else if (w.minutes === 10080) result.sevenDay = w.usage; else result.extra!.push({ label: `${w.label}${w.minutes ? ` · ${w.minutes} min` : ""}`, ...w.usage }); }
   if (!result.extra?.length) delete result.extra;
+  // `rate_limits` presente mas com todas as janelas nulas (é o que os one-shots do Jarvis gravam)
+  // não é "um plano sem uso": é ausência de informação. Devolver o objeto vazio faria o painel dizer
+  // "sem dados" como se o provedor tivesse respondido algo — `null` deixa o chamador tentar outro
+  // rollout e a UI dizer a verdade.
+  if (!result.fiveHour && !result.sevenDay && !result.extra?.length) return null;
   return result;
 }
 
@@ -1354,7 +1426,15 @@ export class CodexAdapter implements AgentAdapter {
     }
   }
 
-  async usage(): Promise<AgentUsage | null> { return codexPlanUsage(codexThreadTelemetry()); }
+  // Cache curto pelo mesmo motivo do ClaudeCodeAdapter: o popover de uso reabre a cada clique e a
+  // busca ordena TODOS os rollouts por mtime (milhares nesta instalação) antes de ler qualquer um.
+  private planCache?: { at: number; data: AgentUsage | null };
+  async usage(): Promise<AgentUsage | null> {
+    if (this.planCache && Date.now() - this.planCache.at < 30_000) return this.planCache.data;
+    const data = codexPlanUsage(codexPlanTelemetry());
+    this.planCache = { at: Date.now(), data };
+    return data;
+  }
 
   async descriptor(): Promise<AgentDescriptor> {
     const caps = await this.capabilities();
