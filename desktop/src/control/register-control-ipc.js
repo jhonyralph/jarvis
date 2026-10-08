@@ -7,10 +7,22 @@
 const { spawn } = require("node:child_process");
 const { existsSync, readFileSync } = require("node:fs");
 const { classify, hubWentOffline, HUB_HEALTH_URL, HUB_ADMIN_URL } = require("./status.js");
-const { runnerService, repoRootFromUnixService, logPath } = require("./actions.js");
+const { runnerService, repoRootFromUnixService, logPath, taskStateArgs, taskControlArgs } = require("./actions.js");
 
 const POLL_MS = 3000;
 const svc = runnerService(process.platform);
+
+// O Hub esta INSTALADO aqui (servico ou tarefa JarvisHub)? Muda raramente, entao a sonda (um
+// powershell) roda no maximo a cada minuto, nao a cada 3 s como a de saude.
+const HUB_INSTALLED_TTL_MS = 60_000;
+let hubInstalledCache = { at: 0, value: false };
+async function probeHubInstalled() {
+  if (process.platform !== "win32") return false;
+  if (Date.now() - hubInstalledCache.at < HUB_INSTALLED_TTL_MS) return hubInstalledCache.value;
+  const out = (await run({ cmd: "powershell.exe", args: ["-NoLogo", ...taskStateArgs("JarvisHub")] }, 5000)).out;
+  hubInstalledCache = { at: Date.now(), value: !!String(out).trim() };
+  return hubInstalledCache.value;
+}
 
 /** Spawn a command spec ({cmd,args}) and resolve its {code,out,err}. Never rejects (missing binary,
  *  timeout, non-Windows PowerShell, etc. → a benign negative code). */
@@ -65,7 +77,8 @@ async function probe() {
   // A hub is "present" if it answered health OR its loopback admin is up (covers a hub mid-restart).
   const adminUp = hubReachable || (await probeUp(`${HUB_ADMIN_URL}/admin/update`, 800));
   const { present: hasRunnerTask, running: runnerRunning } = await probeRunner();
-  const st = classify({ hasHub: hubReachable || adminUp, hubReachable, hubVersion, hasRunnerTask, runnerRunning });
+  const hubInstalled = await probeHubInstalled();
+  const st = classify({ hasHub: hubReachable || adminUp, hubInstalled, hubReachable, hubVersion, hasRunnerTask, runnerRunning });
   return st;
 }
 
@@ -92,6 +105,8 @@ function startControl({ onState, notify }) {
 
   const actions = {
     async restartHub() { await fetch(`${HUB_ADMIN_URL}/admin/restart`, { method: "POST", signal: AbortSignal.timeout(4000) }).catch(() => {}); },
+    // Hub fora do ar: sobe pelo servico (ou tarefa, em maquina nao migrada) — sem elevacao.
+    async startHub() { await run({ cmd: "powershell.exe", args: ["-NoLogo", ...taskControlArgs("JarvisHub", "start")] }, 15000); setTimeout(() => void tick(), 800); },
     async updateRunners() { await fetch(`${HUB_ADMIN_URL}/admin/update-runners`, { method: "POST", signal: AbortSignal.timeout(8000) }).catch(() => {}); },
     async runnerControl(action) { await run(svc.controlSpec(action), 8000); setTimeout(() => void tick(), 800); },
     async runnerSelfUpdate() { if (repoRoot) await run(svc.selfUpdateSpec(repoRoot), 120000); },

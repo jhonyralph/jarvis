@@ -39,7 +39,9 @@ function boolEnv(v: string | undefined): boolean | undefined {
 }
 
 function loadConfig(configFile: string): LogConfig {
-  const d: LogConfig = { enabled: true, level: "info", retentionDays: 14, maxFileMb: 50 };
+  // 30 dias: com 14, a investigação de quedas de 2026-10-07 (janela de 3 semanas) já tinha perdido a
+  // primeira semana inteira. Os arquivos diários têm ~20–60 KB; o custo de guardar o mês é desprezível.
+  const d: LogConfig = { enabled: true, level: "info", retentionDays: 30, maxFileMb: 50 };
   try { Object.assign(d, JSON.parse(readFileSync(configFile, "utf8"))); } catch { /* defaults */ }
   const envEnabled = boolEnv(process.env.JARVIS_LOG);
   if (envEnabled != null) d.enabled = envEnabled;

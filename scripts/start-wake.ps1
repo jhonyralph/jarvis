@@ -9,6 +9,15 @@ $log = Join-Path $env:USERPROFILE '.jarvis\wake.log'
 New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
 function Log($m) { Add-Content -Path $log -Value ("[wake-launcher] {0} {1}" -f (Get-Date -Format o), $m) }
 
+# Instancia unica: a tarefa (scripts/install-wake.ps1) dispara este launcher no logon E a cada 5 min.
+# IgnoreNew so impede duplicata DA TAREFA; um start manual em paralelo abriria dois microfones.
+# Fail-open: sem mutex, segue (o pior caso e o comportamento antigo).
+try {
+  $created = $false
+  $script:WakeMutex = New-Object System.Threading.Mutex($true, 'JarvisWakeSupervisor', [ref]$created)
+  if (-not $created) { Log 'outro supervisor do wake ja ativo (mutex) - este encerra'; return }
+} catch { Log "mutex indisponivel ($($_.Exception.Message)) - seguindo" }
+
 $env:PATH = "C:\Program Files\nodejs;$env:USERPROFILE\.local\bin;$env:PATH"
 
 $hubEnv = Join-Path $env:USERPROFILE '.jarvis\hub.env'

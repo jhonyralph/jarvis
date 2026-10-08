@@ -36,6 +36,7 @@ const CATALOG = [
     configure: "hub",
   }, [
     ["JARVIS_PORT", { defaultValue: "4577", format: "TCP port integer", description: "HTTP UI and WebSocket listener.", example: "4577" }],
+    ["JARVIS_HUB_WATCHDOG", { scope: "Windows Hub launcher (start-hub.ps1)", defaultValue: "on", format: "0 disables; every other value enables", description: "Launcher watchdog: kills the Hub child that never answers /health within 15 min of start, or stops answering for ~2 min, so the supervisor restarts it. Log: ~/.jarvis/hub-watchdog.log.", example: "1" }],
     ["JARVIS_ADMIN_PORT", { defaultValue: "4578", format: "TCP port integer", description: "Loopback-only recovery/admin API and its local CLI.", example: "4578" }],
     ["JARVIS_PUBLIC_URL", { defaultValue: "none", format: "absolute HTTP(S) base URL", description: "Base used to build complete invite links; Android build also accepts it as a fallback Hub URL.", configure: "hub-mobile-build", example: "https://jarvis.example.invalid" }],
     ["JARVIS_CWD", { scope: "Hub and runner", defaultValue: "Hub: process cwd; runner: OS home; runner image: /workspace", format: "existing directory path", description: "Default agent working directory. The Windows Hub launcher overwrites it with the repository root after loading hub.env.", configure: "hub-runner", example: "C:/work" }],
@@ -639,7 +640,7 @@ const CONFIGURATION_LOCATIONS = [
   ["runner-mcp", "runner.env or MCP client env map", "runner.env or MCP client env map", "root .env for runner; MCP is separate", "not applicable"],
   ["mcp", "MCP client/server env map", "MCP client/server env map", "not applicable", "not applicable"],
   ["hub-mobile-build", "hub.env; mobile build process can inherit it", "hub.env; mobile build process can inherit it", "not applicable", "build-time fallback only"],
-  ["wake", "hub.env is loaded by start-wake.ps1", "export for the manually managed wake process", "not applicable", "not a phone runtime env"],
+  ["wake", "hub.env is loaded by start-wake.ps1 (task registered by scripts/install-wake.ps1)", "export for the manually managed wake process", "not applicable", "not a phone runtime env"],
   ["context-compose", "ops/context/.env", "ops/context/.env", "docker compose --env-file ops/context/.env", "not applicable"],
   ["desktop-mobile", "User env or install-desktop.ps1 -HubUrl", "shell rc or install-desktop.sh --hub", "not applicable", "set in the build process; embedded by Capacitor"],
   ["shell", "current/user shell environment", "current shell environment", "not loaded from Compose unless explicitly mapped", "build tooling only"],

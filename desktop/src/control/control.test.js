@@ -23,6 +23,20 @@ test("classify: present hub that is unreachable → down", () => {
   assert.match(st.tooltip, /OFFLINE/);
 });
 
+test("classify: Hub INSTALADO e totalmente fora do ar continua no menu, com 'Iniciar Hub'", () => {
+  // Antes: sem /health e sem admin o Hub sumia — "Nada rodando", sem aviso e sem como subir.
+  const st = classify({ hasHub: false, hubInstalled: true, hubReachable: false, hasRunnerTask: false, runnerRunning: null });
+  assert.equal(st.hub.present, true);
+  assert.equal(st.level, "down");
+  const t = trayTemplate(st);
+  assert.ok(ids(t).includes("hub-start"), "oferece subir o Hub pelo servico");
+  assert.equal(ids(t).includes("hub-restart"), false, "reiniciar depende da API admin do proprio Hub");
+  assert.equal(ids(t).includes("none"), false);
+  const up = classify({ hasHub: true, hubInstalled: true, hubReachable: true, hasRunnerTask: false, runnerRunning: null });
+  assert.equal(hubWentOffline(up, st), true, "a queda total agora dispara o aviso");
+  assert.equal(ids(trayTemplate(up)).includes("hub-start"), false);
+});
+
 test("classify: runner-only machine (Notebook) — no hub, runner stopped → down + runnerOnly", () => {
   const st = classify({ hasHub: false, hubReachable: false, hasRunnerTask: true, runnerRunning: false });
   assert.equal(st.runnerOnly, true);

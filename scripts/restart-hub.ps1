@@ -13,7 +13,7 @@
 
   Uso:
     powershell -ExecutionPolicy Bypass -File scripts\restart-hub.ps1          # dispara e volta na hora
-    powershell -ExecutionPolicy Bypass -File scripts\restart-hub.ps1 -Wait    # bloqueia até subir (~ até 40s)
+    powershell -ExecutionPolicy Bypass -File scripts\restart-hub.ps1 -Wait    # bloqueia até o desfecho (até ~5 min)
     Get-Content ~/.jarvis/restart-status.txt                                  # ver o desfecho a qualquer momento
 #>
 param([switch]$Worker, [switch]$Wait)
@@ -29,9 +29,14 @@ if (-not $Worker) {
   Write-Host "Restart disparado em background. Desfecho em: $status" -ForegroundColor Cyan
   Write-Host "  (acompanhe: Get-Content `"$status`")" -ForegroundColor DarkGray
   if ($Wait) {
-    for ($i = 0; $i -lt 22; $i++) {
+    # Espera o DESFECHO DESTE restart (status gravado depois de agora, com OK/FALHOU), não "algo na
+    # porta": logo após disparar, quem escuta ainda é o Hub ANTIGO, e o status no disco pode ser de
+    # outra sessão — era assim que o -Wait imprimia um resultado velho.
+    $since = Get-Date
+    for ($i = 0; $i -lt 160; $i++) {
       Start-Sleep -Seconds 2
-      if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { break }
+      $f = Get-Item $status -ErrorAction SilentlyContinue
+      if ($f -and $f.LastWriteTime -gt $since -and ((Get-Content $status -Raw -ErrorAction SilentlyContinue) -match 'OK:|FALHOU')) { break }
     }
     Get-Content $status -ErrorAction SilentlyContinue | Write-Host
   }
@@ -48,14 +53,22 @@ function Set-Status([string]$s) {
 # supervisor, disparar tarefa -- existe porque o Agendador de Tarefas nao para o Hub de verdade.
 $svc = Get-Service -Name 'JarvisHub' -ErrorAction SilentlyContinue
 if ($svc) {
+  # PID antigo: logo depois do Stop o node anterior ainda pode segurar a porta por segundos (visto em
+  # 05/10 e 07/10) — sem isto, "algo escutando" era confundido com "Hub novo no ar".
+  $old = (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess
   Set-Status 'reiniciando o servico JarvisHub...'
   try { Restart-Service -Name 'JarvisHub' -Force -ErrorAction Stop } catch { Set-Status "FALHOU ao reiniciar o servico: $($_.Exception.Message)"; exit 1 }
-  for ($i = 0; $i -lt 60; $i++) {
+  # 300 s: o boot ja levou 190 s em producao (le todo o historico antes de abrir a porta). Com 120 s
+  # este script declarava FALHOU num boot que so estava lento — e quem lia reiniciava de novo.
+  for ($i = 0; $i -lt 150; $i++) {
     Start-Sleep -Seconds 2
-    $c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-    if ($c) { Set-Status "OK: Hub no ar na porta $port (pid $($c.OwningProcess), servico)"; exit 0 }
+    $c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c -and $c.OwningProcess -ne $old) {
+      $ok = $false; try { $ok = ((Invoke-WebRequest -Uri "http://127.0.0.1:$port/health" -UseBasicParsing -TimeoutSec 10).StatusCode -eq 200) } catch { }
+      if ($ok) { Set-Status "OK: Hub no ar na porta $port (pid $($c.OwningProcess), servico)"; exit 0 }
+    }
   }
-  Set-Status "FALHOU: servico JarvisHub reiniciado mas nada escutando na $port em ~120s. Veja ~/.jarvis/hub.log"
+  Set-Status "FALHOU: servico JarvisHub reiniciado mas nenhum Hub NOVO respondeu na $port em ~300s. Veja ~/.jarvis/hub.log e ~/.jarvis/hub-watchdog.log"
   exit 1
 }
 

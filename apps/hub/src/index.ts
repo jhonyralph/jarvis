@@ -56,6 +56,13 @@ import { PendingAskStore } from "./pendingAsks.js";
 import { ExecutionOwnershipStore } from "./executionOwnership.js";
 import { PendingRequestRegistry, SessionDispatchReservations, remoteErrorRoute, type PendingRequest, type SessionDispatchLease } from "./sessionIsolation.js";
 
+// Fases do boot. Até o `listen` o Hub não atende nada, e em produção isso já levou de 85 a 190 s sem
+// registro de onde o tempo foi (análise de 2026-10-07). Cada marca guarda os ms desde o início do
+// processo e sai no evento `hub_boot`, então o próximo boot lento diz sozinho qual fase pesou.
+const bootPhases: Record<string, number> = {};
+function bootMark(phase: string): void { bootPhases[phase] = Math.round(process.uptime() * 1000); }
+bootMark("imports");
+
 const WEB = fileURLToPath(new URL("../web", import.meta.url));
 const PORT = Number(process.env.JARVIS_PORT || 4577);
 const CWD = process.env.JARVIS_CWD || process.cwd();
@@ -332,6 +339,7 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new MockAgentAdapter());
 const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });
+bootMark("store");
 const routines = new RoutineStore();
 const memory = new MemoryStore();
 // Semantic-memory GATE (cost/perf). Auto-indexing pays a LOCAL embedding after EVERY turn — wasted
@@ -578,6 +586,7 @@ const executionCfg: ExecutionRuntimeConfig = (() => {
 })();
 function saveExecutionCfg(): void { try { writeJsonAtomic(EXECUTION_CFG_FILE, executionCfg, { pretty: true }); } catch { /* ignore */ } }
 const localExecutionStore = new ExecutionStore({ root: LOCAL_EXECUTION_DIR, maxEventsPerRoot: executionCfg.maxEvents });
+bootMark("executions");
 // Durable store of Hub-owned background jobs (long tasks that outlive the one-shot agent turn and
 // auto-continue the session when they finish). Same dir as sessions.json (~/.jarvis/hub).
 const backgroundJobs = new BackgroundJobStore({ dir: join(JARVIS_DIR, "hub") });
@@ -773,6 +782,7 @@ for (const snapshot of localExecutionStore.rootsForSession()) for (const node of
     localExecutionStore.append(node.rootExecutionId, node.executionId, { kind: "diagnostic", level: "warning", code: "PROCESS_BINDING_LOST", message: "Estado preservado como órfão; nenhum terminal foi inferido" });
   } catch { /* a corrupt root remains visible through the last valid projection */ }
 }
+bootMark("executions_compact");
 const executionMirrors = new Map<string, ExecutionStore>();
 const executionUiState: { archives: Record<string, number>; commands: Record<string, any> } = (() => {
   try { const value = JSON.parse(readFileSync(EXECUTION_UI_FILE, "utf8")); return { archives: value?.archives || {}, commands: value?.commands || {} }; }
@@ -798,7 +808,7 @@ function saveSummaryCfg(): void { try { writeJsonAtomic(SUMMARY_FILE, summaryCfg
 // Voz ambiente (staging): política de escalada de modelo + modelos rápido/upgrade. Persistido.
 // escalate: "ask" (avisa e pede autorização por voz) | "auto" (sobe sozinho) | "<modelId>" (sobe pra esse).
 const VOICE_CFG_FILE = join(JARVIS_DIR, "voice-cfg.json");
-const voiceCfg: { agent: string; model?: string; effort?: string; fastMode?: boolean; escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number; voice?: string } = (() => {
+const voiceCfg: { agent: string; model?: string; effort?: string; fastMode?: boolean; escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number; voice?: string; wake?: boolean } = (() => {
   // relevance: "on" (padrão — filtra falas que não são comando/relacionadas antes de despachar) | "off".
   const d = { agent: process.env.JARVIS_WAKE_AGENT || DEFAULT_AGENT, model: process.env.JARVIS_WAKE_MODEL || undefined, effort: process.env.JARVIS_WAKE_EFFORT || undefined, fastMode: process.env.JARVIS_VOICE_FAST_MODE === "1", escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high", relevance: (process.env.JARVIS_VOICE_RELEVANCE || "on") };
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(VOICE_CFG_FILE, "utf8")) }; } catch { return d; }
@@ -1141,7 +1151,26 @@ process.on("unhandledRejection", (e: any) => console.error("[hub] unhandledRejec
 const subs = new Map<WebSocket, string>();
 // machine wake-word listener sockets + whether "Hey Jarvis" is armed.
 const wakeClients = new Set<WebSocket>();
-let wakeEnabled = process.env.JARVIS_WAKE !== "0";
+// "Hey Jarvis" DESTA máquina (listener Python), persistido. Antes vivia só em memória e todo cliente
+// dono, a cada (re)conexão, mandava o próprio `cfg.wake` local — default false — e desarmava o PC para
+// todos: o wake.log de 28/07 a 30/09 tem ~40 mil "armed=False" e só duas detecções. Agora só muda por
+// um toque explícito no ajuste, e sobrevive a restart.
+let wakeEnabled = typeof voiceCfg.wake === "boolean" ? voiceCfg.wake : process.env.JARVIS_WAKE !== "0";
+// O que o listener reporta de si (wake_status): sem isto não havia como saber, pela UI, se ele estava
+// conectado, com microfone aberto ou caído — de 25/09 a 28/09 ele reiniciou ~900 vezes sem microfone.
+const wakeListener: { mic: "ok" | "error" | "unknown"; micError?: string; device?: string; lastDetectAt?: number } = { mic: "unknown" };
+function wakeStateMsg() { return { t: "wake_state", enabled: wakeEnabled, listener: { connected: wakeClients.size, ...wakeListener } }; }
+// Só para quem já passou pela autenticação + os próprios listeners locais. NÃO usar broadcastAll: ele
+// alcança sockets ainda não autenticados (o teste wake-auth pegou o estado — com nome do microfone —
+// chegando a uma conexão sem login). Cada socket recebe uma vez (antes o listener recebia em dobro).
+function broadcastWakeState(): void {
+  const m = wakeStateMsg();
+  for (const c of wss.clients) {
+    const ws = c as WebSocket;
+    if (ws.readyState !== ws.OPEN || runnerSockets.has(ws)) continue;
+    if (wakeClients.has(ws) || fullyAuthed(ws)) send(ws, m);
+  }
+}
 // speaker-id: label voice messages with the enrolled speaker; optionally reject
 // unknown voices (gate). Off by default so an un-enrolled user is never locked out.
 // Persisted (voice-cfg.json) so the owner turning the gate ON survives a Hub restart — it used to
@@ -1399,7 +1428,7 @@ function wakeTokenOk(value: unknown): boolean {
 function isLocalWakeMsg(ip: string, msg: any): boolean {
   if (!guard.isLoopback(ip)) return false;
   if (!wakeTokenOk(msg?.wakeToken)) return false;
-  if (msg.t === "wake_hello" || msg.t === "wake_event") return true;
+  if (msg.t === "wake_hello" || msg.t === "wake_event" || msg.t === "wake_status") return true;
   return msg.t === "send" && msg.sessionId === WAKE_SESSION && msg.speak === true && typeof msg.text === "string";
 }
 
@@ -1714,14 +1743,17 @@ async function refreshUpdate(doBroadcast = true): Promise<void> {
 }
 /** Apply the Hub update and restart (via the service manager) so the new code takes effect. Drains
  *  in-flight LOCAL turns first (up to a deadline) so a restart doesn't kill an agent mid-edit. */
-function scheduleRestart(): void {
+function scheduleRestart(reason: "update" | "rollback" | "admin"): void {
+  hubExitReason = `restart_${reason}`;
+  console.log(`[hub] reinício pedido (${reason}) — ${activeRuns.size} turno(s) local(is) ativo(s)`);
+  log.info("hub_restart", { reason, activeRuns: activeRuns.size });
   broadcastAll({ t: "update_progress", message: "Nova versão aplicada — reiniciando." });
   void (async () => {
     await new Promise((r) => setTimeout(r, 900)); // let the broadcast flush to clients
     const start = Date.now();
     while (activeRuns.size && Date.now() - start < 120000) await new Promise((r) => setTimeout(r, 1000));
     if (activeRuns.size) console.warn(`[hub] reiniciando com ${activeRuns.size} turno(s) local(is) ativo(s) — deadline atingido`);
-    try { restartService("hub"); } catch { /* ignore */ }
+    try { restartService("hub", { pid: process.pid }); } catch { /* ignore */ }
     process.exit(0);
   })();
 }
@@ -2253,7 +2285,7 @@ async function applyHubUpdate(force: boolean, allMachines: boolean): Promise<any
     if (created.length) savePendingRunnerUpdates();
     hubUpdateInProgress = false; broadcastMachines(); flushAllQueues(); return result;
   }
-  if (result.restartRequired !== false) scheduleRestart(); else { hubUpdateInProgress = false; flushAllQueues(); }
+  if (result.restartRequired !== false) scheduleRestart("update"); else { hubUpdateInProgress = false; flushAllQueues(); }
   return result;
 }
 async function queueAllRemoteRunnerUpdates(): Promise<{ ok: boolean; queued: number; delivered: number; target?: string; error?: string }> {
@@ -5779,6 +5811,7 @@ async function sendInitialState(ws: WebSocket): Promise<void> {
   }).catch(() => { /* hello already carried a minimal usable catalog */ });
   send(ws, { t: "machines", machines: machineList(ws) });
   send(ws, { t: "update_status", status: updateStatus });
+  send(ws, wakeStateMsg()); // o cliente não impõe mais o próprio cfg.wake: ele aprende o estado do PC aqui
   // The initial view is the local machine — only push its sessions/runs to a principal allowed to use
   // it, so a member granted only remote runners doesn't get the Hub's local session list unprompted
   // (mirrors the per-runner drive gate; the client then selects a machine it may access).
@@ -6057,9 +6090,25 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
 /** Wake-word control + speaker-identification / voice-gate messages, lifted from the router VERBATIM.
  *  Returns true if it handled `msg`. Behavior-preserving (same relative order at the call site). */
 async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
-  if (msg.t === "wake_hello") { clearUnauthTimer(ws); wakeClients.add(ws); send(ws, { t: "wake_state", enabled: wakeEnabled }); return true; }
-  if (msg.t === "wake") { if (!requireOwner(ws)) return true; wakeEnabled = !!msg.enabled; for (const c of wakeClients) send(c, { t: "wake_state", enabled: wakeEnabled }); broadcastAll({ t: "wake_state", enabled: wakeEnabled }); return true; }
-  if (msg.t === "wake_event") { broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return true; }
+  if (msg.t === "wake_hello") { clearUnauthTimer(ws); wakeClients.add(ws); broadcastWakeState(); return true; }
+  if (msg.t === "wake") {
+    if (!requireOwner(ws)) return true;
+    const next = !!msg.enabled;
+    if (next !== wakeEnabled) { wakeEnabled = next; voiceCfg.wake = next; saveVoiceCfg(); log.info("wake_toggle", { enabled: next }); }
+    broadcastWakeState(); return true;
+  }
+  if (msg.t === "wake_status") {
+    if (!wakeClients.has(ws)) return true;
+    wakeListener.mic = msg.mic === "ok" ? "ok" : msg.mic === "error" ? "error" : "unknown";
+    wakeListener.micError = typeof msg.error === "string" ? msg.error.slice(0, 300) : undefined;
+    wakeListener.device = typeof msg.device === "string" ? msg.device.slice(0, 120) : undefined;
+    log.info("wake_status", { mic: wakeListener.mic, error: wakeListener.micError, device: wakeListener.device });
+    broadcastWakeState(); return true;
+  }
+  if (msg.t === "wake_event") {
+    if (msg.phase === "capturing") { wakeListener.lastDetectAt = Date.now(); log.info("wake_detect", {}); broadcastWakeState(); }
+    broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return true;
+  }
   if (msg.t === "speakers") { await sendVoiceState(ws); return true; }
   if (msg.t === "voicecfg") {
     // Owner-only: this is the biometric voice gate (an access control) + its threshold. A member could
@@ -6136,7 +6185,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
   ws.on("close", () => {
     log.debug("ws_disconnect", { ip, ms: Date.now() - _wsConnectedAt });
     subs.delete(ws);
-    wakeClients.delete(ws);
+    if (wakeClients.delete(ws)) { if (!wakeClients.size) wakeListener.mic = "unknown"; broadcastWakeState(); }
     updateWatchers.delete(ws);
     for (const [terminalId, watchers] of terminalWatchers) {
       watchers.delete(ws);
@@ -8177,7 +8226,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const drainError = await drainHubForUpdate();
       const r = drainError ? { ok: false, log: drainError } : await updateRollback(UPDATE_ROOT);
       send(ws, { t: "update_result", ok: r.ok, log: r.log });
-      if (r.ok) scheduleRestart();
+      if (r.ok) scheduleRestart("rollback");
       else hubUpdateInProgress = false;
       return;
     }
@@ -8834,8 +8883,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 startAdminApi({ updateRoot: UPDATE_ROOT, port: PORT, applyHubUpdate, rollbackHubUpdate: async () => {
   if (hubUpdateInProgress) return { ok: false, busy: true, log: "outra atualização já está em andamento" };
   hubUpdateInProgress = true; const drainError = await drainHubForUpdate(); const result = drainError ? { ok: false, log: drainError } : await updateRollback(UPDATE_ROOT);
-  if (result.ok) scheduleRestart(); else hubUpdateInProgress = false; return result;
-}, queueAllRunnerUpdates: queueAllRemoteRunnerUpdates, restartHub: scheduleRestart, dropRevoked, refreshPrincipalRole, broadcastMachines,
+  if (result.ok) scheduleRestart("rollback"); else hubUpdateInProgress = false; return result;
+}, queueAllRunnerUpdates: queueAllRemoteRunnerUpdates, restartHub: () => scheduleRestart("admin"), dropRevoked, refreshPrincipalRole, broadcastMachines,
    machineIds: () => [...new Set([LOCAL_ID, ...runners.keys(), ...Object.keys(runnerLabels)])],
    runners, runnerLabels, runnerSessions, sendToRunner });
 
@@ -8868,10 +8917,28 @@ setInterval(() => { try { reconcileBackgroundJobs(); } catch { /* ignore */ } },
 // chama maybeFlushQueue UMA vez; se esse flush bater num gate transitório (reserva de dispatch, timing
 // de boot), nada mais re-dispara — o flush de fim-de-turno só roda quando um turno termina, e não há.
 setInterval(() => { try { flushIdleQueues(); } catch { /* ignore */ } }, 15_000).unref?.();
+bootMark("maintenance");
 // A hub restart can leave sessions with a "sent but no reply visible" turn (see reconcileFromNative)
 // — fix them all proactively at boot, not just when the user happens to reopen one.
-try { let n = 0; for (const meta of store.list()) { const s = store.ensure(meta.id); const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) n++; } if (n) console.log(`[hub] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`); } catch { /* ignore */ }
-try { let n = 0; for (const meta of listNative()) n += reconcileNativeExecutions(meta.id); if (n) console.log(`[hub] reconciliei ${n} execução(ões) nativas sem terminal observado`); } catch { /* ignore */ }
+// Roda DEPOIS do `listen` e cede o event loop entre sessões. Antes era síncrono e antes da porta abrir:
+// relê o transcript nativo inteiro de cada sessão e a listagem nativa abre ~80 arquivos. Medido num
+// boot isolado (2026-10-07): ~20 s com cache quente, só nisto — tempo em que o Hub parecia morto.
+async function reconcileNativeAfterBoot(): Promise<void> {
+  const yieldLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+  const t0 = Date.now(); let replies = 0, executions = 0;
+  try {
+    for (const meta of store.list()) {
+      const s = store.get(meta.id); // get, não ensure: a sessão pode ter sido apagada durante a varredura
+      if (!s) continue;
+      const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) replies++;
+      await yieldLoop();
+    }
+  } catch { /* ignore */ }
+  try { for (const meta of listNative()) { executions += reconcileNativeExecutions(meta.id); await yieldLoop(); } } catch { /* ignore */ }
+  if (replies) console.log(`[hub] reconciliei ${replies} sessão(ões) com resposta nativa que tinha ficado invisível`);
+  if (executions) console.log(`[hub] reconciliei ${executions} execução(ões) nativas sem terminal observado`);
+  log.info("boot_reconcile", { ms: Date.now() - t0, replies, executions });
+}
 // Graceful shutdown: the Hub is also a runner (it spawns local agent CLIs under the configured permission mode).
 // A service stop / SIGTERM would orphan them — abort every live local turn (killTree fires via the
 // AbortSignal) before exiting, mirroring the runner.
@@ -8909,9 +8976,17 @@ async function scanFrameworkSourceDrift(): Promise<void> {
   broadcastFrameworkUpdates();
 }
 
+// Motivo de saída sempre registrado. Na análise de 2026-10-07, duas saídas com código 0 (25/09 e 30/09)
+// não deixaram NENHUMA linha dizendo por quê — reinício pela bandeja, update ou sinal eram
+// indistinguíveis. `appendFileSync` do logger é síncrono, então vale dentro do handler de `exit`.
+let hubExitReason = "";
+process.on("exit", (code) => { log.info("hub_exit", { code, reason: hubExitReason || "desconhecido", uptimeS: Math.round(process.uptime()) }); });
+
 let hubShuttingDown = false;
 async function hubShutdown(sig: string): Promise<void> {
   if (hubShuttingDown) return; hubShuttingDown = true;
+  hubExitReason = sig;
+  console.log(`[hub] ${sig} recebido — encerrando`);
   const forceExit = setTimeout(() => process.exit(0), 3_000);
   personalProactiveScheduler.stop();
   if (localAborts.size) console.log(`[hub] ${sig} — abortando ${localAborts.size} turno(s) local(is) em andamento`);
@@ -8925,8 +9000,20 @@ async function hubShutdown(sig: string): Promise<void> {
 process.on("SIGTERM", () => { void hubShutdown("SIGTERM"); });
 process.on("SIGINT", () => { void hubShutdown("SIGINT"); });
 
+// Sem isto, um EADDRINUSE no listen chegava só como "wss error" (o `ws` repassa o erro do servidor HTTP)
+// e o processo seguia vivo SEM escutar: um zumbi que nenhum supervisor recicla, porque quem supervisiona
+// só reage à saída do processo. Falhar ao abrir a porta tem de encerrar, com código ≠ 0.
+server.once("error", (e: any) => {
+  if (server.listening) return;
+  console.error(`[hub] não consegui escutar na porta ${PORT}: ${e?.code || e?.message || e} — encerrando para o supervisor decidir`);
+  hubExitReason = `listen_${e?.code || "erro"}`;
+  log.error("hub_listen_failed", { port: PORT, code: e?.code, error: String(e?.message ?? e) });
+  process.exit(1);
+});
+
 server.listen(PORT, () => {
-  console.log(`[hub] http+ws  http://127.0.0.1:${PORT}`);
+  bootMark("listen");
+  console.log(`[hub] http+ws  http://127.0.0.1:${PORT}  (boot em ${(bootPhases.listen / 1000).toFixed(1)} s)`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
   console.log(`[hub] guard: rate-limit + conn caps + ${Math.round(guard.MAX_PAYLOAD / 1024 / 1024)}MB payload cap active${/^(on|1|true)$/i.test(process.env.JARVIS_TRUST_PROXY || "") ? " (trust-proxy on)" : ""}`);
   if (process.env.JARVIS_PERSONAL_PROACTIVE !== "0") personalProactiveScheduler.start();
@@ -8943,7 +9030,8 @@ server.listen(PORT, () => {
     console.log(`[hub] auth on — ${auth.listDevices().length} device(s) paired.`);
   }
   // Structured log: boot marker + retention housekeeping (purge old daily files now and once a day).
-  log.info("hub_boot", { version: VERSION, port: PORT, agents: agents.names(), voice: VOICE });
+  log.info("hub_boot", { version: VERSION, port: PORT, agents: agents.names(), voice: VOICE, bootMs: bootPhases.listen, phases: bootPhases });
+  setTimeout(() => { void reconcileNativeAfterBoot(); }, 1_500).unref?.();
   try { const purged = log.purgeOld(); if (purged) console.log(`[hub] logs: ${purged} arquivo(s) diário(s) removido(s) por retenção`); } catch { /* best effort */ }
   setInterval(() => { try { log.purgeOld(); } catch { /* best effort */ } }, 24 * 60 * 60 * 1000).unref?.();
   // Warm the voice daemons at boot instead of on the first live voice message: this product is

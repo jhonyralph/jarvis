@@ -431,21 +431,26 @@ export async function updateRollback(root: string): Promise<UpdateResult> {
   finally { release(); }
 }
 
-/** Restart the OS service so the new code takes effect. Detached, survives our exit. */
-export function restartService(kind: "hub" | "runner"): void {
+/** Comando PowerShell (Windows) que garante o Hub/Runner de volta depois que ESTE processo sai.
+ *
+ *  Hub: mata o processo que ainda escuta na 4577 SÓ se for o PID antigo. Antes matava qualquer dono
+ *  da porta 3 s depois — com um boot rápido isso derrubaria o Hub NOVO. Depois religa pelo SERVIÇO
+ *  quando ele existe: a migração para serviço do Windows desativa a tarefa homônima, e
+ *  `Start-ScheduledTask` numa tarefa Disabled falha calado (era o que este comando fazia nesta
+ *  máquina). Start-Service num serviço já de pé é no-op; sem serviço, cai na tarefa (IgnoreNew). */
+export function windowsRestartCommand(kind: "hub" | "runner", pid?: number): string {
+  const name = kind === "hub" ? "JarvisHub" : "JarvisRunner";
+  const relaunch = `if (Get-Service -Name '${name}' -EA SilentlyContinue) { Start-Service -Name '${name}' -EA SilentlyContinue } else { Start-ScheduledTask -TaskName '${name}' -EA SilentlyContinue }`;
+  if (kind === "runner") return `Start-Sleep 5; ${relaunch}`;
+  const owner = Number.isInteger(pid) && (pid as number) > 0 ? ` -and $c.OwningProcess -eq ${pid}` : "";
+  return `Start-Sleep 3; $c=Get-NetTCPConnection -LocalPort 4577 -State Listen -EA SilentlyContinue | Select-Object -First 1; if($c${owner}){Stop-Process -Id $c.OwningProcess -Force -EA SilentlyContinue}; ${relaunch}`;
+}
+/** Restart the OS service so the new code takes effect. Detached, survives our exit.
+ *  `pid` (Windows/Hub): o PID deste processo — só ele pode ser morto se ainda segurar a porta. */
+export function restartService(kind: "hub" | "runner", opts: { pid?: number } = {}): void {
   const p = process.platform;
   if (p === "win32") {
-    const task = kind === "hub" ? "JarvisHub" : "JarvisRunner";
-    // Hub: the launcher is a supervisor loop — just kill the node process and the loop
-    // relaunches with the new code (tsx runs from source). Start-ScheduledTask is only a
-    // fallback for the rare case the supervisor itself died; IgnoreNew makes it a no-op
-    // when the supervisor is alive. This avoids the old Stop/Start race that left it down.
-    const cmd = kind === "hub"
-      ? `Start-Sleep 3; $c=Get-NetTCPConnection -LocalPort 4577 -State Listen -EA SilentlyContinue; if($c){Stop-Process -Id $c.OwningProcess -Force -EA SilentlyContinue}; Start-ScheduledTask -TaskName '${task}' -EA SilentlyContinue`
-      // The scheduled task's PowerShell launcher is already a supervisor loop. Exiting this Node
-      // process is enough. Start-ScheduledTask is still fired unconditionally as a fallback for a
-      // stale/dead supervisor; the task is installed with IgnoreNew, so this is a no-op if alive.
-      : `Start-Sleep 5; Start-ScheduledTask -TaskName '${task}' -EA SilentlyContinue`;
+    const cmd = windowsRestartCommand(kind, opts.pid);
     // Spawnar "powershell.exe" direto com detached:true não sobrevive de forma confiável à saída
     // do processo pai no Windows (PS 5.1) — mesmo achado do updater externo do runner
     // (apps/runner/src/index.ts handoffWindowsRunnerUpdate). "cmd /c start /b" destaca de verdade.

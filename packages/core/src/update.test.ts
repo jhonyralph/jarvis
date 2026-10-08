@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autonomousUpdateAttempt, commitContains, gitErrorDetail, resolveCommit, runnerUpdateTargetDecision, runnerSelfUpdateDecision, runnerUpdateDeliveryDecision, UPDATE_MAX_DELIVERIES, updateApply, updateCheck, updatePreflight, updateRollback } from "./update.js";
+import { autonomousUpdateAttempt, commitContains, gitErrorDetail, resolveCommit, runnerUpdateTargetDecision, runnerSelfUpdateDecision, runnerUpdateDeliveryDecision, UPDATE_MAX_DELIVERIES, updateApply, updateCheck, updatePreflight, updateRollback, windowsRestartCommand } from "./update.js";
 
 const run = (cwd: string, command: string, args: string[] = []): string => String(execFileSync(command, args, { cwd, windowsHide: true, encoding: "utf8" })).trim();
 const git = (cwd: string, ...args: string[]): string => run(cwd, "git", args);
@@ -240,4 +240,22 @@ test("não saber onde a máquina está sai pelo caminho de hoje, não pelo bloqu
   assert.equal(runnerUpdateTargetDecision({ runnerHasTarget: null, clean: true, protocolMatches: true }).deliver, true);
   assert.equal(runnerUpdateTargetDecision({ runnerHasTarget: false, clean: true, protocolMatches: true }).deliver, true);
   assert.equal(runnerUpdateTargetDecision({ runnerHasTarget: null, clean: false, protocolMatches: false }).clear, false);
+});
+
+test("windowsRestartCommand: Hub so mata o PID antigo e religa pelo servico quando existe", () => {
+  const cmd = windowsRestartCommand("hub", 4242);
+  // Matar qualquer dono da 4577 derrubaria o Hub NOVO se ele subisse em menos de 3 s.
+  assert.ok(cmd.includes("if($c -and $c.OwningProcess -eq 4242){Stop-Process"), cmd);
+  // A tarefa homonima fica Disabled depois da migracao para servico: o servico tem de vir primeiro.
+  assert.ok(cmd.includes("if (Get-Service -Name 'JarvisHub' -EA SilentlyContinue) { Start-Service -Name 'JarvisHub'"), cmd);
+  assert.ok(cmd.includes("else { Start-ScheduledTask -TaskName 'JarvisHub'"), cmd);
+  // Sem PID conhecido, mantem o comportamento antigo (qualquer dono da porta).
+  assert.ok(windowsRestartCommand("hub").includes("if($c){Stop-Process"));
+  assert.ok(!windowsRestartCommand("hub", Number.NaN).includes("OwningProcess -eq"));
+});
+
+test("windowsRestartCommand: Runner nao mata porta nenhuma e tambem prefere o servico", () => {
+  const cmd = windowsRestartCommand("runner", 99);
+  assert.ok(!/Stop-Process|4577/.test(cmd), cmd);
+  assert.ok(cmd.startsWith("Start-Sleep 5; if (Get-Service -Name 'JarvisRunner'"), cmd);
 });

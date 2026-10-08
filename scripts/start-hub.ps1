@@ -7,6 +7,9 @@
 # -Once: roda o corpo UMA vez e retorna, para quem supervisiona ser o SCM (serviço do Windows) em
 # vez do `while($true)` daqui. Ver ops/windows-service/JarvisService.cs. Sem o parâmetro, o
 # comportamento antigo (Agendador de Tarefas + laço próprio) continua idêntico.
+# Sob o SCM, este launcher NUNCA sai só porque já existe um Hub/supervisor: espera o mutex ou ADOTA o
+# Hub órfão que segura a porta (sair virava laço de falhas no SCM e deixava o órfão sem supervisão).
+# Nos dois modos, um WATCHDOG derruba o Hub filho que parar de responder ao /health (ver abaixo).
 param([switch]$Once)
 $ErrorActionPreference = 'Continue'
 $root = Split-Path $PSScriptRoot -Parent            # ...\jarvis
@@ -27,17 +30,91 @@ function Log($m) { Add-Content -Path $log -Encoding Unicode -Value ("[launcher] 
 try {
   $script:HubMutexCreated = $false
   $script:HubMutex = New-Object System.Threading.Mutex($true, 'JarvisHubSupervisor', [ref]$script:HubMutexCreated)
-  if (-not $script:HubMutexCreated) { Log 'outro supervisor ja ativo (mutex) - este encerra'; return }
+  if (-not $script:HubMutexCreated) {
+    if (-not $Once) { Log 'outro supervisor ja ativo (mutex) - este encerra'; return }
+    # Sob o SCM, SAIR aqui e o pior caminho: o host converte a saida em falha, o SCM religa em segundos
+    # e o ciclo se repete para sempre (86 falhas em 23 min em 2026-10-07), enquanto o Hub em pe fica
+    # sem ninguem que o religue. Esperar o outro supervisor terminar mantem o servico "Running" e, quando
+    # ele sai (o mutex e liberado ou abandonado), este assume.
+    Log 'outro supervisor ja ativo (mutex) - aguardando ele terminar para assumir'
+    try { [void]$script:HubMutex.WaitOne() } catch { <# AbandonedMutexException: o dono morreu; a posse e nossa #> }
+    Log 'mutex liberado - este supervisor assume'
+  }
 } catch { Log "mutex indisponivel ($($_.Exception.Message)) - seguindo apenas com a guarda de porta" }
+
+# Saude do Hub pelo /health (loopback). Responder exige o event loop livre: processo vivo que nao
+# responde e Hub morto para quem usa. -UseBasicParsing: sem o motor do IE (indisponivel na sessao 0).
+function Test-HubHealth([int]$TimeoutSec = 10) {
+  try { return ((Invoke-WebRequest -Uri 'http://127.0.0.1:4577/health' -UseBasicParsing -TimeoutSec $TimeoutSec).StatusCode -eq 200) } catch { return $false }
+}
 
 # garante que node/npm/CLIs resolvem, independente do PATH da tarefa
 $env:PATH = "C:\Program Files\nodejs;$env:USERPROFILE\.local\bin;$env:PATH"
 
 # instância única: se já há um Hub na 4577 (ex.: o logon dispara de novo com o supervisor
 # já rodando), este launcher encerra em vez de duplicar.
-if (Get-NetTCPConnection -LocalPort 4577 -State Listen -ErrorAction SilentlyContinue) {
+$held = Get-NetTCPConnection -LocalPort 4577 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($held -and -not $Once) {
   Log 'hub já rodando na 4577 — este launcher encerra (evita instância dupla)'
   return
+}
+if ($held) {
+  # ADOCAO (so sob o SCM). Um Hub segurando a porta sem este supervisor e um orfao: o anterior morreu e
+  # o node ficou (ou o Stop ainda nao terminou de derrubar a arvore). Sair aqui gerava o laco de falhas
+  # do SCM e deixava esse Hub sem supervisao. Em vez disso: vigia o dono da porta ate ele sair; se ele
+  # parar de responder por ~2 min, encerra a arvore dele. Depois segue e sobe um Hub novo.
+  $adopted = $held.OwningProcess; $fails = 0
+  Log "hub ja rodando na 4577 (pid $adopted) sem supervisor - adotando ate ele sair"
+  while (Get-Process -Id $adopted -ErrorAction SilentlyContinue) {
+    Start-Sleep -Seconds 15
+    if (Test-HubHealth) { $fails = 0; continue }
+    $fails++
+    if ($fails -ge 8) {
+      Log "hub adotado (pid $adopted) sem responder ha ~2 min - encerrando a arvore dele"
+      & taskkill.exe /PID $adopted /T /F 2>&1 | Out-Null
+      Start-Sleep -Seconds 3
+    }
+  }
+  Log "hub adotado (pid $adopted) saiu - subindo um novo"
+}
+
+# WATCHDOG do Hub que ESTE launcher sobe. O SCM (e o laco abaixo) so reagem quando o processo SAI; um
+# Hub vivo mas travado (event loop preso, como no incidente de 2026-08-28) ou um boot que nunca abre a
+# porta ficavam assim para sempre. Roda num runspace deste mesmo processo (morre junto com ele: um job
+# separado poderia sobreviver e matar o Hub SEGUINTE). Ao desistir, mata a arvore do node filho deste
+# launcher; o `& node.exe` abaixo retorna e o caminho normal de reinicio assume.
+# Log proprio (UTF-8): o hub.log fica travado pelo `*>>` enquanto o node roda.
+# Desligar: JARVIS_HUB_WATCHDOG=0 no hub.env. Limites: boot ate 15 min (ja medimos 190 s); depois de
+# no ar, 8 falhas seguidas do /health a cada 15 s (~2 min sem resposta).
+function Start-HubWatchdog {
+  $wdLog = Join-Path $env:USERPROFILE '.jarvis\hub-watchdog.log'
+  $ps = [PowerShell]::Create()
+  [void]$ps.AddScript({
+    param($LauncherPid, $WdLog, $GraceSec, $IntervalSec, $MaxFails)
+    function W($m) { try { Add-Content -Path $WdLog -Encoding UTF8 -Value ("[watchdog] {0} {1}" -f (Get-Date -Format o), $m) } catch {} }
+    function Healthy { try { return ((Invoke-WebRequest -Uri 'http://127.0.0.1:4577/health' -UseBasicParsing -TimeoutSec 10).StatusCode -eq 200) } catch { return $false } }
+    $t0 = Get-Date; $up = $false; $fails = 0
+    while ($true) {
+      Start-Sleep -Seconds $IntervalSec
+      if (Healthy) {
+        if (-not $up) { W ("hub respondeu ao /health {0:N0} s apos o inicio" -f ((Get-Date) - $t0).TotalSeconds) }
+        $up = $true; $fails = 0; continue
+      }
+      if (-not $up) {
+        if (((Get-Date) - $t0).TotalSeconds -lt $GraceSec) { continue }
+        W "hub nao respondeu em $GraceSec s desde o inicio - boot travado"
+      } else {
+        $fails++
+        if ($fails -lt $MaxFails) { W "health falhou ($fails/$MaxFails)"; continue }
+        W ("hub sem responder ha ~{0} s" -f ($fails * $IntervalSec))
+      }
+      $kids = Get-CimInstance Win32_Process -Filter "ParentProcessId=$LauncherPid AND Name='node.exe'" -ErrorAction SilentlyContinue
+      foreach ($k in $kids) { W "encerrando a arvore do node $($k.ProcessId) para o supervisor religar"; & taskkill.exe /PID $k.ProcessId /T /F 2>&1 | Out-Null }
+      return
+    }
+  }).AddArgument($PID).AddArgument($wdLog).AddArgument(900).AddArgument(15).AddArgument(8)
+  [void]$ps.BeginInvoke()
+  return $ps
 }
 
 # Config LOCAL opcional (gitignored) — valores pessoais/da máquina vão aqui, ex.:
@@ -92,9 +169,13 @@ do {
   # `*>>` redireciona DIRETO pro arquivo, sem pipeline: o Hub sobe. O log sai em UTF-16LE (feio, mas
   # funcional — para ler, decodifique). UTF-8 no log precisa de uma via que NÃO passe por pipeline do
   # PS (ex.: um logger próprio do app gravando UTF-8), sem reintroduzir esse travamento.
+  $watchdog = $null
+  if ($env:JARVIS_HUB_WATCHDOG -ne '0') { try { $watchdog = Start-HubWatchdog } catch { Log "watchdog indisponivel: $($_.Exception.Message)" } }
   if (Test-Path $tsx) { & node.exe $tsx "$root\apps\hub\src\index.ts" *>> $log }
   else { Log 'tsx nao encontrado na raiz — caindo pro npm'; & npm.cmd start *>> $log }
-  if ($Once) { Log 'hub encerrou — devolvendo ao SCM'; break }
+  $nodeExit = $LASTEXITCODE
+  if ($watchdog) { try { $watchdog.Stop(); $watchdog.Dispose() } catch {} }
+  if ($Once) { Log "hub encerrou (codigo $nodeExit) — devolvendo ao SCM"; break }
   Log 'hub encerrou — reiniciando em 3s'
   Start-Sleep -Seconds 3
 } while ($true)

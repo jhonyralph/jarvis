@@ -20,7 +20,9 @@ const RUNNER_TASK = "JarvisRunner";
  * @returns {{level:Level, hub:{present:boolean,up:boolean,version:string}, runner:{present:boolean,up:boolean|null}, runnerOnly:boolean, tooltip:string}}
  */
 function classify(s) {
-  const hub = { present: !!s.hasHub, up: !!s.hubReachable, version: s.hubVersion || "" };
+  // `hubInstalled` (servico/tarefa JarvisHub existe): sem ele, um Hub TOTALMENTE fora do ar (nem
+  // /health nem admin) sumia do menu — "Nada rodando", sem aviso de queda e sem como subir de novo.
+  const hub = { present: !!s.hasHub || !!s.hubInstalled, up: !!s.hubReachable, version: s.hubVersion || "" };
   const runner = { present: !!s.hasRunnerTask, up: s.hasRunnerTask ? !!s.runnerRunning : null };
   const runnerOnly = runner.present && !hub.present;
 
@@ -58,7 +60,9 @@ function trayTemplate(st, opts = {}) {
 
   if (st.hub.present) {
     items.push({ id: "hub-header", label: st.hub.up ? `● Hub no ar${st.hub.version ? ` (${st.hub.version})` : ""}` : "○ Hub OFFLINE", enabled: false });
-    items.push({ id: "hub-restart", label: "Reiniciar Hub", enabled: true });
+    // "Reiniciar" usa a API admin do PROPRIO Hub — com ele fora, so "Iniciar" (pelo servico) funciona.
+    if (st.hub.up) items.push({ id: "hub-restart", label: "Reiniciar Hub", enabled: true });
+    else items.push({ id: "hub-start", label: "Iniciar Hub", enabled: true });
     items.push({ id: "update-runners", label: "Atualizar máquinas", enabled: st.hub.up });
     items.push({ id: "logs-hub", label: "Abrir log do Hub", enabled: true });
     items.push({ type: "separator" });

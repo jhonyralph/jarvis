@@ -26,6 +26,7 @@ function createTray({ showWindow, quit, openHubSetup }) {
       case "open": return showWindow();
       case "hub-config": return openHubSetup && openHubSetup();
       case "hub-restart": notify("Jarvis", "Reiniciando o Hub…"); return a && a.restartHub();
+      case "hub-start": notify("Jarvis", "Iniciando o Hub… o boot pode levar alguns minutos."); return a && a.startHub();
       case "update-runners": notify("Jarvis", "Enviando atualização às máquinas…"); return a && a.updateRunners();
       case "runner-start": return a && a.runnerControl("start");
       case "runner-stop": return a && a.runnerControl("stop");
