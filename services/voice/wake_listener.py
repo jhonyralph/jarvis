@@ -145,6 +145,10 @@ def open_mic():
     while True:
         try:
             dev = sd.query_devices(kind="input")
+            # Com o servico "Audio do Windows" parado, MME/DirectSound/WASAPI somem e o PortAudio cai
+            # no WDM-KS, que nao suporta leitura bloqueante (visto em 2026-10-07). Diz isso claramente.
+            if sd.query_hostapis(dev["hostapi"])["name"] == "Windows WDM-KS":
+                raise RuntimeError("nenhum microfone pelo Windows Audio (servico 'Audio do Windows' parado?)")
             stream = sd.InputStream(samplerate=SR, channels=1, dtype="int16", blocksize=FRAME)
             stream.start()
             set_mic("ok", device=str(dev.get("name") or "") or None)
