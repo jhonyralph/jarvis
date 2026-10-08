@@ -1,3 +1,11 @@
+## [0.37.2](https://github.com/jhonyralph/jarvis/compare/v0.37.1...v0.37.2) (2026-10-08)
+
+
+### Bug Fixes
+
+* **hub:** Hub volta sozinho e o "Hey Jarvis" do PC deixa de ser desarmado por qualquer cliente ([6bc06d7](https://github.com/jhonyralph/jarvis/commit/6bc06d7b68e05e46ead6ce41d7f8cdf57a7f16b0))
+* **voz:** listener diz que o Audio do Windows caiu em vez de mostrar erro do WDM-KS ([0487b73](https://github.com/jhonyralph/jarvis/commit/0487b738109042c1f57bdd8ee79e72a7e3fa35f3))
+
 ## [0.37.1](https://github.com/jhonyralph/jarvis/compare/v0.37.0...v0.37.1) (2026-09-25)
 
 
