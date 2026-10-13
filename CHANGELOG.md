@@ -1,3 +1,10 @@
+# [0.39.0](https://github.com/jhonyralph/jarvis/compare/v0.38.0...v0.39.0) (2026-10-13)
+
+
+### Features
+
+* **desktop:** app grava log em arquivo e o instalador diz por que o icone so pula ([3f8d2a2](https://github.com/jhonyralph/jarvis/commit/3f8d2a2f7e85e844473777db37b96e58fd0c7900))
+
 # [0.38.0](https://github.com/jhonyralph/jarvis/compare/v0.37.2...v0.38.0) (2026-10-13)
 
 
