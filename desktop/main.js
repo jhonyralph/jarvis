@@ -17,6 +17,15 @@ const { spawn } = require("node:child_process")
 const { registerBrowserIpc } = require("./src/browser/register-browser-ipc")
 const { registerUpdaterIpc } = require("./src/updater/register-updater-ipc")
 const { createTray } = require("./src/control/tray")
+const { createLogger } = require("./src/shared/logger")
+
+// Log em ARQUIVO, não só no console. Aberto por duplo clique não existe stdout, então todo
+// `console.log` daqui sempre se perdeu — e um "do nada fechou" ficava sem UMA linha do app para ler
+// (ver o cabeçalho de src/shared/logger.js). `app.getPath("logs")` é ~/Library/Logs/Jarvis no macOS,
+// %APPDATA%\Jarvis\logs no Windows e ~/.config/Jarvis/logs no Linux — o lugar que o SO reserva para
+// isso, e o primeiro que alguém olha. Criado tarde (depois do whenReady) porque getPath exige o app
+// pronto; até lá, `log` é o console.
+let log = createLogger({ dir: "", io: { mkdir() {}, append() {}, size: () => 0, rename() {}, remove() {}, readdir: () => [], mtimeMs: () => 0 } })
 
 // Where the live Hub UI lives. Same env name as the Capacitor shell (mobile/capacitor.config.ts).
 // Normalizado/validado: um valor em formato errado não falha alto — o app entraria no loop de
@@ -47,8 +56,9 @@ async function resolveHub() {
     runner: readRunnerHubUrl(),
     normalize: normalizeHubUrl,
   })
-  if (hubTarget.warning) console.warn(`[jarvis] ${hubTarget.warning}`)
-  console.log(`[jarvis] Hub: ${hubTarget.url} (${hubTarget.sourceLabel})`)
+  if (hubTarget.warning) log.warn("hub_target_aviso", { detail: hubTarget.warning })
+  // O endereço E a origem dele: metade das investigações começa em "contra qual Hub isso falou?".
+  log.info("hub_target", { url: hubTarget.url, origem: hubTarget.source, rotulo: hubTarget.sourceLabel, candidatos: hubTarget.candidates.length })
   return hubTarget
 }
 const hubUrl = () => hubTarget.url
@@ -93,7 +103,7 @@ function showSetupPage(code, desc) {
   mainWindow.loadFile(path.join(__dirname, "src", "setup", "setup.html")).catch((e) => {
     // Se até a tela de recuperação falhar, o pior desfecho possível é a janela preta de novo. Um
     // texto mínimo, sem arquivo e sem script, ainda diz onde mexer.
-    console.error("[jarvis] setup.html não carregou:", e && e.message)
+    log.error("setup_page_falhou", { detail: e && e.message })
     const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
     const html = `<!doctype html><meta charset="utf-8"><title>Jarvis</title>
       <body style="margin:0;background:#0b0b0d;color:#e6e6e6;font:15px/1.6 system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh">
@@ -186,8 +196,21 @@ function createWindow(show = true) {
   })
   mainWindow.webContents.on("did-fail-load", (_e, errorCode, desc, _url, isMainFrame) => {
     // -3 is ERR_ABORTED (e.g. a redirect) — not a real failure.
-    if (isMainFrame && errorCode !== -3) { showSetupPage(errorCode, desc); scheduleReload() }
+    if (isMainFrame && errorCode !== -3) {
+      log.warn("hub_load_falhou", { code: errorCode, detail: desc, url: hubUrl() })
+      showSetupPage(errorCode, desc); scheduleReload()
+    }
   })
+
+  // O evento que FALTOU em 2026-10-13: o renderer morreu com SIGSEGV num Mac Intel, a janela
+  // sumiu e o único vestígio foi um crash report do macOS com símbolos chutados. `reason` aqui
+  // separa de uma vez "crashed" (bug do Chromium/GPU) de "oom" e de "killed" — três causas com
+  // três conversas diferentes, que sem esta linha são indistinguíveis.
+  mainWindow.webContents.on("render-process-gone", (_e, details) => {
+    log.error("render_process_gone", { reason: details && details.reason, exitCode: details && details.exitCode, url: hubUrl() })
+  })
+  mainWindow.webContents.on("unresponsive", () => log.warn("janela_travada", { url: hubUrl() }))
+  mainWindow.webContents.on("responsive", () => log.info("janela_respondeu"))
 
   // Closing the window HIDES it to the tray (Jarvis keeps running in the background); real quit is the
   // tray "Sair" (quitApp sets app.isQuitting first).
@@ -220,8 +243,8 @@ function ensureHubUp() {
         // execucao para servir maquina migrada e nao migrada com o mesmo comando.
         "-Command", "if (Get-Service -Name 'JarvisHub' -ErrorAction SilentlyContinue) { Start-Service -Name 'JarvisHub' } else { Start-ScheduledTask -TaskName 'JarvisHub' }"],
         { detached: true, stdio: "ignore", windowsHide: true }).unref()
-      console.log("[jarvis] Hub fora do ar — disparei o JarvisHub (servico ou tarefa)")
-    } catch (e) { console.error("[jarvis] nao consegui disparar JarvisHub:", e && e.message) }
+      log.info("hub_disparado", { via: "JarvisHub (servico ou tarefa)" })
+    } catch (e) { log.error("hub_disparo_falhou", { detail: e && e.message }) }
   }
   req.on("timeout", () => { req.destroy(); start() })
   req.on("error", start)
@@ -235,6 +258,33 @@ app.on("second-instance", () => showWindow())
 
 app.whenReady().then(async () => {
   if (!HAS_LOCK) return
+  // O log de verdade começa aqui: `getPath` exige o app pronto. Da primeira linha em diante tudo
+  // vai para disco; o que acontece antes disto (resolução de módulo, single-instance) só pode ser
+  // visto pelo console, e é justamente a parte que não falha em produção.
+  log = createLogger({ dir: app.getPath("logs") })
+  // Identidade da máquina numa linha. Na investigação de 2026-10-13 cada um destes campos teve de
+  // ser descoberto na mão (lipo, PlistBuddy, sw_vers, spctl) para responder "é o binário certo para
+  // este processador?". Agora a primeira linha do log responde.
+  log.info("app_boot", {
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+    plataforma: process.platform,
+    arch: process.arch,                            // x64 num Mac Intel; arm64 traduzido apareceria aqui
+    empacotado: app.isPackaged,                    // dev run não auto-atualiza; explica "travado uma versão atrás"
+    pid: process.pid,
+    logs: app.getPath("logs"),
+  })
+  log.purgeOld()
+  // Exceção não tratada no main é o modo de falha mais caro: o app morre inteiro, sem janela e sem
+  // crash report do SO (o processo sai limpo). Era invisível por completo.
+  process.on("uncaughtException", (e) => log.error("main_uncaught", { detail: e && e.message, stack: e && String(e.stack || "").split("\n").slice(0, 6).join(" | ") }))
+  process.on("unhandledRejection", (e) => log.error("main_unhandled_rejection", { detail: e && (e.message || String(e)) }))
+  // GPU/utility: num Mac Intel sem GPU dedicada o processo de GPU é suspeito frequente, e a sua
+  // morte não aparece em `render-process-gone`.
+  app.on("child-process-gone", (_e, d) => log.error("child_process_gone", { type: d && d.type, name: d && d.name, reason: d && d.reason, exitCode: d && d.exitCode }))
+  app.on("before-quit", () => log.info("app_quit", { uptimeS: Math.round(process.uptime()) }))
   await resolveHub() // precisa do app pronto para `getPath("userData")`; define o alvo antes da 1a janela
   registerSetupIpc({
     ipcMain,
@@ -251,9 +301,10 @@ app.whenReady().then(async () => {
     ipcMain,
     isPackaged: () => app.isPackaged,
     getWindow: () => mainWindow,
+    log,
   })
   // Launched at login (or with --tray) → start hidden in the tray; otherwise show the window.
-  try { ensureHubUp() } catch (e) { console.error("[jarvis] ensureHubUp:", e && e.message) }   // fire-and-forget: nunca bloqueia a janela
+  try { ensureHubUp() } catch (e) { log.error("ensure_hub_falhou", { detail: e && e.message }) }   // fire-and-forget: nunca bloqueia a janela
   const startHidden = process.argv.includes("--tray") || app.getLoginItemSettings().wasOpenedAtLogin
   createWindow(!startHidden)
   try {
@@ -263,7 +314,7 @@ app.whenReady().then(async () => {
       // Hub mesmo com a janela conectada em outro (ou escondida no tray).
       openHubSetup: () => { showWindow(); showSetupPage() },
     })
-  } catch (e) { console.error("[jarvis] tray falhou:", e && e.message) }
+  } catch (e) { log.error("tray_falhou", { detail: e && e.message }) }
   updater.checkOnBoot()
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(true); else showWindow()

@@ -60,12 +60,26 @@ function describeUpdaterError(e) {
   return raw.slice(0, 300);
 }
 
-function registerUpdaterIpc({ ipcMain, isPackaged, getWindow, loadUpdater }) {
+/**
+ * @param {object} deps
+ * @param {import("electron").IpcMain} deps.ipcMain
+ * @param {() => boolean} deps.isPackaged   auto-update só existe em build empacotado
+ * @param {() => import("electron").BrowserWindow | null} deps.getWindow
+ * @param {() => any} [deps.loadUpdater]    injetável para teste; default é o electron-updater
+ * @param {{info:Function,warn:Function,error:Function}} [deps.log]
+ */
+function registerUpdaterIpc({ ipcMain, isPackaged, getWindow, loadUpdater, log }) {
   let updater = null;
   let downloaded = false;
   let wired = false;
+  const diario = log || { info() {}, warn() {}, error() {} };
 
+  // Todo estado do updater vai para o log, não só para a janela: o que a UI mostra morre com a
+  // janela, e os dois sintomas mais relatados ("travado uma versão atrás" e o
+  // ERR_UPDATER_NO_FILES_PROVIDED do Mac Intel) só são diagnosticáveis DEPOIS do fato.
   const emit = (payload) => {
+    if (payload && payload.state === "error") diario.error("updater", payload);
+    else diario.info("updater", payload);
     const win = getWindow && getWindow();
     if (win && !win.isDestroyed()) win.webContents.send("jarvis:updater:event", payload);
   };

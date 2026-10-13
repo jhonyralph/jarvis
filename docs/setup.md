@@ -180,6 +180,35 @@ arquivo (`Jarvis-<versão>-x64.dmg` e `-arm64.dmg`). O app não é assinado aind
 abrir exige liberar em **System Settings → Privacy & Security → Open Anyway**, e a atualização
 automática no macOS é manual enquanto não houver Developer ID (ver `desktop/README.md`).
 
+**5.1. O ícone pula e o app não abre.** Três causas, em ordem de frequência — `npm run
+install:desktop` diagnostica as três e imprime a correção de cada uma:
+
+- **Quarentena sem aprovação.** O app vem do navegador com o xattr `com.apple.quarantine` e, não
+  sendo assinado, o Gatekeeper exige o "Open Anyway" acima. Enquanto ninguém aprova, o `open`
+  devolve `-128` (cancelado) e o ícone só pula.
+- **O diálogo de aprovação nunca aparece.** Visto num MacBook Pro Intel com macOS 15.8.1: o
+  `CoreServicesUIAgent` — o processo que DESENHA aquele diálogo — crasha com SIGSEGV dentro do
+  LocalAuthentication (`LAContext _evaluatePolicy`). Sem diálogo não há aprovação possível, e a
+  instrução do item 5 não tem como ser seguida. A saída é remover a quarentena à mão, assumindo que
+  você confia no binário que você mesmo publicou:
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/Jarvis.app
+  ```
+
+- **Arquitetura errada.** Um `.app` arm64 num Mac Intel não abre de jeito nenhum — o Rosetta traduz
+  x86_64 para arm64, nunca o contrário — e o sintoma é idêntico. Confira com
+  `lipo -archs /Applications/Jarvis.app/Contents/MacOS/Jarvis`.
+
+Assinar com Developer ID resolve os dois primeiros de uma vez (e destrava a atualização automática).
+
+**5.2. Onde o app grava log.** JSONL, mesmo formato do Hub, em `~/Library/Logs/Jarvis/`
+(`%APPDATA%\Jarvis\logs` no Windows, `~/.config/Jarvis/logs` no Linux) — e em
+`~/Library/Logs/jarvis-desktop/` quando rodando via `npm start`. A primeira linha (`app_boot`) traz
+versão, Electron, plataforma, **arquitetura** e se o build é empacotado; `render_process_gone` é o
+que registra uma janela que morreu sozinha. Aberto por duplo clique não existe stdout, então este
+arquivo é a única fonte — sem ele, um "fechou do nada" só deixa crash report do SO.
+
 ## Notes
 
 - **Voice (STT/TTS)** is Hub-side. Instale com `npm run install:voice` (Piper voices em

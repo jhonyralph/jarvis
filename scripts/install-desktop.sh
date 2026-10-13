@@ -204,6 +204,59 @@ if [ "$DO_RUN" -eq 1 ] && [ "$FAILED" -eq 0 ]; then
   npm start
 fi
 
+# --- 6. macOS: o app JA INSTALADO consegue abrir? ----------------------------------------------
+#
+# Isto não é sobre o build acima: é sobre o .app que veio do DMG e está em /Applications. Como o
+# projeto ainda não tem Developer ID, esse app é NÃO ASSINADO e chega do navegador com o xattr
+# `com.apple.quarantine`. O caminho documentado é liberar em Ajustes → Privacidade e Segurança.
+#
+# Só que esse caminho pode não existir na máquina. Visto em 2026-10-13 num MacBook Pro Intel
+# (macOS 15.8.1): o `CoreServicesUIAgent` — o processo que DESENHA o diálogo "não foi possível
+# verificar o desenvolvedor" — crashava com SIGSEGV dentro do LocalAuthentication
+# (`LAContext _evaluatePolicy`, dois crash reports idênticos). Sem o diálogo ninguém aprova nada: o
+# `open` devolve `-128` (cancelado), o ícone pula um tempo e o app nunca abre. Nada no produto
+# dizia isso, e a doc só mandava usar o diálogo que não aparecia.
+#
+# Diagnóstico, não conserto: remover a quarentena é afrouxar uma proteção do SO, então o comando
+# fica impresso para a pessoa decidir — não é o instalador que executa.
+if [ "$(uname -s)" = "Darwin" ]; then
+  printf '\nApp instalado (macOS)\n'
+  # O ATALHO que este próprio script cria em ~/Applications/Jarvis.app é um .app cujo executável é
+  # um script de shell que chama o Electron do repo — não é o app empacotado. Confundir os dois faria
+  # o `lipo` falhar e o instalador avisar sobre um problema inexistente em toda máquina de
+  # desenvolvimento. Por isso o candidato só vale se o executável for Mach-O de verdade, que é
+  # exatamente o que `lipo -archs` responde.
+  INSTALLED=""; IARCH=""
+  for cand in "/Applications/Jarvis.app" "$HOME/Applications/Jarvis.app"; do
+    [ -d "$cand" ] || continue
+    A="$(lipo -archs "$cand/Contents/MacOS/Jarvis" 2>/dev/null || true)"
+    [ -n "$A" ] && { INSTALLED="$cand"; IARCH="$A"; break; }
+  done
+  if [ -z "$INSTALLED" ]; then
+    printf '  %s[--]   nenhum Jarvis.app empacotado instalado — nada a verificar (o atalho do modo dev não conta)%s\n' "$D" "$N"
+  else
+    # Arquitetura primeiro: um .app arm64 num Mac Intel não abre de jeito nenhum (o Rosetta traduz
+    # x86_64 para arm64, nunca o contrário) e o sintoma é idêntico ao da quarentena.
+    case " $IARCH " in
+      *" $(uname -m) "*) ok "Jarvis.app instalado é $IARCH, igual ao host ($(uname -m))" ;;
+      *) bad "Jarvis.app instalado é $IARCH, mas este host é $(uname -m)" \
+             "baixe o DMG com o sufixo certo: Jarvis-<versão>-$(if [ "$(uname -m)" = "arm64" ]; then echo arm64; else echo x64; fi).dmg" ;;
+    esac
+    QUAR="$(xattr -p com.apple.quarantine "$INSTALLED" 2>/dev/null || true)"
+    SIGNED=0; codesign -dv "$INSTALLED" >/dev/null 2>&1 && SIGNED=1
+    if [ "$SIGNED" -eq 1 ]; then
+      ok "Jarvis.app está assinado — o Gatekeeper não bloqueia a abertura"
+    elif [ -n "$QUAR" ]; then
+      warn "Jarvis.app está em QUARENTENA e não é assinado — é isto que faz o ícone pular sem abrir." \
+           "libere em Ajustes → Privacidade e Segurança → 'Abrir mesmo assim'. Se esse diálogo NUNCA aparecer (o CoreServicesUIAgent pode crashar nessa máquina), remova a quarentena você mesmo:  xattr -dr com.apple.quarantine '$INSTALLED'"
+    else
+      ok "Jarvis.app sem quarentena — abre direto (não é assinado, então a atualização segue manual)"
+    fi
+    # Onde olhar quando algo der errado. O app passou a gravar JSONL aqui (desktop/src/shared/logger.js).
+    printf '  %slog do app: ~/Library/Logs/Jarvis/ (empacotado) · ~/Library/Logs/jarvis-desktop/ (npm start)%s\n' "$D" "$N"
+  fi
+fi
+
 printf '\n'
 [ "$FAILED" -gt 0 ] && { printf '%sTerminou com falhas.%s\n' "$R" "$N"; exit 1; }
 printf '%sPronto.%s\n' "$G" "$N"

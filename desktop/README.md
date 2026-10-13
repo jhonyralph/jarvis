@@ -177,6 +177,38 @@ Commit `build/icon.png`. Without it the app builds fine but ships the **default 
 The script needs a graphical session (it renders in a hidden window), so run it on a desktop
 machine, not over a headless SSH/CI shell.
 
+## Log (onde olhar quando algo der errado)
+
+JSONL, mesmo formato do Hub (`{t, lvl, ev, ...}`), em `app.getPath("logs")`:
+
+| | |
+|---|---|
+| macOS (empacotado) | `~/Library/Logs/Jarvis/jarvis-desktop-AAAAMMDD.jsonl` |
+| macOS (`npm start`) | `~/Library/Logs/jarvis-desktop/` |
+| Windows | `%APPDATA%\Jarvis\logs\` |
+| Linux | `~/.config/Jarvis/logs/` |
+
+Por que existe: aberto por duplo clique **não há stdout**, então todo `console.log` deste processo
+sempre se perdeu. Em 2026-10-13, investigar um "fechou do nada" num Mac Intel só deixou um crash
+report do macOS com símbolos chutados — nenhuma linha do app dizendo em qual Hub ele estava nem por
+que o renderer morreu. Os eventos que fecham esse buraco:
+
+- `app_boot` — versão, Electron/Chrome/Node, plataforma, **arquitetura** (`x64` vs `arm64` responde
+  "é o binário certo para este processador?" sem `lipo`) e `empacotado` (um dev run nunca
+  auto-atualiza, o que explica "travado uma versão atrás").
+- `hub_target` — endereço E a origem dele (app > env > Hub local > runner).
+- `render_process_gone` — `reason` separa `crashed` de `oom` e de `killed`: três causas com três
+  conversas diferentes, indistinguíveis sem esta linha.
+- `child_process_gone` — GPU/utility, suspeito frequente em Mac sem GPU dedicada.
+- `main_uncaught` / `main_unhandled_rejection` — o app morre inteiro e **sem** crash report do SO,
+  porque o processo sai limpo. Era invisível.
+- `updater` — todo estado, inclusive o `ERR_UPDATER_NO_FILES_PROVIDED` do Mac Intel; o que a UI
+  mostra morre com a janela.
+
+Rotação em 5 MB (`.1.jsonl`) e retenção de 30 dias, limpas no boot. Segredo é mascarado antes de ir
+ao disco — por campo e por padrão de texto — porque o alvo do app é lido do `runner.env`, que é o
+arquivo do `JARVIS_TOKEN` (ver `src/shared/logger.js` e seu teste).
+
 ## Status
 
 - **Phase 0 (this):** the shell — loads the live Hub UI, auto-update, `window.jarvis` identity
