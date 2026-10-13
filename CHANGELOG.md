@@ -1,3 +1,10 @@
+## [0.39.1](https://github.com/jhonyralph/jarvis/compare/v0.39.0...v0.39.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **desktop:** corrige o caminho do log na doc e da um flag explicito para a quarentena ([8cc62f9](https://github.com/jhonyralph/jarvis/commit/8cc62f92aba665b79befbe816ebba34ca8944724))
+
 # [0.39.0](https://github.com/jhonyralph/jarvis/compare/v0.38.0...v0.39.0) (2026-10-13)
 
 
