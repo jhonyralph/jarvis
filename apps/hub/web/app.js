@@ -3007,16 +3007,45 @@
       add('🛡','Modo',modeLabel(curMode),false,()=>openSub(buildModePop));
     }
 
-    function buildFolderBrowser(p,{runnerId='local',initial='',onUse,showRecents=false}={}){ popMode='folder'; browseRunner=runnerId; browseUse=onUse||null; p.appendChild(ph('Pasta de trabalho'));
+    // Seletor de pasta: navega clicando OU digitando/colando o endereço (Enter / "Ir"). Quem normaliza
+    // (aspas, ~, "C:") e diz se a pasta existe é a máquina que lista — o erro volta no `dirs` e aparece aqui.
+    let browseUseAfter=false, browseFellBack=false, browseEls=null;
+    // `useAfter` vale só para ESTA navegação: qualquer outra (clique, Enter) desarma — senão um pedido
+    // que nunca voltou faria a próxima pasta clicada ser aplicada sozinha.
+    function browseNav(path,useAfter=false){ browseUseAfter=!!useAfter; tx({t:'listdir',runnerId:browseRunner,path:path||''}); }
+    function buildFolderBrowser(p,{runnerId='local',initial='',onUse,showRecents=false}={}){ popMode='folder'; browseRunner=runnerId; browseUse=onUse||null; browsePath=''; browseUseAfter=false; browseFellBack=false; p.appendChild(ph('Pasta de trabalho'));
       if(showRecents&&recentDirs.length){ p.appendChild(ph('Recentes')); const rl=document.createElement('div'); rl.className='flist'; rl.style.maxHeight='140px'; rl.style.marginBottom='8px';
         recentDirs.forEach(d=>{ const it=document.createElement('div'); it.textContent='🕘 '+base(d); it.title=d; it.onclick=()=>{ closePop(); tx({t:'configure',sessionId:currentSession,cwd:d}); }; rl.appendChild(it); }); p.appendChild(rl); p.appendChild(ph('Navegar')); }
-      const path=document.createElement('div'); path.className='fpath'; path.id='popPath'; path.textContent='carregando…'; p.appendChild(path);
+      const prow=document.createElement('div'); prow.className='fpathrow';
+      const path=document.createElement('input'); path.type='text'; path.className='fpath'; path.id='popPath'; path.placeholder='carregando…'; path.spellcheck=false; path.autocomplete='off'; path.setAttribute('autocapitalize','off'); path.setAttribute('aria-label','Endereço da pasta'); path.title='Digite ou cole o endereço da pasta e tecle Enter';
+      const goTyped=()=>{ const v=path.value.trim(); if(v) browseNav(v); };
+      path.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); goTyped(); } if(e.key!=='Escape') e.stopPropagation(); };
+      const go=document.createElement('button'); go.type='button'; go.className='ghost'; go.id='popGo'; go.textContent='Ir'; go.title='Abrir o endereço digitado'; go.onclick=goTyped;
+      prow.appendChild(path); prow.appendChild(go); p.appendChild(prow);
+      const err=document.createElement('div'); err.className='ferr'; err.id='popErr'; err.setAttribute('role','alert'); err.style.display='none'; p.appendChild(err);
       const list=document.createElement('div'); list.className='flist'; list.id='popList'; list.style.height='190px'; p.appendChild(list);
       const row=document.createElement('div'); row.className='frow';
-      const up=document.createElement('button'); up.className='ghost'; up.id='popUp'; up.textContent='⬆ acima'; up.onclick=()=>tx({t:'listdir',runnerId:browseRunner,path:up.dataset.parent||''});
-      const use=document.createElement('button'); use.id='popUse'; use.textContent='Usar esta pasta'; use.onclick=()=>{ const b=browsePath, fn=browseUse; closePop(); if(fn)fn(b); };
+      const up=document.createElement('button'); up.className='ghost'; up.id='popUp'; up.textContent='⬆ acima'; up.onclick=()=>browseNav(up.dataset.parent||'');
+      // Endereço editado e não aberto: "Usar" abre primeiro e só aplica se a pasta existir de verdade.
+      const use=document.createElement('button'); use.id='popUse'; use.textContent='Usar esta pasta'; use.onclick=()=>{ const typed=path.value.trim(); if(typed&&typed!==browsePath){ browseNav(typed,true); return; } const b=browsePath, fn=browseUse; if(!b) return; closePop(); if(fn)fn(b); };
       row.appendChild(up); row.appendChild(use); p.appendChild(row);
-      tx({t:'listdir',runnerId:browseRunner,path:initial||''}); }
+      browseEls={path,go,err,list,up,use};
+      browseNav(initial||''); }
+    function renderFolderListing(m){ if(!browseEls) return; const {path,list,up,err}=browseEls;
+      if(m.error){ browseUseAfter=false; if(err){ err.textContent='⚠ '+m.error; err.style.display=''; }
+        // A pasta inicial sumiu (ex.: cwd apagado): cai na home uma vez em vez de ficar em "carregando…".
+        if(!browsePath&&!browseFellBack){ browseFellBack=true; browseNav(''); }
+        return; }
+      browsePath=m.path; if(err){ err.textContent=''; err.style.display='none'; }
+      path.value=m.path; path.placeholder='';
+      if(up){ up.dataset.parent=m.parent||''; up.disabled=!m.parent||m.parent===m.path; }
+      list.innerHTML='';
+      const row=(label,title,fn)=>{ const d=document.createElement('div'); d.textContent=label; if(title)d.title=title; d.onclick=fn; list.appendChild(d); };
+      (m.drives||[]).forEach(d=>{ if(String(d).toUpperCase()!==String(m.path).toUpperCase()) row('💽 '+d,'Trocar para o disco '+d,()=>browseNav(d)); });
+      const sep=m.path.includes('\\')?'\\':'/';
+      (m.entries||[]).forEach(name=>row('📁 '+name,'',()=>browseNav(m.path.replace(/[\\/]$/,'')+sep+name)));
+      if(!list.childNodes.length){ const d=document.createElement('div'); d.className='fempty'; d.textContent='(sem subpastas)'; list.appendChild(d); }
+      if(browseUseAfter){ browseUseAfter=false; const b=browsePath, fn=browseUse; closePop(); if(fn)fn(b); } }
     function buildFolderPop(p){ buildFolderBrowser(p,{runnerId:routedMachine||'local',initial:curCwd||cfg.lastCwd||'',showRecents:true,onUse:b=>tx({t:'configure',sessionId:currentSession,cwd:b})}); }
 
     E.agentBtn.onclick=()=>{ if(curStarted||curNative)return; agentPopShowAll=false; togglePop(E.agentBtn,buildAgentPop); };
@@ -3043,6 +3072,7 @@
     }
     function renderTreeChildren(node,m){
       node.loaded=true; node.open=true; node.tw.textContent='▾'; node.children.classList.add('open'); node.children.innerHTML='';
+      if(m.error){ node.loaded=false; const e=document.createElement('div'); e.className='tempty'; e.style.paddingLeft=((node.depth+1)*14+6)+'px'; e.textContent='⚠ '+m.error; node.children.appendChild(e); return; }   // clicar de novo tenta reler
       const dirs=m.entries||[], files=m.files||[];
       if(!dirs.length && !files.length){ const e=document.createElement('div'); e.className='tempty'; e.style.paddingLeft=((node.depth+1)*14+6)+'px'; e.textContent='(vazio)'; node.children.appendChild(e); return; }
       dirs.forEach(name=>{ const child=makeFolderNode(treeJoin(m.path,name),name,node.depth+1); node.children.append(child.row,child.children); });
@@ -4980,10 +5010,13 @@
         else if(m.t==='terminal_error'){ const msg=m.message||'erro'; toast('⚠ Terminal: '+msg); const rec=termMap[termKey(m.runnerId||selectedRunner(),m.terminalId)]; if(rec&&rec.term)rec.term.writeln('\r\n[erro] '+msg); else { if(E.termPanel){ E.termPanel.classList.remove('hidden'); E.termPanel.setAttribute('aria-hidden','false'); } setTermEmpty('Terminal não abriu',msg); } }
         else if(m.t==='filecontent'){ showFile(m); }
         else if(m.t==='filediff'){ showDiff(m); }
-        else if(m.t==='dirs'){ browsePath=m.path;
-          if(treePending.has(m.path)){ const node=treePending.get(m.path); treePending.delete(m.path); renderTreeChildren(node,m); return; }   // Orca #1: resposta pra árvore de arquivos
-          if(popMode==='folder'){ const path=document.getElementById('popPath'),list=document.getElementById('popList'),up=document.getElementById('popUp');
-          if(path){ path.textContent=m.path; if(up) up.dataset.parent=m.parent||''; list.innerHTML=''; (m.entries||[]).forEach(name=>{ const d=document.createElement('div'); d.textContent='📁 '+name; d.onclick=()=>tx({t:'listdir',runnerId:browseRunner,path:m.path.replace(/[\\/]$/,'')+(m.path.includes('\\')?'\\':'/')+name}); list.appendChild(d); }); } } }
+        else if(m.t==='dirs'){
+          // Orca #1: resposta pra árvore de arquivos. Casa pelo caminho PEDIDO (`requested`): o `path`
+          // volta normalizado e pode diferir do que a árvore guardou. Runner antigo não manda `requested`.
+          const asked=typeof m.requested==='string'&&treePending.has(m.requested)?m.requested:m.path;
+          if(treePending.has(asked)){ const node=treePending.get(asked); treePending.delete(asked); renderTreeChildren(node,m); return; }
+          // Só o seletor mexe em `browsePath` — antes, uma resposta da árvore trocava a pasta que "Usar" aplicava.
+          if(popMode==='folder') renderFolderListing(m); }
         else if(m.t==='cron_validation'){ if(String(m.cron||'').trim()!==(E.rtCron.value||'').trim())return; cronOk=!!m.ok; E.rtAdd.disabled=!cronOk; E.rtCronHelp.className='cron-help '+(cronOk?'ok':'err'); E.rtCronHelp.textContent=cronOk?('✓ '+m.description+' · '+m.expression+' · fuso '+routineTimezone):('⚠ '+m.error); }
         else if(m.t==='sessions'){
           // visão unificada: só o agregado (runnerId 'all') alimenta a lista; listas de máquina única

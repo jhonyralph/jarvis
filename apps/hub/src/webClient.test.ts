@@ -84,6 +84,10 @@ interface ClientHandle {
   openWork(id: string): void;
   workQueueHtml(): string;
   workQueue(): Array<{ id: string; title: string; bucket: string; label: string; why: string }>;
+  // Seletor de pasta: endereço digitado, erro dentro do seletor, discos do Windows.
+  folderBrowser(opts?: any): any;
+  readonly browsePath: string;
+  treeNode(path: string): any;
 }
 
 /** One permissive fake element: every property access the client makes resolves to something inert. */
@@ -233,6 +237,9 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   openWork: (id)=>{ openWorkPanel(); openWorkNode(id); },
   workQueueHtml: ()=>String(E.workQueue.innerHTML||''),
   workQueue: ()=>workQueueItems(workSelected).map(it=>({id:it.node.executionId,title:String(it.node.title||''),bucket:it.bucket,label:it.label,why:it.why})),
+  folderBrowser: (opts)=>{ const p=document.createElement('div'); buildFolderBrowser(p,opts||{}); return browseEls; },
+  get browsePath(){ return browsePath; },
+  treeNode: (path)=>{ const n=makeFolderNode(path,'raiz',0); toggleFolder(n); return n; },
 };`;
 
   const factory = new Function(
@@ -2089,3 +2096,103 @@ test("Dispositivos & convites: nome do convite, renomear aparelho e a plataforma
   assert.equal(pedido.label, "Tablet da recepção");
   assert.equal(client.el("secInviteLabel").value, "", "o campo esvazia para o próximo convite não herdar o nome do anterior");
 });
+
+// ---------- Seletor de pasta: digitar/colar o endereço ----------
+const listdirs = (sock: FakeSocket): any[] => sock.sent.filter((m: any) => m.t === "listdir");
+const rowsOf = (list: any): string[] => (list.children || []).map((c: any) => String(c.textContent || ""));
+
+test("seletor de pasta: Enter no endereço digitado pede a listagem na máquina do seletor", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  const els = client.folderBrowser({ runnerId: "notebook-1", initial: "C:\\Users\\voce" });
+  assert.deepEqual(listdirs(sock).pop(), { t: "listdir", runnerId: "notebook-1", path: "C:\\Users\\voce" });
+  els.path.value = "  \"D:\\Projetos\"  ";
+  let prevented = false;
+  els.path.onkeydown({ key: "Enter", preventDefault() { prevented = true; }, stopPropagation() {} });
+  assert.equal(prevented, true);
+  // O texto vai cru: quem tira aspas, expande ~ e completa "D:" é a máquina que lista.
+  assert.deepEqual(listdirs(sock).pop(), { t: "listdir", runnerId: "notebook-1", path: "\"D:\\Projetos\"" });
+});
+
+test("seletor de pasta: erro aparece no seletor e não troca a pasta escolhida", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  const els = client.folderBrowser({ initial: "/srv" });
+  sock.deliver({ t: "dirs", path: "/srv", parent: "/", entries: ["app"], requested: "/srv" });
+  assert.equal(client.browsePath, "/srv");
+  assert.equal(els.path.value, "/srv");
+  sock.deliver({ t: "dirs", path: "/nao/existe", parent: "/nao", entries: [], error: "pasta não encontrada: /nao/existe", requested: "/nao/existe" });
+  assert.equal(client.browsePath, "/srv", "a pasta que 'Usar' aplicaria continua a última que existiu");
+  assert.match(els.err.textContent, /pasta não encontrada/);
+  assert.deepEqual(rowsOf(els.list), ["📁 app"], "a listagem anterior fica na tela");
+});
+
+test("seletor de pasta: 'Usar' com endereço editado abre antes e só aplica se a pasta existir", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  const used: string[] = [];
+  const els = client.folderBrowser({ initial: "/srv", onUse: (b: string) => used.push(b) });
+  sock.deliver({ t: "dirs", path: "/srv", parent: "/", entries: [], requested: "/srv" });
+  els.path.value = "/sumiu";
+  els.use.onclick();
+  assert.equal(listdirs(sock).pop().path, "/sumiu");
+  sock.deliver({ t: "dirs", path: "/sumiu", parent: "/", entries: [], error: "pasta não encontrada: /sumiu", requested: "/sumiu" });
+  assert.deepEqual(used, [], "pasta inexistente nunca vira pasta de trabalho");
+  els.path.value = "~/proj";
+  els.use.onclick();
+  sock.deliver({ t: "dirs", path: "/home/voce/proj", parent: "/home/voce", entries: [], requested: "~/proj" });
+  assert.deepEqual(used, ["/home/voce/proj"], "aplica o caminho normalizado pela máquina, não o texto digitado");
+});
+
+test("seletor de pasta: 'Usar' sem resposta não deixa a próxima navegação aplicar sozinha", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  const used: string[] = [];
+  const els = client.folderBrowser({ initial: "/srv", onUse: (b: string) => used.push(b) });
+  sock.deliver({ t: "dirs", path: "/srv", parent: "/", entries: ["app"], requested: "/srv" });
+  els.path.value = "/maquina/offline";
+  els.use.onclick();   // a resposta nunca chega (máquina caiu)
+  els.list.children[0].onclick();
+  sock.deliver({ t: "dirs", path: "/srv/app", parent: "/srv", entries: [], requested: "/srv/app" });
+  assert.deepEqual(used, [], "clicar numa pasta só navega");
+  assert.equal(client.browsePath, "/srv/app");
+});
+
+test("seletor de pasta: na raiz do disco oferece os outros discos e desliga o 'acima'", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  const els = client.folderBrowser({ initial: "C:" });
+  sock.deliver({ t: "dirs", path: "C:\\", parent: "C:\\", entries: ["Users"], drives: ["C:\\", "D:\\"], requested: "C:" });
+  assert.deepEqual(rowsOf(els.list), ["💽 D:\\", "📁 Users"], "o disco atual não se repete na lista");
+  assert.equal(els.up.disabled, true);
+  els.list.children[0].onclick();
+  assert.equal(listdirs(sock).pop().path, "D:\\");
+  els.list.children[1].onclick();
+  assert.equal(listdirs(sock).pop().path, "C:\\Users", "sem barra dobrada na raiz");
+});
+
+test("seletor de pasta: a pasta inicial que sumiu cai na home uma vez, sem laço", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.folderBrowser({ initial: "/apagada" });
+  const before = listdirs(sock).length;
+  sock.deliver({ t: "dirs", path: "/apagada", parent: "/", entries: [], error: "pasta não encontrada: /apagada", requested: "/apagada" });
+  assert.equal(listdirs(sock).length, before + 1);
+  assert.equal(listdirs(sock).pop().path, "", "vazio = home da máquina");
+  sock.deliver({ t: "dirs", path: "/home/x", parent: "/home", entries: [], error: "sem permissão para ler: /home/x", requested: "" });
+  assert.equal(listdirs(sock).length, before + 1, "não insiste de novo");
+});
+
+test("árvore de arquivos: resposta casa pelo caminho pedido e não mexe no seletor", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  const els = client.folderBrowser({ initial: "/srv" });
+  sock.deliver({ t: "dirs", path: "/srv", parent: "/", entries: [], requested: "/srv" });
+  const node = client.treeNode("C:/repo/");
+  // A máquina devolve o caminho normalizado; a árvore pediu com barra final e "/".
+  sock.deliver({ t: "dirs", path: "C:\\repo", parent: "C:\\", entries: ["src"], files: ["a.ts"], requested: "C:/repo/" });
+  assert.equal(node.loaded, true, "a árvore reconhece a própria resposta mesmo com o caminho normalizado");
+  assert.equal(client.browsePath, "/srv", "resposta da árvore não troca a pasta que o seletor aplicaria");
+  assert.equal(els.path.value, "/srv");
+});
+

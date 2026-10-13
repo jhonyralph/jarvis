@@ -26,7 +26,7 @@ import {
   updateCheck, updateApply, restartService, runnerSelfUpdateDecision, updatePreflight, autonomousUpdateAttempt, resolveCommit, readProjectFile, repoCommit, repoVersion, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, detectPreviewCandidates,
   previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest,
-  materializeFramework, FrameworkProvenanceStore,
+  materializeFramework, FrameworkProvenanceStore, listDirectory,
   buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, fileDiffFromMessages, createAgentEventBridge, createEventSequencer,
   ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
   pendingActivityReplay,
@@ -1652,14 +1652,9 @@ function connect(): void {
       }
       if (m.t === "open" && typeof m.sessionId === "string") { await doHistory(m.reqId, m.sessionId); return; }
       if (m.t === "listdir") {
-        const base = (typeof m.path === "string" && m.path) ? m.path : homedir();
-        try {
-          const all = readdirSync(base, { withFileTypes: true });
-          const entries = all.filter((e) => e.isDirectory()).map((e) => e.name).sort((a, b) => a.localeCompare(b));
-          // `files` só quando o cliente pede (m.files) — folder-picker legado não pede e segue só com pastas.
-          const files = m.files ? all.filter((e) => e.isFile()).map((e) => e.name).sort((a, b) => a.localeCompare(b)) : undefined;
-          send({ t: "dirs", reqId: m.reqId, path: base, parent: dirname(base), entries, files });
-        } catch (e: any) { send({ t: "error", reqId: m.reqId, message: "listdir: " + String(e?.message ?? e) }); }
+        // Mesma regra do Hub (core/dir-listing): caminho digitado é normalizado aqui, na máquina dona da
+        // home, e o erro volta dentro do `dirs` para o seletor mostrar.
+        send({ t: "dirs", reqId: m.reqId, ...listDirectory(m.path, { files: !!m.files }), requested: typeof m.path === "string" ? m.path : "" });
         return;
       }
       if (m.t === "configure" && typeof m.sessionId === "string") {

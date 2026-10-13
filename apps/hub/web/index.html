@@ -584,6 +584,14 @@
     .pop .effort-single { width:100%; min-height:44px; border:1px solid var(--line); border-radius:9px; background:#ffffff08; color:var(--text); font:inherit; font-size:13.5px; font-weight:600; cursor:pointer; }
     .pop .effort-single:hover, .pop .effort-single.sel { background:#ffffff17; border-color:#ffffff35; }
     .pop .fpath { font-size:12px; color:var(--mut); margin-bottom:6px; word-break:break-all; }
+    /* Seletor de pasta: o caminho é editável — digitar/colar o endereço e Enter navega até lá. */
+    .pop .fpathrow { display:flex; gap:6px; margin-bottom:6px; }
+    .pop input.fpath { flex:1; min-width:0; margin:0; padding:7px 9px; border:1px solid #ffffff26; border-radius:8px; background:var(--bg); color:var(--text); font:inherit; font-size:12.5px; word-break:normal; }
+    .pop input.fpath:focus { outline:none; border-color:var(--me); }
+    .pop .fpathrow button { flex:0 0 auto; font-size:12px; padding:6px 10px; }
+    .pop .ferr { font-size:12px; color:#fca5a5; margin:0 0 6px; word-break:break-word; }
+    .pop .flist div.fempty { cursor:default; color:var(--mut); font-style:italic; } .pop .flist div.fempty:hover { background:none; }
+    @media (max-width:760px) { .pop input.fpath { font-size:16px; } }   /* <16px faz o iOS dar zoom no foco */
     .pop .flist { max-height:220px; overflow:auto; border:1px solid var(--line); border-radius:9px; }
     .pop .flist div { padding:7px 10px; cursor:pointer; font-size:13px; border-bottom:1px solid var(--line); }
     .pop .flist div:last-child { border-bottom:0; } .pop .flist div:hover { background:#ffffff0d; }

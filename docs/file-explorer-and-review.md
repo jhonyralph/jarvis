@@ -12,6 +12,13 @@ no Electron required.
 - Lazy per folder: expanding a folder sends `{t:"listdir", files:true}`; the runner/hub answer a
   `dirs` message that now includes a `files` array **only when the flag is set** (the legacy
   folder-picker omits it and keeps seeing folders only — no regression).
+- The reply echoes the raw request as `requested` (the `path` comes back normalized), and the tree
+  matches its pending folder by it. A read error comes back **inside** `dirs` as `error` (shown on
+  the folder row), not as a chat-level `error` frame.
+- The folder-picker shares the same contract: its path is an editable field (type/paste + Enter or
+  "Ir"); the listing machine strips quotes, expands `~`, turns `C:` into `C:\` and rejects relative
+  paths (`packages/core/src/dir-listing.ts`). At a Windows drive root the reply also carries
+  `drives`, so the picker can switch disks.
 - Clicking a file opens it in the file panel; the tree stays open.
 
 ## File / diff viewer

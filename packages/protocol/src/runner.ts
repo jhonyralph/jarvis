@@ -249,8 +249,11 @@ export type RunnerToHub =
   | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; mtimeMs?: number; truncated?: boolean; error?: string; image?: boolean; mime?: string }
   /** directory listing for the folder browser (reply to Hub->Runner "listdir").
    *  `files` is present only when the request set `files:true` (the file-tree panel); the legacy
-   *  folder-picker omits it and keeps seeing directories only. */
-  | { t: "dirs"; reqId: string; path: string; parent: string; entries: string[]; files?: string[] }
+   *  folder-picker omits it and keeps seeing directories only. `path` is the NORMALIZED path that was
+   *  listed (quotes stripped, `~` expanded); `requested` echoes the raw request so the client can match
+   *  the reply to what it asked for. `drives` (Windows, at a drive root) and `error` (shown inside the
+   *  picker, `entries` empty) are optional — an older runner omits them. */
+  | { t: "dirs"; reqId: string; path: string; parent: string; entries: string[]; files?: string[]; drives?: string[]; error?: string; requested?: string }
   /** Correlated result of a remote delete. `ids` contains only sessions actually removed. */
   | { t: "deleted"; reqId: string; sessionId?: string; ids: string[]; ok: boolean; okCount: number }
   | { t: "runs"; active: string[] }

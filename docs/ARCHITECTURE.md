@@ -68,6 +68,9 @@ defined there.
 - `packages/protocol/src/runner.ts` — actual Hub↔Runner WebSocket contract. The
   `listdir`/`dirs` messages carry an optional `files` array for the file-tree
   explorer (the legacy folder-picker omits the flag and still sees folders only).
+  `dirs` may also carry `requested` (raw path echoed back), `error` (shown inside the
+  picker) and `drives` (Windows, at a drive root); Hub and Runner build it with the
+  same `listDirectory()` from `packages/core/src/dir-listing.ts`.
 
 ## Voice pipeline (local)
 
