@@ -1,6 +1,7 @@
 """
 Local STT via faster-whisper — 100% offline. No system ffmpeg needed (PyAV bundles
-the decoders). Runs on CPU (int8) — fast on the i7-14700KF, no CUDA setup required.
+the decoders). Runs on CPU (int8), no CUDA setup required. "Fast" depends on the CPU: medido no i7-14700KF do
+dono. Em Mac (Intel ou Apple Silicon) a CPU e o unico caminho — ver services/voice/README.md.
 
 First run downloads the model (~460 MB for "small") from HuggingFace into the local
 HF cache; after that it's fully offline.

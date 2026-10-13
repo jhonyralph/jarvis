@@ -27,6 +27,7 @@ import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, Aider
 import { synthesize, listVoices, listVoiceCatalog, hasVoice, warmUp as warmUpTts } from "./tts.js";
 import { transcribe, warmUp as warmUpStt } from "./stt.js";
 import { warmUp as warmUpEmbed } from "./embed.js";
+import { pythonDiagnostics } from "./python.js";
 import { log, isLogLevel } from "./logger.js";
 import { updateStalled } from "./update-watchdog.js";
 import { retargetTarget } from "./update-retarget.js";
@@ -1722,8 +1723,22 @@ void repoRemoteUrl(UPDATE_ROOT).then((u) => { repoUrl = u; });
 // update restart is automatic (the process restarts). Refresh periodically for a live commit.
 let hubCommit = "";
 let hubBuild = ""; // human-readable `git describe` (tag + distance), shown per machine in the UI
-void repoCommit(UPDATE_ROOT).then((c) => { hubCommit = c; });
-void repoVersion(UPDATE_ROOT).then((v) => { hubBuild = v; });
+// Resolve na subida e é esperado por quem DECIDE sobre o commit das outras máquinas — hoje só o
+// verifyOrDeliverRunnerUpdate(), que sem isso reaponta um update pendente para "não sei" e mantém um
+// alvo obsoleto. NÃO é esperado antes do server.listen: a porta abre na hora (ver o comentário lá).
+//
+// Os dois já tratam "sem git" internamente (devolvem ""), então o ramo de rejeição é cinto de
+// segurança contra uma rejeição INESPERADA deixar um await pendurado. O teto de 10 s é a outra
+// metade do mesmo cinto: se o git travar (repositório em rede, credential helper pendurado), quem
+// espera segue com `hubCommit` vazio — o comportamento de antes desta mudança, nunca pior — em vez
+// de ficar preso para sempre.
+const hubIdentityReady: Promise<void> = Promise.race([
+  Promise.all([
+    repoCommit(UPDATE_ROOT).then((c) => { hubCommit = c; }, () => { /* nunca rejeita hoje; ver acima */ }),
+    repoVersion(UPDATE_ROOT).then((v) => { hubBuild = v; }, () => { /* idem */ }),
+  ]).then(() => undefined),
+  new Promise<void>((resolve) => { setTimeout(resolve, 10_000).unref?.(); }),
+]);
 setInterval(() => { void repoCommit(UPDATE_ROOT).then((c) => {
   // When the Hub's own HEAD advances (it self-updated to a newer commit), re-aim every in-flight
   // runner update at it — so a fix that landed AFTER a stuck update actually reaches the runner,
@@ -2153,6 +2168,13 @@ async function runnerAlreadyHasTarget(runnerCommit: string, target: string): Pro
   return resposta;
 }
 async function verifyOrDeliverRunnerUpdate(rc: RunnerConn): Promise<void> {
+  // Espera o Hub saber o PRÓPRIO commit antes de decidir o alvo. Enquanto `hubCommit` está vazio,
+  // retargetTarget() responde "não sei" e normalizePendingRunnerUpdate() MANTÉM o pendente obsoleto:
+  // um runner que reconecta nessa janela recebe de volta um alvo velho em vez de ser reapontado para
+  // o commit atual. A janela é real — o launchd com KeepAlive traz os runners de volta no mesmo
+  // instante em que o Hub sobe, e `git rev-parse` + `git status` levam ~0,5 s num Mac Intel.
+  // Esperar AQUI, e não antes do server.listen, é o que mantém a porta abrindo na hora.
+  await hubIdentityReady;
   const pending = normalizePendingRunnerUpdate(rc); if (!pending) return;
   if (pending.state === "blocked") return;
   const receipt = rc.info.updateReceipt, clean = !!rc.info.commit && !rc.info.commit.includes("+dirty"), changedCommit = !!pending.fromCommit && !commitMatches(pending.fromCommit, pending.targetCommit);
@@ -9011,6 +9033,16 @@ server.once("error", (e: any) => {
   process.exit(1);
 });
 
+// A porta abre IMEDIATAMENTE, na avaliação síncrona do módulo. Quem precisa do commit do Hub
+// (o reaim de um update pendente) espera o `hubIdentityReady` no próprio caminho — ver o await no
+// topo de verifyOrDeliverRunnerUpdate().
+//
+// Já tentamos o contrário: um `await` aqui, para o Hub nunca abrir a porta sem saber o próprio
+// commit. Custa caro demais. `git rev-parse` + `git status` levam ~0,5 s num Mac Intel em repouso,
+// mas sob carga chegam a 8 s (medido: o boot do Hub na suíte completa saltou de <1 s para 8,0 s, e
+// o parity.e2e.test.ts passou de 25 s para 35 s). Num assistente de voz isso é o "Hey Jarvis" caindo
+// no vazio por oito segundos — e o que se ganhava valia só para a janela entre o listen e a
+// primeira reconexão de runner, que é exatamente o que o await localizado resolve sem atrasar nada.
 server.listen(PORT, () => {
   bootMark("listen");
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}  (boot em ${(bootPhases.listen / 1000).toFixed(1)} s)`);
@@ -9039,7 +9071,25 @@ server.listen(PORT, () => {
   // tts.ts's own comments) during a controlled boot is much better than silently eating it inside a
   // user-facing turn's latency budget. Fire-and-forget; a failure just means the old on-demand path
   // kicks in on first use (see warmUp()'s own .catch), so this can never make voice LESS available.
-  if (process.env.JARVIS_VOICE_WARMUP !== "0") { warmUpStt(); warmUpTts(); }
+  // Qual interpretador a voz vai usar, dito UMA vez no boot e com caminho absoluto. Antes desta
+  // linha o Mac só dizia "spawn python ENOENT" por ponte, sem nunca nomear o que tentou nem o que
+  // faltava — e num Mac são dois ENOENT no boot e silêncio depois. O resolvedor (python.ts) sonda os
+  // candidatos; aqui a gente só reporta a conclusão dele.
+  if (process.env.JARVIS_VOICE_WARMUP !== "0") {
+    // Assíncrono de propósito: a sondagem dos interpretadores custava ~1,2 s de event loop
+    // CONGELADO quando era síncrona — com a porta já aberta, o Hub aceitava conexões e não
+    // respondia nenhuma. Aqui ela corre em paralelo com o resto do boot.
+    void (async () => {
+      const py = await pythonDiagnostics();
+      console.log(`[voz] python: ${py.line}`);
+      if (py.hint) console.log(`[voz] ${py.hint}`);
+      log.info("hub_python", { ok: py.ok, detail: py.line, hint: py.hint });
+      // `ok` = tem piper + faster_whisper, que são os dois módulos que ESTES daemons importam.
+      // Não inclui openwakeword: quem o usa é o wake_listener.py, um processo separado que o Hub
+      // nunca lança — exigi-lo aqui pulava o warmup numa máquina com STT e TTS perfeitos.
+      if (py.ok) { warmUpStt(); warmUpTts(); }
+    })();
+  }
   // Embedding stays opt-in (mirrors semanticMemoryActive's own gate) — only warm it when semantic
   // memory is already in use, so a user who never touches the feature never pays for it at all.
   if (semanticMemoryActive) warmUpEmbed();

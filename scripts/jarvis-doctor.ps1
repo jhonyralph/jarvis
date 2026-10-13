@@ -119,7 +119,7 @@ if ($Role -eq 'hub') {
   if (Have $py) {
     $mods = & $py -c "import importlib.util as u; print(','.join(m for m in ['piper','faster_whisper','openwakeword'] if u.find_spec(m)))" 2>$null
     if ($mods) { Pass "Voz: Python + módulos [$mods]" }
-    else { Warn 'Voz: Python presente, mas piper/faster_whisper/openwakeword ausentes.' 'Opcional — para voz: pip install -r services/voice/requirements.txt' }
+    else { Warn 'Voz: Python presente, mas piper/faster_whisper/openwakeword ausentes.' 'Opcional — para voz: npm run install:voice' }
   } else { Warn 'Voz: Python não encontrado.' 'Opcional — o Hub roda em modo texto sem voz.' }
 }
 

@@ -29,6 +29,32 @@ mac:
   target: [dmg, zip] # zip is required for electron-updater on macOS
   category: public.app-category.developer-tools
   # Arrastar para /Applications já faz o Spotlight indexar: "⌘+espaço → jarvis" acha o app.
+  #
+  # ARQUITETURA: fixada pelos flags `--x64 --arm64` do job mac em release-desktop.yml, NÃO aqui.
+  # Não existe chave `arch` no bloco `mac` (o electron-builder 25 aborta com "unknown property");
+  # a forma de fixar na config seria trocar o `target` acima por objetos —
+  # `target: [{target: dmg, arch: [x64, arm64]}, {target: zip, arch: [x64, arm64]}]` — e essa forma
+  # VENCE os flags da CLI (targetFactory: `target.arch` tem precedência). É justamente por isso que
+  # ela não está aqui: faria TODO build local (`npm run dist`, `./scripts/install-desktop.sh
+  # --build`) baixar dois binários do Electron e empacotar duas vezes. O CI publica as duas; a
+  # máquina de quem desenvolve empacota só a dela. Contra esquecer o flag no CI existe um passo que
+  # falha antes do build.
+  #
+  # Piso de macOS, até aqui não declarado em lugar nenhum do projeto. O Electron 34
+  # (desktop/package.json) exige macOS 11 Big Sur ou mais novo — o Chromium que ele embarca largou
+  # o Catalina a partir do Electron 33. Isto escreve LSMinimumSystemVersion no Info.plist do app:
+  # num Mac abaixo de 11.0 o macOS recusa ABRIR com uma mensagem explícita ("requer macOS 11 ou
+  # posterior") em vez de o app quebrar no launch. O DMG em si não valida versão — a instalação
+  # (arrastar para Applications) continua acontecendo.
+  minimumSystemVersion: "11.0"
+  #
+  # Sem artifactName, o x64 sai SEM marca de arquitetura (`Jarvis-0.37.2.dmg`) ao lado do
+  # `Jarvis-0.37.2-arm64.dmg` — e quem baixa tem de adivinhar qual é o seu. Com ${arch} os dois se
+  # identificam. O sufixo também é o que o electron-updater usa para escolher: ele filtra os assets
+  # pela substring "arm64" NO NOME DO ARQUIVO. O filtro não é simétrico: num Mac Intel os arm64 são
+  # descartados (e sem build x64 sobra lista vazia, que é um erro), mas num Mac ARM sem arquivo
+  # arm64 ele FICA com o x64 e o instala sob Rosetta de propósito, sem avisar.
+  artifactName: ${productName}-${version}-${arch}.${ext}
 
 win:
   target: [nsis]

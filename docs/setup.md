@@ -112,12 +112,81 @@ agents there. Rename with the ✏; revoke with `jarvis status` → its runner to
 | Mint machine token | `jarvis.ps1 machine` | `jarvis.sh machine` |
 | Install **runner** | `install-runner.ps1` | `install-runner.sh` |
 
+## macOS (Apple Silicon e Intel)
+
+As duas arquiteturas são suportadas e o caminho de instalação é o mesmo. O que difere está aqui.
+Os limites de versão foram verificados resolvendo as dependências contra o PyPI; os números de
+desempenho (o "3-5x" do item 3) vêm da documentação do faster-whisper e não foram medidos neste
+projeto — trate-os como ordem de grandeza.
+
+**1. Confirme que o Node é nativo.** `node -p process.arch` responde `x64` num Mac Intel e `arm64`
+num Apple Silicon, e tem de bater com `uname -m`. Se der `x64` num host `arm64`, o Node está sob
+Rosetta e as dependências nativas vão seguir o PROCESSO, não a máquina — reinstale num terminal
+nativo. (Num Mac Intel `sysctl -n sysctl.proc_translated` não existe; o erro é o esperado.) O
+`npm run doctor` já reporta as duas arquiteturas no cabeçalho e avisa sobre essa divergência.
+
+**2. Python 3.10–3.12 para a voz — em Mac Intel o 3.12 é o TETO.**
+
+```bash
+npm run install:voice          # escolhe o interpretador, aplica os tetos e explica o que pular
+```
+
+| Python | Mac Intel (x86_64) | Apple Silicon (arm64) |
+|---|---|---|
+| 3.10 – 3.12 | stack completa | stack completa |
+| 3.13 | TTS, STT e wake word OK; **sem** identificação de voz nem memória semântica | stack completa |
+| 3.14+ | **nada instala** | stack completa |
+
+(O teto é só do Mac Intel. Windows não tem teto superior; **Linux para no 3.11**, por um motivo
+diferente — o `openwakeword` exige `tflite-runtime` só no Linux, e ele parou na 2.14.0, com wheels
+até cp311.)
+
+Os motivos, que são de empacotamento e não do Jarvis: o **`torch`** (puxado pelo `resemblyzer`)
+não publica wheel para macOS x86_64 desde a **2.2.2**, que cobre até o cp312 — para Python 3.13 em
+Intel não existe nenhuma versão. O **`onnxruntime`** (via `openwakeword`) parou o x86_64 na
+**1.23.2**, e nenhuma dessas versões cobre cp314; como o `piper-tts` exige `onnxruntime>=1`, em 3.14
+num Mac Intel o pip sai com `ResolutionImpossible`. Em arm64 isso não acontece: lá o onnxruntime tem
+wheel cp314 e a stack resolve. Além disso, as wheels x86_64 do `onnxruntime` exigem **macOS >= 13**:
+num Mac Intel em Monterey o pip resolve, mas trava o onnxruntime na 1.19.2.
+
+O `install:voice` grava `JARVIS_PYTHON` em `~/.jarvis/hub.env` com o caminho ABSOLUTO do
+interpretador (substituindo o que estiver lá). Isso importa: sob launchd o PATH é só
+`/usr/bin:/bin:/usr/sbin:/sbin`, onde o único Python é o **3.9.6 do Xcode Command Line Tools** —
+abaixo do piso 3.10 da stack, e instalar nele só sujaria `~/Library/Python/3.9` sem resolver nada.
+Para apontar outro à mão:
+
+```bash
+echo 'JARVIS_PYTHON=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3' >> ~/.jarvis/hub.env
+```
+
+**3. STT local é CPU em todo Mac.** Nenhum Mac tem NVIDIA, e o CTranslate2 (motor do
+faster-whisper) não tem backend Metal/CoreML — então `JARVIS_STT_DEVICE=cpu` é o único valor válido
+e as instruções `nvidia-*` do `requirements.txt` não se aplicam. Num Mac Intel sem GPU, o modelo
+default (`large-v3-turbo`) tem o encoder inteiro na CPU e o custo cresce com a duração da fala;
+se a transcrição ficar lenta, o maior ganho é trocar o modelo em `~/.jarvis/hub.env`:
+
+```bash
+JARVIS_STT_MODEL=small    # 3-5x mais rápido que o turbo, alguma perda de acurácia (ou 'base')
+```
+
+**4. Homebrew muda de lugar com a arquitetura** — `/usr/local` no Intel, `/opt/homebrew` no Apple
+Silicon. Os instaladores resolvem isso perguntando ao `brew --prefix` e gravam o PATH resultante no
+plist do LaunchAgent; se você instalou antes desta versão, rode `npm run install:hub` de novo. Um
+serviço que carrega e sai com **127** é esse problema: o `npm run doctor` passou a diagnosticá-lo
+por nome.
+
+**5. Cliente desktop.** O CI publica DMG/ZIP para as duas arquiteturas, com o sufixo no nome do
+arquivo (`Jarvis-<versão>-x64.dmg` e `-arm64.dmg`). O app não é assinado ainda, então o primeiro
+abrir exige liberar em **System Settings → Privacy & Security → Open Anyway**, e a atualização
+automática no macOS é manual enquanto não houver Developer ID (ver `desktop/README.md`).
+
 ## Notes
 
-- **Voice (STT/TTS)** is Hub-side and currently tuned for the Windows setup
-  (Piper voices in `~/.jarvis/voices`, Python services). A Hub without it runs
-  fine in **text mode**; voice is optional extra setup. Runners are always
-  headless (no voice).
+- **Voice (STT/TTS)** is Hub-side. Instale com `npm run install:voice` (Piper voices em
+  `~/.jarvis/voices`, serviços Python). Os números de latência na documentação foram medidos no PC
+  do dono (Windows + GPU NVIDIA) — num Mac veja a seção **macOS** acima, que vale para as duas
+  arquiteturas. A Hub without it runs fine in **text mode**; voice is optional extra setup.
+  Runners are always headless (no voice).
 - **Sandboxed runner** (share a machine without a shell): `docs/runner-sandbox.md`.
 - **Exposing publicly**: `docs/security.md` (checklist: TLS, `JARVIS_TRUST_PROXY`,
   `JARVIS_REQUIRE_TLS`, keep auth on).

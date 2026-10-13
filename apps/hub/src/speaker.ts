@@ -10,9 +10,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { pythonBin } from "./python.js";
 
 const SCRIPT = fileURLToPath(new URL("../../../services/voice/voice_cli.py", import.meta.url));
-const PY = process.env.JARVIS_PYTHON || "python";
 
 export interface SpeakerId {
   name: string | null; // enrolled name if score cleared threshold, else null
@@ -22,9 +22,12 @@ export interface SpeakerId {
   threshold?: number;
 }
 
-function run(args: string[]): Promise<string> {
+async function run(args: string[]): Promise<string> {
+  // Resolve o interpretador ANTES de montar a Promise: pythonBin() é assíncrono (sonda candidatos)
+  // e não pode ser esperado dentro do executor de um `new Promise`.
+  const bin = await pythonBin();
   return new Promise((resolve, reject) => {
-    const p = spawn(PY, [SCRIPT, ...args], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
+    const p = spawn(bin, [SCRIPT, ...args], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
     let out = "";
     let err = "";
     p.stdout.on("data", (d) => (out += d.toString()));

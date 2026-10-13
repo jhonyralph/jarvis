@@ -13,9 +13,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { pythonBin } from "./python.js";
 
 const SERVICE = fileURLToPath(new URL("../../../services/voice/embed_service.py", import.meta.url));
-const PY = process.env.JARVIS_PYTHON || "python";
 const REQUEST_TIMEOUT_MS = 60000;
 
 interface Pending {
@@ -44,11 +44,25 @@ function killProc(err: Error): void {
   ready = null;
 }
 
+// Dedup do arranque. `pythonBin()` é assíncrono (sonda interpretadores), então o `await` abaixo
+// fica ENTRE o guard `proc && ready` e a atribuição `proc = child`: duas chamadas concorrentes
+// passavam as duas pelo guard e spawnavam DOIS serviços, com o primeiro virando órfão — modelo
+// carregado, RAM presa e ninguém para matá-lo, porque `proc` já apontava para o segundo. Enquanto
+// o ensureProc era síncrono até o spawn isso era impossível; voltou a ser possível com o resolvedor
+// assíncrono. `starting` fecha a janela: a primeira chamada arranca, as outras esperam a MESMA
+// promessa. Zerado no fim para que uma falha de spawn possa ser tentada de novo.
+let starting: Promise<void> | null = null;
+
 /** Spawn (once) the warm embedding service and resolve when it reports {"ready":true}. */
 function ensureProc(): Promise<void> {
   if (proc && ready) return ready;
+  starting ??= spawnProc().finally(() => { starting = null; });
+  return starting;
+}
+
+async function spawnProc(): Promise<void> {
   const tSpawn = Date.now();
-  const child = spawn(PY, [SERVICE], {
+  const child = spawn(await pythonBin(), [SERVICE], {
     windowsHide: true,
     env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
   });

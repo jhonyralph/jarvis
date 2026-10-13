@@ -1,11 +1,31 @@
 # Local voice service — everything runs offline on this machine.
+#
+# NÚCLEO (TTS + STT + wake word). Identificação de voz e memória semântica moram em
+# requirements-voiceid.txt porque dependem de torch, que tem teto por arquitetura (ver lá).
+# Instale com `npm run install:voice`, que escolhe o interpretador e os arquivos certos para a
+# máquina. `pip install -r` direto também funciona, desde que o Python esteja na faixa abaixo.
+#
+# PYTHON — o teto depende da PLATAFORMA (verificado resolvendo contra o PyPI, não de memória):
+#
+#   Windows            3.10+, sem teto     (py3.14/win_amd64 resolve: onnxruntime 1.31.0)
+#   macOS arm64        3.10+, sem teto     (py3.14/macosx_14_0_arm64 resolve)
+#   macOS x86_64       3.10 a 3.12         (3.13 = sem torch; 3.14 = ResolutionImpossible, porque o
+#                                           onnxruntime não passa da 1.23.2 em x86_64)
+#   Linux              3.10 a 3.11         (openwakeword exige tflite-runtime SÓ no Linux, e ele
+#                                           parou na 2.14.0, com wheels até cp311)
+#
+# `npm run install:voice` aplica esses limites e explica qual pegou.
+#
+# macOS: as wheels do onnxruntime x86_64 exigem macOS >= 13. Num Mac Intel em macOS 11/12 o pip
+# resolve, mas trava o onnxruntime na 1.19.2 (verificado com --platform macosx_12_0_x86_64).
 piper-tts>=1.4.0        # TTS (working)
 faster-whisper>=1.2.0   # STT (working; bundles PyAV, no system ffmpeg needed; runs on CPU)
 openwakeword>=0.6.0     # wake word "Hey Jarvis" (wake_listener.py; pretrained onnx)
 sounddevice>=0.4.6      # machine mic + speaker for the wake listener
 websocket-client>=1.7.0 # wake listener's WS client to the Hub
-resemblyzer>=0.1.4      # speaker embedding for voice identification (voice_cli.py; pulls torch CPU)
-setuptools<81           # webrtcvad (a resemblyzer dep) imports pkg_resources, removed in setuptools 81+
+setuptools<81           # mantido por precaução, não por causa do webrtcvad (que saiu daqui para
+                        # o requirements-voiceid.txt). Não foi feita varredura de pkg_resources na
+                        # árvore transitiva do núcleo, então o pin fica até alguém provar que sai.
 
 # --- OPTIONAL: NVIDIA GPU decode for STT (big speedup vs CPU) -------------------------------------
 # Install ONLY on a machine with an NVIDIA GPU, then set JARVIS_STT_DEVICE=cuda (JARVIS_STT_COMPUTE=int8).
@@ -15,3 +35,7 @@ setuptools<81           # webrtcvad (a resemblyzer dep) imports pkg_resources, r
 # Measured on a Quadro P1000 (4GB, int8): ~2s decode vs ~9s on CPU for large-v3-turbo. Pascal GPUs
 # have no fast float16, so use compute int8. VRAM is tight at 4GB (model ~1.5GB) — the per-request
 # handler tolerates a transient OOM without crashing the service.
+#
+# NÃO SE APLICA A MAC — nenhum, Intel ou Apple Silicon: não existe NVIDIA, e o CTranslate2 (motor do
+# faster-whisper) não tem backend Metal/CoreML. Em Mac o STT roda 100% em CPU e JARVIS_STT_DEVICE=cpu
+# é o único valor válido. Instalar as wheels nvidia-* num Mac não faz nada além de ocupar disco.

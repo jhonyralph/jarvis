@@ -14,9 +14,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface, Interface } from "node:readline";
 import { log } from "./logger.js";
+import { pythonBin } from "./python.js";
 
 const SERVICE = fileURLToPath(new URL("../../../services/voice/whisper_service.py", import.meta.url));
-const PY = process.env.JARVIS_PYTHON || "python";
 
 // Domain glossary: high-value, easily-misheard terms (mostly English tech spoken inside pt-BR).
 // Kept compact on purpose — Whisper only weighs the last ~224 tokens of the biasing context.
@@ -49,12 +49,26 @@ function killProc(err: Error): void {
   proc = null; rl = null; ready = null;
 }
 
+// Dedup do arranque. `pythonBin()` é assíncrono (sonda interpretadores), então o `await` abaixo
+// fica ENTRE o guard `proc && ready` e a atribuição `proc = child`: duas chamadas concorrentes
+// passavam as duas pelo guard e spawnavam DOIS serviços, com o primeiro virando órfão — modelo
+// carregado, RAM presa e ninguém para matá-lo, porque `proc` já apontava para o segundo. Enquanto
+// o ensureProc era síncrono até o spawn isso era impossível; voltou a ser possível com o resolvedor
+// assíncrono. `starting` fecha a janela: a primeira chamada arranca, as outras esperam a MESMA
+// promessa. Zerado no fim para que uma falha de spawn possa ser tentada de novo.
+let starting: Promise<void> | null = null;
+
 function ensureProc(): Promise<void> {
   if (proc && ready) return ready;
+  starting ??= spawnProc().finally(() => { starting = null; });
+  return starting;
+}
+
+async function spawnProc(): Promise<void> {
   // Timing: separates "cold spawn + model load" (this fn) from "decode of one clip" (transcribe's
   // own timer), so a slow voice reply can be diagnosed as one or the other instead of one lump sum.
   const tSpawn = Date.now();
-  const child = spawn(PY, [SERVICE], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
+  const child = spawn(await pythonBin(), [SERVICE], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
   proc = child;
   let readyResolve!: () => void, readyReject!: (e: Error) => void;
   ready = new Promise<void>((res, rej) => { readyResolve = res; readyReject = rej; });
@@ -74,7 +88,20 @@ function ensureProc(): Promise<void> {
     pending.delete(id); clearTimeout(p.timer);
     if (o.error) p.reject(new Error("STT: " + o.error)); else p.resolve(String(o.text || ""));
   });
-  child.stderr.on("data", () => { /* faster-whisper loga progresso no stderr — ignora */ });
+  // O serviço prefixa os diagnósticos DELE com "[stt]"; o resto do stderr é progresso de
+  // carga de modelo e não interessa. Antes isto descartava tudo, então um aviso do serviço
+  // (ex.: "este Mac roda STT só em CPU") não chegava a lugar nenhum — nem ao hub.log.
+  let errTail = "";
+  child.stderr.on("data", (d) => {
+    errTail += String(d);
+    const lines = errTail.split(/\r?\n/);
+    errTail = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.startsWith("[stt]")) continue;
+      console.warn(line);
+      log.info("stt_service", { line });
+    }
+  });
   child.on("error", (e) => { if (!started) readyReject(e); killProc(e instanceof Error ? e : new Error(String(e))); });
   child.on("close", () => { if (!started) readyReject(new Error("STT: serviço encerrou antes de ficar pronto")); killProc(new Error("STT: serviço encerrou")); });
   return ready;

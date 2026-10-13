@@ -27,7 +27,35 @@ have() { command -v "$1" >/dev/null 2>&1; }
 echo
 echo "${C}Jarvis — diagnóstico de ambiente ($ROLE)${Z}"
 echo "${D}  repo=$REPO  home=$JDIR  port=$PORT${Z}"
+# Plataforma e ARQUITETURA no cabeçalho. Não é enfeite: metade dos problemas de Mac depende de
+# x86_64 vs arm64 (prefixo do brew, teto de wheels do Python, arquitetura do .app), e até aqui o
+# diagnóstico não dizia em qual das duas máquinas estava rodando.
+HOST_ARCH="$(uname -m)"
+if [ "$(uname -s)" = "Darwin" ]; then
+  echo "${D}  macOS $(sw_vers -productVersion 2>/dev/null) ($HOST_ARCH)  node $(node -p process.arch 2>/dev/null || echo '?')${Z}"
+else
+  echo "${D}  $(uname -s) $HOST_ARCH  node $(node -p process.arch 2>/dev/null || echo '?')${Z}"
+fi
 echo
+
+# 0) macOS: versão do SO e arquitetura do Node vs do host
+if [ "$(uname -s)" = "Darwin" ]; then
+  OSV="$(sw_vers -productVersion 2>/dev/null || echo 0)"; OSMAJ="${OSV%%.*}"
+  if [ "${OSMAJ:-0}" -lt 11 ] 2>/dev/null; then
+    fail "macOS $OSV ($HOST_ARCH) está abaixo do piso suportado." "O cliente desktop (Electron 34) exige macOS 11 Big Sur+. Esta máquina pode servir como Hub/runner via terminal, mas não roda o app empacotado."
+  elif [ "${OSMAJ:-0}" -lt 13 ] 2>/dev/null; then
+    warn "macOS $OSV ($HOST_ARCH): abaixo de 13, as wheels x86_64 do onnxruntime param na 1.19.2." "A voz funciona, com uma versão antiga do runtime de wake word. Atualizar o SO destrava a 1.23.x."
+  else
+    pass "macOS $OSV ($HOST_ARCH)"
+  fi
+  # Node emulado é causa clássica de "instalei a wheel errada": o pip/npm seguem o processo, não o
+  # host. Num Mac Intel a chave sysctl.proc_translated não existe — por isso o teste é a divergência.
+  NODE_ARCH="$(node -p process.arch 2>/dev/null || echo '?')"
+  case "$HOST_ARCH:$NODE_ARCH" in
+    arm64:x64)   warn "Node x64 num host arm64 — está rodando sob Rosetta." "Instale o Node nativo arm64 (nvm install 22 num terminal nativo); as deps nativas seguem a arquitetura do PROCESSO.";;
+    x86_64:arm64) warn "Node arm64 reportado num host x86_64 — combinação inesperada." "Confira a instalação do Node.";;
+  esac
+fi
 
 # 1) Node >= 22
 if have node; then
@@ -88,16 +116,52 @@ if have systemctl; then
   elif systemctl --user list-unit-files 2>/dev/null | grep -q "$SVC"; then warn "Serviço '$SVC' registrado mas inativo." "systemctl --user start $SVC (e 'loginctl enable-linger' p/ sobreviver logout)."; \
   else warn "Serviço de autostart '$SVC' não registrado." "Rode scripts/install-hub.sh (hub) / install-runner.sh (runner)."; fi
 elif have launchctl; then
-  launchctl list 2>/dev/null | grep -q "$LSVC" && pass "launchd '$LSVC' carregado" || warn "launchd '$LSVC' não carregado." "Rode o install-*.sh para registrar o autostart."
+  # `launchctl list | grep` só prova que o serviço está CARREGADO. O modo de falha mais comum num
+  # Mac é justamente carregar e morrer: o LaunchAgent recebe PATH=/usr/bin:/bin:/usr/sbin:/sbin, não
+  # encontra o npm, sai 127 e o launchd o reinicia para sempre — e o teste antigo dava PASS nisso.
+  # `launchctl print` traz o estado real e o último código de saída.
+  LOG="$JDIR/$([ "$ROLE" = "hub" ] && echo hub.log || echo runner.log)"
+  if LINFO="$(launchctl print "gui/$(id -u)/$LSVC" 2>/dev/null)"; then
+    LPID="$(printf '%s' "$LINFO" | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\)$/\1/p' | head -1)"
+    LLAST="$(printf '%s' "$LINFO" | sed -n 's/^[[:space:]]*last exit code = \([0-9][0-9]*\)$/\1/p' | head -1)"
+    if [ -n "$LPID" ]; then pass "launchd '$LSVC' rodando (pid $LPID)"
+    elif [ "${LLAST:-}" = "127" ]; then
+      fail "launchd '$LSVC' carregado mas saindo com 127 (comando não encontrado)." "O LaunchAgent não herda seu PATH. Reinstale com scripts/install-hub.sh (ou install-runner.sh), que agora grava EnvironmentVariables>PATH no plist incluindo o diretório do npm — neste host seria $(dirname "$(command -v npm 2>/dev/null || echo /usr/local/bin/npm)")."
+    else warn "launchd '$LSVC' carregado, sem processo (last exit ${LLAST:-?})." "Veja $LOG."; fi
+  else warn "launchd '$LSVC' não carregado." "Rode o install-*.sh para registrar o autostart."; fi
 else warn "Nem systemd nem launchd — autostart não verificável." "Você gerencia o processo manualmente."; fi
 
 # 8) Voz (opcional; só no Hub)
+#
+# Reescrito porque a versão anterior dava PASS numa voz quebrada: ela checava `python3` enquanto o
+# Hub spawnava `python` (que não existe em macOS), usava find_spec num interpretador que podia não
+# ser o do Hub, e tratava o núcleo e os opcionais como uma coisa só. Agora quem resolve é o MESMO
+# código do Hub (apps/hub/src/python.ts), para instalador, runtime e diagnóstico nunca divergirem.
 if [ "$ROLE" = "hub" ]; then
-  PY="${JARVIS_PYTHON:-python3}"; have "$PY" || PY=python
-  if have "$PY"; then
-    MODS="$($PY -c "import importlib.util as u; print(','.join(m for m in ['piper','faster_whisper','openwakeword'] if u.find_spec(m)))" 2>/dev/null)"
-    [ -n "$MODS" ] && pass "Voz: Python + módulos [$MODS]" || warn "Voz: Python presente, sem piper/faster_whisper/openwakeword." "Opcional — para voz: pip install -r services/voice/requirements.txt"
-  else warn "Voz: Python não encontrado." "Opcional — o Hub roda em modo texto sem voz."; fi
+  if have node && [ -d "$REPO/node_modules/tsx" ]; then
+    PYOUT="$(cd "$REPO" && node --import tsx apps/hub/src/python.ts 2>/dev/null)"; PYRC=$?
+    PYLINE="$(printf '%s\n' "$PYOUT" | sed -n 1p)"
+    PYHINT="$(printf '%s\n' "$PYOUT" | sed -n 2p)"
+    if [ -z "$PYLINE" ]; then
+      warn "Voz: não consegui resolver o interpretador Python." "Opcional — o Hub roda em modo texto sem voz. Para habilitar: npm run install:voice"
+    elif [ "$PYRC" -eq 0 ]; then
+      pass "Voz: $PYLINE"
+      # Núcleo ok mas algum opcional faltando (o caso do Mac Intel sem torch) é WARN, nunca FAIL:
+      # qualquer FAIL faz o doctor sair 1, e voz é explicitamente opcional.
+      [ -n "$PYHINT" ] && warn "Voz (parcial): $PYHINT" "npm run install:voice"
+    else
+      warn "Voz indisponível: $PYLINE" "${PYHINT:-npm run install:voice}"
+    fi
+    # O Hub lê JARVIS_PYTHON de ~/.jarvis/hub.env (start-hub.sh exporta com `set -a`). Sem essa
+    # linha, um Hub sob launchd pode resolver um interpretador diferente do que o doctor viu aqui,
+    # porque o PATH dos dois é diferente.
+    if [ -f "$JDIR/hub.env" ] && ! grep -q '^[[:space:]]*JARVIS_PYTHON=' "$JDIR/hub.env" 2>/dev/null; then
+      warn "JARVIS_PYTHON não está fixado em $JDIR/hub.env." "Sob launchd o PATH é pobre e o Hub pode achar outro Python. Rode npm run install:voice (grava a linha) ou adicione-a à mão."
+    fi
+  else
+    # Sem node_modules não há como usar o resolvedor; faz o mínimo sem fingir diagnóstico.
+    warn "Voz: não verificada (node_modules ausentes)." "Rode 'npm install' e depois o doctor de novo."
+  fi
 fi
 
 echo

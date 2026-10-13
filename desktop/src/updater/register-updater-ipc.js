@@ -15,12 +15,51 @@
 const UNSUPPORTED = { state: "unsupported" };
 
 /**
- * @param {object} deps
- * @param {import("electron").IpcMain} deps.ipcMain
- * @param {() => boolean} deps.isPackaged   auto-update only exists in a packaged build
- * @param {() => import("electron").BrowserWindow | null} deps.getWindow
- * @param {() => any} [deps.loadUpdater]    injectable for tests; defaults to electron-updater
+ * Traduz os erros do electron-updater que têm uma AÇÃO do lado do usuário. O resto segue como
+ * mensagem crua (fatiada), que é melhor que nada para um erro de rede.
+ *
+ * O caso que motivou isto: no macOS o updater escolhe o asset por arquitetura antes de baixar,
+ * filtrando os arquivos do canal pela substring "arm64" no nome (MacUpdater.filterFilesForArch).
+ * Num Mac Intel ele DESCARTA os arm64; enquanto a release saía arm64-only isso deixava a lista
+ * VAZIA, e o que chegava à UI era "No files provided" — depois de a mesma UI ter anunciado
+ * "atualização disponível". Ninguém deduz "esta release não tem build para o meu processador" a
+ * partir disso.
+ *
+ * Os dois códigos existem e vêm de lugares diferentes; verificados no electron-updater 6.8.9:
+ *   • lista VAZIA  -> Provider.findFile joga ERR_UPDATER_NO_FILES_PROVIDED ("No files provided").
+ *                     É este o caso da arquitetura sem build.
+ *   • lista sem zip -> MacUpdater joga ERR_UPDATER_ZIP_FILE_NOT_FOUND, com os arquivos no texto
+ *                     (uma release só com .dmg, por exemplo).
+ *
+ * A assimetria importa e não é intuitiva: no sentido inverso NÃO há erro. Um Mac ARM sem arquivo
+ * arm64 cai no mesmo filtro e FICA com o x64, instalando-o sob Rosetta de propósito
+ * (electron-builder PR 5524) — sem avisar ninguém.
+ *
+ * @param {any} e
+ * @returns {string}
  */
+function describeUpdaterError(e) {
+  const code = String(e?.code || "");
+  const raw = String(e?.message || e);
+  const semArquivos = code === "ERR_UPDATER_NO_FILES_PROVIDED" || /No files provided/i.test(raw);
+  const semZip = code === "ERR_UPDATER_ZIP_FILE_NOT_FOUND" || /ZIP file not provided/i.test(raw);
+  if (semArquivos || semZip) {
+    // Só no macOS o updater filtra por arquitetura; dizer isso no Windows mandaria o usuário
+    // procurar um DMG que não existe para ele.
+    if (process.platform === "darwin") {
+      return `esta versão não traz instalador para a arquitetura deste Mac (${process.arch}). Baixe o pacote certo na página de releases — a atualização automática volta a funcionar na próxima versão que publicar as duas.`;
+    }
+    return "esta versão não traz um instalador aplicável a esta máquina. Baixe o pacote na página de releases.";
+  }
+  // Sem assinatura de código, o Squirrel.Mac recusa aplicar o pacote já baixado. É esperado
+  // enquanto o projeto não tiver Developer ID (ver desktop/README.md), e dizer isso evita que o
+  // dono procure um bug que não existe.
+  if (/code signature|not signed|Could not get code signature/i.test(raw)) {
+    return "a atualização baixada não pôde ser aplicada porque o app não é assinado — no macOS a atualização é MANUAL: baixe o novo DMG na página de releases.";
+  }
+  return raw.slice(0, 300);
+}
+
 function registerUpdaterIpc({ ipcMain, isPackaged, getWindow, loadUpdater }) {
   let updater = null;
   let downloaded = false;
@@ -51,7 +90,7 @@ function registerUpdaterIpc({ ipcMain, isPackaged, getWindow, loadUpdater }) {
       updater.on("update-not-available", () => emit({ state: "none" }));
       updater.on("download-progress", (p) => emit({ state: "downloading", percent: Math.round(p?.percent || 0) }));
       updater.on("update-downloaded", (i) => { downloaded = true; emit({ state: "downloaded", version: i?.version }); });
-      updater.on("error", (e) => emit({ state: "error", error: String(e?.message || e).slice(0, 300) }));
+      updater.on("error", (e) => emit({ state: "error", error: describeUpdaterError(e) }));
     }
     return updater;
   }
@@ -66,7 +105,7 @@ function registerUpdaterIpc({ ipcMain, isPackaged, getWindow, loadUpdater }) {
       // the events above, so the caller gets a best-effort snapshot plus the live stream.
       return { state: version && version !== u.currentVersion ? "available" : "none", version };
     } catch (e) {
-      return { state: "error", error: String(e?.message || e).slice(0, 300) };
+      return { state: "error", error: describeUpdaterError(e) };
     }
   });
 
@@ -84,4 +123,4 @@ function registerUpdaterIpc({ ipcMain, isPackaged, getWindow, loadUpdater }) {
   };
 }
 
-module.exports = { registerUpdaterIpc };
+module.exports = { registerUpdaterIpc, describeUpdaterError };

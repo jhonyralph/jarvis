@@ -125,6 +125,22 @@ GitHub Releases** (installers published by CI on every version tag). Consequence
 - After a release, the Hub jumps to the new version instantly (git), but the app catches up
   only after electron-updater checks → downloads → you click **Instalar**. A brief
   "one version behind" window is expected, not a bug.
+- **macOS — a atualização escolhe o pacote por arquitetura, e o filtro NÃO é simétrico.** O
+  electron-updater (`MacUpdater.filterFilesForArch`) olha a substring `arm64` no nome do arquivo:
+  - num **Mac Intel** os arm64 são descartados. Numa release arm64-only sobra **lista vazia** e o
+    update falha com `ERR_UPDATER_NO_FILES_PROVIDED` ("No files provided") — a UI anuncia
+    "disponível" e logo depois mostra o erro.
+  - num **Mac ARM** sem arquivo arm64, ele **fica com o x64** e instala sob Rosetta de propósito
+    ([electron-builder #5524](https://github.com/electron-userland/electron-builder/pull/5524)),
+    sem avisar que trocou de arquitetura.
+
+  Desde a 0.37.x o job de release publica as duas, um passo do CI **falha antes do build** se o job
+  mac não tiver `--x64 --arm64`, e outro confere depois que o `latest-mac.yml` listou as duas (esse
+  segundo só detecta — nesse ponto a release já saiu). O app traduz o erro do updater para uma frase
+  acionável em vez de repassar o texto cru.
+- **macOS — enquanto o app não for assinado, a atualização é MANUAL.** O Squirrel.Mac recusa aplicar
+  um pacote sem assinatura de código; baixe o novo DMG da release. O app detecta esse caso e diz
+  isso, em vez de mostrar um erro de assinatura.
 
 ## Version labels
 

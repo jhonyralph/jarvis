@@ -43,8 +43,22 @@ if ! npm test --silent >/dev/null 2>&1; then
   #
   # Antes o `fail` vinha SEMPRE, mesmo quando a segunda rodada passava. Resultado observado: um
   # "[pre-push] BLOQUEADO: testes falharam" impresso logo abaixo de um "# fail 0", com o push
-  # barrado por ruído. A suíte tem e2e sensível a porta/timing sob carga (o flake conhecido é
-  # apps/hub/src/update-handshake.e2e.test.ts, que passa isolado em ~12s).
+  # barrado por ruído. A suíte tem e2e sensível a porta/timing sob carga.
+  #
+  # NENHUM flake catalogado aqui de propósito — este comentário já catalogou dois, e os DOIS eram
+  # bug de verdade. Fica o registro, porque o padrão se repete:
+  #
+  #   • apps/hub/src/update-handshake.e2e.test.ts foi marcado como "flake de timing". Não era: num
+  #     Mac Intel falhava 4 em 4 vezes ISOLADO, porque o Hub abria a porta antes de resolver o
+  #     próprio commit. Bug, consertado.
+  #   • apps/hub/src/parity.e2e.test.ts ("remote live activity survives a Hub restart...") foi
+  #     marcado como contenção de CPU, por raspar o teto de 40 s com a suíte cheia (34-39 s) e
+  #     passar isolado. Também não era: a correção acima tinha posto um `await` de ~0,5 s (8 s sob
+  #     carga) antes do server.listen, e cada restart de Hub no teste pagava isso. Movido o await
+  #     para quem usa o commit, o teste caiu para 23 s e a suíte fechou em 0 falhas.
+  #
+  # O teste que decide NÃO é "passa isolado?" — os dois passavam. É: a duração mudou junto com uma
+  # alteração sua? Então é sua. Compare contra o HEAD limpo (`git stash -u`) antes de culpar a CPU.
   #
   # Uma quebra de verdade falha nas DUAS rodadas e continua barrando — que é o ponto do gate.
   printf '\n[pre-push] a primeira rodada falhou; repetindo com a saída visível\n\n'

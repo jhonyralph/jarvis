@@ -1,0 +1,53 @@
+# Identificação de voz (Resemblyzer) + memória semântica (sentence-transformers).
+#
+# Separado do requirements.txt porque TUDO aqui depende de torch, e torch é a única peça da stack
+# de voz com teto por arquitetura:
+#
+#   • macOS x86_64 (Mac Intel): a última wheel publicada é a torch 2.2.2 (cp38-cp312). Não existe
+#     2.3+ para Intel e não existe NENHUMA para Python 3.13+ — verificado com
+#     `pip install --dry-run --only-binary=:all: --platform macosx_13_0_x86_64 --python-version 3.13 torch`
+#     → "Could not find a version that satisfies the requirement torch (from versions: none)".
+#   • macOS arm64 (Apple Silicon): torch atual (2.11.0 na mesma verificação). Sem teto.
+#   • Windows / Linux: torch atual. Sem teto.
+#
+# Por isso o núcleo (requirements.txt) continua instalável em qualquer Mac, e só este arquivo é
+# pulado quando a máquina não tem como rodar torch. `npm run install:voice` cuida dessa decisão.
+#
+# Instale SEMPRE junto com o núcleo, numa só invocação do pip:
+#     pip install -r requirements.txt -r requirements-voiceid.txt
+# Em duas invocações separadas o scipy é compilado contra o numpy 2 na primeira e fica ao lado do
+# numpy 1.26 que a segunda instala.
+
+# torch em duas linhas com markers DISJUNTOS (o pip aceita; verificado) para o teto do Mac Intel não
+# contaminar as outras plataformas, onde ele seria uma regressão de anos de versão.
+torch<=2.2.2 ; sys_platform == "darwin" and platform_machine == "x86_64"
+torch ; sys_platform != "darwin" or platform_machine != "x86_64"
+
+# A torch 2.2.2 foi compilada contra a ABI do NumPy 1.x. O resolvedor instala o NumPy 2.x ao lado
+# sem reclamar, e aí `import torch` quebra em tempo de execução ("numpy.core.multiarray failed to
+# import"). Como no Mac Intel não existe torch mais nova, o numpy é a única ponta que dá para mover.
+# Fora do Mac Intel, numpy fica livre — o núcleo resolve 2.5.x e não há motivo para descer.
+numpy<2 ; sys_platform == "darwin" and platform_machine == "x86_64"
+
+# Deps do resemblyzer declaradas À MÃO, de propósito.
+#
+# `resemblyzer` depende da dist `webrtcvad`, que NÃO tem wheel nenhuma no PyPI (verificado:
+# `--only-binary=:all: webrtcvad` responde "from versions: none"). Instalá-lo normalmente compila C
+# e falha em todo Mac sem Xcode Command Line Tools. O fork `webrtcvad-wheels` publica binário
+# (2.0.14.post1 tem cp312 macosx_10_13_x86_64) e expõe o MESMO módulo `webrtcvad`, mas com outro
+# nome de distribuição — então o pip continua exigindo o original enquanto o resemblyzer puxar deps.
+#
+# Daí o install-voice instalar o resemblyzer num segundo passo, com --no-deps. Não "conserte" isso
+# adicionando resemblyzer a este arquivo: ele volta a arrastar a dist webrtcvad.
+webrtcvad-wheels>=2.0.14
+librosa>=0.9.1
+scipy>=1.2.1
+# As deps declaradas pelo resemblyzer 0.1.4 são: librosa, numpy, webrtcvad, torch, scipy e
+# `typing`. O `typing` fica de FORA de propósito: é o backport do PyPI para Python <3.5 e, num
+# 3.10+, instalá-lo SOBREPÕE o módulo da stdlib e quebra coisas. numpy não precisa de linha
+# própria fora do Mac Intel — o librosa já o exige.
+
+# Memória semântica. Entra aqui, e não num `pip install` solto na docstring do embed_service.py,
+# justamente para o teto de torch acima alcançá-la — senão ela instala torch atual por fora e
+# reintroduz a quebra no Mac Intel.
+sentence-transformers>=2.2.0

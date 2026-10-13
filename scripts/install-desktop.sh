@@ -101,7 +101,17 @@ fi
 # SILENCIOSAMENTE e só quebra na hora de abrir. Verificamos de verdade.
 if [ "$FAILED" -eq 0 ]; then
   if node -e "require('electron')" >/dev/null 2>&1; then
-    ok "Electron $(node -e "console.log(require('electron/package.json').version)" 2>/dev/null) pronto"
+    # `require('electron')` só resolve o MÓDULO (um index.js que devolve o caminho do binário) —
+    # passa igual se o binário não baixou, está truncado ou é de outra arquitetura. Executar o
+    # binário de verdade é o único teste que distingue isso. ELECTRON_RUN_AS_NODE roda sem abrir
+    # janela, então serve em máquina sem display.
+    EBIN="$(node -e "process.stdout.write(require('electron'))" 2>/dev/null || true)"
+    if [ -n "$EBIN" ] && ELECTRON_RUN_AS_NODE=1 "$EBIN" -e "process.exit(0)" >/dev/null 2>&1; then
+      ok "Electron $(node -e "console.log(require('electron/package.json').version)" 2>/dev/null) executa neste host ($(uname -m))"
+    else
+      bad "o binário do Electron existe mas NÃO executa neste host ($(uname -m))" \
+          "normalmente é binário de outra arquitetura ou download corrompido: cd desktop && rm -rf node_modules/electron/dist && npm install electron --force"
+    fi
   else
     bad "binário do Electron não baixou" "rode: cd desktop && npm install electron --force  (ou defina ELECTRON_MIRROR atrás de proxy)"
   fi
@@ -162,7 +172,31 @@ fi
 if [ "$DO_BUILD" -eq 1 ]; then
   printf '\nBuild do instalador\n'
   case "$(uname -s)" in Darwin) TARGET="--mac";; *) TARGET="--linux";; esac
-  if npm run dist -- "$TARGET"; then ok "instalador gerado em $APP/dist"; else bad "electron-builder falhou" "veja o erro acima"; fi
+  # Arquitetura EXPLÍCITA e dita na tela. Antes o electron-builder empacotava o `process.arch` do
+  # Node por default e o script nunca dizia qual tinha gerado — num parque com Mac Intel e Apple
+  # Silicon lado a lado, dois DMGs com o mesmo nome e arquiteturas diferentes é um jeito caro de
+  # descobrir o problema. `DESKTOP_ARCH=both` gera as duas (baixa dois binários do Electron).
+  BUILD_ARCH="${DESKTOP_ARCH:-}"
+  if [ -z "$BUILD_ARCH" ]; then
+    case "$(uname -m)" in
+      arm64|aarch64) BUILD_ARCH="arm64";;
+      x86_64|amd64)  BUILD_ARCH="x64";;
+      *)             BUILD_ARCH="";;   # arquitetura exótica: deixa o default do electron-builder decidir
+    esac
+  fi
+  case "$BUILD_ARCH" in
+    both) ARCH_FLAGS="--x64 --arm64";;
+    "")   ARCH_FLAGS="";;
+    *)    ARCH_FLAGS="--$BUILD_ARCH";;
+  esac
+  printf '  %sarquitetura: %s (host %s)%s\n' "$D" "${BUILD_ARCH:-default do electron-builder}" "$(uname -m)" "$N"
+  # shellcheck disable=SC2086 # ARCH_FLAGS são dois flags separados de propósito
+  if npm run dist -- "$TARGET" $ARCH_FLAGS; then
+    ok "instalador gerado em $APP/dist"
+    ls -1 "$APP/dist" 2>/dev/null | grep -Ei '\.(dmg|zip|appimage|deb)$' | sed 's/^/    /' || true
+  else
+    bad "electron-builder falhou" "veja o erro acima"
+  fi
 fi
 
 if [ "$DO_RUN" -eq 1 ] && [ "$FAILED" -eq 0 ]; then
@@ -175,6 +209,7 @@ printf '\n'
 printf '%sPronto.%s\n' "$G" "$N"
 if [ "$DO_RUN" -eq 0 ]; then
   printf '  %sabrir o app:      ./scripts/install-desktop.sh --run%s\n' "$D" "$N"
-  printf '  %sgerar instalador: ./scripts/install-desktop.sh --build%s\n' "$D" "$N"
+  printf '  %sgerar instalador: ./scripts/install-desktop.sh --build        (arquitetura deste host: %s)%s\n' "$D" "$(uname -m)" "$N"
+  printf '  %s                  DESKTOP_ARCH=both ./scripts/install-desktop.sh --build   (x64 + arm64)%s\n' "$D" "$N"
 fi
 exit 0

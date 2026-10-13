@@ -35,13 +35,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `archFlags` existe em TODAS as entradas de propósito: uma entrada sem a chave renderiza
+        # string vazia sem erro de YAML, e o mac voltaria a sair arm64-only em silêncio.
         include:
           - os: windows-latest
             target: win
+            archFlags: ""
           - os: macos-latest
             target: mac
+            # O runner `macos-latest` é Apple Silicon. Sem flag de arquitetura o electron-builder
+            # empacota a arquitetura do HOST (o default é `[process.arch]`), então todo instalador
+            # macOS já publicado é arm64-only — e um Mac Intel simplesmente não abre o .app
+            # (Rosetta traduz x86_64→arm64, nunca o contrário). Os dois flags numa invocação só:
+            # é o que faz o electron-builder escrever UM `latest-mac.yml` listando as duas, que é o
+            # canal que o electron-updater lê. Dois jobs mac (um por arquitetura) NÃO funcionariam:
+            # o segundo publish sobrescreveria o latest-mac.yml do primeiro, porque no macOS o nome
+            # do arquivo de canal não leva sufixo de arquitetura.
+            archFlags: "--x64 --arm64"
           - os: ubuntu-latest
             target: linux
+            archFlags: ""
     runs-on: ${{ matrix.os }}
     steps:
       # Quando chamado pelo release.yml, constrói exatamente a TAG recém-criada (o checkout padrão
@@ -75,6 +88,25 @@ jobs:
             echo "publish=never" >> "$GITHUB_OUTPUT"
           fi
 
+      # Barra ANTES de publicar. É a única verificação que impede uma release meio-arquitetura de
+      # chegar aos usuários: o passo equivalente lá embaixo roda depois do publish e só DETECTA.
+      # O modo de falha que isto pega é o realista — alguém editar a matrix e remover o --x64, e o
+      # build continuar verde porque o electron-builder empacota a arquitetura do host sem reclamar.
+      - name: Exige as duas arquiteturas no job mac
+        if: matrix.target == 'mac'
+        shell: bash
+        run: |
+          flags="${{ matrix.archFlags }}"
+          echo "archFlags do mac: [$flags]"
+          case "$flags" in
+            *--x64*) ;;
+            *) echo "::error::o job mac precisa de --x64 (um Mac Intel não abre um .app arm64)"; exit 1 ;;
+          esac
+          case "$flags" in
+            *--arm64*) ;;
+            *) echo "::error::o job mac precisa de --arm64"; exit 1 ;;
+          esac
+
       - name: Build (electron-builder)
         working-directory: desktop
         env:
@@ -83,7 +115,35 @@ jobs:
           # macOS builds fail trying to auto-discover an identity; disable discovery so an UNSIGNED
           # build still succeeds. Replace with real CSC_* secrets when signing/notarization is set up.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npm run dist -- --${{ matrix.target }} --publish ${{ steps.mode.outputs.publish }}
+        # Os flags de arquitetura vêm da matrix (vazios fora do mac). Cuidado ao mexer: NÃO passe
+        # nome de target na CLI (`--mac dmg`) — isso faz o mapa da CLI vencer o `target: [dmg, zip]`
+        # do yml e o .zip deixa de sair; sem .zip o electron-updater do macOS não tem o que baixar e
+        # o canal de update morre. Os flags `--x64 --arm64` valem nos dois casos.
+        run: npm run dist -- --${{ matrix.target }} ${{ matrix.archFlags }} --publish ${{ steps.mode.outputs.publish }}
+
+      # DETECTA uma release meio-arquitetura — não impede: este passo roda DEPOIS do publish, então
+      # quando ele fica vermelho o canal já está no ar e a ação é republicar. Quem impede é o passo
+      # "Exige as duas arquiteturas" lá em cima, que roda antes do build.
+      # Vale mesmo assim porque pega o que o guard de flags não vê: o electron-builder mudar de
+      # comportamento, um target falhar em silêncio, o canal sair incompleto. Sem as duas, um Mac
+      # Intel recebe ERR_UPDATER_NO_FILES_PROVIDED ("No files provided") ao tentar atualizar — o
+      # updater filtra os assets por arquitetura e sobra lista vazia.
+      - name: Confere que o canal mac lista as DUAS arquiteturas
+        if: matrix.target == 'mac'
+        working-directory: desktop
+        shell: bash
+        run: |
+          yml=dist/latest-mac.yml
+          if [ ! -f "$yml" ]; then echo "::error::$yml não foi gerado — o publish do mac não produziu canal de update"; exit 1; fi
+          echo "--- $yml ---"; cat "$yml"
+          zips="$(grep -oE '[^ /]+\.zip' "$yml" | sort -u)"
+          arm="$(printf '%s\n' "$zips" | grep -c 'arm64' || true)"
+          intel="$(printf '%s\n' "$zips" | grep -v 'arm64' | grep -c '\.zip' || true)"
+          echo "zips no canal: arm64=$arm  x64=$intel"
+          if [ "$arm" -lt 1 ] || [ "$intel" -lt 1 ]; then
+            echo "::error::o canal de update tem de listar um .zip arm64 E um sem 'arm64' no nome (o updater escolhe por essa substring). arm64=$arm x64=$intel"
+            exit 1
+          fi
 
       # Always keep the installers as workflow artifacts too, so a no-publish run is still downloadable.
       - name: Upload installers as workflow artifacts

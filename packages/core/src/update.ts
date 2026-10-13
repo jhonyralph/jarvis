@@ -6,7 +6,7 @@
  * rolls Git + dependencies back when preparation fails. All git/npm calls are ASYNC so
  * they never block the Hub's event loop.
  */
-import { execFile, exec, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFileSync, readFileSync, mkdirSync, openSync, closeSync, unlinkSync, statSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -14,8 +14,12 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 const pExecFile = promisify(execFile);
-const pExec = promisify(exec);
-const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
+// JARVIS_NPM é o npm ABSOLUTO que o instalador gravou em ~/.jarvis/{hub,runner}.env (ver
+// scripts/service-env.sh). Sem ele, o self-update de um serviço sob launchd/systemd roda com o PATH
+// pobre do supervisor e falha em "npm: command not found" — justamente na hora em que a máquina
+// está no meio de uma atualização. Vai CRU: npmStep usa execFile com argv, então não passa por
+// shell nenhum e um caminho com espaço, $ ou backtick chega intacto.
+const NPM = process.env.JARVIS_NPM || (process.platform === "win32" ? "npm.cmd" : "npm");
 function updateDir(): string { return join(process.env.JARVIS_HOME || homedir(), ".jarvis", "updates"); }
 function legacyPrevFile(): string { return join(process.env.JARVIS_HOME || homedir(), ".jarvis", "update-prev"); }
 
@@ -40,18 +44,22 @@ function acquireUpdateLock(root: string): (() => void) | null {
   return () => { try { closeSync(fd); } catch { /* ignore */ } try { unlinkSync(file); } catch { /* ignore */ } };
 }
 
-async function npmStep(root: string, args: string): Promise<string> {
-  const { stdout } = await pExec(`${NPM} ${args}`, { cwd: root, timeout: 600_000, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+// execFile com argv, não exec com string: interpolar um caminho numa linha de shell exigia citação
+// e qualquer espaço, $ ou backtick no caminho do npm quebrava o self-update. No Windows o
+// `shell: true` continua necessário porque o Node recusa executar um .cmd sem shell — e lá o npm é
+// sempre o literal "npm.cmd" (os instaladores que gravam JARVIS_NPM são os .sh), então nada muda.
+async function npmStep(root: string, args: string[]): Promise<string> {
+  const { stdout } = await pExecFile(NPM, args, { cwd: root, timeout: 600_000, windowsHide: true, maxBuffer: 10 * 1024 * 1024, shell: process.platform === "win32" });
   return String(stdout).trim().split(/\r?\n/).slice(-1)[0] || "done";
 }
 
 async function verifyStep(root: string): Promise<string> {
-  return npmStep(root, "run update:verify --if-present");
+  return npmStep(root, ["run", "update:verify", "--if-present"]);
 }
 
 async function installAndVerify(root: string): Promise<string> {
   const install = existsSync(join(root, "package-lock.json")) ? "ci" : "install";
-  const installed = await npmStep(root, install);
+  const installed = await npmStep(root, [install]);
   const verified = await verifyStep(root);
   return `npm ${install}: ok (${installed})\nverificação: ok (${verified})`;
 }

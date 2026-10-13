@@ -104,6 +104,37 @@ npm run dist           # electron-builder → dist/ (per-OS installers)
 switch to a `generic` self-hosted provider to keep it private). macOS signing/notarization and
 Windows signing are **your build step** — add the certs/env before a public release.
 
+### macOS: duas arquiteturas, e por que isso é explícito
+
+O `electron-builder.yml` **não** declara `arch:` no bloco `mac`. Quem declara são os flags
+`--x64 --arm64` do job mac em `.github/workflows/release-desktop.yml`. A divisão é deliberada:
+
+- Sem flag nenhum, o electron-builder empacota só a arquitetura do **host**. O runner do CI é
+  `macos-latest`, que é Apple Silicon — por isso toda release anterior saiu **arm64-only**, e um Mac
+  Intel não abre esse `.app` (o Rosetta traduz x86_64→arm64, nunca o contrário).
+- Os flags ficam no CI, e não na config, por causa da precedência. Não existe chave `arch` solta no
+  bloco `mac` (o electron-builder 25 aborta com *unknown property*); a forma de fixar na config é
+  trocar `target: [dmg, zip]` por objetos com `arch`, e **essa forma vence a CLI**. Declarada ali,
+  todo build local (`npm run dist`, `./scripts/install-desktop.sh --build`) passaria a baixar dois
+  binários do Electron e empacotar duas vezes. No CI isso é o certo; na sua máquina, não.
+- As duas arquiteturas saem de **uma só invocação** do electron-builder, de propósito. Dois jobs mac
+  (um por arquitetura) não funcionariam: no macOS o arquivo de canal não leva sufixo de arquitetura,
+  então o segundo publish sobrescreveria o `latest-mac.yml` do primeiro e o canal de update passaria
+  a listar só uma.
+- Duas verificações no workflow, com papéis diferentes: uma **falha antes do build** se o job mac
+  não tiver `--x64 --arm64` (é a que impede uma release meio-arquitetura de sair), e outra confere o
+  `latest-mac.yml` **depois** — essa só detecta, porque nesse ponto a release já foi publicada.
+
+Build local de uma arquitetura específica:
+
+```sh
+npm run dist -- --mac --x64            # ou --arm64, ou os dois
+DESKTOP_ARCH=both ./scripts/install-desktop.sh --build
+```
+
+**Piso de macOS: 11.0 (Big Sur)**, declarado em `minimumSystemVersion` — é o requisito do Electron
+34, que embarca um Chromium que largou o Catalina.
+
 ### Finding the app in the OS
 
 **Running from source already gives you a launcher.** `npm run install:desktop` finishes by creating
@@ -125,7 +156,8 @@ Skip it with `--no-shortcut` (`-NoShortcut` on Windows); manage it directly with
 | OS | Installer | How it's found |
 |---|---|---|
 | Windows | `Jarvis-Setup-x.y.z.exe` (NSIS) | Start Menu shortcut → **Win key → "jarvis"** |
-| macOS | `.dmg` → drag to Applications | Spotlight (**⌘+Space → "jarvis"**), Launchpad |
+| macOS (Apple Silicon) | `Jarvis-x.y.z-arm64.dmg` → drag to Applications | Spotlight (**⌘+Space → "jarvis"**), Launchpad |
+| macOS (Intel, x86_64) | `Jarvis-x.y.z-x64.dmg` → drag to Applications | idem. Baixe o que casa com `uname -m`: o arm64 não abre em Intel |
 | Linux | **`.deb`** | registers a `.desktop` entry → app menu / GNOME search |
 | Linux | `.AppImage` | **portable, does NOT register itself** — it only shows up in the menu if you use [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher). Prefer the `.deb` if you want it searchable. |
 

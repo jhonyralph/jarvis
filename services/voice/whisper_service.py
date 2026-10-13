@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import sys
 
 
@@ -73,7 +74,8 @@ _add_nvidia_cuda_dll_dirs()
 import numpy as np
 from faster_whisper import WhisperModel
 
-MODEL = os.environ.get("JARVIS_STT_MODEL", "deepdml/faster-whisper-large-v3-turbo-ct2")
+_DEFAULT_MODEL = "deepdml/faster-whisper-large-v3-turbo-ct2"
+MODEL = os.environ.get("JARVIS_STT_MODEL", _DEFAULT_MODEL)
 DEVICE = os.environ.get("JARVIS_STT_DEVICE", "cpu")
 COMPUTE = os.environ.get("JARVIS_STT_COMPUTE", "int8")
 BEAM = int(os.environ.get("JARVIS_STT_BEAM", "1"))  # greedy by default — the decode is cheaper than beam=5
@@ -87,8 +89,9 @@ def _emit(obj: dict) -> None:
 
 
 def _log(msg: str) -> None:
-    # stderr is drained (and ignored) by the Hub — safe channel for diagnostics that must not be
-    # parsed as a protocol line on stdout.
+    # stderr nunca e parseado como linha de protocolo (o stdout e), entao e o canal seguro para
+    # diagnostico. O Hub le o stderr e encaminha ao hub.log APENAS as linhas prefixadas com
+    # "[stt]" (apps/hub/src/stt.ts); o resto — progresso de carga de modelo — segue descartado.
     sys.stderr.write(msg + "\n")
     sys.stderr.flush()
 
@@ -104,7 +107,38 @@ def _load(device: str, compute: str) -> WhisperModel:
     return m
 
 
+def _warn_mac_cpu_only() -> None:
+    """Num Mac, o STT roda 100% em CPU — e isso nao e configuravel.
+
+    Nenhum Mac tem NVIDIA, e o CTranslate2 (motor do faster-whisper) nao tem backend Metal nem
+    CoreML: `JARVIS_STT_DEVICE=cuda` so pode falhar e cair para cpu. O default
+    large-v3-turbo tem o ENCODER em tamanho cheio, que na CPU domina o custo e escala com a duracao
+    da fala. Num Mac Intel sem GPU isso aparece como "o Jarvis demora para me entender", e nada no
+    produto dizia por que — so o comentario deste arquivo, que o usuario nao le.
+
+    Avisa uma vez no boot do servico, no stderr. O Hub encaminha para o log APENAS as linhas
+    prefixadas com "[stt]" (apps/hub/src/stt.ts) — o resto do stderr e progresso de carga de modelo
+    e segue descartado. Por isso o prefixo nao e decoracao: sem ele a mensagem some.
+
+    NAO troca o default: o modelo e escolha do dono, e trocar por arquitetura em silencio
+    transforma uma diferenca de hardware em bug de suporte.
+    """
+    if platform.system() != "Darwin":
+        return
+    arch = platform.machine()
+    _log(f"[stt] macOS ({arch}): o CTranslate2 nao tem backend Metal/CoreML — o STT roda 100% em CPU.")
+    if MODEL == _DEFAULT_MODEL:
+        slow = " Numa CPU x86_64 sem GPU uma fala longa pode passar de 20s." if arch == "x86_64" else ""
+        _log(
+            f"[stt] modelo default ({MODEL}) tem encoder em tamanho cheio.{slow}"
+            " Para 3-5x mais rapido: JARVIS_STT_MODEL=small (ou base) em ~/.jarvis/hub.env."
+        )
+    if DEVICE != "cpu":
+        _log(f"[stt] JARVIS_STT_DEVICE={DEVICE} nao existe em macOS; o servico vai cair para cpu/int8.")
+
+
 def main() -> int:
+    _warn_mac_cpu_only()
     device, compute = DEVICE, COMPUTE
     try:
         model = _load(device, compute)

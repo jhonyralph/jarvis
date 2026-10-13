@@ -30,6 +30,7 @@
     "install:hub": "node scripts/run.mjs install-hub",
     "install:runner": "node scripts/run.mjs install-runner",
     "install:desktop": "node scripts/run.mjs install-desktop",
+    "install:voice": "node scripts/run.mjs install-voice",
     "build:android": "node scripts/run.mjs build-android",
     "build:android:release": "node scripts/run.mjs build-android-release",
     "build:aab": "node scripts/run.mjs build-aab",

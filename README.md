@@ -72,6 +72,12 @@ Everything external enters through a swappable adapter (`AgentAdapter`,
 ## Requirements
 
 - **Node.js >= 22** on every machine.
+- **Plataformas suportadas:** Windows (x64), Linux (x64) e **macOS 11+ nas duas
+  arquiteturas — Apple Silicon (arm64) e Intel (x86_64)**. O Hub, os runners e o cliente desktop
+  rodam nativamente nas duas; o que muda em Mac Intel é o teto da stack de voz em Python
+  (`torch` parou na 2.2.2 para x86_64, então **use Python 3.10–3.12**) e o desempenho do STT local,
+  que não tem aceleração de GPU em Mac nenhum. Detalhes e o que fazer:
+  [docs/setup.md § macOS](docs/setup.md#macos-apple-silicon-e-intel).
 - **At least one supported agent CLI, installed and authenticated**, on every
   machine that should do work. Run `npm run agents:report`; support is deliberately
   labeled `complete`, `unverified`, `limited`, `unauthenticated` or `not_installed`.
@@ -107,6 +113,7 @@ Every operational script is exposed the same way (run `npm run scripts:list` to 
 | `npm run doctor` | read-only environment check |
 | `npm run install:runner` | make this machine a runner |
 | `npm run install:desktop` | install/run the Electron client |
+| `npm run install:voice` | install the local voice stack (TTS/STT/wake word) |
 | `npm run build:android` | generate the Android debug APK |
 | `npm run build:aab` | generate the Android release bundle |
 | `npm run build:apple` / `build:ios` | prepare/open the iOS project on macOS |

@@ -28,6 +28,10 @@ const ACTIONS = {
   "install-hub": { win: "install-autostart.ps1", unix: "install-hub.sh", help: "instala esta máquina como Hub (autostart)" },
   "install-runner": { win: "install-runner.ps1", unix: "install-runner.sh", help: "instala esta máquina como runner" },
   "install-desktop": { win: "install-desktop.ps1", unix: "install-desktop.sh", help: "instala/roda o cliente desktop (Electron)" },
+  // Antes NÃO havia ação nenhuma de voz: a instalação era um `pip install -r` copiado da doc, que
+  // num Mac erra três vezes (não existe binário `pip`, o python3 do sistema é o 3.9.6 do CLT, e em
+  // Mac Intel o Python 3.13+ não resolve a stack). O script decide o interpretador e os tetos.
+  "install-voice": { win: "install-voice.ps1", unix: "install-voice.sh", help: "instala a stack de voz local (TTS/STT/wake word; -- --core pula o que depende de torch)" },
   "build-android": { node: "build-mobile.mjs", nodeArgs: ["android"], help: "gera APK Android debug do app mobile" },
   "build-android-release": { node: "build-mobile.mjs", nodeArgs: ["android-release"], help: "gera APK Android release (requer signing config)" },
   "build-aab": { node: "build-mobile.mjs", nodeArgs: ["aab"], help: "gera Android App Bundle release (Play Store)" },
