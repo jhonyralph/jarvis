@@ -186,15 +186,26 @@ install:desktop` diagnostica as três e imprime a correção de cada uma:
 - **Quarentena sem aprovação.** O app vem do navegador com o xattr `com.apple.quarantine` e, não
   sendo assinado, o Gatekeeper exige o "Open Anyway" acima. Enquanto ninguém aprova, o `open`
   devolve `-128` (cancelado) e o ícone só pula.
-- **O diálogo de aprovação nunca aparece.** Visto num MacBook Pro Intel com macOS 15.8.1: o
-  `CoreServicesUIAgent` — o processo que DESENHA aquele diálogo — crasha com SIGSEGV dentro do
-  LocalAuthentication (`LAContext _evaluatePolicy`). Sem diálogo não há aprovação possível, e a
-  instrução do item 5 não tem como ser seguida. A saída é remover a quarentena à mão, assumindo que
-  você confia no binário que você mesmo publicou:
+- **O diálogo de aprovação nunca aparece.** Visto num MacBook Pro Intel com macOS 15.8.1 (Sequoia
+  via OpenCore Legacy Patcher): o `CoreServicesUIAgent` — o processo que DESENHA aquele diálogo —
+  crasha com SIGSEGV dentro do LocalAuthentication (`LAContext _evaluatePolicy`). Sem diálogo não há
+  aprovação possível, e a instrução do item 5 não tem como ser seguida. O sintoma exato é `open`
+  devolvendo `-128`, um processo que nasce e morre na hora, e **nenhuma** linha no log do app (o
+  main nunca chega ao `whenReady`). A saída é declarar que você confia no bundle que você mesmo
+  publicou:
 
   ```bash
-  xattr -dr com.apple.quarantine /Applications/Jarvis.app
+  npm run install:desktop -- --trust
   ```
+
+  O flag existe para esta decisão ser explícita: nenhuma execução normal do instalador mexe em
+  quarentena. Ele faz o equivalente a `xattr -dr com.apple.quarantine /Applications/Jarvis.app`,
+  escopado nesse bundle, e **precisa ser repetido em cada versão nova baixada** — cada DMG chega do
+  navegador com a quarentena de novo.
+
+- **Evitar a quarentena por completo.** Um `.app` compilado NA máquina nunca é marcado, porque não
+  veio do navegador: `npm run install:desktop -- --build` e instale do DMG em `desktop/dist/`. Não
+  afrouxa nada, ao custo do tempo de build.
 
 - **Arquitetura errada.** Um `.app` arm64 num Mac Intel não abre de jeito nenhum — o Rosetta traduz
   x86_64 para arm64, nunca o contrário — e o sintoma é idêntico. Confira com
@@ -202,9 +213,10 @@ install:desktop` diagnostica as três e imprime a correção de cada uma:
 
 Assinar com Developer ID resolve os dois primeiros de uma vez (e destrava a atualização automática).
 
-**5.2. Onde o app grava log.** JSONL, mesmo formato do Hub, em `~/Library/Logs/Jarvis/`
-(`%APPDATA%\Jarvis\logs` no Windows, `~/.config/Jarvis/logs` no Linux) — e em
-`~/Library/Logs/jarvis-desktop/` quando rodando via `npm start`. A primeira linha (`app_boot`) traz
+**5.2. Onde o app grava log.** JSONL, mesmo formato do Hub, em `~/Library/Logs/jarvis-desktop/`
+(`%APPDATA%\jarvis-desktop\logs` no Windows, `~/.config/jarvis-desktop/logs` no Linux) — o mesmo
+diretório no build empacotado e no `npm start`, porque o nome vem do `package.json` embutido e não
+do `productName` (ver `desktop/README.md`). A primeira linha (`app_boot`) traz
 versão, Electron, plataforma, **arquitetura** e se o build é empacotado; `render_process_gone` é o
 que registra uma janela que morreu sozinha. Aberto por duplo clique não existe stdout, então este
 arquivo é a única fonte — sem ele, um "fechou do nada" só deixa crash report do SO.

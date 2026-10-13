@@ -12,11 +12,12 @@
 #     ./scripts/install-desktop.sh --run      # instala e abre o app
 #     ./scripts/install-desktop.sh --build    # instala e gera o instalador (dist/)
 #     ./scripts/install-desktop.sh --force    # reinstala do zero
+#     ./scripts/install-desktop.sh --trust    # remove a quarentena do Jarvis.app instalado (macOS)
 #
 # Exit code: 0 = ok, 1 = falhou (cada falha imprime a correção concreta).
 set -u
 
-HUB_URL=""; DO_RUN=0; DO_BUILD=0; DO_FORCE=0; NO_SHORTCUT=0
+HUB_URL=""; DO_RUN=0; DO_BUILD=0; DO_FORCE=0; NO_SHORTCUT=0; DO_TRUST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --hub|-h) HUB_URL="${2:-}"; shift 2;;
@@ -24,6 +25,11 @@ while [ $# -gt 0 ]; do
     --build|-b) DO_BUILD=1; shift;;
     --force|-f) DO_FORCE=1; shift;;
     --no-shortcut) NO_SHORTCUT=1; shift;;
+    # Remover quarentena é AFROUXAR o Gatekeeper, então exige flag: nenhuma execução normal deste
+    # script mexe nisso. Existe porque, sem Developer ID, a alternativa é o dono decorar um `xattr`
+    # e repetir em cada versão — e porque nesta máquina o diálogo oficial de aprovação não aparece
+    # (ver a seção "App instalado" no fim).
+    --trust) DO_TRUST=1; shift;;
     *) echo "arg desconhecido: $1"; exit 1;;
   esac
 done
@@ -246,14 +252,24 @@ if [ "$(uname -s)" = "Darwin" ]; then
     SIGNED=0; codesign -dv "$INSTALLED" >/dev/null 2>&1 && SIGNED=1
     if [ "$SIGNED" -eq 1 ]; then
       ok "Jarvis.app está assinado — o Gatekeeper não bloqueia a abertura"
-    elif [ -n "$QUAR" ]; then
-      warn "Jarvis.app está em QUARENTENA e não é assinado — é isto que faz o ícone pular sem abrir." \
-           "libere em Ajustes → Privacidade e Segurança → 'Abrir mesmo assim'. Se esse diálogo NUNCA aparecer (o CoreServicesUIAgent pode crashar nessa máquina), remova a quarentena você mesmo:  xattr -dr com.apple.quarantine '$INSTALLED'"
-    else
+    elif [ -z "$QUAR" ]; then
       ok "Jarvis.app sem quarentena — abre direto (não é assinado, então a atualização segue manual)"
+    elif [ "$DO_TRUST" -eq 1 ]; then
+      # Só aqui, e só com --trust. O que isto faz, em uma frase: diz ao macOS que VOCÊ confia neste
+      # bundle, dispensando a aprovação do Gatekeeper que, sem assinatura, ele exigiria em cada
+      # versão nova. Não torna o app assinado e não muda mais nada no sistema.
+      if xattr -dr com.apple.quarantine "$INSTALLED" 2>/dev/null; then
+        ok "quarentena removida de $INSTALLED (--trust) — o app abre a partir de agora"
+        printf '  %sprecisa repetir a cada versao nova baixada; o conserto definitivo e assinar com Developer ID%s\n' "$D" "$N"
+      else
+        bad "nao consegui remover a quarentena de $INSTALLED" "rode manualmente: xattr -dr com.apple.quarantine '$INSTALLED'"
+      fi
+    else
+      warn "Jarvis.app está em QUARENTENA e não é assinado — é isto que faz o ícone pular sem abrir." \
+           "libere em Ajustes → Privacidade e Segurança → 'Abrir mesmo assim'. Se esse diálogo NUNCA aparecer (o CoreServicesUIAgent pode crashar nesta máquina), rode de novo com --trust, que remove a quarentena deste bundle."
     fi
     # Onde olhar quando algo der errado. O app passou a gravar JSONL aqui (desktop/src/shared/logger.js).
-    printf '  %slog do app: ~/Library/Logs/Jarvis/ (empacotado) · ~/Library/Logs/jarvis-desktop/ (npm start)%s\n' "$D" "$N"
+    printf '  %slog do app: ~/Library/Logs/jarvis-desktop/ (empacotado E npm start — o nome vem do package.json, nao do productName)%s\n' "$D" "$N"
   fi
 fi
 

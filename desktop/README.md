@@ -183,10 +183,17 @@ JSONL, mesmo formato do Hub (`{t, lvl, ev, ...}`), em `app.getPath("logs")`:
 
 | | |
 |---|---|
-| macOS (empacotado) | `~/Library/Logs/Jarvis/jarvis-desktop-AAAAMMDD.jsonl` |
-| macOS (`npm start`) | `~/Library/Logs/jarvis-desktop/` |
-| Windows | `%APPDATA%\Jarvis\logs\` |
-| Linux | `~/.config/Jarvis/logs/` |
+| macOS | `~/Library/Logs/jarvis-desktop/jarvis-desktop-AAAAMMDD.jsonl` |
+| Windows | `%APPDATA%\jarvis-desktop\logs\` |
+| Linux | `~/.config/jarvis-desktop/logs/` |
+
+O diretório é **`jarvis-desktop`**, não `Jarvis`, e vale igual no build empacotado — conferido com
+`empacotado=true` no log. O motivo: `app.getPath()` usa `app.getName()`, que lê o campo `name` do
+`package.json` EMBUTIDO no bundle; o `productName: Jarvis` do `electron-builder.yml` só nomeia o
+`.app` e o `CFBundleName`. Não "conserte" isso com `app.setName("Jarvis")`: o mesmo nome decide o
+`userData`, e renomear ORFANARIA o `hub-config.json` de quem já salvou um endereço no app — a janela
+voltaria a apontar para o Hub errado sem ninguém ter mexido em nada. A linha `app_boot` carrega o
+campo `logs` com o caminho resolvido, então o próprio log diz onde ele está.
 
 Por que existe: aberto por duplo clique **não há stdout**, então todo `console.log` deste processo
 sempre se perdeu. Em 2026-10-13, investigar um "fechou do nada" num Mac Intel só deixou um crash
