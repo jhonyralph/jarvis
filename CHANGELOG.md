@@ -1,3 +1,10 @@
+# [0.38.0](https://github.com/jhonyralph/jarvis/compare/v0.37.2...v0.38.0) (2026-10-13)
+
+
+### Features
+
+* **mac:** Jarvis instala, atualiza e fala em Mac Intel ([d9fb845](https://github.com/jhonyralph/jarvis/commit/d9fb845c96b74da4da817b11fad7fa5e9b7f1609))
+
 ## [0.37.2](https://github.com/jhonyralph/jarvis/compare/v0.37.1...v0.37.2) (2026-10-08)
 
 
