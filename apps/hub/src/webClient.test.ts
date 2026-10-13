@@ -88,6 +88,8 @@ interface ClientHandle {
   folderBrowser(opts?: any): any;
   readonly browsePath: string;
   treeNode(path: string): any;
+  // Cartões de decisão: o estado do cartão aberto (para escolher e enviar como o usuário faria).
+  askCard(): any;
 }
 
 /** One permissive fake element: every property access the client makes resolves to something inert. */
@@ -240,6 +242,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   folderBrowser: (opts)=>{ const p=document.createElement('div'); buildFolderBrowser(p,opts||{}); return browseEls; },
   get browsePath(){ return browsePath; },
   treeNode: (path)=>{ const n=makeFolderNode(path,'raiz',0); toggleFolder(n); return n; },
+  askCard: ()=>askActive,
 };`;
 
   const factory = new Function(
@@ -2196,3 +2199,33 @@ test("árvore de arquivos: resposta casa pelo caminho pedido e não mexe no sele
   assert.equal(els.path.value, "/srv");
 });
 
+// ---------- Cartões de decisão: o que o usuário fez com o cartão vira métrica no Hub ----------
+const ASK_QS = [
+  { header: "Rumo", question: "Qual caminho?", multi: false, options: [{ label: "A", desc: "" }, { label: "B (Recomendado)", desc: "" }] },
+  { header: "Itens", question: "Quais itens?", multi: true, options: [{ label: "x", desc: "" }, { label: "y", desc: "" }] },
+];
+const askClears = (sock: FakeSocket): any[] => sock.sent.filter((m: any) => m.t === "ask_clear");
+
+test("cartão respondido manda só índices e o uso de 'Outros' no ask_clear", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-ask", "local");
+  sock.deliver({ t: "ask", runnerId: "local", sessionId: "s-ask", questions: ASK_QS });
+  const card = client.askCard();
+  assert.ok(card, "o cartão abriu");
+  card.answers[0].sel.add(1);
+  card.answers[1].otherSel = true; card.answers[1].other = "z, na verdade";
+  card.submit();
+  assert.deepEqual(askClears(sock).pop(), { t: "ask_clear", sessionId: "s-ask", outcome: { kind: "answered", picks: [[1], []], other: [false, true] } });
+  const msg = sock.sent.filter((m: any) => m.t === "send").pop();
+  assert.match(msg.text, /Decisões escolhidas/, "a resposta em si continua indo como mensagem");
+});
+
+test("escrever no composer com o cartão aberto conta como 'typed'", async () => {
+  const client = loadClient();
+  const sock = await authenticate(client, MACHINES);
+  client.setSession("s-ask2", "local");
+  sock.deliver({ t: "ask", runnerId: "local", sessionId: "s-ask2", questions: ASK_QS });
+  client.submitComposer("prefiro outra coisa");
+  assert.deepEqual(askClears(sock).pop(), { t: "ask_clear", sessionId: "s-ask2", outcome: { kind: "typed" } });
+});

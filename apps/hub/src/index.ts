@@ -54,6 +54,7 @@ import { createPersonalProactiveScheduler } from "./personalProactiveIntegration
 import { preparePersonalTurnContext, type PreparedPersonalTurnContext } from "./personalTurnContext.js";
 import { PersonalSessionBindings, type PersonalSessionGeneration } from "./personalSessionBindings.js";
 import { PendingAskStore } from "./pendingAsks.js";
+import { buildAskPrompt, parseAskQuestions, askShape, summarizeAskOutcome, type AskQuestion } from "./askDetect.js";
 import { ExecutionOwnershipStore } from "./executionOwnership.js";
 import { PendingRequestRegistry, SessionDispatchReservations, remoteErrorRoute, type PendingRequest, type SessionDispatchLease } from "./sessionIsolation.js";
 
@@ -1254,10 +1255,17 @@ function broadcastAskState(runnerId: string, sid: string, count: number | null, 
   const raw = JSON.stringify(frame);
   for (const c of clientsAuthorizedFor(runnerId)) if (c.readyState === c.OPEN && canAccessSession(c, runnerId, sid)) c.send(raw);
 }
-function clearPendingAsk(runnerId: string, sid: string): void {
+/** `outcome` é o que aconteceu com o cartão (o cliente diz no `ask_clear`; os demais chamadores são
+ *  um turno novo começando, daí o padrão "superseded"). Vira o evento `ask_outcome` — é a métrica de
+ *  assertividade dos cartões: respondido pela recomendada, pelo "Outros", ignorado, descartado. */
+function clearPendingAsk(runnerId: string, sid: string, outcome: unknown = { kind: "superseded" }): void {
   const key = decisionKey(runnerId, sid), wasAsking = asking.delete(key);
   let wasPending = false;
-  try { wasPending = pendingAsks.remove(runnerId, sid); } catch { /* disco travado não pode travar o turno */ }
+  try {
+    const row = pendingAsks.get(runnerId, sid);
+    wasPending = pendingAsks.remove(runnerId, sid);
+    if (row && wasPending) log.info("ask_outcome", { runnerId, sessionId: sid, ageMs: Date.now() - row.at, ...summarizeAskOutcome(row.questions, outcome) });
+  } catch { /* disco travado não pode travar o turno */ }
   if (wasAsking || wasPending) broadcastAskState(runnerId, sid, null);
 }
 /** Resend pending analysis/questions to a client that just (re)opened the exact machine/session. */
@@ -2396,10 +2404,14 @@ function announceTaskBridge(rc: RunnerConn, sessionId: string): void {
   ].filter(Boolean);
   broadcastOn(rc.id, sessionId, { t: "notice", message: `Esta máquina (${rc.info.label || rc.info.host || rc.id}) permite que ${partes.join("; e que ")}. As chaves ficam no runner.env dela.` });
 }
+/** Último pedido enviado a cada sessão remota — o contexto da detecção de decisões quando o turno
+ *  termina lá. Uma entrada por sessão (sobrescreve), e já cortada: o prompt só usa ~600 caracteres. */
+const remoteAskedText = new Map<string, string>();
 function sendOwnedRunnerTurn(rc: RunnerConn, sessionId: string, turnId: string, principalId: string, frame: Record<string, unknown>): boolean {
   const key = executionTurnKey(rc.id, turnId);
   rememberExecutionPrincipal(rc.id, turnId, principalId);
   announceTaskBridge(rc, sessionId);
+  if (frame.t === "send" && typeof frame.text === "string") remoteAskedText.set(rc.id + "\0" + sessionId, frame.text.slice(0, 2000));
   if (sendToRunner(rc, { ...frame, sessionId, turnId })) return true;
   executionPrincipalHints.delete(key);
   return false;
@@ -2729,7 +2741,8 @@ function relayRunner(rc: RunnerConn, m: any): void {
       })();
       const askTarget = notificationTargetForSession(rc.id, sid);
       // Uma notificação por turno: quem decide entre "concluída" e "decisão esperando" é a runAsking.
-      void runAsking(rc.id, sid, replyText, { title: `${label} · sessão`, target: askTarget, done: () => notifyEvent("done", `${label} · sessão concluída`, replyText, sid, askTarget) });
+      const askedText = remoteAskedText.get(mkey); remoteAskedText.delete(mkey);
+      void runAsking(rc.id, sid, replyText, { title: `${label} · sessão`, target: askTarget, done: () => notifyEvent("done", `${label} · sessão concluída`, replyText, sid, askTarget) }, askedText);
     }
     else if (event.kind === "failed") notifyEvent("error", `${label} · falhou`, event.text || "", sid, notificationTargetForSession(rc.id, sid));
     if (event.kind === "completed") void indexRunnerSession(rc, sid);
@@ -5043,6 +5056,8 @@ function autoStartWorkflow(sid: string): WorkflowRun | undefined {
 }
 
 async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cwd: string, opts: SendOpts): Promise<AgentReply & { activity?: any[] }> {
+  // O pedido como chegou, ANTES das injeções abaixo: é o contexto que a detecção de decisões recebe.
+  const askedText = agentText;
   // F4 — a IA conduz: quando há fluxo ativo nesta sessão, o turno leva junto onde estamos e como
   // declarar avanço. Só custa tokens enquanto existe acompanhamento em andamento.
   // Multi-tarefa (F3): o steering COMPLETO é só da tarefa em FOCO. As demais entram como uma linha de
@@ -5142,7 +5157,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     {
       const askTitle = store.get(sid)?.title || (isNativeId(sid) ? "Sessão da máquina" : "Jarvis");
       const askTarget = notificationTargetForSession(LOCAL_ID, sid);
-      void runAsking(LOCAL_ID, sid, reply.text, { title: askTitle, target: askTarget, done: () => notifyEvent("done", askTitle, reply.text, sid, askTarget) });
+      void runAsking(LOCAL_ID, sid, reply.text, { title: askTitle, target: askTarget, done: () => notifyEvent("done", askTitle, reply.text, sid, askTarget) }, askedText);
     }
     // A subagent's internal tool calls only exist while the turn is live (Claude Code writes no
     // recoverable trace of them to disk once done — verified: Task's toolUseResult.outputFile is
@@ -5428,44 +5443,28 @@ async function correctTranscript(text: string): Promise<string> {
 /** Agnostic decision cards: a cheap LLM reads the agent's reply and, if it ASKS the user to decide,
  *  extracts structured questions (single- or multi-select). Works for ANY agent because it acts on
  *  the reply text, not the agent. The UI renders a stepper; the chosen answers come back as a normal
- *  next message. Best-effort; gated on a "?" so most replies skip the call. Disable: JARVIS_ASK=0. */
-async function detectDecisions(replyText: string): Promise<Array<{ header: string; question: string; multi: boolean; options: Array<{ label: string; desc: string }> }>> {
-  if (process.env.JARVIS_ASK === "0") return [];
-  const t = (replyText || "").trim();
-  if (t.length < 12 || !t.includes("?")) return [];
+ *  next message. Best-effort; gated on a "?" in PROSE so most replies skip the call. Disable: JARVIS_ASK=0.
+ *  Prompt, recorte e parse vivem em askDetect.ts; aqui só a chamada e as métricas para o log. */
+interface AskDetectMeta { skip?: string; replyChars: number; sentChars: number; truncated: boolean; agent?: string; model?: string; ms?: number; error?: string }
+async function detectDecisions(replyText: string, userText?: string): Promise<{ questions: AskQuestion[]; meta: AskDetectMeta }> {
+  if (process.env.JARVIS_ASK === "0") return { questions: [], meta: { skip: "disabled", replyChars: (replyText || "").length, sentChars: 0, truncated: false } };
+  const input = buildAskPrompt(replyText, userText);
+  const meta: AskDetectMeta = { skip: input.skip, replyChars: input.replyChars, sentChars: input.sentChars, truncated: input.truncated };
+  if (!input.prompt) return { questions: [], meta };
+  const t0 = Date.now();
   try {
     const agent = summaryAgent();
-    if (!agent?.oneShot) return [];
-    const prompt =
-      "Você analisa a RESPOSTA de um assistente de desenvolvimento e detecta se ela PEDE decisões ao usuário (escolher alternativas, priorizar itens, confirmar rumo, preencher lacunas).\n" +
-      'Se SIM, devolva JSON estrito: {"questions":[{"header":"título curto","question":"a pergunta, clara e autoexplicativa","multi":false,"options":[{"label":"opção curta, com \\"(Recomendado)\\" no fim SE a resposta recomendar essa","desc":"detalhe"}]}]}\n' +
-      "Regras:\n" +
-      "- Extraia TODAS as decisões que a resposta pede — se ela pede 5, gere as 5 (não corte nem junte).\n" +
-      "- CADA pergunta PRECISA de opções (2 a 6). Use as que a resposta oferece; se ela não listar, GERE opções plausíveis do contexto. Nunca devolva pergunta sem opções.\n" +
-      "- header ~2-5 palavras; question 1-2 linhas — sempre curtos, entendíveis sem abrir o histórico.\n" +
-      "- label: curto (uma linha). desc: aqui vale ser RICO quando a resposta original já explica o porquê — o que essa opção concretamente faz, o custo/trade-off, a consequência de escolher. NÃO invente justificativa que a resposta não deu; se a resposta só listou a opção sem explicar, deixe desc curto ou vazio. Não force tamanho artificial pra cima nem pra baixo — o tamanho certo é o que a resposta já sustenta.\n" +
-      "- multi=true SOMENTE quando o usuário escolhe VÁRIOS itens de uma lista (ex.: quais tarefas fazer); multi=false quando é UMA alternativa entre outras.\n" +
-      "- NÃO inclua 'Outros' (a UI adiciona).\n" +
-      'Se a resposta NÃO pede decisão, devolva {"questions":[]}. Responda APENAS o JSON.\n\nRESPOSTA:\n' +
-      t.slice(0, 4000);
-    const reply = await agent.oneShot(prompt, await summaryAgentOpts(agent));
+    if (!agent?.oneShot) return { questions: [], meta: { ...meta, skip: "no_agent" } };
+    const opts = await summaryAgentOpts(agent);
+    meta.agent = agent.name; meta.model = opts.model;
+    const reply = await agent.oneShot(input.prompt, opts);
     addUsage("__decision_detection__", agent.name, reply.usage);
-    const m = String(reply?.text ?? "").match(/\{[\s\S]*\}/);
-    if (!m) return [];
-    const qs = JSON.parse(m[0])?.questions;
-    if (!Array.isArray(qs)) return [];
-    return qs
-      .filter((q: any) => q && q.question && Array.isArray(q.options) && q.options.length)
-      .slice(0, 6)
-      .map((q: any) => ({
-        header: String(q.header || "").slice(0, 40),
-        question: String(q.question).slice(0, 300),
-        multi: !!q.multi,
-        options: q.options.slice(0, 8).map((o: any) => ({ label: String(o?.label ?? o ?? "").slice(0, 100), desc: String(o?.desc ?? "").slice(0, 500) })).filter((o: any) => o.label),
-      }))
-      .filter((q: any) => q.options.length);
-  } catch {
-    return [];
+    const parsed = parseAskQuestions(String(reply?.text ?? ""));
+    meta.ms = Date.now() - t0;
+    if (parsed.error) meta.error = parsed.error;
+    return { questions: parsed.questions, meta };
+  } catch (e) {
+    return { questions: [], meta: { ...meta, ms: Date.now() - t0, error: String((e as Error)?.message || e).slice(0, 200) } };
   }
 }
 /** Post-turn decision flow: publish non-blocking analysis state, then keep any questions available
@@ -5475,7 +5474,7 @@ async function detectDecisions(replyText: string): Promise<Array<{ header: strin
  *  vira um segundo aviso (o único caso de dois, documentado no spec TSK-10). */
 const ASK_NOTIFY_CAP_MS = 20_000;
 interface AskNotify { done: () => void; title: string; target?: PushActor }
-async function runAsking(runnerId: string, sid: string, replyText: string, notify?: AskNotify): Promise<void> {
+async function runAsking(runnerId: string, sid: string, replyText: string, notify?: AskNotify, userText?: string): Promise<void> {
   const key = decisionKey(runnerId, sid), generation = randomUUID();
   asking.set(key, generation);
   broadcastOn(runnerId, sid, { t: "asking", runnerId, sessionId: sid, on: true });
@@ -5483,8 +5482,13 @@ async function runAsking(runnerId: string, sid: string, replyText: string, notif
   const notifyOnce = (fn?: () => void): void => { if (notified || !fn) return; notified = true; fn(); };
   const cap = notify ? setTimeout(() => notifyOnce(notify.done), ASK_NOTIFY_CAP_MS) : undefined;
   try {
-    const questions = await detectDecisions(replyText);
-    if (asking.get(key) !== generation) return;
+    const { questions, meta } = await detectDecisions(replyText, userText);
+    const stale = asking.get(key) !== generation;
+    // Uma linha por detecção (só metadados). Pulos — sem `?` em prosa, resposta curta — vão em debug:
+    // acontecem quase todo turno e só interessam para medir quanto o gatilho filtra.
+    if (meta.skip) log.debug("ask_detect", { runnerId, sessionId: sid, ...meta });
+    else log.info("ask_detect", { runnerId, sessionId: sid, ...meta, questions: questions.length, shape: askShape(questions), stale: stale || undefined });
+    if (stale) return;
     if (questions.length) {
       const principalId = captureSessionOwnerGeneration(runnerId, sid).principalId || auth.OWNER_IDENTITY;
       try {
@@ -8514,7 +8518,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "ask_clear" && typeof msg.sessionId === "string") {
       const runnerId = activeRunner(ws);
       if (isInternalExecutionSession(runnerId, msg.sessionId)) { send(ws, { t: "error", message: "sessão interna não pode ser alterada pelo chat" }); return; }
-      clearPendingAsk(runnerId, msg.sessionId); return;
+      clearPendingAsk(runnerId, msg.sessionId, msg.outcome ?? { kind: "cleared" }); return;
     }
 
     // Wizard de voz dos cards de decisão: falar um passo (say) e interpretar a resposta falada (ask_voice).

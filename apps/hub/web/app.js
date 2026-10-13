@@ -1321,7 +1321,9 @@
       }
       function answerText(i){ const q=questions[i],a=answers[i]; const picks=[...a.sel].map(x=>q.options[x].label); if(a.otherSel && a.other.trim())picks.push('Outros: '+a.other.trim()); return picks.join('; '); }
       function submit(){ const text='Decisões escolhidas:\n'+questions.map((q,i)=>`- ${q.question}\n  → ${answerText(i)}`).join('\n');
-        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false; clearAsk(currentSession,st.runnerId); tx({t:'ask_clear',sessionId:currentSession});
+        card.classList.add('done'); const nav=card.querySelector('.asknav'); if(nav)nav.remove(); const wasVoice=st.voice; askActive=null; askVoice=false; clearAsk(currentSession,st.runnerId);
+        // Métrica de assertividade (evento ask_outcome no Hub): só índices escolhidos e se usou "Outros" — o texto vai na mensagem.
+        tx({t:'ask_clear',sessionId:currentSession,outcome:{kind:'answered',picks:answers.map(a=>[...a.sel]),other:answers.map(a=>!!(a.otherSel&&a.other.trim()))}});
         sendMsgTo(currentSession, text); if(wasVoice) lastWasVoice=true; }  // mantém o modo voz para a próxima decisão
       st.draw=draw; st.submit=submit; st.voice=lastWasVoice; askActive=st; draw(); refreshComposer();
       // Se a decisão veio de uma fala, conduz por VOZ (step a step). Espera a fala da resposta
@@ -5429,7 +5431,7 @@
     // MESMO frame reusa o id e é ignorada). Cada submit gera um id novo (dois envios = dois turnos).
     const uid=()=>{ try{ return crypto.randomUUID(); }catch(e){ return 'm'+Date.now()+Math.random().toString(36).slice(2,8); } };
     function sendMsgTo(sid,text,atts){ if(!sid)return false; const msgId=uid(), body=text||'(anexo)'; lastWasVoice=false;
-      if(askActive&&sid===currentSession){ const runner=askActive.runnerId||sessionRunner(); try{askActive.card.remove();}catch(e){} askActive=null; askVoice=false; clearAsk(sid,runner); tx({t:'ask_clear',sessionId:sid}); }
+      if(askActive&&sid===currentSession){ const runner=askActive.runnerId||sessionRunner(); try{askActive.card.remove();}catch(e){} askActive=null; askVoice=false; clearAsk(sid,runner); tx({t:'ask_clear',sessionId:sid,outcome:{kind:'typed'}}); }
       const askKey=askStateKey(sid); if(askingSids.delete(askKey)) tx({t:'ask_clear',sessionId:sid}); bumpSession(sid); markJustSent(sid);
       if(sid===currentSession){ stick=true; addOptimisticUser(sid,msgId,body,atts||[]); if(!curStarted){ curStarted=true; renderControls(); } showPending(); }
       const sent=tx({t:'send',text:body,speak,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(sid),sessionId:sid,attachments:atts||[],msgId});
@@ -6654,7 +6656,7 @@
         askVoice=false; askPendingVoice=false;
         try{ const c=askActive.card; const nav=c.querySelector('.asknav'); if(nav)nav.remove(); c.classList.add('done'); c.classList.remove('min');
           const n=document.createElement('div'); n.className='askhd'; n.textContent='Decisão interrompida — responda manualmente pelo campo abaixo.'; c.appendChild(n); }catch(e){}
-        const runner=askActive.runnerId||sessionRunner(); askActive=null; clearAsk(currentSession,runner); tx({t:'ask_clear',sessionId:currentSession}); status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
+        const runner=askActive.runnerId||sessionRunner(); askActive=null; clearAsk(currentSession,runner); tx({t:'ask_clear',sessionId:currentSession,outcome:{kind:'dismissed'}}); status(''); refreshComposer(); try{E.input.focus();}catch(e){} return; }
       // Parar um turno em andamento: cancela o agente e — se ainda não veio resposta — devolve a
       // mensagem ao input (ou mostra o botão "voltar" se você já estava digitando). A FILA é
       // preservada (não some mais no parar).
