@@ -64,7 +64,11 @@ async function spawnsSince(before: number, deadlineMs = 10_000): Promise<number>
   return spawnCount() - before;
 }
 
-test("STT: duas chamadas concorrentes spawnam UM serviço", async () => {
+test("STT: duas chamadas concorrentes spawnam UM serviço", async (t) => {
+  // Mesmo motivo do python.test.ts: o shim é um script `#!/bin/sh`. No Windows o Node se recusa a
+  // executá-lo (e um .cmd equivalente não serve, porque o probe usa execFile sem shell). O dedup
+  // que está sob teste não tem nada de específico de plataforma — é o mesmo código nos três SOs.
+  if (process.platform === "win32") return t.skip("o shim é um script sh");
   const stt = await import("./stt.js");
   const before = spawnCount();
   // As duas no MESMO tick, sem await entre elas: é exatamente a janela que o bug abria.
@@ -73,7 +77,11 @@ test("STT: duas chamadas concorrentes spawnam UM serviço", async () => {
   assert.equal(await spawnsSince(before), 1, "o segundo spawn deixaria um serviço órfão com o modelo carregado");
 });
 
-test("TTS: duas chamadas concorrentes spawnam UM serviço", async () => {
+test("TTS: duas chamadas concorrentes spawnam UM serviço", async (t) => {
+  // Mesmo motivo do python.test.ts: o shim é um script `#!/bin/sh`. No Windows o Node se recusa a
+  // executá-lo (e um .cmd equivalente não serve, porque o probe usa execFile sem shell). O dedup
+  // que está sob teste não tem nada de específico de plataforma — é o mesmo código nos três SOs.
+  if (process.platform === "win32") return t.skip("o shim é um script sh");
   const tts = await import("./tts.js");
   const before = spawnCount();
   tts.warmUp();
@@ -81,7 +89,11 @@ test("TTS: duas chamadas concorrentes spawnam UM serviço", async () => {
   assert.equal(await spawnsSince(before), 1, "o segundo spawn deixaria um serviço órfão com o modelo carregado");
 });
 
-test("embeddings: duas chamadas concorrentes spawnam UM serviço", async () => {
+test("embeddings: duas chamadas concorrentes spawnam UM serviço", async (t) => {
+  // Mesmo motivo do python.test.ts: o shim é um script `#!/bin/sh`. No Windows o Node se recusa a
+  // executá-lo (e um .cmd equivalente não serve, porque o probe usa execFile sem shell). O dedup
+  // que está sob teste não tem nada de específico de plataforma — é o mesmo código nos três SOs.
+  if (process.platform === "win32") return t.skip("o shim é um script sh");
   const embed = await import("./embed.js");
   const before = spawnCount();
   embed.warmUp();
