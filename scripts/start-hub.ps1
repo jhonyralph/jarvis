@@ -108,8 +108,54 @@ function Start-HubWatchdog {
         if ($fails -lt $MaxFails) { W "health falhou ($fails/$MaxFails)"; continue }
         W ("hub sem responder ha ~{0} s" -f ($fails * $IntervalSec))
       }
-      $kids = Get-CimInstance Win32_Process -Filter "ParentProcessId=$LauncherPid AND Name='node.exe'" -ErrorAction SilentlyContinue
-      foreach ($k in $kids) { W "encerrando a arvore do node $($k.ProcessId) para o supervisor religar"; & taskkill.exe /PID $k.ProcessId /T /F 2>&1 | Out-Null }
+      # Mata TODA a descendencia do launcher, da folha para a raiz. Matar so o filho `node.exe`
+      # direto com `taskkill /T` NAO bastava: o Hub de verdade e NETO (launcher -> node do tsx ->
+      # node do Hub), e sobrevivia ao /T segurando a porta 4577 e o handle de stdout/stderr que
+      # herdou do `*>> $log`. Com o neto vivo o `& node.exe` do launcher nunca retorna, o supervisor
+      # nao devolve ao SCM e NADA religa: foi isso que virou um congelamento de ~2 min em 13-15 min
+      # de queda (INC-02, medido em 14/10: kill 07:41:38 -> launcher so reagiu 07:55:50).
+      # Derrubar a subarvore toda tambem leva os filhos do Hub (CLIs de agente, servicos de voz) —
+      # o que e o certo num restart: sao justamente os orfaos que os reapers do laco abaixo varrem.
+      $procs = Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate -ErrorAction SilentlyContinue
+      $byParent = @{}; $byId = @{}
+      foreach ($p in $procs) {
+        $key = [int]$p.ParentProcessId
+        if (-not $byParent.ContainsKey($key)) { $byParent[$key] = New-Object System.Collections.ArrayList }
+        [void]$byParent[$key].Add($p)
+        $byId[[int]$p.ProcessId] = $p
+      }
+      $found = New-Object System.Collections.ArrayList
+      $seen = @{}
+      $queue = New-Object System.Collections.Queue
+      [void]$queue.Enqueue(@{ Pid = [int]$LauncherPid; Depth = 0 })
+      while ($queue.Count -gt 0) {
+        $node = $queue.Dequeue()
+        $kids = $byParent[[int]$node.Pid]
+        if (-not $kids) { continue }
+        foreach ($k in $kids) {
+          $kid = [int]$k.ProcessId
+          if ($kid -eq [int]$LauncherPid -or $seen.ContainsKey($kid)) { continue }
+          # Guarda contra PID reciclado: um filho legitimo nunca e mais ANTIGO que o pai. Sem isto,
+          # um PPID obsoleto apontando para um pid reaproveitado nos faria matar processo alheio.
+          $parent = $byId[[int]$node.Pid]
+          if ($parent -and $k.CreationDate -and $parent.CreationDate -and $k.CreationDate -lt $parent.CreationDate) { continue }
+          $seen[$kid] = $true
+          [void]$found.Add(@{ Pid = $kid; Depth = $node.Depth + 1; Name = $k.Name })
+          [void]$queue.Enqueue(@{ Pid = $kid; Depth = $node.Depth + 1 })
+        }
+      }
+      if ($found.Count -eq 0) { W "nenhum descendente vivo do launcher $LauncherPid para encerrar"; return }
+      foreach ($t in ($found | Sort-Object { $_.Depth } -Descending)) {
+        W "encerrando $($t.Name) pid $($t.Pid) (profundidade $($t.Depth))"
+        try { Stop-Process -Id $t.Pid -Force -ErrorAction Stop } catch { & taskkill.exe /PID $t.Pid /F 2>&1 | Out-Null }
+      }
+      # Conferir e obrigatorio: se UM sobreviver, o launcher pendura de novo no handle herdado e a
+      # queda volta a ser de 15 min. Sem este registro a falha seria muda outra vez.
+      Start-Sleep -Seconds 2
+      $alive = @()
+      foreach ($t in $found) { if (Get-Process -Id $t.Pid -ErrorAction SilentlyContinue) { $alive += $t.Pid } }
+      if ($alive.Count -gt 0) { W ("ATENCAO: sobreviveram " + ($alive -join ',') + " - o launcher pode pendurar e o SCM nao religar") }
+      else { W "arvore encerrada por completo; o supervisor pode religar" }
       return
     }
   }).AddArgument($PID).AddArgument($wdLog).AddArgument(900).AddArgument(15).AddArgument(8)

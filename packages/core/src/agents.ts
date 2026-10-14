@@ -1146,10 +1146,32 @@ function codexThreadFile(threadId?: string): string | undefined {
   const files = codexRolloutFiles(); return threadId ? files.find((p) => p.includes(threadId)) : files[0];
 }
 
+/**
+ * Teto de leitura da telemetria de uma thread. O rollout de uma conversa longa chega a centenas de
+ * MB — aqui apareceu um de 718 MB — e ler o arquivo INTEIRO num `readFileSync(...,"utf8")` é o pior
+ * dos dois mundos: aloca tudo, trava o event loop e AINDA volta `undefined`, porque passar de 512 MB
+ * estoura o limite de string do V8 (`ERR_STRING_TOO_LONG`) e o `catch` engole. Isto roda no começo de
+ * TODO turno do codex (ver `beforeTelemetry`), então era uma pausa garantida por turno.
+ *
+ * Como `codexTelemetryFromLines` é "o último vence", a CAUDA já responde o que o painel precisa.
+ * Mantemos a leitura inteira para arquivo normal (preserva campo que só aparece no começo, p.ex. o
+ * `model` do primeiro `turn_context`) e caímos para a cauda só no caso patológico — onde hoje a
+ * resposta era nada.
+ */
+const THREAD_TELEMETRY_FULL_READ_MAX_BYTES = 8 * 1024 * 1024;
+const THREAD_TELEMETRY_TAIL_BYTES = 2 * 1024 * 1024;
+
 function codexThreadTelemetry(threadId?: string): CodexTelemetry | undefined {
   const file = codexThreadFile(threadId);
   if (!file) return undefined;
-  try { return codexTelemetryFromLines(readFileSync(file, "utf8").split(/\r?\n/)); } catch { return undefined; }
+  try {
+    let size = 0;
+    try { size = statSync(file).size; } catch { return undefined; }
+    const lines = size > THREAD_TELEMETRY_FULL_READ_MAX_BYTES
+      ? readTailLines(file, THREAD_TELEMETRY_TAIL_BYTES)
+      : readFileSync(file, "utf8").split(/\r?\n/);
+    return codexTelemetryFromLines(lines);
+  } catch { return undefined; }
 }
 
 /** Uma leitura de `rate_limits` só serve para o painel se tiver ALGUMA janela. */
@@ -1245,13 +1267,36 @@ export function codexCommandActivity(command: string): Pick<StreamEvent, "name" 
   return { name: "Bash", summary: "Bash: " + flat.slice(0, 90), detail: cmd.length > 90 ? cmd : undefined };
 }
 
-/** Read only bytes appended since `offset`; avoids rereading a potentially large rollout every
- * polling tick. A truncated/replaced file safely restarts from byte zero. */
-function codexRolloutAppend(path: string, offset: number): { data: Buffer; offset: number; reset: boolean } {
+/**
+ * Read only bytes appended since `offset`; avoids rereading a potentially large rollout every
+ * polling tick. A truncated/replaced file safely restarts from byte zero.
+ *
+ * Teto de UMA leitura. Esta função é incremental por natureza (lê do `offset` até o fim), mas tem dois
+ * caminhos degenerados que pedem o arquivo TODO numa só alocação: `offset = 0`, quando o turno adota o
+ * `patchFile` pela primeira vez, e `reset`, quando o arquivo encolheu (truncado/rotacionado). Com um
+ * rollout de centenas de MB isso virava "alocar centenas de MB, falhar na decodificação, jogar fora" a
+ * cada tique de 750 ms do acompanhamento de atividade — ~1 GB/s de churn com o event loop travado, que
+ * é o que explicava o Hub com ~1 GB de RSS e o congelamento (INC-02).
+ *
+ * Quem consome isto (`codexPatchEventsFromLines`) só quer o que foi anexado AGORA e filtra por
+ * `sinceMs`, então pular o atraso que não vai ser usado não perde nada. Marcamos `reset` no salto para
+ * o chamador descartar o `patchCarry` e recriar o `StringDecoder`: a janela começa num byte arbitrário,
+ * possivelmente no meio de um caractere e no meio de uma linha — e a primeira linha parcial morre no
+ * `JSON.parse` do consumidor, que já ignora linha inválida.
+ */
+export const ROLLOUT_APPEND_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Exportada para o teste de regressão: a aritmética de `offset`/`reset` aqui é o que decide se um
+ *  evento de patch aparece, duplica ou desaparece — e o salto de janela é novo. */
+export function codexRolloutAppend(path: string, offset: number): { data: Buffer; offset: number; reset: boolean } {
   let fd: number | undefined;
   try {
     const size = statSync(path).size;
-    const reset = size < offset, start = reset ? 0 : offset;
+    const shrank = size < offset;
+    let start = shrank ? 0 : offset;
+    const skipped = size - start > ROLLOUT_APPEND_MAX_BYTES;
+    if (skipped) start = size - ROLLOUT_APPEND_MAX_BYTES;
+    const reset = shrank || skipped;
     if (size <= start) return { data: Buffer.alloc(0), offset: size, reset };
     const buf = Buffer.allocUnsafe(size - start);
     fd = openSync(path, "r");

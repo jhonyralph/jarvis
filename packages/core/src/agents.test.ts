@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, isClaudeAsyncAgentLaunch, parseClaudeTaskNotification, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions, settleOnExit, codexHasPlanWindow } from "./agents.js";
+import { mkdtempSync, writeFileSync, appendFileSync, truncateSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, isClaudeAsyncAgentLaunch, parseClaudeTaskNotification, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions, settleOnExit, codexHasPlanWindow, codexRolloutAppend, ROLLOUT_APPEND_MAX_BYTES } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("native continuity rejects one provider thread bound to multiple Jarvis sessions", () => {
@@ -647,4 +650,44 @@ test("janelas todas nulas sao AUSENCIA de dado, nao plano zerado", () => {
   assert.equal(codexPlanUsage(t), null, "devolver objeto vazio faria a UI dizer 'sem dados' como se o provedor tivesse respondido");
   assert.equal(codexHasPlanWindow(undefined), false);
   assert.equal(codexHasPlanWindow({}), false);
+});
+
+/* INC-02 (2026-10-14): o Hub congelava e o watchdog o matava, deixando 13-15 min de queda. Um dos
+ * caminhos era este: `codexRolloutAppend` com `offset = 0` (primeira adocao do arquivo no turno) ou
+ * com o arquivo encolhido pedia o rollout INTEIRO numa alocacao unica. Havia um rollout de 718 MB
+ * aqui: alocava 718 MB, falhava na decodificacao, jogava fora e repetia a cada tique de 750 ms. */
+test("codexRolloutAppend limita UMA leitura e nunca materializa o rollout inteiro", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-rollout-"));
+  const file = join(dir, "rollout.jsonl");
+
+  // Arquivo maior que o teto, lido "do zero" — o caso que travava o event loop.
+  const line = JSON.stringify({ type: "event_msg", payload: { type: "token_count" } }) + "\n";
+  const big = line.repeat(Math.ceil((ROLLOUT_APPEND_MAX_BYTES + 1_000_000) / line.length));
+  writeFileSync(file, big);
+
+  const first = codexRolloutAppend(file, 0);
+  assert.ok(first.data.length <= ROLLOUT_APPEND_MAX_BYTES, `leu ${first.data.length} B; o teto e ${ROLLOUT_APPEND_MAX_BYTES} B`);
+  assert.ok(first.data.length > 0, "a janela tem de trazer a cauda, nao vir vazia");
+  assert.equal(first.reset, true, "saltar a janela precisa sinalizar reset: o chamador tem de descartar o carry e recriar o StringDecoder");
+  assert.equal(first.offset, Buffer.byteLength(big), "mesmo saltando, o offset termina no fim do arquivo");
+
+  // A partir dai volta a ser incremental: so o que foi anexado, sem reset.
+  const appended = JSON.stringify({ type: "turn_context", payload: { model: "gpt-5" } }) + "\n";
+  appendFileSync(file, appended);
+  const second = codexRolloutAppend(file, first.offset);
+  assert.equal(second.data.toString("utf8"), appended, "a leitura seguinte traz exatamente o apendice");
+  assert.equal(second.reset, false, "apendice normal nao e reset");
+
+  // Arquivo que encolhe (rotacionado) continua sendo reparseado do zero — e tambem limitado.
+  truncateSync(file, 10);
+  const shrunk = codexRolloutAppend(file, 10_000_000);
+  assert.equal(shrunk.reset, true, "arquivo menor que o offset = reset");
+  assert.equal(shrunk.data.length, 10, "le o arquivo encolhido inteiro quando ele cabe no teto");
+
+  // Arquivo pequeno segue com o comportamento antigo, byte a byte.
+  const small = join(dir, "small.jsonl");
+  writeFileSync(small, appended);
+  const whole = codexRolloutAppend(small, 0);
+  assert.equal(whole.data.toString("utf8"), appended, "arquivo pequeno e lido inteiro, sem salto");
+  assert.equal(whole.reset, false, "sem salto, sem reset");
 });
