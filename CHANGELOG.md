@@ -1,3 +1,16 @@
+# [0.40.0](https://github.com/jhonyralph/jarvis/compare/v0.39.1...v0.40.0) (2026-10-14)
+
+
+### Bug Fixes
+
+* **decisoes:** cartoes leem o fim da resposta, param de inventar opcoes e viram metrica ([16eb30f](https://github.com/jhonyralph/jarvis/commit/16eb30fcc349bdb1b7c4a42fcdd58cc1474f2348))
+* **hub:** Hub deixa de congelar por rollout gigante e volta em 2 min no lugar de 15 ([56e3fb9](https://github.com/jhonyralph/jarvis/commit/56e3fb975b71a98e8afb75e7f9ec2d284e6d4994))
+
+
+### Features
+
+* **pastas:** seletor aceita endereco digitado ou colado e mostra o erro nele mesmo ([30cfa4c](https://github.com/jhonyralph/jarvis/commit/30cfa4c26301ab6fb9581f921a71e2ae18b95a63))
+
 ## [0.39.1](https://github.com/jhonyralph/jarvis/compare/v0.39.0...v0.39.1) (2026-10-13)
 
 
