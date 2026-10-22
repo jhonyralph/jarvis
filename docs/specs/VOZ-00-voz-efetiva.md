@@ -3,7 +3,7 @@ feature_id: VOZ-00-voz-efetiva
 tldr: "Épico de voz: casos de uso, regras de negócio, orçamento de latência e decisões para a conversa por voz do Jarvis ser rápida, precisa, interrompível e à prova de perda."
 title: "Voz efetiva no Jarvis"
 owner: "Jonathan / Claude"
-status: draft
+status: approved
 risk_level: high
 stack: node + python
 services_affected: [hub, web, mobile, desktop, voice-services]
@@ -14,7 +14,7 @@ links:
   roadmap: "Épico novo de voz; consolida o backlog de gaps de voz aberto em 2026-07-24"
   design: "Diagnóstico desta spec (2026-10-22): telemetria de voz, auditoria do código e backlog de gaps"
   adr: "N/A — as decisões ficam na seção 6, como nas demais specs do repo"
-approval_evidence: "Usuário em 2026-10-22: 'A gente precisa conseguir fazer o jarvis ser extremamente efetivo relacionado a voz.' Decidido reimplementar ideias do zero, com cada requisito derivado dos próprios requisitos do Jarvis."
+approval_evidence: "Usuário em 2026-10-22: 'A gente precisa conseguir fazer o jarvis ser extremamente efetivo relacionado a voz.' Decidido reimplementar ideias do zero, com cada requisito derivado dos próprios requisitos do Jarvis. Perguntas da seção 10 respondidas pelo dono em 2026-10-22."
 ---
 
 # Executable spec
@@ -251,6 +251,7 @@ O ator é sempre o dono do Jarvis falando com ele, salvo indicação.
   frase curta o que poderia ser dito melhor. "Volta pro português" encerra o modo.
 - **Alternativos:** o usuário trava e fala em português no meio → o Jarvis entende e ajuda no
   idioma praticado; abortar e encerrar em português funcionam sempre.
+- **Idiomas iniciais:** inglês e espanhol (decisão do dono, 2026-10-22).
 - **Regras:** RN-H3..H7.
 - **Origem:** decisão do dono em 2026-10-22 ("é uma meta começar a treinar línguas").
 
@@ -381,8 +382,8 @@ alvos iniciais para validar com uso real, não requisitos já confirmados.
   praticado, a voz precisa falar esse idioma e os marcadores falados que hoje são fixos em
   português (ex.: "(tabela no chat)" em `speechify.ts`) também mudam. Voz sem suporte ao idioma →
   avisa e oferece outra (RN-I3).
-- **RN-H7 — No modo prática, a correção é curta, opcional e vem depois.** Liga e desliga; nunca
-  interrompe a fala do usuário.
+- **RN-H7 — No modo prática, a correção é curta, opcional e vem depois.** Começa ligada (decisão
+  do dono) e pode ser desligada; nunca interrompe a fala do usuário.
 
 ### I. Vozes
 
@@ -409,7 +410,7 @@ alvos iniciais para validar com uso real, não requisitos já confirmados.
 Etapas do turno de voz, do fim da fala do usuário ao primeiro som da resposta. "Medido" vem de
 `voice-timing.log`; "não medido" é lacuna que a fase F0 fecha.
 
-| # | Etapa | Medido | Meta (*proposta*) |
+| # | Etapa | Medido | Meta (aprovada pelo dono em 2026-10-22) |
 |---|---|---|---|
 | 1 | Fim da fala detectado | 1,8 s fixos de silêncio | a definir após F4 |
 | 2 | Transcrição | mediana 20,2 s (4,7–89 s, jul–ago) · atual desconhecido | ≤ 1 s após o fim da fala |
@@ -527,7 +528,7 @@ Cada fase entrega valor sozinha e é verificável pela telemetria de F0.
 | **F3** | Durabilidade do áudio no aparelho e no Hub, com política de retenção e taxa de gravação definida | RN-G1..G5, RN-J3 | Médio | Sim |
 | **F4** | Detector de voz por modelo no cliente (DEC-01 B) | RN-A1..A3 | Médio | Não (cliente) |
 | **F5** | Transcrição incremental e fim de turno semântico (DEC-02 B, DEC-01 D); troca de assunto; voz entre máquinas | RN-B3, RN-C4, UC-12, UC-13 | Alto | Sim |
-| **F6** | Modo prática de idioma: modos Conjunto e Prática, comandos em outros idiomas, voz e marcadores por idioma, correção opcional. Depende de F1; fica melhor depois de F2 | UC-15, RN-H3, RN-H5..H7 | Médio | Sim |
+| **F6** | Modo prática de idioma: modos Conjunto e Prática, comandos em outros idiomas, voz e marcadores por idioma, correção ligada por padrão; idiomas iniciais inglês e espanhol. Depende de F1; fica melhor depois de F2 | UC-15, RN-H3, RN-H5..H7 | Médio | Sim |
 
 **Critério de pronto de cada fase:** testes verdes, telemetria mostrando a etapa dentro da meta em
 uso real por uma semana, e roteiro de dispositivo da seção 8 aprovado pelo usuário.
@@ -584,11 +585,9 @@ uso real por uma semana, e roteiro de dispositivo da seção 8 aprovado pelo usu
    finalidade única em RN-G2, retenção configurável, padrão "só até dar certo".
 4. **Voz nuvem ou local (DEC-06):** quer a melhor, configurável se as duas forem aceitáveis → as
    duas, com troca automática; o padrão é revisto com as medições de F0.
+5. **Idiomas iniciais (UC-15):** inglês e espanhol.
+6. **Correção no modo prática (RN-H7):** começa ligada.
+7. **Metas da seção 5:** aprovadas como estão.
 
-### Ainda abertas
-
-1. **UC-15:** quais idiomas praticar primeiro? Proposta: inglês e espanhol. O modelo de
-   transcrição cobre os idiomas mais falados; o limite prático é a qualidade da voz e da
-   transcrição em cada um.
-2. **RN-H7:** a correção no modo prática começa ligada ou desligada?
-3. **Seção 5:** as metas propostas batem com a sua percepção de "rápido"?
+Não há perguntas abertas. Os padrões ainda marcados como *proposta* (prazo e tetos de retenção em
+RN-G4, taxa de gravação em RN-G5) são ajustados com o uso real, sem nova decisão de produto.
