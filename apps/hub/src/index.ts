@@ -15,7 +15,7 @@ import { createServer } from "node:http";
 import { spawn, execFile } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID, randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, appendFileSync, rmSync, chmodSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdirSync, rmSync, chmodSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join, normalize, dirname, basename, relative, resolve, sep } from "node:path";
 import QRCode from "qrcode";
@@ -29,6 +29,7 @@ import { transcribe, warmUp as warmUpStt } from "./stt.js";
 import { warmUp as warmUpEmbed } from "./embed.js";
 import { pythonDiagnostics } from "./python.js";
 import { log, isLogLevel } from "./logger.js";
+import { VoiceTurnTracker } from "@jarvis/core";
 import { updateStalled } from "./update-watchdog.js";
 import { retargetTarget } from "./update-retarget.js";
 import { speechify, speechifyCapped } from "./speechify.js";
@@ -369,6 +370,21 @@ const metrics = new Metrics();
 // measure its duration when the terminal stream event arrives.
 const remoteTurnStart = new Map<string, number>();
 const remoteSpeak = new Set<string>();
+// VOZ-00 F0: um evento `voice_turn` por turno de voz, com o tempo de cada etapa — entrada, agente,
+// fala — e o que o aparelho mediu (pausa até encerrar, tempo até o primeiro som). Substitui o antigo
+// voice-timing.log, que só via a entrada e guardava o começo do que foi dito.
+const voiceTurns = new VoiceTurnTracker({ emit: (event) => log.info("voice_turn", { ...event }) });
+const voiceKey = (runnerId: string, sessionId: string): string => runnerId + "\0" + sessionId;
+/** Quadro saindo para o aparelho: o primeiro áudio de resposta de um turno de voz leva o id do turno
+ *  (o aparelho mede quando o som começa e devolve com esse id); a ida para a fila encerra o turno. */
+function trackVoiceFrame(obj: unknown, runnerId: string): unknown {
+  const o = obj as { t?: unknown; sessionId?: unknown; for?: unknown } | null;
+  if (!o || typeof o !== "object" || typeof o.sessionId !== "string" || !o.sessionId) return obj;
+  if (o.t === "queued") { voiceTurns.end(voiceKey(runnerId, o.sessionId), "queued"); return obj; }
+  if (o.t !== "tts" || o.for) return obj;
+  const vtid = voiceTurns.audioSent(voiceKey(runnerId, o.sessionId));
+  return vtid ? { ...(obj as Record<string, unknown>), vtid } : obj;
+}
 /** Best-effort: embed a session's digest and upsert it into semantic memory (no-op if the local
  *  embedding model isn't installed). Called after each managed turn via turnCtx.afterTurn. */
 async function indexSession(sid: string): Promise<void> {
@@ -1221,10 +1237,13 @@ function voiceMentionsCatalog(text: string, desc: Awaited<ReturnType<AgentRegist
 }
 
 function send(ws: WebSocket, obj: unknown): void {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+  if (ws.readyState !== ws.OPEN) return;
+  const runnerId = typeof (obj as { runnerId?: unknown } | null)?.runnerId === "string" ? (obj as { runnerId: string }).runnerId : LOCAL_ID;
+  ws.send(JSON.stringify(trackVoiceFrame(obj, runnerId)));
 }
 /** To every client viewing a session on one exact machine (keeps desktop + phone in sync). */
 function broadcastOn(runnerId: string, sessionId: string, obj: unknown): void {
+  obj = trackVoiceFrame(obj, runnerId);
   const frame = obj && typeof obj === "object" && !Array.isArray(obj) ? { ...(obj as Record<string, unknown>), runnerId } : obj;
   const s = JSON.stringify(frame);
   for (const c of clientsAuthorizedFor(runnerId)) if (c.readyState === c.OPEN && subs.get(c) === sessionId && canAccessSession(c, runnerId, sessionId)) c.send(s);
@@ -2726,6 +2745,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
       const t0 = remoteTurnStart.get(mkey);
       if (t0 && event.kind !== "cancelled") metrics.record({ runnerId: rc.id, agent: m.agent, model: event.usage?.model, ms: Date.now() - t0, ok: event.kind === "completed", ts: Date.now() });
       remoteTurnStart.delete(mkey);
+      voiceTurns.agentDone(mkey); // mesma forma de chave do turno de voz: máquina + sessão
       if (event.kind !== "completed") remoteSpeak.delete(mkey);
       releaseRunnerSessionAfterTerminal(rc.id, sid);
     }
@@ -2735,7 +2755,9 @@ function relayRunner(rc: RunnerConn, m: any): void {
       const replyText = event.text || "";
       if (remoteSpeak.delete(mkey) && replyText) void (async () => {
         try {
+          const tSynth = Date.now();
           const wav = await synthesize(replyText, VOICE);
+          voiceTurns.speech(mkey, { synthMs: Date.now() - tSynth, spokenChars: replyText.length, summarized: false });
           for (const c of clientsOn(rc.id)) if (subs.get(c) === sid && canAccessSession(c, rc.id, sid)) send(c, { t: "tts", runnerId: rc.id, sessionId: sid, audio: wav.toString("base64"), text: replyText });
         } catch { /* TTS is best-effort. */ }
       })();
@@ -3368,9 +3390,22 @@ interface AggregateMachine { runnerId: string; label: string; online: boolean; c
 
 /** What to SPEAK for an agent reply: short answers are read verbatim (cleaned); long ones are
  *  condensed to a 1–3 sentence spoken summary (cheap model) so the audio doesn't drag on. */
+const SPOKEN_VERBATIM_MAX = 600;
+/** Texto falado e áudio de uma resposta, com o preparo e a síntese registrados no turno de voz
+ *  aberto em cada chave (VOZ-00 F0). `null` quando não há nada para falar. */
+async function spokenReplyAudio(voiceKeys: string[], replyText: string): Promise<{ spoken: string; b64: string } | null> {
+  const tPrep = Date.now();
+  const spoken = await speechForReply(replyText);
+  if (!spoken) return null;
+  const tSynth = Date.now();
+  const b64 = (await synthesize(spoken, VOICE)).toString("base64");
+  const timing = { prepMs: tSynth - tPrep, synthMs: Date.now() - tSynth, spokenChars: spoken.length, summarized: speechify(replyText || "").length > SPOKEN_VERBATIM_MAX };
+  for (const key of voiceKeys) voiceTurns.speech(key, timing);
+  return { spoken, b64 };
+}
 async function speechForReply(replyText: string): Promise<string> {
   const spoken = speechify(replyText || "");
-  if (spoken.length <= 600) return spoken; // already short when spoken → read as-is
+  if (spoken.length <= SPOKEN_VERBATIM_MAX) return spoken; // already short when spoken → read as-is
   const prompt = `Resuma em 1 a 3 frases CURTAS e faladas (português do Brasil, sem markdown, sem listas, sem código) o texto abaixo — como quem conta o resultado em voz alta, direto ao ponto:\n\n${(replyText || "").slice(0, 4000)}`;
   try {
     const agent = summaryAgent();
@@ -3416,11 +3451,17 @@ const turnCtx: TurnCtx = {
     try { contextManifests.append(manifest); } catch (error) { console.warn("[hub] manifesto de contexto não persistido:", String(error)); }
     broadcast(manifest.sessionId, { t: "context_manifest", sessionId: manifest.sessionId, manifest });
   },
-  runAgentTurn: (sid, agentName, agentText, cwd, opts) => agentTurn(sid, agents.get(agentName), agentText, cwd, opts),
+  runAgentTurn: async (sid, agentName, agentText, cwd, opts) => {
+    const vk = voiceKey(LOCAL_ID, sid);
+    voiceTurns.dispatched(vk, "local");
+    try { return await agentTurn(sid, agents.get(agentName), agentText, cwd, opts); }
+    finally { voiceTurns.agentDone(vk); }
+  },
   speak: async (sid, replyText, also) => {
-    const spoken = await speechForReply(replyText);
-    if (!spoken) return;
-    const wav = await synthesize(spoken, VOICE); const b64 = wav.toString("base64");
+    // O canal de voz (WAKE) vinculado a outra sessão também é um turno de voz: as duas chaves recebem o tempo.
+    const audio = await spokenReplyAudio([sid, ...(also || [])].filter(Boolean).map((target) => voiceKey(LOCAL_ID, target)), replyText);
+    if (!audio) return;
+    const { spoken, b64 } = audio;
     // Gap 17: se a fala do usuário que originou este turno foi um fechamento (CLOSING_RX), o client
     // não deve re-armar o mic depois de tocar esta resposta — a conversa terminou naturalmente.
     const closing = closingTurn.delete(sid) || undefined;
@@ -5576,10 +5617,12 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
   nativeTurnPaused.add(sid);
   try {
     const principalId = opts.actor?.userId || captureSessionOwnerGeneration(LOCAL_ID, sid).principalId || "local";
-    const reply = await executionPrincipalContext.run(principalId, () => agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, fastMode: opts.fastMode && supportsFastMode(agent.name), turnId }));
+    const vk = voiceKey(LOCAL_ID, sid);
+    voiceTurns.dispatched(vk, "native");
+    const reply = await executionPrincipalContext.run(principalId, () => agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, fastMode: opts.fastMode && supportsFastMode(agent.name), turnId })).finally(() => voiceTurns.agentDone(vk));
     if (opts.speak) {
-      const spoken = await speechForReply(reply.text);
-      if (spoken) { const wav = await synthesize(spoken, VOICE); broadcast(sid, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: spoken }); }
+      const audio = await spokenReplyAudio([vk], reply.text);
+      if (audio) broadcast(sid, { t: "tts", sessionId: sid, audio: audio.b64, text: audio.spoken });
     }
   } catch (e: any) {
     const message = String(e?.message ?? e);
@@ -6262,6 +6305,13 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       });
       auth.audit(msg.t, { userId: principal?.userId, deviceId: principal?.deviceId, detail: msg.requestId });
       send(ws, frame);
+      return;
+    }
+
+    // VOZ-00 F0: o aparelho conta quando o primeiro som da resposta começou. Só tempos, nunca texto,
+    // e só completa um turno aberto por ESTE mesmo socket — o rastreador recusa o resto.
+    if (msg.t === "voice_client") {
+      voiceTurns.client(msg.vtid, ws, { recMs: msg.recMs, endpointMs: msg.endpointMs, encodeMs: msg.encodeMs, stopToFirstAudioMs: msg.stopToFirstAudioMs });
       return;
     }
 
@@ -8565,11 +8615,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (typeof msg.speaker === "string") speaker = msg.speaker; // wake listener already identified it
     } else if (msg.t === "voice" && typeof msg.audio === "string") {
       const audio = Buffer.from(msg.audio, "base64");
+      const vk = voiceKey(activeRunner(ws), sid);
+      voiceTurns.start(vk, { id: msg.vtid, owner: ws, runnerId: activeRunner(ws), bytes: audio.length });
       const t0 = Date.now();
       let raw: string;
       try {
         raw = await transcribe(audio, msg.lang, msg.ext); // RAW — correction runs below, parallel to the gate
       } catch (e: any) {
+        voiceTurns.input(vk, { sttMs: Date.now() - t0 }); voiceTurns.end(vk, "error");
         send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) });
         return;
       }
@@ -8580,6 +8633,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const id = await identifySpeaker(audio, msg.ext || "webm", voiceThreshold);
         if (id.known && id.name) speaker = id.name;
         if (voiceGate && !id.known) {
+          voiceTurns.input(vk, { sttMs, speakerMs: Date.now() - tSpk }); voiceTurns.end(vk, "denied");
           send(ws, { t: "error", message: "voz não reconhecida", denied: true, score: id.score });
           if (msg.speak) {
             const wav = await synthesize("Desculpe, não reconheci a sua voz.", VOICE);
@@ -8598,13 +8652,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const needGate = voiceCfg.relevance !== "off" && sid !== WAKE_SESSION;
       const pre = await voicePreflight(raw, needGate ? recentContextOf(sid) : "");
       const preMs = Date.now() - tPre;
-      // Timing to a file (hub.log doesn't capture stdout post-boot) so we can see WHERE the latency is.
-      try { appendFileSync(join(JARVIS_DIR, "voice-timing.log"), `${new Date().toISOString()} stt=${sttMs}ms speaker=${spkMs}ms correção+gate=${preMs}ms relevante=${pre.relevant} "${String(raw).slice(0, 50)}"\n`); } catch { /* ignore */ }
-      // Structured twin of the file line above, with the audio SIZE — so a slow STT can be told apart
-      // from a big/long clip, and the whole voice pipeline is diagnosable from the one JSONL log.
-      log.debug("voice_stt", { bytes: audio.length, sttMs, spkMs, preMs, relevant: pre.relevant });
+      // As etapas de entrada entram no evento `voice_turn` do turno (VOZ-00 F0), junto do resto do
+      // caminho. O antigo voice-timing.log guardava o começo do que foi dito; o evento não guarda texto.
+      voiceTurns.input(vk, { sttMs, speakerMs: spkMs, preflightMs: preMs, relevant: pre.relevant });
       send(ws, { t: "voice_timing", stt: sttMs, speaker: spkMs, preflight: preMs });
-      if (needGate && !pre.relevant) { send(ws, { t: "voice_ignored", sessionId: sid, text: pre.text }); return; }
+      if (needGate && !pre.relevant) { voiceTurns.end(vk, "ignored"); send(ws, { t: "voice_ignored", sessionId: sid, text: pre.text }); return; }
       text = pre.text;
       if (CLOSING_RX.test(text)) closingTurn.add(sid); else closingTurn.delete(sid);
       // Gap 21: desvio de assunto NO MEIO de uma sessão já ativa. Diferente de `suggestSession`
@@ -8779,9 +8831,14 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const turnId = (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID();
         if (!sendOwnedRunnerTurn(rc, remoteSid, turnId, actorPrincipalId(turnActor), { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort, fastMode: msg.fastMode === true && supportsFastMode(decision.agent), permissionMode: remoteSessionModes.get(rc.id + " " + remoteSid) }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, actor: turnActor })) {
           remoteSpeak.delete(ar + "\0" + remoteSid);
+          voiceTurns.end(voiceKey(ar, sid), "error");
           send(ws, { t: "error", message: "não foi possível enviar para a máquina" });
           return;
         }
+        // A resposta volta com o id da sessão NA MÁQUINA, que pode diferir do que o aparelho vê
+        // (sessão nativa encaminhada): o turno de voz passa a responder pelos dois.
+        voiceTurns.alias(voiceKey(ar, sid), voiceKey(ar, remoteSid));
+        voiceTurns.dispatched(voiceKey(ar, remoteSid), "remote");
         markRunnerSessionActive(ar, remoteSid);
         return;
         } finally { releaseSessionDispatch(lease); }

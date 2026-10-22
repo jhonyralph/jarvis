@@ -533,6 +533,14 @@ Cada fase entrega valor sozinha e é verificável pela telemetria de F0.
 **Critério de pronto de cada fase:** testes verdes, telemetria mostrando a etapa dentro da meta em
 uso real por uma semana, e roteiro de dispositivo da seção 8 aprovado pelo usuário.
 
+**Como ler a telemetria (F0):** `npm run voice:report` (ou `-- --days 30`, `-- --json`) mostra
+mínimo, mediana, p90 e máximo de cada etapa a partir dos eventos `voice_turn`. A medida principal é
+`perceivedMs`: da última fala do usuário até o primeiro som da resposta. Caminhos instrumentados com
+o detalhe completo: sessão gerenciada local, sessão nativa local e sessão em outra máquina. Os
+demais caminhos de fala gravada no aparelho (busca, resumos, conversa da varinha) registram ao
+menos as etapas de entrada. O "Hey Jarvis" do ouvinte da máquina transcreve por conta própria e
+ainda não entra na medição.
+
 ## 8) Validação
 
 ### Restrições duras

@@ -1271,10 +1271,11 @@
         curItem=item; let url; try{ url=decode(item.b64); }catch(e){ curItem=null; item.resolve(); next(); return; }
         const a=new Audio(url); cur=a; ttsPlaying=true; curTtsAudio=a;
         const fin=()=>{ if(cur!==a) return; try{ URL.revokeObjectURL(url); }catch(e){} cur=null; curItem=null; try{ if(item.onEnd) item.onEnd(); }catch(e){} item.resolve(); next(); };
+        if(item.onStart){ a.onplaying=()=>{ const f=item.onStart; item.onStart=null; if(f){ try{ f(); }catch(e){} } }; }
         a.onended=fin; a.onerror=fin; a.play().catch(fin); }
       function flush(){ const pend=queue.slice(); queue=[]; const ci=curItem; curItem=null; if(cur){ try{ cur.pause(); }catch(e){} cur=null; } ttsPlaying=false; curTtsAudio=null; if(ci) ci.resolve(); pend.forEach(it=>it.resolve()); }
       return {
-        play(b64,opts){ opts=opts||{}; return new Promise(res=>{ const item={b64,onEnd:opts.onEnd,resolve:res}; if(opts.jump) flush(); queue.push(item); next(); }); },
+        play(b64,opts){ opts=opts||{}; return new Promise(res=>{ const item={b64,onEnd:opts.onEnd,onStart:opts.onStart,resolve:res}; if(opts.jump) flush(); queue.push(item); next(); }); },
         stop(){ flush(); },
         get active(){ return !!cur || queue.length>0; } }; })();
     function stopTTS(){ audioMgr.stop(); }
@@ -5123,7 +5124,7 @@
           if(inCur){ currentSession=null; clearQueue(); resetUsageMeter(); E.log.innerHTML=''; E.title.textContent='—'; refreshTitleInfo(); curNativeId=''; renderNativeChip(); setHash(''); }
           deleted.forEach(id=>{ const key=sessionStateKey(id,sessionRunner()); if(sessionPrefs[key])delete sessionPrefs[key]; if(sessionRunner()==='local'&&sessionPrefs[id])delete sessionPrefs[id]; }); saveSessionPrefs();
           if(!m.ok) toast(t('tDelFail')); }
-        else if(m.t==='tts'){ if(m.for==='ask'){ if(!m.sessionId||currentFrame(m))askVoicePlayAndListen(m.audio); } else if(currentFrame(m)) playTTS(m.audio,!!m.closing); }
+        else if(m.t==='tts'){ if(m.for==='ask'){ if(!m.sessionId||currentFrame(m))askVoicePlayAndListen(m.audio); } else if(currentFrame(m)) playTTS(m.audio,!!m.closing,m.vtid); }
         else if(m.t==='ask_choice'){ askVoiceApply(m); }
         else if(m.t==='searchResult'){ clearPending();
           if(m.hits!==undefined){ if(!E.searchModal.classList.contains('hidden') && m.query===E.searchInput.value.trim()) renderHits(E.searchResults,m); }   // filtro literal digitado (ignora resposta obsoleta)
@@ -5173,8 +5174,18 @@
         else if(m.t==='enrolled'){ note('✓ Voz cadastrada: '+m.name+' ('+m.samples+' amostras).'); }
         else if(m.t==='error'){ creatingSession=false; pendingNewSession=null; endVoiceOp(); clearPending(); onTurnEnd(currentSession); clearLimitBanner(); addErr(m.message||'Falha na execução',{limit:!!m.limit}); } };
     }
-    function playTTS(b64,closing){ status('speaking',t('spSpeaking'));
-      audioMgr.play(b64,{ onEnd:()=>{ if(audioMgr.active) return;   // ainda há áudio na fila → adia re-armar o mic (evita voltar a ouvir no meio)
+    // VOZ-00 F0: medidas do turno de voz que só o aparelho tem (pausa esperada até encerrar a
+    // gravação, codificação, tempo até o primeiro som). Ficam aqui até a resposta começar a tocar e
+    // vão ao Hub com o id do turno — só durações, nunca texto. Pendentes velhos são descartados.
+    const voiceTurnsPending=new Map();
+    function newVoiceTurnId(){ return 'vt'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+    function rememberVoiceTurn(vtid,data){ const now=performance.now();
+      for(const [k,v] of voiceTurnsPending) if(now-v.stopAt>30*60*1000) voiceTurnsPending.delete(k);
+      voiceTurnsPending.set(vtid,data); }
+    function voiceTurnStarted(vtid){ const p=vtid&&voiceTurnsPending.get(vtid); if(!p) return; voiceTurnsPending.delete(vtid);
+      tx({t:'voice_client',vtid,recMs:p.recMs,endpointMs:p.endpointMs,encodeMs:p.encodeMs,stopToFirstAudioMs:Math.round(performance.now()-p.stopAt)}); }
+    function playTTS(b64,closing,vtid){ status('speaking',t('spSpeaking'));
+      audioMgr.play(b64,{ onStart:vtid?()=>voiceTurnStarted(vtid):undefined, onEnd:()=>{ if(audioMgr.active) return;   // ainda há áudio na fila → adia re-armar o mic (evita voltar a ouvir no meio)
         status('');
         if(closing){ lastWasVoice=false; return; }                               // Gap 17: fechamento (ex. "obrigado") → não volta a escutar sozinho
         if(stagingActive && !recording){ startRec(true); return; }               // refino por voz em andamento → continua ouvindo
@@ -5247,7 +5258,7 @@
     }
     async function startRec(auto){ if(recording) return;
       let wakePaused=false;
-      try{ wakePaused=await pauseWakeForRecording(); const st=await navigator.mediaDevices.getUserMedia({audio:{noiseSuppression:cfg.noise,echoCancellation:true,autoGainControl:true}}); rec=new MediaRecorder(st); chunks=[]; recording=true;
+      try{ wakePaused=await pauseWakeForRecording(); const st=await navigator.mediaDevices.getUserMedia({audio:{noiseSuppression:cfg.noise,echoCancellation:true,autoGainControl:true}}); rec=new MediaRecorder(st); chunks=[]; recording=true; const recStartAt=performance.now();
         // VAD: detecta fala e fim de fala (silêncio após falar) para não gravar o tempo todo
         const ac=new AudioContext(); const src=ac.createMediaStreamSource(st); const an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
         const buf=new Uint8Array(an.fftSize); let spoke=false,silence=0,elapsed=0; const TH=cfg.noise?10:6;
@@ -5264,7 +5275,7 @@
                     else if(!spoke&&elapsed>=6000){ rec.stop(); } }                        // ninguém falou em 6s -> desiste
         },100);
         rec.ondataavailable=(e)=>chunks.push(e.data);
-        rec.onstop=async()=>{ clearInterval(poll); clearTimeout(contTimer); ac.close(); st.getTracks().forEach(t=>t.stop()); resumeWakeAfterRecording(wakePaused); recording=false; E.mic.classList.remove('on'); E.mic.innerHTML=MIC_ICON; syncComposerActions(); if(E.micCancel)E.micCancel.classList.add('hidden'); status('');
+        rec.onstop=async()=>{ const stopAt=performance.now(), endpointMs=spoke?silence:undefined; clearInterval(poll); clearTimeout(contTimer); ac.close(); st.getTracks().forEach(t=>t.stop()); resumeWakeAfterRecording(wakePaused); recording=false; E.mic.classList.remove('on'); E.mic.innerHTML=MIC_ICON; syncComposerActions(); if(E.micCancel)E.micCancel.classList.add('hidden'); status('');
           if(discardRec){ discardRec=false; return; }   // descartado pelo usuário -> nao envia
           if(auto && !spoke){ toast('🎤 Parei de ouvir (silêncio).'); return; } // Gap 5: avisa que encerrou de propósito — não fica ambíguo com travamento
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
@@ -5275,7 +5286,8 @@
           // O usuário grava, vê "transcrevendo…" e a mensagem entra na fila para rodar no próximo turno.
           const sessionBusy=busy(currentSession);
           status('busy', sessionBusy ? '🎧 transcrevendo para a fila…' : '🎧 transcrevendo…');   // Gap 5: feedback claro durante o STT
-          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
+          const vtid=newVoiceTurnId(); rememberVoiceTurn(vtid,{stopAt,recMs:Math.round(stopAt-recStartAt),endpointMs,encodeMs:Math.round(performance.now()-stopAt)});
+          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); tx({t:'voice',vtid,audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; syncComposerActions(); if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?t('spListeningAns'):t('spListening')); if(auto)tx({t:'wake_event',phase:'capturing',sessionId:currentSession});
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ resumeWakeAfterRecording(wakePaused); const msg=t('wakeMicError')+': '+micErrorText(e); addErr(msg); toast(msg); tx({t:'wake_event',phase:'mic_error',sessionId:currentSession,error:String((e&&e.message)||e)}); recording=false; status(''); } }
