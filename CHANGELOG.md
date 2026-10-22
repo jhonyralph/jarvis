@@ -1,3 +1,11 @@
+# [0.41.0](https://github.com/jhonyralph/jarvis/compare/v0.40.0...v0.41.0) (2026-10-22)
+
+
+### Features
+
+* **voz:** escuta por idioma, fala em trechos, audio sem perda, fim de fala inteligente e pratica de idiomas (VOZ-00 F1-F6) ([d9790a8](https://github.com/jhonyralph/jarvis/commit/d9790a89d87722bc3d3759eaaa2597e43e396118))
+* **voz:** mede cada etapa do turno de voz, da ultima fala ao primeiro som (VOZ-00 F0) ([6340677](https://github.com/jhonyralph/jarvis/commit/63406777542c0cbf4abf51a10c6a6460c93d0d62))
+
 # [0.40.0](https://github.com/jhonyralph/jarvis/compare/v0.39.1...v0.40.0) (2026-10-14)
 
 
