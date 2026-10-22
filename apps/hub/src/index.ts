@@ -24,12 +24,14 @@ import { RunnerListWaiters } from "./runnerListWaiters.js";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, resolveClosestModel, createAgentEventBridge, createEventSequencer, ackThenWork, routePersonalIntent, loadSessionDefaults, saveSessionDefaults, resolveSessionDefaults, normalizePermissionMode, type AgentAdapter, type AgentReply, type SendOpts, type AgentEvent, type PermissionMode, type SessionDefaults, type SessionDefaultsDocument } from "@jarvis/core";
-import { synthesize, listVoices, listVoiceCatalog, hasVoice, warmUp as warmUpTts } from "./tts.js";
-import { transcribe, warmUp as warmUpStt } from "./stt.js";
+import { synthesize, listVoices, listVoiceCatalog, hasVoice, hasLanguageVoice, warmUp as warmUpTts } from "./tts.js";
+import { transcribeDetailed, openTranscriptionStream, warmUp as warmUpStt } from "./stt.js";
+import { VoiceStreams } from "./voiceStream.js";
 import { warmUp as warmUpEmbed } from "./embed.js";
 import { pythonDiagnostics } from "./python.js";
 import { log, isLogLevel } from "./logger.js";
-import { VoiceTurnTracker } from "@jarvis/core";
+import { VoiceTurnTracker, normalizeListenConfig, listenLanguages, normalizeGateLevel, voiceGateDecision, speechChunks, normalizeAudioRetention, replyLanguage, parseLanguageCommand, practiceInstruction, languageSwitchConfirmation, LANGUAGE_NAMES_PT, type ListenLanguage } from "@jarvis/core";
+import { VoiceAudioStore } from "./voiceAudio.js";
 import { updateStalled } from "./update-watchdog.js";
 import { retargetTarget } from "./update-retarget.js";
 import { speechify, speechifyCapped } from "./speechify.js";
@@ -826,12 +828,42 @@ function saveSummaryCfg(): void { try { writeJsonAtomic(SUMMARY_FILE, summaryCfg
 // Voz ambiente (staging): política de escalada de modelo + modelos rápido/upgrade. Persistido.
 // escalate: "ask" (avisa e pede autorização por voz) | "auto" (sobe sozinho) | "<modelId>" (sobe pra esse).
 const VOICE_CFG_FILE = join(JARVIS_DIR, "voice-cfg.json");
-const voiceCfg: { agent: string; model?: string; effort?: string; fastMode?: boolean; escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number; voice?: string; wake?: boolean } = (() => {
+const voiceCfg: { agent: string; model?: string; effort?: string; fastMode?: boolean; escalate: string; fastModel: string; fastEffort: string; upgradeModel: string; upgradeEffort: string; relevance: string; gate?: boolean; threshold?: number; voice?: string; wake?: boolean; listen?: unknown; gateLevel?: string; correctBelow?: number; audio?: unknown } = (() => {
   // relevance: "on" (padrão — filtra falas que não são comando/relacionadas antes de despachar) | "off".
   const d = { agent: process.env.JARVIS_WAKE_AGENT || DEFAULT_AGENT, model: process.env.JARVIS_WAKE_MODEL || undefined, effort: process.env.JARVIS_WAKE_EFFORT || undefined, fastMode: process.env.JARVIS_VOICE_FAST_MODE === "1", escalate: "ask", fastModel: process.env.JARVIS_VOICE_FAST_MODEL || "haiku", fastEffort: "low", upgradeModel: process.env.JARVIS_VOICE_UPGRADE_MODEL || "opus", upgradeEffort: "high", relevance: (process.env.JARVIS_VOICE_RELEVANCE || "on") };
   try { mkdirSync(JARVIS_DIR, { recursive: true }); return { ...d, ...JSON.parse(readFileSync(VOICE_CFG_FILE, "utf8")) }; } catch { return d; }
 })();
 function saveVoiceCfg(): void { try { writeJsonAtomic(VOICE_CFG_FILE, voiceCfg, { pretty: true }); } catch { /* ignore */ } }
+// VOZ-00 F1: idioma de escuta (RN-H3) e rigor do portão (RN-C5). Sempre normalizados na LEITURA — o
+// arquivo pode vir de uma versão antiga (só `relevance`) ou editado à mão.
+const voiceListen = () => normalizeListenConfig(voiceCfg.listen);
+const voiceGateLevel = () => normalizeGateLevel(voiceCfg);
+// VOZ-00 F3: o áudio de cada fala é guardado ANTES de transcrever (RN-G1) e apagado conforme a
+// política do dono (RN-G4) — por padrão, assim que a transcrição sai.
+const voiceAudioPolicy = () => normalizeAudioRetention(voiceCfg.audio);
+const voiceAudio = new VoiceAudioStore(join(JARVIS_DIR, "voice-audio"));
+/** Falas em processamento e já processadas, por id do aparelho: um reenvio (o aparelho reconectou
+ *  sem receber a confirmação) não vira um segundo turno. */
+const voiceInFlight = new Map<string, number>(); // id → início; vale por 3 min (um erro no meio não prende o id)
+const voiceDoneIds = createSeenSet(500);
+function sweepVoiceAudio(): void {
+  try { const n = voiceAudio.sweep(voiceAudioPolicy()); if (n) log.info("voice_audio_sweep", { removed: n }); } catch { /* retenção é best-effort */ }
+}
+// VOZ-00 F4/F5: o áudio chega em pedaços enquanto o usuário fala; o Hub decide o fim do turno pelo
+// detector de voz por modelo + o sentido da frase parcial, e manda o aparelho encerrar a gravação.
+const voiceStreams = new VoiceStreams<WebSocket>({
+  open: (streamId, onEvent) => openTranscriptionStream(streamId, listenOpts(), onEvent),
+  send: (socket, frame) => send(socket, frame),
+});
+/** VOZ-00 F6: fala gravada no modo prática leva a instrução do idioma junto do contexto pessoal.
+ *  Só fala gravada: o que é DIGITADO segue como sempre. */
+function withVoicePractice(msg: any, prefix?: string): string | undefined {
+  const l = voiceListen();
+  const practice = msg?.t === "voice" && l.mode === "practice" ? practiceInstruction(l.practice, l.correct) : "";
+  return [prefix, practice].filter(Boolean).join("\n\n") || undefined;
+}
+/** Idioma da transcrição: o pedido explícito vence; senão, o modo de escuta configurado. */
+const listenOpts = (lang?: unknown): { lang: string } | { langs: string[] } => typeof lang === "string" && lang ? { lang } : listenLanguages(voiceListen());
 // Resolve o timbre falado agora que o voiceCfg carregou. Preferência: escolha explícita salva (UI) >
 // env JARVIS_VOICE > pt_BR (público padrão pt-BR — evita voz inglesa lendo português, Gap 4) >
 // primeira voz pt > default/1ª disponível. Só ajusta se a resolução encontrar um modelo instalado.
@@ -2755,10 +2787,11 @@ function relayRunner(rc: RunnerConn, m: any): void {
       const replyText = event.text || "";
       if (remoteSpeak.delete(mkey) && replyText) void (async () => {
         try {
-          const tSynth = Date.now();
-          const wav = await synthesize(replyText, VOICE);
-          voiceTurns.speech(mkey, { synthMs: Date.now() - tSynth, spokenChars: replyText.length, summarized: false });
-          for (const c of clientsOn(rc.id)) if (subs.get(c) === sid && canAccessSession(c, rc.id, sid)) send(c, { t: "tts", runnerId: rc.id, sessionId: sid, audio: wav.toString("base64"), text: replyText });
+          // Mesmo preparo das sessões locais (VOZ-00 RN-D3): limpa o texto e resume resposta longa.
+          // Antes a resposta de outra máquina era falada CRUA — código, listas e tudo, inteira.
+          await speakReplyChunks([mkey], replyText, (frame) => {
+            for (const c of clientsOn(rc.id)) if (subs.get(c) === sid && canAccessSession(c, rc.id, sid)) send(c, { t: "tts", runnerId: rc.id, sessionId: sid, ...frame });
+          });
         } catch { /* TTS is best-effort. */ }
       })();
       const askTarget = notificationTargetForSession(rc.id, sid);
@@ -3391,30 +3424,55 @@ interface AggregateMachine { runnerId: string; label: string; online: boolean; c
 /** What to SPEAK for an agent reply: short answers are read verbatim (cleaned); long ones are
  *  condensed to a 1–3 sentence spoken summary (cheap model) so the audio doesn't drag on. */
 const SPOKEN_VERBATIM_MAX = 600;
-/** Texto falado e áudio de uma resposta, com o preparo e a síntese registrados no turno de voz
- *  aberto em cada chave (VOZ-00 F0). `null` quando não há nada para falar. */
-async function spokenReplyAudio(voiceKeys: string[], replyText: string): Promise<{ spoken: string; b64: string } | null> {
+/** Um quadro de fala de uma resposta em trechos. `more` = ainda vem trecho depois deste (o aparelho
+ *  não reabre o microfone); `rid` identifica a resposta (o aparelho descarta trechos de uma resposta
+ *  que o usuário mandou parar). Quadro final sem áudio = a síntese falhou no meio. */
+interface SpeechFrame { audio: string; text: string; more?: true; rid: string }
+/**
+ * Fala uma resposta em trechos (VOZ-00 F2): a primeira frase é sintetizada sozinha e sai na hora; as
+ * seguintes são sintetizadas enquanto ela toca. O preparo e a síntese do PRIMEIRO trecho vão para o
+ * turno de voz aberto em cada chave — é o que define o tempo até o primeiro som.
+ * Devolve `false` quando não há nada para falar. Falha no primeiro trecho propaga (quem chama trata
+ * como antes); falha num trecho seguinte fecha a resposta com um quadro final sem áudio.
+ */
+async function speakReplyChunks(voiceKeys: string[], replyText: string, deliver: (frame: SpeechFrame) => void): Promise<boolean> {
   const tPrep = Date.now();
-  const spoken = await speechForReply(replyText);
-  if (!spoken) return null;
-  const tSynth = Date.now();
-  const b64 = (await synthesize(spoken, VOICE)).toString("base64");
-  const timing = { prepMs: tSynth - tPrep, synthMs: Date.now() - tSynth, spokenChars: spoken.length, summarized: speechify(replyText || "").length > SPOKEN_VERBATIM_MAX };
-  for (const key of voiceKeys) voiceTurns.speech(key, timing);
-  return { spoken, b64 };
+  const lang = replyLanguage(voiceListen());
+  const spoken = await speechForReply(replyText, lang);
+  if (!spoken) return false;
+  const chunks = speechChunks(spoken);
+  if (!chunks.length) return false;
+  const rid = randomUUID().slice(0, 12);
+  for (let i = 0; i < chunks.length; i++) {
+    const tSynth = Date.now();
+    let audio: string;
+    try { audio = (await synthesize(chunks[i], VOICE, { lang })).toString("base64"); }
+    catch (error) {
+      if (i === 0) throw error;
+      deliver({ audio: "", text: "", rid });
+      return true;
+    }
+    if (i === 0) {
+      const timing = { prepMs: tSynth - tPrep, synthMs: Date.now() - tSynth, spokenChars: spoken.length, summarized: speechify(replyText || "", lang).length > SPOKEN_VERBATIM_MAX };
+      for (const key of voiceKeys) voiceTurns.speech(key, timing);
+    }
+    deliver({ audio, text: chunks[i], rid, ...(i < chunks.length - 1 ? { more: true as const } : {}) });
+  }
+  return true;
 }
-async function speechForReply(replyText: string): Promise<string> {
-  const spoken = speechify(replyText || "");
+async function speechForReply(replyText: string, lang: ListenLanguage = "pt"): Promise<string> {
+  const spoken = speechify(replyText || "", lang);
   if (spoken.length <= SPOKEN_VERBATIM_MAX) return spoken; // already short when spoken → read as-is
-  const prompt = `Resuma em 1 a 3 frases CURTAS e faladas (português do Brasil, sem markdown, sem listas, sem código) o texto abaixo — como quem conta o resultado em voz alta, direto ao ponto:\n\n${(replyText || "").slice(0, 4000)}`;
+  const idioma = lang === "pt" ? "português do Brasil" : LANGUAGE_NAMES_PT[lang];
+  const prompt = `Resuma em 1 a 3 frases CURTAS e faladas (${idioma}, sem markdown, sem listas, sem código) o texto abaixo — como quem conta o resultado em voz alta, direto ao ponto:\n\n${(replyText || "").slice(0, 4000)}`;
   try {
     const agent = summaryAgent();
     const opts = await summaryAgentOpts(agent);
     const reply = agent.oneShot ? await agent.oneShot(prompt, opts) : await agent.send("__speaksum__", prompt, process.cwd(), opts);
     addUsage("__spoken_summary__", agent.name, reply.usage);
-    const s = speechify((reply.text || "").trim());
-    return s || speechifyCapped(replyText);
-  } catch { return speechifyCapped(replyText); }
+    const s = speechify((reply.text || "").trim(), lang);
+    return s || speechifyCapped(replyText, undefined, lang);
+  } catch { return speechifyCapped(replyText, undefined, lang); }
 }
 
 // The ONE managed-turn context (see turn.ts): wires the shared lifecycle to the hub's real store,
@@ -3458,15 +3516,15 @@ const turnCtx: TurnCtx = {
     finally { voiceTurns.agentDone(vk); }
   },
   speak: async (sid, replyText, also) => {
-    // O canal de voz (WAKE) vinculado a outra sessão também é um turno de voz: as duas chaves recebem o tempo.
-    const audio = await spokenReplyAudio([sid, ...(also || [])].filter(Boolean).map((target) => voiceKey(LOCAL_ID, target)), replyText);
-    if (!audio) return;
-    const { spoken, b64 } = audio;
     // Gap 17: se a fala do usuário que originou este turno foi um fechamento (CLOSING_RX), o client
-    // não deve re-armar o mic depois de tocar esta resposta — a conversa terminou naturalmente.
+    // não deve re-armar o mic depois de tocar esta resposta — a conversa terminou naturalmente. Vai só
+    // no ÚLTIMO trecho: é ele que decide se o microfone volta.
     const closing = closingTurn.delete(sid) || undefined;
-    broadcast(sid, { t: "tts", sessionId: sid, audio: b64, text: spoken, closing });
-    for (const a of (also || [])) if (a && a !== sid) broadcast(a, { t: "tts", sessionId: a, audio: b64, text: spoken, closing }); // ex.: canal de voz (WAKE) quando vinculado a outra sessão
+    const targets = [sid, ...(also || []).filter((a) => a && a !== sid)]; // ex.: canal de voz (WAKE) vinculado a outra sessão
+    // O canal de voz (WAKE) vinculado a outra sessão também é um turno de voz: as chaves recebem o tempo.
+    await speakReplyChunks(targets.map((target) => voiceKey(LOCAL_ID, target)), replyText, (frame) => {
+      for (const target of targets) broadcast(target, { t: "tts", sessionId: target, ...frame, ...(frame.more ? {} : { closing }) });
+    });
   },
   // Per-session spend cap (opt-in): JARVIS_SESSION_COST_CAP=<usd>. 0/unset = no cap (default, no
   // behavior change). Stops a runaway session from spending indefinitely without a human in the loop.
@@ -3598,19 +3656,19 @@ async function looksLikeTopicShift(sid: string, text: string): Promise<boolean> 
   return !!hit && hit.score < 0.15;
 }
 // ---- voz ambiente: staging (refinar a fala por voz ANTES de comprometer no chat real) --------
-const CONFIRM_RX = /\b(confirm(o|ar|ado)?|pode (mandar|enviar|ir)|manda(r)?|envia(r)?|isso mesmo|é isso|perfeito|fechou)\b/i;
+const CONFIRM_RX = /\b(confirm(o|ar|ado)?|pode (mandar|enviar|ir)|manda(r)?|envia(r)?|isso mesmo|é isso|perfeito|fechou|send it|go ahead|confirm(ed)?|env[ií]alo|dale)\b/i;
 // Gap 13(b)/14: intenção de ABORTAR (não "adicionar contexto") quando o usuário fala por cima do
 // Jarvis ou durante um refino de staging já em andamento — "para, deixa pra lá" deve descartar o
 // rascunho de vez, não ser tratado como mais uma rodada de refino. ANCORADO À UTTERANCE INTEIRA
 // (igual ao CLOSING_RX do Gap 17) — "para" sozinho é comando de abortar, mas "isso é para o projeto
 // X" (preposição, no meio de uma frase maior) NÃO pode disparar isso; checado ANTES do CONFIRM_RX
 // (e antes de qualquer refino) em `stageHandle`.
-const ABORT_RX = /^\s*(para(r)?|cancela(r)?(\s+isso)?|deixa\s+pra\s+l[áa]|deixa\s+isso(\s+pra\s+l[áa])?|esque[çc]e(\s+isso)?|n[ãa]o\s+(é|era)\s+isso|n[ãa]o\s+precisa(va)?|desist[oi]|n[ãa]o\s+importa)\s*[.,!]*\s*$/i;
+const ABORT_RX = /^\s*(para(r)?|cancela(r)?(\s+isso)?|deixa\s+pra\s+l[áa]|deixa\s+isso(\s+pra\s+l[áa])?|esque[çc]e(\s+isso)?|n[ãa]o\s+(é|era)\s+isso|n[ãa]o\s+precisa(va)?|desist[oi]|n[ãa]o\s+importa|stop|cancel(\s+(it|that))?|never\s*mind|forget\s+(it|that)|olv[ií]dalo|d[ée]jalo|basta)\s*[.,!]*\s*$/i; // VOZ-00 RN-H5: também em inglês e espanhol
 // Gap 17: fechamento conversacional (agradecimento/despedida CURTO, sem pedido novo) — a UTTERANCE
 // INTEIRA precisa bater (não só conter a palavra), senão "obrigado por isso, mas..." seria tratado
 // como despedida. Quando bate, marcamos a sessão para o `speak()` sinalizar ao client (`closing`)
 // que não deve re-armar o microfone depois de tocar a resposta.
-const CLOSING_RX = /^\s*(muito\s+)?(obrigad[oa]s?|valeu|vlw|tchau|até\s+(mais|logo|depois|breve)|falou|é\s+isso(\s+mesmo)?|(só\s+)?isso\s+mesmo|beleza\s+obrigad[oa])[.! ]*$/i;
+const CLOSING_RX = /^\s*(muito\s+)?(obrigad[oa]s?|valeu|vlw|tchau|até\s+(mais|logo|depois|breve)|falou|é\s+isso(\s+mesmo)?|(só\s+)?isso\s+mesmo|beleza\s+obrigad[oa]|thanks?(\s+you)?(\s+(so|very)\s+much)?|thank\s+you|bye|good\s*bye|see\s+you|(muchas\s+)?gracias|adi[oó]s|chao|hasta\s+luego)[.! ]*$/i; // RN-H5
 const closingTurn = new Set<string>();
 interface StageScope { runnerId: string; sessionId: string; actor?: ContextActor }
 const stageKey = (scope: StageScope): string => decisionKey(scope.runnerId, scope.sessionId);
@@ -3762,8 +3820,9 @@ function recentContextOf(sid: string): string {
  *  with someone else / off-topic). FAIL-OPEN — any error/unparseable verdict returns true, so a glitch
  *  never swallows a real command. Empty/garbage transcripts are dropped without even a model call. */
 async function relevanceGate(text: string, context: string): Promise<boolean> {
-  if (voiceCfg.relevance === "off") return true;
-  if (!text || text.trim().length < 2) return false;
+  const gate = voiceGateDecision({ text, level: voiceGateLevel(), handsFree: true, wakeWord: true, speakerKnown: false, isControl: ABORT_RX.test(text) || CLOSING_RX.test(text) });
+  if (gate.drop) return false;
+  if (!gate.callModel || !gate.modelMayDrop) return true;
   try {
     const agent = summaryAgent();
     if (!agent?.oneShot) return true;
@@ -3788,11 +3847,11 @@ async function voicePreflight(rawText: string, context: string): Promise<{ text:
     return r;
   } catch { return { text: rawText, relevant: true }; }
 }
-async function handleVoiceTurn(text: string, speak: boolean, speaker?: string): Promise<void> {
+async function handleVoiceTurn(text: string, speak: boolean, speaker?: string, gated = false): Promise<void> {
   // Relevance gate: unless we're waiting on a short control answer (continuar/nova/…), a captured
   // utterance must first pass a fast-model check that it's actually meant for Jarvis — not background
   // noise or you talking to someone else. If it fails, ignore it (no session dispatch).
-  if (!voiceResolve && !voicePending) {
+  if (!voiceResolve && !voicePending && !gated) {   // fala gravada no aparelho já passou pelo portão
     if (!(await relevanceGate(text, voiceTarget ? recentContextOf(voiceTarget) : ""))) {
       broadcast(WAKE_SESSION, { t: "voice_ignored", text });
       return;
@@ -5621,8 +5680,7 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
     voiceTurns.dispatched(vk, "native");
     const reply = await executionPrincipalContext.run(principalId, () => agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, fastMode: opts.fastMode && supportsFastMode(agent.name), turnId })).finally(() => voiceTurns.agentDone(vk));
     if (opts.speak) {
-      const audio = await spokenReplyAudio([vk], reply.text);
-      if (audio) broadcast(sid, { t: "tts", sessionId: sid, audio: audio.b64, text: audio.spoken });
+      await speakReplyChunks([vk], reply.text, (frame) => broadcast(sid, { t: "tts", sessionId: sid, ...frame }));
     }
   } catch (e: any) {
     const message = String(e?.message ?? e);
@@ -6093,7 +6151,7 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
   if (msg.t === "stage_voice" && typeof msg.audio === "string") {
     const current = scope((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : undefined);
     let text = "";
-    try { text = await transcribe(Buffer.from(msg.audio, "base64"), msg.lang, msg.ext); text = await correctTranscript(text); }
+    try { text = (await transcribeDetailed(Buffer.from(msg.audio, "base64"), { ...listenOpts(msg.lang), ext: msg.ext })).text; text = await correctTranscript(text); }
     catch (e: any) { send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) }); return true; }
     broadcastOn(current.runnerId, current.sessionId, { t: "stage_heard", runnerId: current.runnerId, sessionId: current.sessionId, text });
     await stageHandle(current, text);
@@ -6132,6 +6190,13 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
     voiceCfg.agent = voiceConfig.agent = nextAgent; voiceCfg.model = voiceConfig.model = nextModel; voiceCfg.effort = voiceConfig.effort = nextEffort;
     if (typeof msg.fastMode === "boolean" || !supportsFastMode(nextAgent)) voiceCfg.fastMode = voiceConfig.fastMode = msg.fastMode === true && supportsFastMode(nextAgent);
     if (typeof msg.escalate === "string") voiceCfg.escalate = msg.escalate; if (typeof msg.fastModel === "string") voiceCfg.fastModel = msg.fastModel; if (typeof msg.upgradeModel === "string") voiceCfg.upgradeModel = msg.upgradeModel; if (typeof msg.relevance === "string") voiceCfg.relevance = msg.relevance;
+    if (msg.listen && typeof msg.listen === "object") voiceCfg.listen = normalizeListenConfig(msg.listen);
+    if (msg.gateLevel === "fast" || msg.gateLevel === "balanced" || msg.gateLevel === "strict") {
+      voiceCfg.gateLevel = msg.gateLevel;
+      voiceCfg.relevance = msg.gateLevel === "fast" ? "off" : "on"; // a chave antiga segue coerente para quem ainda lê
+    }
+    if (typeof msg.correctBelow === "number" && msg.correctBelow >= 0 && msg.correctBelow <= 1) voiceCfg.correctBelow = msg.correctBelow;
+    if (msg.audio && typeof msg.audio === "object") { voiceCfg.audio = normalizeAudioRetention(msg.audio); sweepVoiceAudio(); }
     saveVoiceCfg(); send(ws, { t: "voice_cfg", cfg: { ...voiceCfg } }); return true; }
   // --- catálogo de vozes / timbre falado (Gap 6): listar, trocar e ouvir prévia. Trocar é do dono
   //     (é a voz GLOBAL do Hub); listar e a prévia são inofensivos e ficam liberados. ---
@@ -6260,6 +6325,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       watchers.delete(ws);
       if (!watchers.size) terminalWatchers.delete(terminalId);
     }
+    voiceStreams.stop(ws); // gravação em andamento de um aparelho que saiu
     clearUnauthTimer(ws);
     syncTails();
   });
@@ -6310,9 +6376,24 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // VOZ-00 F0: o aparelho conta quando o primeiro som da resposta começou. Só tempos, nunca texto,
     // e só completa um turno aberto por ESTE mesmo socket — o rastreador recusa o resto.
+    // VOZ-00 F4/F5: gravação em andamento (abrir, pedaços de áudio, fechar). Só transcreve para
+    // decidir o fim da fala — nada é despachado daqui; o turno segue pela fala completa (`voice`).
+    if (msg.t === "voice_stream_open") { void voiceStreams.start(ws, msg.streamId); return; }
+    if (msg.t === "voice_stream_chunk") { voiceStreams.push(ws, msg.streamId, msg.pcm); return; }
+    if (msg.t === "voice_stream_close") { voiceStreams.stop(ws, msg.streamId); return; }
     if (msg.t === "voice_client") {
       voiceTurns.client(msg.vtid, ws, { recMs: msg.recMs, endpointMs: msg.endpointMs, encodeMs: msg.encodeMs, stopToFirstAudioMs: msg.stopToFirstAudioMs });
       return;
+    }
+
+    // VOZ-00 F3 (RN-G3): reprocessar uma fala cuja transcrição falhou, sem o usuário repetir. Só o dono
+    // dela, e só na máquina para onde ela foi. Vira uma fala nova e segue pelos mesmos portões abaixo.
+    if (msg.t === "voice_retry") {
+      const meta = voiceAudio.get(msg.vtid);
+      const bytes = meta && meta.principal === socketPrincipalId(ws) ? voiceAudio.audio(meta.id) : undefined;
+      if (!meta || !bytes) { send(ws, { t: "voice_retry_missing", vtid: msg.vtid }); return; }
+      if (meta.runnerId !== activeRunner(ws)) { send(ws, { t: "error", message: "Essa fala foi para outra máquina — abra a máquina dela para tentar de novo." }); return; }
+      msg = { ...meta.opts, t: "voice", audio: bytes.toString("base64"), ext: meta.ext, vtid: meta.id, sessionId: meta.sessionId, retry: true };
     }
 
     // --- per-runner authorization (drive gate) -------------------------------
@@ -8579,7 +8660,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (msg.t === "ask_voice" && typeof msg.audio === "string") {
       let transcript = "";
-      try { transcript = await transcribe(Buffer.from(msg.audio, "base64"), undefined, msg.ext || "webm"); }
+      try { transcript = (await transcribeDetailed(Buffer.from(msg.audio, "base64"), { ...listenOpts(), ext: msg.ext || "webm" })).text; }
       catch (e: any) { send(ws, { t: "ask_choice", action: "repeat", error: String(e?.message ?? e) }); return; }
       const choice = await interpretAskVoice(transcript, String(msg.question || ""), Array.isArray(msg.options) ? msg.options : [], !!msg.multi);
       send(ws, { t: "ask_choice", ...choice, transcript });
@@ -8615,17 +8696,53 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (typeof msg.speaker === "string") speaker = msg.speaker; // wake listener already identified it
     } else if (msg.t === "voice" && typeof msg.audio === "string") {
       const audio = Buffer.from(msg.audio, "base64");
+      // VOZ-00 F3: o aparelho reenvia uma fala sem confirmação quando reconecta. A mesma fala ainda em
+      // processamento é ignorada; uma já processada só recebe a confirmação de novo.
+      const deviceVtid = typeof msg.vtid === "string" ? msg.vtid : "";
+      if (deviceVtid && Date.now() - (voiceInFlight.get(deviceVtid) ?? 0) < 180_000) return;
+      if (deviceVtid && voiceDoneIds.has(deviceVtid)) { send(ws, { t: "voice_ack", vtid: deviceVtid }); return; }
       const vk = voiceKey(activeRunner(ws), sid);
-      voiceTurns.start(vk, { id: msg.vtid, owner: ws, runnerId: activeRunner(ws), bytes: audio.length });
+      const vtid = voiceTurns.start(vk, { id: msg.vtid, owner: ws, runnerId: activeRunner(ws), bytes: audio.length });
+      if (deviceVtid) voiceInFlight.set(deviceVtid, Date.now());
+      // RN-G1: guardado ANTES de transcrever. Um reprocessamento já tem o arquivo.
+      const audioPolicy = voiceAudioPolicy();
+      const kept = msg.retry === true ? !!voiceAudio.get(vtid) : audioPolicy.mode !== "off" && voiceAudio.save({
+        id: vtid, ext: typeof msg.ext === "string" ? msg.ext : "webm", sessionId: sid, runnerId: activeRunner(ws), principal: socketPrincipalId(ws),
+        opts: { speak: msg.speak === true, model: msg.model, effort: msg.effort, fastMode: msg.fastMode, permissionMode: msg.permissionMode, auto: msg.auto, handsFree: msg.handsFree },
+      }, audio);
       const t0 = Date.now();
-      let raw: string;
-      try {
-        raw = await transcribe(audio, msg.lang, msg.ext); // RAW — correction runs below, parallel to the gate
-      } catch (e: any) {
+      let raw = "";
+      let sttConf: number | undefined, sttLang: string | undefined;
+      let sttError: unknown;
+      // RN-G3: uma segunda tentativa automática. Um tempo esgotado mata e reinicia o serviço de
+      // transcrição (stt.ts), então a segunda tentativa roda num processo limpo.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const tr = await transcribeDetailed(audio, { ...listenOpts(msg.lang), ext: msg.ext }); // idioma: VOZ-00 RN-H3
+          raw = tr.text; sttConf = tr.conf; sttLang = tr.lang; sttError = undefined;
+          break;
+        } catch (e) { sttError = e; }
+      }
+      if (sttError !== undefined) {
+        if (deviceVtid) voiceInFlight.delete(deviceVtid);
+        const message = "STT: " + String((sttError as any)?.message ?? sttError);
+        if (kept) voiceAudio.mark(vtid, "failed", message);
         voiceTurns.input(vk, { sttMs: Date.now() - t0 }); voiceTurns.end(vk, "error");
-        send(ws, { t: "error", message: "STT: " + String(e?.message ?? e) });
+        // RN-F2: o erro diz o que foi preservado. O aparelho mostra "tentar de novo".
+        if (deviceVtid) send(ws, { t: "voice_failed", vtid: deviceVtid, sessionId: sid, kept, message });
+        else send(ws, { t: "error", message });
         return;
       }
+      // A fala só é dada como entregue (o aparelho apaga a cópia dele; o Hub, a sua) quando já tem
+      // destino: depois do portão — que pode levar segundos — e antes do registro durável do turno.
+      // Até lá um reenvio do aparelho é ignorado, e uma queda do Hub no meio não perde a fala.
+      let voiceConfirmed = false;
+      const confirmVoice = (): void => {
+        if (voiceConfirmed) return;
+        voiceConfirmed = true;
+        if (deviceVtid) { voiceInFlight.delete(deviceVtid); voiceDoneIds.add(deviceVtid); send(ws, { t: "voice_ack", vtid: deviceVtid }); }
+        if (kept) { if (audioPolicy.mode === "until_done") voiceAudio.remove(vtid); else voiceAudio.mark(vtid, "done"); }
+      };
       const sttMs = Date.now() - t0;
       // who spoke? label the message and, if the gate is on, reject unknown voices.
       const tSpk = Date.now();
@@ -8633,7 +8750,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const id = await identifySpeaker(audio, msg.ext || "webm", voiceThreshold);
         if (id.known && id.name) speaker = id.name;
         if (voiceGate && !id.known) {
-          voiceTurns.input(vk, { sttMs, speakerMs: Date.now() - tSpk }); voiceTurns.end(vk, "denied");
+          voiceTurns.input(vk, { sttMs, speakerMs: Date.now() - tSpk }); voiceTurns.end(vk, "denied"); confirmVoice();
           send(ws, { t: "error", message: "voz não reconhecida", denied: true, score: id.score });
           if (msg.speak) {
             const wav = await synthesize("Desculpe, não reconheci a sua voz.", VOICE);
@@ -8645,18 +8762,47 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         console.error("[speaker]", String(e?.message ?? e)); // speaker-id must never block the conversation
       }
       const spkMs = Date.now() - tSpk;
-      // ONE fast-model call does correction + relevance together — two contending CLI spawns are slower
-      // on a CPU-bound box (measured ~7.5s for the pair vs ~3.8s for one). Typed `send` never gets here;
-      // the WAKE path only needs the correction (handleVoiceTurn runs its own gate with control skip).
+      // VOZ-00 RN-H4: "vamos praticar inglês" / "volta pro português" troca o idioma da conversa e é
+      // confirmado numa frase curta já no idioma novo. É configuração do dono — para os demais a frase
+      // segue como uma fala comum.
+      const langCmd = parseLanguageCommand(raw);
+      if (langCmd && (!auth.AUTH_ENABLED || principalOf(ws)?.role === "owner")) {
+        const cur = voiceListen();
+        voiceCfg.listen = langCmd.action === "native" ? { ...cur, mode: "fixed", lang: "pt" } : { ...cur, mode: "practice", practice: langCmd.lang };
+        saveVoiceCfg();
+        const lang: ListenLanguage = langCmd.action === "native" ? "pt" : langCmd.lang;
+        let reply = languageSwitchConfirmation(langCmd);
+        if (!hasLanguageVoice(lang)) reply += ` (Nenhuma voz instalada fala ${LANGUAGE_NAMES_PT[lang]}; vou usar a voz atual.)`;
+        voiceTurns.input(vk, { sttMs, speakerMs: spkMs, sttConf, sttLang, gateReason: "troca_de_idioma" }); confirmVoice();
+        send(ws, { t: "voice_cfg", cfg: { ...voiceCfg } });
+        const now = Date.now();
+        send(ws, { t: "message", message: { sessionId: sid, role: "user", text: raw, ts: now, agent: "jarvis", speaker } });
+        send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply, ts: now + 1, agent: "jarvis" } });
+        if (msg.speak) {
+          try { const wav = await synthesize(reply, VOICE, { lang }); send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: reply }); }
+          catch { voiceTurns.end(vk, "error"); }
+        } else voiceTurns.end(vk, "no_audio");
+        return;
+      }
+      // VOZ-00 RN-C5: o modelo de correção + relevância custava de 1,4 s a 98,8 s em TODA fala. Agora
+      // só é chamado quando o nível pede: no equilibrado, quando a fala é ambígua (escuta aberta sozinha
+      // e voz não reconhecida) ou quando a transcrição saiu com pouca confiança — nesse último caso só
+      // para CORRIGIR, sem poder descartar uma fala que o usuário fez de propósito.
+      const gateLevel = voiceGateLevel();
+      const gate = voiceGateDecision({ text: raw, level: gateLevel, handsFree: msg.handsFree === true, speakerKnown: !!speaker, confidence: sttConf, isControl: ABORT_RX.test(raw) || CLOSING_RX.test(raw), correctBelow: voiceCfg.correctBelow });
       const tPre = Date.now();
-      const needGate = voiceCfg.relevance !== "off" && sid !== WAKE_SESSION;
-      const pre = await voicePreflight(raw, needGate ? recentContextOf(sid) : "");
+      let pre = { text: raw, relevant: !gate.drop };
+      if (gate.callModel) {
+        const r = await voicePreflight(raw, gate.modelMayDrop ? recentContextOf(sid) : "");
+        pre = { text: r.text, relevant: gate.modelMayDrop ? r.relevant : true };
+      }
       const preMs = Date.now() - tPre;
       // As etapas de entrada entram no evento `voice_turn` do turno (VOZ-00 F0), junto do resto do
       // caminho. O antigo voice-timing.log guardava o começo do que foi dito; o evento não guarda texto.
-      voiceTurns.input(vk, { sttMs, speakerMs: spkMs, preflightMs: preMs, relevant: pre.relevant });
-      send(ws, { t: "voice_timing", stt: sttMs, speaker: spkMs, preflight: preMs });
-      if (needGate && !pre.relevant) { voiceTurns.end(vk, "ignored"); send(ws, { t: "voice_ignored", sessionId: sid, text: pre.text }); return; }
+      voiceTurns.input(vk, { sttMs, speakerMs: spkMs, preflightMs: preMs, relevant: pre.relevant, sttConf, sttLang, gateLevel, gateReason: gate.reason, endpointReason: typeof msg.endpointReason === "string" ? msg.endpointReason.slice(0, 32) : undefined });
+      send(ws, { t: "voice_timing", stt: sttMs, speaker: spkMs, preflight: preMs, gate: gate.reason });
+      confirmVoice();
+      if (!pre.relevant) { voiceTurns.end(vk, "ignored"); send(ws, { t: "voice_ignored", sessionId: sid, text: pre.text }); return; }
       text = pre.text;
       if (CLOSING_RX.test(text)) closingTurn.add(sid); else closingTurn.delete(sid);
       // Gap 21: desvio de assunto NO MEIO de uma sessão já ativa. Diferente de `suggestSession`
@@ -8774,7 +8920,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // folder by speech, and asks new-vs-continue when a conversation is already going.
     if (sid === WAKE_SESSION) {
       clearPendingInboundTurn(inboundKey);
-      await handleVoiceTurn(text, !!msg.speak, speaker);
+      await handleVoiceTurn(text, !!msg.speak, speaker, msg.t === "voice");
       return;
     }
     if (msg.t === "voice") {
@@ -8829,7 +8975,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const personal = await personalContextForChat(ar, remoteSid, text, turnActor, () => refreshSessionDispatchAuthorization(lease));
         if (!sessionDispatchAuthorized(lease, ws, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
         const turnId = (typeof msg.msgId === "string" && msg.msgId) ? msg.msgId : randomUUID();
-        if (!sendOwnedRunnerTurn(rc, remoteSid, turnId, actorPrincipalId(turnActor), { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, opts: { model: decision.model, effort: decision.effort, fastMode: msg.fastMode === true && supportsFastMode(decision.agent), permissionMode: remoteSessionModes.get(rc.id + " " + remoteSid) }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, actor: turnActor })) {
+        if (!sendOwnedRunnerTurn(rc, remoteSid, turnId, actorPrincipalId(turnActor), { t: "send", text, contextPrefix: withVoicePractice(msg, personal?.contextPrefix), agent: decision.agent, opts: { model: decision.model, effort: decision.effort, fastMode: msg.fastMode === true && supportsFastMode(decision.agent), permissionMode: remoteSessionModes.get(rc.id + " " + remoteSid) }, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], speaker, actor: turnActor })) {
           remoteSpeak.delete(ar + "\0" + remoteSid);
           voiceTurns.end(voiceKey(ar, sid), "error");
           send(ws, { t: "error", message: "não foi possível enviar para a máquina" });
@@ -8895,7 +9041,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         if (!sessionDispatchAuthorized(lease, ws)) throw new Error("a autorização da sessão mudou durante o roteamento");
         const personal = await personalContextForChat(LOCAL_ID, sid, text, turnActor, () => refreshSessionDispatchAuthorization(lease));
         if (!sessionDispatchAuthorized(lease, ws)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
-        await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, fastMode: msg.fastMode === true && supportsFastMode(decision.agent), speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], actor: turnActor, contextPrefix: personal?.contextPrefix, authorize: () => sessionDispatchAuthorized(lease, ws) });
+        await deliverNativeTurn(ws, sid, text, { model: decision.model, effort: decision.effort, fastMode: msg.fastMode === true && supportsFastMode(decision.agent), speak: !!msg.speak, speaker, attachments: Array.isArray(msg.attachments) ? msg.attachments : [], actor: turnActor, contextPrefix: withVoicePractice(msg, personal?.contextPrefix), authorize: () => sessionDispatchAuthorized(lease, ws) });
         clearPendingInboundTurn(inboundKey);
         return;
       }
@@ -8925,7 +9071,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       log.debug("local_dispatch", { sid, kind: msg.t, routeMs: _routeMs, expandMs: _expandMs, personalMs: _personalMs });
       if (!sessionDispatchAuthorized(lease, ws) || !store.get(sid)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
       await runOwnedManagedTurn(sid, {
-        showText, agentText: personal ? `${personal.contextPrefix}\n\n${manifestAgentText}` : manifestAgentText, manifestAgentText,
+        showText, agentText: ((prefix) => prefix ? `${prefix}\n\n${manifestAgentText}` : manifestAgentText)(withVoicePractice(msg, personal?.contextPrefix)), manifestAgentText,
         model: decision.model,
         effort: decision.effort,
         fastMode: msg.fastMode === true && supportsFastMode(decision.agent),
@@ -9140,6 +9286,8 @@ server.listen(PORT, () => {
       // Não inclui openwakeword: quem o usa é o wake_listener.py, um processo separado que o Hub
       // nunca lança — exigi-lo aqui pulava o warmup numa máquina com STT e TTS perfeitos.
       if (py.ok) { warmUpStt(); warmUpTts(); }
+      // VOZ-00 F3: retenção do áudio de voz no boot e de hora em hora.
+      sweepVoiceAudio(); setInterval(sweepVoiceAudio, 60 * 60_000).unref?.();
     })();
   }
   // Embedding stays opt-in (mirrors semanticMemoryActive's own gate) — only warm it when semantic

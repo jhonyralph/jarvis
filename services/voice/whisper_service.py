@@ -4,10 +4,30 @@ stdio (JSON lines). This avoids reloading the model on every voice message, whic
 a bigger/better model (large-v3-turbo) usable without paying a multi-second load per utterance.
 
 Protocol (one JSON object per line):
-  stdin  ->  {"id": 1, "path": "C:\\...\\clip.webm", "lang": "pt"|null, "hotwords": "Docker git ..."}
+  stdin  ->  {"id": 1, "path": "C:\\...\\clip.webm", "lang": "pt"|null, "langs": ["pt","en"]|null,
+              "hotwords": "Docker git ..."}
   stdout <-  {"ready": true, "model": "...", "device": "cuda"|"cpu", "compute": "int8"}   # once
-             {"id": 1, "text": "...", "lang": "pt"}               # per request
+             {"id": 1, "text": "...", "lang": "pt", "conf": 0.83}  # per request
              {"id": 1, "error": "..."}                            # per request, on failure
+
+"langs" (VOZ-00 RN-H3): the language is detected ONLY among these and the clip is then transcribed
+with the winner pinned. Free auto-detect over ~100 languages is what turned Portuguese into Romanian;
+a restricted set keeps the "speak English sometimes" door open without that failure. "lang" wins
+over "langs" when both come.
+
+Streaming (VOZ-00 F4/F5) — while the user is still talking:
+  stdin  ->  {"op": "stream_open", "sid": "s1", "lang": "pt"|null, "langs": [...]|null, "hotwords": "..."}
+             {"op": "stream_audio", "sid": "s1", "pcm": "<base64 int16 mono 16 kHz>"}
+             {"op": "stream_close", "sid": "s1"}
+  stdout <-  {"sid": "s1", "event": "vad", "speechMs": 1830, "silenceMs": 420, "durMs": 2900, "partialFresh": true}
+             {"sid": "s1", "event": "partial", "text": "verifica se o build", "fresh": false}
+             {"sid": "s1", "event": "error", "error": "..."}
+The model-based voice detector (Silero, shipped with faster-whisper) measures silence since the last
+SPEECH — not since the last noise — and partial transcripts tell the Hub whether the sentence sounds
+finished. The Hub decides the end of turn; the final transcript still comes from the normal request.
+
+"conf" is a 0..1 confidence (exp of the duration-weighted mean token log-prob). The Hub uses it to
+decide whether paying an LLM correction pass is worth it (VOZ-00 RN-C3).
 
 Language: pinned to JARVIS_STT_LANG (default "pt") when the request's "lang" is null. On this
 single-user, Portuguese-first box, auto-detect was mis-firing (transcribing pt speech as Romanian
@@ -71,8 +91,10 @@ def _add_nvidia_cuda_dll_dirs() -> None:
 
 _add_nvidia_cuda_dll_dirs()
 
+import math
+
 import numpy as np
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, decode_audio
 
 _DEFAULT_MODEL = "deepdml/faster-whisper-large-v3-turbo-ct2"
 MODEL = os.environ.get("JARVIS_STT_MODEL", _DEFAULT_MODEL)
@@ -105,6 +127,130 @@ def _load(device: str, compute: str) -> WhisperModel:
     segments, _ = m.transcribe(probe, language=LANG or "pt", vad_filter=False, beam_size=1)
     list(segments)  # the generator is lazy; consume it to actually run inference
     return m
+
+
+def _pick_language(model: WhisperModel, audio: "np.ndarray", allowed: list) -> str:
+    """Most probable language AMONG `allowed` (not among all ~100). Falls back to the first allowed
+    one when detection fails or none of them shows up in the probabilities."""
+    try:
+        _lang, _prob, probs = model.detect_language(audio=audio, vad_filter=True)
+        ranked = {code: p for code, p in (probs or [])}
+        best = max(allowed, key=lambda code: ranked.get(code, 0.0))
+        return best if ranked.get(best, 0.0) > 0 else allowed[0]
+    except Exception as e:  # noqa: BLE001 — detection is an optimization; transcription still runs
+        _log(f"[stt] deteccao de idioma falhou ({e}); usando {allowed[0]}")
+        return allowed[0]
+
+
+def _confidence(segments: list) -> "float | None":
+    """exp(mean avg_logprob weighted by segment duration), clamped to 0..1. None without segments."""
+    total = 0.0
+    weight = 0.0
+    for seg in segments:
+        dur = max(0.01, float(seg.end) - float(seg.start))
+        total += float(seg.avg_logprob) * dur
+        weight += dur
+    if weight <= 0:
+        return None
+    return max(0.0, min(1.0, math.exp(total / weight)))
+
+
+# --- streaming (VOZ-00 F4/F5) ---------------------------------------------------------------------
+_VAD_WINDOW = 512                 # 32 ms a 16 kHz — a janela do Silero
+_VAD_TRAIL = 16000 * 8            # o silêncio é medido nos últimos 8 s (custo constante por pedaço)
+_STREAM_MAX = 16000 * 120         # teto de 2 min por gravação
+_PARTIAL_EVERY = 16000 * 1.5      # parcial a cada ~1,5 s de áudio novo enquanto há fala
+_PAUSE_PARTIAL_MS = 350           # numa pausa, uma parcial que cubra tudo o que foi dito
+_vad_model = None
+
+
+def _vad():
+    global _vad_model
+    if _vad_model is None:
+        from faster_whisper.vad import get_vad_model
+        _vad_model = get_vad_model()
+    return _vad_model
+
+
+class _Stream:
+    def __init__(self, sid: str, lang, langs, hotwords):
+        self.sid = sid
+        self.lang = lang
+        self.langs = langs or []
+        self.hotwords = hotwords
+        self.buf = np.zeros(0, dtype=np.float32)
+        self.counted = 0            # amostras já contadas no total de fala
+        self.speech_ms = 0
+        self.last_speech_end = -1   # amostra onde a última fala terminou
+        self.partial_at = 0         # tamanho do buffer na última parcial
+
+
+_streams: dict = {}
+
+
+def _stream_partial(model: WhisperModel, st: "_Stream", fresh: bool) -> None:
+    lang = st.lang
+    if not lang and len(st.langs) == 1:
+        lang = st.langs[0]
+    if not lang and len(st.langs) > 1:
+        lang = st.lang = _pick_language(model, st.buf, st.langs)   # decide uma vez por gravação
+    segments, _info = model.transcribe(
+        st.buf, language=lang or LANG or None, vad_filter=False, beam_size=1,
+        hotwords=st.hotwords or None, condition_on_previous_text=False, without_timestamps=True,
+    )
+    text = " ".join(seg.text.strip() for seg in segments).strip()
+    st.partial_at = len(st.buf)
+    _emit({"sid": st.sid, "event": "partial", "text": text, "fresh": fresh})
+
+
+def _stream_audio(model: WhisperModel, st: "_Stream", pcm: bytes) -> None:
+    chunk = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    if len(st.buf) + len(chunk) > _STREAM_MAX:
+        chunk = chunk[: max(0, _STREAM_MAX - len(st.buf))]
+    st.buf = np.concatenate([st.buf, chunk])
+    n = len(st.buf) // _VAD_WINDOW * _VAD_WINDOW
+    start = max(0, (n - _VAD_TRAIL) // _VAD_WINDOW * _VAD_WINDOW)
+    if n - start < _VAD_WINDOW:
+        return
+    probs = np.asarray(_vad()(st.buf[start:n])).reshape(-1)
+    speech = probs >= 0.5
+    # Total de fala: conta só janelas novas (as já contadas ficam como estavam).
+    first_new = max(0, (st.counted - start) // _VAD_WINDOW)
+    st.speech_ms += int(speech[first_new:].sum()) * 32
+    st.counted = n
+    idx = np.where(speech)[0]
+    if len(idx):
+        st.last_speech_end = start + (int(idx[-1]) + 1) * _VAD_WINDOW
+    silence_ms = int((n - st.last_speech_end) / 16) if st.last_speech_end >= 0 else int(n / 16)
+    fresh = st.last_speech_end >= 0 and st.partial_at >= st.last_speech_end
+    _emit({"sid": st.sid, "event": "vad", "speechMs": st.speech_ms, "silenceMs": silence_ms, "durMs": int(len(st.buf) / 16), "partialFresh": fresh})
+    if st.speech_ms < 250:
+        return
+    if silence_ms >= _PAUSE_PARTIAL_MS and not fresh:
+        _stream_partial(model, st, True)       # pausa: o Hub precisa saber se a frase acabou
+    elif silence_ms < _PAUSE_PARTIAL_MS and len(st.buf) - st.partial_at >= _PARTIAL_EVERY:
+        _stream_partial(model, st, False)      # falando: parcial para mostrar na tela
+
+
+def _handle_stream(model: WhisperModel, req: dict) -> None:
+    op, sid = req.get("op"), str(req.get("sid") or "")
+    if not sid:
+        return
+    try:
+        if op == "stream_open":
+            langs = [c for c in (req.get("langs") or []) if isinstance(c, str) and c]
+            _streams[sid] = _Stream(sid, req.get("lang") or None, langs, req.get("hotwords") or None)
+            if len(_streams) > 8:   # aparelho que sumiu sem fechar: descarta o mais antigo
+                _streams.pop(next(iter(_streams)))
+        elif op == "stream_audio":
+            st = _streams.get(sid)
+            if st is not None:
+                import base64
+                _stream_audio(model, st, base64.b64decode(req.get("pcm") or ""))
+        elif op == "stream_close":
+            _streams.pop(sid, None)
+    except Exception as e:  # noqa: BLE001 — um pedaço ruim não derruba o serviço
+        _emit({"sid": sid, "event": "error", "error": str(e)})
 
 
 def _warn_mac_cpu_only() -> None:
@@ -163,17 +309,30 @@ def main() -> int:
         req_id = None
         try:
             req = json.loads(line)
+            if req.get("op"):
+                _handle_stream(model, req)
+                continue
             req_id = req.get("id")
+            lang = req.get("lang") or None
+            allowed = [code for code in (req.get("langs") or []) if isinstance(code, str) and code]
+            source = req["path"]
+            if not lang and len(allowed) == 1:
+                lang = allowed[0]
+            elif not lang and len(allowed) > 1:
+                source = decode_audio(req["path"], sampling_rate=16000)   # decode once, reuse below
+                lang = _pick_language(model, source, allowed)
             segments, info = model.transcribe(
-                req["path"],
-                language=req.get("lang") or LANG or None,   # request lang > JARVIS_STT_LANG > auto
+                source,
+                language=lang or LANG or None,   # request lang/langs > JARVIS_STT_LANG > auto
                 vad_filter=True,
                 beam_size=int(req.get("beam", BEAM)),
                 hotwords=req.get("hotwords") or None,
                 condition_on_previous_text=False,   # each utterance is independent; avoids drift
             )
-            text = " ".join(s.text.strip() for s in segments).strip()
-            _emit({"id": req_id, "text": text, "lang": getattr(info, "language", None)})
+            segs = list(segments)
+            text = " ".join(s.text.strip() for s in segs).strip()
+            conf = _confidence(segs)
+            _emit({"id": req_id, "text": text, "lang": getattr(info, "language", None), "conf": None if conf is None else round(conf, 3)})
         except Exception as e:  # noqa: BLE001 — one bad request must not kill the service
             _emit({"id": req_id, "error": str(e)})
     return 0

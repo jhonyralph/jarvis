@@ -10,15 +10,17 @@
  * on top later; this alone fixes reading '**', '`', tables, images, etc.
  */
 
+import { speechMarkers, type ListenLanguage, type SpeechMarkers } from "@jarvis/core";
+
 const EMOJI =
   /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{20E3}\u{2122}\u{2139}]/gu;
 
-function cleanInline(s: string): string {
+function cleanInline(s: string, mk: SpeechMarkers): string {
   return s
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_m, a) => (a ? `imagem ${a}, no chat` : "imagem no chat"))
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_m, a) => (a ? mk.imageNamed(a) : mk.image))
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // links -> text only
-    .replace(/`([^`]+)`/g, (_m, c) => (c.length > 40 ? "código no chat" : c)) // inline code
-    .replace(/https?:\/\/\S+/g, "link") // don't read full URLs
+    .replace(/`([^`]+)`/g, (_m, c) => (c.length > 40 ? mk.inlineCode : c)) // inline code
+    .replace(/https?:\/\/\S+/g, mk.link) // don't read full URLs
     .replace(EMOJI, "")
     .replace(/^#{1,6}\s+/, "") // headers
     .replace(/^\s{0,3}(?:[>\-*+•·]|\d+[.)])\s+/, "") // leading list / quote markers
@@ -35,14 +37,16 @@ function cleanInline(s: string): string {
     .trimEnd();
 }
 
-export function speechify(md: string): string {
+/** `lang`: idioma da conversa (VOZ-00 RN-H6) — os avisos de tabela/código saem nesse idioma. */
+export function speechify(md: string, lang: ListenLanguage = "pt"): string {
+  const mk = speechMarkers(lang);
   const lines = md.split(/\r?\n/);
   const out: string[] = [];
   let inFence = false;
   let tableRun = 0;
 
   const flushTable = () => {
-    if (tableRun >= 2) out.push("(tabela no chat)");
+    if (tableRun >= 2) out.push(mk.table);
     tableRun = 0;
   };
 
@@ -50,7 +54,7 @@ export function speechify(md: string): string {
     if (/^\s*```/.test(line)) {
       if (!inFence) {
         flushTable();
-        out.push("(trecho de código no chat)");
+        out.push(mk.codeBlock);
         inFence = true;
       } else {
         inFence = false;
@@ -63,7 +67,7 @@ export function speechify(md: string): string {
       continue;
     }
     flushTable();
-    out.push(cleanInline(line));
+    out.push(cleanInline(line, mk));
   }
   flushTable();
 
@@ -78,8 +82,8 @@ export function speechify(md: string): string {
  *  index.ts, fails or is unavailable). Cuts cleanly at a word boundary — does NOT announce
  *  "o restante está no chat": the user already sees the full text on screen, and hearing that
  *  fixed phrase every time a reply ran long felt robotic and repetitive. */
-export function speechifyCapped(md: string, max = 700): string {
-  let s = speechify(md);
+export function speechifyCapped(md: string, max = 700, lang: ListenLanguage = "pt"): string {
+  let s = speechify(md, lang);
   if (s.length > max) s = s.slice(0, max).replace(/\s+\S*$/, "").replace(/[,;:]$/, "") + ".";
   return s;
 }

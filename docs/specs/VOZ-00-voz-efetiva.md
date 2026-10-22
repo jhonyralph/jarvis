@@ -61,13 +61,13 @@ Verificado no código e nos dados desta instalação em 2026-10-22:
    o único registro posterior (2026-09-26, 310 ms) é de uma fala vazia. **A latência atual da
    transcrição é desconhecida.**
 
-2. **O idioma é adivinhado, e erra.** A transcrição usa `idioma do pedido > JARVIS_STT_LANG >
-   autodetecção` (`services/voice/whisper_service.py:169`). O cliente manda `lang: null`
-   (`apps/hub/src/stt.ts:129`) e `JARVIS_STT_LANG` não está definido, então tudo cai em
-   autodetecção. Resultado registrado em 2026-08-04: uma fala em português transcrita como
-   *"Voila, judea pentru ziunului, vamo testa comunicas"* (romeno). A autodetecção é deliberada —
-   `stt.ts:6` documenta que ela existe para aceitar fala em inglês —, então corrigir isso é uma
-   troca, não um ajuste (ver DEC-04).
+2. **O idioma era fixo só em português, sem escolha.** *Correção de 2026-10-22: a primeira versão
+   desta spec dizia que o idioma era adivinhado. Estava errado.* Desde 2026-08-03 (commit `c3c335e`)
+   o serviço fixa o português quando o pedido não diz o idioma (`JARVIS_STT_LANG`, padrão `pt`); o
+   comentário de `stt.ts` é que ainda falava em autodetecção. A transcrição em romeno de 2026-08-04
+   (*"Voila, judea pentru ziunului…"*) é de poucas horas depois, provavelmente antes de o Hub ser
+   reiniciado com a mudança. O problema real era outro: não havia como falar outro idioma nem
+   praticar um (ver DEC-04 e UC-15).
 
 3. **A saída só começa no fim.** A síntese recebe o texto completo da resposta. Se a versão falada
    passar de 600 caracteres, `speechForReply` (`index.ts:3728`) faz **mais uma chamada de LLM**
@@ -117,7 +117,7 @@ domínio público e já estavam registradas no backlog de julho (G1, G12).
 | Timeout que reinicia a transcrição travada | Sim | `apps/hub/src/stt.ts` | G19 |
 | Transcrição incremental / parciais | **Não** — arquivo inteiro | `whisper_service.py` | G12 |
 | Glossário de termos técnicos | Sim | `~/.jarvis/stt-hotwords.txt`, `stt.ts:8` | — |
-| Idioma fixo | **Não** — autodetecção | `whisper_service.py:169` | transcrição de 2026-08-04 |
+| Idioma fixo | Sim — português desde 2026-08-03; sem escolha de outro idioma | `whisper_service.py` (`JARVIS_STT_LANG`) | correção de 2026-10-22 |
 | Fim de fala | Limiar de silêncio configurável | `app.js:154` (`silenceSec`) | G2 |
 | Detector de atividade de voz por modelo | **Não** | — | G12 |
 | Fila central de áudio (sem sobreposição, parar funciona) | Sim | `app.js:1686` (`audioMgr`) | G3, G7 |
@@ -430,7 +430,12 @@ Etapas do turno de voz, do fim da fala do usuário ao primeiro som da resposta. 
   escolher e empacotar o detector.
 - **C.** Decisão no servidor, sobre áudio em fluxo. Mais preciso; depende de DEC-02.
 - **D.** C + decisão semântica (a frase parece completa?). Melhor resultado; maior custo.
-- **Recomendação:** B agora, D como evolução depois de DEC-02.
+- **Recomendação original:** B agora, D como evolução depois de DEC-02.
+- **Decidido na implementação (2026-10-22): C + D.** O detector por modelo (Silero) já vem instalado
+  com a biblioteca de transcrição do Hub — rodá-lo lá evita empacotar um modelo para navegador e app
+  (B), e no Hub ele já está ao lado da transcrição parcial, que é o que a decisão semântica (D)
+  precisa. Medido: 9 ms para analisar 5,6 s de áudio. O fim por volume no aparelho continua como
+  reserva automática quando o Hub não confirma a gravação ou avisa falha.
 
 ### DEC-02 — Transcrição de arquivo inteiro ou incremental
 
@@ -439,6 +444,10 @@ Etapas do turno de voz, do fim da fala do usuário ao primeiro som da resposta. 
   antecipada; muda cliente, protocolo e serviço.
 - **Recomendação:** B, mas só depois de F0 provar onde o tempo está hoje (com CUDA + `small` a
   transcrição pode já estar rápida o suficiente).
+- **Decidido na implementação (2026-10-22): híbrido.** As parciais existem para decidir o fim do turno
+  e mostrar na tela o que está sendo entendido; a transcrição FINAL continua sendo do arquivo inteiro,
+  pelo caminho que já é durável (F3) e que funciona mesmo sem o fluxo. Trocar a final pela parcial
+  fica para quando a telemetria mostrar que a transcrição final pesa no tempo percebido.
 
 ### DEC-03 — Correção e portão de relevância
 
@@ -532,6 +541,21 @@ Cada fase entrega valor sozinha e é verificável pela telemetria de F0.
 
 **Critério de pronto de cada fase:** testes verdes, telemetria mostrando a etapa dentro da meta em
 uso real por uma semana, e roteiro de dispositivo da seção 8 aprovado pelo usuário.
+
+### Estado da implementação (2026-10-22)
+
+Todas as fases estão implementadas no código e cobertas por testes de unidade; **nenhuma foi testada
+em aparelho real** e todas dependem de reiniciar o Hub. A validação da seção 8 é o próximo passo.
+
+| Fase | O que foi feito | Onde |
+|---|---|---|
+| F0 | Evento `voice_turn` por turno; `npm run voice:report` | `packages/core/src/voice-turn.ts`, `scripts/voice-report.ts` |
+| F1 | Idioma de escuta (fixo/conjunto/prática) com detecção restrita e confiança da transcrição; níveis do portão; endereço da voz na nuvem configurável | `voice-policy.ts`, `services/voice/whisper_service.py`, `apps/hub/src/stt.ts`, `tts.ts` |
+| F2 | Fala em trechos (primeira frase sai sozinha); resposta de outra máquina passa a ser preparada como as locais | `speech-chunks.ts`, `speakReplyChunks` no Hub |
+| F3 | Áudio guardado antes de transcrever, segunda tentativa automática, "tentar de novo", cópia no aparelho com reenvio sem duplicar, retenção configurável, 32 kbit/s | `voice-retention.ts`, `apps/hub/src/voiceAudio.ts` |
+| F4+F5 | Áudio em pedaços enquanto fala; detector por modelo + frase parcial decidem o fim do turno; parcial na tela | `voice-endpoint.ts`, `apps/hub/src/voiceStream.ts`, streaming em `whisper_service.py` |
+| F5 | Troca de assunto já existia (G21); agora a sugestão abre uma sessão nova com a fala no compositor. Voz entre máquinas já existia (G22: `jarvis_read_session`, `jarvis_send_to_session`) | `app.js` |
+| F6 | "Vamos praticar inglês/espanhol" e "volta pro português"; instrução de prática ao agente; comandos de parar e encerrar também em inglês e espanhol; texto falado, resumo e voz no idioma praticado | `voice-practice.ts`, `speechify.ts`, `tts.ts` |
 
 **Como ler a telemetria (F0):** `npm run voice:report` (ou `-- --days 30`, `-- --json`) mostra
 mínimo, mediana, p90 e máximo de cada etapa a partir dos eventos `voice_turn`. A medida principal é

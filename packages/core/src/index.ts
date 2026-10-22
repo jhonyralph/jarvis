@@ -92,3 +92,8 @@ export * from "./personal-mcp-client.js";
 export * from "./home-assistant-context.js";
 export * from "./region-sources.js";
 export * from "./voice-turn.js";
+export * from "./voice-policy.js";
+export * from "./speech-chunks.js";
+export * from "./voice-retention.js";
+export * from "./voice-practice.js";
+export * from "./voice-endpoint.js";

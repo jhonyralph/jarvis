@@ -44,6 +44,16 @@ export interface VoiceTurnEvent {
   speakerMs?: number;
   preflightMs?: number;
   relevant?: boolean;
+  /** Confiança da transcrição, 0..1. */
+  sttConf?: number;
+  /** Idioma em que a fala foi transcrita. */
+  sttLang?: string;
+  /** Nível do portão (RN-C5) e o motivo da decisão — calibram o que conta como "ambíguo". */
+  gateLevel?: string;
+  gateReason?: string;
+  /** Como a gravação terminou: decisão do Hub (frase_completa, frase_incompleta...) ou "volume"
+   *  (o fim de fala antigo do aparelho, quando o streaming não estava disponível). */
+  endpointReason?: string;
   /** Do recebimento do áudio até o despacho ao agente (inclui transcrição, portão e roteamento). */
   dispatchMs?: number;
   /** Do despacho até o agente terminar. */
@@ -145,7 +155,7 @@ export class VoiceTurnTracker {
   }
 
   /** Etapas de entrada, medidas pelo Hub. */
-  input(key: string, fields: { sttMs?: number; speakerMs?: number; preflightMs?: number; relevant?: boolean }): void {
+  input(key: string, fields: { sttMs?: number; speakerMs?: number; preflightMs?: number; relevant?: boolean; sttConf?: number; sttLang?: string; gateLevel?: string; gateReason?: string; endpointReason?: string }): void {
     const turn = this.byKey.get(key); if (!turn) return;
     Object.assign(turn.ev, defined(fields));
   }

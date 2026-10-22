@@ -24,6 +24,12 @@ const SILENCE = Number(process.env.JARVIS_TTS_SILENCE || "0.32");
 const NOISEW = Number(process.env.JARVIS_TTS_NOISEW || "0.9");
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.JARVIS_OPENAI_API_KEY || "";
 const OPENAI_TTS_MODEL = process.env.JARVIS_OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
+// VOZ-00 DEC-06 C: o endereço da voz na nuvem é configurável. Qualquer servidor compatível com a
+// API de fala da OpenAI (inclusive um local) entra sem mudar o aparelho. Um endereço próprio pode
+// dispensar chave — por isso a voz conta como disponível com chave OU com endereço próprio.
+const CLOUD_TTS_URL = process.env.JARVIS_TTS_URL || "https://api.openai.com/v1/audio/speech";
+const CLOUD_TTS_KEY = process.env.JARVIS_TTS_API_KEY || OPENAI_API_KEY;
+const CLOUD_TTS_READY = !!CLOUD_TTS_KEY || !!process.env.JARVIS_TTS_URL;
 
 export interface VoiceInfo {
   id: string;
@@ -354,16 +360,16 @@ export function listVoiceCatalog(): VoiceInfo[] {
     accent: voice.accent,
     description: voice.description,
     previewText: voice.previewText,
-    available: !!OPENAI_API_KEY,
+    available: CLOUD_TTS_READY,
     local: false,
-    requiresKey: !OPENAI_API_KEY,
+    requiresKey: !CLOUD_TTS_READY,
   }));
   return [...openai, ...piper];
 }
 
 /** true se o modelo de voz existe localmente. */
 export function hasVoice(voice: string): boolean {
-  if (isOpenAiVoice(voice)) return !!OPENAI_API_KEY && !!openAiProfile(voice);
+  if (isOpenAiVoice(voice)) return CLOUD_TTS_READY && !!openAiProfile(voice);
   return !!voice && existsSync(join(VOICES, `${voice}.onnx`));
 }
 
@@ -373,6 +379,18 @@ function isOpenAiVoice(voice: string): boolean {
 
 function openAiProfile(voice: string): OpenAiVoiceProfile | undefined {
   return OPENAI_VOICE_PROFILES.find((v) => v.id === voice);
+}
+
+/** Voz local instalada que fala o idioma (prefixo do modelo Piper: "en_", "es_"...). */
+function piperVoiceFor(lang: string): string | undefined {
+  return listVoices().find((v) => v.toLowerCase().startsWith(`${lang.toLowerCase()}_`));
+}
+
+const LANGUAGE_NAMES: Record<string, string> = { pt: "Brazilian Portuguese", en: "English", es: "Spanish", fr: "French", it: "Italian", de: "German" };
+
+/** VOZ-00 RN-H6/RN-I3: existe voz para este idioma? Local instalada, ou a da nuvem (multilíngue). */
+export function hasLanguageVoice(lang: string): boolean {
+  return lang === "pt" || !!piperVoiceFor(lang) || CLOUD_TTS_READY;
 }
 
 function fallbackPiperVoice(): string | undefined {
@@ -487,16 +505,25 @@ export function warmUp(): void {
   ensureProc().catch((e) => console.warn("[tts] pré-aquecimento falhou (seguirá sob demanda no 1º uso):", String((e as Error)?.message || e)));
 }
 
-export async function synthesize(text: string, voice = "en_GB-alan-medium", opts: { fallback?: boolean } = {}): Promise<Buffer> {
+export async function synthesize(text: string, voice = "en_GB-alan-medium", opts: { fallback?: boolean; lang?: string } = {}): Promise<Buffer> {
+  // VOZ-00 RN-H6 (prática de idioma): falar em outro idioma pede uma voz que o fale. A da nuvem é
+  // multilíngue (só muda a instrução de pronúncia); a local precisa de um modelo do idioma.
+  const lang = opts.lang && opts.lang !== "pt" ? opts.lang : undefined;
+  if (lang && !isOpenAiVoice(voice)) {
+    const local = piperVoiceFor(lang);
+    if (local) return await synthesizePiper(text, local);
+    const cloud = CLOUD_TTS_READY ? OPENAI_VOICE_PROFILES[0]?.id : undefined;
+    if (cloud) voice = cloud;
+  }
   if (isOpenAiVoice(voice)) {
     try {
-      return await synthesizeOpenAi(text, voice);
+      return await synthesizeOpenAi(text, voice, lang);
     } catch (error) {
       // Falar uma RESPOSTA prefere dizer ALGO (cai numa voz local). Mas uma PRÉVIA (fallback:false)
       // não pode fingir: o usuário pediu para ouvir ESTA voz — se a OpenAI falha (ex.: sem quota),
       // propaga o erro em vez de tocar a voz local por baixo (o que fazia todas soarem iguais).
       if (opts.fallback === false) throw error;
-      const fallback = fallbackPiperVoice();
+      const fallback = (lang && piperVoiceFor(lang)) || fallbackPiperVoice();
       if (fallback) return await synthesizePiper(text, fallback);
       throw error;
     }
@@ -522,21 +549,23 @@ async function synthesizePiper(text: string, voice = "en_GB-alan-medium"): Promi
   });
 }
 
-async function synthesizeOpenAi(text: string, voice: string): Promise<Buffer> {
+async function synthesizeOpenAi(text: string, voice: string, lang?: string): Promise<Buffer> {
   const profile = openAiProfile(voice);
   if (!profile) throw new Error(`voz OpenAI desconhecida: ${voice}`);
-  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY nao configurada para OpenAI TTS");
-  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+  if (!CLOUD_TTS_READY) throw new Error("OPENAI_API_KEY nao configurada para OpenAI TTS (ou defina JARVIS_TTS_URL)");
+  const response = await fetch(CLOUD_TTS_URL, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      ...(CLOUD_TTS_KEY ? { "Authorization": `Bearer ${CLOUD_TTS_KEY}` } : {}),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
       model: OPENAI_TTS_MODEL,
       voice: profile.baseVoice,
       input: text,
-      instructions: profile.instructions,
+      // As instruções dos perfis mandam falar português. Na prática de idioma, a pronúncia é a do
+      // idioma praticado, um pouco mais devagar para quem está aprendendo acompanhar.
+      instructions: lang ? `Speak ${LANGUAGE_NAMES[lang] || lang} with natural, native pronunciation. Calm and clear, slightly slower than usual so a language learner can follow.` : profile.instructions,
       response_format: "wav",
     }),
   });

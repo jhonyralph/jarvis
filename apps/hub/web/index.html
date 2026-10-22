@@ -1979,8 +1979,29 @@
           <label class="row"><input type="checkbox" id="setContinue"> <span data-i18n="lblContinue">Após responder, continuar escutando follow-up</span></label>
           <label><span data-i18n="lblContinueWin">Janela de escuta de continuação (segundos)</span><input type="number" id="setContinueSec" min="5" max="120" step="5"></label>
           <label><span data-i18n="lblSilenceWin">Pausa antes de encerrar a fala (segundos)</span><input type="number" id="setSilenceSec" min="0.6" max="6" step="0.1"></label>
+          <label class="row"><input type="checkbox" id="setSmartEnd"> <span data-i18n="lblSmartEnd">Fim de fala inteligente (o Hub ouve enquanto você fala e espera quando a frase não acabou)</span></label>
           <label><span data-i18n="lblVoiceEscalate">Refino por voz — modelo em análises difíceis</span> <select id="setVoiceEscalate"></select></label>
-          <label class="row"><input type="checkbox" id="setVoiceRelevance"> <span data-i18n="lblVoiceRelevance">Só despachar falas que são comando (filtro anti-ruído)</span></label>
+          <label><span data-i18n="lblVoiceGateLevel">Antes de enviar uma fala</span> <select id="setVoiceGateLevel">
+            <option value="fast" data-i18n="optGateFast">Rápido — envia direto, sem checagem por IA</option>
+            <option value="balanced" data-i18n="optGateBalanced">Equilibrado — IA só quando a fala é ambígua</option>
+            <option value="strict" data-i18n="optGateStrict">Rigoroso — IA confere toda fala</option>
+          </select></label>
+          <label><span data-i18n="lblListenMode">Idioma de escuta</span> <select id="setListenMode">
+            <option value="fixed" data-i18n="optListenFixed">Um idioma</option>
+            <option value="set" data-i18n="optListenSet">Escolher entre alguns idiomas</option>
+            <option value="practice" data-i18n="optListenPractice">Praticar um idioma</option>
+          </select></label>
+          <div id="listenOpts" style="display:flex;flex-wrap:wrap;gap:6px 12px;margin:-2px 0 6px"></div>
+          <label><span data-i18n="lblAudioKeep">Guardar o áudio das falas</span> <select id="setAudioMode">
+            <option value="until_done" data-i18n="optAudioUntilDone">Só até transcrever (padrão)</option>
+            <option value="days" data-i18n="optAudioDays">Guardar por alguns dias</option>
+            <option value="off" data-i18n="optAudioOff">Não guardar (pode perder fala se falhar)</option>
+          </select></label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px 12px;margin:-2px 0 6px">
+            <label><span data-i18n="lblAudioDays">Dias</span> <input type="number" id="setAudioDays" min="1" max="90" step="1" style="width:5em"></label>
+            <label><span data-i18n="lblAudioHubMb">Máx. no Hub (MB)</span> <input type="number" id="setAudioHubMb" min="10" max="10000" step="10" style="width:6em"></label>
+            <label><span data-i18n="lblAudioDeviceMb">Máx. neste aparelho (MB)</span> <input type="number" id="setAudioDeviceMb" min="5" max="2000" step="5" style="width:6em"></label>
+          </div>
           <div class="sec"><span data-i18n="secAdvListen">Escuta avançada</span> <span class="soon">em desenvolvimento</span></div>
           <label class="row"><input type="checkbox" id="setWake"> <span data-i18n="lblWake">Wake word "Hey Jarvis" (máquina/APK)</span> <span class="soon">requer listener</span></label>
           <div id="wakeStatus" class="mut" style="font-size:12px;margin:-2px 0 6px 26px"></div>
