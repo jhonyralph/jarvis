@@ -46,6 +46,47 @@ function readHead(path: string, bytes = HEAD_BYTES): string {
 // Lê o FIM do arquivo. O ai-title "correto" é reescrito a cada turno e, numa sessão grande, mora
 // perto do EOF — muito além do head. A primeira linha pode vir cortada (offset no meio): o parser
 // de linha ignora o JSON inválido. 128KB cobre com folga (o último título fica a ~30KB do fim).
+/**
+ * Teto de UMA leitura de transcript (INC-03, 2026-10-17).
+ *
+ * Quatro funções deste arquivo liam o jsonl INTEIRO com `readFileSync` sem teto nenhum — e duas
+ * delas (`codexFileOps`, `nativeHistory`) resolvem rollout do Codex, onde esta instalação tem um
+ * arquivo de **733 MB**. O resultado não era só lentidão: passando de 512 MB o `readFileSync(...,
+ * "utf8")` estoura o limite de string do V8, o `catch` devolve vazio/null, e a função já tinha
+ * bloqueado o event loop e alocado centenas de MB para entregar NADA. Com o Hub sendo um único
+ * event loop (servidor + leitura + pai dos CLIs), isso congelava o Jarvis inteiro.
+ *
+ * Com teto, arquivo gigante entrega a CAUDA — que é justamente a parte que interessa (turnos
+ * recentes, último título, últimas operações) — em tempo limitado, em vez de entregar nada depois
+ * de travar tudo.
+ *
+ * 32 MB é o JOELHO da curva, medido nos dois piores arquivos desta instalação (rollout do Codex de
+ * 733 MB e transcript do Claude de 30 MB). O custo é linear no teto; a utilidade satura:
+ *
+ *   teto |  codex 733 MB          |  claude 30 MB
+ *        |  ms   msgs  pico RSS   |  ms   msgs  pico RSS
+ *    4MB |   59     3     14 MB   |   16     5     11 MB
+ *   16MB |   91    12     45 MB   |   56    34     48 MB   <- já perde histórico do Claude
+ *   32MB |  134    16     84 MB   |  113    52     75 MB   <- Claude COMPLETO
+ *   64MB |  220    22    143 MB   |  112    52     75 MB   <- +32 MB e +86 ms por 6 msgs
+ *
+ * Abaixo de 32 MB passa a truncar transcript legítimo (o do Claude cai de 52 para 34 mensagens).
+ * Acima, só se paga alocação: para o Claude 64 MB é idêntico a 32 MB, e no rollout patológico dobrar
+ * o teto compra 6 mensagens por +59 MB de pico e +86 ms de bloqueio. O pico transitório é o que
+ * importa aqui — o que FICA em cache é só 2-3 MB por sessão (medido com GC forçado).
+ */
+const TRANSCRIPT_READ_CAP_BYTES = Math.max(4 * 1024 * 1024, Number(process.env.JARVIS_TRANSCRIPT_READ_CAP_BYTES) || 32 * 1024 * 1024);
+/** Texto do transcript, inteiro quando cabe no teto e só a cauda quando não cabe. */
+function readTranscriptCapped(path: string): { text: string; truncated: boolean } {
+  let size = 0;
+  try { size = statSync(path).size; } catch { return { text: "", truncated: false }; }
+  if (size <= TRANSCRIPT_READ_CAP_BYTES) {
+    try { return { text: readFileSync(path, "utf8"), truncated: false }; } catch { return { text: "", truncated: false }; }
+  }
+  // readTail já trata a primeira linha cortada (o parser de linha descarta JSON inválido).
+  return { text: readTail(path, TRANSCRIPT_READ_CAP_BYTES), truncated: true };
+}
+
 function readTail(path: string, bytes = 131072): string {
   try {
     const size = statSync(path).size;
@@ -292,10 +333,16 @@ function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
 
 // ------------------------------- caching + public API -------------------------------
 const pcache = new Map<string, { mtime: number; meta: Omit<NativeMeta, "updatedAt"> | null }>();
+/** Único cache deste arquivo que não tinha teto: uma entrada por transcript já parseado, para sempre.
+ *  São 3.700 arquivos nativos nesta máquina e o número só cresce. As entradas são pequenas (meta,
+ *  não conteúdo), então o limite é folgado — na prática nunca evicta; ele existe para que o cache
+ *  não seja uma das poucas estruturas do Hub que crescem sem limite nenhum. */
+const PCACHE_LIMIT = 8_000;
 function cachedParse(path: string, mtime: number, fn: (p: string) => Omit<NativeMeta, "updatedAt"> | null) {
   const c = pcache.get(path);
   if (c && c.mtime === mtime) return c.meta;
   const meta = fn(path);
+  if (pcache.size >= PCACHE_LIMIT) pcache.delete(pcache.keys().next().value as string);
   pcache.set(path, { mtime, meta });
   return meta;
 }
@@ -345,7 +392,8 @@ function searchDoc(path: string, mtime: number, claude: boolean, title: string):
   const hit = searchDocCache.get(path);
   if (hit && hit.key === key) return hit;
   let raw = "";
-  try { raw = readFileSync(path, "utf8"); } catch { return { title, hay: title }; }
+  raw = readTranscriptCapped(path).text;
+  if (!raw) return { title, hay: title };
   const parts: string[] = [title];
   let total = title.length;
   eachLine(raw, (o) => {
@@ -641,7 +689,8 @@ function claudeFileOps(jsonlPath: string): Map<string, FileOp> {
   if (hit && stamp && hit.key === stamp) return hit.ops;
   const ops = new Map<string, FileOp>();
   let raw: string;
-  try { raw = readFileSync(jsonlPath, "utf8"); } catch { return ops; }
+  raw = readTranscriptCapped(jsonlPath).text;
+  if (!raw) return ops;
   const bump = (p: string): FileOp => { let o = ops.get(p); if (!o) { o = { action: "read", edits: [], adds: 0, dels: 0 }; ops.set(p, o); } return o; };
   eachLine(raw, (o: any) => {
     if (o.type !== "assistant") return;
@@ -679,7 +728,8 @@ function codexFileOps(jsonlPath: string): Map<string, FileOp> {
   try { const s = statSync(jsonlPath); stamp = `${s.mtimeMs}:${s.size}`; } catch { /* fresh read */ }
   const hit = opsCache.get(jsonlPath); if (hit && stamp && hit.key === stamp) return hit.ops;
   const ops = new Map<string, FileOp>();
-  let raw = ""; try { raw = readFileSync(jsonlPath, "utf8"); } catch { return ops; }
+  const raw = readTranscriptCapped(jsonlPath).text;
+  if (!raw) return ops;
   eachLine(raw, (o) => {
     if (o.type !== "event_msg" || o.payload?.type !== "patch_apply_end") return;
     for (const [path, change] of Object.entries(o.payload.changes || {}) as Array<[string, any]>) {
@@ -793,12 +843,8 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   const ckey = f.path;
   const hit = histCache.get(ckey);
   if (hit && stamp && hit.key === stamp) return hit.data;
-  let raw: string;
-  try {
-    raw = readFileSync(f.path, "utf8");
-  } catch {
-    return null;
-  }
+  const raw = readTranscriptCapped(f.path).text;
+  if (!raw) return null;
   const messages: HistMsg[] = [];
   const toolRefs: Array<{ ev: HistEvent; name: string; input: unknown }> = [];
   let cwd = "", lastAi = "", lastCustom = "", codexTitle = "";

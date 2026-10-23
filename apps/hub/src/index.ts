@@ -9179,7 +9179,55 @@ async function reconcileNativeAfterBoot(): Promise<void> {
   if (replies) console.log(`[hub] reconciliei ${replies} sessão(ões) com resposta nativa que tinha ficado invisível`);
   if (executions) console.log(`[hub] reconciliei ${executions} execução(ões) nativas sem terminal observado`);
   log.info("boot_reconcile", { ms: Date.now() - t0, replies, executions });
+  armLoopStallExit("boot_reconcile_concluido");
 }
+
+/* ── Auto-abort por travamento do event loop (INC-03, 2026-10-17) ────────────────────────────────
+ * Em 17/10 o Hub travou e o watchdog o matou à força. A última thread ficou presa numa espera de
+ * kernel não-interrompível: o `TerminateProcess` nunca completou, o processo ficou PENDENTE DE
+ * TÉRMINO segurando a 4577 (mais 41 sockets em CLOSE_WAIT), e nenhum Hub novo conseguiu subir —
+ * queda TOTAL até reiniciar a máquina. É a mesma família do zumbi que o `server.once("error")`
+ * abaixo já evita no EADDRINUSE, só que chegando pelo outro lado.
+ *
+ * A lição é curta: quem sai LIMPO nunca vira zumbi. Então o Hub vigia o atraso do PRÓPRIO event
+ * loop e, se passar do teto, encerra sozinho enquanto ainda tem controle — o supervisor religa em
+ * ~15 s em vez das 13-15 min medidas nos incidentes. Não substitui tirar a leitura pesada do loop
+ * (é a correção de verdade); é a rede que garante que uma próxima trava seja minutos, não um dia.
+ *
+ * Três cuidados que o teto precisa respeitar:
+ *  - FOLGA: o boot já mediu pausas legítimas de 7-20 s, e este laço só é ARMADO depois dele.
+ *  - ABAIXO DO WATCHDOG: o watchdog mata à força em ~120 s. Sair antes disso é justamente o ponto —
+ *    se ele vencer a corrida, voltamos ao zumbi.
+ *  - UM TIQUE SÓ: se o loop está travado, este timer não dispara; o atraso é medido no tique
+ *    SEGUINTE. Logo o processo só sai depois de a trava já ter passado — nunca durante.
+ */
+const LOOP_SAMPLE_MS = 1_000;
+const LOOP_STALL_EXIT_MS = Math.max(20_000, Number(process.env.JARVIS_HUB_STALL_EXIT_MS) || 45_000);
+let loopStallArmed = false;
+let loopLastTick = Date.now();
+let loopWorstLagMs = 0;
+/** Armado só quando o boot termina: antes disso uma pausa longa é esperada, não defeito. */
+function armLoopStallExit(reason: string): void {
+  if (loopStallArmed) return;
+  loopStallArmed = true;
+  loopLastTick = Date.now();   // zera a régua: o atraso do boot não conta contra o primeiro tique
+  log.info("hub_loop_guard_armed", { reason, limitMs: LOOP_STALL_EXIT_MS, sampleMs: LOOP_SAMPLE_MS });
+}
+setInterval(() => {
+  const now = Date.now();
+  const lag = now - loopLastTick - LOOP_SAMPLE_MS;   // o quanto o tique atrasou ALÉM do intervalo
+  loopLastTick = now;
+  if (lag > loopWorstLagMs) loopWorstLagMs = lag;
+  if (!loopStallArmed || lag < LOOP_STALL_EXIT_MS) return;
+  hubExitReason = `loop_stall_${Math.round(lag / 1000)}s`;
+  // Síncrono de propósito: o logger grava com appendFileSync e, saindo aqui, não existe "depois".
+  try { log.error("hub_loop_stall_exit", { lagMs: lag, limitMs: LOOP_STALL_EXIT_MS, uptimeS: Math.round(process.uptime()) }); } catch { /* best effort */ }
+  console.error(`[hub] event loop travado ${Math.round(lag / 1000)}s (teto ${Math.round(LOOP_STALL_EXIT_MS / 1000)}s) — encerrando LIMPO para o supervisor religar. Morrer à força aqui é o que vira zumbi segurando a porta.`);
+  process.exit(1);
+}, LOOP_SAMPLE_MS).unref?.();
+// Rede da rede: se a reconciliação do boot nunca terminar (foi o caso em que o Hub "parecia morto"),
+// o guarda ainda entra em serviço. 15 min espelha a carência de boot do watchdog em start-hub.ps1.
+setTimeout(() => armLoopStallExit("carencia_de_boot_esgotada"), 15 * 60_000).unref?.();
 // Graceful shutdown: the Hub is also a runner (it spawns local agent CLIs under the configured permission mode).
 // A service stop / SIGTERM would orphan them — abort every live local turn (killTree fires via the
 // AbortSignal) before exiting, mirroring the runner.

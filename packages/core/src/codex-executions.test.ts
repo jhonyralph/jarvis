@@ -136,6 +136,40 @@ test("rollout de outro pai continua fora, tique após tique, mesmo crescendo", (
   assert.deepEqual(codexChildRollouts("p2", { root }).map((c) => c.id), ["outro"]);
 });
 
+/* INC-03 (2026-10-17): `newEntry()` começa em `offset: 0`, então a primeira visão de um rollout
+ * (todo cache frio = todo restart do Hub) pedia o arquivo TODO numa alocação e leitura síncrona.
+ * Com um rollout de 733 MB isso congelava o event loop do Hub inteiro. Agora cada passada tem teto
+ * de 8 MB — e o teste que importa é que NADA se perde: o resto entra nas passadas seguintes. */
+test("ingestão de rollout grande é fatiada por passada e ainda converge para o estado final", () => {
+  resetCodexRolloutCache();
+  const root = rolloutDir();
+  const file = rolloutPath(root, "grande.jsonl");
+  // Recheio > 8 MB entre o início e o fim do turno, para forçar mais de uma passada.
+  const filler = JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "x".repeat(2000) }] } });
+  const linhas = [meta("grande", "p1"), started(1)];
+  for (let i = 0; i < 5000; i++) linhas.push(filler);   // ~10 MB
+  linhas.push(completed("terminou", 2));
+  writeFileSync(file, linhas.join("\n") + "\n");
+  const total = statSync(file).size;
+  assert.ok(total > 8 * 1024 * 1024, `fixture precisa passar do teto de 8 MB; tem ${total} bytes`);
+
+  // Primeira passada: já devolve algo utilizável, sem ter lido o arquivo inteiro.
+  const primeira = codexChildRollouts("p1", { root })[0];
+  assert.ok(primeira, "a primeira passada tem de devolver o filho, mesmo sem ler tudo");
+  assert.equal(primeira.state, "running", "o `task_complete` está depois do teto — ainda não foi visto");
+
+  // Tiques seguintes continuam de onde pararam até convergir. O teste falha se o atalho de cache
+  // ("nada mudou") congelar o snapshot incompleto — foi o risco real desta mudança.
+  let atual = primeira;
+  for (let i = 0; i < 20 && atual.state !== "succeeded"; i++) atual = codexChildRollouts("p1", { root })[0];
+  assert.equal(atual.state, "succeeded", "a ingestão fatiada não convergiu: o cache travou num snapshot incompleto");
+  assert.equal(atual.summary, "terminou");
+
+  // Nada mais a ler: o snapshot estabiliza (não fica reingerindo para sempre).
+  const estavel = codexChildRollouts("p1", { root })[0];
+  assert.equal(estavel.state, "succeeded");
+});
+
 test("arquivo que encolhe (rotacionado/trocado) é reparseado do zero", () => {
   resetCodexRolloutCache();
   const root = rolloutDir(), file = rolloutPath(root, "d.jsonl");

@@ -352,6 +352,21 @@ async function rolloutFilesAsync(root: string): Promise<string[]> {
   await walk(root); return found;
 }
 
+/**
+ * Teto de bytes por PASSADA de ingestão (INC-03, 2026-10-17).
+ *
+ * `newEntry()` começa com `offset: 0`, então a primeira visão de um rollout — o que acontece a cada
+ * cache frio, isto é, depois de TODO restart do Hub — pedia `st.size - 0` numa única alocação e
+ * leitura síncrona. Com um rollout de centenas de MB (há um de 733 MB nesta instalação) isso é o
+ * mesmo congelamento do event loop que derrubava o Jarvis inteiro.
+ *
+ * Nada é perdido: o excedente é ingerido nas passadas SEGUINTES, porque quando a passada é tetada
+ * registramos como "lido" a posição REAL (ver a chamada de buildSnapshot) em vez de `st.size` — sem
+ * isso o atalho "nada mudou" devolveria para sempre um snapshot incompleto. O trabalho fica
+ * distribuído pelos tiques em vez de concentrado num bloqueio único.
+ */
+const INGEST_MAX_BYTES_PER_PASS = 8 * 1024 * 1024;
+
 function childSnapshot(file: string, parentThreadId: string, sinceMs?: number): CodexChildRollout | undefined {
   // (1) Dono já conhecido e não é este pai: nem `stat` é preciso. Meta não muda.
   const known = fileCache.get(file);
@@ -367,8 +382,8 @@ function childSnapshot(file: string, parentThreadId: string, sinceMs?: number): 
   // (2) Nada mudou desde a última leitura.
   if (entry.size === st.size && entry.mtimeMs === st.mtimeMs && entry.snapshot) return entry.snapshot;
   // (3) Só o que foi anexado.
-  if (st.size > entry.offset) ingest(entry, readRange(file, entry.offset, st.size - entry.offset));
-  return buildSnapshot(entry, file, st.size, st.mtimeMs);
+  if (st.size > entry.offset) ingest(entry, readRange(file, entry.offset, Math.min(st.size - entry.offset, INGEST_MAX_BYTES_PER_PASS)));
+  return buildSnapshot(entry, file, Math.min(st.size, entry.offset), st.mtimeMs);
 }
 
 async function childSnapshotAsync(file: string, parentThreadId: string, sinceMs?: number): Promise<CodexChildRollout | undefined> {
@@ -383,8 +398,8 @@ async function childSnapshotAsync(file: string, parentThreadId: string, sinceMs?
   if (entry.meta === null || entry.parentId !== parentThreadId) return undefined;
   if (sinceMs && st.mtimeMs < sinceMs) return undefined;
   if (entry.size === st.size && entry.mtimeMs === st.mtimeMs && entry.snapshot) return entry.snapshot;
-  if (st.size > entry.offset) ingest(entry, await readRangeAsync(file, entry.offset, st.size - entry.offset));
-  return buildSnapshot(entry, file, st.size, st.mtimeMs);
+  if (st.size > entry.offset) ingest(entry, await readRangeAsync(file, entry.offset, Math.min(st.size - entry.offset, INGEST_MAX_BYTES_PER_PASS)));
+  return buildSnapshot(entry, file, Math.min(st.size, entry.offset), st.mtimeMs);
 }
 
 const byStart = (a: CodexChildRollout, b: CodexChildRollout): number =>
