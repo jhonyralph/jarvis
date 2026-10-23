@@ -1,3 +1,10 @@
+## [0.43.1](https://github.com/jhonyralph/jarvis/compare/v0.43.0...v0.43.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **editor:** o botao do cabecalho abre o Editor dentro do Jarvis; VS Code vira link secundario ([e6b8206](https://github.com/jhonyralph/jarvis/commit/e6b820615d39cb79a9ede3742141298981ae8b23))
+
 # [0.43.0](https://github.com/jhonyralph/jarvis/compare/v0.42.0...v0.43.0) (2026-10-23)
 
 
