@@ -1,3 +1,15 @@
+# [0.43.0](https://github.com/jhonyralph/jarvis/compare/v0.42.0...v0.43.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* **hub:** Hub volta sozinho quando a conta do servico trava (INC-04) ([bebb442](https://github.com/jhonyralph/jarvis/commit/bebb4426cd6a7006fc9bb723d7c488e23970493d))
+
+
+### Features
+
+* **editor:** editar ocupa a area principal e o chat fica a uma aba de distancia ([c04add3](https://github.com/jhonyralph/jarvis/commit/c04add312dc9d0e43b17b750fb41d83f11a682c0))
+
 # [0.42.0](https://github.com/jhonyralph/jarvis/compare/v0.41.0...v0.42.0) (2026-10-23)
 
 
