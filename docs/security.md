@@ -45,12 +45,30 @@ Trust boundaries:
 | Require-TLS | optional fail-closed: refuse non-loopback plaintext connections | `guard.ts` |
 | Device TTL | optional auto-revoke of a device token unused for N days | `auth.ts` |
 | Audit log | append-only attribution incl. failed/blocked auth with IP | `auth.ts` |
+| Remote browser (BRW-IDE-00) | **owner-only** (members refused even with a runner grant; refusals audited as `browser_denied`, opens/new tabs/navigations as `browser_open`/`browser_tab_open`/`browser_nav`); the machine's Chrome exposes CDP on `127.0.0.1` only and only frames/input/tab metadata cross the network — cookies and storage never leave the machine | `browserRelay.ts`, `core/browser.ts` |
+| AI in the browser (BRW-IDE-00 F2) | three levels enforced on the machine that owns the browser: **Ver** = read-only tools on the owner profile (the AI never launches the owner's Chrome); **agent profile** = full driving on a separate system profile with no owner logins (cookies isolated by `--user-data-dir`); **owner drive** = actions on the owner profile only after an explicit per-session opt-in in the 🌐 panel, with a visible "IA no controle" bar + "Assumir", expiring at the end of that session's turn / on Assumir / on Hub-link loss / after 30 min. Only **owner** turns get the bridge (per-turn token, loopback endpoint); no JS evaluation or cookie tools in any level; URLs limited to http(s)/about:blank (no `chrome://`, `file:`); `plan` mode = read tools only. Every call audited as `browser_agent_action` (tool, profile, ref/URL/key, "N caracteres" — never page content or typed text); grants as `browser_agent_grant_*`/`browser_agent_takeover`. `JARVIS_BROWSER_AGENT=0` turns the AI side off per machine. Page content is untrusted (prompt injection) — tool descriptions and MCP instructions say so; the owner-drive level is the conscious exception | `core/browser-agent.ts`, `browserRelay.ts` |
+| VS Code per machine (BRW-IDE-00 F4) | **owner-only** HTTP surface `/ide/<runnerId>/…`. A browser tab can't send the device token, so the authenticated WS mints a **one-time ticket** (256-bit, 60 s, bound to the machine; only its hash is kept) that `/ide/<id>/__jarvis_auth?t=…` exchanges for a session cookie `jarvis_ide` — **HttpOnly, SameSite=Strict, Secure under TLS, Path=/ide/<id>/**, 24 h, kept only in the Hub's memory (a Hub restart logs every IDE out). **Every** request and WebSocket upgrade re-checks the cookie **and** that the device that opened it still exists and is owner, so revoking/demoting a device closes its open IDE connections at once. Upgrades also require `Origin` = this Hub. code-server listens on `127.0.0.1` only (`--auth none`; the auth is ours) and remote machines are reached through the runner's existing connection, never a new port. Our cookie is stripped before reaching code-server; the ticket/cookie never go to `audit.log`. Audited: `ide_open`, `ide_session`, `ide_install`, `ide_stop`, `ide_denied`, `ide_auth_fail`, `ide_origin_reject`. Download pinned by SHA-256 (see the spec §17 for the residual risks: same origin as the Hub UI, antivirus HTML injection) | `ideGateway.ts`, `core/ide.ts`, `core/ide-tunnel.ts` |
 | Loopback admin | recovery/mint API bound to 127.0.0.1 only; rejects browser-origin/rebound-Host requests (anti-CSRF / DNS-rebinding) | `index.ts` |
 | Recovery | mint a pairing code from the host with zero logged-in devices | `jarvis.ps1` |
 
 Tokens/codes are high-entropy (pairing codes ~144-bit, device tokens 256-bit),
 so brute force is infeasible even before throttling; the throttle is defense in
 depth + anti-DoS + intrusion visibility (audited).
+
+### VS Code per machine — residual risks (BRW-IDE-00 F4)
+
+- **Same origin as the Jarvis UI.** The IDE is served under `/ide/…` of the Hub's own origin, so
+  JavaScript running in the workbench (web extensions, webviews with `allow-same-origin`) can read
+  the Jarvis UI's `localStorage` — where the device token lives. Only the owner opens the IDE and
+  only the owner installs extensions, and code-server's extension host already has a shell on that
+  machine; the escalation is "one machine → the Hub's owner token". Install extensions you trust.
+  The structural fix (serving the IDE from a separate origin/port) is listed as follow-up in the spec.
+- **Antivirus that rewrites HTML** (measured with Kaspersky Web Anti-Virus on the Hub's machine): it
+  injects a `<script>` and a `child-src` CSP into pages a recognised browser loads over HTTP, which
+  blocks the webviews' service worker (Markdown preview / extension panels stay blank). Exclude the
+  Hub address from web-traffic scanning on such machines.
+- `~/.vscode-oss-shared` is created by code-server outside `~/.jarvis/ide` (HOME is deliberately not
+  overridden, so the integrated terminal keeps the user's git/ssh credentials).
 
 ## The honest limit (containment)
 

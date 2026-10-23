@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, attachPartialTurn, turnProducedWork,
   listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
-  updateCheck, updateApply, restartService, runnerSelfUpdateDecision, updatePreflight, autonomousUpdateAttempt, resolveCommit, readProjectFile, repoCommit, repoVersion, createSeenSet, VERSION, Outbox,
+  updateCheck, updateApply, restartService, runnerSelfUpdateDecision, updatePreflight, autonomousUpdateAttempt, resolveCommit, readProjectFile, writeProjectFile, searchProjectFiles, repoCommit, repoVersion, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, detectPreviewCandidates,
   previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest,
   materializeFramework, FrameworkProvenanceStore, listDirectory,
@@ -34,7 +34,7 @@ import {
   formatTournamentFinalMessage, parseJudgeScores, selectTournamentWinner, tournamentCandidateResults,
   runDebate, clampDebateRounds, normalizeEffortLevel, resolveEffortLevel, managedPhaseExecutionId,
   DEBATE_INTERJECTION_MAX_CHARS,
-  TerminalManager,
+  TerminalManager, BrowserManager, BrowserAgentService, serveBrowserBridgeHttp, IdeManager, isTunnelFrame,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
   LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, featureFileContent, featureFileName, createTaskViaMcp,
   windowsUpdaterHeader, windowsUpdaterBody,
@@ -48,6 +48,7 @@ import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
 import { RUNNER_PROTOCOL_VERSION, type ContextActor, type HubToRunner, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
 import { confirmBoot, writeBootState } from "./boot-health.js";
+import { createRunnerIde } from "./ide.js";
 
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/+$/, "");
@@ -208,6 +209,104 @@ const terminals = new TerminalManager({
   onOutput: (terminal, data) => send({ t: "terminal_output", terminalId: terminal.id, data }),
   onExit: (terminal, exitCode, signal) => send({ t: "terminal_closed", terminalId: terminal.id, exitCode, signal }),
 });
+// BRW-IDE-00 F1 — browser remoto DESTA máquina (perfil do dono em ~/.jarvis/browser/owner). O Chrome só
+// sobe no primeiro `browser_open`; quem decide quem pode ver é o Hub (só o dono). Frames vão como
+// mensagem BINÁRIA na mesma conexão, sem deflate (JPEG não comprime e o zlib só gastaria CPU dos dois
+// lados). "O mais recente vence" no produtor: com o link entupido (bufferedAmount) o frame espera e é
+// substituído pelo próximo — nunca enfileira. `JARVIS_BROWSER=0` desliga; `JARVIS_BROWSER_PATH` escolhe.
+const BROWSER_BACKLOG_BYTES = 2 * 1024 * 1024;
+// BRW-IDE-00 F2 — a IA desta máquina vê/dirige o browser daqui (perfil de sistema `agent` + níveis da
+// spec §3.1, aplicados AQUI, na máquina dona do browser). `JARVIS_BROWSER_AGENT=0` desliga só a IA
+// (o browser do dono continua); sem browser não há o que oferecer.
+const BROWSER_AGENT_ON = !["0", "off", "false", "no"].includes(String(process.env.JARVIS_BROWSER_AGENT ?? "1").trim().toLowerCase());
+const browser = new BrowserManager({
+  connect: (url) => new WebSocket(url, { perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 }),
+  rootDir: join(JDIR, "browser"),
+  allowedProfiles: BROWSER_AGENT_ON ? ["owner", "agent"] : ["owner"],
+  idleMs: Math.max(0, Number(process.env.JARVIS_BROWSER_IDLE_MIN ?? 10)) * 60000,
+  maxFps: Number(process.env.JARVIS_BROWSER_FPS) || 15,
+  onState: (state) => send({ t: "browser_state", state }),
+  onFrame: (frame) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(frame, { binary: true, compress: false }); },
+  canSend: () => !!ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < BROWSER_BACKLOG_BYTES,
+  log: (event, data) => console.log(`[runner] ${event} ${JSON.stringify(data || {})}`),
+});
+// BRW-IDE-00 F4 — VS Code (code-server) DESTA máquina, em ~/.jarvis/ide. Baixa só a pedido do dono
+// (~218 MB, SHA-256 fixado no código), sobe sob demanda em 127.0.0.1 e desliga sozinho sem aba aberta
+// (`JARVIS_IDE_IDLE_MIN`, padrão 30). O Hub chega nele pelo túnel binário (kind 0x54) nesta conexão.
+// `JARVIS_IDE=0` desliga; `JARVIS_IDE_CODE_SERVER` usa um code-server já instalado (sem a conferência).
+const ideManager = new IdeManager({
+  rootDir: join(JDIR, "ide"),
+  binDir: process.env.JARVIS_IDE_CODE_SERVER || undefined,
+  idleMs: Math.max(0, Number(process.env.JARVIS_IDE_IDLE_MIN ?? 30)) * 60000,
+  onState: (state) => send({ t: "ide_state", state }),
+  log: (event, data) => console.log(`[runner] ${event} ${JSON.stringify(data || {})}`),
+});
+const ide = createRunnerIde({
+  manager: ideManager,
+  sendJson: (m) => send(m),
+  sendBinary: (frame, compress) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(frame, { binary: true, compress }); },
+  backlog: () => (ws && ws.readyState === WebSocket.OPEN ? ws.bufferedAmount : 0),
+  draining: () => updateInProgress,
+  log: (event, data) => console.log(`[runner] ${event} ${JSON.stringify(data || {})}`),
+});
+async function handleBrowserOp(m: any): Promise<void> {
+  try {
+    switch (m.t) {
+      case "browser_open": {
+        if (updateInProgress) throw new Error("máquina drenando para atualização — tente novamente após ela reconectar");
+        const state = await browser.open(m.profile === "agent" ? "agent" : "owner");
+        send({ t: "browser_state", reqId: typeof m.reqId === "string" ? m.reqId : undefined, state });
+        return;
+      }
+      // abas/navegação: o estado novo sai pelo onState do próprio gerenciador
+      case "browser_tab": await browser.tab(m.op, { pageId: m.pageId, url: m.url, profile: m.profile === "agent" ? "agent" : "owner" }); return;
+      case "browser_nav": await browser.navigate(String(m.pageId), { url: m.url, action: m.action }); return;
+      case "browser_input": browser.input(String(m.pageId), m.input); return;
+      case "browser_view": await browser.view(String(m.pageId), m.on !== false, { maxWidth: m.maxWidth, maxHeight: m.maxHeight }); return;
+      case "browser_feedback": browser.feedback(String(m.pageId), Number(m.delivered) || 0, Number(m.dropped) || 0); return;
+      case "browser_viewport": await browser.setViewport(String(m.pageId), Number(m.width) > 0 ? { width: m.width, height: m.height, mobile: m.mobile === true, scale: m.scale } : null); return;
+      case "browser_dialog": await browser.dialog(String(m.pageId), m.accept === true, typeof m.promptText === "string" ? m.promptText : undefined); return;
+      case "browser_shutdown": await browser.shutdown(m.profile === "agent" ? "agent" : "owner", "pedido do dono"); return;
+      // F2 — o dono liga/desliga o nível 3 para uma sessão daqui; `all` + off = "Assumir".
+      case "browser_agent_grant":
+        if (m.all === true && m.on !== true) { browserAgent.revokeAll("assumir"); return; }
+        if (m.on === true && !BROWSER_AGENT_ON) throw new Error("a IA não tem browser nesta máquina (JARVIS_BROWSER_AGENT=0)");
+        browserAgent.setOwnerDrive(String(m.sessionId || ""), m.on === true);
+        return;
+      case "browser_grab": {
+        const reqId = typeof m.reqId === "string" ? m.reqId : "";
+        try { send({ t: "browser_grab_result", reqId, ok: true, grab: await browserAgent.grab(String(m.pageId), Number(m.x), Number(m.y)) }); }
+        catch (error: any) { send({ t: "browser_grab_result", reqId, ok: false, error: String(error?.message ?? error).slice(0, 300) }); }
+        return;
+      }
+    }
+  } catch (error: any) {
+    send({ t: "browser_error", reqId: typeof m.reqId === "string" ? m.reqId : undefined, pageId: typeof m.pageId === "string" ? m.pageId : undefined, message: String(error?.message ?? error).slice(0, 300) });
+  }
+}
+
+// BRW-IDE-00 F2 — as ferramentas de browser da IA DESTA máquina. Endpoint loopback com token POR TURNO
+// (só turno do dono recebe um — o Hub decide no `send`). Sem link com o Hub tudo é recusado: não há
+// auditoria nem botão "Assumir" para o dono. As ações vão ao Hub para o audit.log (sem conteúdo).
+const browserAgent = new BrowserAgentService(browser, {
+  canAct: () => !!ws && ws.readyState === WebSocket.OPEN,
+  onAction: (action) => send({ t: "browser_agent_action", action }),
+  onGrants: (grants) => send({ t: "browser_agent_state", grants }),
+});
+let BROWSER_AGENT_URL = "";
+if (BROWSER_AGENT_ON && browser.available) {
+  const browserAgentServer = createServer((req, res) => {
+    if ((req.url || "").split("?")[0] !== "/internal/browser") { res.writeHead(404).end(); return; }
+    serveBrowserBridgeHttp(browserAgent, req, res);
+  });
+  browserAgentServer.on("error", (e: any) => console.error("[runner] ponte de browser:", String(e?.message ?? e)));
+  browserAgentServer.listen(0, "127.0.0.1", () => {
+    const addr = browserAgentServer.address();
+    const port = addr && typeof addr === "object" ? addr.port : 0;
+    if (port) BROWSER_AGENT_URL = `http://127.0.0.1:${port}/internal/browser`;
+  });
+  browserAgentServer.unref();
+}
 
 // --- Manual permission mode (Fase 3) — approval bridge on THIS machine -------------------------
 // The Claude adapter spawns a stdio MCP bridge here (the turn runs on this machine), and that bridge
@@ -1187,6 +1286,7 @@ async function doSend(
   speaker?: string,
   actor?: ContextActor,
   contextPrefix?: string,
+  browserForTurn = false,
 ): Promise<void> {
   if (store.isHidden(sessionId)) { send({ t: "error", message: "sessão interna não aceita envio pelo chat" }); return; }
   if (turnId && !seenTurns.add(turnId)) { console.log(`[runner] turno duplicado ignorado (turnId=${turnId})`); return; }
@@ -1194,6 +1294,12 @@ async function doSend(
   if (activeRuns.has(sessionId)) { send({ t: "busy", message: "Já há um processamento nesta sessão — aguarde terminar ou toque em Parar." }); return; }
   const ctrl = new AbortController();
   const effectiveTurnId = turnId || randomUUID();
+  // F2 — ponte de browser deste turno (o Hub só marca `browser` em turno do DONO). O token morre no
+  // `finally` abaixo, e com ele a liberação do nível 3 desta sessão (expira no fim do turno, §3.1).
+  const browserToken = browserForTurn && BROWSER_AGENT_ON && BROWSER_AGENT_URL && browser.available
+    ? browserAgent.openTurn(sessionId, { turnId: effectiveTurnId, readOnly: (opts?.permissionMode ?? sessionPermissionMode(sessionId)) === "plan" })
+    : undefined;
+  if (browserToken) opts = { ...opts, browserTools: { url: BROWSER_AGENT_URL, token: browserToken } };
   runAborts.set(sessionId, ctrl);
   activeRuns.add(sessionId); pushRuns();
   // pause the native tail so our own turn isn't double-broadcast (already streamed below)
@@ -1284,7 +1390,7 @@ async function doSend(
         },
         runAgentTurn: async (sid, name, agentText, turnCwd, turnOpts) => {
           const selected = agents.get(name);
-          return executeRunnerAgentTurn(sid, selected, agentText, turnCwd, { ...turnOpts, fastMode: opts?.fastMode }, ctrl);
+          return executeRunnerAgentTurn(sid, selected, agentText, turnCwd, { ...turnOpts, fastMode: opts?.fastMode, browserTools: opts?.browserTools }, ctrl);
         },
         afterStored: (sid, storedTurnId) => send({ t: "activity_committed", sessionId: sid, turnId: storedTurnId }),
       };
@@ -1308,6 +1414,7 @@ async function doSend(
       if (nativeId) send({ t: "session", sessionId, nativeId });
     }
     if (runAborts.get(sessionId) === ctrl) runAborts.delete(sessionId);
+    browserAgent.closeTurn(browserToken);
     activeRuns.delete(sessionId); pushRuns();
     if (tail) { try { tail.offset = statSync(tail.path).size; tail.buf = ""; } catch { /* ignore */ } tail.paused = false; }
   }
@@ -1352,6 +1459,7 @@ function connect(): void {
   hb.unref?.();
   sock.on("open", async () => {
     reconnectDelay = 1000;
+    ide.onConnect(); // túnel novo por conexão: stream de uma conexão morta não vaza para a próxima
     clearOutageAbort(); // reconectou → cancela o abort armado; turnos preservados seguem via replay
     const info: RunnerInfo = {
       runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: availableAgentsSnapshot(),
@@ -1368,12 +1476,24 @@ function connect(): void {
       // máquina só sabe listar — e para não esconder que sabe.
       taskMcpUses: Object.fromEntries(Object.keys(loadTaskMcpConfig().servers).map((n) => [n, { list: true, create: !!loadTaskMcpConfig().creates[n] }])),
       taskMcpRemoteEdit: TASK_MCP_REMOTE_EDIT,
+      // BRW-IDE-00 F1: há navegador e o kill switch não está ligado (o Chrome só sobe sob demanda).
+      browser: browser.available,
+      // F2: a IA daqui recebe as ferramentas de browser (e o perfil "IA" aparece no painel do dono).
+      browserAgent: BROWSER_AGENT_ON && browser.available,
+      // BRW-IDE-00 F4: há build do code-server para este SO e JARVIS_IDE≠0 (instalar é a pedido).
+      ide: ideManager.available,
     };
     send({ t: "register", token: TOKEN, info });
     void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));
   });
-  sock.on("message", async (data) => {
+  sock.on("message", async (data, isBinary) => {
     lastInbound = Date.now();
+    // BRW-IDE-00 F4: binário do Hub = frame do túnel da IDE. Nunca passa pelo JSON.parse.
+    if (isBinary) {
+      const buf = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);
+      if (isTunnelFrame(buf)) ide.onFrame(buf);
+      return;
+    }
     let m: any; try { m = JSON.parse(data.toString()); } catch { return; }
     if (!m || typeof m !== "object" || typeof m.t !== "string") return; // drop junk / non-object frames
     try {
@@ -1386,6 +1506,7 @@ function connect(): void {
         flushOutbox();
         pushExecutionManifest(`welcome:${RUNNER_ID}`);
         pushSessions(); pushRuns(); void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));
+        if (BROWSER_AGENT_ON && browser.available) send({ t: "browser_agent_state", grants: browserAgent.grants() });
         return;
       }
       if (m.t === "reject") {
@@ -1488,6 +1609,8 @@ function connect(): void {
           : { behavior: "deny", message: "Negado pelo usuário" });
         return;
       }
+      if (m.t.startsWith("browser_")) { void handleBrowserOp(m); return; }
+      if (m.t.startsWith("ide_")) { void ide.handleMessage(m); return; }
       if (m.t === "terminal_open") {
         if (updateInProgress) { send({ t: "terminal_error", reqId: m.reqId, message: "máquina drenando para atualização — tente novamente após ela reconectar" }); return; }
         try {
@@ -1622,6 +1745,24 @@ function connect(): void {
         return;
       }
       if (m.t === "readfile" && typeof m.path === "string") { send({ t: "filecontent", reqId: m.reqId, ...readProjectFile(m.path, m.cwd) }); return; }
+      // BRW-IDE-00 F3 — editor leve. A autorização (só o dono) é do Hub; aqui ficam as guardas do disco.
+      if (m.t === "writefile" && typeof m.reqId === "string" && typeof m.path === "string" && typeof m.content === "string") {
+        const reqId = m.reqId, path = m.path;
+        // Gravar no meio de um update (git pull) sujaria o checkout e abortaria a atualização.
+        if (updateInProgress) { send({ t: "filesaved", reqId, path, ok: false, error: "máquina drenando para atualização — tente novamente após ela reconectar" }); return; }
+        void writeProjectFile(path, typeof m.cwd === "string" ? m.cwd : undefined, m.content, {
+          expectedMtimeMs: typeof m.expectedMtimeMs === "number" ? m.expectedMtimeMs : undefined,
+          expectedSize: typeof m.expectedSize === "number" ? m.expectedSize : undefined,
+          force: m.force === true, create: m.create === true,
+        }).then((r) => send({ t: "filesaved", reqId, ...r }), (e) => send({ t: "filesaved", reqId, path, ok: false, error: String(e?.message ?? e).slice(0, 200) }));
+        return;
+      }
+      if (m.t === "searchfiles" && typeof m.reqId === "string" && typeof m.cwd === "string" && typeof m.query === "string") {
+        const reqId = m.reqId, cwd = m.cwd, query = m.query;
+        void searchProjectFiles(cwd, query, { regex: m.regex === true, caseSensitive: m.caseSensitive === true, max: typeof m.max === "number" ? m.max : undefined })
+          .then((r) => send({ t: "searchresults", reqId, cwd, query, ...r }), (e) => send({ t: "searchresults", reqId, cwd, query, results: [], truncated: false, error: String(e?.message ?? e).slice(0, 200) }));
+        return;
+      }
       if (m.t === "readdiff" && typeof m.path === "string" && typeof m.sessionId === "string") {
         if (store.isHidden(m.sessionId)) { send({ t: "error", reqId: m.reqId, message: "sessão interna não expõe diff pelo chat" }); return; }
         const diffId = isNativeId(m.sessionId) ? m.sessionId : (() => { const s = store.get(m.sessionId); const nid = s && agents.get(s.agent).nativeSessionId?.(s.id); return s && nid ? (nativeIdForAgent(s.agent, nid) || "") : ""; })();
@@ -1684,6 +1825,7 @@ function connect(): void {
           typeof m.speaker === "string" ? m.speaker : undefined,
           m.actor,
           m.contextPrefix,
+          m.browser === true,
         );
         return;
       }
@@ -1823,9 +1965,15 @@ function connect(): void {
   });
   sock.on("close", () => {
     clearInterval(hb); ws = null;
+    // Sem Hub ninguém assiste: para todo screencast (o Chrome desliga sozinho pelo idle depois).
+    try { browser.stopAllViews(); } catch { /* ignore */ }
+    // Os streams da IDE desta conexão morreram com ela (o code-server desliga sozinho pelo idle).
+    ide.onDisconnect();
     // Sem Hub não há UI para responder: nega o que estava pendente em vez de segurar o turno por 5min.
     denyAllPendingPermissions("Hub desconectado — negado por segurança");
     failAllPendingTasks("Hub desconectado — recusado por segurança");
+    // F2: sem Hub o dono não vê o "IA no controle" nem tem o "Assumir" — o nível 3 cai na hora.
+    browserAgent.revokeAll("Hub desconectado");
     armOutageAbort(); // arma o corte de turnos abandonados se a queda persistir (flap reseta no reconnect)
     // #4: NÃO dispare auto-update numa queda transiente (ex.: 502 do túnel) — era o gatilho que criava
     // corrida com o update do Hub. Só considera após desconexão SUSTENTADA (backoff já cresceu); a
@@ -1857,12 +2005,27 @@ function shutdown(sig: string): void {
   if (runAborts.size) console.log(`[runner] ${sig} — abortando ${runAborts.size} turno(s) em andamento`);
   for (const [, ctrl] of runAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
   try { terminals.closeAll(); } catch { /* ignore */ }
+  // Browser.close já sai agora (dá chance de o Chrome gravar cookies); o `exit` abaixo mata o que sobrar.
+  void browser.shutdown(undefined, sig).catch(() => { /* ignore */ });
+  ide.shutdown();
+  void ideManager.stop(sig).catch(() => { /* ignore */ });
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
 }
+// Qualquer saída (inclusive o process.exit do drainAndExit do update) leva o Chrome junto: no Windows
+// o filho não morre com o pai, e um Chrome órfão segurando o perfil já foi a causa de travar a máquina.
+process.on("exit", () => { try { browser.shutdownSync(); } catch { /* ignore */ } });
+// Idem para o code-server (e os filhos dele: ptyHost, extension host, shells do terminal integrado).
+process.on("exit", () => { try { ideManager.stopSync(); } catch { /* ignore */ } });
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
 console.log(`[runner] id=${RUNNER_ID} host=${hostname()} os=${platform()} -> ${HUB_URL}`);
+console.log(browser.available ? `[runner] browser remoto disponível (${browser.executablePath})` : `[runner] browser remoto indisponível: ${browser.unavailableReason}`);
+// Runner morto à força pode ter deixado Chrome órfão no perfil: recolhe no boot (assíncrono).
+if (browser.available) setTimeout(() => { void browser.reapOrphans().catch(() => { /* ignore */ }); }, 5000).unref?.();
+console.log(ideManager.available ? `[runner] VS Code (code-server ${ideManager.state().version}) ${ideManager.installed ? "instalado" : "disponível para instalar"}` : `[runner] VS Code indisponível: ${ideManager.unavailableReason}`);
+// Mesma coisa para um code-server órfão desta máquina (runner anterior morto à força).
+if (ideManager.available && ideManager.installed) setTimeout(() => { void ideManager.reapOrphans().catch(() => { /* ignore */ }); }, 6000).unref?.();
 // Surface the #1 misconfig at boot instead of as a silent reject 20s later: an empty token means the
 // Hub drops the register unless it runs with JARVIS_AUTH=off. Warn (not exit) so the auth-off case
 // still works. Louder still when pointing at a REMOTE hub, where a missing token is almost never intended.

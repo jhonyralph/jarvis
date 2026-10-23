@@ -19,8 +19,14 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
 /** Increment when a protocol change affects observable turn/history semantics.
  *  v7: framework_publish / framework_published (Framework Jarvis distribution to machines).
  *  v8: preview_query / preview_list (Design Mode preview-URL discovery for a session's cwd).
- *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8. */
-export const RUNNER_PROTOCOL_VERSION = 17;
+ *      Tolerant: the Hub only sends preview_query to runners advertising protocolVersion >= 8.
+ *  v18: browser_* (BRW-IDE-00 F1 — browser remoto) + frames binários na conexão do runner;
+ *       writefile/searchfiles (BRW-IDE-00 F3 — editor leve).
+ *  v19: BRW-IDE-00 F2 — a IA vê e dirige o browser da máquina (ponte MCP `jarvisbrowser`, três
+ *       níveis, `browser_agent_*`) + seleção de pontos do dono (`browser_grab`).;
+ *       ide_* (BRW-IDE-00 F4 — VS Code/code-server por máquina) + túnel HTTP/WebSocket multiplexado
+ *       em frames binários `kind 0x54` na conexão do runner (ver @jarvis/core ide-tunnel.ts). */
+export const RUNNER_PROTOCOL_VERSION = 19;
 
 /**
  * Em qual versão cada CAPACIDADE entrou. Comparar com número solto espalha a regra pelo código, e
@@ -37,6 +43,13 @@ export const RUNNER_CAPABILITY_SINCE = {
   /** abrir subsessoes na MAQUINA da sessao, e nao so no Hub */ fanoutOnRunner: 16,
   /** Espaco de Solucoes (Benchmark/Revisao/Auditoria) na MAQUINA da sessao */ tournamentOnRunner: 17,
   /** Debate iterativo na MAQUINA da sessao, com recado ao vivo */ debateOnRunner: 17,
+  /** BRW-IDE-00 F3 — editor leve: `writefile` → `filesaved` (escrita com detecção de conflito) */ fileWrite: 18,
+  /** BRW-IDE-00 F3 — busca de conteúdo no projeto: `searchfiles` → `searchresults` */ fileSearch: 18,
+  /** BRW-IDE-00 F1 — browser remoto da máquina (perfil do dono), frames binários */ remoteBrowser: 18,
+  /** BRW-IDE-00 F2 — ferramentas de browser para a IA desta máquina (ver/dirigir; níveis no runner) */ browserAgentTools: 19,
+  /** BRW-IDE-00 F2 — "selecionar pontos": elemento sob o ponto + recorte, para o dono mandar à IA */ browserGrab: 19,
+  /** BRW-IDE-00 F4 — VS Code (code-server) da máquina: `ide_status/ide_install/ide_open/ide_stop` */ ideServer: 19,
+  /** BRW-IDE-00 F4 — túnel HTTP+WebSocket do Hub até o code-server da máquina (frames `kind 0x54`) */ ideTunnel: 19,
 } as const;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
@@ -80,6 +93,16 @@ export interface RunnerInfo {
   label?: string;
   /** true for the Hub's own embedded runner ("machine 0") */
   local?: boolean;
+  /** BRW-IDE-00 F1 — esta máquina tem Chrome/Edge/Chromium e o browser remoto não foi desligado
+   *  (`JARVIS_BROWSER=0`). O Hub só oferece o browser quando isto é true E o protocolo é ≥
+   *  `RUNNER_CAPABILITY_SINCE.remoteBrowser`. O Chrome só sobe na primeira abertura. */
+  browser?: boolean;
+  /** BRW-IDE-00 F2 — esta máquina serve as ferramentas de browser às IAs dela (`JARVIS_BROWSER_AGENT=0`
+   *  desliga). Só vale junto com `browser:true` e protocolo ≥ `RUNNER_CAPABILITY_SINCE.browserAgentTools`. */
+  browserAgent?: boolean;
+  /** BRW-IDE-00 F4 — esta máquina oferece o VS Code (há build do code-server para o SO/arquitetura e
+   *  `JARVIS_IDE≠0`). Não quer dizer instalado: o download (~218 MB) só acontece a pedido do dono. */
+  ide?: boolean;
 }
 
 /** One session as listed by a Runner (managed by Jarvis, or a native CLI session). */
@@ -180,6 +203,11 @@ export type BrowserSessionEvent =
   | { kind: "coverage"; pageId: string; url: string; jsFiles?: number; cssRules?: number; usedCssRules?: number; at: number }
   | { kind: "closed"; pageId: string; at: number };
 
+/** v18 (F3) — versão no disco quando `writefile` encontra conflito. */
+export interface FileSaveConflict { mtimeMs?: number; size?: number; missing?: boolean; exists?: boolean }
+/** v18 (F3) — um acerto da busca no projeto. `hl` = [início, fim) do trecho casado DENTRO de `preview`. */
+export interface FileSearchHitWire { path: string; rel: string; line: number; col: number; preview: string; hl: [number, number] }
+
 /** Interactive terminal session hosted by one Runner/Hub machine. */
 export interface TerminalInfo {
   id: string;
@@ -190,6 +218,140 @@ export interface TerminalInfo {
   rows: number;
   createdAt: number;
   updatedAt: number;
+}
+
+// --- Browser remoto (BRW-IDE-00 F1) ---------------------------------------------------------------
+// Um Chromium headless por PERFIL na máquina (F1 expõe só "owner"; "agent" é da F2), dirigido por CDP
+// só em 127.0.0.1. Pela rede passam só metadados (URL, título, abas), input e frames — cookies e
+// storage nunca saem da máquina (lei §3.1 da spec).
+//
+// Frames NÃO são JSON: vão como mensagem BINÁRIA do WebSocket (runner → Hub → cliente), com um
+// cabeçalho fixo e o JPEG cru logo depois (o CDP entrega base64; cru economiza ~25% do fio):
+//
+//   off len  campo
+//   0   1    kind = 0x42 ('B')      — reserva o espaço para outros binários (ex.: túnel da IDE, F4)
+//   1   1    versão do cabeçalho = 1
+//   2   1    L = tamanho do pageId (1..64, ASCII)
+//   3   1    qualidade JPEG usada (informativo)
+//   4   4    seq (u32 BE, por página)
+//   8   8    t0 (f64 BE, ms epoch em que o produtor recebeu o frame do Chrome)
+//   16  2    largura do viewport em px CSS (u16 BE) — base da conversão de coordenadas do input
+//   18  2    altura do viewport em px CSS (u16 BE)
+//   20  L    pageId
+//   20+L …   JPEG
+//
+// O Hub só lê o pageId (para rotear) e repassa o Buffer intacto. Codec em @jarvis/core (browser.ts).
+
+export type BrowserProfileName = "owner" | "agent";
+
+export interface BrowserPageInfo {
+  /** targetId do CDP — único por Chrome; é o endereço de toda operação de página */
+  pageId: string;
+  url: string;
+  title: string;
+  loading?: boolean;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  /** aba aberta por outra (window.open/target=_blank) — o cliente pode segui-la */
+  openerId?: string;
+  /** diálogo JS aberto (alert/confirm/prompt/beforeunload): a página fica PARADA até alguém responder */
+  dialog?: { type: string; message: string; defaultPrompt?: string };
+  /** viewport sobrescrito (ex.: "ajustar à tela do celular"); ausente = janela padrão do Chrome */
+  viewport?: { width: number; height: number; mobile: boolean };
+  /** há espectador (screencast ligado) nesta aba agora */
+  viewing?: boolean;
+}
+
+export interface BrowserStateInfo {
+  profile: BrowserProfileName;
+  /** o Chrome deste perfil está de pé */
+  running: boolean;
+  pages: BrowserPageInfo[];
+  /** última aba ativada (por qualquer dispositivo do dono) — o cliente só adota ao abrir o painel */
+  activePageId?: string;
+  /** motivo da última parada ("idle", "shutdown", "exited", erro de launch…) */
+  reason?: string;
+}
+
+/** Input do espectador. Coordenadas em px CSS do viewport (o cabeçalho do frame traz a base).
+ *  `modifiers` segue o CDP: Alt=1, Ctrl=2, Meta=4, Shift=8. */
+export type BrowserInput =
+  | { kind: "mouse"; type: "move" | "down" | "up"; x: number; y: number; button?: "left" | "middle" | "right" | "none"; buttons?: number; clickCount?: number; modifiers?: number }
+  | { kind: "wheel"; x: number; y: number; dx: number; dy: number; modifiers?: number }
+  | { kind: "key"; type: "down" | "up"; key: string; code?: string; modifiers?: number }
+  /** texto pronto (teclado virtual do celular, IME, colar) — vira Input.insertText */
+  | { kind: "text"; text: string };
+
+// --- BRW-IDE-00 F2: a IA no browser (três níveis, spec §3.1) -----------------------------------------
+// Ver (padrão): ferramentas só-leitura no perfil do DONO. Dirigir no perfil do agente: tudo no perfil
+// `agent` (separado, sem logins do dono). Dirigir no perfil do dono: só com liberação EXPLÍCITA do dono
+// para AQUELA sessão — expira no fim do turno, no "Assumir", na queda do link com o Hub ou em 30 min.
+// Quem decide é a máquina dona do browser (um único lugar); o Hub só repassa a vontade do dono.
+
+/** Uma liberação do nível 3 (IA dirigindo o perfil do dono) numa sessão desta máquina. */
+export interface BrowserAgentGrantInfo {
+  sessionId: string;
+  /** sempre "owner" hoje — o perfil do agente não precisa de liberação */
+  profile: BrowserProfileName;
+  since: number;
+  /** teto absoluto; antes disso a liberação cai no fim do turno da sessão */
+  expiresAt: number;
+  /** a sessão tem turno rodando agora (a IA pode estar agindo) */
+  turnActive: boolean;
+}
+
+/** Uma ação da IA no browser — vai para o audit.log do Hub (NUNCA conteúdo de página nem texto digitado). */
+export interface BrowserAgentActionInfo {
+  sessionId: string;
+  tool: string;
+  profile: BrowserProfileName;
+  pageId?: string;
+  ok: boolean;
+  /** resumo seguro: URL navegada, ref clicado, tecla, "N caracteres" — nunca o texto digitado */
+  detail?: string;
+  at: number;
+}
+
+/** Elemento sob o ponto que o dono marcou (seleção de pontos → IA). Texto já redigido de segredos. */
+export interface BrowserGrabInfo {
+  url: string;
+  title?: string;
+  tag: string;
+  selector: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  attributes?: Record<string, string>;
+  htmlSnippet?: string;
+  /** caixa do elemento em px CSS do viewport */
+  rect: { x: number; y: number; width: number; height: number };
+  viewport?: { width: number; height: number };
+  /** quantos trechos parecidos com segredo foram trocados por [redacted] */
+  redactions?: number;
+  /** recorte do elemento (data URL JPEG), quando deu para capturar */
+  image?: string;
+}
+
+// --- IDE / code-server (BRW-IDE-00 F4) --------------------------------------------------------------
+// Um code-server por máquina, só em 127.0.0.1. O navegador do dono chega nele por
+// `/ide/<runnerId>/…` no Hub (cookie de sessão de IDE, só dono); para máquina remota o Hub tunela
+// HTTP+WebSocket na conexão do runner com frames binários `kind 0x54` (codec em @jarvis/core
+// ide-tunnel.ts). Estas mensagens JSON só cuidam do ciclo de vida.
+
+export interface IdeStateInfo {
+  /** unavailable = SO sem build / JARVIS_IDE=0 · not_installed = precisa baixar · installing ·
+   *  stopped (instalado, parado) · starting · running · error (ver `reason`) */
+  status: "unavailable" | "not_installed" | "installing" | "stopped" | "starting" | "running" | "error";
+  /** versão fixada do code-server (ex.: "4.141.0") */
+  version: string;
+  installed: boolean;
+  /** tamanho do download (bytes) — a UI mostra antes de pedir confirmação */
+  sizeBytes?: number;
+  progress?: { phase: "download" | "verify" | "extract"; received: number; total: number };
+  reason?: string;
+  startedAt?: number;
+  /** usando um code-server de fora (`JARVIS_IDE_CODE_SERVER`), sem a conferência de hash do Jarvis */
+  external?: boolean;
 }
 
 // --- Runner -> Hub ---
@@ -246,7 +408,13 @@ export type RunnerToHub =
   | { t: "debate_progress"; sessionId: string; debateId: string; round: number; maxRounds: number; phase: string; rootExecutionId?: string; debaters: Array<{ label: string; state: string }>; interjected: number; canSay: boolean }
   | { t: "debate_said"; reqId: string; ok: boolean; sessionId: string; debateId?: string; pending?: number; msgId?: string; message: string }
   | { t: "activity"; sessionId: string; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRowMeta[]; background?: boolean }
-  | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; mtimeMs?: number; truncated?: boolean; error?: string; image?: boolean; mime?: string }
+  /** `readOnlyReason` (v18, aditivo): por que o editor não pode editar este arquivo sem perda. */
+  | { t: "filecontent"; reqId: string; path: string; name: string; content?: string; size?: number; mtimeMs?: number; truncated?: boolean; error?: string; image?: boolean; mime?: string; readOnlyReason?: string }
+  /** v18 (F3) — resultado de `writefile`. `conflict` = o disco não é mais a versão lida (a IA editou?):
+   *  NADA foi gravado e vem a versão atual (`missing` = o arquivo sumiu; `exists` = criar por cima). */
+  | { t: "filesaved"; reqId: string; path: string; name?: string; ok: boolean; mtimeMs?: number; size?: number; created?: boolean; conflict?: FileSaveConflict; error?: string }
+  /** v18 (F3) — resultado de `searchfiles`. `truncated` = algum teto (resultados/tempo/bytes) cortou. */
+  | { t: "searchresults"; reqId: string; cwd: string; query: string; results: FileSearchHitWire[]; truncated: boolean; engine?: "rg" | "node"; error?: string }
   /** directory listing for the folder browser (reply to Hub->Runner "listdir").
    *  `files` is present only when the request set `files:true` (the file-tree panel); the legacy
    *  folder-picker omits it and keeps seeing directories only. `path` is the NORMALIZED path that was
@@ -279,6 +447,19 @@ export type RunnerToHub =
   | { t: "terminal_closed"; terminalId: string; exitCode?: number; signal?: number }
   | { t: "terminal_list"; reqId?: string; terminals: TerminalInfo[] }
   | { t: "terminal_error"; reqId?: string; terminalId?: string; message: string }
+  /** v18 — estado do browser da máquina (abas, URL, título, rodando). Vai a cada mudança (com debounce)
+   *  e como resposta a `browser_open` (com `reqId`). Frames vão à parte, em mensagem binária. */
+  | { t: "browser_state"; reqId?: string; state: BrowserStateInfo }
+  | { t: "browser_error"; reqId?: string; pageId?: string; message: string }
+  /** v19 (F2) — liberações do nível 3 nesta máquina (a cada mudança e depois do `register`). */
+  | { t: "browser_agent_state"; grants: BrowserAgentGrantInfo[] }
+  /** v19 (F2) — a IA usou uma ferramenta de browser: o Hub audita e mostra no painel. */
+  | { t: "browser_agent_action"; action: BrowserAgentActionInfo }
+  /** v19 (F2) — resposta de `browser_grab`. */
+  | { t: "browser_grab_result"; reqId: string; ok: boolean; error?: string; grab?: BrowserGrabInfo }
+  /** v19 — estado do VS Code da máquina. Com `reqId` responde a `ide_status/ide_install/ide_open/
+   *  ide_stop`; sem `reqId` é mudança espontânea (progresso do download, subiu, caiu, ocioso). */
+  | { t: "ide_state"; reqId?: string; state: IdeStateInfo }
   /** Manual permission mode: a tool on THIS machine is blocked waiting for the user. The Hub owns the
    *  UI, so the runner relays the request and waits for the matching `permission_decision`. `id` is
    *  minted by the runner and is only meaningful for this runner's pending table. */
@@ -326,6 +507,9 @@ export type HubToRunner =
       effort?: string;
       fastMode?: boolean;
       actor?: ContextActor;
+      /** v19 (F2) — turno do DONO numa máquina que serve as ferramentas: o runner entrega a ponte MCP
+       *  `jarvisbrowser` à IA deste turno (token por turno). Ausente/false = sem browser para a IA. */
+      browser?: boolean;
     }
   | { t: "list" }
   /** Tarefas locais (`docs/features/*.md`) do projeto DESTA máquina. v10: antes o Hub varria o
@@ -348,6 +532,12 @@ export type HubToRunner =
   | { t: "configure"; reqId: string; sessionId: string; agent?: string; cwd?: string }
   | { t: "delete"; reqId: string; sessionId?: string; sessionIds?: string[]; alsoNative?: boolean }
   | { t: "readfile"; reqId: string; path: string; cwd?: string }
+  /** v18 (F3) — gravar um arquivo do projeto. Só o DONO chega aqui (o Hub barra membro e audita).
+   *  Sem `expectedMtimeMs` só cria (`create:true`); com ele, conflito em vez de sobrescrever.
+   *  `force` = "sobrescrever mesmo assim" depois que o usuário viu o conflito. */
+  | { t: "writefile"; reqId: string; path: string; cwd?: string; content: string; expectedMtimeMs?: number; expectedSize?: number; force?: boolean; create?: boolean }
+  /** v18 (F3) — buscar conteúdo sob `cwd` (ripgrep se houver; senão varredura numa worker thread). */
+  | { t: "searchfiles"; reqId: string; cwd: string; query: string; regex?: boolean; caseSensitive?: boolean; max?: number }
   | { t: "readdiff"; reqId: string; sessionId: string; path: string }
   | { t: "caps"; agent?: string }
   /** Query this machine's live account-plan usage for an adapter. */
@@ -397,6 +587,36 @@ export type HubToRunner =
   | { t: "terminal_resize"; terminalId: string; cols: number; rows: number }
   | { t: "terminal_close"; terminalId: string }
   | { t: "terminal_list"; reqId?: string }
+  /** v18 — browser remoto. Authz (só o DONO) é do Hub; o runner só executa. Operações de página são
+   *  endereçadas pelo `pageId`; perfil só aparece onde há escolha (abrir/encerrar). */
+  | { t: "browser_open"; reqId: string; profile: BrowserProfileName }
+  | { t: "browser_tab"; reqId?: string; op: "new" | "close" | "activate"; pageId?: string; url?: string; profile?: BrowserProfileName }
+  | { t: "browser_nav"; pageId: string; url?: string; action?: "back" | "forward" | "reload" | "stop" }
+  | { t: "browser_input"; pageId: string; input: BrowserInput }
+  /** Liga/desliga o screencast da aba. O HUB conta os espectadores e só manda `on:false` quando o
+   *  último sai; `maxWidth/maxHeight` = a MAIOR tela entre os espectadores (px de dispositivo). */
+  | { t: "browser_view"; pageId: string; on: boolean; maxWidth?: number; maxHeight?: number }
+  /** Retorno do relay (≈1/s por aba assistida): frames entregues e descartados por crédito esgotado.
+   *  Alimenta a qualidade adaptativa no produtor. */
+  | { t: "browser_feedback"; pageId: string; delivered: number; dropped: number }
+  /** Sobrescreve o viewport da aba ("ajustar à tela"); sem `width` volta ao padrão. */
+  | { t: "browser_viewport"; pageId: string; width?: number; height?: number; mobile?: boolean; scale?: number }
+  /** Responde o diálogo JS aberto na aba (alert/confirm/prompt/beforeunload). */
+  | { t: "browser_dialog"; pageId: string; accept: boolean; promptText?: string }
+  /** Encerra o Chrome do perfil (o perfil continua no disco). */
+  | { t: "browser_shutdown"; profile: BrowserProfileName }
+  /** v19 (F2) — o dono liga/desliga o nível 3 (IA dirigindo o perfil DELE) para uma sessão; `all` +
+   *  `on:false` = "Assumir" (revoga tudo nesta máquina na hora). Resposta: `browser_agent_state`. */
+  | { t: "browser_agent_grant"; sessionId?: string; on: boolean; all?: boolean }
+  /** v19 (F2) — seleção de pontos: o elemento sob (x,y) em px CSS da aba + recorte. Resposta: `browser_grab_result`. */
+  | { t: "browser_grab"; reqId: string; pageId: string; x: number; y: number }
+  /** v19 — VS Code da máquina. Authz (só o DONO) é do Hub. `ide_install` baixa e confere o build
+   *  fixado (progresso por `ide_state`); `ide_open` sobe o code-server se preciso e responde quando ele
+   *  está de pé (a pasta e a URL ficam no Hub); `ide_stop` encerra a árvore do code-server. */
+  | { t: "ide_status"; reqId: string }
+  | { t: "ide_install"; reqId: string }
+  | { t: "ide_open"; reqId: string }
+  | { t: "ide_stop"; reqId?: string }
   /** The user answered a `permission_request` this runner relayed. Unknown/expired ids are ignored
    *  (already settled or timed out → the runner already failed it closed). */
   | { t: "permission_decision"; sessionId: string; id: string; behavior: "allow" | "deny"; updatedInput?: unknown; message?: string }

@@ -38,6 +38,7 @@ import { estimateCodexCost } from "./codex-pricing.js";
 import { BACKGROUND_JOB_STEERING } from "./background-jobs.js";
 import { ensurePermissionBridge } from "./permission-bridge.js";
 import { ensureTaskBridge } from "./task-bridge.js";
+import { browserBridgeMcpServer, codexBrowserMcpArgs, CLAUDE_BROWSER_ALLOWED_TOOLS, type BrowserToolsAccess } from "./browser-agent.js";
 import { EXECUTION_ADAPTER_PROFILES, EXECUTION_ADAPTER_IDS, mapProviderExecutionFixture, type ExecutionAdapterId } from "./execution-adapters.js";
 
 /** Effective unattended execution policy. The historical default is full access; operators can
@@ -477,6 +478,9 @@ export interface SendOpts {
    * paying the MCP server startup/handshake on every one is wasted latency + cost. Adapters that
    * can't honor it ignore it (best-effort). */
   noMcp?: boolean;
+  /** BRW-IDE-00 F2 — ponte MCP `jarvisbrowser` deste turno (só turno do DONO numa máquina com browser).
+   *  O adaptador só pluga; quem aplica os níveis é o endpoint (token morre com o turno). */
+  browserTools?: BrowserToolsAccess;
 }
 
 function codexFastModeArgs(opts?: SendOpts): string[] {
@@ -1178,6 +1182,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         const taskBridgePath = ensureTaskBridge().replace(/\\/g, "/");
         mcpServers.jarvistask = { command: "node", args: [taskBridgePath], env: { JARVIS_TASK_URL: process.env.JARVIS_TASK_URL, JARVIS_TASK_TOKEN: process.env.JARVIS_TASK_TOKEN, JARVIS_TASK_SESSION: sessionId } };
       }
+      if (opts?.browserTools) mcpServers.jarvisbrowser = browserBridgeMcpServer(opts.browserTools);
       if (mode === "manual" && process.env.JARVIS_PERM_URL && process.env.JARVIS_PERM_TOKEN) {
         const bridgePath = ensurePermissionBridge().replace(/\\/g, "/");
         mcpServers.jarvisperm = { command: "node", args: [bridgePath], env: { JARVIS_PERM_URL: process.env.JARVIS_PERM_URL, JARVIS_PERM_TOKEN: process.env.JARVIS_PERM_TOKEN, JARVIS_PERM_SESSION: sessionId } };
@@ -1188,6 +1193,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         permCleanup = () => { try { unlinkSync(cfgPath); } catch { /* already gone */ } };
         args.push("--mcp-config", cfgPath);
         if (mcpServers.jarvisperm) args.push("--permission-prompt-tool", "mcp__jarvisperm__approve");
+        // Browser: fora do modo manual as ferramentas valem sem perguntar (o nível do Jarvis é a
+        // permissão delas); no manual cada chamada passa pela aprovação do dono, como qualquer tool.
+        if (mcpServers.jarvisbrowser && mode !== "manual") args.push("--allowedTools", CLAUDE_BROWSER_ALLOWED_TOOLS);
       }
     }
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
@@ -1862,6 +1870,8 @@ export class CodexAdapter implements AgentAdapter {
     if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
     else args.push(...permissionArgs("codex", effectivePermissionMode(opts)));
     args.push(...codexFastModeArgs(opts));
+    // BRW-IDE-00 F2 — ponte de browser do turno (nunca em execução gerenciada/subagente).
+    if (!opts?.managed && opts?.browserTools) args.push(...codexBrowserMcpArgs(opts.browserTools));
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);

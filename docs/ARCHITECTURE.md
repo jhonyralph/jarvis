@@ -71,6 +71,68 @@ defined there.
   `dirs` may also carry `requested` (raw path echoed back), `error` (shown inside the
   picker) and `drives` (Windows, at a drive root); Hub and Runner build it with the
   same `listDirectory()` from `packages/core/src/dir-listing.ts`.
+- `packages/core/src/browser.ts` — **remote browser** (BRW-IDE-00 F1): one headless
+  Chromium per *profile* per machine (F1 exposes only the owner profile,
+  `~/.jarvis/browser/owner`), driven over raw CDP on loopback only. Hosted by each
+  Runner and, for the Hub's own machine, in-process by the Hub (like the terminal).
+  Chrome is discovered (`JARVIS_BROWSER_PATH` → Chrome → Edge → Chromium/Playwright)
+  and launched lazily on the first open; `JARVIS_BROWSER=0` removes the capability.
+  Screencast runs only while someone watches a tab, with "latest wins" + an fps cap on
+  the producer and adaptive JPEG quality. Orphan safety: pidfile per profile, reaping by
+  `--user-data-dir` command line (on open, after every kill and at host boot), tree
+  kill on shutdown, idle shutdown with no viewers.
+- `apps/hub/src/browserRelay.ts` — the Hub side of the remote browser: **owner-only**
+  gate (members are refused even with a runner grant, and the attempt is audited),
+  viewer counting per (machine, tab), and an **opaque** relay of the binary frames
+  (only the `pageId` in the header is read) with per-viewer credit (max 2 frames in
+  flight without `browser_fack`, keeping only the newest). Frames travel as binary
+  WebSocket messages on the existing runner connection and to the client, never as
+  JSON/base64, and with per-message deflate disabled. Contract and binary layout:
+  `packages/protocol/src/runner.ts` (protocol v18) and
+  [`specs/BRW-IDE-00-remote-browser-and-ide.md`](specs/BRW-IDE-00-remote-browser-and-ide.md) §4.1.
+  The client panel (🌐 in the chat header, `apps/hub/web/app.js`) is feature-detected:
+  it only appears for the owner when some machine advertises `browser`.
+- `packages/core/src/browser-agent.ts` — **the AI in the browser** (BRW-IDE-00 F2, protocol
+  v19). A small Playwright-MCP-like toolset (`browser_tabs/snapshot/screenshot/navigate/click/
+  type/press/scroll/new_tab/close_tab/wait/handle_dialog`; accessibility-tree snapshot with
+  stable refs `e12`; **no** JS evaluation, **no** cookie/storage access) served by
+  `BrowserAgentService` on top of the machine's `BrowserManager`. The three levels of the spec
+  §3.1 are enforced in ONE place (`BrowserAgentService.call`) on the machine that owns the
+  browser: *Ver* (read tools on the owner profile), *agent profile* (everything on the separate
+  system profile `~/.jarvis/browser/agent`, launched lazily) and *owner drive* (actions on the
+  owner profile only after the owner enables it for that session; expires at the end of the
+  session's turn, on "Assumir", on Hub-link loss or after 30 min). Transport to the agent is the
+  same as the task/permission bridges: a tiny stdio MCP server embedded as a string
+  (`~/.jarvis/browser-bridge.mjs`, server `jarvisbrowser`) injected per turn — Claude via the
+  turn's `--mcp-config`, Codex via `-c mcp_servers.jarvisbrowser.*` — that forwards each call to
+  a loopback endpoint (`/internal/browser` on the Hub for local sessions, an ephemeral
+  `127.0.0.1` server on each runner) with a **per-turn token**. The Hub only marks owner turns
+  (`send.browser:true`); grants/actions/selection travel as `browser_agent_*`/`browser_grab*`
+  and every agent action lands in `audit.log` without page content. The same module serves the
+  owner's "select points → send to the AI" (`browser_grab`: element under the point + cropped
+  JPEG, secrets redacted). Spec §16.
+- `packages/core/src/ide.ts` — **VS Code per machine** (BRW-IDE-00 F4): `IdeManager`
+  provisions code-server 4.141.0 on demand (asset per OS/arch, **SHA-256 pinned in the
+  code**, download → verify → system `tar` in a child process → atomic rename into
+  `~/.jarvis/ide/code-server-4.141.0/`), runs one instance per machine on
+  `127.0.0.1:<free port>` with `--auth none` and its own `user-data`/`extensions` dirs
+  (HOME/USERPROFILE untouched so the integrated terminal keeps the user's git/ssh), stops
+  it when idle (no tunnel/proxy connection for `JARVIS_IDE_IDLE_MIN`), and reaps orphans by
+  command line + process tree (pidfile, on start, after stop and at host boot). Hosted by
+  each Runner and, for the Hub's own machine, in-process by the Hub.
+- `packages/core/src/ide-tunnel.ts` — the **tunnel** for remote machines: multiplexed
+  byte streams as binary WebSocket frames (`kind 0x54`, next to the browser's `0x42`) on
+  the runner's existing connection — `OPEN` (request head) / `DATA` / `END` / `RESET` /
+  `WINDOW` (credit) / `RESPONSE` (status + headers). Per-stream credit window (512 KiB),
+  64 KiB chunks, link backlog gate, stream cap, header/idle timeouts, teardown when the
+  connection drops. The runner side (`apps/runner/src/ide.ts`) bridges each stream to
+  the local code-server (HTTP re-issued with the original `Host`, WebSocket as raw TCP).
+- `apps/hub/src/ideGateway.ts` — the Hub's HTTP surface `/ide/<runnerId>/…`: owner-only
+  `ide_*` messages, one-time ticket → per-machine session cookie, prefix stripping,
+  `Service-Worker-Allowed` injection, `Location` rewriting, folder → `/c:/…` URI, and the
+  two upstreams (direct proxy for the Hub's machine, tunnel for the others). The Hub's
+  WebSocket server runs with `noServer` so `/ide/…` upgrades reach the gateway. Contract:
+  `packages/protocol/src/runner.ts` (protocol v19) and the spec §17.
 
 ## Voice pipeline (local)
 

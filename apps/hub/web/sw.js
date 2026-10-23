@@ -5,7 +5,8 @@
 //     the last good copy is cached and only served when the network is unreachable (Tailscale
 //     dropped, tab resumed offline) so the app opens instead of showing a blank page.
 //   • static shell assets (manifest, icon) → cache-first with a background refresh.
-// Everything else (POST, /pasted/ images, cross-origin) is passed straight through, untouched.
+// Everything else (POST, /pasted/ images, /ide/ — o VS Code da máquina —, cross-origin) is passed
+// straight through, untouched.
 // Bumped v1 → v2 when the app JS moved out of index.html into /app.js: the shell now MUST cache the
 // external script or an offline open would render an empty page.
 const CACHE = "jarvis-shell-v5";
@@ -56,6 +57,11 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // never touch cross-origin
   if (url.pathname.startsWith("/pasted/")) return;    // user images: always live, never cached
+  // VS Code da máquina (BRW-IDE-00 F4): nunca tocar. Sem isto a navegação para /ide/<máquina>/ (e as
+  // de cada webview, que também são `navigate`) caía no network-first daqui: guardava o HTML do
+  // workbench no lugar do "/" do Jarvis e, em rede lenta, servia o Jarvis dentro da IDE. O
+  // code-server tem o próprio service worker, com escopo /ide/<máquina>/.
+  if (url.pathname.startsWith("/ide/")) return;
 
   if (req.mode === "navigate") {
     event.respondWith(networkFirstWithTimeout(req, "/"));
@@ -67,6 +73,19 @@ self.addEventListener("fetch", (event) => {
   // the cached script instantly instead of hanging on the 287KB download.
   if (url.pathname === "/app.js") {
     event.respondWith(networkFirstWithTimeout(req, req));
+    return;
+  }
+
+  // Editor leve (BRW-IDE-00 F3): o CodeMirror (~600 KB) NÃO entra no SHELL — pré-cachear faria todo
+  // aparelho baixá-lo na instalação do SW mesmo sem nunca editar. Ele é guardado no PRIMEIRO uso
+  // (stale-while-revalidate): abrir o editor de novo é instantâneo, inclusive no celular.
+  if (url.pathname.startsWith("/vendor/codemirror/")) {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE);
+      const cached = await cache.match(req);
+      const network = fetch(req).then((res) => { if (res && res.ok) cache.put(req, res.clone()); return res; }).catch(() => null);
+      return cached || (await network) || Response.error();
+    })());
     return;
   }
 

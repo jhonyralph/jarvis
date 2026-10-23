@@ -44,12 +44,19 @@ import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, bui
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, RUNNER_CAPABILITY_SINCE, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
 import * as auth from "./auth.js";
+import { writeProjectFile, searchProjectFiles } from "@jarvis/core";
+import { createFileEditRouter, type FileEditPendingMeta } from "./fileEdit.js";
 import * as guard from "./guard.js";
 import { startAdminApi } from "./adminApi.js";
 import { runManagedTurn, type ManagedTurnInput, type TurnCtx } from "./turn.js";
 import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
 import { buildCouncilRoutePrompt, councilRouteFallback, parseCouncilRouteDecision, type CouncilRouteDecision } from "./councilRoute.js";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
+import { BrowserManager, BrowserAgentService, serveBrowserBridgeHttp, type BrowserStateInfo } from "@jarvis/core";
+import type { BrowserAgentActionInfo, BrowserAgentGrantInfo } from "@jarvis/protocol";
+import { BrowserProfilePages, BrowserRelay, browserAccess, browserToolsForTurn, parseBrowserClientMessage, runnerHasBrowser, runnerHasBrowserAgent, runnerHasBrowserGrab } from "./browserRelay.js";
+import { IdeManager, isTunnelFrame } from "@jarvis/core";
+import { createIdeService } from "./ideGateway.js";
 import { BackgroundJobStore, planJobContinuation, parseBackgroundRunDirectives, canContinueOriginSession, DEFAULT_MAX_AUTO_CONTINUE_DEPTH, isTerminalJobStatus, type BackgroundJob, jobPaths, spawnDetachedJob, readJobPid, readJobCompletion, readJobLogTail } from "@jarvis/core";
 import { PersonalAssistantService } from "./personalAssistant.js";
 import { createBuiltInPersonalSources, createPersonalSourceFactory } from "./personalSources.js";
@@ -1030,6 +1037,8 @@ function secHeaders(nonce?: string, host?: string): Record<string, string> {
 const PASTED_DIR = join(homedir(), ".jarvis", "pasted");
 const server = createServer((req, res) => {
   const urlPath = (req.url || "/").split("?")[0];
+  // BRW-IDE-00 F4 — VS Code da máquina em /ide/<runnerId>/… (cookie de sessão de IDE, só dono; ver ./ideGateway.ts).
+  if (urlPath.startsWith("/ide/") && ideService.handleHttp(req, res)) return;
   // Unauthenticated liveness/readiness probe for monitors, `tailscale serve` health, or a load
   // balancer. Deliberately leaks only coarse status (up + uptime + count of connected runners) —
   // no hostnames/ids — so it's safe to leave open on the private network.
@@ -1039,6 +1048,9 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, version: VERSION, build: hubBuild || undefined, commit: hubCommit || undefined, uptime: Math.round(process.uptime()), runners: online }));
     return;
   }
+  // BRW-IDE-00 F2 — ferramentas de browser da IA da máquina do HUB (sessões locais). Loopback + token
+  // POR TURNO (só turno do dono recebe um); o nível de §3.1 é aplicado dentro do serviço.
+  if (urlPath === "/internal/browser") { serveBrowserBridgeHttp(localBrowserAgent, req, res, secHeaders()); return; }
   // Ponte de tarefas (C3) — jarvis_task_* de qualquer IA cai aqui: o Hub resolve sessão → projeto →
   // conexão do COFRE e executa com a conta certa. A IA nunca vê credencial nem escolhe conta.
   // `create` segura a resposta até a aprovação do dono (ou autoApprove do projeto, sem divergência).
@@ -1183,8 +1195,10 @@ const server = createServer((req, res) => {
 // and hub<->browser). Measured on the largest real session: history 52.8KB -> 15.3KB (-71%) for
 // 0.6ms of CPU per send. That trade is worth it here; on a phone it's worth it twice over.
 // Browsers and the `ws` client both offer the extension, so enabling it here covers both hops.
+// `noServer` + roteamento próprio do upgrade: com `{ server }` o `ws` responde 400 a TODO upgrade que
+// não é dele, e o VS Code (BRW-IDE-00 F4) abre WebSocket em /ide/<runnerId>/… no mesmo servidor.
 const wss = new WebSocketServer({
-  server,
+  noServer: true,
   maxPayload: guard.MAX_PAYLOAD,
   perMessageDeflate: {
     threshold: 1024,       // below this the CPU costs more than the bytes saved
@@ -1192,6 +1206,13 @@ const wss = new WebSocketServer({
   },
 });
 wss.on("error", (e: any) => console.error("[hub] wss error:", e?.message ?? e));
+server.on("upgrade", (req, socket, head) => {
+  if (String(req.url || "").startsWith("/ide/") && ideService.handleUpgrade(req, socket, head)) return;
+  wss.handleUpgrade(req, socket, head, (client) => wss.emit("connection", client, req));
+});
+// Com `{ server }` o `ws` repassava os erros do servidor HTTP ao `wss`; sem ele, um 'error' sem ouvinte
+// depois do listen derrubaria o processo. (A falha de listen continua tratada lá embaixo.)
+server.on("error", (e: any) => { if (server.listening) console.error("[hub] erro no servidor HTTP:", e?.message ?? e); });
 // Last-resort safety net: a stray socket/parse error must not take the hub down
 // (a crash is a denial-of-service). Log loudly and keep serving.
 process.on("uncaughtException", (e: any) => console.error("[hub] uncaughtException (mantendo no ar):", e?.stack ?? e));
@@ -1550,9 +1571,11 @@ function refreshPrincipalRole(deviceId: string, role: auth.Role): void {
     const pr = principals.get(client as WebSocket);
     if (pr && pr.deviceId === deviceId) { pr.role = role; try { send(client as WebSocket, { t: "authed", user: { id: pr.userId, role, name: pr.name } }); } catch { /* ignore */ } }
   }
+  ideService.revalidate(); // rebaixado a membro: a IDE aberta nesse aparelho fecha
 }
 /** Boot any currently-connected device whose token was just revoked. */
 function dropRevoked(): void {
+  ideService.revalidate(); // sessões de IDE do aparelho revogado caem junto (e as conexões abertas fecham)
   const valid = new Set(auth.listDevices().map((d) => d.id));
   for (const client of wss.clients) {
     const pr = principals.get(client as WebSocket);
@@ -1684,6 +1707,8 @@ interface PendingDeleteTarget {
 interface PendingRequestMetadata {
   deleteTargets?: PendingDeleteTarget[];
   rootExecutionId?: string;
+  /** BRW-IDE-00 F3 — `reqId` do cliente + o que a auditoria da gravação precisa (nunca o conteúdo). */
+  fileEdit?: FileEditPendingMeta;
 }
 const pendingReq = new PendingRequestRegistry<WebSocket, PendingRequestMetadata>();
 const dispatchReservations = new SessionDispatchReservations();
@@ -1714,6 +1739,26 @@ function takePendingRequest(rc: RunnerConn, requestId: unknown, operations: Iter
   if (typeof requestId !== "string") return undefined;
   return pendingReq.take(requestId, { runnerId: rc.id, operations: new Set(operations), sessionId, authorize: pendingRequestAuthorized });
 }
+// BRW-IDE-00 F3 — editor leve (gravar/buscar). As regras (só o dono, auditoria, protocolo mínimo)
+// vivem em ./fileEdit.ts; aqui só se injeta o Hub real.
+const fileEdit = createFileEditRouter<WebSocket>({
+  localId: LOCAL_ID,
+  isOwner: (ws) => !auth.AUTH_ENABLED || principalOf(ws)?.role === "owner",
+  actor: (ws) => ({ userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId }),
+  canUseRunner: (ws, runnerId) => canUseRunner(ws, runnerId),
+  defaultRunner: (ws) => activeRunner(ws),
+  runner: (runnerId) => { const rc = runners.get(runnerId); return rc ? { online: !!rc.ws && rc.ws.readyState === WebSocket.OPEN, protocolVersion: rc.info.protocolVersion || 1 } : undefined; },
+  forward: (ws, runnerId, frame, meta) => {
+    const rc = runners.get(runnerId); if (!rc) return false;
+    const reqId = registerPendingRequest({ ws, runnerId, operation: meta.op, metadata: { fileEdit: meta } });
+    if (sendToRunner(rc, { ...frame, reqId })) return true;
+    pendingReq.delete(reqId); return false;
+  },
+  send: (ws, frame) => send(ws, frame),
+  audit: (event, info) => auth.audit(event, info),
+  writeLocal: (path, cwd, content, opts) => writeProjectFile(path, cwd, content, opts),
+  searchLocal: (cwd, query, opts) => searchProjectFiles(cwd, query, opts),
+});
 interface PendingMemoryConfirmation {
   runnerId: string;
   sessionId?: string;
@@ -2007,6 +2052,13 @@ function machineList(ws?: WebSocket): any[] {
       // do atraso — nem se a máquina está andando entre uma tentativa e outra.
       hubProtocolVersion: RUNNER_PROTOCOL_VERSION,
       online, local: !!r.local, commit, hubCommit, build, hubBuild, stale, offlineMs, updatePending: pendingRunnerUpdates[r.id] || null,
+      // BRW-IDE-00 F1 — só o dono enxerga a capacidade (membro nem fica sabendo que existe).
+      browser: browserCapable(r) && (!ws || isOwnerSocket(ws)),
+      // F2 — a IA desta máquina tem browser (perfil "IA" no painel + "Deixar a IA dirigir") e a seleção
+      // de pontos. `agentControl` = quantas sessões têm o nível 3 ligado AGORA (o 🌐 fica marcado).
+      ...(browserCapable(r) && (!ws || isOwnerSocket(ws)) ? { browserAgent: browserAgentCapable(r), browserGrab: browserGrabCapable(r), agentControl: (browserAgentGrants.get(r.id) || []).length } : {}),
+      // BRW-IDE-00 F4 — idem para o VS Code da máquina.
+      ide: ideService.capable(r.id) && (!ws || isOwnerSocket(ws)),
     };
   });
 }
@@ -2065,6 +2117,279 @@ function terminalRunner(msg: any, ws: WebSocket): string {
     : typeof msg.terminalId === "string" && terminalOwners.get(msg.terminalId) ? terminalOwners.get(msg.terminalId)!
     : activeRunner(ws);
 }
+
+// ---- BRW-IDE-00 F1: browser remoto (perfil do dono, uma máquina = um perfil) ---------------------
+// Só o DONO (lei §3.3, decisão de 2026-10-19): membro é recusado mesmo com grant na máquina, e a
+// tentativa vai para o audit.log. Frames: o Hub NÃO os interpreta — lê o pageId do cabeçalho e repassa
+// o mesmo Buffer com crédito por espectador (browserRelay.ts). A máquina do Hub (LOCAL) hospeda o
+// próprio BrowserManager aqui dentro, como o terminal; o frame do CDP passa pelo caminho rápido do
+// core (sem JSON.parse do JPEG) e o Chrome só sobe na primeira abertura. Como serviço do Windows o Hub
+// roda na sessão 0: o Chrome dele é necessariamente headless (o modo usado de qualquer forma).
+// F2: `JARVIS_BROWSER_AGENT=0` desliga só a IA no browser (o perfil `agent` e as ferramentas).
+const LOCAL_BROWSER_AGENT_ON = !["0", "off", "false", "no"].includes(String(process.env.JARVIS_BROWSER_AGENT ?? "1").trim().toLowerCase());
+const localBrowser = new BrowserManager({
+  connect: (url) => new WebSocket(url, { perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 }),
+  rootDir: join(JARVIS_DIR, "browser"),
+  allowedProfiles: LOCAL_BROWSER_AGENT_ON ? ["owner", "agent"] : ["owner"],
+  idleMs: Math.max(0, Number(process.env.JARVIS_BROWSER_IDLE_MIN ?? 10)) * 60000,
+  maxFps: Number(process.env.JARVIS_BROWSER_FPS) || 15,
+  onState: (state) => onBrowserState(LOCAL_ID, state),
+  onFrame: (frame) => { browserRelay.onFrame(LOCAL_ID, frame); },
+  log: (event, data) => log.info(event, { runnerId: LOCAL_ID, ...(data || {}) }),
+});
+// Hub morto à força (watchdog: taskkill /T) pode deixar um auxiliar do Chrome vivo segurando o perfil:
+// recolhe no boot, fora do caminho crítico (consulta de processos é assíncrona).
+if (localBrowser.available) setTimeout(() => { void localBrowser.reapOrphans().catch(() => { /* ignore */ }); }, 5000).unref?.();
+const browserRelay = new BrowserRelay<WebSocket>({
+  // compress:false — o wss tem permessage-deflate ligado para JSON; JPEG não comprime e o zlib só
+  // gastaria CPU do event loop.
+  sendFrame: (viewer, frame) => { if (viewer.readyState === WebSocket.OPEN) viewer.send(frame, { binary: true, compress: false }); },
+  setProducer: (runnerId, pageId, on, dims) => browserProducer(runnerId, pageId, on, dims),
+  feedback: (runnerId, pageId, delivered, dropped) => {
+    if (runnerId === LOCAL_ID) { localBrowser.feedback(pageId, delivered, dropped); return; }
+    const rc = runners.get(runnerId);
+    if (rc) sendToRunner(rc, { t: "browser_feedback", pageId, delivered, dropped });
+  },
+  canView: (viewer) => viewer.readyState === WebSocket.OPEN && isOwnerSocket(viewer),
+  onPageIdle: (s) => log.info("browser_view_session", { ...s }),
+});
+/** Sockets com o painel do browser aberto, por máquina (cada socket olha uma máquina por vez). */
+const browserWatchers = new Map<string, Set<WebSocket>>();
+// ---- BRW-IDE-00 F2: a IA no browser ----------------------------------------------------------------
+// As abas são por (máquina, perfil): com o perfil "IA" a mesma máquina manda dois browser_state.
+const browserProfilePages = new BrowserProfilePages();
+/** Liberações do nível 3 (IA dirigindo o perfil do dono) por máquina — a VERDADE é da máquina; isto é o
+ *  espelho para o painel ("IA no controle" + Assumir) e para o selo no botão 🌐. */
+const browserAgentGrants = new Map<string, BrowserAgentGrantInfo[]>();
+/** seleção de pontos em voo: reqId do HUB → quem pediu (o reqId do cliente nunca vira chave) */
+const pendingBrowserGrabs = new Map<string, { ws: WebSocket; reqId: string; runnerId: string; timer: ReturnType<typeof setTimeout> }>();
+function browserAgentCapable(r: RunnerConn): boolean { return r.local ? (LOCAL_BROWSER_AGENT_ON && localBrowser.available) : runnerHasBrowserAgent(r.info); }
+function browserGrabCapable(r: RunnerConn): boolean { return r.local ? localBrowser.available : runnerHasBrowserGrab(r.info); }
+/** Para TODO socket de dono (o selo do 🌐 aparece mesmo com o painel fechado). */
+function broadcastToOwners(frame: Record<string, unknown>): void {
+  const payload = JSON.stringify(frame);
+  for (const c of wss.clients) { const w = c as WebSocket; if (!runnerSockets.has(w) && w.readyState === WebSocket.OPEN && isOwnerSocket(w)) w.send(payload); }
+}
+function onBrowserAgentGrants(runnerId: string, grants: BrowserAgentGrantInfo[]): void {
+  const list = (Array.isArray(grants) ? grants : []).filter((g) => g && typeof g.sessionId === "string").slice(0, 50)
+    .map((g) => ({ sessionId: String(g.sessionId).slice(0, 200), profile: "owner" as const, since: Number(g.since) || 0, expiresAt: Number(g.expiresAt) || 0, turnActive: g.turnActive === true }));
+  const before = (browserAgentGrants.get(runnerId) || []).length;
+  if (list.length) browserAgentGrants.set(runnerId, list); else browserAgentGrants.delete(runnerId);
+  broadcastToOwners({ t: "browser_agent_state", runnerId, grants: list });
+  if (before !== list.length) auth.audit(list.length > before ? "browser_agent_grant_on" : "browser_agent_grant_off", { runnerId, detail: list.map((g) => g.sessionId).join(",").slice(0, 200) || "(nenhuma)" });
+}
+/** Cada ação da IA no browser vai para o audit.log (nunca conteúdo de página nem texto digitado) e
+ *  aparece no painel de quem está olhando aquela máquina. */
+function onBrowserAgentAction(runnerId: string, a: BrowserAgentActionInfo): void {
+  if (!a || typeof a !== "object") return;
+  const action = { sessionId: String(a.sessionId || "").slice(0, 200), tool: String(a.tool || "").slice(0, 40), profile: a.profile === "owner" ? "owner" as const : "agent" as const, ok: a.ok === true, ...(typeof a.pageId === "string" ? { pageId: a.pageId.slice(0, 64) } : {}), ...(typeof a.detail === "string" ? { detail: a.detail.slice(0, 240) } : {}), at: Number(a.at) || Date.now() };
+  auth.audit("browser_agent_action", { runnerId, detail: `${action.tool} perfil=${action.profile} ${action.ok ? "ok" : "falhou"} sessão=${action.sessionId}${action.detail ? " · " + action.detail : ""}`.slice(0, 400) });
+  broadcastBrowser(runnerId, { t: "browser_agent_action", ...action });
+}
+const localBrowserAgent = new BrowserAgentService(localBrowser, {
+  onAction: (a) => onBrowserAgentAction(LOCAL_ID, a),
+  onGrants: (g) => onBrowserAgentGrants(LOCAL_ID, g),
+});
+const LOCAL_BROWSER_AGENT_URL = `http://127.0.0.1:${PORT}/internal/browser`;
+const browserDeniedAuditAt = new WeakMap<WebSocket, number>();
+function watchBrowser(ws: WebSocket, runnerId: string): void {
+  for (const [rid, set] of browserWatchers) if (rid !== runnerId && set.delete(ws) && !set.size) browserWatchers.delete(rid);
+  let set = browserWatchers.get(runnerId);
+  if (!set) { set = new Set(); browserWatchers.set(runnerId, set); }
+  set.add(ws);
+}
+function unwatchBrowser(ws: WebSocket): void {
+  for (const [rid, set] of browserWatchers) if (set.delete(ws) && !set.size) browserWatchers.delete(rid);
+  browserRelay.unview(ws);
+}
+function broadcastBrowser(runnerId: string, frame: Record<string, unknown>): void {
+  const payload = JSON.stringify({ ...frame, runnerId });
+  for (const c of browserWatchers.get(runnerId) || []) if (c.readyState === WebSocket.OPEN && isOwnerSocket(c)) c.send(payload);
+}
+function browserCapable(r: RunnerConn): boolean { return r.local ? localBrowser.available : runnerHasBrowser(r.info); }
+/** Estado novo de uma máquina: repassa aos espectadores e esquece no relay as abas que sumiram. As abas
+ *  são por PERFIL (F2): o estado do perfil "IA" não pode derrubar quem assiste o perfil do dono. */
+function onBrowserState(runnerId: string, state: BrowserStateInfo, reqId?: string): void {
+  const pages = Array.isArray(state?.pages) ? state.pages.slice(0, 50) : [];
+  const profile = state?.profile === "agent" ? "agent" : "owner";
+  for (const pageId of browserProfilePages.update(runnerId, { profile, running: !!state?.running, pages })) browserRelay.dropPage(runnerId, pageId);
+  broadcastBrowser(runnerId, { t: "browser_state", ...(reqId ? { reqId } : {}), profile, running: !!state?.running, pages, activePageId: state?.activePageId, reason: state?.reason });
+}
+function browserProducer(runnerId: string, pageId: string, on: boolean, dims: { maxWidth: number; maxHeight: number }): void {
+  if (runnerId === LOCAL_ID) {
+    localBrowser.view(pageId, on, dims).catch((e) => { if (on) broadcastBrowser(LOCAL_ID, { t: "browser_error", pageId, message: String(e?.message ?? e).slice(0, 300) }); });
+    return;
+  }
+  const rc = runners.get(runnerId);
+  if (rc) sendToRunner(rc, { t: "browser_view", pageId, on, maxWidth: dims.maxWidth, maxHeight: dims.maxHeight });
+}
+/** A máquina caiu: ninguém mais recebe frame dela e os painéis abertos ficam sabendo. */
+function browserRunnerOffline(runnerId: string): void {
+  browserRelay.dropRunner(runnerId);
+  browserProfilePages.drop(runnerId);
+  // A máquina revoga o nível 3 sozinha quando perde o Hub; aqui só o espelho acompanha.
+  if (browserAgentGrants.has(runnerId)) onBrowserAgentGrants(runnerId, []);
+  for (const [id, g] of pendingBrowserGrabs) if (g.runnerId === runnerId) { clearTimeout(g.timer); pendingBrowserGrabs.delete(id); send(g.ws, { t: "browser_grab_result", runnerId, reqId: g.reqId, ok: false, error: "máquina offline" }); }
+  if (browserWatchers.has(runnerId)) for (const profile of ["owner", "agent"]) broadcastBrowser(runnerId, { t: "browser_state", profile, running: false, pages: [], reason: "máquina offline" });
+}
+function handleBrowserClient(ws: WebSocket, msg: any): void {
+  const principal = principalOf(ws);
+  const gate = browserAccess({ authEnabled: auth.AUTH_ENABLED, role: principal?.role });
+  if (!gate.ok) {
+    // Auditada, mas sem deixar um cliente insistente inundar o audit.log (append síncrono).
+    const last = browserDeniedAuditAt.get(ws) || 0;
+    if (Date.now() - last > 10_000) { browserDeniedAuditAt.set(ws, Date.now()); auth.audit("browser_denied", { userId: principal?.userId, deviceId: principal?.deviceId, runnerId: typeof msg.runnerId === "string" ? msg.runnerId : undefined, detail: String(msg.t).slice(0, 40) }); }
+    send(ws, { t: "browser_error", runnerId: typeof msg.runnerId === "string" ? msg.runnerId : undefined, reqId: typeof msg.reqId === "string" ? msg.reqId : undefined, message: gate.reason });
+    return;
+  }
+  const op = parseBrowserClientMessage(msg, activeRunner(ws));
+  if ("error" in op) { send(ws, { t: "browser_error", runnerId: typeof msg.runnerId === "string" ? msg.runnerId : undefined, reqId: typeof msg.reqId === "string" ? msg.reqId : undefined, message: op.error }); return; }
+  const rid = op.runnerId;
+  // Os dois mais frequentes primeiro e sem checagem cara (fack vem a cada frame).
+  if (op.op === "fack") { browserRelay.ack(ws, op.pageId); return; }
+  if (op.op === "detach") { unwatchBrowser(ws); return; }
+  const fail = (message: string, extra: Record<string, unknown> = {}) => send(ws, { t: "browser_error", runnerId: rid, ...extra, message: message.slice(0, 300) });
+  const reqId = "reqId" in op ? op.reqId : undefined;
+  if (!canUseRunner(ws, rid)) { fail("sem acesso a esta máquina", { reqId }); return; }
+  const rc = rid === LOCAL_ID ? undefined : runners.get(rid);
+  if (rid === LOCAL_ID) { if (!localBrowser.available) { fail(`browser indisponível no servidor: ${localBrowser.unavailableReason || "sem navegador"}`, { reqId }); return; } }
+  else if (!rc?.ws || rc.ws.readyState !== WebSocket.OPEN) { fail("máquina offline", { reqId }); return; }
+  else if (!runnerHasBrowser(rc.info)) { fail("esta máquina não oferece o browser (versão antiga, sem Chrome/Edge/Chromium ou JARVIS_BROWSER=0)", { reqId }); return; }
+  const who = { userId: principal?.userId, deviceId: principal?.deviceId, runnerId: rid };
+  const local = (p: Promise<unknown>, extra: Record<string, unknown> = {}) => { p.catch((e) => fail(String(e?.message ?? e), extra)); };
+  const machine = rc || runners.get(LOCAL_ID);
+  // F2: o perfil "IA" só existe onde a máquina serve a IA (runner < 19 ou JARVIS_BROWSER_AGENT=0 não).
+  if (("profile" in op && op.profile === "agent") || op.op === "agent_grant" || op.op === "agent_revoke") {
+    if (!(machine && browserAgentCapable(machine))) { fail("a IA não tem browser nesta máquina (versão antiga ou JARVIS_BROWSER_AGENT=0)", { reqId }); return; }
+  }
+  switch (op.op) {
+    case "open":
+      watchBrowser(ws, rid);
+      auth.audit("browser_open", { ...who, detail: "perfil " + op.profile });
+      // Quem abre o painel já vê se a IA está no controle desta máquina.
+      send(ws, { t: "browser_agent_state", runnerId: rid, grants: browserAgentGrants.get(rid) || [] });
+      if (rc) { sendToRunner(rc, { t: "browser_open", reqId: op.reqId, profile: op.profile }); return; }
+      localBrowser.open(op.profile).then((state) => send(ws, { t: "browser_state", runnerId: LOCAL_ID, reqId: op.reqId, ...state })).catch((e) => fail(String(e?.message ?? e), { reqId: op.reqId }));
+      return;
+    case "tab":
+      if (op.tab !== "activate") auth.audit(op.tab === "new" ? "browser_tab_open" : "browser_tab_close", { ...who, detail: (op.tab === "new" ? op.url || "about:blank" : op.pageId || "").slice(0, 200) });
+      if (rc) { sendToRunner(rc, { t: "browser_tab", reqId: op.reqId, op: op.tab, pageId: op.pageId, url: op.url, profile: op.profile }); return; }
+      local(localBrowser.tab(op.tab, { pageId: op.pageId, url: op.url, profile: op.profile }), { reqId: op.reqId });
+      return;
+    case "agent_grant":
+      // O dono liga/desliga "a IA dirige o MEU browser" para UMA sessão. A máquina decide e devolve o
+      // estado (browser_agent_state); a auditoria do liga/desliga sai de onBrowserAgentGrants.
+      auth.audit("browser_agent_grant_request", { ...who, detail: `${op.on ? "ligar" : "desligar"} sessão=${op.sessionId}`.slice(0, 240) });
+      if (rc) { sendToRunner(rc, { t: "browser_agent_grant", sessionId: op.sessionId, on: op.on }); return; }
+      try { localBrowserAgent.setOwnerDrive(op.sessionId, op.on); } catch (e: any) { fail(String(e?.message ?? e)); }
+      return;
+    case "agent_revoke":
+      auth.audit("browser_agent_takeover", { ...who, detail: "assumir" });
+      if (rc) { sendToRunner(rc, { t: "browser_agent_grant", on: false, all: true }); return; }
+      localBrowserAgent.revokeAll("assumir");
+      return;
+    case "grab": {
+      if (!(machine && browserGrabCapable(machine))) { fail("esta máquina ainda não tem a seleção de pontos (runner antigo)", { reqId: op.reqId }); return; }
+      auth.audit("browser_grab", { ...who, detail: op.pageId });
+      const reply = (r: { ok: boolean; error?: string; grab?: unknown }) => send(ws, { t: "browser_grab_result", runnerId: rid, reqId: op.reqId, ...r });
+      if (rc) {
+        const hubReq = "grab-" + randomUUID();
+        const timer = setTimeout(() => { if (pendingBrowserGrabs.delete(hubReq)) reply({ ok: false, error: "a máquina não respondeu a tempo" }); }, 15000);
+        timer.unref?.();
+        pendingBrowserGrabs.set(hubReq, { ws, reqId: op.reqId, runnerId: rid, timer });
+        sendToRunner(rc, { t: "browser_grab", reqId: hubReq, pageId: op.pageId, x: op.x, y: op.y });
+        return;
+      }
+      localBrowserAgent.grab(op.pageId, op.x, op.y).then((grab) => reply({ ok: true, grab }), (e) => reply({ ok: false, error: String(e?.message ?? e).slice(0, 300) }));
+      return;
+    }
+    case "nav":
+      if (op.url) auth.audit("browser_nav", { ...who, detail: op.url.slice(0, 200) });
+      if (rc) { sendToRunner(rc, { t: "browser_nav", pageId: op.pageId, url: op.url, action: op.action }); return; }
+      local(localBrowser.navigate(op.pageId, { url: op.url, action: op.action }), { pageId: op.pageId });
+      return;
+    case "input":
+      if (rc) { sendToRunner(rc, { t: "browser_input", pageId: op.pageId, input: op.input }); return; }
+      try { localBrowser.input(op.pageId, op.input); } catch (e: any) { fail(String(e?.message ?? e), { pageId: op.pageId }); }
+      return;
+    case "view":
+      if (!op.on) { browserRelay.unview(ws); return; }
+      watchBrowser(ws, rid);
+      browserRelay.view(ws, rid, op.pageId, op.dims);
+      return;
+    case "viewport": {
+      const v = op.width ? { width: op.width, height: op.height, mobile: op.mobile, scale: op.scale } : null;
+      if (rc) { sendToRunner(rc, { t: "browser_viewport", pageId: op.pageId, ...(v || {}) }); return; }
+      local(localBrowser.setViewport(op.pageId, v), { pageId: op.pageId });
+      return;
+    }
+    case "dialog":
+      if (rc) { sendToRunner(rc, { t: "browser_dialog", pageId: op.pageId, accept: op.accept, promptText: op.promptText }); return; }
+      local(localBrowser.dialog(op.pageId, op.accept, op.promptText), { pageId: op.pageId });
+      return;
+    case "shutdown":
+      auth.audit("browser_shutdown", { ...who, detail: "perfil " + op.profile });
+      if (rc) { sendToRunner(rc, { t: "browser_shutdown", profile: op.profile }); return; }
+      local(localBrowser.shutdown(op.profile, "pedido do dono"));
+      return;
+  }
+}
+// 1×/s: retorno de qualidade + crédito preso; a cada minuto com tráfego, uma linha de observabilidade
+// (fps entregue, descartes, Mbps) para correlacionar com a guarda de lag do event loop.
+let browserStatsTicks = 0;
+setInterval(() => {
+  browserRelay.tick();
+  if (++browserStatsTicks % 60 !== 0) return;
+  const st = browserRelay.stats();
+  if (st.pages || st.fpsIn || st.dropped) log.info("browser_relay", st);
+}, 1000).unref?.();
+
+// ---- BRW-IDE-00 F4: VS Code (code-server) por máquina em /ide/<runnerId>/… --------------------------
+// Regras de segurança, túnel e proxy em ./ideGateway.ts; aqui só o Hub real é injetado. A máquina do
+// Hub (LOCAL) hospeda o próprio code-server, como o terminal e o browser; as outras chegam pelo túnel
+// binário (kind 0x54) na conexão do runner.
+const localIde = new IdeManager({
+  rootDir: join(JARVIS_DIR, "ide"),
+  binDir: process.env.JARVIS_IDE_CODE_SERVER || undefined,
+  idleMs: Math.max(0, Number(process.env.JARVIS_IDE_IDLE_MIN ?? 30)) * 60000,
+  onState: (state) => ideService.onLocalState(state),
+  log: (event, data) => log.info(event, { runnerId: LOCAL_ID, ...(data || {}) }),
+});
+const ideService = createIdeService<WebSocket>({
+  authEnabled: auth.AUTH_ENABLED,
+  localId: LOCAL_ID,
+  localIde: localIde.available ? localIde : null,
+  localOs: process.platform,
+  isOwner: (ws) => isOwnerSocket(ws),
+  actor: (ws) => ({ userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId }),
+  canUseRunner: (ws, rid) => canUseRunner(ws, rid),
+  defaultRunner: (ws) => activeRunner(ws),
+  runner: (rid) => {
+    const rc = runners.get(rid);
+    if (!rc || rc.local) return null;
+    const sock = rc.ws;
+    return {
+      online: !!sock && sock.readyState === WebSocket.OPEN, os: rc.info.os, protocolVersion: rc.info.protocolVersion, ide: rc.info.ide, link: sock,
+      sendJson: (obj) => sendToRunner(rc, obj),
+      // compress só para corpo de texto (decidido por stream); bytes de WebSocket já vêm comprimidos
+      sendBinary: (frame, compress) => { if (sock && sock.readyState === WebSocket.OPEN) sock.send(frame, { binary: true, compress }); },
+      backlog: () => (sock ? sock.bufferedAmount : 0),
+    };
+  },
+  send: (ws, frame) => send(ws, frame),
+  isOpen: (ws) => ws.readyState === WebSocket.OPEN,
+  ownerDevice: (deviceId) => !auth.AUTH_ENABLED || auth.deviceRole(deviceId) === "owner",
+  audit: (event, info) => auth.audit(event, info),
+  clientIp: (req) => guard.clientIp(req),
+  originAllowed: (req) => guard.originAllowed(req),
+  guard,
+  log: (event, data) => log.info(event, data || {}),
+});
+// Hub morto à força pode ter deixado o code-server (e o ptyHost/extension host dele) vivo: recolhe no boot.
+if (localIde.available && localIde.installed) setTimeout(() => { void localIde.reapOrphans().catch(() => { /* ignore */ }); }, 6000).unref?.();
+// A cada minuto com tráfego: requisições, upgrades, recusas, streams e bytes por túnel (para cruzar com
+// a guarda de lag do event loop — o túnel não pode virar o próximo INC).
+setInterval(() => { const line = ideService.statsLine(); if (line) log.info("ide_proxy", line); }, 60_000).unref?.();
 
 function queueRunnerUpdate(runnerId: string, targetCommit: string, opts?: { force?: boolean }): PendingRunnerUpdate {
   const existing = pendingRunnerUpdates[runnerId];
@@ -2462,6 +2787,8 @@ function sendOwnedRunnerTurn(rc: RunnerConn, sessionId: string, turnId: string, 
   const key = executionTurnKey(rc.id, turnId);
   rememberExecutionPrincipal(rc.id, turnId, principalId);
   announceTaskBridge(rc, sessionId);
+  // F2 — só turno do DONO leva a ponte de browser (o resto — nível, liberação — é da máquina).
+  if (frame.t === "send" && browserToolsForTurn({ ownerTurn: auth.identityOf(principalId) === auth.OWNER_IDENTITY, machineOffers: runnerHasBrowserAgent(rc.info) })) frame = { ...frame, browser: true };
   if (frame.t === "send" && typeof frame.text === "string") remoteAskedText.set(rc.id + "\0" + sessionId, frame.text.slice(0, 2000));
   if (sendToRunner(rc, { ...frame, sessionId, turnId })) return true;
   executionPrincipalHints.delete(key);
@@ -2957,6 +3284,18 @@ function relayRunner(rc: RunnerConn, m: any): void {
     broadcastTerminal(rc.id, { t: "terminal_opened", reqId: m.reqId, terminal: m.terminal });
     return;
   }
+  if (m.t === "browser_state" && m.state && typeof m.state === "object") { onBrowserState(rc.id, m.state, typeof m.reqId === "string" ? m.reqId : undefined); return; }
+  if (m.t === "browser_agent_state") { onBrowserAgentGrants(rc.id, Array.isArray(m.grants) ? m.grants : []); return; }
+  if (m.t === "browser_agent_action" && m.action && typeof m.action === "object") { onBrowserAgentAction(rc.id, m.action); return; }
+  if (m.t === "browser_grab_result" && typeof m.reqId === "string") {
+    const g = pendingBrowserGrabs.get(m.reqId);
+    if (!g || g.runnerId !== rc.id) return;
+    clearTimeout(g.timer); pendingBrowserGrabs.delete(m.reqId);
+    send(g.ws, { t: "browser_grab_result", runnerId: rc.id, reqId: g.reqId, ok: m.ok === true, ...(typeof m.error === "string" ? { error: m.error.slice(0, 300) } : {}), ...(m.ok === true && m.grab && typeof m.grab === "object" ? { grab: m.grab } : {}) });
+    return;
+  }
+  if (m.t === "ide_state") { ideService.onRunnerState(rc.id, m); return; }
+  if (m.t === "browser_error") { broadcastBrowser(rc.id, { t: "browser_error", reqId: typeof m.reqId === "string" ? m.reqId : undefined, pageId: typeof m.pageId === "string" ? m.pageId : undefined, message: String(m.message || "erro no browser remoto").slice(0, 300) }); return; }
   if (m.t === "terminal_output" && typeof m.terminalId === "string") { terminalOwners.set(m.terminalId, rc.id); broadcastTerminal(rc.id, { t: "terminal_output", terminalId: m.terminalId, data: String(m.data || "") }); return; }
   if (m.t === "terminal_closed" && typeof m.terminalId === "string") { terminalOwners.delete(m.terminalId); broadcastTerminal(rc.id, { t: "terminal_closed", terminalId: m.terminalId, exitCode: m.exitCode, signal: m.signal }); return; }
   if (m.t === "terminal_list") {
@@ -2984,7 +3323,12 @@ function relayRunner(rc: RunnerConn, m: any): void {
     return;
   }
   if (m.t === "dirs") { const request = takePendingRequest(rc, m.reqId, ["listdir"]); if (request) send(request.socket, { t: "dirs", path: m.path, parent: m.parent, entries: m.entries, files: m.files, drives: m.drives, error: m.error, requested: m.requested }); return; }
-  if (m.t === "filecontent") { const request = takePendingRequest(rc, m.reqId, ["readfile"]); if (request) send(request.socket, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, mtimeMs: m.mtimeMs, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime }); return; }
+  if (m.t === "filecontent") { const request = takePendingRequest(rc, m.reqId, ["readfile"]); if (request) send(request.socket, { t: "filecontent", path: m.path, name: m.name, content: m.content, size: m.size, mtimeMs: m.mtimeMs, truncated: m.truncated, error: m.error, image: m.image, mime: m.mime, readOnlyReason: m.readOnlyReason }); return; }
+  if (m.t === "filesaved" || m.t === "searchresults") {
+    const request = takePendingRequest(rc, m.reqId, [m.t === "filesaved" ? "writefile" : "searchfiles"]);
+    if (request?.metadata?.fileEdit) fileEdit.deliverRunnerReply(request.socket, rc.id, request.metadata.fileEdit, m);
+    return;
+  }
   if (m.t === "error") {
     const route = remoteErrorRoute(m);
     if (route.scope === "request") {
@@ -3193,9 +3537,22 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
   }, 20000);
   // drop runners that never register (token) within 20s
   const regTimer = setTimeout(() => { if (!rid) { try { ws.close(1008, "no register"); } catch { /* ignore */ } } }, 20000);
-  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); denyPendingPermissionsFor(rid); console.log(`[hub] runner offline: ${rid}`); for (const k of [...remoteLiveDebates.keys()]) if (k.startsWith(rid + "\u0000")) remoteLiveDebates.delete(k); noteRunnerOffline(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
+  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); denyPendingPermissionsFor(rid); browserRunnerOffline(rid); ideService.runnerOffline(rid); console.log(`[hub] runner offline: ${rid}`); for (const k of [...remoteLiveDebates.keys()]) if (k.startsWith(rid + "\u0000")) remoteLiveDebates.delete(k); noteRunnerOffline(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
   ws.on("error", () => { /* close handles cleanup */ });
-  ws.on("message", (raw) => {
+  ws.on("message", (raw, isBinary) => {
+    // BRW-IDE-00 F1: mensagem binária = frame do browser remoto. Só de runner registrado e fora da
+    // quarentena; repasse opaco pelo relay (nunca vira string, nunca passa pelo JSON.parse).
+    if (isBinary) {
+      if (!rid || upgradeOnly) return;
+      const rcb = runners.get(rid);
+      if (!rcb || rcb.ws !== ws) return;
+      rcb.lastSeen = Date.now();
+      const buf = Buffer.isBuffer(raw) ? raw : Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw as ArrayBuffer);
+      // 1º byte separa sem parse: 0x54 = túnel da IDE (F4), 0x42 = frame do browser (F1).
+      if (isTunnelFrame(buf)) { try { ideService.onRunnerFrame(rid, ws, buf); } catch (e) { console.error("[hub] erro no túnel da IDE", rid, "-", String((e as any)?.message ?? e)); } return; }
+      try { browserRelay.onFrame(rid, buf); } catch (e) { console.error("[hub] erro no relay do browser", rid, "-", String((e as any)?.message ?? e)); }
+      return;
+    }
     let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
     if (!m || typeof m !== "object" || typeof m.t !== "string") return; // drop junk / non-object frames
     if (m.t === "register") {
@@ -5219,6 +5576,13 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   const buf: any[] = []; activityBuf.set(activityKey, buf);
   const t0 = Date.now();
   const turnId = opts.turnId || randomUUID();
+  // F2 — ponte de browser deste turno: só turno do DONO, numa máquina (o Hub) com browser para a IA.
+  // O token morre no `finally` — e com ele a liberação do nível 3 da sessão (expira no fim do turno).
+  const browserToken = !opts.managed && browserToolsForTurn({
+    ownerTurn: auth.identityOf(executionPrincipalContext.getStore() || captureSessionOwnerGeneration(LOCAL_ID, sid).principalId) === auth.OWNER_IDENTITY,
+    machineOffers: LOCAL_BROWSER_AGENT_ON && localBrowser.available,
+  }) ? localBrowserAgent.openTurn(sid, { turnId, readOnly: (opts.permissionMode ?? sessionPermissionMode(sid)) === "plan" }) : undefined;
+  if (browserToken) opts = { ...opts, browserTools: { url: LOCAL_BROWSER_AGENT_URL, token: browserToken } };
   const sequencer = createEventSequencer(turnId);
   const bridge = createAgentEventBridge(turnId, sequencer);
   const profile = (EXECUTION_ADAPTER_PROFILES as Partial<Record<string, (typeof EXECUTION_ADAPTER_PROFILES)[ExecutionAdapterId]>>)[agent.name];
@@ -5324,6 +5688,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
     attachPartialTurn(e, buf);   // idem ao cancelamento: falhar no meio não pode apagar o que já rodou
     throw e;
   } finally {
+    localBrowserAgent.closeTurn(browserToken);
     if (localExecutionAborts.get(tracker.rootExecutionId) === ctrl) localExecutionAborts.delete(tracker.rootExecutionId);
     if (localAborts.get(sid) === ctrl) localAborts.delete(sid);
     activeRuns.delete(sid); broadcastRuns();
@@ -6346,7 +6711,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       watchers.delete(ws);
       if (!watchers.size) terminalWatchers.delete(terminalId);
     }
+    unwatchBrowser(ws); // último espectador de uma aba saindo desliga o screencast dela
     voiceStreams.stop(ws); // gravação em andamento de um aparelho que saiu
+    ideService.onSocketClose(ws);
     clearUnauthTimer(ws);
     syncTails();
   });
@@ -6534,6 +6901,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // --- machine selection + routing to remote runners -----------------------
     if (msg.t === "machines") { send(ws, { t: "machines", machines: machineList(ws) }); return; }
+    // BRW-IDE-00 F3 — gravar/buscar arquivos (só o dono; ver ./fileEdit.ts).
+    if (msg.t === "writefile" || msg.t === "searchfiles") { await fileEdit.handleClient(ws, msg); return; }
+    if (msg.t.startsWith("browser_")) { handleBrowserClient(ws, msg); return; }
+    if (msg.t.startsWith("ide_")) { ideService.handleClient(ws, msg); return; }
     if (msg.t === "terminal_open" || msg.t === "terminal_input" || msg.t === "terminal_resize" || msg.t === "terminal_close" || msg.t === "terminal_list") {
       if (!requireOwner(ws)) return;
       const rid = terminalRunner(msg, ws);
@@ -6728,7 +7099,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     // when viewing a REMOTE machine, session ops are forwarded to that runner
     {
-      const explicitListRunner = msg.t === "listdir" && typeof msg.runnerId === "string" ? msg.runnerId : null;
+      // `readfile` também aceita `runnerId` (F3): a aba do editor relê da máquina de onde o arquivo veio.
+      const explicitListRunner = (msg.t === "listdir" || msg.t === "readfile") && typeof msg.runnerId === "string" ? msg.runnerId : null;
       if (explicitListRunner && !canUseRunner(ws, explicitListRunner)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
       const ar = explicitListRunner || activeRunner(ws);
       if (ar !== LOCAL_ID && (msg.t === "list" || msg.t === "open" || msg.t === "send" || msg.t === "new" || msg.t === "listdir" || msg.t === "configure" || msg.t === "readfile" || msg.t === "readdiff" || msg.t === "delete" || msg.t === "dropLast" || msg.t === "archive" || msg.t === "getWorktreePreview")) {
@@ -9270,6 +9642,10 @@ async function scanFrameworkSourceDrift(): Promise<void> {
 // indistinguíveis. `appendFileSync` do logger é síncrono, então vale dentro do handler de `exit`.
 let hubExitReason = "";
 process.on("exit", (code) => { log.info("hub_exit", { code, reason: hubExitReason || "desconhecido", uptimeS: Math.round(process.uptime()) }); });
+// O Chrome do browser remoto LOCAL não morre sozinho com o Hub no Windows: mata a árvore na saída.
+process.on("exit", () => { try { localBrowser.shutdownSync(); } catch { /* ignore */ } });
+// Idem o code-server LOCAL e os filhos dele (ptyHost, extension host, shells do terminal integrado).
+process.on("exit", () => { try { localIde.stopSync(); } catch { /* ignore */ } });
 
 let hubShuttingDown = false;
 async function hubShutdown(sig: string): Promise<void> {
@@ -9282,6 +9658,9 @@ async function hubShutdown(sig: string): Promise<void> {
   for (const [, ctrl] of localAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
   for (const [, ctrl] of routeAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
   try { localTerminals.closeAll(); } catch { /* ignore */ }
+  void localBrowser.shutdown(undefined, sig).catch(() => { /* ignore */ }); // Browser.close: grava cookies
+  try { ideService.shutdown(); } catch { /* ignore */ }
+  void localIde.stop(sig).catch(() => { /* ignore */ });
   await Promise.race([personalAssistant.disposeAll(), new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
   clearTimeout(forceExit);
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn

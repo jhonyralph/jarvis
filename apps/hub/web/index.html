@@ -512,6 +512,62 @@
     .filebody .anno-note .an-h { font-size:11px; color:#93c5fd; font-weight:700; letter-spacing:.3px; }
     .filebody .anno-note .an-t { font-size:13px; color:var(--text); margin-top:2px; }
     .filebody .anno-note .an-x { float:right; cursor:pointer; color:var(--mut); }
+    /* ---- editor leve (BRW-IDE-00 F3): abas, editor CodeMirror, conflito, busca no projeto ---- */
+    #filePanel .fileeditor { display:none; flex:1; min-height:0; background:var(--code); }
+    #filePanel.editing .fileeditor { display:flex; flex-direction:column; }
+    #filePanel.editing #fileBody, #filePanel.editing #annoBar, #filePanel.editing #annoSend, #filePanel.editing #fileFmt, #filePanel.editing #fileView { display:none !important; }
+    #filePanel .edhost { flex:1; min-height:0; display:flex; flex-direction:column; }
+    #filePanel .edhost.hidden { display:none !important; }
+    #filePanel .edhost .cm-editor { flex:1; min-height:0; }
+    #fileEdit.off { opacity:.5; }
+    #fileEdit, #fileSave, #fileEditDone { flex:none; white-space:nowrap; }
+    /* painel estreito (lado a lado com a árvore aberta): os botões do editor viram só ícone, senão o
+       cabeçalho transborda por cima da árvore. Container query = largura do PAINEL, não da janela. */
+    #filePanel { container-type:inline-size; container-name:filepanel; }
+    @container filepanel (max-width:620px) { #fileEdit .lbl, #fileSave .lbl, #fileEditDone .lbl { display:none; } }
+    @container filepanel (max-width:480px) { #filePanel .fphead { flex-wrap:wrap; row-gap:4px; } }
+    #fileSave.dirty { background:#22c55e; color:#04210f; }
+    #fileSave:disabled { opacity:.6; cursor:progress; }
+    .edtabs { display:flex; gap:2px; padding:3px 6px 0; border-bottom:1px solid var(--line); overflow-x:auto; overflow-y:hidden; flex:none; scrollbar-width:thin; }
+    .edtab { flex:none; display:inline-flex; align-items:center; gap:4px; max-width:220px; padding:4px 4px 4px 10px; border:1px solid transparent; border-bottom:0; border-radius:8px 8px 0 0; color:var(--mut); font-size:12px; cursor:pointer; user-select:none; }
+    .edtab:hover { color:var(--text); background:#ffffff08; }
+    .edtab.on { color:var(--text); background:var(--code); border-color:var(--line); }
+    .edtab .edtn { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .edtab .edtd { color:#f59e0b; font-size:10px; min-width:6px; }
+    .edtab .edtx { background:none; border:0; color:var(--mut); padding:2px 5px; font-size:11px; font-weight:400; border-radius:5px; min-height:0; }
+    .edtab .edtx:hover { color:var(--text); background:#ffffff14; }
+    .edbanner { display:flex; align-items:center; gap:8px; padding:6px 12px; font-size:12px; color:#fcd9a0; background:#f59e0b14; border-bottom:1px solid #f59e0b44; }
+    .edbanner span { flex:1; min-width:0; }
+    .edbanner button { flex:none; padding:4px 9px; font-size:12px; }
+    .modal.edconf { z-index:95; }
+    .modal.edconf .card { width:min(760px,100%); }
+    .edconf .edcmsg { font-size:13.5px; line-height:1.5; }
+    .edconf .edcmeta { font-size:12px; color:var(--mut); }
+    .edconf .edcbtns { flex-wrap:wrap; justify-content:flex-end; }
+    .edconf .eddiff { max-height:min(46dvh,420px); overflow:auto; border:1px solid var(--line); border-radius:8px; flex:none; }
+    .edconf .edclegend { padding:4px 10px 6px; font-size:11.5px; color:var(--mut); font-family:system-ui,sans-serif; }
+    .edconf .edclegend .add { color:#3fb950; } .edconf .edclegend .del { color:#f85149; }
+    .edconf .eddiff .tempty { padding:6px 12px; color:var(--mut); font-family:system-ui,sans-serif; }
+    .treesearch { display:flex; gap:4px; padding:6px 8px; border-bottom:1px solid var(--line); flex:none; }
+    .treesearch input { flex:1; min-width:0; background:#0f141b; color:var(--text); border:1px solid #ffffff1f; border-radius:8px; padding:6px 8px; font:inherit; font-size:12.5px; }
+    .treesearch button { flex:none; padding:4px 7px; font-size:11.5px; font-family:ui-monospace,Menlo,Consolas,monospace; }
+    .treesearch button.on { background:#2563eb; color:#fff; border-color:#2563eb; }
+    .treesearchres { flex:0 1 auto; max-height:55%; overflow:auto; border-bottom:1px solid var(--line); font-size:12px; padding:2px 4px 6px; }
+    .treesearchres .srhead { display:flex; align-items:center; gap:6px; padding:4px 6px; color:var(--mut); font-size:11.5px; }
+    .treesearchres .srhead .srclose { margin-left:auto; padding:2px 7px; font-size:11px; }
+    .treesearchres .srfile { padding:5px 6px 2px; color:var(--text); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .treesearchres .srhit { display:flex; gap:6px; padding:3px 6px 3px 14px; border-radius:6px; cursor:pointer; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; }
+    .treesearchres .srhit:hover { background:#ffffff0d; } .treesearchres .srhit.sel { background:#2563eb2e; }
+    .treesearchres .srln { flex:none; min-width:28px; text-align:right; color:#5c6673; }
+    .treesearchres .srpv { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#cbd5e1; }
+    .treesearchres mark { background:#e5c07b44; color:#fff; border-radius:3px; padding:0 1px; }
+    @media (max-width:820px){
+      .treesearch input { font-size:16px; }         /* < 16px faz o iOS dar zoom ao focar */
+      #filePanel .edhost .cm-content { font-size:14px; }
+      #filePanel .edhost .cm-textfield { font-size:16px; }
+      .edtab { max-width:150px; }
+    }
+    @media (max-width:520px){ #fileEdit .lbl, #fileSave .lbl, #fileEditDone .lbl { display:none; } }
     #annoBar { position:absolute; bottom:calc(14px + var(--safe-bottom)); left:50%; transform:translateX(-50%); z-index:7; display:none; gap:8px; align-items:center; background:#0f172a; border:1px solid var(--line); border-radius:10px; padding:6px 8px; box-shadow:0 6px 20px #0008; }
     #annoBar.on { display:flex; }
     #annoBar button { min-height:34px; }
@@ -1207,6 +1263,101 @@
     .termpane .xterm { height:100%; }
     .termempty { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--mut); text-align:center; padding:24px; }
     .termempty b { color:var(--text); }
+    /* BRW-IDE-00 F4 — VS Code da máquina (modal: instalar / abrir numa aba nova / encerrar) */
+    #ideModal { z-index:60; }
+    #ideModal .idecard { width:min(520px,100%); }
+    .idestatus { font-size:13.5px; line-height:1.45; overflow-wrap:anywhere; }
+    .idestatus.err { color:#fca5a5; }
+    .ideprog { height:6px; border-radius:999px; background:#ffffff14; overflow:hidden; }
+    .ideprog > div { height:100%; width:0; background:#2563eb; transition:width .25s; }
+    .idemachines { display:flex; flex-wrap:wrap; gap:6px; }
+    .idefolder { font-size:12px; word-break:normal; overflow-wrap:anywhere; }
+    .idehint { font-size:11.5px; line-height:1.4; word-break:normal; overflow-wrap:break-word; }
+    a.idelink { display:inline-flex; align-items:center; padding:8px 14px; border-radius:10px; background:#2563eb; color:#fff; text-decoration:none; font-weight:600; }
+    /* BRW-IDE-00 F1 — browser remoto (painel à direita, como o terminal; tela cheia no celular) */
+    #brwPanel { flex:0 0 clamp(480px,56%,1100px); min-width:0; min-height:0; display:flex; flex-direction:column; border-left:1px solid var(--line); background:#0b0e13; }
+    #brwPanel.hidden { display:none; }
+    #brwPanel.max { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:46; border-left:0; }
+    .brwhead { display:flex; align-items:center; gap:6px; padding:6px 8px; border-bottom:1px solid var(--line); background:#0d1117; min-width:0; }
+    .brwhead .brwtitle { font-size:15px; flex:none; }
+    .brwprofiles { display:flex; gap:5px; overflow-x:auto; min-width:0; flex:1 1 auto; scrollbar-width:none; }
+    .brwprofiles::-webkit-scrollbar { display:none; }
+    .brwprof { flex:none; display:inline-flex; align-items:center; gap:5px; background:#ffffff0d; color:#cbd5e1; border:1px solid var(--line); border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer; white-space:nowrap; }
+    .brwprof.active { border-color:#2563eb99; background:#2563eb22; color:#fff; }
+    .brwprof .av { width:18px; height:18px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; color:#fff; }
+    .brwstatus { flex:none; color:var(--mut); font-size:11px; white-space:nowrap; font-variant-numeric:tabular-nums; max-width:38%; overflow:hidden; text-overflow:ellipsis; }
+    .brwstatus.err { color:#fca5a5; }
+    .brwhead button.ghost, .brwbar button.ghost { flex:none; padding:4px 8px; min-height:30px; }
+    #brwFit.on { background:#2563eb33; border-color:#2563eb99; }
+    .brwtabs { display:flex; gap:5px; padding:5px 7px; border-bottom:1px solid var(--line); background:#080b10; overflow-x:auto; }
+    .brwtab { display:inline-flex; align-items:center; gap:6px; max-width:200px; flex:none; background:#ffffff0d; color:#cbd5e1; border:1px solid var(--line); border-radius:8px; padding:4px 7px; font-size:12px; cursor:pointer; }
+    .brwtab.active { border-color:#2563eb99; background:#2563eb22; color:#fff; }
+    .brwtab .tlbl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .brwtab .tx { background:none; border:0; color:#94a3b8; padding:0 2px; font-size:12px; line-height:1; min-height:0; }
+    .brwtab .tx:hover { color:#fca5a5; }
+    .brwtab.new { color:#93c5fd; }
+    .brwbar { display:flex; align-items:center; gap:5px; padding:5px 7px; border-bottom:1px solid var(--line); background:#0d1117; }
+    .brwbar button:disabled { opacity:.35; cursor:not-allowed; }
+    .brwurlform { flex:1; min-width:0; margin:0; }
+    #brwUrl { width:100%; box-sizing:border-box; background:#05070a; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:13px; }
+    .brwdialog { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 10px; background:#422006; border-bottom:1px solid #a16207; color:#fde68a; font-size:13px; }
+    .brwdialog .msg { flex:1 1 220px; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .brwdialog input { flex:1 1 160px; background:#05070a; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
+    .brwstage { flex:1 1 auto; min-height:0; position:relative; display:flex; align-items:center; justify-content:center; overflow:hidden; background:#05070a; }
+    #brwCanvas { display:block; max-width:100%; max-height:100%; outline:none; touch-action:none; cursor:default; background:#fff; }
+    #brwCanvas.idle { visibility:hidden; }
+    #brwCanvas:focus-visible { box-shadow:0 0 0 2px #2563eb88; }
+    .brwempty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--mut); text-align:center; padding:24px; pointer-events:none; }
+    .brwempty b { color:var(--text); }
+    .brwempty.hidden { display:none; }
+    /* o teclado do celular só abre para um campo de texto de verdade: este fica invisível sobre o palco */
+    .brwime { position:absolute; left:0; bottom:0; width:1px; height:1px; opacity:0; border:0; padding:0; font-size:16px; resize:none; pointer-events:none; }
+    /* BRW-IDE-00 F2: perfil Você/IA, "IA no controle", seleção de pontos */
+    .brwwho { display:inline-flex; flex:none; border:1px solid var(--line); border-radius:999px; overflow:hidden; }
+    .brwwho.hidden { display:none; }
+    .brwwho button { background:transparent; border:0; color:#cbd5e1; padding:4px 10px; font-size:12px; min-height:28px; cursor:pointer; border-radius:0; }
+    .brwwho button.active { background:#2563eb33; color:#fff; }
+    .brwwho button[data-p="agent"].active { background:#7c3aed40; }
+    #brwDrive.on { background:#b4530933; border-color:#f59e0b; color:#fde68a; }
+    #brwGrab.on { background:#7c3aed33; border-color:#a78bfa; color:#ede9fe; }
+    .brwagentbar { display:flex; align-items:center; gap:8px; padding:6px 10px; background:#78350f; border-bottom:1px solid #f59e0b; color:#fef3c7; font-size:13px; }
+    .brwagentbar.hidden { display:none; }
+    .brwagentbar .msg { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .brwagentbar .dot { width:9px; height:9px; border-radius:50%; background:#f59e0b; flex:none; animation:brwpulse 1.2s infinite; }
+    .brwagentbar button { flex:none; background:#fef3c7; color:#78350f; border:0; border-radius:7px; padding:4px 12px; font-weight:700; min-height:28px; }
+    @keyframes brwpulse { 0%,100% { opacity:1 } 50% { opacity:.35 } }
+    #brwBtn.agentctl { box-shadow:0 0 0 2px #f59e0b; border-radius:8px; }
+    .brwstage.grabbing #brwCanvas { cursor:crosshair; }
+    .brwmarks { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+    .brwmark { position:absolute; border:2px solid #a78bfa; background:#7c3aed22; border-radius:3px; }
+    .brwmark .n { position:absolute; left:-2px; top:-20px; background:#7c3aed; color:#fff; font:700 11px/18px system-ui; padding:0 6px; border-radius:4px; }
+    .brwmark.flash { animation:brwflash 1.4s ease-out forwards; }
+    @keyframes brwflash { 0% { background:#7c3aed66 } 100% { background:#7c3aed11 } }
+    .brwgrab { border-top:1px solid var(--line); background:#0d1117; max-height:42%; display:flex; flex-direction:column; min-height:0; }
+    .brwgrab.hidden { display:none; }
+    .brwgrabhead { display:flex; align-items:center; gap:8px; padding:6px 10px; font-size:12px; color:var(--mut); }
+    .brwgrabhead b { color:var(--text); font-size:13px; }
+    .brwgrabhead .sp { flex:1; }
+    .brwgrablist { overflow:auto; padding:0 10px 6px; display:flex; flex-direction:column; gap:6px; min-height:0; }
+    .brwpt { display:flex; gap:8px; align-items:flex-start; background:#ffffff08; border:1px solid var(--line); border-radius:8px; padding:6px; }
+    .brwpt img, .brwpt .noimg { width:72px; height:54px; object-fit:contain; background:#fff1; border-radius:5px; flex:none; }
+    .brwpt .meta { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+    .brwpt .sel { font:12px ui-monospace,monospace; color:#ddd6fe; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .brwpt .txt { font-size:12px; color:var(--mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .brwpt textarea { width:100%; box-sizing:border-box; min-height:30px; resize:vertical; background:#05070a; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 6px; font-size:12px; }
+    .brwpt .x { flex:none; background:none; border:0; color:#94a3b8; min-height:0; padding:2px 4px; }
+    .brwgrabfoot { display:flex; gap:6px; padding:6px 10px 8px; align-items:center; }
+    .brwgrabfoot textarea { flex:1; min-width:0; min-height:30px; resize:vertical; background:#05070a; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 7px; font-size:12px; }
+    .brwgrabfoot button { flex:none; }
+    .brwpt textarea, .brwgrabfoot textarea { font-family:inherit; }
+    @media (max-width:820px) {
+      #brwPanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:46; width:100%; height:auto; flex:none; border-left:0; }
+      #brwMax { display:none; }
+      /* celular: os perfis (máquinas) ganham uma linha própria; status e botões ficam na de cima */
+      .brwhead { flex-wrap:wrap; }
+      .brwprofiles { order:10; flex:1 0 100%; }
+      .brwstatus { flex:1 1 auto; max-width:none; }
+    }
     .workhead { display:flex; align-items:center; gap:8px; min-height:54px; padding:8px 12px; border-bottom:1px solid var(--line); }
     .workhead .wtitle { flex:1; min-width:0; display:flex; align-items:center; gap:8px; font-size:15px; }
     .workhead button { width:40px; height:40px; min-width:40px; min-height:40px; padding:0; display:inline-flex; align-items:center; justify-content:center; line-height:1; font-size:18px; }
@@ -1442,6 +1593,8 @@
         <span class="spacer"></span>
         <button type="button" id="sumHdr" class="ghost" title="Resumir esta conversa e falar (só esta sessão)">🔊<span class="blbl">Resumir</span></button>
         <button type="button" id="termBtn" class="ghost" title="Abrir terminal nesta máquina">⌘<span class="blbl">Terminal</span></button>
+        <button type="button" id="brwBtn" class="ghost hidden" title="Browser remoto — o navegador de uma máquina, de qualquer dispositivo">🌐</button>
+        <button type="button" id="ideBtn" class="ghost hidden" title="VS Code da máquina — abre numa aba nova (só o dono)">&lt;/&gt;<span class="blbl">VS Code</span></button>
         <button type="button" id="treeBtn" class="ghost treeicon" title="Arquivos da pasta desta sessão (abre/fecha ao lado)">🗂</button>
       </header>
       <div id="fileTabs"><button type="button" id="tabChatBtn">💬 Chat</button><button type="button" id="tabFileBtn">📄 Arquivo</button></div>
@@ -1503,12 +1656,18 @@
         <span id="fileView" class="fpview hidden"><button type="button" data-v="diff">Diff</button><button type="button" data-v="full">Arquivo</button></span>
         <span id="fileFmt" class="fpview hidden"><button type="button" data-f="fmt">Formatado</button><button type="button" data-f="raw">Bruto</button></span>
         <button id="annoSend" class="ghost hidden" type="button" title="Enviar comentários para uma IA">✈️ <span id="annoCount">0</span></button>
+        <button id="fileEdit" class="ghost hidden" type="button" title="Editar este arquivo">✏️<span class="lbl"> Editar</span></button>
+        <button id="fileSave" class="hidden" type="button" title="Salvar (Ctrl+S)">💾<span class="lbl"> Salvar</span></button>
+        <button id="fileEditDone" class="ghost hidden" type="button" title="Sair do modo edição (volta a visualizar)">👁<span class="lbl"> Ver</span></button>
         <button id="fileCopy" class="ghost" type="button" title="Copiar">Copiar</button>
         <button id="fileFull" class="ghost" type="button" title="Ver só o arquivo (tela cheia) / voltar">⤢</button>
         <button id="fileClose" class="ghost" type="button" title="Fechar">✕</button>
       </div>
+      <div id="edTabs" class="edtabs hidden" role="tablist" aria-label="Arquivos abertos"></div>
       <div id="fileMeta" class="fpmeta"></div>
+      <div id="edBanner" class="edbanner hidden" role="status"></div>
       <pre id="fileBody" class="filebody"></pre>
+      <div id="fileEditor" class="fileeditor"></div>
       <div id="annoBar"><span id="annoSelLbl" class="mut" style="font-size:12px"></span><button id="annoAdd" type="button">💬 Comentar</button><button id="annoCancelSel" class="ghost" type="button">✕</button></div>
     </aside>
     <aside id="termPanel" class="hidden" aria-label="Terminais" aria-hidden="true">
@@ -1521,6 +1680,46 @@
       <div id="termTabs" class="termtabs"></div>
       <div id="termBody"><div id="termEmpty" class="termempty"><b>Nenhum terminal aberto</b><span>Abra uma aba para executar comandos diretamente na máquina selecionada.</span></div></div>
     </aside>
+    <!-- BRW-IDE-00 F1: browser remoto. Um "perfil" por máquina; só aparece para o dono e só se alguma
+         máquina oferece a capacidade. Só pixels e input atravessam a rede. -->
+    <aside id="brwPanel" class="hidden" aria-label="Browser remoto" aria-hidden="true">
+      <div class="brwhead">
+        <b class="brwtitle">🌐</b>
+        <div id="brwProfiles" class="brwprofiles" role="tablist" aria-label="Perfis (um por máquina)"></div>
+        <div id="brwWho" class="brwwho hidden" role="tablist" aria-label="De quem é o browser">
+          <button type="button" data-p="owner" class="active" title="O seu browser nesta máquina (com os seus logins)">Você</button>
+          <button type="button" data-p="agent" title="O browser da IA nesta máquina — perfil de sistema, separado, sem os seus logins. Assista a IA navegando.">🤖 IA</button>
+        </div>
+        <span id="brwStatus" class="brwstatus" aria-live="polite"></span>
+        <button id="brwDrive" class="ghost hidden" type="button" title="Deixar a IA desta conversa dirigir o SEU browser (logado) até o fim do próximo turno">🤖</button>
+        <button id="brwFit" class="ghost" type="button" title="Ajustar a página à tela deste dispositivo">📱</button>
+        <button id="brwKbd" class="ghost" type="button" title="Abrir o teclado (celular)">⌨</button>
+        <button id="brwMax" class="ghost" type="button" title="Maximizar">⛶</button>
+        <button id="brwPower" class="ghost" type="button" title="Encerrar o browser desta máquina (o perfil e os logins ficam)">⏻</button>
+        <button id="brwClose" class="ghost" type="button" title="Fechar painel">✕</button>
+      </div>
+      <div id="brwAgentBar" class="brwagentbar hidden" role="status" aria-live="polite"><span class="dot"></span><span class="msg"></span><button id="brwTakeover" type="button" title="Tirar o controle da IA agora">Assumir</button></div>
+      <div id="brwTabs" class="brwtabs"></div>
+      <div class="brwbar">
+        <button id="brwBack" class="ghost" type="button" title="Voltar">←</button>
+        <button id="brwFwd" class="ghost" type="button" title="Avançar">→</button>
+        <button id="brwReload" class="ghost" type="button" title="Recarregar">↻</button>
+        <form id="brwUrlForm" class="brwurlform"><input id="brwUrl" type="text" inputmode="url" enterkeyhint="go" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Endereço ou busca" aria-label="Endereço"></form>
+        <button id="brwGrab" class="ghost hidden" type="button" title="Selecionar pontos da página para mandar à IA (cada toque marca um elemento)">🎯</button>
+      </div>
+      <div id="brwDialog" class="brwdialog hidden"></div>
+      <div id="brwStage" class="brwstage">
+        <canvas id="brwCanvas" tabindex="0" aria-label="Página remota"></canvas>
+        <div id="brwEmpty" class="brwempty"><b>Browser remoto</b><span>Escolha uma máquina para abrir o navegador dela.</span></div>
+        <textarea id="brwIme" class="brwime" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Digitar na página remota"></textarea>
+        <div id="brwMarks" class="brwmarks"></div>
+      </div>
+      <div id="brwGrabPanel" class="brwgrab hidden" aria-label="Pontos selecionados">
+        <div class="brwgrabhead"><b>🎯 Pontos</b><span id="brwGrabHint">Toque nos elementos da página. Cada toque vira um ponto.</span><span class="sp"></span><button id="brwGrabClear" class="ghost" type="button">Limpar</button><button id="brwGrabDone" class="ghost" type="button" title="Sair do modo seleção">✕</button></div>
+        <div id="brwGrabList" class="brwgrablist"></div>
+        <div class="brwgrabfoot"><textarea id="brwGrabNote" placeholder="Pedido geral para a IA (opcional)…"></textarea><button id="brwGrabSend" type="button" disabled>Enviar à IA</button></div>
+      </div>
+    </aside>
     </div><!-- /cbody -->
     </div><!-- /center -->
     <aside id="treePanel" class="hidden" aria-label="Arquivos da pasta">
@@ -1529,6 +1728,12 @@
         <span id="treeRootPath" class="fpname" style="font-weight:400;font-size:11.5px;color:var(--mut)">—</span>
         <button id="treeClose" class="ghost" type="button" title="Fechar">✕</button>
       </div>
+      <form id="treeSearch" class="treesearch hidden" autocomplete="off" role="search">
+        <input id="treeSearchQ" type="search" placeholder="Buscar no projeto…" spellcheck="false" enterkeyhint="search" aria-label="Buscar texto nos arquivos do projeto">
+        <button id="treeSearchCase" class="ghost" type="button" title="Diferenciar maiúsculas/minúsculas">Aa</button>
+        <button id="treeSearchRx" class="ghost" type="button" title="Expressão regular">.*</button>
+      </form>
+      <div id="treeSearchRes" class="treesearchres hidden" aria-live="polite"></div>
       <div id="treeBody" style="flex:1;min-height:0;overflow:auto;font-size:13px;padding:6px 4px">—</div>
     </aside>
     <aside id="designPanel" class="hidden" aria-label="Design Mode">
@@ -1608,6 +1813,22 @@
     <b id="dlgTitle"></b>
     <input id="dlgInput" type="text" class="hidden" autocomplete="off">
     <div class="row" style="justify-content:flex-end"><button id="dlgCancel" class="ghost" type="button">Cancelar</button><button id="dlgOk" type="button">OK</button></div>
+  </div></div>
+
+  <!-- BRW-IDE-00 F4 — VS Code (code-server) da máquina: instalar, abrir numa aba nova, encerrar -->
+  <div id="ideModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ideTitle"><div class="card idecard">
+    <div class="row" style="justify-content:space-between;align-items:center;gap:8px"><b id="ideTitle">&lt;/&gt; VS Code</b><span id="ideSub" class="mut" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><button id="ideClose" class="ghost" type="button" title="Fechar" aria-label="Fechar">✕</button></div>
+    <div id="ideMachines" class="idemachines hidden" role="tablist" aria-label="Máquinas"></div>
+    <div id="ideStatus" class="idestatus" role="status" aria-live="polite"></div>
+    <div id="ideProg" class="ideprog hidden"><div id="ideProgBar"></div></div>
+    <div id="ideFolder" class="mut idefolder"></div>
+    <div class="row" style="justify-content:flex-end;flex-wrap:wrap;gap:8px">
+      <button id="ideStop" class="ghost hidden" type="button">Encerrar</button>
+      <button id="ideInstall" class="hidden" type="button">Instalar VS Code nesta máquina</button>
+      <a id="ideLink" class="hidden idelink" target="_blank" rel="noopener">Abrir VS Code ↗</a>
+      <button id="ideOpen" class="hidden" type="button">Abrir VS Code ↗</button>
+    </div>
+    <div class="mut idehint">Abre numa aba nova do navegador (atalhos do VS Code funcionam melhor fora do Jarvis). O code-server roda só nesta máquina, em 127.0.0.1; o acesso passa pelo Hub e é só do dono.</div>
   </div></div>
 
   <!-- painel rico de info da sessão (abre ao clicar no título do chat) -->

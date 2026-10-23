@@ -344,6 +344,16 @@ export function setDeviceGrants(deviceId: string, runners: string[]): boolean {
   return true;
 }
 
+/** Papel ATUAL de um dispositivo (undefined = revogado, expirado ou inexistente). Barato (varre a lista
+ *  em memória, sem gravar nada): é o que o proxy da IDE (BRW-IDE-00 F4) consulta a CADA requisição para
+ *  que revogar ou rebaixar um aparelho corte o VS Code aberto nele na hora. */
+export function deviceRole(deviceId: string | null | undefined): Role | undefined {
+  if (!deviceId) return undefined;
+  const dev = data.devices.find((d) => d.id === deviceId);
+  if (!dev || (dev.expiresAt && Date.now() > dev.expiresAt)) return undefined;
+  return data.users.find((u) => u.id === dev.userId)?.role;
+}
+
 /** The userId behind a device — admin surfaces address devices, grants are stored per user. */
 export function userIdOfDevice(deviceId: string): string | undefined {
   return data.devices.find((d) => d.id === deviceId)?.userId;

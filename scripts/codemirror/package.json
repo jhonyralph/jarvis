@@ -1,0 +1,23 @@
+{
+  "//": "Manifesto do BUILD do CodeMirror vendorizado (BRW-IDE-00 F3). NÃO é workspace e NÃO se instala no repo: scripts/build-codemirror.mjs copia este arquivo + o lock para uma pasta temporária FORA do repositório, roda `npm ci` lá e copia só o bundle pronto para apps/hub/web/vendor/codemirror/.",
+  "name": "jarvis-codemirror-build",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-css": "6.3.1",
+    "@codemirror/lang-html": "6.4.12",
+    "@codemirror/lang-javascript": "6.2.5",
+    "@codemirror/lang-json": "6.0.2",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/lang-python": "6.2.1",
+    "@codemirror/lang-yaml": "6.1.3",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/search": "6.7.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.14",
+    "@lezer/highlight": "1.2.5",
+    "esbuild": "0.28.2"
+  }
+}
