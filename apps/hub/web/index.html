@@ -524,7 +524,9 @@
     /* painel estreito (lado a lado com a árvore aberta): os botões do editor viram só ícone, senão o
        cabeçalho transborda por cima da árvore. Container query = largura do PAINEL, não da janela. */
     #filePanel { container-type:inline-size; container-name:filepanel; }
-    @container filepanel (max-width:620px) { #fileEdit .lbl, #fileSave .lbl, #fileEditDone .lbl { display:none; } }
+    /* "Editar" fica sempre com rótulo: é a porta da edição dentro do Jarvis (BRW-IDE-00 §15.4) e um ✏️
+       sozinho no painel estreito passava despercebido. Quem encolhe é o secundário (VS Code). */
+    @container filepanel (max-width:620px) { #fileSave .lbl, #fileEditDone .lbl, #ideBtn .lbl { display:none; } }
     @container filepanel (max-width:480px) { #filePanel .fphead { flex-wrap:wrap; row-gap:4px; } }
     #fileSave.dirty { background:#22c55e; color:#04210f; }
     #fileSave:disabled { opacity:.6; cursor:progress; }
@@ -567,7 +569,7 @@
       #filePanel .edhost .cm-textfield { font-size:16px; }
       .edtab { max-width:150px; }
     }
-    @media (max-width:520px){ #fileEdit .lbl, #fileSave .lbl, #fileEditDone .lbl { display:none; } }
+    @media (max-width:520px){ #fileSave .lbl, #fileEditDone .lbl, #ideBtn .lbl { display:none; } }
     #annoBar { position:absolute; bottom:calc(14px + var(--safe-bottom)); left:50%; transform:translateX(-50%); z-index:7; display:none; gap:8px; align-items:center; background:#0f172a; border:1px solid var(--line); border-radius:10px; padding:6px 8px; box-shadow:0 6px 20px #0008; }
     #annoBar.on { display:flex; }
     #annoBar button { min-height:34px; }
@@ -596,6 +598,8 @@
     @media (max-width:820px){
       #filePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:40; flex:none; border-left:0; }
       #fileLayoutSw, #fileFull, #fileTabs { display:none !important; }
+      /* no celular o editor leve basta (decisão do dono, §15.4): o workbench do VS Code não cabe aqui */
+      #ideBtn { display:none !important; }
       #app.flay-tabs.file-open:not(.tab-chat) > #center > header { display:flex; }
       #app.flay-tabs.file-open:not(.tab-chat) #cbody > main { display:flex; }
       #app.flay-tabs.file-open.tab-chat #filePanel:not(.hidden) { display:flex; }
@@ -1206,6 +1210,7 @@
       header button.ghost { flex:none; }
       header #sumHdr { min-width:44px; font-size:17px; }
       header #sumHdr .blbl { display:none; }   /* no celular so o ícone: o título precisa do espaço */
+      header #edBtn .blbl { display:none; }
       header #termBtn { display:none; }
       /* por ultimo: mesma altura do input (mesma especificidade que as regras acima). */
       .inputrow .micbtn, .inputrow #attach { flex:0 0 48px; width:48px; min-width:48px; min-height:calc(var(--ilh) + var(--ipad) + var(--ipad) + 2px); height:calc(var(--ilh) + var(--ipad) + var(--ipad) + 2px); padding:0; line-height:var(--ilh); font-size:17px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; }
@@ -1600,7 +1605,7 @@
         <button type="button" id="sumHdr" class="ghost" title="Resumir esta conversa e falar (só esta sessão)">🔊<span class="blbl">Resumir</span></button>
         <button type="button" id="termBtn" class="ghost" title="Abrir terminal nesta máquina">⌘<span class="blbl">Terminal</span></button>
         <button type="button" id="brwBtn" class="ghost hidden" title="Browser remoto — o navegador de uma máquina, de qualquer dispositivo">🌐</button>
-        <button type="button" id="ideBtn" class="ghost hidden" title="VS Code da máquina — abre numa aba nova (só o dono)">&lt;/&gt;<span class="blbl">VS Code</span></button>
+        <button type="button" id="edBtn" class="ghost hidden" title="Editar os arquivos desta pasta aqui no Jarvis — o editor ocupa a área principal (só o dono)">&lt;/&gt;<span class="blbl">Editor</span></button>
         <button type="button" id="treeBtn" class="ghost treeicon" title="Arquivos da pasta desta sessão (abre/fecha ao lado)">🗂</button>
       </header>
       <div id="fileTabs"><button type="button" id="tabChatBtn">💬 Chat</button><button type="button" id="tabFileBtn">📄 Arquivo</button></div>
@@ -1665,6 +1670,7 @@
         <button id="fileEdit" class="ghost hidden" type="button" title="Editar este arquivo">✏️<span class="lbl"> Editar</span></button>
         <button id="fileSave" class="hidden" type="button" title="Salvar (Ctrl+S)">💾<span class="lbl"> Salvar</span></button>
         <button id="fileEditDone" class="ghost hidden" type="button" title="Sair do modo edição (volta a visualizar)">👁<span class="lbl"> Ver</span></button>
+        <button id="ideBtn" class="ghost hidden" type="button" title="Abrir esta pasta no VS Code da máquina — abre numa aba nova (só o dono)">&lt;/&gt;<span class="lbl"> VS Code ↗</span></button>
         <button id="fileCopy" class="ghost" type="button" title="Copiar">Copiar</button>
         <button id="fileFull" class="ghost" type="button" title="Ver só o arquivo (tela cheia) / voltar">⤢</button>
         <button id="fileClose" class="ghost" type="button" title="Fechar">✕</button>

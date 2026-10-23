@@ -67,6 +67,14 @@ Spec: `docs/specs/BRW-IDE-00-remote-browser-and-ide.md` (§4.2 has the wire cont
   preference. Picking ⬌/⬍/▭ in the layout switch while editing is an explicit choice and also decides
   where editing goes from then on (`cfg.editMain`). Phones are unchanged (the file panel is already
   full screen). The full VS Code (F4) still opens in a **new tab**.
+- **`</> Editor` in the chat header is the way in** (owner only). With a file open it edits that
+  file; with none it opens the file tree and the file you pick **opens already in edit mode**. While
+  any edit is open, a *new* file picked in the tree also opens editing (IDE-like). This auto-edit
+  fires once, on the tab's first load — the 2.5 s re-read and a tab you put back on **Ver** are never
+  pushed into editing again. From the 💬 Chat tab, the same button brings the editor back.
+- **VS Code is secondary**: `</> VS Code ↗` lives in the file panel header (not the chat header) and
+  still opens a new tab. Hidden on phones — there the lightweight editor is the IDE. The ✏️ button now
+  always shows its **Editar** label (it used to vanish whenever the side panel was narrow).
 - The button is **disabled with the reason** (tooltip + toast on tap) for images, binary, files
   over 512 KB (the viewer only read the beginning), non-UTF-8 or NUL-containing files (editing would
   corrupt bytes), read-only files, members (not the owner) and machines on runner protocol < 18.

@@ -1551,7 +1551,7 @@
       if(st.status!=='installing'){ const ok=await dialog({title:'Encerrar o VS Code de '+machineLabel(ide.runnerId)+'? Terminais abertos nele (e o que estiver rodando neles) fecham junto.',okText:'Encerrar',danger:true}); if(!ok)return; }
       tx({t:'ide_stop',runnerId:ide.runnerId,reqId:'ide-'+uid()}); ide.busy='Encerrando…'; ideRender(); }
     function ideHandleFrame(m){
-      if(m.t==='machines'){ setTimeout(()=>{ ideSyncButton(); if(ide.open){ ideRenderMachines(); ideRender(); } },0); return false; }
+      if(m.t==='machines'){ setTimeout(()=>{ ideSyncButton(); edSyncHeaderBtn(); if(ide.open){ ideRenderMachines(); ideRender(); } },0); return false; }
       if(typeof m.t!=='string'||m.t.indexOf('ide_')!==0) return false;
       if(m.runnerId&&ide.runnerId&&m.runnerId!==ide.runnerId) return true;
       if(m.t==='ide_state'){ ide.state=m.state||null; if(m.reqId) ide.busy=''; if(m.state&&m.state.status!=='error') ide.err=''; ideRender(); }
@@ -1567,6 +1567,8 @@
         if(!ide.open) toast('VS Code: '+ide.err); ideRender(); }
       return true;
     }
+    // Desde a §15.4 o VS Code é o caminho SECUNDÁRIO: o botão mora no cabeçalho do painel de arquivo; a
+    // porta de entrada da edição é o "</> Editor" do cabeçalho do chat (editor leve, dentro do fluxo).
     if(IW.ideBtn) IW.ideBtn.onclick=()=>{ if(ide.open) ideClose(); else ideOpenModal(); };
     if(IW.ideClose) IW.ideClose.onclick=()=>ideClose();
     if(IW.ideModal) IW.ideModal.addEventListener('click',(e)=>{ if(e.target===IW.ideModal) ideClose(); });
@@ -2311,6 +2313,22 @@
     function edFind(path,rid){ return edTabs.find(t=>t.runnerId===rid && (edSamePath(t.path,path) || (t.abs && edSamePath(t.abs,path))))||null; }
     function edAnyDirty(){ return edTabs.some(t=>t.mode==='edit' && t.dirty); }
     function edEditing(){ return edTabs.some(t=>t.mode==='edit'); }
+    // "</> Editor" no cabeçalho do chat: a porta da edição DENTRO do Jarvis (§15.4). Com arquivo aberto,
+    // edita ele; sem, abre a árvore e o arquivo escolhido já abre editando (`edIntent`, uso único). Enquanto
+    // houver edição aberta, arquivo NOVO vindo da árvore também abre editando — como numa IDE.
+    let edIntent=false;
+    function edSyncHeaderBtn(){ const b=$('edBtn'); if(b) b.classList.toggle('hidden',!edOwner()); }
+    function edOpenEditor(){ const tab=edActive(), panelOpen=!E.filePanel.classList.contains('hidden');
+      if(edEditing()){ const t=tab&&tab.mode==='edit'?tab:edTabs.find(x=>x.mode==='edit');
+        if(panelOpen&&t===tab){ APP().classList.remove('tab-chat'); if(E.tabFileBtn){E.tabFileBtn.classList.add('on');E.tabChatBtn&&E.tabChatBtn.classList.remove('on');} } else edActivate(t); return; }
+      if(tab&&panelOpen){ edEnterEdit(); return; }
+      if(!curCwd){ toast('Abra uma sessão com uma pasta de trabalho para editar os arquivos dela.'); return; }
+      edIntent=true; if(E.treePanel.classList.contains('hidden')) openTree();
+      toast('Escolha um arquivo na árvore — ele já abre para editar.',{duration:2600}); }
+    // Só na PRIMEIRA carga da aba marcada: a releitura de 2,5 s e uma aba que o dono pôs de volta em "Ver"
+    // nunca são empurradas para a edição de novo.
+    function edMaybeAutoEdit(t){ if(!t||!t.autoEdit||t.mode==='edit')return; t.autoEdit=false;
+      const why=edEditBlock(t); if(why){ toast('✏️ Não dá para editar: '+why); return; } edEnterEdit(); }
     // Editar é trabalho de IDE: enquanto houver aba em edição, o arquivo ocupa a ÁREA PRINCIPAL (layout
     // "abas", com 💬 Chat | 📄 Arquivo para alternar) em vez do painel lateral; quando a última edição
     // fecha, volta o layout de leitura do dono. Nada é gravado: ler lado a lado (revisar o que a IA mudou
@@ -2329,7 +2347,8 @@
     // Chamado por openFile(): cria/ativa a aba. Aba em modo Editar mostra o editor e NÃO relê o arquivo.
     function edOnOpenFile(path,opts){ const byId=opts&&opts.edTab?edTabs.find(t=>t.id===opts.edTab):null;
       const rid=byId?byId.runnerId:treeRunner(); let tab=byId||edFind(path,rid);
-      if(!tab){ tab={id:'t'+(++edSeq), path, abs:'', name:String(path).split(/[\\/]/).pop()||path, runnerId:rid, cwd:curCwd||'', mode:'view', dirty:false}; edTabs.push(tab); edTrim(); }
+      const fresh=!tab; if(!tab){ tab={id:'t'+(++edSeq), path, abs:'', name:String(path).split(/[\\/]/).pop()||path, runnerId:rid, cwd:curCwd||'', mode:'view', dirty:false}; edTabs.push(tab); edTrim(); }
+      if(tab.mode!=='edit' && (edIntent || (fresh && edEditing()))){ tab.autoEdit=true; edIntent=false; }
       edActiveId=tab.id;
       if(tab.mode==='edit'&&tab.cm){ edShowEditor(tab); if(opts&&opts.line) tab.cm.gotoLine(opts.line); return true; }
       edShowViewer(); return false; }
@@ -2412,7 +2431,7 @@
         if(!tab.dirty&&typeof m.content==='string'&&!m.truncated&&!m.readOnlyReason&&!m.image){ edApplyDisk(tab,m); toast('🔄 “'+tab.name+'” mudou no disco — o editor foi atualizado.',{duration:3500}); return; }
         if(!tab.dirty&&(m.truncated||m.readOnlyReason)){ toast('“'+tab.name+'” mudou no disco e não é mais editável: '+(m.readOnlyReason||'grande demais')); edLeaveEdit(tab,true); return; }
         tab.diskChanged={mtimeMs:m.mtimeMs,size:m.size}; edRenderBanner(); }); }
-    function edAfterShowFile(){ const t=edActive(); if(t&&t.mode==='edit'&&E.filePanel.classList.contains('editing'))edRenderTitle(); else edRenderButtons(); }
+    function edAfterShowFile(){ const t=edActive(); if(t&&t.mode==='edit'&&E.filePanel.classList.contains('editing'))edRenderTitle(); else { edRenderButtons(); edMaybeAutoEdit(t); } }
     // troca o conteúdo pelo do disco como UMA transação desfazível: Ctrl+Z traz a versão anterior de volta
     function edApplyDisk(tab,m){ const text=edDetectText(tab,m.content); tab.cm.replaceAll(text); tab.savedDoc=tab.cm.doc(); tab.mtimeMs=m.mtimeMs; tab.size=m.size; if(m.path)tab.abs=m.path; tab.dirty=false; tab.diskChanged=null;
       edRenderTitle(); edRenderBanner(); edRenderTabs(); edRenderButtons(); maybeReload(); }
@@ -2483,6 +2502,7 @@
     [EDX.sCase,EDX.sRx].forEach(b=>{ if(b) b.onclick=()=>{ b.classList.toggle('on'); if(edSearchReq&&EDX.sQ&&EDX.sQ.value.trim())edRunSearch(); }; });
     if(EDX.edit) EDX.edit.onclick=()=>{ if(EDX.edit.classList.contains('off')){ const t=edActive(); const why=t?edEditBlock(t):''; if(why){ toast('✏️ Não dá para editar: '+why); return; } } edEnterEdit(); };
     if(EDX.save) EDX.save.onclick=()=>edSave();
+    { const b=$('edBtn'); if(b) b.onclick=edOpenEditor; }
     if(EDX.done) EDX.done.onclick=()=>edLeaveEdit();
     // Ctrl/Cmd+S salva a aba em edição (e não abre o "salvar página" do navegador)
     document.addEventListener('keydown',(e)=>{ if(!(e.ctrlKey||e.metaKey)||e.altKey||(e.key!=='s'&&e.key!=='S'))return; const t=edActive();

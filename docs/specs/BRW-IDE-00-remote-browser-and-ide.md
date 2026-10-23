@@ -527,6 +527,19 @@ decisões pede o VS Code embutido.
 - Validação: Chromium via Playwright contra `apps/hub/web` com Hub falso, fluxo real (árvore → arquivo
   → Editar → Chat → Arquivo → Concluir → fechar no meio da edição → seletor) em 1400, 900 e 390 px.
 
+**Ajuste de 2026-10-23 (o dono testou na v0.43.0):** o comportamento acima estava certo, mas a porta de
+entrada estava errada — o botão mais visível, `</> VS Code` no cabeçalho do chat, levava para FORA do
+Jarvis, e o editor leve ficava atrás de um ✏️ sem rótulo. Corrigido:
+- o cabeçalho do chat ganha **`</> Editor`** (só o dono): com arquivo aberto, edita; sem, abre a árvore e
+  o arquivo escolhido já abre editando (`edIntent`, uso único). Com edição aberta, arquivo *novo* da
+  árvore também abre editando. A marca `autoEdit` vale uma vez, na primeira carga da aba: a releitura de
+  2,5 s e uma aba posta de volta em "Ver" nunca são empurradas para a edição de novo;
+- **`</> VS Code ↗`** desce para o cabeçalho do painel de arquivo (mesmo modal, mesma aba nova) e some
+  no celular, onde o editor leve é a IDE;
+- o ✏️ sempre mostra **Editar** (a container query de painel ≤ 620 px escondia o rótulo).
+Limitação conhecida (821–1000 px): enquanto o arquivo ocupa a área principal a árvore sai da frente,
+como já saía no modo lado a lado; para trocar de arquivo, aba 💬 Chat → árvore.
+
 ## 16) F2 — implementação (2026-10-19, não commitada; aguardando revisão)
 
 ### 16.1 Decisão: ferramentas próprias em vez do Playwright MCP
