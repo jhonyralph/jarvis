@@ -60,6 +60,13 @@ Spec: `docs/specs/BRW-IDE-00-remote-browser-and-ide.md` (§4.2 has the wire cont
   JS/TS/JSX/TSX, JSON, CSS, HTML, Markdown, Python, YAML (others open as plain text). Line numbers,
   folding, bracket matching/closing, history, multi-cursor, search/replace (Ctrl/Cmd+F inside the
   editor opens CodeMirror's own panel, in Portuguese).
+- **Editing takes the main area.** While any tab is in edit mode the file moves out of the side
+  panel into the main area — the *Abas* (▭) layout, where a `💬 Chat | 📄 Arquivo` bar switches
+  between the two — and when the last edit closes the reading layout comes back. This is **not**
+  saved: reading side by side (reviewing what the AI changed with the chat next to it) stays the
+  preference. Picking ⬌/⬍/▭ in the layout switch while editing is an explicit choice and also decides
+  where editing goes from then on (`cfg.editMain`). Phones are unchanged (the file panel is already
+  full screen). The full VS Code (F4) still opens in a **new tab**.
 - The button is **disabled with the reason** (tooltip + toast on tap) for images, binary, files
   over 512 KB (the viewer only read the beginning), non-UTF-8 or NUL-containing files (editing would
   corrupt bytes), read-only files, members (not the owner) and machines on runner protocol < 18.

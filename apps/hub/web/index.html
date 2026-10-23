@@ -586,6 +586,12 @@
       #filePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); width:min(88vw,600px); flex:none; z-index:48; box-shadow:-10px 0 28px #0008; }
       #treePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); width:min(78vw,340px); flex:none; order:0; z-index:47; box-shadow:-10px 0 28px #0008; }
       #app.flay-stacked #cbody, #app.flay-tabs #cbody { flex-direction:row; }
+      /* Modo abas mostrando o arquivo (o modo Editar entra nele sozinho): o arquivo É a área principal,
+         então volta para o fluxo — como overlay fixo em top:0 ele cobria a barra 💬 Chat | 📄 Arquivo e
+         não havia como voltar ao chat. A árvore (overlay nesta faixa) sai da frente, como já fica atrás
+         do arquivo no modo lado a lado. */
+      #app.flay-tabs:not(.work-file-split):not(.file-full) #filePanel { position:relative; top:auto; right:auto; bottom:auto; width:auto; flex:1; z-index:auto; box-shadow:none; }
+      #app.flay-tabs.file-open:not(.tab-chat):not(.work-file-split) #treePanel { display:none; }
     }
     @media (max-width:820px){
       #filePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:40; flex:none; border-left:0; }

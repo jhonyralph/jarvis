@@ -151,7 +151,7 @@
     // do card que o desenha, porque `refreshComposer` o consulta e roda antes daquele trecho do arquivo.
     const debateBySession={};
     // ---- config (persisted; refresh não perde estado) ----
-    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, silenceSec:1.8, smartEnd:true, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec', treeOpen:false, fileLayout:'side', fastMode:false }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
+    const cfg = Object.assign({ voice:false, continue:false, continueSec:30, silenceSec:1.8, smartEnd:true, wake:false, noise:true, voiceGate:false, push:false, pushEvents:['done','error'], pushMode:'each', pushEvery:15, lastCwd:'', tab:'rec', treeOpen:false, fileLayout:'side', editMain:true, fastMode:false }, JSON.parse(localStorage.getItem('jarvis')||'{}'));
     // Location is never appended to chat frames. It is collected only after a per-purpose consent
     // and sent through the personal-context protocol with a short expiry.
     const saveCfg = () => localStorage.setItem('jarvis', JSON.stringify(cfg));
@@ -2091,18 +2091,23 @@
     }
     function setWorkFileSplit(on){ const app=document.getElementById('app'); if(app)app.classList.toggle('work-file-split',!!on); }
     const APP=()=>document.getElementById('app');
-    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); APP().classList.remove('file-full','file-open','tab-chat'); curFileSig=''; lastFileMsg=null; if(typeof findState!=='undefined'&&findState&&findState.container===E.fileBody)closeFind(); }
+    function closeFilePanel(){ E.filePanel.classList.add('hidden'); setWorkFileSplit(false); APP().classList.remove('file-full','file-open','tab-chat'); curFileSig=''; lastFileMsg=null; if(typeof findState!=='undefined'&&findState&&findState.container===E.fileBody)closeFind(); syncEditMainArea(); }
     function markFileOpen(){ APP().classList.add('file-open'); }
     // largura/altura persistidas do painel de arquivo (redimensionável) + modo de layout (lado a
     // lado / empilhado / abas), tudo salvo em cfg e reaplicado no reload.
     function applyFileWidth(){ if(cfg.fileW) APP().style.setProperty('--file-w', cfg.fileW+'px'); if(cfg.fileH) APP().style.setProperty('--file-h', cfg.fileH+'px'); }
     applyFileWidth();
-    function applyFileLayout(mode){ mode=['side','stacked','tabs'].includes(mode)?mode:'side'; cfg.fileLayout=mode; saveCfg();
+    // Layout de leitura guardado enquanto o editor ocupa a área principal (ver syncEditMainArea).
+    let fileLayoutHeld=null;
+    // `transient`: troca só a tela, sem gravar em cfg — é o que o modo Editar usa para não mexer na preferência.
+    function applyFileLayout(mode,transient){ mode=['side','stacked','tabs'].includes(mode)?mode:'side'; if(!transient){ cfg.fileLayout=mode; saveCfg(); }
       APP().classList.remove('flay-side','flay-stacked','flay-tabs'); APP().classList.add('flay-'+mode);
       if(mode!=='tabs') APP().classList.remove('tab-chat');
       if(E.fileLayoutSw) E.fileLayoutSw.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.fl===mode)); }
     applyFileLayout(cfg.fileLayout);
-    if(E.fileLayoutSw) E.fileLayoutSw.querySelectorAll('button').forEach(b=>b.onclick=()=>applyFileLayout(b.dataset.fl));
+    // O seletor é escolha explícita: vale para a leitura e, com edição aberta, também para editar
+    // (cfg.editMain) — o editor não volta a tomar a área principal contra o que o dono escolheu.
+    if(E.fileLayoutSw) E.fileLayoutSw.querySelectorAll('button').forEach(b=>b.onclick=()=>{ fileLayoutHeld=null; if(edEditing()) cfg.editMain=b.dataset.fl==='tabs'; applyFileLayout(b.dataset.fl); });
     // arraste horizontal (lado a lado) → --file-w; vertical (empilhado) → --file-h
     function fileDrag(handle,vertical){ if(!handle)return; let on=false;
       const move=(e)=>{ if(!on)return; if(vertical){ const bottom=cssPx('--safe-bottom'); const h=Math.max(120,Math.min(window.innerHeight-160-bottom, window.innerHeight-bottom-(e.clientY))); APP().style.setProperty('--file-h', h+'px'); } else { const w=Math.max(300,Math.min(window.innerWidth-260, window.innerWidth-(e.clientX))); APP().style.setProperty('--file-w', w+'px'); } };
@@ -2305,6 +2310,16 @@
     function edActive(){ return edTabs.find(t=>t.id===edActiveId)||null; }
     function edFind(path,rid){ return edTabs.find(t=>t.runnerId===rid && (edSamePath(t.path,path) || (t.abs && edSamePath(t.abs,path))))||null; }
     function edAnyDirty(){ return edTabs.some(t=>t.mode==='edit' && t.dirty); }
+    function edEditing(){ return edTabs.some(t=>t.mode==='edit'); }
+    // Editar é trabalho de IDE: enquanto houver aba em edição, o arquivo ocupa a ÁREA PRINCIPAL (layout
+    // "abas", com 💬 Chat | 📄 Arquivo para alternar) em vez do painel lateral; quando a última edição
+    // fecha, volta o layout de leitura do dono. Nada é gravado: ler lado a lado (revisar o que a IA mudou
+    // com o chat ao lado) continua sendo a preferência. Por "houver aba em edição" e não "a aba ativa":
+    // alternar entre abas não faz a tela pular. No celular nada muda (o painel já é tela cheia), e o split
+    // Trabalhos+arquivo usa position:fixed com precedência, então fica de fora.
+    function syncEditMainArea(){ const want=cfg.editMain!==false && edEditing() && !E.filePanel.classList.contains('hidden') && !APP().classList.contains('work-file-split');
+      if(want && fileLayoutHeld==null && cfg.fileLayout!=='tabs'){ fileLayoutHeld=cfg.fileLayout; applyFileLayout('tabs',true); }
+      else if(!want && fileLayoutHeld!=null){ const back=fileLayoutHeld; fileLayoutHeld=null; applyFileLayout(back,true); } }
     function edActiveText(){ const t=edActive(); return t&&t.mode==='edit'&&t.cm&&!E.filePanel.classList.contains('hidden')?t.cm.text('\n'):null; }
     function edReadExtra(){ const t=edActive(); return t&&t.runnerId&&t.runnerId!==(routedMachine||'local')?{runnerId:t.runnerId}:{}; }
     function edOwnsKey(e){ return !!(EDX.host && e && e.target && EDX.host.contains && EDX.host.contains(e.target)); }
@@ -2319,10 +2334,10 @@
       if(tab.mode==='edit'&&tab.cm){ edShowEditor(tab); if(opts&&opts.line) tab.cm.gotoLine(opts.line); return true; }
       edShowViewer(); return false; }
     function edTrim(){ while(edTabs.length>ED_MAX_TABS){ const i=edTabs.findIndex(t=>t.id!==edActiveId && t.mode!=='edit'); if(i<0)break; edTabs.splice(i,1); } }
-    function edShowViewer(){ E.filePanel.classList.remove('editing'); edTabs.forEach(t=>{ if(t.host)t.host.classList.add('hidden'); }); edRenderBanner(); edRenderTabs(); edRenderButtons(); }
+    function edShowViewer(){ E.filePanel.classList.remove('editing'); edTabs.forEach(t=>{ if(t.host)t.host.classList.add('hidden'); }); edRenderBanner(); edRenderTabs(); edRenderButtons(); syncEditMainArea(); }
     function edShowEditor(tab){ E.filePanel.classList.add('editing'); edTabs.forEach(t=>{ if(t.host)t.host.classList.toggle('hidden',t!==tab); });
       curFilePath=tab.abs||tab.path; curFileView='full'; curFileDiffable=false; renderFileViewBtns(); annoTeardown();
-      E.fileStat.textContent=''; edRenderTitle(); edRenderBanner(); edRenderTabs(); edRenderButtons(); }
+      E.fileStat.textContent=''; edRenderTitle(); edRenderBanner(); edRenderTabs(); edRenderButtons(); syncEditMainArea(); }
     function edRenderTitle(){ const t=edActive(); if(!t||t.mode!=='edit')return; E.fileName.textContent=(t.dirty?'● ':'')+t.name; E.fileName.title=t.abs||t.path;
       const kb=t.size!=null?(t.size<1024?t.size+' B':(t.size/1024).toFixed(1)+' KB'):'';
       E.fileMeta.textContent=(t.abs||t.path)+(kb?' · '+kb:'')+' · '+(t.cm?t.cm.language:'')+' · '+(t.eol==='\r\n'?'CRLF':'LF')+(t.mixedEol?' (finais de linha mistos: salva como '+(t.eol==='\r\n'?'CRLF':'LF')+')':'')+(t.runnerId&&t.runnerId!=='local'?' · máquina '+((machines.find(m=>m.id===t.runnerId)||{}).label||t.runnerId):''); }

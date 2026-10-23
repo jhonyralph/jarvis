@@ -505,6 +505,28 @@ Runner remoto real (só runner falso no e2e), aparelho móvel real (só viewport
 como serviço do Windows, ripgrep no PATH em produção, Safari/iOS (zoom de input e teclado virtual com
 o CodeMirror), sistemas de arquivo de relógio grosso.
 
+### 15.4 Editor na área principal (decisões do dono, 2026-10-22)
+
+Três decisões tomadas em cartão: a IDE aparece na **área principal**; no celular basta o **editor
+leve**; o que importa é **editar dentro do Jarvis**, não ter os recursos do VS Code. Leitura aplicada:
+o editor leve (F3) passa a ocupar a área principal enquanto houver aba em edição, e o VS Code (F4)
+continua em **aba nova** — o §17 decidiu isso pelos atalhos que brigariam num iframe, e nada nestas
+decisões pede o VS Code embutido.
+
+- Implementação: `syncEditMainArea()` em `apps/hub/web/app.js` reaproveita o layout "abas" que já
+  existia (`💬 Chat | 📄 Arquivo`), em modo **transitório** (não grava `cfg.fileLayout`); ao sair da
+  última edição, fechar o painel ou abrir o painel Trabalhos, o layout de leitura volta.
+- Gatilho é "existe aba em edição", não "a aba ativa está em edição": alternar entre abas não faz a
+  tela pular de lugar.
+- O seletor ⬌/⬍/▭ usado durante a edição vira preferência de edição (`cfg.editMain`), para o editor
+  não voltar à área principal contra uma escolha explícita.
+- Celular (≤ 820 px) sem mudança: o painel já é tela cheia, que é o editor leve escolhido.
+- Corrigido de quebra (821–1000 px): no modo abas o painel de arquivo continuava overlay `fixed` em
+  `top:0` e cobria a barra `💬 Chat | 📄 Arquivo` — não havia como voltar ao chat. Agora volta ao fluxo
+  e a árvore (overlay nessa faixa) sai da frente.
+- Validação: Chromium via Playwright contra `apps/hub/web` com Hub falso, fluxo real (árvore → arquivo
+  → Editar → Chat → Arquivo → Concluir → fechar no meio da edição → seletor) em 1400, 900 e 390 px.
+
 ## 16) F2 — implementação (2026-10-19, não commitada; aguardando revisão)
 
 ### 16.1 Decisão: ferramentas próprias em vez do Playwright MCP
