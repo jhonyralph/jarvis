@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, appendFileSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, isClaudeAsyncAgentLaunch, parseClaudeTaskNotification, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions, settleOnExit, codexHasPlanWindow, codexRolloutAppend, ROLLOUT_APPEND_MAX_BYTES } from "./agents.js";
+import { AgentRegistry, AiderAdapter, CodexAdapter, MockAgentAdapter, agentPermissionMode, normalizePermissionMode, effectivePermissionMode, permissionArgs, managedAdapterSecurityArgs, buildAiderInvocationArgs, codexUsage, codexTelemetryFromLines, codexPlanUsage, codexCommandActivity, codexItemToEvents, codexPatchEventsFromLines, codexConfigModel, normalizeToolName, validateModelSelection, resolveClosestModel, parseGeminiCliEvent, parseCursorCliEvent, parseClineCliEvent, parseQwenCliEvent, parseCopilotCliEvent, parseOpenCodeCliEvent, parseCopilotHelpModels, parseGenericJsonlEvent, isClaudeAsyncAgentLaunch, parseClaudeTaskNotification, finalOnlyText, safeProviderValue, withManagedHistory, createAgentEventBridge, cliLifecycleEvent, buildGeminiArgs, buildCursorArgs, buildCopilotArgs, buildOpenCodeArgs, buildClineArgs, buildQwenArgs, buildContinueArgs, buildKiroArgs, assertNativeSessionBinding, findNativeSessionCollisions, settleOnExit, codexHasPlanWindow, codexRolloutAppend, ROLLOUT_APPEND_MAX_BYTES, codexPromptTokens, managedHistoryBudgetChars, codexRolloutOversized } from "./agents.js";
 import { createEventSequencer } from "./agent-contract.js";
 
 test("native continuity rejects one provider thread bound to multiple Jarvis sessions", () => {
@@ -690,4 +690,291 @@ test("codexRolloutAppend limita UMA leitura e nunca materializa o rollout inteir
   const whole = codexRolloutAppend(small, 0);
   assert.equal(whole.data.toString("utf8"), appended, "arquivo pequeno e lido inteiro, sem salto");
   assert.equal(whole.reset, false, "sem salto, sem reset");
+});
+
+/* INC-03 (2026-10-17): o ledger desta instalacao guardou "contexto" de 46 M, 905 M e 1,15 BILHAO de
+ * tokens, sempre com a janela nula — era o total CUMULATIVO vazando para o campo de contexto por
+ * turno, porque sem telemetria o codigo caia no delta e, sem snapshot anterior, o delta E o total.
+ * Alem de mentir no medidor, inflava `promptTokens` e cobrava sobretaxa de contexto longo. */
+test("contexto do codex nunca reporta total cumulativo nem valor acima da janela", () => {
+  // Medida real: passa.
+  assert.equal(codexPromptTokens({ last: { input_tokens: 107928 }, contextWindow: 258400 } as any), 107928);
+  // Perto do limite ainda passa (provedor as vezes reporta um pouco acima).
+  assert.equal(codexPromptTokens({ last: { input_tokens: 262000 }, contextWindow: 258400 } as any), 262000);
+  // Absurdo em relacao a janela: descartado.
+  assert.equal(codexPromptTokens({ last: { input_tokens: 1157311016 }, contextWindow: 258400 } as any), undefined,
+    "1,15 bilhao numa janela de 258 mil e total cumulativo, nao contexto");
+  // Sem telemetria nenhuma: nao inventa.
+  assert.equal(codexPromptTokens(undefined), undefined);
+  assert.equal(codexPromptTokens({} as any), undefined);
+  assert.equal(codexPromptTokens({ contextWindow: 258400 } as any), undefined, "janela sem medida nao vira contexto");
+
+  // O caminho que produzia o lixo: sem telemetria E sem snapshot anterior, `input_tokens` do turno
+  // e o total acumulado da thread. Antes isso virava contextTokens; agora fica sem dado.
+  const semTelemetria = codexUsage({ input_tokens: 1157311016, output_tokens: 240 }, undefined, undefined, {} as any);
+  assert.equal(semTelemetria?.contextTokens, undefined, "sem telemetria nao se declara contexto");
+  assert.equal(semTelemetria?.contextWindowTokens, undefined);
+  assert.equal(semTelemetria?.inputTokens, 1157311016, "o total cumulativo segue valendo como inputTokens do turno");
+
+  // Com telemetria boa, o medidor recebe a medida real (e nao o delta).
+  const comTelemetria = codexUsage(
+    { input_tokens: 1157311016, output_tokens: 240 }, undefined,
+    { last: { input_tokens: 107928 }, contextWindow: 258400, model: "gpt-6-astra" } as any, {} as any,
+  );
+  assert.equal(comTelemetria?.contextTokens, 107928);
+  assert.equal(comTelemetria?.contextWindowTokens, 258400);
+});
+
+/* INC-03: o historico gerenciado cortava em 16.000 chars FIXOS (≈6% de uma janela de 258k tokens) e,
+ * pior, descartava os turnos antigos em SILENCIO — o modelo recebia um comeco de conversa que nao era
+ * o comeco e respondia como se fosse tudo. */
+test("historico gerenciado usa a janela real do modelo e avisa o que foi cortado", () => {
+  // Sem janela conhecida (o caso comum: CLI com autoModel) => teto fixo conservador.
+  assert.equal(managedHistoryBudgetChars(undefined), 16_000, "sem janela, mantem o teto historico");
+  assert.equal(managedHistoryBudgetChars(0), 16_000);
+  // Janela grande => orcamento cresce (258.400 * 3,5 * 0,35).
+  const grande = managedHistoryBudgetChars(258_400);
+  assert.ok(grande > 300_000, `esperado >300k chars numa janela de 258k tokens, veio ${grande}`);
+  // Janela minuscula/mal reportada nunca encolhe abaixo do teto fixo.
+  assert.equal(managedHistoryBudgetChars(100), 16_000, "janela absurdamente pequena nao reduz o orcamento");
+
+  // Nada cortado: cabecalho normal, sem aviso.
+  const curto = withManagedHistory("agora", [{ role: "user", text: "oi" }, { role: "assistant", text: "ola" }]);
+  assert.ok(!/omitidos/.test(curto), "sem corte nao deve haver aviso");
+  assert.ok(curto.includes("Usuário: oi") && curto.includes("Mensagem atual do usuário:\nagora"));
+
+  // Com corte: o aviso tem de dizer QUANTOS turnos faltam.
+  const muitos = Array.from({ length: 40 }, (_, i) => ({ role: (i % 2 ? "assistant" : "user") as "user" | "assistant", text: `turno ${i} ` + "x".repeat(400) }));
+  const cortado = withManagedHistory("agora", muitos, 2_000);
+  const m = cortado.match(/os (\d+) turno\(s\) mais antigos foram omitidos/);
+  assert.ok(m, "corte silencioso: o aviso de turnos omitidos nao apareceu");
+  assert.ok(Number(m![1]) > 0 && Number(m![1]) < 40, `contagem de omitidos implausivel: ${m![1]}`);
+  assert.ok(cortado.includes("turno 39"), "a cauda recente tem de sobreviver ao corte");
+
+  // A janela grande faz CABER o que o teto fixo cortaria — o ganho concreto da mudanca.
+  const comJanela = withManagedHistory("agora", muitos, { contextWindowTokens: 258_400 });
+  assert.ok(!/omitidos/.test(comJanela), "com janela de 258k tokens esse historico inteiro deveria caber");
+  assert.ok(comJanela.includes("turno 0"), "o turno mais antigo deveria sobreviver com a janela real");
+});
+
+/* INC-03: compactar NAO encolhe o rollout do Codex — ele e append-only, e o arquivo desta instalacao
+ * chegou a 733 MB COM 101 eventos `compacted` dentro. O que encolhe e aposentar a thread. */
+test("thread do codex e aposentada so quando o rollout passa do teto", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-rotate-"));
+  const pequeno = join(dir, "pequeno.jsonl");
+  const grande = join(dir, "grande.jsonl");
+  writeFileSync(pequeno, "x".repeat(1024));
+  writeFileSync(grande, "x".repeat(4096));
+  const resolve = (id: string) => (id === "t-grande" ? grande : id === "t-pequeno" ? pequeno : undefined);
+
+  assert.equal(codexRolloutOversized("t-pequeno", 2048, resolve), undefined, "abaixo do teto nao aposenta");
+  const ret = codexRolloutOversized("t-grande", 2048, resolve);
+  assert.ok(ret, "acima do teto tem de aposentar");
+  assert.equal(ret!.size, 4096);
+  assert.equal(ret!.path, grande);
+
+  // Casos em que NAO se pode aposentar: sem thread, ou thread cujo rollout nem existe mais.
+  assert.equal(codexRolloutOversized(undefined, 2048, resolve), undefined);
+  assert.equal(codexRolloutOversized("inexistente", 2048, resolve), undefined, "sem arquivo resolvido nao se decide nada");
+
+  // O teto real nunca pode ser baixo o bastante para aposentar conversa grande e saudavel: um
+  // transcript de 28 MB (o maior do Claude nesta maquina) tem de passar longe.
+  const normal = join(dir, "normal.jsonl");
+  writeFileSync(normal, "x".repeat(4096));
+  assert.equal(codexRolloutOversized("t-normal", 256 * 1024 * 1024, () => normal), undefined,
+    "o teto de producao nao pode aposentar rollout de tamanho normal");
+});
+
+
+// --- JRV-42: o primeiro `result` do processo nao e o fim do turno -------------------------------
+// Incidente de 2026-10-19 (sessao 9ecf7b75, nativa 6b84d10e): no `--resume`, o claude processou o
+// aviso velho de 3 shells em segundo plano como um mini-turno sem API, emitiu um `result` vazio em
+// 35 ms e so entao rodou o pedido real. O adaptador tomou aquele `result` como fim, armou o prazo de
+// 60 s e derrubou o trabalho real (`ms: 60939`, `outputTokens: 0`). As linhas abaixo tem a forma
+// exata das medidas no CLI 2.1.288 (reproducao com haiku), reduzidas aos campos que importam.
+
+const SID = "a41bbae9-4e67-4713-bb72-7b56851a3572";
+const cl = {
+  init: () => ({ type: "system", subtype: "init", session_id: SID }),
+  staleNotice: (taskId: string) => ({ type: "system", subtype: "task_notification", task_id: taskId, tool_use_id: `toolu_old_${taskId}`, status: "stopped", output_file: "", summary: "Background shell command didn't finish before the previous session ended" }),
+  // Mini-turno do aviso velho: zero chamadas de API; o total e o custo RESTAURADO da sessao.
+  miniResult: (restored: number) => ({ type: "result", subtype: "success", is_error: false, result: "", num_turns: 0, duration_ms: 45, total_cost_usd: restored, origin: { kind: "task-notification" }, usage: { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0, iterations: [] }, session_id: SID }),
+  say: (text: string, ctx = [10, 715, 30601], model = "claude-haiku-4-5-20251001") => ({ type: "assistant", message: { model, content: [{ type: "text", text }], usage: { input_tokens: ctx[0], cache_creation_input_tokens: ctx[1], cache_read_input_tokens: ctx[2], output_tokens: 2 } } }),
+  tool: (id: string, name = "Bash") => ({ type: "assistant", message: { content: [{ type: "tool_use", id, name, input: { command: "echo hi" } }], usage: { input_tokens: 10, cache_creation_input_tokens: 715, cache_read_input_tokens: 30601, output_tokens: 6 } } }),
+  toolResult: (id: string) => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "hi" }] } }),
+  result: (text: string, total: number, out: number, last = [8, 1002, 31316], extra: Record<string, unknown> = {}) => ({ type: "result", subtype: "success", is_error: false, result: text, num_turns: 2, total_cost_usd: total, usage: { input_tokens: 18, cache_creation_input_tokens: 1717, cache_read_input_tokens: 61917, output_tokens: out, iterations: [{ input_tokens: last[0], cache_creation_input_tokens: last[1], cache_read_input_tokens: last[2], output_tokens: out }] }, session_id: SID, ...extra }),
+  // Teardown que a CLI emite DEPOIS do `result` final (medido): nao e turno novo.
+  teardown: () => [
+    { type: "system", subtype: "background_tasks_changed", tasks: [] },
+    { type: "system", subtype: "task_updated", task_id: "brfhwhvbn", patch: { status: "killed" } },
+    { type: "system", subtype: "task_notification", task_id: "brfhwhvbn", tool_use_id: "toolu_bg", status: "stopped", summary: "sleep 200" },
+  ],
+};
+
+async function feed(lines: unknown[]) {
+  const { ClaudeTurnAccount } = await import("./agents.js");
+  const account = new ClaudeTurnAccount();
+  const signals = lines.map((o) => account.line(o));
+  return { account, signals };
+}
+
+test("JRV-42 (a) turno normal: so o `result` anuncia o fim; texto, contexto e custo do turno", async () => {
+  const { account, signals } = await feed([cl.init(), cl.tool("t1"), cl.toolResult("t1"), cl.say("PONG", [8, 1002, 31316]), cl.result("PONG", 0.0419112, 150), ...cl.teardown()]);
+  assert.deepEqual(signals.map((s) => s ?? null), [null, null, null, null, true, null, null, null], "teardown depois do result nao desarma o prazo");
+  assert.equal(account.text, "PONG");
+  assert.equal(account.contextTokens, 8 + 1002 + 31316, "contexto = ultima chamada, nao a soma do turno");
+  assert.equal(account.outputTokens, 150);
+  assert.equal(account.restoredCost, undefined, "sem mini-turno o processo nao revela a base");
+  assert.equal(Number(account.turnCost(0.0315175)!.toFixed(7)), 0.0103937, "custo = total acumulado - restaurado do transcript");
+  assert.equal(account.turnCost(undefined), undefined, "sem base, custo desconhecido — nunca o acumulado");
+});
+
+test("JRV-42 (b) mini-turno do aviso velho + turno real: o real NAO e derrubado e e ele que conta", async () => {
+  const { account, signals } = await feed([
+    cl.staleNotice("bko6jw51a"), cl.init(), cl.miniResult(36.9696274),
+    cl.init(), cl.say("Vou seguir para a F2.", [6, 2_000, 300_000]), cl.tool("t1"), cl.toolResult("t1"), cl.say(" Feito."), cl.result("Feito.", 37.2196274, 5288),
+  ]);
+  assert.equal(signals[2], true, "o mini-turno anuncia fim...");
+  assert.equal(signals[3], "resumed", "...e o init seguinte DESARMA o prazo: e outro turno no mesmo processo");
+  assert.equal(signals.filter((s) => s === "resumed").length, 1);
+  assert.equal(signals.at(-1), true, "o result real anuncia o fim de verdade");
+  assert.equal(account.text, "Vou seguir para a F2. Feito.", "o texto e o do pedido real");
+  assert.equal(account.restoredCost, 36.9696274, "o mini-turno revela o custo restaurado pela CLI");
+  assert.equal(Number(account.turnCost(1)!.toFixed(7)), 0.25, "base do processo vence a do transcript; custo e do turno, nao os 36,97 acumulados");
+  assert.equal(account.outputTokens, 5288);
+});
+
+test("JRV-42 (c) so o mini-turno e a CLI sai: anuncia fim (sem pendurar) e nao inventa texto nem custo", async () => {
+  const { account, signals } = await feed([cl.staleNotice("x"), cl.init(), cl.miniResult(1.5)]);
+  assert.equal(signals.at(-1), true);
+  assert.equal(account.text, "");
+  assert.equal(account.turnCost(), 0, "turno sem chamada de API custa zero");
+  assert.equal(account.contextTokens, undefined, "uso zerado nao vira leitura de contexto");
+});
+
+test("JRV-42 (e) varios avisos velhos (varios mini-turnos) antes do pedido real", async () => {
+  const { account, signals } = await feed([
+    cl.staleNotice("a"), cl.staleNotice("b"), cl.init(), cl.miniResult(2),
+    cl.staleNotice("c"), cl.init(), cl.miniResult(2),
+    cl.init(), cl.say("ok"), cl.result("ok", 2.1, 40),
+  ]);
+  assert.deepEqual(signals.map((s) => s ?? null), [null, null, null, true, null, "resumed", true, "resumed", null, true]);
+  assert.equal(account.text, "ok");
+  assert.equal(Number(account.turnCost()!.toFixed(6)), 0.1);
+  assert.equal(account.results, 3);
+});
+
+test("JRV-42: varios turnos da CLI no mesmo processo (subagente em segundo plano) somam texto e saida", async () => {
+  // Medido: com subagente em segundo plano a CLI espera ele terminar, roda outro turno para o aviso
+  // e solta os dois `result` juntos no fim (result_index 0 e 1).
+  const { account } = await feed([cl.init(), cl.say("LAUNCHED"), cl.init(), cl.say("Agente terminou."), cl.result("LAUNCHED", 0.05, 575), cl.result("Agente terminou.", 0.0648, 153)]);
+  assert.equal(account.text, "LAUNCHED\n\nAgente terminou.", "cada turno da CLI vira um paragrafo, nada some");
+  assert.equal(account.outputTokens, 575 + 153);
+  assert.equal(Number(account.turnCost(0)!.toFixed(4)), 0.0648, "o ULTIMO result da o total");
+});
+
+test("JRV-42: mensagem sintetica (limite de sessao) nao troca o contexto pela soma do turno", async () => {
+  // Turno 3 da sessao 9ecf7b75: terminou num "You've hit your session limit" sintetico com uso
+  // zerado, e o contexto caiu para a soma do turno (1.967.066 tokens) — mais que a janela inteira.
+  const synthetic = { type: "assistant", message: { model: "<synthetic>", content: [{ type: "text", text: "You've hit your session limit" }], usage: { input_tokens: 0, output_tokens: 0 } } };
+  const sum = { type: "result", subtype: "success", is_error: false, result: "You've hit your session limit", num_turns: 40, total_cost_usd: 15.67, usage: { input_tokens: 66, cache_creation_input_tokens: 67_000, cache_read_input_tokens: 1_900_000, output_tokens: 20776, iterations: [] } };
+  const { account } = await feed([cl.init(), cl.say("trabalhando", [5, 1_000, 299_000]), synthetic, sum]);
+  assert.equal(account.contextTokens, 300_005);
+  assert.match(account.text, /session limit/, "o aviso sintetico continua visivel");
+});
+
+test("JRV-42: 'No response requested.' sintetico nao vira texto da resposta", async () => {
+  const noResponse = { type: "assistant", message: { model: "<synthetic>", content: [{ type: "text", text: "No response requested." }], usage: { input_tokens: 0, output_tokens: 0 } } };
+  const { account } = await feed([cl.init(), noResponse, cl.say("Resposta real."), cl.result("Resposta real.", 1, 3)]);
+  assert.equal(account.text, "Resposta real.");
+});
+
+test("JRV-42: erro de um turno anterior nao condena o turno seguinte que deu certo", async () => {
+  const { account } = await feed([cl.init(), { ...cl.miniResult(1), is_error: true, result: "API Error: overloaded" }, cl.init(), cl.say("ok"), cl.result("ok", 1.1, 3)]);
+  assert.equal(account.error, "");
+  assert.equal(account.text, "ok");
+});
+
+test("claudeTurnCost: diferenca do acumulado; total que cai e sessao recomecada; sem base, sem custo", async () => {
+  const { claudeTurnCost } = await import("./agents.js");
+  assert.equal(claudeTurnCost(36.9696274, 36.9696274), 0);
+  assert.equal(Number(claudeTurnCost(0.046193, 0.0419112)!.toFixed(7)), 0.0042818);
+  assert.equal(claudeTurnCost(0.5, 36.97), 0.5);
+  assert.equal(claudeTurnCost(0.5, undefined), undefined);
+  assert.equal(claudeTurnCost(undefined, 0), undefined);
+});
+
+test("parseClaudeSystemTaskNotification: terminal do subagente na forma do stream-json", async () => {
+  const { parseClaudeSystemTaskNotification } = await import("./agents.js");
+  assert.deepEqual(parseClaudeSystemTaskNotification({ type: "system", subtype: "task_notification", tool_use_id: "toolu_1", status: "completed", summary: "ok" }), { providerId: "toolu_1", state: "succeeded", summary: "ok" });
+  assert.equal(parseClaudeSystemTaskNotification({ type: "system", subtype: "task_notification", tool_use_id: "toolu_1", status: "stopped" })!.state, "cancelled");
+  assert.equal(parseClaudeSystemTaskNotification({ type: "system", subtype: "task_notification", status: "completed" }), undefined, "sem tool_use_id nao ha no a enderecar");
+  assert.equal(parseClaudeSystemTaskNotification({ type: "system", subtype: "task_progress", tool_use_id: "toolu_1" }), undefined);
+});
+
+test("claudeRestoredCostFromFile: o ULTIMO cost-state, lido de tras para frente em blocos", async () => {
+  const { claudeRestoredCostFromFile } = await import("./agents.js");
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-cost-state-"));
+  const f = join(dir, `${SID}.jsonl`);
+  const filler = (n: number) => Array.from({ length: n }, (_, i) => JSON.stringify({ type: "user", message: { content: `linha ${i} ` + "x".repeat(50) } })).join("\n");
+  const cost = (v: number, sessionId = SID) => JSON.stringify({ type: "cost-state", sessionId, totalCostUSD: v, modelUsage: {} });
+  // Processo derrubado depois do ultimo cost-state: ele fica LONGE do fim — bloco de 64 B obriga a
+  // costurar linhas entre blocos.
+  writeFileSync(f, [cost(1.47), filler(5), cost(4.99), filler(40), cost(99, "outra-sessao"), filler(3)].join("\n") + "\n");
+  assert.equal(await claudeRestoredCostFromFile(f, SID, 32 * 1024 * 1024, 64), 4.99);
+  const none = join(dir, "none.jsonl"); writeFileSync(none, filler(3) + "\n");
+  assert.equal(await claudeRestoredCostFromFile(none, SID, 1024 * 1024, 64), 0, "arquivo inteiro sem cost-state: a CLI comeca do zero");
+  assert.equal(await claudeRestoredCostFromFile(f, SID, 128, 64), undefined, "teto atingido antes de achar: base desconhecida");
+  assert.equal(await claudeRestoredCostFromFile(join(dir, "nao-existe.jsonl"), SID), undefined);
+});
+
+test("claudeRestoredCost acha o transcript pelo nome que a CLI da ao cwd, e procura se o cwd veio grafado diferente", async () => {
+  const { claudeRestoredCost, claudeProjectDirName } = await import("./agents.js");
+  assert.equal(claudeProjectDirName("C:\\Users\\Jonathan\\AppData\\Local\\Temp\\jrv42\\cwd"), "C--Users-Jonathan-AppData-Local-Temp-jrv42-cwd");
+  const projects = mkdtempSync(join(tmpdir(), "jarvis-projects-"));
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(join(projects, claudeProjectDirName("C:\\w\\proj")));
+  writeFileSync(join(projects, claudeProjectDirName("C:\\w\\proj"), `${SID}.jsonl`), JSON.stringify({ type: "cost-state", sessionId: SID, totalCostUSD: 3.5 }) + "\n");
+  assert.equal(await claudeRestoredCost("C:\\w\\proj", SID, projects), 3.5);
+  assert.equal(await claudeRestoredCost("/outro/caminho", SID, projects), 3.5, "fallback: procura <id>.jsonl nos projetos");
+  assert.equal(await claudeRestoredCost("C:\\w\\proj", "00000000-0000-0000-0000-000000000000", projects), undefined);
+});
+
+// runStream com processo REAL: o prazo de verdade, encurtado para 300 ms.
+const nodeScript = (body: string) => [process.execPath, ["-e", body]] as const;
+const emit = (o: unknown) => `process.stdout.write(${JSON.stringify(JSON.stringify(o) + "\n")});`;
+
+async function runClaudeLike(body: string, graceMs = 300) {
+  const { runStream, ClaudeTurnAccount } = await import("./agents.js");
+  const account = new ClaudeTurnAccount();
+  const [cmd, args] = nodeScript(body);
+  const t0 = Date.now();
+  const out = await runStream(cmd, [...args], tmpdir(), "", (line) => { try { return account.line(JSON.parse(line)); } catch { return; } }, undefined, graceMs);
+  return { out, account, ms: Date.now() - t0 };
+}
+
+test("JRV-42 (b) processo real: mini-turno + turno real mais longo que o prazo NAO e derrubado", async () => {
+  const { out, account, ms } = await runClaudeLike(
+    emit(cl.staleNotice("a")) + emit(cl.init()) + emit(cl.miniResult(36.97)) + emit(cl.init())
+    + `setTimeout(() => { ${emit(cl.say("resposta real"))}${emit(cl.result("resposta real", 37.0, 7))} setTimeout(() => process.exit(0), 20); }, 900);`,
+  );
+  assert.ok(ms >= 900, `o turno real correu inteiro (${ms} ms), muito alem do prazo de 300 ms`);
+  assert.match(out, /resposta real/);
+  assert.equal(account.text, "resposta real");
+  assert.equal(Number(account.turnCost()!.toFixed(2)), 0.03);
+});
+
+test("JRV-42 (c) processo real: so o mini-turno e a CLI sai sozinha — resolve na hora, sem pendurar", async () => {
+  const { account, ms } = await runClaudeLike(emit(cl.init()) + emit(cl.miniResult(1)) + "setTimeout(() => process.exit(0), 20);", 5_000);
+  assert.ok(ms < 4_000, `resolveu pelo exit, sem esperar o prazo (${ms} ms)`);
+  assert.equal(account.results, 1);
+});
+
+test("JRV-42 (d) processo real: depois do result REAL, CLI pendurada com neto no pipe ainda e derrubada (9c4222e)", async () => {
+  // O neto herda o stdout e se mataria sozinho em 15 s — rede de seguranca para nao deixar orfao.
+  const grandchild = `require("child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 15000)"], { stdio: ["ignore", "inherit", "inherit"] });`;
+  const { out, account, ms } = await runClaudeLike(grandchild + emit(cl.init()) + emit(cl.say("pronto")) + emit(cl.result("pronto", 1, 1)) + "setInterval(() => {}, 1000);");
+  assert.ok(ms < 10_000, `derrubado pelo prazo, nao pendurado (${ms} ms)`);
+  assert.match(out, /pronto/, "a resposta que ja tinha chegado e entregue, nao descartada");
+  assert.equal(account.text, "pronto");
 });

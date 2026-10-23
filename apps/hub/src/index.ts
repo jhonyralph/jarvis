@@ -4210,6 +4210,27 @@ function killJob(pid: number): void {
 }
 /** Jobs mostrados ao dono na UI: tudo ainda vivo + os terminais recentes (para ver "acabou/falhou" por
  *  um tempo). Comando truncado; nada além do próprio comando é exposto. */
+/**
+ * Janela de contexto do modelo, do catálogo que o registry já mantém em cache — sem I/O e sem await,
+ * porque isto roda no caminho do despacho. Serve para os adaptadores de histórico gerenciado
+ * dimensionarem o contexto pela janela REAL (ver withManagedHistory).
+ *
+ * `undefined` é resposta legítima e comum: a maioria destes CLIs declara `autoModel` sem publicar
+ * janela. Quem recebe `undefined` usa o teto fixo conservador — é melhor sub-aproveitar a janela do
+ * que estourá-la e perder o turno inteiro. Só aceita valor com `contextVerified`: um número não
+ * confirmado viraria orçamento de verdade e o erro apareceria como turno falhando, não como aviso.
+ */
+function modelContextWindow(agentName: string, model?: string): number | undefined {
+  if (!model) return undefined;
+  try {
+    const entry = agents.describeSnapshot().find((a) => a.name === agentName);
+    const info = entry?.models?.find((m) => m.id === model);
+    if (!info?.contextVerified) return undefined;
+    const ctx = Number(info.context);
+    return Number.isFinite(ctx) && ctx > 0 ? ctx : undefined;
+  } catch { return undefined; }
+}
+
 function backgroundJobsForUi(): Array<Record<string, unknown>> {
   // Uma hora (era 10min): a queixa real era job terminal SUMINDO da tela antes de o usuário entender o
   // que houve — principalmente o que falhou. Enquanto vive, manda a cauda do log para dar progresso.
@@ -5220,7 +5241,7 @@ async function agentTurn(sid: string, agent: AgentAdapter, agentText: string, cw
   try {
     emit(bridge.accepted()); emit(bridge.started());
     const prior = store.history(sid).slice(0, -1).filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
-    const reply = await agent.send(sid, agentText, cwd, { ...opts, permissionMode: opts.permissionMode ?? sessionPermissionMode(sid), turnId, history: prior, signal: ctrl.signal }, (ev) => {
+    const reply = await agent.send(sid, agentText, cwd, { ...opts, permissionMode: opts.permissionMode ?? sessionPermissionMode(sid), turnId, history: prior, contextWindowTokens: modelContextWindow(agent.name, opts.model), signal: ctrl.signal }, (ev) => {
       if (isProviderExecutionEvent(ev)) {
         let projected: ReturnType<ExecutionTracker["handleProviderEvent"]> | undefined;
         let projectionFailed = false;

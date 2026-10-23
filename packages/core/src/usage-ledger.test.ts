@@ -75,3 +75,26 @@ test("Codex cumulative migration is isolated by runner", () => {
   assert.equal(ledger.session("same", "runner-a").inputTokens, 100);
   assert.equal(ledger.session("same", "runner-b").inputTokens, 40);
 });
+
+// JRV-42: o claude gravava `total_cost_usd` — acumulado da sessão nativa — como custo de cada turno.
+test("ledger converte o custo acumulado antigo do Claude em custo por turno (sessão 9ecf7b75)", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "jarvis-ledger-claude-")), "usage.json"), at = Date.now();
+  const sid = "9ecf7b75-c08f-4c83-8217-809123819968";
+  const legacy = (costUsd: number, i: number, sessionId = sid) => ({ sessionId, runnerId: "local", agent: "claude-code", at: at + i, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", costUsd });
+  writeFileSync(file, JSON.stringify([
+    // Os cinco turnos reais do log de 2026-10-19 — somados davam 96,07 para uma sessão de 36,97.
+    legacy(1.4738332, 0), legacy(4.9902478, 1), legacy(15.6680776, 2), legacy(36.9696274, 3), legacy(36.9696274, 4),
+    // Sessão nativa nova sob o mesmo id do Jarvis: o total CAI — o próprio total é o turno.
+    legacy(0.5, 5),
+    // One-shots sob pseudo-ids são independentes: nada de diferença entre eles.
+    legacy(0.05, 6, "__summary__"), legacy(0.03, 7, "__summary__"),
+    // Registro novo (fonte nova) não é tocado.
+    { sessionId: sid, runnerId: "local", agent: "claude-code", at: at + 8, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd − custo restaurado da sessão (por turno)", costUsd: 0.25 },
+  ]));
+  const ledger = new UsageLedger(file);
+  assert.equal(Number(ledger.session(sid, "local").costUsd.toFixed(6)), Number((36.9696274 + 0.5 + 0.25).toFixed(6)));
+  assert.equal(Number(ledger.session("__summary__", "local").costUsd.toFixed(6)), 0.08, "pseudo-sessão fica como estava");
+  // Idempotente: recarregar o arquivo já migrado (a fonte mudou) não aplica a diferença de novo.
+  ledger.record("other", "mock", { inputTokens: 1, costKind: "tokens_only", source: "fixture" }, "local"); // força o flush
+  assert.equal(Number(new UsageLedger(file).session(sid, "local").costUsd.toFixed(6)), Number((36.9696274 + 0.5 + 0.25).toFixed(6)));
+});

@@ -96,9 +96,15 @@ export const DEFAULT_MAX_AUTO_CONTINUE_DEPTH = 8;
  * background (which dies with the one-shot turn). Injected on non-managed turns; the Hub parses the
  * `jarvis-run` block from the reply (parseBackgroundRunDirectives), runs it durably, and opens a new
  * turn with the result. Keep it short — it costs prompt tokens on every turn.
+ *
+ * O que morre e o que não morre foi MEDIDO no Claude Code 2.1.288 em modo `-p` (JRV-42): shell em
+ * segundo plano (Bash `run_in_background`) e vigia do Monitor são mortos ~5 s depois do fim do turno,
+ * e no `--resume` seguinte voltam como aviso velho ("didn't finish before the previous session
+ * ended"); subagente em segundo plano NÃO morre — a CLI espera ele terminar antes de encerrar.
  */
 export const BACKGROUND_JOB_STEERING =
-  "Ambiente Jarvis: você roda como UM turno não-interativo. Tarefas em segundo plano nativas (run_in_background) NÃO sobrevivem ao fim do turno e você NÃO será reinvocado quando terminarem. "
+  "Ambiente Jarvis: você roda como UM processo não-interativo por turno. Ao fim do turno, shells em segundo plano (run_in_background no Bash) e vigias do Monitor são MORTOS e você NÃO será reinvocado quando terminariam — nunca encerre o turno com eles pendentes: espere o resultado ou pare-os (TaskStop). Subagentes (Agent) não morrem: o turno só acaba quando todos terminam. "
+  + "Um aviso de tarefa que \"didn't finish before the previous session ended\" é resto do turno anterior: não responda a ele, atenda a mensagem do usuário. "
   + "Para uma tarefa LONGA cujo resultado você precisa (build, testes, typecheck, script demorado), não use background nativo: emita um bloco cercado exatamente assim, um comando de shell por bloco:\n"
   + "```jarvis-run\n<comando>\n```\n"
   + "O Jarvis executa esse comando de forma durável FORA deste turno e, quando terminar, abre um NOVO turno com o resultado. Após emitir o bloco, encerre o turno em vez de esperar. "

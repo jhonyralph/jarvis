@@ -11,6 +11,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { platform, homedir, tmpdir } from "node:os";
 import { closeSync, existsSync, openSync, readFileSync, readSync, writeFileSync, mkdirSync, unlinkSync, readdirSync, statSync } from "node:fs";
+import { open as openAsync, readdir as readdirAsync, access as accessAsync } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -172,6 +173,215 @@ export function parseClaudeTaskNotification(content: unknown): { providerId: str
   return out;
 }
 
+/** O mesmo sinal terminal, mas como o `claude -p --output-format stream-json` o publica DENTRO do
+ *  processo: `{"type":"system","subtype":"task_notification","tool_use_id":…,"status":"completed"}`.
+ *  Medido no CLI 2.1.288 (JRV-42): nos streams medidos o aviso de subagente em segundo plano veio
+ *  SÓ nesta forma — nenhuma linha `user` com `<task-notification>` —, então sem ler esta linha o nó
+ *  do subagente ficava "rodando" até o fim do turno e virava `unknown` mesmo tendo terminado bem. */
+export function parseClaudeSystemTaskNotification(o: any): { providerId: string; state: ExecutionState; summary?: string } | undefined {
+  if (o?.type !== "system" || o.subtype !== "task_notification" || !o.tool_use_id) return undefined;
+  const state = TASK_NOTIFICATION_STATES[String(o.status || "").toLowerCase()];
+  if (!state) return undefined;
+  return { providerId: String(o.tool_use_id), state, summary: o.summary ? String(o.summary).slice(0, 2_000) : undefined };
+}
+
+// ---------------------------------------------------------------------------
+// JRV-42 — um processo `claude -p` NÃO é um turno só.
+//
+// Medido no CLI 2.1.288 (sessão nativa 6b84d10e, 2026-10-19, e reproduzido com haiku): quando o turno
+// anterior acabou com shell/Monitor em segundo plano ainda registrado, o `--resume` seguinte começa
+// processando o aviso velho ("didn't finish before the previous session ended") como um MINI-TURNO
+// sem chamada de API — `system/init`, depois um `result` com `num_turns: 0`, `usage` zerado e
+// `origin.kind: "task-notification"` — e só então abre um SEGUNDO `system/init` e roda o pedido real.
+// Também quando um subagente em segundo plano termina, a CLI roda outro turno no mesmo processo e
+// emite um `result` por turno (`result_index` 0, 1, …).
+//
+// Daí as três regras desta contabilidade:
+//  1. `result` anuncia fim, mas uma linha de turno NOVO depois dele (init/assistant/user/stream_event)
+//     desfaz o anúncio — ver StreamLineSignal. O teardown que a CLI emite depois do `result` final
+//     (`system` task_updated/task_notification/background_tasks_changed) não é turno novo.
+//  2. O texto e o uso valem para TODOS os turnos do processo; o último `result` dá o total.
+//  3. `total_cost_usd` é ACUMULADO da sessão nativa (a CLI restaura o `cost-state` do transcript no
+//     `--resume`: 0,0419 → 0,0462 na medição). O custo do turno é o total menos o restaurado.
+
+/** Texto que a CLI injeta, com `model: "<synthetic>"`, no lugar de uma resposta que nunca houve. */
+const CLAUDE_SYNTHETIC_NO_RESPONSE = "No response requested.";
+
+/** Linha que só existe quando a CLI COMEÇOU um turno novo no mesmo processo (ver regra 1 acima). */
+function isClaudeTurnStartLine(o: any): boolean {
+  if (o?.type === "system") return o.subtype === "init";
+  return o?.type === "assistant" || o?.type === "user" || o?.type === "stream_event";
+}
+
+const finiteNumber = (v: unknown): number | undefined => {
+  if (v === null || v === undefined || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+/** Custo de UM turno a partir do acumulado da sessão nativa. Sem o restaurado não há como saber —
+ *  devolver o acumulado como se fosse do turno é o defeito que esta função existe para matar. Total
+ *  MENOR que o restaurado significa que a CLI começou do zero (não restaurou): o total é o turno. */
+export function claudeTurnCost(total: unknown, restored: unknown): number | undefined {
+  const t = finiteNumber(total), r = finiteNumber(restored);
+  if (t === undefined || r === undefined) return undefined;
+  const d = t - r;
+  if (d >= -1e-9) return Math.max(0, d);
+  return t;
+}
+
+/** Acumula UM processo `claude -p` linha a linha e diz a runStream quando o turno acabou. Pura: não
+ *  emite eventos nem toca disco — o adaptador continua cuidando de atividade, sessão e subagentes. */
+export class ClaudeTurnAccount {
+  private parts: string[] = [];
+  private current = "";
+  private ended = false;
+  private outputSum = 0;
+  private sawOutput = false;
+  private lastCall: any;
+  private lastIteration: any;
+  private lastResultText = "";
+  /** Quantos `result` o processo emitiu. */
+  results = 0;
+  /** `total_cost_usd` do mini-turno SEM chamada de API do início do processo: é exatamente o custo
+   *  que a CLI restaurou da sessão — melhor fonte possível para a base do custo do turno. */
+  restoredCost?: number;
+  /** `total_cost_usd` do último `result` (acumulado da sessão nativa). */
+  totalCost?: number;
+  /** Erro do ÚLTIMO `result` (um turno posterior que deu certo apaga o erro de um anterior). */
+  error = "";
+
+  line(o: any): StreamLineSignal {
+    if (!o || typeof o !== "object") return;
+    let signal: StreamLineSignal = undefined;
+    if (this.ended && isClaudeTurnStartLine(o)) { this.ended = false; signal = "resumed"; }
+    // Cada `init` abre um turno da CLI. Com subagente em segundo plano a CLI segura os `result` e
+    // solta todos juntos no fim (medido) — então a fronteira entre os textos é o `init`, não o `result`.
+    if (o.type === "system" && o.subtype === "init" && this.current) { this.parts.push(this.current); this.current = ""; }
+    if (o.type === "assistant" && !o.parent_tool_use_id) {
+      const m = o.message || {};
+      const synthetic = m.model === "<synthetic>";
+      // Contexto = a ÚLTIMA chamada de API REAL do thread principal. Mensagem sintética (limite de
+      // sessão, "No response requested.") vem com uso zerado e não pode apagar a leitura anterior.
+      if (!synthetic && claudeInputContext(m.usage)) this.lastCall = m.usage;
+      for (const b of Array.isArray(m.content) ? m.content : []) {
+        if (b?.type !== "text" || !b.text) continue;
+        if (synthetic && String(b.text).trim() === CLAUDE_SYNTHETIC_NO_RESPONSE) continue;
+        this.current += b.text;
+      }
+    } else if (o.type === "result") {
+      const first = this.results === 0;
+      this.results++;
+      const total = finiteNumber(o.total_cost_usd);
+      if (first && Number(o.num_turns) === 0 && total !== undefined) this.restoredCost = total;
+      if (total !== undefined) this.totalCost = total;
+      const out = finiteNumber(o.usage?.output_tokens);
+      if (out !== undefined) { this.outputSum += out; this.sawOutput = true; }
+      // `usage.iterations` traz a última chamada de API do turno (medido: bate com a última mensagem
+      // do assistente). `usage` em si é a SOMA das chamadas — nunca é tamanho de contexto.
+      const iterations = o.usage?.iterations;
+      const lastIteration = Array.isArray(iterations) ? iterations[iterations.length - 1] : undefined;
+      if (claudeInputContext(lastIteration)) this.lastIteration = lastIteration;
+      if (this.current) { this.parts.push(this.current); this.current = ""; }
+      if (o.result) this.lastResultText = String(o.result);
+      this.error = o.is_error ? cliErrorMessage(o.result, "claude error") : "";
+      this.ended = true;
+      return true;
+    }
+    return signal;
+  }
+
+  /** Texto do processo: cada turno da CLI vira um parágrafo; sem texto nenhum, cai no `result`. */
+  get text(): string {
+    const parts = this.current ? [...this.parts, this.current] : this.parts;
+    return parts.join("\n\n") || this.lastResultText;
+  }
+
+  /** Tamanho do contexto: última chamada real; nunca a soma do turno (era o 1.967.066 do log). */
+  get contextTokens(): number | undefined {
+    return claudeInputContext(this.lastCall) ?? claudeInputContext(this.lastIteration);
+  }
+
+  get outputTokens(): number | undefined {
+    return this.sawOutput ? this.outputSum : finiteNumber(this.lastCall?.output_tokens);
+  }
+
+  /** Custo do turno; `restoredFromTranscript` só é usado quando o processo não revelou a base. */
+  turnCost(restoredFromTranscript?: number): number | undefined {
+    return claudeTurnCost(this.totalCost, this.restoredCost ?? restoredFromTranscript);
+  }
+}
+
+const CLAUDE_PROJECTS_DIR = process.env.JARVIS_CLAUDE_DIR || join(homedir(), ".claude", "projects");
+/** Nome do diretório de projeto que o Claude Code dá a um cwd (medido: `C:\Users\…\jrv42\cwd` →
+ *  `C--Users-…-jrv42-cwd`). */
+export function claudeProjectDirName(cwd: string): string { return cwd.replace(/[^a-zA-Z0-9]/g, "-"); }
+
+const COST_STATE_MARK = "\"cost-state\"";
+/** Custo acumulado que a CLI vai RESTAURAR ao retomar a sessão `nativeId`: o `totalCostUSD` do último
+ *  `cost-state` do transcript. A CLI só grava esse registro quando o processo sai sozinho — processo
+ *  derrubado não grava, e a CLI restaura o anterior; por isso a leitura é do ÚLTIMO, onde quer que
+ *  esteja, e não "da cauda". Lê de trás para frente em blocos, ASSÍNCRONO (transcript de dezenas de MB
+ *  é normal aqui e leitura síncrona grande já derrubou o Hub — INC-02/03), com teto.
+ *  - número: o restaurado;  - 0: arquivo lido inteiro sem `cost-state` (a CLI começa do zero);
+ *  - undefined: arquivo não encontrado ou teto atingido antes de achar (base desconhecida). */
+export async function claudeRestoredCostFromFile(file: string, nativeId?: string, capBytes = 32 * 1024 * 1024, chunkBytes = 1024 * 1024): Promise<number | undefined> {
+  let fh: Awaited<ReturnType<typeof openAsync>> | undefined;
+  try { fh = await openAsync(file, "r"); } catch { return undefined; }
+  try {
+    let end = (await fh.stat()).size, scanned = 0;
+    let carry = Buffer.alloc(0);
+    while (end > 0) {
+      if (scanned >= capBytes) return undefined;
+      const start = Math.max(0, end - chunkBytes);
+      const chunk = Buffer.alloc(end - start);
+      const { bytesRead } = await fh.read(chunk, 0, chunk.length, start);
+      scanned += bytesRead;
+      const buf = carry.length ? Buffer.concat([chunk.subarray(0, bytesRead), carry]) : chunk.subarray(0, bytesRead);
+      // Só linhas COMPLETAS: o começo do bloco pode ser o meio de uma linha que continua no bloco
+      // anterior do arquivo — ele vira `carry` e é lido junto com esse bloco na próxima volta.
+      const firstNl = start === 0 ? -1 : buf.indexOf(0x0a);
+      const complete = start === 0 ? buf : firstNl < 0 ? Buffer.alloc(0) : buf.subarray(firstNl + 1);
+      if (complete.includes(COST_STATE_MARK)) {
+        const lines = complete.toString("utf8").split("\n");
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (!lines[i].includes(COST_STATE_MARK)) continue;
+          try {
+            const o = JSON.parse(lines[i]);
+            const total = finiteNumber(o?.totalCostUSD);
+            if (o?.type === "cost-state" && total !== undefined && (!nativeId || !o.sessionId || o.sessionId === nativeId)) return total;
+          } catch { /* linha torta: segue procurando */ }
+        }
+      }
+      carry = start === 0 ? Buffer.alloc(0) : firstNl < 0 ? buf : buf.subarray(0, firstNl + 1);
+      end = start;
+    }
+    return 0;
+  } catch {
+    return undefined;
+  } finally {
+    await fh.close().catch(() => { /* já fechado */ });
+  }
+}
+
+/** Ver claudeRestoredCostFromFile. Acha o transcript pelo nome que a CLI usa; se o cwd veio grafado de
+ *  outro jeito, procura `<id>.jsonl` diretório a diretório (um `access` por projeto, assíncrono). */
+export async function claudeRestoredCost(cwd: string, nativeId: string, projectsDir = CLAUDE_PROJECTS_DIR): Promise<number | undefined> {
+  const name = `${nativeId}.jsonl`;
+  let file: string | undefined = join(projectsDir, claudeProjectDirName(cwd), name);
+  try { await accessAsync(file); } catch {
+    file = undefined;
+    try {
+      for (const dir of await readdirAsync(projectsDir, { withFileTypes: true })) {
+        if (!dir.isDirectory()) continue;
+        const candidate = join(projectsDir, dir.name, name);
+        try { await accessAsync(candidate); file = candidate; break; } catch { /* não é aqui */ }
+      }
+    } catch { /* sem diretório de projetos */ }
+  }
+  return file ? claudeRestoredCostFromFile(file, nativeId) : undefined;
+}
+
 // one-shot prompts (search / summary / digest / voice-intent) run in this dir so their
 // throwaway `claude -p` sessions land somewhere the native-session import excludes —
 // otherwise every digest/summary/warmup shows up as a "ping"/"Painel de status" session.
@@ -252,6 +462,11 @@ export interface SendOpts {
    * user message is not included; adapters prepend this bounded history only when they declare
    * `sessionContinuity: jarvis_history`. */
   history?: Array<{ role: "user" | "assistant"; text: string }>;
+  /** Janela de contexto do modelo deste turno, em tokens, quando o catálogo publica (`ModelInfo.context`).
+   *  Só os adaptadores de `sessionContinuity: jarvis_history` usam, para dimensionar o `history` acima
+   *  pela janela REAL em vez do teto fixo. Ausente = teto fixo conservador (ver withManagedHistory):
+   *  boa parte destes CLIs declara `autoModel` sem janela nenhuma, e inventar orçamento estoura o turno. */
+  contextWindowTokens?: number;
   /** Stable Jarvis turn id used by the canonical event envelope; never forwarded to a provider. */
   turnId?: string;
   /** Fail-closed execution boundary used only by Jarvis-managed child workflows. Adapters must
@@ -421,9 +636,45 @@ export function buildAiderInvocationArgs(messageFile: string, opts?: SendOpts, u
 }
 
 /** Bounded, session-isolated continuity for CLIs that have no addressable native resume id. */
-export function withManagedHistory(text: string, history?: SendOpts["history"], maxChars = Number(process.env.JARVIS_MANAGED_CONTEXT_CHARS || 16_000)): string {
+const DEFAULT_MANAGED_CONTEXT_CHARS = 16_000;
+/** Chars por token, em média, para texto pt/en. Só serve para traduzir a janela do modelo em
+ *  orçamento de caracteres — é estimativa, e é por isso que a fatia abaixo é conservadora. */
+const CHARS_PER_TOKEN = 3.5;
+/** Fatia da janela que o HISTÓRICO pode ocupar. O resto é do prompt do sistema, da mensagem atual,
+ *  das definições de ferramenta e — principalmente — da RESPOSTA. Estourar a janela faz o turno
+ *  falhar inteiro, então aqui se erra para o lado de sobrar. */
+const HISTORY_WINDOW_SHARE = 0.35;
+
+/**
+ * Orçamento de histórico em caracteres, derivado da janela REAL do modelo quando ela é conhecida.
+ *
+ * Por que não é sempre derivado: os agentes que usam histórico gerenciado (aider e os adaptadores
+ * genéricos) em boa parte declaram `models: []` / `autoModel`, ou seja **não publicam janela**.
+ * Inventar um orçamento grande para um modelo pequeno não "aproveita melhor a janela": faz o turno
+ * estourar e falhar. Sem janela conhecida, mantém-se o teto fixo histórico — conservador de propósito.
+ */
+export function managedHistoryBudgetChars(contextWindowTokens?: number, fallbackChars = DEFAULT_MANAGED_CONTEXT_CHARS): number {
+  const floorCap = Number.isFinite(fallbackChars) && fallbackChars >= 1_000 ? Math.floor(fallbackChars) : DEFAULT_MANAGED_CONTEXT_CHARS;
+  const windowTokens = Number(contextWindowTokens);
+  if (!Number.isFinite(windowTokens) || windowTokens <= 0) return floorCap;
+  const derived = Math.floor(windowTokens * CHARS_PER_TOKEN * HISTORY_WINDOW_SHARE);
+  // Nunca ENCOLHE abaixo do teto fixo por causa de uma janela minúscula mal reportada, e nunca deixa
+  // de crescer quando a janela é de verdade grande (16k chars numa janela de 258k tokens usava ~6%).
+  return Math.max(floorCap, derived);
+}
+
+export function withManagedHistory(
+  text: string,
+  history?: SendOpts["history"],
+  opts?: number | { maxChars?: number; contextWindowTokens?: number },
+): string {
   if (!history?.length) return text;
-  const cap = Number.isFinite(maxChars) && maxChars >= 1_000 ? Math.floor(maxChars) : 16_000;
+  const envChars = Number(process.env.JARVIS_MANAGED_CONTEXT_CHARS) || DEFAULT_MANAGED_CONTEXT_CHARS;
+  // Forma numérica preservada: já havia chamador/teste passando o teto direto.
+  const explicit = typeof opts === "number" ? opts : opts?.maxChars;
+  const cap = explicit !== undefined
+    ? (Number.isFinite(explicit) && explicit >= 1_000 ? Math.floor(explicit) : DEFAULT_MANAGED_CONTEXT_CHARS)
+    : managedHistoryBudgetChars(typeof opts === "number" ? undefined : opts?.contextWindowTokens, envChars);
   const rows = history
     .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.text === "string" && m.text.trim())
     .map((m) => `${m.role === "user" ? "Usuário" : "Assistente"}: ${m.text.trim()}`);
@@ -435,7 +686,15 @@ export function withManagedHistory(text: string, history?: SendOpts["history"], 
     selected.unshift(row); used += row.length + 2;
   }
   if (!selected.length) return text;
-  return `Contexto anterior desta conversa Jarvis (não repita respostas já dadas):\n${selected.join("\n\n")}\n\nMensagem atual do usuário:\n${text}`;
+  // Turno cortado tem de APARECER. Antes o histórico era truncado em silêncio: o modelo recebia um
+  // começo de conversa que não era o começo, sem nenhuma pista de que faltava coisa, e respondia como
+  // se aquilo fosse tudo. Dizer "faltam N turnos" é barato e muda a resposta — ele passa a pedir o
+  // que falta em vez de preencher a lacuna com suposição.
+  const omitted = rows.length - selected.length;
+  const header = omitted > 0
+    ? `Contexto anterior desta conversa Jarvis (não repita respostas já dadas). ATENÇÃO: os ${omitted} turno(s) mais antigos foram omitidos por limite de contexto — se precisar deles, peça em vez de supor:`
+    : "Contexto anterior desta conversa Jarvis (não repita respostas já dadas):";
+  return `${header}\n${selected.join("\n\n")}\n\nMensagem atual do usuário:\n${text}`;
 }
 
 /** Kill a spawned process AND its children. On Windows a shell:true spawn wraps the real CLI in
@@ -938,21 +1197,28 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     // input_tokens sozinho é só o delta NÃO-cacheado (poucas centenas mesmo com a janela quase
     // cheia). O medidor de contexto precisa da SOMA: fresh + cache_creation + cache_read — senão
-    // marca ~0% quando a sessão está de fato ~95% cheia.
-    const inputContext = (u: any): number | undefined => {
-      if (!u) return undefined;
-      const n = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
-      return n || undefined;
-    };
+    // marca ~0% quando a sessão está de fato ~95% cheia (claudeInputContext). Mas é a soma de UMA
+    // chamada de API — a última —, nunca a do turno inteiro (ver ClaudeTurnAccount.contextTokens).
+
+    // `total_cost_usd` é acumulado da sessão nativa (JRV-42). Sessão nova começa do zero; retomada
+    // começa do `cost-state` que a CLI restaura do transcript — lido ANTES do spawn, porque é esse o
+    // valor que a CLI vai carregar (e o processo novo ainda não escreveu nada).
+    const restoredCost = prev ? await claudeRestoredCost(cwd, prev).catch(() => undefined) : 0;
+    const turnUsage = (costUsd: number | undefined, contextTokens: number | undefined, outputTokens: number | undefined, timing: { spawnMs?: number; workMs?: number } = {}): AgentReply["usage"] => usageWithFast({
+      costUsd, inputTokens: contextTokens, contextTokens, outputTokens,
+      costKind: costUsd === undefined ? "unavailable" : "estimated_api_equivalent",
+      source: costUsd === undefined
+        ? "Claude Code result.total_cost_usd é acumulado da sessão e o custo restaurado não foi encontrado — custo do turno indisponível"
+        : "Claude Code result.total_cost_usd − custo restaurado da sessão (por turno)",
+      model: opts?.model, ...timing,
+    }, opts);
 
     try {
     if (onEvent) {
       // streaming: emit tool/text activity live; accumulate the final reply + usage.
-      let finalText = "";
       let sessionOut = "";
-      let streamError = "";
-      let usage: AgentReply["usage"];
-      let lastMsgUsage: any;
+      // Texto, uso, custo e o sinal de fim de turno de TODOS os turnos da CLI neste processo (JRV-42).
+      const account = new ClaudeTurnAccount();
       const taskIds = new Set<string>();
       // Spawned async and still unresolved: launched, but no <task-notification> seen yet.
       const asyncTaskIds = new Set<string>();
@@ -969,6 +1235,18 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (!tFirstLine) tFirstLine = Date.now();
         let o: any;
         try { o = JSON.parse(line); } catch { return; }
+        const signal = account.line(o);
+        if (o.type === "system" && o.subtype === "task_started" && o.is_backgrounded && taskIds.has(String(o.tool_use_id || ""))) {
+          asyncTaskIds.add(String(o.tool_use_id));
+        }
+        // Terminal do subagente em segundo plano, na forma que o stream-json publica (ver
+        // parseClaudeSystemTaskNotification). Aviso velho de processo anterior traz um tool_use_id
+        // que este processo não lançou — fica de fora pelo `taskIds`.
+        const systemDone = parseClaudeSystemTaskNotification(o);
+        if (systemDone && taskIds.has(systemDone.providerId)) {
+          onEvent({ kind: "execution_state", providerId: systemDone.providerId, state: systemDone.state, summary: systemDone.summary });
+          asyncTaskIds.delete(systemDone.providerId);
+        }
         if (o.type === "system" && o.subtype === "init" && o.session_id) {
           sessionOut = o.session_id;
           if (sessionOut && this.sessions.get(sessionId) !== sessionOut) {
@@ -979,10 +1257,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           // Sub-agent (Task) turns carry a top-level parent_tool_use_id; their text is the
           // sub-agent's own reasoning, NOT the parent answer — surface it but don't accumulate it.
           const parentId = o.parent_tool_use_id || undefined;
-          // idem para o contexto: só o thread principal conta para a janela (sub-agente é outro contexto).
-          if (!parentId && o.message?.usage) lastMsgUsage = o.message.usage;
+          // Texto e contexto do thread principal são acumulados em `account` (sub-agente é outro contexto).
           for (const b of o.message?.content || []) {
-            if (b.type === "text" && b.text) { if (!parentId) finalText += b.text; onEvent({ kind: "text", text: b.text, parentId }); }
+            if (b.type === "text" && b.text) onEvent({ kind: "text", text: b.text, parentId });
             else if (b.type === "tool_use") {
               const st = fileToolStat(b.name, b.input);
               if (!parentId && b.id && (b.name === "Task" || b.name === "Agent")) {
@@ -1016,15 +1293,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
               this.bindSession(sessionId, sessionOut);
             }
           }
-          if (o.result && !finalText) finalText = o.result;
-          if (o.is_error) streamError = cliErrorMessage(o.result, "claude error");
           tResult = Date.now();
-          usage = usageWithFast({ costUsd: o.total_cost_usd, inputTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), contextTokens: inputContext(lastMsgUsage) ?? inputContext(o.usage), outputTokens: o.usage?.output_tokens ?? lastMsgUsage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? tResult - tFirstLine : undefined }, opts);
-          // O `result` É o fim do turno (ver o comentário de tSpawn acima: o resto é teardown do CLI).
-          // Devolver `true` dá ao claude o mesmo prazo de saída que o codex — antes disso a espera
-          // pelo `close` era ilimitada, e um neto segurando o pipe pendurava o turno para sempre.
-          return true;
         }
+        // `true` no `result` dá ao claude o mesmo prazo de saída que o codex — sem ele a espera pelo
+        // `close` era ilimitada e um neto segurando o pipe pendurava o turno para sempre (9c4222e).
+        // `"resumed"` quando a CLI abre OUTRO turno depois de um `result`: aquele `result` não era o
+        // fim (o mini-turno do aviso velho no `--resume`), e o prazo armado por ele mataria o real.
+        return signal;
       }, opts?.signal);
       // The turn ended while async subagents were still unresolved. The tracker will mark them
       // `unknown`; say WHY, since Claude keeps their transcript and they can be resumed.
@@ -1044,10 +1319,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // limite de sessao, e o texto ja produzido esta em `finalText` — falhar aqui apagava trabalho
       // concluido e mostrava a notificacao da CLI como se fosse a causa da falha.
       // Ainda falha quando nao ha conteudo, ou quando o unico conteudo E a propria mensagem de erro
-      // (`finalText` cai para `o.result` logo acima) — ai um "sucesso" seria mentira.
+      // (sem texto, `account.text` cai para o `result` — ver ClaudeTurnAccount) — ai um "sucesso" seria mentira.
+      const finalText = account.text, streamError = account.error;
       const usableText = finalText.trim();
       if (streamError && (!usableText || usableText === streamError.trim())) throw new Error(streamError);
       if (sessionOut) this.bindSession(sessionId, sessionOut);
+      const usage = account.results
+        ? turnUsage(account.turnCost(restoredCost), account.contextTokens, account.outputTokens, { spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine && tResult ? tResult - tFirstLine : undefined })
+        : undefined;
       return { text: finalText, usage };
     }
 
@@ -1057,7 +1336,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (json.session_id) this.bindSession(sessionId, json.session_id);
     return {
       text: json.result ?? "",
-      usage: usageWithFast({ costUsd: json.total_cost_usd, inputTokens: inputContext(json.usage), contextTokens: inputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model }, opts),
+      usage: turnUsage(claudeTurnCost(json.total_cost_usd, restoredCost), claudeInputContext(Array.isArray(json.usage?.iterations) ? json.usage.iterations[json.usage.iterations.length - 1] : undefined) ?? claudeInputContext(json.usage), finiteNumber(json.usage?.output_tokens)),
     };
     } finally { if (permCleanup) permCleanup(); }
   }
@@ -1073,7 +1352,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const raw = await run(this.bin, args, ONESHOT_CWD, text); // stateless + isolated cwd (excluded from native list)
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(cliErrorMessage(json.result, "claude error"));
-    return { text: json.result ?? "", usage: usageWithFast({ costUsd: json.total_cost_usd, inputTokens: claudeInputContext(json.usage), contextTokens: claudeInputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd", model: opts?.model }, opts) };
+    return { text: json.result ?? "", usage: usageWithFast({ costUsd: json.total_cost_usd, inputTokens: claudeInputContext(json.usage), contextTokens: claudeInputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd (one-shot: sessão nova, o total é o turno)", model: opts?.model }, opts) };
   }
 }
 
@@ -1087,21 +1366,44 @@ export class ClaudeCodeAdapter implements AgentAdapter {
  *  context-window figure the usage gauge needs (same role as Claude's fresh+cache_creation+cache_read
  *  sum). The cost is billed on the per-turn DELTA, while the long-context threshold is tested against
  *  the turn's real prompt size (`last_token_usage`), which is what the provider actually surcharges. */
+/** Uma leitura de contexto acima deste múltiplo da janela não é contexto — é total cumulativo
+ *  vazando. Folga de 2× em vez de 1× porque provedor perto do limite às vezes reporta um pouco
+ *  acima; o lixo que isto barra errava por milhares de vezes, não por alguns por cento. */
+const CONTEXT_WINDOW_SANITY_FACTOR = 2;
+/** Tamanho REAL do prompt do turno, ou `undefined` quando não há como medir. Nunca um palpite. */
+export function codexPromptTokens(telemetry?: CodexTelemetry): number | undefined {
+  const measured = Number(telemetry?.last?.input_tokens);
+  if (!Number.isFinite(measured) || measured <= 0) return undefined;
+  const windowTokens = Number(telemetry?.contextWindow);
+  if (Number.isFinite(windowTokens) && windowTokens > 0 && measured > windowTokens * CONTEXT_WINDOW_SANITY_FACTOR) return undefined;
+  return measured;
+}
+
 export function codexUsage(u: any, previous?: any, telemetry?: CodexTelemetry, opts?: SendOpts): AgentReply["usage"] | undefined {
   if (!u) return undefined;
   const input = Math.max(0, (u.input_tokens || 0) - (previous?.input_tokens || 0));
   const cached = Math.max(0, (u.cached_input_tokens || 0) - (previous?.cached_input_tokens || 0));
   const output = Math.max(0, (u.output_tokens || 0) - (previous?.output_tokens || 0));
   if (!input && !output) return undefined;
-  const currentInput = telemetry?.last?.input_tokens || input || undefined;
+  // `contextTokens` responde UMA pergunta: quanto da JANELA está em uso agora. Só o `last_token_usage`
+  // do rollout mede isso. O fallback antigo (`telemetry?.last?.input_tokens || input`) caía no DELTA do
+  // total CUMULATIVO — e, sem snapshot anterior (todo restart do Hub), `input` É o total inteiro.
+  // Resultado medido no ledger desta instalação: "contexto" de 46 M, 905 M e 1,15 BILHÃO de tokens,
+  // sempre junto de `contextWindowTokens` nulo. Os dois sintomas têm a MESMA raiz: o rollout gigante
+  // que fazia a telemetria estourar deixava `telemetry` indefinido, tirando a janela E a medida real.
+  // Pior, esse número inflado entrava no cálculo de preço como `promptTokens` e cruzava o limiar de
+  // contexto longo, cobrando sobretaxa em turno que não era longo (5 registros assim nesta máquina).
+  // Sem base real é melhor NÃO declarar contexto do que declarar um valor impossível — o medidor
+  // mostra "sem dado", e qualquer portão de auto-compactação não dispara em cima de lixo.
+  const measuredPrompt = codexPromptTokens(telemetry);
   const model = telemetry?.model || opts?.model;
   const estimate = estimateCodexCost({
     inputTokens: input, cachedInputTokens: cached, outputTokens: output,
-    promptTokens: currentInput, model, fastMode: opts?.fastMode === true,
+    promptTokens: measuredPrompt, model, fastMode: opts?.fastMode === true,
   });
   return {
     costUsd: estimate.costUsd, inputTokens: input || undefined, cachedInputTokens: cached || undefined,
-    contextTokens: currentInput, contextWindowTokens: telemetry?.contextWindow, outputTokens: output || undefined,
+    contextTokens: measuredPrompt, contextWindowTokens: telemetry?.contextWindow, outputTokens: output || undefined,
     costKind: estimate.costUsd === undefined ? "tokens_only" : "estimated_api_equivalent",
     source: `codex exec --json token delta × ${estimate.source}`, model,
   };
@@ -1160,6 +1462,35 @@ function codexThreadFile(threadId?: string): string | undefined {
  */
 const THREAD_TELEMETRY_FULL_READ_MAX_BYTES = 8 * 1024 * 1024;
 const THREAD_TELEMETRY_TAIL_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Teto de tamanho de rollout para APOSENTAR a thread (INC-03, 2026-10-17).
+ *
+ * O rollout do Codex é um diário APPEND-ONLY: cada turno é anexado e nada é removido. Compactar
+ * reduz o CONTEXTO, não o arquivo — medido nesta instalação, um rollout com **101 eventos
+ * `compacted`** chegou a 733 MB. Então nenhuma política de contexto encolhe este arquivo; a única
+ * coisa que encolhe é começar uma thread NOVA.
+ *
+ * O teto é alto de propósito: aposentar uma thread custa a memória interna do modelo (ele passa a
+ * ter só o resumo que o Jarvis injeta), então isso só vale a pena no caso patológico, não numa
+ * conversa grande e saudável.
+ */
+const CODEX_ROLLOUT_ROTATE_BYTES = Math.max(32 * 1024 * 1024, Number(process.env.JARVIS_CODEX_ROLLOUT_ROTATE_BYTES) || 256 * 1024 * 1024);
+/** Rollout da thread quando ele já passou do teto de aposentadoria; `undefined` = segue utilizável.
+ *  `resolve` é injetável só para teste — em produção é sempre o catálogo real de rollouts. */
+export function codexRolloutOversized(
+  threadId?: string,
+  capBytes = CODEX_ROLLOUT_ROTATE_BYTES,
+  resolve: (id: string) => string | undefined = codexThreadFile,
+): { path: string; size: number } | undefined {
+  if (!threadId) return undefined;
+  const path = resolve(threadId);
+  if (!path) return undefined;
+  try {
+    const size = statSync(path).size;
+    return size > capBytes ? { path, size } : undefined;
+  } catch { return undefined; }
+}
 
 function codexThreadTelemetry(threadId?: string): CodexTelemetry | undefined {
   const file = codexThreadFile(threadId);
@@ -1508,7 +1839,26 @@ export class CodexAdapter implements AgentAdapter {
     // directly: `codex exec resume <id> --json` correctly recalls prior turns in the same thread.
     const prev = mapped || (sessionId.startsWith("codex:") ? sessionId.slice("codex:".length) : undefined);
     if (prev) assertNativeSessionBinding(this.sessions, sessionId, prev);
-    const args = prev ? ["exec", "resume", prev, "--json"] : ["exec", "--cd", cwd, "--json"];
+    // Aposentadoria da thread por tamanho do rollout (ver codexRolloutOversized). Não resume: começa
+    // uma thread NOVA, com rollout novo e pequeno, semeada com o histórico que o Jarvis já guarda.
+    // O arquivo antigo fica INTACTO — ele é o histórico da conversa, e mover/apagar quebra o resume
+    // (aprendido na prática: arquivar um rollout vinculado derrubou uma sessão com
+    // "no rollout found for thread id"). O vínculo passa a apontar para a thread nova quando ela nasce.
+    const retired = codexRolloutOversized(prev);
+    const resumeId = retired ? undefined : prev;
+    if (retired) {
+      console.warn(`[codex] thread ${prev} aposentada: rollout com ${Math.round(retired.size / 1048576)} MB passou do teto — abrindo thread nova com resumo (arquivo antigo preservado em ${retired.path})`);
+    }
+    // Numa thread nova o modelo NÃO tem a memória interna da anterior. Dizer isso explicitamente é o
+    // que evita a pior falha: ele responder como se lembrasse e preencher a lacuna com suposição.
+    const effectiveText = retired
+      ? withManagedHistory(
+        `${text}\n\n[Jarvis: a thread anterior do Codex foi aposentada porque o arquivo dela passou de ${Math.round(retired.size / 1048576)} MB — o rollout é append-only e cresce para sempre, mesmo compactando. Esta é uma thread NOVA: você não tem a memória interna da anterior, só o contexto resumido acima. Se precisar de algo que não está nele, PERGUNTE em vez de supor.]`,
+        opts?.history,
+        { contextWindowTokens: opts?.contextWindowTokens },
+      )
+      : text;
+    const args = resumeId ? ["exec", "resume", resumeId, "--json"] : ["exec", "--cd", cwd, "--json"];
     if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
     else args.push(...permissionArgs("codex", effectivePermissionMode(opts)));
     args.push(...codexFastModeArgs(opts));
@@ -1524,8 +1874,8 @@ export class CodexAdapter implements AgentAdapter {
     const finalParts: string[] = [];   // agent_message texts, in order (preâmbulo + resposta final)
     let usage: AgentReply["usage"];
     let rawUsage: any;
-    const beforeTelemetry = prev ? codexThreadTelemetry(prev) : undefined;
-    const beforeRollout = prev ? codexThreadFile(prev) : undefined;
+    const beforeTelemetry = resumeId ? codexThreadTelemetry(resumeId) : undefined;
+    const beforeRollout = resumeId ? codexThreadFile(resumeId) : undefined;
     let streamError = "";
     const seen = new Map<string, string>(); // allow started -> completed/failed; reject duplicate frames
     const childSeen = new Map<string, { activities: number; state: string; usage: string }>();
@@ -1536,8 +1886,8 @@ export class CodexAdapter implements AgentAdapter {
     let patchDecoder = new StringDecoder("utf8");
     const patchSeen = new Set<string>();
     const emitPatches = (flush = false): void => {
-      if (!onEvent || !(threadId || prev)) return;
-      const candidate = patchFile || codexThreadFile(threadId || prev);
+      if (!onEvent || !(threadId || resumeId)) return;
+      const candidate = patchFile || codexThreadFile(threadId || resumeId);
       if (!candidate) return;
       if (!patchFile) { patchFile = candidate; patchOffset = 0; patchCarry = ""; patchDecoder = new StringDecoder("utf8"); }
       const appended = codexRolloutAppend(candidate, patchOffset); patchOffset = appended.offset;
@@ -1564,12 +1914,12 @@ export class CodexAdapter implements AgentAdapter {
       }
     };
     const emitChildren = (): void => {
-      if (!onEvent || !(threadId || prev)) return;
-      projectChildren(codexChildRollouts(threadId || prev!, { sinceMs: scanStartedAt }));
+      if (!onEvent || !(threadId || resumeId)) return;
+      projectChildren(codexChildRollouts(threadId || resumeId!, { sinceMs: scanStartedAt }));
     };
     const emitChildrenAsync = async (): Promise<void> => {
-      if (!onEvent || !(threadId || prev)) return;
-      projectChildren(await codexChildRolloutsAsync(threadId || prev!, { sinceMs: scanStartedAt }));
+      if (!onEvent || !(threadId || resumeId)) return;
+      projectChildren(await codexChildRolloutsAsync(threadId || resumeId!, { sinceMs: scanStartedAt }));
     };
     let activityTimer: ReturnType<typeof setTimeout> | undefined;
     let activityStarted = false, activityStopped = false;
@@ -1592,7 +1942,7 @@ export class CodexAdapter implements AgentAdapter {
       activityTimer.unref?.();
     };
     const startActivityPolling = (): void => {
-      if (!onEvent || activityStarted || activityStopped || !(threadId || prev)) return;
+      if (!onEvent || activityStarted || activityStopped || !(threadId || resumeId)) return;
       activityStarted = true;
       // O primeiro tique tambem entra na corrente (delay 0) em vez de rodar sincrono: com o cache
       // frio ele e justamente o mais caro, e era ele que segurava o event loop na largada.
@@ -1649,8 +1999,8 @@ export class CodexAdapter implements AgentAdapter {
     let out = "";
     try {
       out = onEvent
-        ? await runStream("codex", args, cwd, text, handleLine, opts?.signal)
-        : await run("codex", args, cwd, text, opts?.signal);
+        ? await runStream("codex", args, cwd, effectiveText, handleLine, opts?.signal)
+        : await run("codex", args, cwd, effectiveText, opts?.signal);
     } finally {
       // O flush final continua SINCRONO de proposito: com o cache quente ele le so os bytes novos,
       // e assim os ultimos eventos da crianca saem antes de a funcao retornar.
@@ -1661,7 +2011,7 @@ export class CodexAdapter implements AgentAdapter {
     }
     if (!onEvent) for (const line of out.split("\n")) { const t = line.trim(); if (t) handleLine(t); }
 
-    const afterTelemetry = codexThreadTelemetry(threadId || prev);
+    const afterTelemetry = codexThreadTelemetry(threadId || resumeId);
     if (rawUsage) usage = codexUsage(rawUsage, beforeTelemetry?.total, afterTelemetry, opts);
     if (usage) usage = usageWithFast({ ...usage, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? (tResult || Date.now()) - tFirstLine : undefined }, opts);
     this.started.add(sessionId);
@@ -1936,7 +2286,7 @@ class StructuredCliAdapter implements AgentAdapter {
     const nativeContinuity = this.spec.capabilities.sessionContinuity === "native_id";
     const previous = nativeContinuity ? this.sessions.get(sessionId) : undefined;
     if (previous) assertNativeSessionBinding(this.sessions, sessionId, previous);
-    const effectiveText = this.spec.capabilities.sessionContinuity === "jarvis_history" ? withManagedHistory(text, opts?.history) : text;
+    const effectiveText = this.spec.capabilities.sessionContinuity === "jarvis_history" ? withManagedHistory(text, opts?.history, { contextWindowTokens: opts?.contextWindowTokens }) : text;
     const args = this.spec.args(effectiveText, cwd, previous, opts);
     const parts: string[] = [];
     let snapshot = "", finalText = "", nativeId = previous, usage: AgentReply["usage"], failure = "";
@@ -2056,7 +2406,7 @@ class LimitedFinalCliAdapter implements AgentAdapter {
     if (opts?.managed) managedAdapterSecurityArgs(this.name, opts.managed);
     if (opts?.model && this.declaredCapabilities.modelControl !== "per_turn") throw new Error(`o agente ${this.name} não permite selecionar modelo por turno; configure o modelo na própria CLI`);
     validateModelSelection(await this.capabilities(), opts);
-    const prompt = this.declaredCapabilities.sessionContinuity === "jarvis_history" ? withManagedHistory(text, opts?.history) : text;
+    const prompt = this.declaredCapabilities.sessionContinuity === "jarvis_history" ? withManagedHistory(text, opts?.history, { contextWindowTokens: opts?.contextWindowTokens }) : text;
     const lifecycleTurn = opts?.turnId || sessionId;
     onEvent?.(cliLifecycleEvent(this.name, this.label, "started", undefined, lifecycleTurn));
     try {
@@ -2133,7 +2483,7 @@ export class AiderAdapter implements AgentAdapter {
     // The chat message goes via --message-file, not --message <text>: the text is user input, and on
     // the old shell:true path a message with `;`/`&`/`$()` ran as a shell command. A temp file keeps
     // it entirely off the command line (belt-and-braces with spawnCli's shell:false).
-    const mf = tempTextFile("jarvis_aider", withManagedHistory(text, opts?.history));
+    const mf = tempTextFile("jarvis_aider", withManagedHistory(text, opts?.history, { contextWindowTokens: opts?.contextWindowTokens }));
     try {
       const args = buildAiderInvocationArgs(mf.path, opts);
       const out = await run("aider", args, cwd, "", opts?.signal);
@@ -2362,10 +2712,20 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, signal?: A
   });
 }
 
+/** O que uma linha do stream diz sobre o turno — o contrato entre o parser do adaptador e runStream.
+ *  - `true`: o agente ANUNCIOU que o turno acabou (o `turn.completed` do codex, o `result` do claude).
+ *    A partir daí o CLI tem FINISHED_EXIT_GRACE_MS para sair sozinho; depois a árvore é derrubada.
+ *  - `"resumed"`: DEPOIS de um anúncio de fim, o CLI começou OUTRO turno no mesmo processo. O prazo
+ *    é desarmado — o anúncio anterior não era o fim. Ver JRV-42: no `--resume` o claude processa um
+ *    `task_notification` velho como mini-turno, emite um `result` vazio e só ENTÃO roda o pedido real;
+ *    tratar aquele primeiro `result` como fim matava o trabalho real 60 s depois.
+ *  - nada: linha comum, não muda o prazo. */
+export type StreamLineSignal = boolean | "resumed" | void;
+
 /** Like run(), but calls onLine for each complete stdout line as it arrives (NDJSON stream).
- *  `onLine` devolvendo `true` significa "o agente ANUNCIOU que o turno acabou": a partir daí o CLI
- *  tem FINISHED_EXIT_GRACE_MS para sair sozinho, e depois disso a árvore é derrubada. */
-function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => boolean | void, signal?: AbortSignal): Promise<string> {
+ *  Ver StreamLineSignal para o que `onLine` pode devolver. `finishedGraceMs` só existe para os testes
+ *  exercitarem o prazo de verdade (com processo real) sem esperar um minuto. */
+export function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => StreamLineSignal, signal?: AbortSignal, finishedGraceMs = FINISHED_EXIT_GRACE_MS): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawnCli(cmd, args, cwd);
     const wasAborted = wireAbort(p, signal);
@@ -2375,13 +2735,26 @@ function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLi
     let out = "";
     let buf = "";
     let err = "";
-    // Armado quando o agente ANUNCIA o fim do turno (ver runStream doc). Só então existe prazo: antes
+    // Armado quando o agente ANUNCIA o fim do turno (ver StreamLineSignal). Só então existe prazo: antes
     // disso o CLI pode legitimamente levar horas, e nenhum relógio do Jarvis tem o direito de opinar.
+    // `announcedEnd` é separado do timer de propósito: é ele que decide, no fim, se um processo
+    // derrubado tinha terminado o turno (resolve com o que já veio) ou não (falha).
     let finishedTimer: ReturnType<typeof setTimeout> | undefined;
+    let announcedEnd = false;
     const noteFinished = (): void => {
+      announcedEnd = true;
       if (finishedTimer) return;
-      finishedTimer = setTimeout(() => killTree(p), FINISHED_EXIT_GRACE_MS);
+      finishedTimer = setTimeout(() => killTree(p), finishedGraceMs);
       finishedTimer.unref?.();
+    };
+    const noteResumed = (): void => {
+      announcedEnd = false;
+      if (finishedTimer) { clearTimeout(finishedTimer); finishedTimer = undefined; }
+    };
+    const signalOf = (line: string): void => {
+      const s = onLine(line);
+      if (s === true) noteFinished();
+      else if (s === "resumed") noteResumed();
     };
     p.stdout!.on("data", (d) => {
       buf += d.toString();
@@ -2390,7 +2763,7 @@ function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLi
         const line = buf.slice(0, i);
         buf = buf.slice(i + 1);
         out += line + "\n";
-        if (line.trim() && onLine(line) === true) noteFinished();
+        if (line.trim()) signalOf(line);
       }
     });
     p.stderr!.on("data", (d) => (err += d.toString()));
@@ -2400,10 +2773,10 @@ function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLi
     settleOnExit(p, p, (code, drained) => {
       if (finishedTimer) clearTimeout(finishedTimer);
       if (wasAborted()) { reject(new Error(ABORTED)); return; }
-      if (drained && buf.trim()) onLine(buf);
+      if (drained && buf.trim()) signalOf(buf);
       // Saiu (ou foi derrubado) DEPOIS de anunciar o fim do turno: o trabalho existe e está em `out`.
       // Tratar como falha aqui apagaria justamente a resposta que já tínhamos em mãos.
-      if (code === 0 || finishedTimer) resolve(out);
+      if (code === 0 || announcedEnd) resolve(out);
       else reject(new Error(cliErrorMessage(err.trim() || out.trim(), `${cmd} exited with ${code}`)));
     });
   });

@@ -22,6 +22,11 @@ export interface UsageRollup {
   byKind: Partial<Record<CostKind, number>>;
 }
 
+/** `source` que o adaptador do Claude gravava antes de JRV-42, quando o custo era o acumulado da sessão. */
+const CLAUDE_LEGACY_CUMULATIVE_SOURCE = "Claude Code result.total_cost_usd";
+/** Id de sessão de conversa do Jarvis (uuid, ou `claude:<uuid>` para sessão nativa importada). */
+const CONVERSATION_SESSION_ID = /^(?:claude:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const emptyRollup = (): UsageRollup => ({ costUsd: 0, billableUsd: 0, estimatedUsd: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, byKind: {} });
 
 /** Typed, append-only usage ledger. Cost classes never collapse into a single billable number. */
@@ -47,6 +52,21 @@ export class UsageLedger {
       codexTotals.set(key, current);
       if (prev) { e.costUsd = Math.max(0, current.cost - prev.cost); e.inputTokens = Math.max(0, current.input - prev.input); e.cachedInputTokens = Math.max(0, current.cached - prev.cached); e.outputTokens = Math.max(0, current.output - prev.output); }
       e.contextTokens = undefined; e.contextWindowTokens = undefined; e.source = "migrated Codex cumulative snapshot → delta";
+    }
+    // Mesmo defeito no Claude, até JRV-42: o adaptador gravava `result.total_cost_usd` como custo do
+    // turno, mas a CLI RESTAURA o custo da sessão nativa no `--resume` — o número é acumulado. Medido
+    // na sessão 9ecf7b75 (2026-10-19): 1,47 → 4,99 → 15,67 → 36,97 → 36,97, somados como US$ 96,07
+    // para uma sessão que custou US$ 36,97. Converte os registros ANTIGOS (pela `source` antiga, que o
+    // adaptador não grava mais) em diferenças por sessão. Total que CAI é sessão nativa nova (a CLI
+    // começou do zero): o próprio total é o turno. Só sessões de conversa (id uuid) entram — os
+    // pseudo-ids (`__summary__`, `voice`, `__debate__:…`) são one-shots independentes, não acumulados.
+    const claudeTotals = new Map<string, number>();
+    for (const e of this.entries) if (e.agent === "claude-code" && e.source === CLAUDE_LEGACY_CUMULATIVE_SOURCE && CONVERSATION_SESSION_ID.test(e.sessionId) && e.costUsd !== undefined) {
+      const key = `${e.runnerId || "legacy"}\0${e.sessionId}`;
+      const current = Number(e.costUsd) || 0, prev = claudeTotals.get(key);
+      claudeTotals.set(key, current);
+      if (prev !== undefined) e.costUsd = current >= prev ? current - prev : current;
+      e.source = "migrated Claude cumulative total_cost_usd → delta";
     }
     this.trim(now);
   }
