@@ -1,3 +1,16 @@
+# [0.42.0](https://github.com/jhonyralph/jarvis/compare/v0.41.0...v0.42.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* **agentes:** turno do Claude nao morre em 60 s e custo/contexto deixam de inflar (JRV-42) ([a2b95ef](https://github.com/jhonyralph/jarvis/commit/a2b95efc5f01454a96ba9860e0a5c987256b3667))
+* **hub:** leitura de transcript com teto e Hub sai limpo quando o event loop trava (INC-03) ([8d0e900](https://github.com/jhonyralph/jarvis/commit/8d0e90070baa16cce6e8270e39108ac8e4c6cba0))
+
+
+### Features
+
+* **maquinas:** browser remoto, IA no browser, editor e VS Code de cada maquina (BRW-IDE-00 F1-F4) ([fcd84ca](https://github.com/jhonyralph/jarvis/commit/fcd84ca8606b39e9a12b8851a0f06bb8742c4948))
+
 # [0.41.0](https://github.com/jhonyralph/jarvis/compare/v0.40.0...v0.41.0) (2026-10-22)
 
 
