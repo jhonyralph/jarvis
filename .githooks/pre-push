@@ -37,7 +37,13 @@ printf '  -> typecheck\n'
 npm run --silent typecheck || fail 'typecheck falhou'
 
 printf '  -> testes\n'
-if ! npm test --silent >/dev/null 2>&1; then
+# A saída da 1ª rodada fica em .git/pre-push-first-run.log (nunca versionado) e uma falha imprime os
+# testes que caíram. Antes ela ia para /dev/null: a falha que a 2ª rodada "perdoava" não deixava rastro
+# nenhum para investigar — e o aviso logo abaixo diz que os flakes catalogados aqui eram bug de verdade.
+first_log="$(git rev-parse --git-dir 2>/dev/null || echo .git)/pre-push-first-run.log"   # set -e: sem o || um rev-parse falho mataria o hook mudo
+if ! npm test --silent >"$first_log" 2>&1; then
+  printf '\n[pre-push] a primeira rodada falhou — saída completa em %s\n' "$first_log"
+  grep -E '^[[:space:]]*not ok' "$first_log" | head -20 | sed 's/^/    /' || true
   # A primeira rodada falhou. Roda de novo MOSTRANDO a saída — o resumo silencioso não ajuda a
   # consertar — e o resultado DELA é que decide.
   #
@@ -61,9 +67,10 @@ if ! npm test --silent >/dev/null 2>&1; then
   # alteração sua? Então é sua. Compare contra o HEAD limpo (`git stash -u`) antes de culpar a CPU.
   #
   # Uma quebra de verdade falha nas DUAS rodadas e continua barrando — que é o ponto do gate.
-  printf '\n[pre-push] a primeira rodada falhou; repetindo com a saída visível\n\n'
+  printf '\n[pre-push] repetindo com a saída visível\n\n'
   npm test || fail 'testes falharam nas DUAS rodadas'
   printf '\n[pre-push] a segunda rodada passou — primeira tratada como flake, seguindo\n'
+  printf '[pre-push] a falha da 1ª rodada segue em %s — compare contra o HEAD limpo antes de culpar a CPU\n' "$first_log"
 fi
 
 # app.js não é coberto pelo tsc e é o arquivo que mais mexemos — um erro de sintaxe aqui derruba a
