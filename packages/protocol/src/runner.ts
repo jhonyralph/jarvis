@@ -24,8 +24,9 @@ export type RunnerOS = "linux" | "darwin" | "win32" | string;
  *       writefile/searchfiles (BRW-IDE-00 F3 — editor leve).
  *  v19: BRW-IDE-00 F2 — a IA vê e dirige o browser da máquina (ponte MCP `jarvisbrowser`, três
  *       níveis, `browser_agent_*`) + seleção de pontos do dono (`browser_grab`).;
- *       ide_* (BRW-IDE-00 F4 — VS Code/code-server por máquina) + túnel HTTP/WebSocket multiplexado
- *       em frames binários `kind 0x54` na conexão do runner (ver @jarvis/core ide-tunnel.ts). */
+ *       ide_* (BRW-IDE-00 F4 — VS Code/code-server por máquina) + túnel binário `kind 0x54` entraram
+ *       aqui e foram REMOVIDOS em 2026-10-26 (a edição ficou no editor leve, F3). A versão segue 19;
+ *       Hub e runner descartam `ide_*` e `0x54` de quem ainda não atualizou. */
 export const RUNNER_PROTOCOL_VERSION = 19;
 
 /**
@@ -48,8 +49,6 @@ export const RUNNER_CAPABILITY_SINCE = {
   /** BRW-IDE-00 F1 — browser remoto da máquina (perfil do dono), frames binários */ remoteBrowser: 18,
   /** BRW-IDE-00 F2 — ferramentas de browser para a IA desta máquina (ver/dirigir; níveis no runner) */ browserAgentTools: 19,
   /** BRW-IDE-00 F2 — "selecionar pontos": elemento sob o ponto + recorte, para o dono mandar à IA */ browserGrab: 19,
-  /** BRW-IDE-00 F4 — VS Code (code-server) da máquina: `ide_status/ide_install/ide_open/ide_stop` */ ideServer: 19,
-  /** BRW-IDE-00 F4 — túnel HTTP+WebSocket do Hub até o code-server da máquina (frames `kind 0x54`) */ ideTunnel: 19,
 } as const;
 
 /** Sent by the Runner at `register` time and kept in the Hub registry. */
@@ -100,9 +99,6 @@ export interface RunnerInfo {
   /** BRW-IDE-00 F2 — esta máquina serve as ferramentas de browser às IAs dela (`JARVIS_BROWSER_AGENT=0`
    *  desliga). Só vale junto com `browser:true` e protocolo ≥ `RUNNER_CAPABILITY_SINCE.browserAgentTools`. */
   browserAgent?: boolean;
-  /** BRW-IDE-00 F4 — esta máquina oferece o VS Code (há build do code-server para o SO/arquitetura e
-   *  `JARVIS_IDE≠0`). Não quer dizer instalado: o download (~218 MB) só acontece a pedido do dono. */
-  ide?: boolean;
 }
 
 /** One session as listed by a Runner (managed by Jarvis, or a native CLI session). */
@@ -229,7 +225,7 @@ export interface TerminalInfo {
 // cabeçalho fixo e o JPEG cru logo depois (o CDP entrega base64; cru economiza ~25% do fio):
 //
 //   off len  campo
-//   0   1    kind = 0x42 ('B')      — reserva o espaço para outros binários (ex.: túnel da IDE, F4)
+//   0   1    kind = 0x42 ('B')      — os outros valores ficam livres; 0x54 foi do túnel da IDE (F4, removida)
 //   1   1    versão do cabeçalho = 1
 //   2   1    L = tamanho do pageId (1..64, ASCII)
 //   3   1    qualidade JPEG usada (informativo)
@@ -330,28 +326,6 @@ export interface BrowserGrabInfo {
   redactions?: number;
   /** recorte do elemento (data URL JPEG), quando deu para capturar */
   image?: string;
-}
-
-// --- IDE / code-server (BRW-IDE-00 F4) --------------------------------------------------------------
-// Um code-server por máquina, só em 127.0.0.1. O navegador do dono chega nele por
-// `/ide/<runnerId>/…` no Hub (cookie de sessão de IDE, só dono); para máquina remota o Hub tunela
-// HTTP+WebSocket na conexão do runner com frames binários `kind 0x54` (codec em @jarvis/core
-// ide-tunnel.ts). Estas mensagens JSON só cuidam do ciclo de vida.
-
-export interface IdeStateInfo {
-  /** unavailable = SO sem build / JARVIS_IDE=0 · not_installed = precisa baixar · installing ·
-   *  stopped (instalado, parado) · starting · running · error (ver `reason`) */
-  status: "unavailable" | "not_installed" | "installing" | "stopped" | "starting" | "running" | "error";
-  /** versão fixada do code-server (ex.: "4.141.0") */
-  version: string;
-  installed: boolean;
-  /** tamanho do download (bytes) — a UI mostra antes de pedir confirmação */
-  sizeBytes?: number;
-  progress?: { phase: "download" | "verify" | "extract"; received: number; total: number };
-  reason?: string;
-  startedAt?: number;
-  /** usando um code-server de fora (`JARVIS_IDE_CODE_SERVER`), sem a conferência de hash do Jarvis */
-  external?: boolean;
 }
 
 // --- Runner -> Hub ---
@@ -457,9 +431,6 @@ export type RunnerToHub =
   | { t: "browser_agent_action"; action: BrowserAgentActionInfo }
   /** v19 (F2) — resposta de `browser_grab`. */
   | { t: "browser_grab_result"; reqId: string; ok: boolean; error?: string; grab?: BrowserGrabInfo }
-  /** v19 — estado do VS Code da máquina. Com `reqId` responde a `ide_status/ide_install/ide_open/
-   *  ide_stop`; sem `reqId` é mudança espontânea (progresso do download, subiu, caiu, ocioso). */
-  | { t: "ide_state"; reqId?: string; state: IdeStateInfo }
   /** Manual permission mode: a tool on THIS machine is blocked waiting for the user. The Hub owns the
    *  UI, so the runner relays the request and waits for the matching `permission_decision`. `id` is
    *  minted by the runner and is only meaningful for this runner's pending table. */
@@ -610,13 +581,6 @@ export type HubToRunner =
   | { t: "browser_agent_grant"; sessionId?: string; on: boolean; all?: boolean }
   /** v19 (F2) — seleção de pontos: o elemento sob (x,y) em px CSS da aba + recorte. Resposta: `browser_grab_result`. */
   | { t: "browser_grab"; reqId: string; pageId: string; x: number; y: number }
-  /** v19 — VS Code da máquina. Authz (só o DONO) é do Hub. `ide_install` baixa e confere o build
-   *  fixado (progresso por `ide_state`); `ide_open` sobe o code-server se preciso e responde quando ele
-   *  está de pé (a pasta e a URL ficam no Hub); `ide_stop` encerra a árvore do code-server. */
-  | { t: "ide_status"; reqId: string }
-  | { t: "ide_install"; reqId: string }
-  | { t: "ide_open"; reqId: string }
-  | { t: "ide_stop"; reqId?: string }
   /** The user answered a `permission_request` this runner relayed. Unknown/expired ids are ignored
    *  (already settled or timed out → the runner already failed it closed). */
   | { t: "permission_decision"; sessionId: string; id: string; behavior: "allow" | "deny"; updatedInput?: unknown; message?: string }

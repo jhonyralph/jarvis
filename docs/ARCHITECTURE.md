@@ -111,28 +111,10 @@ defined there.
   and every agent action lands in `audit.log` without page content. The same module serves the
   owner's "select points → send to the AI" (`browser_grab`: element under the point + cropped
   JPEG, secrets redacted). Spec §16.
-- `packages/core/src/ide.ts` — **VS Code per machine** (BRW-IDE-00 F4): `IdeManager`
-  provisions code-server 4.141.0 on demand (asset per OS/arch, **SHA-256 pinned in the
-  code**, download → verify → system `tar` in a child process → atomic rename into
-  `~/.jarvis/ide/code-server-4.141.0/`), runs one instance per machine on
-  `127.0.0.1:<free port>` with `--auth none` and its own `user-data`/`extensions` dirs
-  (HOME/USERPROFILE untouched so the integrated terminal keeps the user's git/ssh), stops
-  it when idle (no tunnel/proxy connection for `JARVIS_IDE_IDLE_MIN`), and reaps orphans by
-  command line + process tree (pidfile, on start, after stop and at host boot). Hosted by
-  each Runner and, for the Hub's own machine, in-process by the Hub.
-- `packages/core/src/ide-tunnel.ts` — the **tunnel** for remote machines: multiplexed
-  byte streams as binary WebSocket frames (`kind 0x54`, next to the browser's `0x42`) on
-  the runner's existing connection — `OPEN` (request head) / `DATA` / `END` / `RESET` /
-  `WINDOW` (credit) / `RESPONSE` (status + headers). Per-stream credit window (512 KiB),
-  64 KiB chunks, link backlog gate, stream cap, header/idle timeouts, teardown when the
-  connection drops. The runner side (`apps/runner/src/ide.ts`) bridges each stream to
-  the local code-server (HTTP re-issued with the original `Host`, WebSocket as raw TCP).
-- `apps/hub/src/ideGateway.ts` — the Hub's HTTP surface `/ide/<runnerId>/…`: owner-only
-  `ide_*` messages, one-time ticket → per-machine session cookie, prefix stripping,
-  `Service-Worker-Allowed` injection, `Location` rewriting, folder → `/c:/…` URI, and the
-  two upstreams (direct proxy for the Hub's machine, tunnel for the others). The Hub's
-  WebSocket server runs with `noServer` so `/ide/…` upgrades reach the gateway. Contract:
-  `packages/protocol/src/runner.ts` (protocol v19) and the spec §17.
+- **VS Code per machine** (BRW-IDE-00 F4) was **removed on 2026-10-26**: editing happens in the
+  lightweight editor inside Jarvis (F3). Protocol v19 keeps its number; the Hub and the runner
+  silently drop `ide_*` messages and binary `0x54` frames from peers that have not updated yet.
+  History in the spec §15.4 and §17.
 
 ## Voice pipeline (local)
 

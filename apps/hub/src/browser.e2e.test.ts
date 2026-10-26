@@ -103,7 +103,7 @@ test("browser remoto no Hub: só o dono, roteamento, frames binários com crédi
     const rws = new WebSocket(`ws://127.0.0.1:${hubPort}/runner`); sockets.push(rws);
     await new Promise<void>((resolve, reject) => { rws.once("open", () => resolve()); rws.once("error", reject); });
     const runner = new Inbox(rws);
-    runner.send({ t: "register", token, info: { runnerId, host: "nb", os: "linux", agents: ["mock"], agentDescriptors: [], agentUsage: {}, protocolVersion: RUNNER_PROTOCOL_VERSION, version: "test", label: "Notebook", browser: true } });
+    runner.send({ t: "register", token, info: { runnerId, host: "nb", os: "linux", agents: ["mock"], agentDescriptors: [], agentUsage: {}, protocolVersion: RUNNER_PROTOCOL_VERSION, ide: true, version: "test", label: "Notebook", browser: true } });
     await runner.take((m) => m.t === "welcome");
     rws.on("message", (raw, isBinary) => { if (isBinary) return; try { const m = JSON.parse(raw.toString()); if (m.t === "ping") rws.send(JSON.stringify({ t: "pong" })); } catch { /* ignore */ } });
 
@@ -119,6 +119,14 @@ test("browser remoto no Hub: só o dono, roteamento, frames binários com crédi
     member.send({ t: "machines" });
     const mm = await member.take((m) => m.t === "machines" && m.machines?.some((x: any) => x.id === runnerId));
     assert.equal(mm.machines.find((x: any) => x.id === runnerId).browser, false, "membro nem fica sabendo da capacidade");
+
+    // Runner e app ANTIGOS ainda falam do VS Code (F4, removido em 2026-10-26) — Luby/Mac passam por isso
+    // quando o Hub atualiza antes deles. O Hub novo descarta em silêncio e segue: o resto deste teste roda
+    // depois disto, então um Hub que caísse ou travasse aqui o faria falhar.
+    assert.equal(om.machines.find((x: any) => x.id === runnerId).ide, undefined, "o Hub não anuncia mais VS Code, mesmo com o runner dizendo ide:true");
+    runner.send({ t: "ide_state", state: { status: "running", version: "4.141.0", installed: true } });
+    rws.send(Buffer.from([0x54, 1, 0, 0, 0, 1]), { binary: true }); // frame do antigo túnel da IDE
+    owner.send({ t: "ide_open", runnerId, reqId: "app-antigo" });
 
     // Membro com grant: recusado, nada chega à máquina, e fica no audit.log.
     member.send({ t: "browser_open", runnerId, reqId: "m1" });

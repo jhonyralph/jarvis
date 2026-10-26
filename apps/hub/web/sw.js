@@ -5,7 +5,7 @@
 //     the last good copy is cached and only served when the network is unreachable (Tailscale
 //     dropped, tab resumed offline) so the app opens instead of showing a blank page.
 //   • static shell assets (manifest, icon) → cache-first with a background refresh.
-// Everything else (POST, /pasted/ images, /ide/ — o VS Code da máquina —, cross-origin) is passed
+// Everything else (POST, /pasted/ images, /ide/ — rota antiga do VS Code —, cross-origin) is passed
 // straight through, untouched.
 // Bumped v1 → v2 when the app JS moved out of index.html into /app.js: the shell now MUST cache the
 // external script or an offline open would render an empty page.
@@ -57,10 +57,9 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // never touch cross-origin
   if (url.pathname.startsWith("/pasted/")) return;    // user images: always live, never cached
-  // VS Code da máquina (BRW-IDE-00 F4): nunca tocar. Sem isto a navegação para /ide/<máquina>/ (e as
-  // de cada webview, que também são `navigate`) caía no network-first daqui: guardava o HTML do
-  // workbench no lugar do "/" do Jarvis e, em rede lenta, servia o Jarvis dentro da IDE. O
-  // code-server tem o próprio service worker, com escopo /ide/<máquina>/.
+  // /ide/ era o VS Code da máquina (BRW-IDE-00 F4, removido em 2026-10-26). A regra FICA: o
+  // network-first de navegação abaixo guarda a resposta como o "/" do Jarvis, e um favorito ou aba
+  // antiga em /ide/<máquina>/ não pode trocar o app em cache pela resposta de uma rota que não existe.
   if (url.pathname.startsWith("/ide/")) return;
 
   if (req.mode === "navigate") {

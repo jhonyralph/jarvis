@@ -391,9 +391,6 @@ the repo. Owner-editable execution settings are additionally persisted in
 | `JARVIS_BROWSER_PATH` | auto (Chrome → Edge → Chromium) | Explicit browser executable for the remote browser; if it does not exist the capability stays off with the reason in the log |
 | `JARVIS_BROWSER_IDLE_MIN` / `JARVIS_BROWSER_FPS` | `10` / `15` | Remote browser: minutes without viewers before Chrome is closed (`0` = never) and the frame-rate cap |
 | `JARVIS_BROWSER_AGENT` | on (when the browser is on) | `0` removes the AI browser tools and the AI profile from this machine (Hub or runner); the owner's remote browser and point selection keep working |
-| `JARVIS_IDE` | on when code-server has a build for the OS | `0` removes the VS Code (code-server) support from this machine (Hub or runner). The web UI no longer offers VS Code (2026-10-23) — editing happens inside Jarvis. Nothing is downloaded until the owner asks |
-| `JARVIS_IDE_IDLE_MIN` | `30` | VS Code: minutes with no tab/connection open before code-server is stopped (`0` = never) |
-| `JARVIS_IDE_CODE_SERVER` | — | Use an already installed code-server folder instead of downloading (skips the Jarvis SHA-256 check; the version is your responsibility) |
 | `JARVIS_VOICE` | — | Voice id. Piper models use ids like `en_GB-alan-medium`; optional OpenAI profiles use ids like `openai:jarvis-br` |
 | `OPENAI_API_KEY` / `JARVIS_OPENAI_API_KEY` | — | Enables optional OpenAI TTS voices in the voice catalog |
 | `JARVIS_OPENAI_TTS_MODEL` | `gpt-4o-mini-tts` | OpenAI TTS model used for optional cloud voices |

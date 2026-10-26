@@ -79,8 +79,6 @@ export * from "./preview.js";
 export * from "./terminal.js";
 export * from "./browser.js";
 export * from "./browser-agent.js";
-export * from "./ide.js";
-export * from "./ide-tunnel.js";
 export * from "./personal-context.js";
 export * from "./personal-store.js";
 export * from "./context-sources.js";

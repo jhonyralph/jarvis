@@ -55,8 +55,6 @@ import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/
 import { BrowserManager, BrowserAgentService, serveBrowserBridgeHttp, type BrowserStateInfo } from "@jarvis/core";
 import type { BrowserAgentActionInfo, BrowserAgentGrantInfo } from "@jarvis/protocol";
 import { BrowserProfilePages, BrowserRelay, browserAccess, browserToolsForTurn, parseBrowserClientMessage, runnerHasBrowser, runnerHasBrowserAgent, runnerHasBrowserGrab } from "./browserRelay.js";
-import { IdeManager, isTunnelFrame } from "@jarvis/core";
-import { createIdeService } from "./ideGateway.js";
 import { BackgroundJobStore, planJobContinuation, parseBackgroundRunDirectives, canContinueOriginSession, DEFAULT_MAX_AUTO_CONTINUE_DEPTH, isTerminalJobStatus, type BackgroundJob, jobPaths, spawnDetachedJob, readJobPid, readJobCompletion, readJobLogTail } from "@jarvis/core";
 import { PersonalAssistantService } from "./personalAssistant.js";
 import { createBuiltInPersonalSources, createPersonalSourceFactory } from "./personalSources.js";
@@ -1037,8 +1035,6 @@ function secHeaders(nonce?: string, host?: string): Record<string, string> {
 const PASTED_DIR = join(homedir(), ".jarvis", "pasted");
 const server = createServer((req, res) => {
   const urlPath = (req.url || "/").split("?")[0];
-  // BRW-IDE-00 F4 — VS Code da máquina em /ide/<runnerId>/… (cookie de sessão de IDE, só dono; ver ./ideGateway.ts).
-  if (urlPath.startsWith("/ide/") && ideService.handleHttp(req, res)) return;
   // Unauthenticated liveness/readiness probe for monitors, `tailscale serve` health, or a load
   // balancer. Deliberately leaks only coarse status (up + uptime + count of connected runners) —
   // no hostnames/ids — so it's safe to leave open on the private network.
@@ -1196,7 +1192,8 @@ const server = createServer((req, res) => {
 // 0.6ms of CPU per send. That trade is worth it here; on a phone it's worth it twice over.
 // Browsers and the `ws` client both offer the extension, so enabling it here covers both hops.
 // `noServer` + roteamento próprio do upgrade: com `{ server }` o `ws` responde 400 a TODO upgrade que
-// não é dele, e o VS Code (BRW-IDE-00 F4) abre WebSocket em /ide/<runnerId>/… no mesmo servidor.
+// não é dele. Nasceu para o VS Code em /ide/<runnerId>/… (BRW-IDE-00 F4, removido em 2026-10-26) e fica:
+// é o ponto único para rotear upgrades, sem custo.
 const wss = new WebSocketServer({
   noServer: true,
   maxPayload: guard.MAX_PAYLOAD,
@@ -1207,7 +1204,6 @@ const wss = new WebSocketServer({
 });
 wss.on("error", (e: any) => console.error("[hub] wss error:", e?.message ?? e));
 server.on("upgrade", (req, socket, head) => {
-  if (String(req.url || "").startsWith("/ide/") && ideService.handleUpgrade(req, socket, head)) return;
   wss.handleUpgrade(req, socket, head, (client) => wss.emit("connection", client, req));
 });
 // Com `{ server }` o `ws` repassava os erros do servidor HTTP ao `wss`; sem ele, um 'error' sem ouvinte
@@ -1571,11 +1567,9 @@ function refreshPrincipalRole(deviceId: string, role: auth.Role): void {
     const pr = principals.get(client as WebSocket);
     if (pr && pr.deviceId === deviceId) { pr.role = role; try { send(client as WebSocket, { t: "authed", user: { id: pr.userId, role, name: pr.name } }); } catch { /* ignore */ } }
   }
-  ideService.revalidate(); // rebaixado a membro: a IDE aberta nesse aparelho fecha
 }
 /** Boot any currently-connected device whose token was just revoked. */
 function dropRevoked(): void {
-  ideService.revalidate(); // sessões de IDE do aparelho revogado caem junto (e as conexões abertas fecham)
   const valid = new Set(auth.listDevices().map((d) => d.id));
   for (const client of wss.clients) {
     const pr = principals.get(client as WebSocket);
@@ -2057,8 +2051,6 @@ function machineList(ws?: WebSocket): any[] {
       // F2 — a IA desta máquina tem browser (perfil "IA" no painel + "Deixar a IA dirigir") e a seleção
       // de pontos. `agentControl` = quantas sessões têm o nível 3 ligado AGORA (o 🌐 fica marcado).
       ...(browserCapable(r) && (!ws || isOwnerSocket(ws)) ? { browserAgent: browserAgentCapable(r), browserGrab: browserGrabCapable(r), agentControl: (browserAgentGrants.get(r.id) || []).length } : {}),
-      // BRW-IDE-00 F4 — idem para o VS Code da máquina.
-      ide: ideService.capable(r.id) && (!ws || isOwnerSocket(ws)),
     };
   });
 }
@@ -2343,53 +2335,6 @@ setInterval(() => {
   const st = browserRelay.stats();
   if (st.pages || st.fpsIn || st.dropped) log.info("browser_relay", st);
 }, 1000).unref?.();
-
-// ---- BRW-IDE-00 F4: VS Code (code-server) por máquina em /ide/<runnerId>/… --------------------------
-// Regras de segurança, túnel e proxy em ./ideGateway.ts; aqui só o Hub real é injetado. A máquina do
-// Hub (LOCAL) hospeda o próprio code-server, como o terminal e o browser; as outras chegam pelo túnel
-// binário (kind 0x54) na conexão do runner.
-const localIde = new IdeManager({
-  rootDir: join(JARVIS_DIR, "ide"),
-  binDir: process.env.JARVIS_IDE_CODE_SERVER || undefined,
-  idleMs: Math.max(0, Number(process.env.JARVIS_IDE_IDLE_MIN ?? 30)) * 60000,
-  onState: (state) => ideService.onLocalState(state),
-  log: (event, data) => log.info(event, { runnerId: LOCAL_ID, ...(data || {}) }),
-});
-const ideService = createIdeService<WebSocket>({
-  authEnabled: auth.AUTH_ENABLED,
-  localId: LOCAL_ID,
-  localIde: localIde.available ? localIde : null,
-  localOs: process.platform,
-  isOwner: (ws) => isOwnerSocket(ws),
-  actor: (ws) => ({ userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId }),
-  canUseRunner: (ws, rid) => canUseRunner(ws, rid),
-  defaultRunner: (ws) => activeRunner(ws),
-  runner: (rid) => {
-    const rc = runners.get(rid);
-    if (!rc || rc.local) return null;
-    const sock = rc.ws;
-    return {
-      online: !!sock && sock.readyState === WebSocket.OPEN, os: rc.info.os, protocolVersion: rc.info.protocolVersion, ide: rc.info.ide, link: sock,
-      sendJson: (obj) => sendToRunner(rc, obj),
-      // compress só para corpo de texto (decidido por stream); bytes de WebSocket já vêm comprimidos
-      sendBinary: (frame, compress) => { if (sock && sock.readyState === WebSocket.OPEN) sock.send(frame, { binary: true, compress }); },
-      backlog: () => (sock ? sock.bufferedAmount : 0),
-    };
-  },
-  send: (ws, frame) => send(ws, frame),
-  isOpen: (ws) => ws.readyState === WebSocket.OPEN,
-  ownerDevice: (deviceId) => !auth.AUTH_ENABLED || auth.deviceRole(deviceId) === "owner",
-  audit: (event, info) => auth.audit(event, info),
-  clientIp: (req) => guard.clientIp(req),
-  originAllowed: (req) => guard.originAllowed(req),
-  guard,
-  log: (event, data) => log.info(event, data || {}),
-});
-// Hub morto à força pode ter deixado o code-server (e o ptyHost/extension host dele) vivo: recolhe no boot.
-if (localIde.available && localIde.installed) setTimeout(() => { void localIde.reapOrphans().catch(() => { /* ignore */ }); }, 6000).unref?.();
-// A cada minuto com tráfego: requisições, upgrades, recusas, streams e bytes por túnel (para cruzar com
-// a guarda de lag do event loop — o túnel não pode virar o próximo INC).
-setInterval(() => { const line = ideService.statsLine(); if (line) log.info("ide_proxy", line); }, 60_000).unref?.();
 
 function queueRunnerUpdate(runnerId: string, targetCommit: string, opts?: { force?: boolean }): PendingRunnerUpdate {
   const existing = pendingRunnerUpdates[runnerId];
@@ -3294,7 +3239,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     send(g.ws, { t: "browser_grab_result", runnerId: rc.id, reqId: g.reqId, ok: m.ok === true, ...(typeof m.error === "string" ? { error: m.error.slice(0, 300) } : {}), ...(m.ok === true && m.grab && typeof m.grab === "object" ? { grab: m.grab } : {}) });
     return;
   }
-  if (m.t === "ide_state") { ideService.onRunnerState(rc.id, m); return; }
+  if (m.t === "ide_state") return; // runner antigo: o VS Code da máquina (F4) foi removido em 2026-10-26
   if (m.t === "browser_error") { broadcastBrowser(rc.id, { t: "browser_error", reqId: typeof m.reqId === "string" ? m.reqId : undefined, pageId: typeof m.pageId === "string" ? m.pageId : undefined, message: String(m.message || "erro no browser remoto").slice(0, 300) }); return; }
   if (m.t === "terminal_output" && typeof m.terminalId === "string") { terminalOwners.set(m.terminalId, rc.id); broadcastTerminal(rc.id, { t: "terminal_output", terminalId: m.terminalId, data: String(m.data || "") }); return; }
   if (m.t === "terminal_closed" && typeof m.terminalId === "string") { terminalOwners.delete(m.terminalId); broadcastTerminal(rc.id, { t: "terminal_closed", terminalId: m.terminalId, exitCode: m.exitCode, signal: m.signal }); return; }
@@ -3537,7 +3482,7 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
   }, 20000);
   // drop runners that never register (token) within 20s
   const regTimer = setTimeout(() => { if (!rid) { try { ws.close(1008, "no register"); } catch { /* ignore */ } } }, 20000);
-  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); denyPendingPermissionsFor(rid); browserRunnerOffline(rid); ideService.runnerOffline(rid); console.log(`[hub] runner offline: ${rid}`); for (const k of [...remoteLiveDebates.keys()]) if (k.startsWith(rid + "\u0000")) remoteLiveDebates.delete(k); noteRunnerOffline(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
+  ws.on("close", () => { clearInterval(ping); clearTimeout(regTimer); runnerSockets.delete(ws); if (rid) { const rc = runners.get(rid); if (rc && rc.ws === ws) { rc.ws = null; offlineSince.set(rid, Date.now()); denyPendingPermissionsFor(rid); browserRunnerOffline(rid); console.log(`[hub] runner offline: ${rid}`); for (const k of [...remoteLiveDebates.keys()]) if (k.startsWith(rid + "\u0000")) remoteLiveDebates.delete(k); noteRunnerOffline(rid); broadcastMachines(); notifyEvent("machine", `${runnerLabels[rid] || rc.info.host || rid} ficou offline`, "A máquina saiu do ar — sessões nela não respondem até voltar."); } } });
   ws.on("error", () => { /* close handles cleanup */ });
   ws.on("message", (raw, isBinary) => {
     // BRW-IDE-00 F1: mensagem binária = frame do browser remoto. Só de runner registrado e fora da
@@ -3548,8 +3493,9 @@ function handleRunnerConnection(ws: WebSocket, ip: string): void {
       if (!rcb || rcb.ws !== ws) return;
       rcb.lastSeen = Date.now();
       const buf = Buffer.isBuffer(raw) ? raw : Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw as ArrayBuffer);
-      // 1º byte separa sem parse: 0x54 = túnel da IDE (F4), 0x42 = frame do browser (F1).
-      if (isTunnelFrame(buf)) { try { ideService.onRunnerFrame(rid, ws, buf); } catch (e) { console.error("[hub] erro no túnel da IDE", rid, "-", String((e as any)?.message ?? e)); } return; }
+      // 1º byte separa sem parse: 0x42 = frame do browser (F1). 0x54 era o túnel da IDE (F4, removida em
+      // 2026-10-26): runner antigo ainda pode mandar — descarta antes do relay.
+      if (buf[0] === 0x54) return;
       try { browserRelay.onFrame(rid, buf); } catch (e) { console.error("[hub] erro no relay do browser", rid, "-", String((e as any)?.message ?? e)); }
       return;
     }
@@ -6713,7 +6659,6 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     unwatchBrowser(ws); // último espectador de uma aba saindo desliga o screencast dela
     voiceStreams.stop(ws); // gravação em andamento de um aparelho que saiu
-    ideService.onSocketClose(ws);
     clearUnauthTimer(ws);
     syncTails();
   });
@@ -6904,7 +6849,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // BRW-IDE-00 F3 — gravar/buscar arquivos (só o dono; ver ./fileEdit.ts).
     if (msg.t === "writefile" || msg.t === "searchfiles") { await fileEdit.handleClient(ws, msg); return; }
     if (msg.t.startsWith("browser_")) { handleBrowserClient(ws, msg); return; }
-    if (msg.t.startsWith("ide_")) { ideService.handleClient(ws, msg); return; }
+    if (msg.t.startsWith("ide_")) return; // app antigo em cache: o VS Code (F4) foi removido em 2026-10-26
     if (msg.t === "terminal_open" || msg.t === "terminal_input" || msg.t === "terminal_resize" || msg.t === "terminal_close" || msg.t === "terminal_list") {
       if (!requireOwner(ws)) return;
       const rid = terminalRunner(msg, ws);
@@ -9644,8 +9589,6 @@ let hubExitReason = "";
 process.on("exit", (code) => { log.info("hub_exit", { code, reason: hubExitReason || "desconhecido", uptimeS: Math.round(process.uptime()) }); });
 // O Chrome do browser remoto LOCAL não morre sozinho com o Hub no Windows: mata a árvore na saída.
 process.on("exit", () => { try { localBrowser.shutdownSync(); } catch { /* ignore */ } });
-// Idem o code-server LOCAL e os filhos dele (ptyHost, extension host, shells do terminal integrado).
-process.on("exit", () => { try { localIde.stopSync(); } catch { /* ignore */ } });
 
 let hubShuttingDown = false;
 async function hubShutdown(sig: string): Promise<void> {
@@ -9659,8 +9602,6 @@ async function hubShutdown(sig: string): Promise<void> {
   for (const [, ctrl] of routeAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
   try { localTerminals.closeAll(); } catch { /* ignore */ }
   void localBrowser.shutdown(undefined, sig).catch(() => { /* ignore */ }); // Browser.close: grava cookies
-  try { ideService.shutdown(); } catch { /* ignore */ }
-  void localIde.stop(sig).catch(() => { /* ignore */ });
   await Promise.race([personalAssistant.disposeAll(), new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
   clearTimeout(forceExit);
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn

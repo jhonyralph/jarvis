@@ -543,7 +543,15 @@ como já saía no modo lado a lado; para trocar de arquivo, aba 💬 Chat → á
 **2026-10-23, depois:** o dono pediu para tirar a opção do VS Code. Saíram da interface o botão
 `</> VS Code ↗`, o modal (instalar / abrir / encerrar) e o cliente de `ide_*` em `app.js`. O lado de
 máquina da F4 (`ideGateway.ts`, `ide.ts`, `ide-tunnel.ts`, `/ide/<runner>/`, protocolo) **ficou** — sem
-nenhum caminho na UI que o acione; remover ou manter é decisão separada. O `sw.js` continua deixando
+nenhum caminho na UI que o acione. O `sw.js` continua deixando
+
+**2026-10-26:** o dono decidiu remover também o lado de máquina. Saíram `ideGateway.ts`, `ide.ts`,
+`ide-tunnel.ts`, o lado do runner, o `fake-code-server`, o spike `code-server-proxy.mjs`, os testes e as
+variáveis `JARVIS_IDE*`; do protocolo, `ide_*`, `IdeStateInfo`, `RunnerInfo.ide` e as capacidades
+`ideServer`/`ideTunnel`. A versão segue **19** (renumerar forçaria atualizar toda máquina à toa); Hub e
+runner descartam `ide_*` e frames `0x54` de quem ainda não atualizou. Junto foi o maior risco residual
+da F4 (IDE na mesma origem do Jarvis lendo o token do aparelho). Máquinas que instalaram mantêm
+`~/.jarvis/ide/` (~530 MB) e `~/.vscode-oss-shared` até alguém apagar.
 `/ide/` passar sem cache enquanto o servidor souber atender essa rota.
 
 ## 16) F2 — implementação (2026-10-19, não commitada; aguardando revisão)

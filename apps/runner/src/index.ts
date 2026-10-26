@@ -34,7 +34,7 @@ import {
   formatTournamentFinalMessage, parseJudgeScores, selectTournamentWinner, tournamentCandidateResults,
   runDebate, clampDebateRounds, normalizeEffortLevel, resolveEffortLevel, managedPhaseExecutionId,
   DEBATE_INTERJECTION_MAX_CHARS,
-  TerminalManager, BrowserManager, BrowserAgentService, serveBrowserBridgeHttp, IdeManager, isTunnelFrame,
+  TerminalManager, BrowserManager, BrowserAgentService, serveBrowserBridgeHttp,
   loadSessionDefaults, resolveSessionDefaults, normalizePermissionMode,
   LocalTaskCache, resolveFeaturesRoot, parseFeatureTask, featureFileContent, featureFileName, createTaskViaMcp,
   windowsUpdaterHeader, windowsUpdaterBody,
@@ -48,7 +48,6 @@ import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
 import { RUNNER_PROTOCOL_VERSION, type ContextActor, type HubToRunner, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
 import { confirmBoot, writeBootState } from "./boot-health.js";
-import { createRunnerIde } from "./ide.js";
 
 
 const HUB = (process.env.JARVIS_HUB || "ws://127.0.0.1:4577").replace(/\/+$/, "");
@@ -228,25 +227,6 @@ const browser = new BrowserManager({
   onState: (state) => send({ t: "browser_state", state }),
   onFrame: (frame) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(frame, { binary: true, compress: false }); },
   canSend: () => !!ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < BROWSER_BACKLOG_BYTES,
-  log: (event, data) => console.log(`[runner] ${event} ${JSON.stringify(data || {})}`),
-});
-// BRW-IDE-00 F4 — VS Code (code-server) DESTA máquina, em ~/.jarvis/ide. Baixa só a pedido do dono
-// (~218 MB, SHA-256 fixado no código), sobe sob demanda em 127.0.0.1 e desliga sozinho sem aba aberta
-// (`JARVIS_IDE_IDLE_MIN`, padrão 30). O Hub chega nele pelo túnel binário (kind 0x54) nesta conexão.
-// `JARVIS_IDE=0` desliga; `JARVIS_IDE_CODE_SERVER` usa um code-server já instalado (sem a conferência).
-const ideManager = new IdeManager({
-  rootDir: join(JDIR, "ide"),
-  binDir: process.env.JARVIS_IDE_CODE_SERVER || undefined,
-  idleMs: Math.max(0, Number(process.env.JARVIS_IDE_IDLE_MIN ?? 30)) * 60000,
-  onState: (state) => send({ t: "ide_state", state }),
-  log: (event, data) => console.log(`[runner] ${event} ${JSON.stringify(data || {})}`),
-});
-const ide = createRunnerIde({
-  manager: ideManager,
-  sendJson: (m) => send(m),
-  sendBinary: (frame, compress) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(frame, { binary: true, compress }); },
-  backlog: () => (ws && ws.readyState === WebSocket.OPEN ? ws.bufferedAmount : 0),
-  draining: () => updateInProgress,
   log: (event, data) => console.log(`[runner] ${event} ${JSON.stringify(data || {})}`),
 });
 async function handleBrowserOp(m: any): Promise<void> {
@@ -1459,7 +1439,6 @@ function connect(): void {
   hb.unref?.();
   sock.on("open", async () => {
     reconnectDelay = 1000;
-    ide.onConnect(); // túnel novo por conexão: stream de uma conexão morta não vaza para a próxima
     clearOutageAbort(); // reconectou → cancela o abort armado; turnos preservados seguem via replay
     const info: RunnerInfo = {
       runnerId: RUNNER_ID, host: hostname(), os: platform(), agents: availableAgentsSnapshot(),
@@ -1480,20 +1459,15 @@ function connect(): void {
       browser: browser.available,
       // F2: a IA daqui recebe as ferramentas de browser (e o perfil "IA" aparece no painel do dono).
       browserAgent: BROWSER_AGENT_ON && browser.available,
-      // BRW-IDE-00 F4: há build do code-server para este SO e JARVIS_IDE≠0 (instalar é a pedido).
-      ide: ideManager.available,
     };
     send({ t: "register", token: TOKEN, info });
     void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));
   });
   sock.on("message", async (data, isBinary) => {
     lastInbound = Date.now();
-    // BRW-IDE-00 F4: binário do Hub = frame do túnel da IDE. Nunca passa pelo JSON.parse.
-    if (isBinary) {
-      const buf = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);
-      if (isTunnelFrame(buf)) ide.onFrame(buf);
-      return;
-    }
+    // Binário do Hub só existia para o túnel da IDE (BRW-IDE-00 F4, removida em 2026-10-26). Hub antigo
+    // ainda pode mandar: descarta antes do JSON.parse.
+    if (isBinary) return;
     let m: any; try { m = JSON.parse(data.toString()); } catch { return; }
     if (!m || typeof m !== "object" || typeof m.t !== "string") return; // drop junk / non-object frames
     try {
@@ -1610,7 +1584,7 @@ function connect(): void {
         return;
       }
       if (m.t.startsWith("browser_")) { void handleBrowserOp(m); return; }
-      if (m.t.startsWith("ide_")) { void ide.handleMessage(m); return; }
+      if (m.t.startsWith("ide_")) return; // VS Code da máquina (F4) removido em 2026-10-26; Hub antigo ainda pode pedir
       if (m.t === "terminal_open") {
         if (updateInProgress) { send({ t: "terminal_error", reqId: m.reqId, message: "máquina drenando para atualização — tente novamente após ela reconectar" }); return; }
         try {
@@ -1967,8 +1941,6 @@ function connect(): void {
     clearInterval(hb); ws = null;
     // Sem Hub ninguém assiste: para todo screencast (o Chrome desliga sozinho pelo idle depois).
     try { browser.stopAllViews(); } catch { /* ignore */ }
-    // Os streams da IDE desta conexão morreram com ela (o code-server desliga sozinho pelo idle).
-    ide.onDisconnect();
     // Sem Hub não há UI para responder: nega o que estava pendente em vez de segurar o turno por 5min.
     denyAllPendingPermissions("Hub desconectado — negado por segurança");
     failAllPendingTasks("Hub desconectado — recusado por segurança");
@@ -2007,15 +1979,11 @@ function shutdown(sig: string): void {
   try { terminals.closeAll(); } catch { /* ignore */ }
   // Browser.close já sai agora (dá chance de o Chrome gravar cookies); o `exit` abaixo mata o que sobrar.
   void browser.shutdown(undefined, sig).catch(() => { /* ignore */ });
-  ide.shutdown();
-  void ideManager.stop(sig).catch(() => { /* ignore */ });
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
 }
 // Qualquer saída (inclusive o process.exit do drainAndExit do update) leva o Chrome junto: no Windows
 // o filho não morre com o pai, e um Chrome órfão segurando o perfil já foi a causa de travar a máquina.
 process.on("exit", () => { try { browser.shutdownSync(); } catch { /* ignore */ } });
-// Idem para o code-server (e os filhos dele: ptyHost, extension host, shells do terminal integrado).
-process.on("exit", () => { try { ideManager.stopSync(); } catch { /* ignore */ } });
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
@@ -2023,9 +1991,6 @@ console.log(`[runner] id=${RUNNER_ID} host=${hostname()} os=${platform()} -> ${H
 console.log(browser.available ? `[runner] browser remoto disponível (${browser.executablePath})` : `[runner] browser remoto indisponível: ${browser.unavailableReason}`);
 // Runner morto à força pode ter deixado Chrome órfão no perfil: recolhe no boot (assíncrono).
 if (browser.available) setTimeout(() => { void browser.reapOrphans().catch(() => { /* ignore */ }); }, 5000).unref?.();
-console.log(ideManager.available ? `[runner] VS Code (code-server ${ideManager.state().version}) ${ideManager.installed ? "instalado" : "disponível para instalar"}` : `[runner] VS Code indisponível: ${ideManager.unavailableReason}`);
-// Mesma coisa para um code-server órfão desta máquina (runner anterior morto à força).
-if (ideManager.available && ideManager.installed) setTimeout(() => { void ideManager.reapOrphans().catch(() => { /* ignore */ }); }, 6000).unref?.();
 // Surface the #1 misconfig at boot instead of as a silent reject 20s later: an empty token means the
 // Hub drops the register unless it runs with JARVIS_AUTH=off. Warn (not exit) so the auth-off case
 // still works. Louder still when pointing at a REMOTE hub, where a missing token is almost never intended.
