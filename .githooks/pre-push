@@ -51,7 +51,7 @@ if ! npm test --silent >"$first_log" 2>&1; then
   # "[pre-push] BLOQUEADO: testes falharam" impresso logo abaixo de um "# fail 0", com o push
   # barrado por ruído. A suíte tem e2e sensível a porta/timing sob carga.
   #
-  # NENHUM flake catalogado aqui de propósito — este comentário já catalogou dois, e os DOIS eram
+  # NENHUM flake catalogado aqui de propósito — este comentário já catalogou três, e os TRÊS eram
   # bug de verdade. Fica o registro, porque o padrão se repete:
   #
   #   • apps/hub/src/update-handshake.e2e.test.ts foi marcado como "flake de timing". Não era: num
@@ -62,6 +62,10 @@ if ! npm test --silent >"$first_log" 2>&1; then
   #     passar isolado. Também não era: a correção acima tinha posto um `await` de ~0,5 s (8 s sob
   #     carga) antes do server.listen, e cada restart de Hub no teste pagava isso. Movido o await
   #     para quem usa o commit, o teste caiu para 23 s e a suíte fechou em 0 falhas.
+  #   • 2026-10-23: a 1ª rodada falhava (ou TRAVAVA, parando o push) num e2e diferente a cada vez. Não
+  #     era timing: 11 dos 13 e2e subiam Hubs que aqueciam Whisper+Piper (12,4 GB somados), a memória
+  #     virtual esgotava (evento 2004 a cada travamento) e o `taskkill` do encerramento nem era criado
+  #     — erro engolido, Hub vivo, pipes presos. Corrigido em scripts/test.env + fixtures/stop-child.ts.
   #
   # O teste que decide NÃO é "passa isolado?" — os dois passavam. É: a duração mudou junto com uma
   # alteração sua? Então é sua. Compare contra o HEAD limpo (`git stash -u`) antes de culpar a CPU.

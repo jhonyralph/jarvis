@@ -30,7 +30,13 @@ async function freePorts(count: number): Promise<number[]> {
   await Promise.all(servers.map((s) => new Promise<void>((res) => s.close(() => res()))));
   return ports;
 }
-async function stop(pid?: number): Promise<void> { if (!pid) return; try { if (process.platform === "win32") await pExecFile("taskkill", ["/pid", String(pid), "/T", "/F"]); else process.kill(-pid, "SIGTERM"); } catch { /* já morreu */ } }
+async function stop(pid?: number): Promise<void> { if (!pid) return; try { if (process.platform === "win32") await pExecFile("taskkill", ["/pid", String(pid), "/T", "/F"]); else process.kill(-pid, "SIGTERM"); } catch (e) {
+    // Sem memória para CRIAR o taskkill (evento 2004), o erro vinha engolido e o Hub sobrevivia, prendendo
+    // o arquivo de teste. Erro de spawn tem `code` em texto (ENOMEM…); aí o TerminateProcess direto do
+    // `process.kill` resolve sem criar processo. Saída não-zero do taskkill (code numérico) não entra
+    // aqui: o pid pode já ter sido reaproveitado. Ver packages/core/src/fixtures/stop-child.ts.
+    if (process.platform === "win32" && typeof (e as NodeJS.ErrnoException)?.code === "string") { try { process.kill(pid, "SIGKILL"); } catch { /* já morreu */ } }
+  } }
 async function waitHealth(port: number): Promise<void> {
   const end = Date.now() + 45_000;
   while (Date.now() < end) { try { const r = await fetch(`http://127.0.0.1:${port}/health`); if (r.ok) return; } catch { /* subindo */ } await new Promise((r) => setTimeout(r, 100)); }

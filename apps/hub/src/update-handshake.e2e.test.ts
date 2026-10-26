@@ -39,7 +39,9 @@ async function stop(child?: ReturnType<typeof spawn>): Promise<void> {
   // se não sair em 5s, força e espera de novo — nunca devolver com a porta ainda ocupada
   const forced = new Promise<void>((res) => setTimeout(res, 5_000));
   if (await Promise.race([exited.then(() => true), forced.then(() => false)]) === false) {
-    try { if (process.platform !== "win32") process.kill(-pid, "SIGKILL"); } catch { /* gone */ }
+    // No Windows o taskkill pode nem ter rodado (sem memória para criar o processo — evento 2004):
+    // `child.kill` é TerminateProcess pelo handle, sem criar processo e sem risco de pid reaproveitado.
+    try { if (process.platform !== "win32") process.kill(-pid, "SIGKILL"); else child.kill("SIGKILL"); } catch { /* gone */ }
     await Promise.race([exited, new Promise<void>((res) => setTimeout(res, 3_000))]);
   }
 }

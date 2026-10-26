@@ -14,7 +14,8 @@ import test from "node:test";
 
 import assert from "node:assert/strict";
 
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { stopChild } from "../../../packages/core/src/fixtures/stop-child.js";
 
 import { createServer } from "node:net";
 
@@ -69,19 +70,6 @@ function child(entry: string, env: NodeJS.ProcessEnv): { process: ChildProcess; 
 
 
 
-async function stopChild(p: ChildProcess | undefined): Promise<void> {
-
-  if (!p || p.exitCode !== null) return;
-
-  const exited = new Promise<void>((resolve) => p.once("exit", () => resolve()));
-
-  if (process.platform === "win32" && p.pid) spawnSync("taskkill", ["/PID", String(p.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-
-  else p.kill();
-
-  await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
-
-}
 
 
 

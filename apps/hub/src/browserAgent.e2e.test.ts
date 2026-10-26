@@ -13,7 +13,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import { stopChild } from "../../../packages/core/src/fixtures/stop-child.js";
 import { createServer } from "node:net";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,13 +34,6 @@ async function freePorts(count: number): Promise<number[]> {
   const ports = servers.map((server) => { const address = server.address(); return typeof address === "object" && address ? address.port : 0; });
   await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
   return ports;
-}
-async function stopChild(p: ChildProcess | undefined): Promise<void> {
-  if (!p || p.exitCode !== null) return;
-  const exited = new Promise<void>((resolve) => p.once("exit", () => resolve()));
-  if (process.platform === "win32" && p.pid) spawnSync("taskkill", ["/PID", String(p.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-  else p.kill();
-  await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
 }
 class Inbox {
   readonly json: any[] = [];

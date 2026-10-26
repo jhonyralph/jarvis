@@ -15,7 +15,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { stopChild } from "../../../packages/core/src/fixtures/stop-child.js";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -45,13 +46,6 @@ async function freePorts(count: number): Promise<number[]> {
   const ports = servers.map((s) => (s.address() as any).port as number);
   await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
   return ports;
-}
-async function stopChild(p: ChildProcess | undefined): Promise<void> {
-  if (!p || p.exitCode !== null) return;
-  const exited = new Promise<void>((resolve) => p.once("exit", () => resolve()));
-  if (process.platform === "win32" && p.pid) spawnSync("taskkill", ["/PID", String(p.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-  else p.kill("SIGTERM");
-  await Promise.race([exited, sleep(5000)]);
 }
 function rmrf(p: string) { for (let i = 0; i < 30; i++) { try { rmSync(p, { recursive: true, force: true }); return; } catch { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300); } } }
 
