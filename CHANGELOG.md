@@ -1,3 +1,11 @@
+## [0.43.2](https://github.com/jhonyralph/jarvis/compare/v0.43.1...v0.43.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **editor:** tira a opcao do VS Code da interface; editar acontece dentro do Jarvis ([1818088](https://github.com/jhonyralph/jarvis/commit/1818088d07e10bd34cb1173c24567fc280bcb643))
+* **testes:** suite deixa de travar e de falhar por falta de memoria na maquina ([ae1c713](https://github.com/jhonyralph/jarvis/commit/ae1c7137d972a3a482665f2cacf8506419224185))
+
 ## [0.43.1](https://github.com/jhonyralph/jarvis/compare/v0.43.0...v0.43.1) (2026-10-23)
 
 
