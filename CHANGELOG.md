@@ -1,3 +1,10 @@
+## [0.43.3](https://github.com/jhonyralph/jarvis/compare/v0.43.2...v0.43.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **maquinas:** remove o VS Code (code-server) do lado das maquinas ([a891379](https://github.com/jhonyralph/jarvis/commit/a891379861fab070080f6205390879caaa35ce76))
+
 ## [0.43.2](https://github.com/jhonyralph/jarvis/compare/v0.43.1...v0.43.2) (2026-10-26)
 
 
