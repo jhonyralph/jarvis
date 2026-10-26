@@ -540,6 +540,12 @@ Jarvis, e o editor leve ficava atrás de um ✏️ sem rótulo. Corrigido:
 Limitação conhecida (821–1000 px): enquanto o arquivo ocupa a área principal a árvore sai da frente,
 como já saía no modo lado a lado; para trocar de arquivo, aba 💬 Chat → árvore.
 
+**2026-10-23, depois:** o dono pediu para tirar a opção do VS Code. Saíram da interface o botão
+`</> VS Code ↗`, o modal (instalar / abrir / encerrar) e o cliente de `ide_*` em `app.js`. O lado de
+máquina da F4 (`ideGateway.ts`, `ide.ts`, `ide-tunnel.ts`, `/ide/<runner>/`, protocolo) **ficou** — sem
+nenhum caminho na UI que o acione; remover ou manter é decisão separada. O `sw.js` continua deixando
+`/ide/` passar sem cache enquanto o servidor souber atender essa rota.
+
 ## 16) F2 — implementação (2026-10-19, não commitada; aguardando revisão)
 
 ### 16.1 Decisão: ferramentas próprias em vez do Playwright MCP

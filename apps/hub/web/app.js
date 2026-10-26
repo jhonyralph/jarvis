@@ -1484,98 +1484,6 @@
     const brwResizeObs=window.ResizeObserver?new ResizeObserver(()=>{ clearTimeout(brw.resizeT); brw.resizeT=setTimeout(()=>{ if(!brw.open)return; brwView(false); brwMarksRedraw();
       const p=brwPage(); if(p&&p.viewport&&brw.fitMine.has(p.pageId)) tx({t:'browser_viewport',runnerId:brw.runnerId,pageId:p.pageId,...brwFitPayload()}); },300); }):null;
     if(brwResizeObs&&BW.brwStage) brwResizeObs.observe(BW.brwStage);
-    // ---- BRW-IDE-00 F4 — VS Code (code-server) da máquina, aberto numa ABA NOVA via /ide/<máquina>/ ----
-    // Aba nova e não painel: os atalhos do VS Code (Ctrl+P, Ctrl+Shift+P, Ctrl+`) brigariam com os do
-    // Jarvis dentro de um iframe, e no celular o workbench precisa da tela inteira. Só o dono vê o botão
-    // (o Hub recusa e audita de qualquer forma). O link que o Hub devolve é um BILHETE de uso único (60 s):
-    // abrir a aba já no clique (antes da resposta) evita o bloqueio de pop-up dos navegadores.
-    const IW=['ideBtn','ideModal','ideMachines','ideTitle','ideSub','ideStatus','ideProg','ideProgBar','ideFolder','ideInstall','ideOpen','ideStop','ideLink','ideClose'].reduce((o,k)=>(o[k]=$(k),o),{});
-    const ide={open:false,runnerId:null,state:null,err:'',busy:'',win:null,winReq:null,link:''};
-    const IDE_MB=(n)=>Math.round((n||0)/1e6); // MB decimais, como o GitHub e o navegador mostram downloads
-    function ideAllowed(){ return !authUser||authUser.role==='owner'; }
-    function ideMachines(){ return (machines||[]).filter(m=>m&&m.ide); }
-    function ideSyncButton(){ if(!IW.ideBtn)return; const show=ideAllowed()&&ideMachines().length>0; IW.ideBtn.classList.toggle('hidden',!show); if(!show&&ide.open) ideClose(); }
-    function ideInShell(){ try{ return !!(window.jarvis||(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform())); }catch(e){ return false; } }
-    function ideSessionRunner(){ return currentSessionRunner||selectedRunner(); }
-    function ideFolder(){ return ide.runnerId===ideSessionRunner()?(curCwd||''):''; }
-    function ideRenderMachines(){ const box=IW.ideMachines; if(!box)return; box.innerHTML='';
-      const list=ideMachines(); box.classList.toggle('hidden',list.length<2);
-      list.forEach(m=>{ const b=document.createElement('button'); b.type='button'; b.className='brwprof'+(m.id===ide.runnerId?' active':''); b.disabled=!m.online;
-        b.title=(m.online?'VS Code de ':'Offline: ')+(m.label||m.id); b.textContent=(m.label||m.id); b.onclick=()=>{ if(m.id!==ide.runnerId) ideSelect(m.id); }; box.appendChild(b); }); }
-    function ideOpenModal(){ if(!IW.ideModal)return; const list=ideMachines(); if(!list.length)return;
-      const pref=ideSessionRunner(); const rid=(list.find(m=>m.id===pref&&m.online)||list.find(m=>m.online)||list[0]).id;
-      ide.open=true; IW.ideModal.classList.remove('hidden'); ideSelect(rid); }
-    function ideClose(){ ide.open=false; if(IW.ideModal) IW.ideModal.classList.add('hidden'); }
-    function ideSelect(rid){ Object.assign(ide,{runnerId:rid,state:null,err:'',busy:'consultando…',link:''}); ideRenderMachines(); ideRender(); tx({t:'ide_status',runnerId:rid,reqId:'ide-'+uid()}); }
-    function ideRender(){
-      if(!ide.open)return; const st=ide.state, m=(machines||[]).find(x=>x.id===ide.runnerId)||{};
-      IW.ideSub.textContent=(m.label||ide.runnerId||'')+(m.online===false?' · offline':'');
-      const folder=ideFolder(); IW.ideFolder.textContent=folder?('Pasta: '+folder):'Sem sessão nesta máquina: abre a última pasta usada no VS Code.'; IW.ideFolder.title=folder;
-      let text='', err=!!ide.err, prog=null;
-      const s=st&&st.status;
-      if(ide.err) text='⚠ '+ide.err;
-      else if(ide.busy&&!st) text=ide.busy;
-      else if(s==='unavailable') { text='Indisponível nesta máquina: '+(st.reason||'sem build do code-server para este sistema'); err=true; }
-      else if(s==='not_installed') text='O VS Code ainda não está nesta máquina. O download é o code-server '+(st.version||'')+' (MIT) do GitHub, ~'+IDE_MB(st.sizeBytes)+' MB, conferido por SHA-256; instalado ocupa ~560 MB em ~/.jarvis/ide.';
-      else if(s==='installing'){ const p=st.progress||{}; const ph=p.phase==='verify'?'Conferindo o SHA-256…':p.phase==='extract'?'Descompactando…':'Baixando… '+IDE_MB(p.received)+' de '+IDE_MB(p.total||st.sizeBytes)+' MB'; text=ph; prog=p.phase==='download'&&p.total?Math.min(100,Math.round(100*p.received/p.total)):(p.phase?100:0); }
-      else if(s==='starting') text='Subindo o VS Code…';
-      else if(s==='running') text='Rodando'+(st.startedAt?' desde '+new Date(st.startedAt).toLocaleTimeString():'')+(st.external?' · code-server externo (JARVIS_IDE_CODE_SERVER)':'')+'.';
-      else if(s==='stopped') text='Instalado ('+(st.version||'')+'). Sobe ao abrir'+(st.reason?' · parado: '+st.reason:'')+'.';
-      else if(s==='error') { text='⚠ '+(st.reason||'erro'); err=true; }
-      if(ide.busy&&st&&!ide.err) text=ide.busy+' '+text;
-      IW.ideStatus.textContent=text; IW.ideStatus.classList.toggle('err',err);
-      IW.ideProg.classList.toggle('hidden',prog==null); if(prog!=null) IW.ideProgBar.style.width=prog+'%';
-      const online=m.online!==false, installed=!!(st&&st.installed);
-      IW.ideInstall.classList.toggle('hidden',!(st&&(s==='not_installed'||(s==='error'&&!installed))));
-      IW.ideInstall.textContent=s==='error'?'Tentar instalar de novo (~'+IDE_MB(st.sizeBytes)+' MB)':'Instalar VS Code nesta máquina (~'+IDE_MB(st&&st.sizeBytes)+' MB)';
-      IW.ideInstall.disabled=!online;
-      IW.ideOpen.classList.toggle('hidden',!(st&&installed&&s!=='installing'&&s!=='unavailable'));
-      IW.ideOpen.disabled=!online||!!ide.winReq;
-      IW.ideStop.classList.toggle('hidden',!(st&&(s==='running'||s==='starting'||s==='installing')));
-      IW.ideStop.textContent=s==='installing'?'Cancelar':'Encerrar';
-      IW.ideLink.classList.toggle('hidden',!ide.link); if(ide.link) IW.ideLink.href=ide.link;
-    }
-    function idePendingWinMsg(w,txt){ try{ w.document.title='VS Code — Jarvis'; w.document.body.style.cssText='font-family:system-ui,sans-serif;background:#0b0e13;color:#e5e7eb;display:grid;place-items:center;min-height:90vh'; w.document.body.textContent=txt; }catch(e){} }
-    async function ideInstall(){ const st=ide.state||{}; if(!ide.runnerId)return;
-      const ok=await dialog({title:'Baixar o VS Code (code-server '+(st.version||'')+', MIT) em '+machineLabel(ide.runnerId)+'?\n\n~'+IDE_MB(st.sizeBytes)+' MB do GitHub, conferido por SHA-256 antes de instalar; ocupa ~560 MB em ~/.jarvis/ide. Roda só nesta máquina, em 127.0.0.1 — o acesso passa pelo Jarvis, só para o dono.',okText:'Instalar'});
-      if(!ok)return; ide.err=''; ide.busy=''; tx({t:'ide_install',runnerId:ide.runnerId,reqId:'ide-'+uid()}); ideRender(); }
-    function ideOpen(){ if(!ide.runnerId)return;
-      const reqId='ide-'+uid(); ide.err=''; ide.link=''; ide.winReq=reqId; ide.busy='Abrindo…';
-      // a aba nasce no clique (gesto do usuário) e só recebe o endereço quando o Hub responde. Nos
-      // apps (Electron/Capacitor) não: lá uma aba em branco viraria um about:blank no navegador do sistema.
-      let w=null; if(!ideInShell()){ try{ w=window.open('','_blank'); }catch(e){ w=null; } }
-      ide.win=w; if(w) idePendingWinMsg(w,'Abrindo o VS Code de '+machineLabel(ide.runnerId)+'…');
-      tx({t:'ide_open',runnerId:ide.runnerId,reqId,cwd:ideFolder()||undefined}); ideRender();
-      setTimeout(()=>{ if(ide.winReq===reqId){ ide.winReq=null; ide.busy=''; ide.err='a máquina não respondeu'; if(ide.win){ try{ ide.win.close(); }catch(e){} ide.win=null; } ideRender(); } },130000); }
-    async function ideStop(){ if(!ide.runnerId)return; const st=ide.state||{};
-      if(st.status!=='installing'){ const ok=await dialog({title:'Encerrar o VS Code de '+machineLabel(ide.runnerId)+'? Terminais abertos nele (e o que estiver rodando neles) fecham junto.',okText:'Encerrar',danger:true}); if(!ok)return; }
-      tx({t:'ide_stop',runnerId:ide.runnerId,reqId:'ide-'+uid()}); ide.busy='Encerrando…'; ideRender(); }
-    function ideHandleFrame(m){
-      if(m.t==='machines'){ setTimeout(()=>{ ideSyncButton(); edSyncHeaderBtn(); if(ide.open){ ideRenderMachines(); ideRender(); } },0); return false; }
-      if(typeof m.t!=='string'||m.t.indexOf('ide_')!==0) return false;
-      if(m.runnerId&&ide.runnerId&&m.runnerId!==ide.runnerId) return true;
-      if(m.t==='ide_state'){ ide.state=m.state||null; if(m.reqId) ide.busy=''; if(m.state&&m.state.status!=='error') ide.err=''; ideRender(); }
-      else if(m.t==='ide_ready'){
-        if(m.reqId!==ide.winReq) return true; ide.winReq=null; ide.busy='';
-        const url=new URL(m.url,location.href).href, w=ide.win; ide.win=null;
-        if(w&&!w.closed){ try{ w.location.replace(url); try{ w.opener=null; }catch(e){} }catch(e){ ide.link=url; } }
-        else if(window.jarvis){ window.open(url,'_blank'); } // Electron: o shell manda para o navegador do sistema
-        else { ide.link=url; } // pop-up bloqueado / Capacitor: o dono toca no link (vale 1 min, uma vez)
-        ideRender(); if(!ide.link) setTimeout(ideClose,600); }
-      else if(m.t==='ide_error'){ ide.err=m.message||'erro'; ide.busy='';
-        if(m.reqId&&m.reqId===ide.winReq){ ide.winReq=null; if(ide.win){ idePendingWinMsg(ide.win,'Não deu para abrir o VS Code: '+ide.err); ide.win=null; } }
-        if(!ide.open) toast('VS Code: '+ide.err); ideRender(); }
-      return true;
-    }
-    // Desde a §15.4 o VS Code é o caminho SECUNDÁRIO: o botão mora no cabeçalho do painel de arquivo; a
-    // porta de entrada da edição é o "</> Editor" do cabeçalho do chat (editor leve, dentro do fluxo).
-    if(IW.ideBtn) IW.ideBtn.onclick=()=>{ if(ide.open) ideClose(); else ideOpenModal(); };
-    if(IW.ideClose) IW.ideClose.onclick=()=>ideClose();
-    if(IW.ideModal) IW.ideModal.addEventListener('click',(e)=>{ if(e.target===IW.ideModal) ideClose(); });
-    if(IW.ideInstall) IW.ideInstall.onclick=()=>ideInstall();
-    if(IW.ideOpen) IW.ideOpen.onclick=()=>ideOpen();
-    if(IW.ideStop) IW.ideStop.onclick=()=>ideStop();
-    if(IW.ideLink) IW.ideLink.onclick=()=>{ setTimeout(()=>{ ide.link=''; ideRender(); ideClose(); },300); };
     function optimisticKey(s){ return (s.runnerId||'local')+'|'+s.id; }
     function mergeOptimisticSessions(list){
       const base=dedupeSessionsList(list), seen=new Set(base.map(optimisticKey)), now=Date.now(), fresh=[];
@@ -3100,7 +3008,9 @@
     // ---- segurança: dispositivos & convites (dono) ----
     // O item de nav é owner-only via .snav-owner (settingsSetupNav); aqui só reagimos a uma troca de
     // papel com as configurações JÁ abertas, senão o painel continuaria listado para um membro.
-    function updateOwnerUI(){ settingsOwnerVisibility(!!(authUser&&authUser.role==='owner')); }
+    // O botão "</> Editor" é só do dono: sincroniza aqui, quando o Hub diz quem você é (antes ia junto do
+    // bloco do VS Code, que saiu — §15.4).
+    function updateOwnerUI(){ settingsOwnerVisibility(!!(authUser&&authUser.role==='owner')); edSyncHeaderBtn(); }
     E.secGen.onclick=()=>{ tx({t:'sec_invite', role:E.secRole.value, ttlSec:Number(E.secTtl.value), label:(E.secInviteLabel&&E.secInviteLabel.value||'').trim()}); if(E.secInviteLabel)E.secInviteLabel.value=''; };
     let secRepoUrl='';
     E.secRunGen.onclick=()=>{ tx({t:'mint_runner', label:E.secRunLabel.value.trim()}); E.secRunLabel.value=''; };
@@ -5501,7 +5411,7 @@
       ws.binaryType='arraybuffer'; // frames do browser remoto (BRW-IDE-00) chegam binários
       ws.onopen=()=>{ E.dot.classList.add('on'); workConnected=true; renderWorkConnection(); enteredConn=false; if(authToken) tx({t:'auth',token:authToken}); else tx({t:'authinfo'}); }; // autentica antes de tudo
       ws.onclose=()=>{ E.dot.classList.remove('on'); workConnected=false; renderWorkConnection(); scheduleReconnect(); };
-      ws.onmessage=(e)=>{ if(typeof e.data!=='string'){ brwOnBinary(e.data); return; } const m=JSON.parse(e.data); if(brwHandleFrame(m)) return; if(ideHandleFrame(m)) return;
+      ws.onmessage=(e)=>{ if(typeof e.data!=='string'){ brwOnBinary(e.data); return; } const m=JSON.parse(e.data); if(brwHandleFrame(m)) return;
         // Auto-recarregar quando a UI muda no servidor: guarda a 1ª versão recebida (a do HTML que
         // esta pagina carregou); se depois chegar outra, o arquivo mudou -> esta pagina esta velha.
         // Espera o turno atual terminar pra nao recarregar no meio de uma resposta.

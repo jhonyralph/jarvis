@@ -525,8 +525,8 @@
        cabeçalho transborda por cima da árvore. Container query = largura do PAINEL, não da janela. */
     #filePanel { container-type:inline-size; container-name:filepanel; }
     /* "Editar" fica sempre com rótulo: é a porta da edição dentro do Jarvis (BRW-IDE-00 §15.4) e um ✏️
-       sozinho no painel estreito passava despercebido. Quem encolhe é o secundário (VS Code). */
-    @container filepanel (max-width:620px) { #fileSave .lbl, #fileEditDone .lbl, #ideBtn .lbl { display:none; } }
+       sozinho no painel estreito passava despercebido. */
+    @container filepanel (max-width:620px) { #fileSave .lbl, #fileEditDone .lbl { display:none; } }
     @container filepanel (max-width:480px) { #filePanel .fphead { flex-wrap:wrap; row-gap:4px; } }
     #fileSave.dirty { background:#22c55e; color:#04210f; }
     #fileSave:disabled { opacity:.6; cursor:progress; }
@@ -569,7 +569,7 @@
       #filePanel .edhost .cm-textfield { font-size:16px; }
       .edtab { max-width:150px; }
     }
-    @media (max-width:520px){ #fileSave .lbl, #fileEditDone .lbl, #ideBtn .lbl { display:none; } }
+    @media (max-width:520px){ #fileSave .lbl, #fileEditDone .lbl { display:none; } }
     #annoBar { position:absolute; bottom:calc(14px + var(--safe-bottom)); left:50%; transform:translateX(-50%); z-index:7; display:none; gap:8px; align-items:center; background:#0f172a; border:1px solid var(--line); border-radius:10px; padding:6px 8px; box-shadow:0 6px 20px #0008; }
     #annoBar.on { display:flex; }
     #annoBar button { min-height:34px; }
@@ -598,8 +598,6 @@
     @media (max-width:820px){
       #filePanel { position:fixed; top:var(--safe-top); right:var(--safe-right); bottom:var(--safe-bottom); left:var(--safe-left); z-index:40; flex:none; border-left:0; }
       #fileLayoutSw, #fileFull, #fileTabs { display:none !important; }
-      /* no celular o editor leve basta (decisão do dono, §15.4): o workbench do VS Code não cabe aqui */
-      #ideBtn { display:none !important; }
       #app.flay-tabs.file-open:not(.tab-chat) > #center > header { display:flex; }
       #app.flay-tabs.file-open:not(.tab-chat) #cbody > main { display:flex; }
       #app.flay-tabs.file-open.tab-chat #filePanel:not(.hidden) { display:flex; }
@@ -1274,17 +1272,6 @@
     .termpane .xterm { height:100%; }
     .termempty { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--mut); text-align:center; padding:24px; }
     .termempty b { color:var(--text); }
-    /* BRW-IDE-00 F4 — VS Code da máquina (modal: instalar / abrir numa aba nova / encerrar) */
-    #ideModal { z-index:60; }
-    #ideModal .idecard { width:min(520px,100%); }
-    .idestatus { font-size:13.5px; line-height:1.45; overflow-wrap:anywhere; }
-    .idestatus.err { color:#fca5a5; }
-    .ideprog { height:6px; border-radius:999px; background:#ffffff14; overflow:hidden; }
-    .ideprog > div { height:100%; width:0; background:#2563eb; transition:width .25s; }
-    .idemachines { display:flex; flex-wrap:wrap; gap:6px; }
-    .idefolder { font-size:12px; word-break:normal; overflow-wrap:anywhere; }
-    .idehint { font-size:11.5px; line-height:1.4; word-break:normal; overflow-wrap:break-word; }
-    a.idelink { display:inline-flex; align-items:center; padding:8px 14px; border-radius:10px; background:#2563eb; color:#fff; text-decoration:none; font-weight:600; }
     /* BRW-IDE-00 F1 — browser remoto (painel à direita, como o terminal; tela cheia no celular) */
     #brwPanel { flex:0 0 clamp(480px,56%,1100px); min-width:0; min-height:0; display:flex; flex-direction:column; border-left:1px solid var(--line); background:#0b0e13; }
     #brwPanel.hidden { display:none; }
@@ -1670,7 +1657,6 @@
         <button id="fileEdit" class="ghost hidden" type="button" title="Editar este arquivo">✏️<span class="lbl"> Editar</span></button>
         <button id="fileSave" class="hidden" type="button" title="Salvar (Ctrl+S)">💾<span class="lbl"> Salvar</span></button>
         <button id="fileEditDone" class="ghost hidden" type="button" title="Sair do modo edição (volta a visualizar)">👁<span class="lbl"> Ver</span></button>
-        <button id="ideBtn" class="ghost hidden" type="button" title="Abrir esta pasta no VS Code da máquina — abre numa aba nova (só o dono)">&lt;/&gt;<span class="lbl"> VS Code ↗</span></button>
         <button id="fileCopy" class="ghost" type="button" title="Copiar">Copiar</button>
         <button id="fileFull" class="ghost" type="button" title="Ver só o arquivo (tela cheia) / voltar">⤢</button>
         <button id="fileClose" class="ghost" type="button" title="Fechar">✕</button>
@@ -1825,22 +1811,6 @@
     <b id="dlgTitle"></b>
     <input id="dlgInput" type="text" class="hidden" autocomplete="off">
     <div class="row" style="justify-content:flex-end"><button id="dlgCancel" class="ghost" type="button">Cancelar</button><button id="dlgOk" type="button">OK</button></div>
-  </div></div>
-
-  <!-- BRW-IDE-00 F4 — VS Code (code-server) da máquina: instalar, abrir numa aba nova, encerrar -->
-  <div id="ideModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ideTitle"><div class="card idecard">
-    <div class="row" style="justify-content:space-between;align-items:center;gap:8px"><b id="ideTitle">&lt;/&gt; VS Code</b><span id="ideSub" class="mut" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><button id="ideClose" class="ghost" type="button" title="Fechar" aria-label="Fechar">✕</button></div>
-    <div id="ideMachines" class="idemachines hidden" role="tablist" aria-label="Máquinas"></div>
-    <div id="ideStatus" class="idestatus" role="status" aria-live="polite"></div>
-    <div id="ideProg" class="ideprog hidden"><div id="ideProgBar"></div></div>
-    <div id="ideFolder" class="mut idefolder"></div>
-    <div class="row" style="justify-content:flex-end;flex-wrap:wrap;gap:8px">
-      <button id="ideStop" class="ghost hidden" type="button">Encerrar</button>
-      <button id="ideInstall" class="hidden" type="button">Instalar VS Code nesta máquina</button>
-      <a id="ideLink" class="hidden idelink" target="_blank" rel="noopener">Abrir VS Code ↗</a>
-      <button id="ideOpen" class="hidden" type="button">Abrir VS Code ↗</button>
-    </div>
-    <div class="mut idehint">Abre numa aba nova do navegador (atalhos do VS Code funcionam melhor fora do Jarvis). O code-server roda só nesta máquina, em 127.0.0.1; o acesso passa pelo Hub e é só do dono.</div>
   </div></div>
 
   <!-- painel rico de info da sessão (abre ao clicar no título do chat) -->
