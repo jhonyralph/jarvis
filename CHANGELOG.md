@@ -1,3 +1,10 @@
+## [0.44.1](https://github.com/jhonyralph/jarvis/compare/v0.44.0...v0.44.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **voz:** prazo de abrir o microfone sobe para 120 s e cita o antivirus ([d82b102](https://github.com/jhonyralph/jarvis/commit/d82b102fc3e6d75c7c82a25748a8e6379b093eb7))
+
 # [0.44.0](https://github.com/jhonyralph/jarvis/compare/v0.43.3...v0.44.0) (2026-10-27)
 
 
