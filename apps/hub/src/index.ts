@@ -30,6 +30,7 @@ import { VoiceStreams } from "./voiceStream.js";
 import { warmUp as warmUpEmbed } from "./embed.js";
 import { pythonDiagnostics } from "./python.js";
 import { log, isLogLevel } from "./logger.js";
+import { startStallForensics } from "./stallForensics.js";
 import { VoiceTurnTracker, normalizeListenConfig, listenLanguages, normalizeGateLevel, voiceGateDecision, speechChunks, normalizeAudioRetention, replyLanguage, parseLanguageCommand, practiceInstruction, languageSwitchConfirmation, LANGUAGE_NAMES_PT, type ListenLanguage } from "@jarvis/core";
 import { VoiceAudioStore } from "./voiceAudio.js";
 import { updateStalled } from "./update-watchdog.js";
@@ -9531,6 +9532,21 @@ function armLoopStallExit(reason: string): void {
   loopStallArmed = true;
   loopLastTick = Date.now();   // zera a régua: o atraso do boot não conta contra o primeiro tique
   log.info("hub_loop_guard_armed", { reason, limitMs: LOOP_STALL_EXIT_MS, sampleMs: LOOP_SAMPLE_MS });
+  // O guarda só sabe QUANTO travou; isto flagra ONDE (./stallForensics.ts): a pilha da thread principal
+  // aos 10 s e aos 30 s de trava, antes de o guarda encerrar. Em 26/10 foram 6 quedas num dia (48–142 s)
+  // sem nenhum rastro do trecho culpado. Grava em ~/.jarvis/logs/stall-traces.jsonl pela própria worker
+  // (a thread principal está presa) e repete no log do Hub quando ela volta. JARVIS_HUB_STALL_TRACE=0 desliga.
+  if (process.env.JARVIS_HUB_STALL_TRACE !== "0") {
+    try {
+      const first = Math.max(2_000, Number(process.env.JARVIS_HUB_STALL_TRACE_MS) || 10_000);
+      startStallForensics({
+        marks: [first, first * 3],
+        logFile: join(JARVIS_DIR, "logs", "stall-traces.jsonl"),
+        onTrace: (tr) => log.warn("hub_loop_stall_trace", { stalledMs: tr.stalledMs, captureMs: tr.captureMs, error: tr.error, frames: tr.frames.slice(0, 12).map((f) => `${f.fn} ${f.url}:${f.line}`) }),
+        onError: (e) => log.warn("hub_stall_trace_error", { error: String(e?.message ?? e) }),
+      });
+    } catch (e) { log.warn("hub_stall_trace_error", { error: String((e as any)?.message ?? e) }); }
+  }
 }
 setInterval(() => {
   const now = Date.now();
