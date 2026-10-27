@@ -1,3 +1,10 @@
+# [0.47.0](https://github.com/jhonyralph/jarvis/compare/v0.46.0...v0.47.0) (2026-10-27)
+
+
+### Features
+
+* **voz:** "Hey Jarvis" do PC termina a fala sozinho, sem limite de duracao ([8fb852d](https://github.com/jhonyralph/jarvis/commit/8fb852d2c298c145811237b1c7a15d94e0397029))
+
 # [0.46.0](https://github.com/jhonyralph/jarvis/compare/v0.45.0...v0.46.0) (2026-10-27)
 
 
