@@ -5405,7 +5405,7 @@
       if(currentMachine!=='local'&&currentMachine!=='all'){ restoringMachine=true; }
       else if(currentSession) openSession(currentSession,currentSessionRunner);
       if(cfg.push) enablePush(); requestCommands(); if(hashWork())openWorkPanel({fromHash:true}); }
-    function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); resendPendingVoice(); initializePersonalNativeBridge();setTimeout(()=>{if(!consumePendingPersonalDeepLink())applyDeepLink();},0); if(window.__jarvisNative){ if(window.__jarvisNative.reregister&&cfg.push) window.__jarvisNative.reregister(); if(window.__jarvisNative.wakeStart&&cfg.wake) window.__jarvisNative.wakeStart(); } }
+    function enter(){ if(enteredConn)return; enteredConn=true; authed=true; hideGate(); tx({t:'speech_caps',queue:1}); if((location.hash||'').indexOf('invite=')>=0){ try{ history.replaceState(null,'','/'); }catch(e){} } postAuth(); resendPendingVoice(); initializePersonalNativeBridge();setTimeout(()=>{if(!consumePendingPersonalDeepLink())applyDeepLink();},0); if(window.__jarvisNative){ if(window.__jarvisNative.reregister&&cfg.push) window.__jarvisNative.reregister(); if(window.__jarvisNative.wakeStart&&cfg.wake) window.__jarvisNative.wakeStart(); } }
 
     function connect(){ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
       ws.binaryType='arraybuffer'; // frames do browser remoto (BRW-IDE-00) chegam binários
@@ -5713,7 +5713,9 @@
           if(inCur){ currentSession=null; clearQueue(); resetUsageMeter(); E.log.innerHTML=''; E.title.textContent='—'; refreshTitleInfo(); curNativeId=''; renderNativeChip(); setHash(''); }
           deleted.forEach(id=>{ const key=sessionStateKey(id,sessionRunner()); if(sessionPrefs[key])delete sessionPrefs[key]; if(sessionRunner()==='local'&&sessionPrefs[id])delete sessionPrefs[id]; }); saveSessionPrefs();
           if(!m.ok) toast(t('tDelFail')); }
-        else if(m.t==='tts'){ if(m.for==='ask'){ if(!m.sessionId||currentFrame(m))askVoicePlayAndListen(m.audio); } else if(currentFrame(m)) playTTS(m.audio,!!m.closing,m.vtid,!!m.more,m.rid); }
+        else if(m.t==='tts'){ if(m.for==='ask'){ if(!m.sessionId||currentFrame(m))askVoicePlayAndListen(m.audio); } else if(m.qid) playQueuedTTS(m); else if(currentFrame(m)) playTTS(m.audio,!!m.closing,m.vtid,!!m.more,m.rid); }
+        else if(m.t==='voice_window'){ onVoiceWindow(m); }
+        else if(m.t==='tts_stop'){ onSpeechStop(m); }
         else if(m.t==='ask_choice'){ askVoiceApply(m); }
         else if(m.t==='searchResult'){ clearPending();
           if(m.hits!==undefined){ if(!E.searchModal.classList.contains('hidden') && m.query===E.searchInput.value.trim()) renderHits(E.searchResults,m); }   // filtro literal digitado (ignora resposta obsoleta)
@@ -5816,6 +5818,32 @@
         s.ended=true; s.endpointMs=m.silenceMs; s.reason=m.reason; if(rec&&rec.state==='recording') rec.stop(); } }
     // RN-G5: taxa de gravação pensada para fala (padrão 32 kbit/s ≈ 0,24 MB por minuto).
     function voiceRecorder(st){ const bps=Number(audioKeepPolicy().bitrate)||32000; try{ return new MediaRecorder(st,{audioBitsPerSecond:bps}); }catch(e){ return new MediaRecorder(st); } }
+    // ---------- fila única de fala (VOZ-01): o Hub decide o que toca, quando, e quem responde ----------
+    // Este aparelho só recebe fala com `qid` quando é o aparelho de saída (onde o dono falou por último).
+    // Ele toca — mesmo de uma sessão que não está na tela —, avisa "terminei" e, quando o Hub abre a
+    // janela de resposta, escuta para a sessão QUE FALOU (abrindo-a se for preciso).
+    let speechWin=null;
+    function playQueuedTTS(m){
+      const done=()=>tx({t:'tts_played',qid:m.qid});
+      if(m.rid && stoppedReplies.includes(m.rid)){ done(); return; }
+      if(m.rid){ replyInProgress=m.more?m.rid:(replyInProgress===m.rid?null:replyInProgress); clearTimeout(replyStaleTimer); if(m.more) replyStaleTimer=setTimeout(()=>{ replyInProgress=null; },20000); }
+      status('speaking',t('spSpeaking'));
+      audioMgr.play(m.audio||'',{ onStart:m.vtid?()=>voiceTurnStarted(m.vtid):undefined, onEnd:()=>{ done(); if(!audioMgr.active) status(''); } });
+    }
+    function speechWinClosed(){ if(!speechWin) return; const w=speechWin; speechWin=null; tx({t:'tts_window_closed',runnerId:w.runnerId,sessionId:w.sessionId}); }
+    function onVoiceWindow(m){
+      speechWin={runnerId:m.runnerId,sessionId:m.sessionId};
+      if(recording) return;                                                     // já está ouvindo (o dono tocou no microfone)
+      if(askPendingVoice){ askPendingVoice=false; startAskVoice(); speechWinClosed(); return; }   // decisão pendente → wizard de voz
+      if(askActive || !(cfg.continue || lastWasVoice)){ speechWinClosed(); return; }             // sem conversa por voz: não escuta sozinho
+      const here=currentFrame(m);
+      if(!here) openSession(m.sessionId,m.runnerId);                            // a resposta vai para a sessão que falou
+      setTimeout(()=>{ if(!recording && speechWin) startRec(true); },here?0:350);
+    }
+    function onSpeechStop(m){
+      stopTTS();
+      if(m.off){ lastWasVoice=false; speechWin=null; if(recording&&rec){ discardRec=true; try{ rec.stop(); }catch(e){} } status(''); }
+    }
     function playTTS(b64,closing,vtid,more,rid){
       if(rid && stoppedReplies.includes(rid)) return;                            // trecho de uma resposta que o usuário mandou parar
       if(rid){ replyInProgress=more?rid:(replyInProgress===rid?null:replyInProgress); clearTimeout(replyStaleTimer); if(more) replyStaleTimer=setTimeout(()=>{ replyInProgress=null; },20000); }   // trecho final que nunca chega não prende o barge-in
@@ -5915,8 +5943,8 @@
         },100);
         rec.ondataavailable=(e)=>chunks.push(e.data);
         rec.onstop=async()=>{ const stopAt=performance.now(), byHub=!!(vs&&vs.reason), endpointMs=byHub?vs.endpointMs:(spoke?silence:undefined), endpointReason=byHub?vs.reason:(auto?'volume':'toque'); if(vs){ vs.close(); if(liveStream===vs) liveStream=null; } if(byHub) spoke=vs.reason!=='sem_fala'; clearInterval(poll); clearTimeout(contTimer); ac.close(); st.getTracks().forEach(t=>t.stop()); resumeWakeAfterRecording(wakePaused); recording=false; E.mic.classList.remove('on'); E.mic.innerHTML=MIC_ICON; syncComposerActions(); if(E.micCancel)E.micCancel.classList.add('hidden'); status('');
-          if(discardRec){ discardRec=false; return; }   // descartado pelo usuário -> nao envia
-          if(auto && !spoke){ toast('🎤 Parei de ouvir (silêncio).'); return; } // Gap 5: avisa que encerrou de propósito — não fica ambíguo com travamento
+          if(discardRec){ discardRec=false; speechWinClosed(); return; }   // descartado pelo usuário -> nao envia
+          if(auto && !spoke){ toast('🎤 Parei de ouvir (silêncio).'); speechWinClosed(); return; } // Gap 5: avisa que encerrou de propósito — não fica ambíguo com travamento
           const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
           // barge-in: falar POR CIMA do agente (ou já em refino) → vai para o staging (refino), não pro chat
           if(ttsPlaying || stagingActive || replyInProgress){ stopTTS(); stagingActive=true; showStage({say:'refinando…'}); status('speaking',t('spRefining')); tx({t:'stage_voice',audio:b64,ext:'webm',sessionId:currentSession}); return; }
@@ -5926,10 +5954,10 @@
           const sessionBusy=busy(currentSession);
           status('busy', sessionBusy ? '🎧 transcrevendo para a fila…' : '🎧 transcrevendo…');   // Gap 5: feedback claro durante o STT
           const vtid=newVoiceTurnId(); rememberVoiceTurn(vtid,{stopAt,recMs:Math.round(stopAt-recStartAt),endpointMs,encodeMs:Math.round(performance.now()-stopAt)});
-          lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); sendVoice({t:'voice',vtid,handsFree:!!auto,endpointReason,audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
+          speechWin=null; lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); sendVoice({t:'voice',vtid,handsFree:!!auto,endpointReason,audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; syncComposerActions(); if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?t('spListeningAns'):t('spListening')); if(auto)tx({t:'wake_event',phase:'capturing',sessionId:currentSession});
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
-      }catch(e){ resumeWakeAfterRecording(wakePaused); const msg=t('wakeMicError')+': '+micErrorText(e); addErr(msg); toast(msg); tx({t:'wake_event',phase:'mic_error',sessionId:currentSession,error:String((e&&e.message)||e)}); recording=false; status(''); } }
+      }catch(e){ speechWinClosed(); resumeWakeAfterRecording(wakePaused); const msg=t('wakeMicError')+': '+micErrorText(e); addErr(msg); toast(msg); tx({t:'wake_event',phase:'mic_error',sessionId:currentSession,error:String((e&&e.message)||e)}); recording=false; status(''); } }
     E.mic.onclick=()=>{ if(recording){ rec.stop(); } else startRec(false); };
     // Descartar: para a gravacao e NAO envia (comecei a falar besteira / sessao errada).
     E.micCancel.onclick=()=>{ if(!recording||!rec)return; discardRec=true; try{rec.stop();}catch(e){} status(''); };

@@ -32,6 +32,8 @@ import { pythonDiagnostics } from "./python.js";
 import { log, isLogLevel } from "./logger.js";
 import { startStallForensics } from "./stallForensics.js";
 import { LoopStallPolicy } from "./loopStallPolicy.js";
+import { SpeechBridge } from "./speechBridge.js";
+import type { SpeechKind } from "./speechQueue.js";
 import { VoiceTurnTracker, normalizeListenConfig, listenLanguages, normalizeGateLevel, voiceGateDecision, speechChunks, normalizeAudioRetention, replyLanguage, parseLanguageCommand, practiceInstruction, languageSwitchConfirmation, LANGUAGE_NAMES_PT, type ListenLanguage } from "@jarvis/core";
 import { VoiceAudioStore } from "./voiceAudio.js";
 import { updateStalled } from "./update-watchdog.js";
@@ -3064,7 +3066,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
           // Mesmo preparo das sessões locais (VOZ-00 RN-D3): limpa o texto e resume resposta longa.
           // Antes a resposta de outra máquina era falada CRUA — código, listas e tudo, inteira.
           await speakReplyChunks([mkey], replyText, (frame) => {
-            for (const c of clientsOn(rc.id)) if (subs.get(c) === sid && canAccessSession(c, rc.id, sid)) send(c, { t: "tts", runnerId: rc.id, sessionId: sid, ...frame });
+            enqueueSpeech(rc.id, sid, { ...frame }, clientsOn(rc.id).filter((c) => subs.get(c) === sid && canAccessSession(c, rc.id, sid)));
           });
         } catch { /* TTS is best-effort. */ }
       })();
@@ -3144,7 +3146,7 @@ function relayRunner(rc: RunnerConn, m: any): void {
     if (target && target.readyState === target.OPEN) {
       send(target, { t: "debate_said", ok: m.ok, runnerId: rc.id, sessionId: m.sessionId, debateId: m.debateId, pending: m.pending, msgId: m.msgId, message: m.message });
       // O ack falado é acessório: o recado já está anotado na máquina.
-      if (pend?.speak && m.ok) void synthesize(m.message, VOICE).then((wav) => send(target, { t: "tts", sessionId: m.sessionId, audio: wav.toString("base64"), text: m.message })).catch(() => { /* ack falado é acessório */ });
+      if (pend?.speak && m.ok) void synthesize(m.message, VOICE).then((wav) => enqueueSpeech(rc.id, m.sessionId, { audio: wav.toString("base64"), text: m.message }, [target])).catch(() => { /* ack falado é acessório */ });
     }
     return;
   }
@@ -3765,6 +3767,30 @@ async function speakReplyChunks(voiceKeys: string[], replyText: string, deliver:
   }
   return true;
 }
+// Fila única de fala (VOZ-01 F1): toda fala do Jarvis passa por ./speechBridge.ts — UMA por vez, no
+// aparelho onde o dono falou por último (regras em ./speechQueue.ts).
+const speech = new SpeechBridge<WebSocket>({
+  send: (ws, frame) => send(ws, frame),
+  synthesize: (text) => synthesize(text, VOICE),
+  wakeClients: () => wakeClients,
+  postMessage: (runnerId, sessionId, text) => {
+    for (const c of sessionViewers(runnerId, sessionId)) send(c, { t: "message", runnerId, sessionId, message: { sessionId, role: "assistant", text, ts: Date.now(), agent: "jarvis" } });
+  },
+  sessionTitle: (runnerId, sessionId) => (runnerId === LOCAL_ID ? store.get(sessionId)?.title || "" : ""),
+  log: (event, data) => log.info(event, data),
+}, {
+  localId: LOCAL_ID,
+  waitSteps: String(process.env.JARVIS_VOICE_WAIT_STEPS || "2,5,10").split(",").map(Number).filter((v) => v > 0),
+  deviceWindowMs: Number(process.env.JARVIS_VOICE_WINDOW_MS) || undefined,
+});
+function enqueueSpeech(runnerId: string, sessionId: string, frame: Record<string, unknown>, fallback: WebSocket[], kind?: SpeechKind): void {
+  speech.enqueue(runnerId, sessionId, frame, fallback, kind);
+}
+/** Quem vê a sessão agora — o destino antigo das falas, usado só sem aparelho de saída. */
+function sessionViewers(runnerId: string, sessionId: string): WebSocket[] {
+  return clientsAuthorizedFor(runnerId).filter((c) => subs.get(c) === sessionId && canAccessSession(c, runnerId, sessionId));
+}
+
 async function speechForReply(replyText: string, lang: ListenLanguage = "pt"): Promise<string> {
   const spoken = speechify(replyText || "", lang);
   if (spoken.length <= SPOKEN_VERBATIM_MAX) return spoken; // already short when spoken → read as-is
@@ -3827,8 +3853,12 @@ const turnCtx: TurnCtx = {
     const closing = closingTurn.delete(sid) || undefined;
     const targets = [sid, ...(also || []).filter((a) => a && a !== sid)]; // ex.: canal de voz (WAKE) vinculado a outra sessão
     // O canal de voz (WAKE) vinculado a outra sessão também é um turno de voz: as chaves recebem o tempo.
+    if (speech.isOff()) return; // voz encerrada (VOZ-01 RN-O13): nem sintetiza
+    // Antes cada alvo recebia o mesmo áudio — com o listener na voice e o app na sessão vinculada,
+    // a mesma resposta tocava duas vezes. Agora é UMA fala, da sessão real, no aparelho de saída.
+    const viewers = [...new Set(targets.flatMap((target) => sessionViewers(LOCAL_ID, target)))];
     await speakReplyChunks(targets.map((target) => voiceKey(LOCAL_ID, target)), replyText, (frame) => {
-      for (const target of targets) broadcast(target, { t: "tts", sessionId: target, ...frame, ...(frame.more ? {} : { closing }) });
+      enqueueSpeech(LOCAL_ID, sid, { ...frame, ...(frame.more ? {} : { closing }) }, viewers);
     });
   },
   // Per-session spend cap (opt-in): JARVIS_SESSION_COST_CAP=<usd>. 0/unset = no cap (default, no
@@ -3990,7 +4020,7 @@ async function stageContext(scope: StageScope): Promise<string> {
 async function stageSpeak(scope: StageScope, text: string): Promise<void> {
   if (!text) return;
   broadcastOn(scope.runnerId, scope.sessionId, { t: "stage_say", runnerId: scope.runnerId, sessionId: scope.sessionId, text });
-  try { const wav = await synthesize(text, VOICE); broadcastOn(scope.runnerId, scope.sessionId, { t: "tts", sessionId: scope.sessionId, audio: wav.toString("base64"), text }); } catch { /* tts opcional */ }
+  try { const wav = await synthesize(text, VOICE); enqueueSpeech(scope.runnerId, scope.sessionId, { audio: wav.toString("base64"), text }, sessionViewers(scope.runnerId, scope.sessionId)); } catch { /* tts opcional */ }
 }
 async function stageRefinePass(scope: StageScope, utterance: string, model: string, effort: string): Promise<ReturnType<typeof parseRefine>> {
   const e = staging.get(stageKey(scope))!;
@@ -4081,15 +4111,17 @@ async function stageConfirm(scope: StageScope): Promise<void> {
 /** Jarvis speaks a short control line into the voice session (not from the agent). */
 async function voiceSay(text: string): Promise<void> {
   broadcast(WAKE_SESSION, { t: "message", message: { sessionId: WAKE_SESSION, role: "assistant", text, ts: Date.now(), agent: "jarvis" } });
-  try { const wav = await synthesize(text, VOICE); broadcast(WAKE_SESSION, { t: "tts", sessionId: WAKE_SESSION, audio: wav.toString("base64"), text }); } catch { /* tts optional */ }
+  try { const wav = await synthesize(text, VOICE); enqueueSpeech(LOCAL_ID, WAKE_SESSION, { audio: wav.toString("base64"), text }, sessionViewers(LOCAL_ID, WAKE_SESSION)); } catch { /* tts optional */ }
 }
 function resetVoiceSession(): void {
   const s = store.reset(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd, title: "Voz (Jarvis)" });
   broadcast(WAKE_SESSION, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
   pushSessions();
 }
+/** VOZ-01 RN-O7: resposta por "Hey Jarvis" à sessão que acabou de falar (vale só para esta fala). */
+let voiceFocusOnce = "";
 async function runVoiceTask(task: string, speak: boolean, speaker?: string): Promise<void> {
-  const sid = voiceTarget || WAKE_SESSION; // binding: age na sessão-alvo (evita sessão errada)
+  const sid = voiceFocusOnce || voiceTarget || WAKE_SESSION; // binding: age na sessão-alvo (evita sessão errada)
   const s = store.ensure(sid);
   if (sid === WAKE_SESSION && s.messages.length === 0) store.reconfigure(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd });
   // sessão vinculada usa o modelo/esforço DELA (undefined → prefs/default); só a de voz usa voiceConfig.
@@ -5003,7 +5035,7 @@ async function acceptDebateInterjection(live: LiveDebate, ws: WebSocket, text: s
   send(ws, { t: "debate_said", ok: true, runnerId: LOCAL_ID, sessionId: live.sessionId, debateId: live.debateId, pending: live.pending.length, msgId, message: aviso });
   auth.audit("debate_say", { userId: principalOf(ws)?.userId, deviceId: principalOf(ws)?.deviceId, runnerId: LOCAL_ID, detail: `${live.debateId}: ${recado.slice(0, 80)}` });
   if (speak) {
-    try { const wav = await synthesize(aviso, VOICE); send(ws, { t: "tts", sessionId: live.sessionId, audio: wav.toString("base64"), text: aviso }); }
+    try { const wav = await synthesize(aviso, VOICE); enqueueSpeech(LOCAL_ID, live.sessionId, { audio: wav.toString("base64"), text: aviso }, [ws]); }
     catch { /* o ack falado é acessório; o recado já está anotado */ }
   }
 }
@@ -6014,7 +6046,7 @@ async function deliverNativeTurn(ws: WebSocket | null, sid: string, text: string
     voiceTurns.dispatched(vk, "native");
     const reply = await executionPrincipalContext.run(principalId, () => agentTurn(sid, agent, agentSend, info.cwd || CWD, { model: opts.model, effort: opts.effort, fastMode: opts.fastMode && supportsFastMode(agent.name), turnId })).finally(() => voiceTurns.agentDone(vk));
     if (opts.speak) {
-      await speakReplyChunks([vk], reply.text, (frame) => broadcast(sid, { t: "tts", sessionId: sid, ...frame }));
+      await speakReplyChunks([vk], reply.text, (frame) => enqueueSpeech(LOCAL_ID, sid, { ...frame }, sessionViewers(LOCAL_ID, sid)));
     }
   } catch (e: any) {
     const message = String(e?.message ?? e);
@@ -6483,6 +6515,8 @@ function handleSecurityMsg(ws: WebSocket, msg: any): boolean {
 async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
   const scope = (sessionId?: string): StageScope => ({ runnerId: activeRunner(ws), sessionId: sessionId || subs.get(ws) || WAKE_SESSION, actor: actorOf(ws) });
   if (msg.t === "stage_voice" && typeof msg.audio === "string") {
+    // Falar por cima do agente no app (refino): a fila para e espera a resposta desta sessão.
+    speech.bargeIn(ws);
     const current = scope((typeof msg.sessionId === "string" && msg.sessionId) ? msg.sessionId : undefined);
     let text = "";
     try { text = (await transcribeDetailed(Buffer.from(msg.audio, "base64"), { ...listenOpts(msg.lang), ext: msg.ext })).text; text = await correctTranscript(text); }
@@ -6558,6 +6592,13 @@ async function handleVoiceStageMsg(ws: WebSocket, msg: any): Promise<boolean> {
 /** Wake-word control + speaker-identification / voice-gate messages, lifted from the router VERBATIM.
  *  Returns true if it handled `msg`. Behavior-preserving (same relative order at the call site). */
 async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
+  // VOZ-01: avisos do aparelho que toca a fila de fala ("terminei", "a janela fechou sem fala").
+  if (msg.t === "speech_caps") { if (msg.queue === 1) speech.markCapable(ws); return true; }
+  if (msg.t === "tts_played" && typeof msg.qid === "string") { speech.played(msg.qid); return true; }
+  if (msg.t === "tts_window_closed" && typeof msg.sessionId === "string") {
+    speech.windowClosed(typeof msg.runnerId === "string" && msg.runnerId ? msg.runnerId : LOCAL_ID, msg.sessionId);
+    return true;
+  }
   if (msg.t === "wake_hello") { clearUnauthTimer(ws); wakeClients.add(ws); broadcastWakeState(); return true; }
   if (msg.t === "wake") {
     if (!requireOwner(ws)) return true;
@@ -9096,7 +9137,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           send(ws, { t: "error", message: "voz não reconhecida", denied: true, score: id.score });
           if (msg.speak) {
             const wav = await synthesize("Desculpe, não reconheci a sua voz.", VOICE);
-            send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: "Desculpe, não reconheci a sua voz." });
+            enqueueSpeech(activeRunner(ws), sid, { audio: wav.toString("base64"), text: "Desculpe, não reconheci a sua voz." }, [ws]);
           }
           return;
         }
@@ -9121,7 +9162,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         send(ws, { t: "message", message: { sessionId: sid, role: "user", text: raw, ts: now, agent: "jarvis", speaker } });
         send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply, ts: now + 1, agent: "jarvis" } });
         if (msg.speak) {
-          try { const wav = await synthesize(reply, VOICE, { lang }); send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: reply }); }
+          try { const wav = await synthesize(reply, VOICE, { lang }); enqueueSpeech(activeRunner(ws), sid, { audio: wav.toString("base64"), text: reply }, [ws]); }
           catch { voiceTurns.end(vk, "error"); }
         } else voiceTurns.end(vk, "no_audio");
         return;
@@ -9186,6 +9227,24 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // (local sessions persist it via the setmode handler + the Store instead).
     { const _rr = activeRunner(ws); if (_rr !== LOCAL_ID) { const _pm = normalizePermissionMode(typeof msg.permissionMode === "string" ? msg.permissionMode : undefined); if (_pm) remoteSessionModes.set(_rr + "" + sid, _pm); } }
 
+    // VOZ-01: fala do dono → vira o aparelho de saída; "espere", "próxima", "encerrar a voz"… são da
+    // fila e param aqui; o resto conta como resposta à sessão que tem a vez.
+    const heardByWake = msg.t === "send" && msg.speak === true && wakeClients.has(ws);
+    let wakeFocus = "";
+    // Digitou com a voz ligada: a resposta fala neste aparelho, não no último em que falou.
+    if (msg.t === "send" && msg.speak === true && !heardByWake) speech.useDevice(ws);
+    if (msg.t === "voice" || heardByWake) {
+      const heard = speech.heard(ws, activeRunner(ws), sid, text, heardByWake && sid === WAKE_SESSION);
+      if (heard.handled) {
+        clearPendingInboundTurn(inboundKey);
+        if (msg.t === "voice") voiceTurns.end(voiceKey(activeRunner(ws), sid), "no_audio");
+        send(ws, { t: "message", runnerId: activeRunner(ws), message: { sessionId: sid, role: "user", text, ts: Date.now(), agent: "jarvis", speaker } });
+        return;
+      }
+      // "Hey Jarvis" logo depois de uma sessão falar responde a ELA, não à voice (RN-O7).
+      if (heardByWake && sid === WAKE_SESSION && heard.target.runnerId === LOCAL_ID && heard.target.sessionId !== WAKE_SESSION) wakeFocus = heard.target.sessionId;
+    }
+
     const approvalCommand = adaptiveApprovalVoiceCommand(text);
     if (approvalCommand) {
       clearPendingInboundTurn(inboundKey);
@@ -9200,7 +9259,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
       send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply, ts: Date.now(), agent: "jarvis" } });
       if (msg.speak) {
-        try { const wav = await synthesize(reply, VOICE); send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: reply }); } catch { /* ignore */ }
+        try { const wav = await synthesize(reply, VOICE); enqueueSpeech(activeRunner(ws), sid, { audio: wav.toString("base64"), text: reply }, [ws]); } catch { /* ignore */ }
       }
       return;
     }
@@ -9246,7 +9305,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
       send(ws, { t: "message", message: { sessionId: sid, role: "assistant", text: reply, ts: Date.now(), agent: "jarvis" } });
       if (msg.speak) {
-        try { const wav = await synthesize(reply, VOICE); send(ws, { t: "tts", sessionId: sid, audio: wav.toString("base64"), text: reply }); } catch { /* fala é best-effort; o texto já foi */ }
+        try { const wav = await synthesize(reply, VOICE); enqueueSpeech(activeRunner(ws), sid, { audio: wav.toString("base64"), text: reply }, [ws]); } catch { /* fala é best-effort; o texto já foi */ }
       }
       return;
     }
@@ -9262,6 +9321,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // folder by speech, and asks new-vs-continue when a conversation is already going.
     if (sid === WAKE_SESSION) {
       clearPendingInboundTurn(inboundKey);
+      if (wakeFocus && store.get(wakeFocus)) {
+        voiceFocusOnce = wakeFocus;
+        try { await runVoiceTask(text, !!msg.speak, speaker); } finally { voiceFocusOnce = ""; }
+        return;
+      }
       await handleVoiceTurn(text, !!msg.speak, speaker, msg.t === "voice");
       return;
     }

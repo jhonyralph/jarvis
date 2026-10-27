@@ -299,6 +299,25 @@ de cada vez.
 | **F5** | Celular só com app aberto (UC-24) | Muda o serviço Android que já existe; teste em aparelho |
 | **F6** | Vários aparelhos: opt-in, autenticação remota, líder manual e arbitragem automática por rede + localização (UC-22, UC-23) | Exige pareamento de listener remoto e a comparação de detectores |
 
+### 7.1) Estado da F1 (2026-10-27)
+Passos 1–4 do roteiro implementados; o passo 5 (listener do PC) fica para uma entrega própria, com
+teste em aparelho.
+- **Regras:** `apps/hub/src/speechQueue.ts` (puro); ponte com aparelhos e síntese em
+  `apps/hub/src/speechBridge.ts`; comandos de voz sem IA em `apps/hub/src/speechCommands.ts`.
+- **Hub:** todo envio de fala passa pela ponte, exceto a fala do cartão de decisão (`for: "ask"`),
+  que segue direta. Aparelho de saída = onde o dono falou (ou digitou com voz) por último; sem ele,
+  quem vê a sessão; sem ninguém vendo, o listener do PC.
+- **App:** toca fala da fila mesmo de sessão fora da tela, avisa "terminei", abre a janela de resposta
+  na sessão que falou (abrindo-a) e avisa quando a janela fecha sem fala.
+- **Limites conhecidos:**
+  - o listener do PC ainda não avisa "terminei" nem tem janela: a fila usa a duração do áudio e segura
+    a vez por `JARVIS_VOICE_WINDOW_MS` (8 s) para o "Hey Jarvis" seguinte cair na sessão que falou;
+  - esse redirecionamento do "Hey Jarvis" vale só para sessões desta máquina; de outra máquina, a fala
+    vai para a voice;
+  - falar por cima no app continua indo para o refino da sessão que está na tela (VOZ-00);
+  - a fila vive na memória do Hub: um reinício perde as falas pendentes (o texto fica nas sessões);
+  - nada foi validado em aparelho real.
+
 ## 8) Validação
 - F1 tem teste automático (fila 1 → 2 → 1 tocando 1+1 e depois 2; fala da sessão 1 chegando durante
   a fala dela entra logo depois; fala da sessão 2 chegando nesse momento espera a janela; a fila não
