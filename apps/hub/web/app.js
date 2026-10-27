@@ -5935,6 +5935,7 @@
         // teto — em vez de um threshold fixo que trata toda pausa de raciocínio igual.
         let adaptiveSIL=baseSIL, nearMiss=false;
         const poll=setInterval(()=>{ an.getByteTimeDomainData(buf); let mx=0; for(const v of buf) mx=Math.max(mx,Math.abs(v-128)); elapsed+=100;
+          if(mx>TH && !spoke && auto && contTimer){ clearTimeout(contTimer); contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, 600000); }   // começou a falar: o teto de continueSec era para COMEÇAR, não para durar
           if(mx>TH){ if(spoke&&nearMiss) adaptiveSIL=Math.min(baseSIL+2000,adaptiveSIL+400); spoke=true; silence=0; nearMiss=false; }
           else if(spoke){ silence+=100; if(silence>=adaptiveSIL*0.6) nearMiss=true; }
           if(vs&&vs.auto&&vs.ready&&!vs.failed) return;   // o Hub decide o fim da fala (voice_endpoint)

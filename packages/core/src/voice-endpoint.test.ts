@@ -47,3 +47,29 @@ test("limiares são configuráveis", () => {
   const d = endOfTurnDecision({ ...base, silenceMs: 400, partial: "Pronto." }, { ...TH, completeMs: 300 });
   assert.equal(d.end, true);
 });
+
+test("fala longa: frase completa NÃO encerra num gole d'água — vale a espera longa", () => {
+  const long = { speechMs: 45_000, elapsedMs: 60_000, partialFresh: true };
+  const pausa = endOfTurnDecision({ ...long, silenceMs: 4_000, partial: "E o cliente reclamou disso ontem." });
+  assert.equal(pausa.end, false, "4 s de pausa no meio de uma explicação não encerram");
+  assert.equal(pausa.waitMs, TH.longCompleteMs);
+  assert.deepEqual(endOfTurnDecision({ ...long, silenceMs: 5_100, partial: "E o cliente reclamou disso ontem." }), { end: true, reason: "frase_completa", waitMs: TH.longCompleteMs });
+  assert.equal(endOfTurnDecision({ ...long, silenceMs: 7_000, partial: "e aí eu pensei que" }).end, false, "conector: espera ainda mais");
+  assert.deepEqual(endOfTurnDecision({ ...long, silenceMs: 10_000, partial: "e aí eu pensei que" }), { end: true, reason: "teto_de_silencio", waitMs: TH.longMaxSilenceMs });
+});
+
+test("fala curta continua rápida: o modo longo só vale depois de muita fala", () => {
+  const short = { speechMs: TH.longSpeechMs - 1, elapsedMs: 12_000, partialFresh: true };
+  assert.equal(endOfTurnDecision({ ...short, silenceMs: 750, partial: "Roda os testes." }).end, true);
+  assert.equal(endOfTurnDecision({ ...short, silenceMs: TH.maxSilenceMs, partial: "e" }).reason, "teto_de_silencio");
+});
+
+test("frase de fim encerra já, até no meio de uma explicação longa", () => {
+  const long = { speechMs: 90_000, elapsedMs: 120_000, partialFresh: true };
+  for (const fim of ["... e era isso, pode mandar.", "Terminei.", "Câmbio!", "ok, that's all", "eso es todo"]) {
+    assert.deepEqual(endOfTurnDecision({ ...long, silenceMs: 800, partial: fim }), { end: true, reason: "frase_de_fim", waitMs: TH.completeMs }, fim);
+  }
+  assert.equal(endOfTurnDecision({ ...long, silenceMs: 800, partial: "O que eu quero é isso." }).end, false, "'é isso' comum não encerra");
+  assert.equal(endOfTurnDecision({ ...long, silenceMs: 800, partial: "terminei o relatório e depois" }).end, false, "'terminei' no meio da frase não conta");
+  assert.equal(endOfTurnDecision({ speechMs: 90_000, elapsedMs: 120_000, partialFresh: false, silenceMs: 800, partial: "pode mandar" }).end, false, "parcial velha não decide");
+});

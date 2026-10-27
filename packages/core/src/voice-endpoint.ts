@@ -26,12 +26,37 @@ export interface EndpointThresholds {
   noSpeechMs: number;
   /** Menos fala que isto não conta como "falou" (estalo, tosse curta). */
   minSpeechMs: number;
+  /**
+   * FALA LONGA (2026-10-27): depois de tanta fala acumulada, a pessoa está explicando, não pedindo.
+   * Numa explicação toda frase termina em ponto — "frase completa" deixa de significar "acabou" — e
+   * um gole d'água ou uma tosse no meio não podem encerrar. Valem então os prazos `long*`, mais
+   * folgados; para encerrar rápido, a frase de fim ("pode mandar", "terminei").
+   */
+  longSpeechMs: number;
+  longCompleteMs: number;
+  longNeutralMs: number;
+  longIncompleteMs: number;
+  longMaxSilenceMs: number;
 }
 
 /** Proposta inicial — calibrar com a telemetria (o evento voice_turn registra o motivo do fim). */
 export const DEFAULT_ENDPOINT_THRESHOLDS: EndpointThresholds = {
   completeMs: 700, neutralMs: 1_300, incompleteMs: 2_600, maxSilenceMs: 3_500, noSpeechMs: 6_000, minSpeechMs: 250,
+  longSpeechMs: 10_000, longCompleteMs: 5_000, longNeutralMs: 6_000, longIncompleteMs: 8_000, longMaxSilenceMs: 10_000,
 };
+
+/** Frases que, no FIM da fala, dizem "pode mandar" — encerram já, em fala curta ou longa. Só as que
+ *  quase nunca fecham uma frase comum ("é isso" ficou de fora: "o que eu quero é isso."). */
+const END_PHRASES = [
+  "pode mandar", "pode enviar", "manda ver", "terminei", "acabei", "cambio", "e so isso", "era isso", "era so isso",
+  "that's all", "thats all", "send it", "i'm done", "im done",
+  "eso es todo", "puedes enviar", "termine",
+];
+function endsWithEndPhrase(partial?: string): boolean {
+  const t = (partial || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z' ]+/g, " ").replace(/\s+/g, " ").trim();
+  return !!t && END_PHRASES.some((p) => t === p || t.endsWith(" " + p));
+}
 
 /** Palavras que, no FIM da frase, indicam que ela não acabou (pt, en, es). Ficam de fora as que
  *  fecham frase de verdade: "faz isso", "é assim", "eu também", "I think so". */
@@ -47,7 +72,7 @@ const TRAILING_INCOMPLETE = new Set([
   "y", "pero", "entonces", "porque", "o", "si", "cuando", "el", "la", "los", "las", "un", "una", "con", "para", "por", "mi", "tu", "eh",
 ]);
 
-export type EndpointReason = "frase_completa" | "pausa_neutra" | "frase_incompleta" | "teto_de_silencio" | "sem_fala";
+export type EndpointReason = "frase_completa" | "pausa_neutra" | "frase_incompleta" | "teto_de_silencio" | "sem_fala" | "frase_de_fim";
 
 export interface EndpointInput {
   /** Silêncio desde a última fala detectada pelo modelo. */
@@ -79,9 +104,17 @@ export function endOfTurnDecision(input: EndpointInput, th: EndpointThresholds =
   if (input.speechMs < th.minSpeechMs) {
     return input.elapsedMs >= th.noSpeechMs ? { end: true, reason: "sem_fala", waitMs: th.noSpeechMs } : { end: false, waitMs: th.noSpeechMs };
   }
-  if (input.silenceMs >= th.maxSilenceMs) return { end: true, reason: "teto_de_silencio", waitMs: th.maxSilenceMs };
+  // "Pode mandar" no fim encerra já, mesmo no meio de uma explicação longa.
+  if (input.partialFresh && endsWithEndPhrase(input.partial)) {
+    return input.silenceMs >= th.completeMs ? { end: true, reason: "frase_de_fim", waitMs: th.completeMs } : { end: false, waitMs: th.completeMs };
+  }
+  const long = input.speechMs >= th.longSpeechMs;
+  const maxSilence = long ? th.longMaxSilenceMs : th.maxSilenceMs;
+  if (input.silenceMs >= maxSilence) return { end: true, reason: "teto_de_silencio", waitMs: maxSilence };
   const shape = input.partialFresh ? partialShape(input.partial) : "unknown";
-  const waitMs = shape === "complete" ? th.completeMs : shape === "incomplete" ? th.incompleteMs : th.neutralMs;
+  const waitMs = long
+    ? (shape === "complete" ? th.longCompleteMs : shape === "incomplete" ? th.longIncompleteMs : th.longNeutralMs)
+    : (shape === "complete" ? th.completeMs : shape === "incomplete" ? th.incompleteMs : th.neutralMs);
   const reason: EndpointReason = shape === "complete" ? "frase_completa" : shape === "incomplete" ? "frase_incompleta" : "pausa_neutra";
   return input.silenceMs >= waitMs ? { end: true, reason, waitMs } : { end: false, waitMs };
 }

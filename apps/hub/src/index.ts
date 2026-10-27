@@ -33,6 +33,8 @@ import { log, isLogLevel } from "./logger.js";
 import { startStallForensics } from "./stallForensics.js";
 import { LoopStallPolicy } from "./loopStallPolicy.js";
 import { SpeechBridge } from "./speechBridge.js";
+import { VoiceContinuation } from "./voiceContinuation.js";
+import { DEFAULT_ENDPOINT_THRESHOLDS, type EndpointThresholds } from "@jarvis/core";
 import type { SpeechKind } from "./speechQueue.js";
 import { VoiceTurnTracker, normalizeListenConfig, listenLanguages, normalizeGateLevel, voiceGateDecision, speechChunks, normalizeAudioRetention, replyLanguage, parseLanguageCommand, practiceInstruction, languageSwitchConfirmation, LANGUAGE_NAMES_PT, type ListenLanguage } from "@jarvis/core";
 import { VoiceAudioStore } from "./voiceAudio.js";
@@ -860,9 +862,20 @@ function sweepVoiceAudio(): void {
 }
 // VOZ-00 F4/F5: o áudio chega em pedaços enquanto o usuário fala; o Hub decide o fim do turno pelo
 // detector de voz por modelo + o sentido da frase parcial, e manda o aparelho encerrar a gravação.
+/** Fim da fala em explicação longa (2026-10-27): a pausa máxima é configurável — um gole d'água ou uma
+ *  tosse no meio não podem encerrar. As esperas do modo longo nunca passam desse teto. */
+const LONG_PAUSE_MS = Math.max(4_000, Number(process.env.JARVIS_VOICE_LONG_PAUSE_MS) || DEFAULT_ENDPOINT_THRESHOLDS.longMaxSilenceMs);
+const ENDPOINT_THRESHOLDS: EndpointThresholds = {
+  ...DEFAULT_ENDPOINT_THRESHOLDS,
+  longMaxSilenceMs: LONG_PAUSE_MS,
+  longCompleteMs: Math.min(DEFAULT_ENDPOINT_THRESHOLDS.longCompleteMs, LONG_PAUSE_MS),
+  longNeutralMs: Math.min(DEFAULT_ENDPOINT_THRESHOLDS.longNeutralMs, LONG_PAUSE_MS),
+  longIncompleteMs: Math.min(DEFAULT_ENDPOINT_THRESHOLDS.longIncompleteMs, LONG_PAUSE_MS),
+};
 const voiceStreams = new VoiceStreams<WebSocket>({
   open: (streamId, onEvent) => openTranscriptionStream(streamId, listenOpts(), onEvent),
   send: (socket, frame) => send(socket, frame),
+  thresholds: () => ENDPOINT_THRESHOLDS,
 });
 /** VOZ-00 F6: fala gravada no modo prática leva a instrução do idioma junto do contexto pessoal.
  *  Só fala gravada: o que é DIGITADO segue como sempre. */
@@ -4122,10 +4135,30 @@ function resetVoiceSession(): void {
   broadcast(WAKE_SESSION, { t: "history", runnerId: LOCAL_ID, sessionId: s.id, session: { agent: s.agent, cwd: s.cwd, title: s.title }, messages: [] });
   pushSessions();
 }
+// Continuação de fala cortada (gole d'água, tosse): ./voiceContinuation.ts. Só sessões desta máquina —
+// o turno de outra máquina não é cancelável daqui do mesmo jeito.
+const voiceContinuation = new VoiceContinuation({
+  windowMs: Math.max(0, Number(process.env.JARVIS_VOICE_MERGE_MS ?? 10_000) || 0),
+  busy: (sid) => sessionDispatchBusy(LOCAL_ID, sid),
+  abort: (sid) => {
+    const ctrl = localAborts.get(sid);
+    if (!ctrl) return false;
+    cancelRequestedAt.set(sid, Date.now());
+    ctrl.abort();
+    return true;
+  },
+});
+function noteVoiceDispatch(sid: string, text: string): void { voiceContinuation.note(sid, text); }
+async function joinVoiceContinuation(sid: string, text: string): Promise<string> {
+  const r = await voiceContinuation.join(sid, text);
+  if (r.joined) log.info("voice_continuation_joined", { sessionId: sid, gapMs: r.gapMs });
+  return r.text;
+}
 /** VOZ-01 RN-O7: resposta por "Hey Jarvis" à sessão que acabou de falar (vale só para esta fala). */
 let voiceFocusOnce = "";
 async function runVoiceTask(task: string, speak: boolean, speaker?: string): Promise<void> {
   const sid = voiceFocusOnce || voiceTarget || WAKE_SESSION; // binding: age na sessão-alvo (evita sessão errada)
+  noteVoiceDispatch(sid, task);
   const s = store.ensure(sid);
   if (sid === WAKE_SESSION && s.messages.length === 0) store.reconfigure(WAKE_SESSION, { agent: voiceConfig.agent, cwd: voiceConfig.cwd });
   // sessão vinculada usa o modelo/esforço DELA (undefined → prefs/default); só a de voz usa voiceConfig.
@@ -9333,6 +9366,15 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // folder by speech, and asks new-vs-continue when a conversation is already going.
     if (sid === WAKE_SESSION) {
       clearPendingInboundTurn(inboundKey);
+      if (heardByWake) {
+        const target = wakeFocus && store.get(wakeFocus) ? wakeFocus : (voiceTarget || WAKE_SESSION);
+        const joined = await joinVoiceContinuation(target, text);
+        if (joined !== text) {
+          voiceFocusOnce = target;
+          try { await runVoiceTask(joined, !!msg.speak, speaker); } finally { voiceFocusOnce = ""; }
+          return;
+        }
+      }
       if (wakeFocus && store.get(wakeFocus)) {
         voiceFocusOnce = wakeFocus;
         try { await runVoiceTask(text, !!msg.speak, speaker); } finally { voiceFocusOnce = ""; }
@@ -9419,7 +9461,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     const queueLocalTurn = (): void => {
       const rid = activeRunner(ws);
       enqueueChatTurn(LOCAL_ID, sid, {
-        text,
+        text: text ?? "", // já garantido não vazio acima; o `??` só porque `text` é reatribuído (continuação de fala)
         atts: Array.isArray(msg.attachments) ? msg.attachments : [],
         model: typeof msg.model === "string" ? msg.model : undefined,
         effort: typeof msg.effort === "string" ? msg.effort : undefined,
@@ -9437,10 +9479,12 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // queue list itself already updated via broadcastQueue above).
       send(ws, { t: "queued", runnerId: LOCAL_ID, sessionId: sid, text, voice: msg.t === "voice" });
     };
+    if (msg.t === "voice") text = await joinVoiceContinuation(sid, text);
     if (sessionDispatchBusy(LOCAL_ID, sid)) {
       queueLocalTurn();
       return;
     }
+    if (msg.t === "voice") noteVoiceDispatch(sid, text);
 
     // Reserve the slot SYNCHRONOUSLY — no `await` between the guard check above and this line.
     // Without this, two messages for the same session (e.g. a text `send` and a `voice` whose STT
