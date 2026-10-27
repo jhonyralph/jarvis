@@ -1,3 +1,10 @@
+# [0.49.0](https://github.com/jhonyralph/jarvis/compare/v0.48.0...v0.49.0) (2026-10-27)
+
+
+### Features
+
+* **voz:** resposta em ate 3,5 s com o microfone seguindo aberto + logs do fluxo ([b6877ec](https://github.com/jhonyralph/jarvis/commit/b6877ec3d021b816065182e442f8061d49527fd2))
+
 # [0.48.0](https://github.com/jhonyralph/jarvis/compare/v0.47.0...v0.48.0) (2026-10-27)
 
 
