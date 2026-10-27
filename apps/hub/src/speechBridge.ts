@@ -34,7 +34,7 @@ export interface SpeechBridgeOptions extends SpeechQueueOptions {
   localId?: string;
 }
 
-interface Payload<W> { frame: Record<string, unknown>; fallback: W[] }
+interface Payload<W> { frame: Record<string, unknown>; fallback: W[]; enqueuedAt: number }
 
 export class SpeechBridge<W extends SpeechSocket> {
   readonly queue: SpeechQueue;
@@ -42,6 +42,8 @@ export class SpeechBridge<W extends SpeechSocket> {
   private device: W | null = null;
   private capable = new WeakSet<W>();
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** Falas tocando agora (monitoramento: quanto tocaram de verdade). */
+  private playing = new Map<string, { at: number; sessionId: string; durationMs?: number }>();
   private windowTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly deviceWindowMs: number;
   private readonly localId: string;
@@ -76,17 +78,29 @@ export class SpeechBridge<W extends SpeechSocket> {
       closing: frame.closing === true,
       // Sem áudio (trecho final vazio por falha de síntese): termina sozinho, não prende a fila.
       durationMs: wavDurationMs(audio) || 1,
-      payload: { frame: { ...frame, t: "tts", runnerId, sessionId }, fallback } satisfies Payload<W>,
+      payload: { frame: { ...frame, t: "tts", runnerId, sessionId }, fallback, enqueuedAt: this.now() } satisfies Payload<W>,
     };
     this.run(this.queue.enqueue(item, this.now()));
   }
 
-  played(qid: string): void { this.run(this.queue.played(qid, this.now())); }
-  windowClosed(runnerId: string, sessionId: string): void { this.run(this.queue.windowClosed(this.key(runnerId, sessionId), this.now())); }
+  played(qid: string): void {
+    const p = this.playing.get(qid);
+    if (p) {
+      this.playing.delete(qid);
+      this.deps.log("speech_played", { sessionId: p.sessionId, playMs: this.now() - p.at, durationMs: p.durationMs, by: "aparelho" });
+    }
+    this.run(this.queue.played(qid, this.now()));
+  }
+  windowClosed(runnerId: string, sessionId: string): void {
+    this.deps.log("speech_window_closed", { sessionId, by: "aparelho" });
+    this.run(this.queue.windowClosed(this.key(runnerId, sessionId), this.now()));
+  }
   /** Falou por cima do agente no app (refino): para a voz e espera a resposta desta sessão. */
   bargeIn(ws: W): void {
     this.device = ws;
-    this.run(this.queue.bargeIn(this.now()).commands);
+    const b = this.queue.bargeIn(this.now());
+    if (b.session) this.deps.log("speech_barge_in", { sessionId: this.target(b.session).sessionId, via: "app" });
+    this.run(b.commands);
   }
 
   /**
@@ -122,11 +136,15 @@ export class SpeechBridge<W extends SpeechSocket> {
     }
     if (this.queue.state().mode === "playing") {
       const b = this.queue.bargeIn(now);
+      if (b.session) this.deps.log("speech_barge_in", { sessionId: this.target(b.session).sessionId, via: followFocus ? "wake" : "app" });
       this.run(b.commands);
       if (followFocus && b.session) key = b.session;
     }
     this.run(this.queue.userSpoke(key, now));
-    return { handled: false, target: this.target(key) };
+    const target = this.target(key);
+    // Para onde foi a fala: a sessão que tinha a vez (resposta a ela) ou a pedida.
+    this.deps.log("speech_heard", { sessionId: target.sessionId, runnerId: target.runnerId, viaFocus: key !== this.key(runnerId, sessionId), source: followFocus ? "wake" : "app" });
+    return { handled: false, target };
   }
 
   /** Para os timers (testes / desligamento). */
@@ -140,6 +158,10 @@ export class SpeechBridge<W extends SpeechSocket> {
 
   private now(): number { return this.deps.now ? this.deps.now() : Date.now(); }
   private output(): W | null { return this.device && this.device.readyState === this.device.OPEN ? this.device : null; }
+  private isWake(ws: W): boolean {
+    for (const w of this.deps.wakeClients()) if (w === ws) return true;
+    return false;
+  }
   private firstWake(): W | null {
     for (const w of this.deps.wakeClients()) if (w.readyState === w.OPEN) return w;
     return null;
@@ -165,18 +187,31 @@ export class SpeechBridge<W extends SpeechSocket> {
         const out = this.output();
         const alive = fallback.filter((w) => w.readyState === w.OPEN);
         const wake = this.firstWake();
-        if (out) this.deps.send(out, f);
-        else if (alive.length) for (const w of alive) this.deps.send(w, f);
-        else if (wake) this.deps.send(wake, f);
+        let device = "ninguem";
+        if (out) { this.deps.send(out, f); device = this.isWake(out) ? "listener" : "saida"; }
+        else if (alive.length) { for (const w of alive) this.deps.send(w, f); device = "quem_ve"; }
+        else if (wake) { this.deps.send(wake, f); device = "listener"; }
+        const target = this.target(c.item.session);
+        this.playing.set(c.item.id, { at: this.now(), sessionId: target.sessionId, durationMs: c.item.durationMs });
+        if (this.playing.size > 200) this.playing.delete(this.playing.keys().next().value as string);
+        this.deps.log("speech_play", {
+          sessionId: target.sessionId, runnerId: target.runnerId, kind: c.item.kind, device,
+          queuedMs: this.now() - (c.item.payload as Payload<W>).enqueuedAt, durationMs: c.item.durationMs, more: c.item.more || undefined,
+        });
       } else if (c.type === "window") {
         const out = this.output() || this.firstWake();
         const { runnerId, sessionId } = this.target(c.session);
+        this.deps.log("speech_window", { sessionId, mode: out && this.capable.has(out) ? "aparelho" : "tempo" });
         if (out && this.capable.has(out)) this.deps.send(out, { t: "voice_window", runnerId, sessionId });
         else {
           // Aparelho sem janela (listener do PC): segura a vez um tempo curto para o "Hey Jarvis" de
           // resposta cair nesta sessão; depois a fila segue.
           if (this.windowTimer) clearTimeout(this.windowTimer);
-          this.windowTimer = setTimeout(() => { this.windowTimer = null; this.run(this.queue.windowClosed(c.session, this.now())); }, this.deviceWindowMs);
+          this.windowTimer = setTimeout(() => {
+            this.windowTimer = null;
+            this.deps.log("speech_window_closed", { sessionId, by: "tempo" });
+            this.run(this.queue.windowClosed(c.session, this.now()));
+          }, this.deviceWindowMs);
           this.windowTimer.unref?.();
         }
       } else if (c.type === "stop") {

@@ -8,7 +8,7 @@
  * Se o serviço não abre ou cai no meio, o aparelho recebe `voice_stream_failed` e volta ao fim de fala
  * pelo volume, como antes — a conversa nunca depende deste caminho para funcionar.
  */
-import { endOfTurnDecision, type EndpointThresholds } from "@jarvis/core";
+import { endOfTurnDecision, partialShape, type EndpointThresholds } from "@jarvis/core";
 import type { StreamEvent, TranscriptionStream } from "./stt.js";
 
 const ID_RX = /^[A-Za-z0-9_-]{6,64}$/;
@@ -19,6 +19,9 @@ export interface VoiceStreamDeps<S> {
   open(streamId: string, onEvent: (ev: StreamEvent) => void): Promise<TranscriptionStream>;
   send(socket: S, frame: Record<string, unknown>): void;
   thresholds?: () => EndpointThresholds | undefined;
+  /** Monitoramento (2026-10-27): abertura, decisão de fim de fala (com os números que a decidiram),
+   *  falha e fechamento de cada gravação. Nunca o texto — só o tamanho e o formato da parcial. */
+  log?: (event: string, data: Record<string, unknown>) => void;
 }
 
 interface Live<S> {
@@ -29,6 +32,8 @@ interface Live<S> {
   partial: string;
   partialFresh: boolean;
   last?: { speechMs: number; silenceMs: number; durMs: number };
+  openedAt: number;
+  endedReason?: string;
 }
 
 export class VoiceStreams<S> {
@@ -41,12 +46,13 @@ export class VoiceStreams<S> {
   async start(socket: S, streamId: unknown): Promise<void> {
     if (typeof streamId !== "string" || !ID_RX.test(streamId)) return;
     this.stop(socket); // uma gravação por aparelho
-    const live: Live<S> = { socket, streamId, ended: false, partial: "", partialFresh: false };
+    const live: Live<S> = { socket, streamId, ended: false, partial: "", partialFresh: false, openedAt: Date.now() };
     this.bySocket.set(socket, live);
     try {
       const stream = await this.deps.open(streamId, (ev) => this.onEvent(live, ev));
       if (this.bySocket.get(socket) !== live) { stream.close(); return; } // encerrada enquanto abria
       live.stream = stream;
+      this.deps.log?.("voice_stream_open", { streamId, readyMs: Date.now() - live.openedAt });
       this.deps.send(socket, { t: "voice_stream_ready", streamId });
     } catch (error) {
       this.fail(live, String((error as Error)?.message || error));
@@ -65,6 +71,10 @@ export class VoiceStreams<S> {
     if (!live || (streamId !== undefined && live.streamId !== streamId)) return;
     this.bySocket.delete(socket);
     live.stream?.close();
+    this.deps.log?.("voice_stream_closed", {
+      streamId: live.streamId, endpointed: live.ended, reason: live.endedReason, openMs: Date.now() - live.openedAt,
+      speechMs: live.last?.speechMs, durMs: live.last?.durMs,
+    });
   }
 
   private onEvent(live: Live<S>, ev: StreamEvent): void {
@@ -90,6 +100,12 @@ export class VoiceStreams<S> {
     }, this.deps.thresholds?.());
     if (!d.end) return;
     live.ended = true;
+    live.endedReason = d.reason;
+    this.deps.log?.("voice_stream_endpoint", {
+      streamId: live.streamId, reason: d.reason, waitMs: d.waitMs,
+      speechMs: live.last.speechMs, silenceMs: live.last.silenceMs, durMs: live.last.durMs,
+      partialChars: live.partial.length, partialFresh: live.partialFresh, shape: live.partialFresh ? partialShape(live.partial) : "unknown",
+    });
     this.deps.send(live.socket, {
       t: "voice_endpoint", streamId: live.streamId, reason: d.reason,
       silenceMs: live.last.silenceMs, spoke: d.reason !== "sem_fala",
@@ -97,6 +113,7 @@ export class VoiceStreams<S> {
   }
 
   private fail(live: Live<S>, error: string): void {
+    this.deps.log?.("voice_stream_failed", { streamId: live.streamId, error: error.slice(0, 200), openMs: Date.now() - live.openedAt });
     if (this.bySocket.get(live.socket) === live) this.bySocket.delete(live.socket);
     live.stream?.close();
     this.deps.send(live.socket, { t: "voice_stream_failed", streamId: live.streamId, error });

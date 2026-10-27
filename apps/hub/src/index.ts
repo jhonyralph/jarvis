@@ -34,7 +34,7 @@ import { startStallForensics } from "./stallForensics.js";
 import { LoopStallPolicy } from "./loopStallPolicy.js";
 import { SpeechBridge } from "./speechBridge.js";
 import { VoiceContinuation } from "./voiceContinuation.js";
-import { DEFAULT_ENDPOINT_THRESHOLDS, type EndpointThresholds } from "@jarvis/core";
+import { DEFAULT_ENDPOINT_THRESHOLDS, LONG_SPEECH_PROFILE, type EndpointThresholds } from "@jarvis/core";
 import type { SpeechKind } from "./speechQueue.js";
 import { VoiceTurnTracker, normalizeListenConfig, listenLanguages, normalizeGateLevel, voiceGateDecision, speechChunks, normalizeAudioRetention, replyLanguage, parseLanguageCommand, practiceInstruction, languageSwitchConfirmation, LANGUAGE_NAMES_PT, type ListenLanguage } from "@jarvis/core";
 import { VoiceAudioStore } from "./voiceAudio.js";
@@ -862,20 +862,24 @@ function sweepVoiceAudio(): void {
 }
 // VOZ-00 F4/F5: o áudio chega em pedaços enquanto o usuário fala; o Hub decide o fim do turno pelo
 // detector de voz por modelo + o sentido da frase parcial, e manda o aparelho encerrar a gravação.
-/** Fim da fala em explicação longa (2026-10-27): a pausa máxima é configurável — um gole d'água ou uma
- *  tosse no meio não podem encerrar. As esperas do modo longo nunca passam desse teto. */
-const LONG_PAUSE_MS = Math.max(4_000, Number(process.env.JARVIS_VOICE_LONG_PAUSE_MS) || DEFAULT_ENDPOINT_THRESHOLDS.longMaxSilenceMs);
-const ENDPOINT_THRESHOLDS: EndpointThresholds = {
-  ...DEFAULT_ENDPOINT_THRESHOLDS,
-  longMaxSilenceMs: LONG_PAUSE_MS,
-  longCompleteMs: Math.min(DEFAULT_ENDPOINT_THRESHOLDS.longCompleteMs, LONG_PAUSE_MS),
-  longNeutralMs: Math.min(DEFAULT_ENDPOINT_THRESHOLDS.longNeutralMs, LONG_PAUSE_MS),
-  longIncompleteMs: Math.min(DEFAULT_ENDPOINT_THRESHOLDS.longIncompleteMs, LONG_PAUSE_MS),
-};
+/** Fim da fala em explicação longa (2026-10-27). Padrão: DESLIGADO — o dono prefere a resposta em até
+ *  3,5 s e o microfone seguindo aberto (o que vier depois vai como continuação). Com
+ *  JARVIS_VOICE_LONG_PAUSE_MS, depois de 10 s de fala as esperas crescem até esse teto. */
+const LONG_PAUSE_MS = Number(process.env.JARVIS_VOICE_LONG_PAUSE_MS) || 0;
+const ENDPOINT_THRESHOLDS: EndpointThresholds = LONG_PAUSE_MS >= 4_000
+  ? {
+    ...DEFAULT_ENDPOINT_THRESHOLDS,
+    longMaxSilenceMs: LONG_PAUSE_MS,
+    longCompleteMs: Math.min(LONG_SPEECH_PROFILE.longCompleteMs, LONG_PAUSE_MS),
+    longNeutralMs: Math.min(LONG_SPEECH_PROFILE.longNeutralMs, LONG_PAUSE_MS),
+    longIncompleteMs: Math.min(LONG_SPEECH_PROFILE.longIncompleteMs, LONG_PAUSE_MS),
+  }
+  : DEFAULT_ENDPOINT_THRESHOLDS;
 const voiceStreams = new VoiceStreams<WebSocket>({
   open: (streamId, onEvent) => openTranscriptionStream(streamId, listenOpts(), onEvent),
   send: (socket, frame) => send(socket, frame),
   thresholds: () => ENDPOINT_THRESHOLDS,
+  log: (event, data) => log.info(event, { ...data, source: String(data.streamId || "").startsWith("wk") ? "wake" : "app" }),
 });
 /** VOZ-00 F6: fala gravada no modo prática leva a instrução do idioma junto do contexto pessoal.
  *  Só fala gravada: o que é DIGITADO segue como sempre. */
@@ -4151,7 +4155,8 @@ const voiceContinuation = new VoiceContinuation({
 function noteVoiceDispatch(sid: string, text: string): void { voiceContinuation.note(sid, text); }
 async function joinVoiceContinuation(sid: string, text: string): Promise<string> {
   const r = await voiceContinuation.join(sid, text);
-  if (r.joined) log.info("voice_continuation_joined", { sessionId: sid, gapMs: r.gapMs });
+  // "no_previous" é o caso comum (primeira fala da sessão): só barulho no log.
+  if (r.reason !== "no_previous") log.info("voice_continuation", { sessionId: sid, joined: r.joined, reason: r.reason, gapMs: r.gapMs, settleMs: r.settleMs });
   return r.text;
 }
 /** VOZ-01 RN-O7: resposta por "Hey Jarvis" à sessão que acabou de falar (vale só para esta fala). */
@@ -4256,8 +4261,12 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string, g
   const hasControl = voiceMentionsCatalog(text, desc);
   // plain task, fresh session -> RESOLVE (sugere a sessão certa via memória; overlay decide)
   if (!inProgress && !hasControl) { await resolveVoice(text, speak, speaker); return; }
-  // plain task, in progress -> ask new-vs-continue
-  if (inProgress && !hasControl) { voicePending = { task: text }; await voiceSay("Já tenho uma conversa em andamento. Quer continuar ou começar uma nova?"); return; }
+  // plain task, in progress -> CONTINUA na voice (VOZ-01 RN-L1, decisão do dono 2026-10-27: "sempre a
+  // sessão voice"). Antes perguntava "continuar ou nova?" a cada pedido: por voz, sem tela, a pergunta
+  // chegava como um bloqueio, e a fala seguinte (a continuação do pedido) virava resposta a ela.
+  // Começar do zero continua valendo quando pedido ("nova conversa", "do zero") — via intenção abaixo.
+  if (inProgress && !hasControl && !/\b((conversa|sess[ãa]o) nova|nova (conversa|sess[ãa]o)|do zero|outra sess[ãa]o|come[çc]ar de novo)\b/i.test(text)) { log.info("voice_route", { source: "voice", decision: "continua" }); await runVoiceTask(text, speak, speaker); return; }
+  if (inProgress && !hasControl) { log.info("voice_route", { source: "voice", decision: "pergunta_nova" }); voicePending = { task: text }; await voiceSay("Quer começar uma conversa nova? Diga 'nova' para começar do zero, ou 'continuar'."); return; }
   // command-ish utterance -> one LLM intent pass
   const catalog = desc.map((a) => `${a.name} — modelos: ${a.models.map((m) => m.id).join(", ")} — esforços: ${[...new Set(a.models.flatMap((m) => m.efforts))].join(", ")}`).join("\n");
   const intent = await parseVoiceIntent({ text, catalog, recent: recentDirsList(20), inProgress, config: voiceConfig, agents });
@@ -6658,7 +6667,17 @@ async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
     broadcastWakeState(); return true;
   }
   if (msg.t === "wake_event") {
-    if (msg.phase === "capturing") { wakeListener.lastDetectAt = Date.now(); log.info("wake_detect", {}); broadcastWakeState(); }
+    // Monitoramento do fluxo (2026-10-27): o listener manda cada etapa (detecção, captura, continuação)
+    // com o id do "Hey Jarvis" (`flow`). Só campos curtos conhecidos — nunca texto falado.
+    const flowFields: Record<string, unknown> = {};
+    for (const k of ["flow", "score", "device", "streamId", "followUp", "secs", "end", "hubOk", "hubFailed", "spoke", "readyMs", "follows", "reason", "sttMs", "chars", "why"]) {
+      const v = msg[k];
+      if (typeof v === "number" && Number.isFinite(v)) flowFields[k] = v;
+      else if (typeof v === "boolean") flowFields[k] = v;
+      else if (typeof v === "string") flowFields[k] = v.slice(0, 80);
+    }
+    if (typeof msg.phase === "string" && wakeClients.has(ws)) log.info("wake_flow", { phase: msg.phase.slice(0, 24), ...flowFields });
+    if (msg.phase === "capturing") { wakeListener.lastDetectAt = Date.now(); log.info("wake_detect", { score: flowFields.score, flow: flowFields.flow }); broadcastWakeState(); }
     broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return true;
   }
   if (msg.t === "speakers") { await sendVoiceState(ws); return true; }
@@ -9368,6 +9387,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       clearPendingInboundTurn(inboundKey);
       if (heardByWake) {
         const target = wakeFocus && store.get(wakeFocus) ? wakeFocus : (voiceTarget || WAKE_SESSION);
+        log.info("voice_route", { source: "wake", sessionId: target, via: wakeFocus && store.get(wakeFocus) ? "vez_da_sessao" : voiceTarget ? "voice_vinculada" : "voice", chars: text.length });
         const joined = await joinVoiceContinuation(target, text);
         if (joined !== text) {
           voiceFocusOnce = target;
@@ -9811,6 +9831,12 @@ server.listen(PORT, () => {
   }
   // Structured log: boot marker + retention housekeeping (purge old daily files now and once a day).
   log.info("hub_boot", { version: VERSION, port: PORT, agents: agents.names(), voice: VOICE, bootMs: bootPhases.listen, phases: bootPhases });
+  // Monitoramento do fluxo de voz: os números em vigor, para ler cada `voice_stream_endpoint` com eles.
+  log.info("voice_flow_config", {
+    endpoint: ENDPOINT_THRESHOLDS, longPauseMs: LONG_PAUSE_MS || undefined,
+    mergeMs: Math.max(0, Number(process.env.JARVIS_VOICE_MERGE_MS ?? 10_000) || 0),
+    waitSteps: speech.queue.opts.waitSteps, deviceWindowMs: Number(process.env.JARVIS_VOICE_WINDOW_MS) || 8_000,
+  });
   setTimeout(() => { void reconcileNativeAfterBoot(); }, 1_500).unref?.();
   try { const purged = log.purgeOld(); if (purged) console.log(`[hub] logs: ${purged} arquivo(s) diário(s) removido(s) por retenção`); } catch { /* best effort */ }
   setInterval(() => { try { log.purgeOld(); } catch { /* best effort */ } }, 24 * 60 * 60 * 1000).unref?.();

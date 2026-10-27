@@ -39,11 +39,16 @@ export interface EndpointThresholds {
   longMaxSilenceMs: number;
 }
 
-/** Proposta inicial — calibrar com a telemetria (o evento voice_turn registra o motivo do fim). */
+/** Proposta inicial — calibrar com a telemetria (o evento voice_turn registra o motivo do fim).
+ *  O modo de fala longa vem DESLIGADO (prazos `long*` iguais aos normais): o dono prefere a resposta
+ *  em até 3,5 s e o microfone seguindo aberto — o que vier depois vai para a IA como continuação
+ *  (2026-10-27). Para ligar, ver LONG_SPEECH_PROFILE / JARVIS_VOICE_LONG_PAUSE_MS no Hub. */
 export const DEFAULT_ENDPOINT_THRESHOLDS: EndpointThresholds = {
   completeMs: 700, neutralMs: 1_300, incompleteMs: 2_600, maxSilenceMs: 3_500, noSpeechMs: 6_000, minSpeechMs: 250,
-  longSpeechMs: 10_000, longCompleteMs: 5_000, longNeutralMs: 6_000, longIncompleteMs: 8_000, longMaxSilenceMs: 10_000,
+  longSpeechMs: 10_000, longCompleteMs: 700, longNeutralMs: 1_300, longIncompleteMs: 2_600, longMaxSilenceMs: 3_500,
 };
+/** Prazos do modo de fala longa quando ligado (o teto vem da configuração). */
+export const LONG_SPEECH_PROFILE = { longCompleteMs: 5_000, longNeutralMs: 6_000, longIncompleteMs: 8_000 } as const;
 
 /** Frases que, no FIM da fala, dizem "pode mandar" — encerram já, em fala curta ou longa. Só as que
  *  quase nunca fecham uma frase comum ("é isso" ficou de fora: "o que eu quero é isso."). */

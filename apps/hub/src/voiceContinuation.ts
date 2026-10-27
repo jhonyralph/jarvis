@@ -21,6 +21,19 @@ export interface VoiceContinuationDeps {
   settleMs?: number;
 }
 
+/** Por que a fala foi (ou não) juntada à anterior — para o monitoramento calibrar a janela. */
+export type ContinuationReason = "joined" | "no_previous" | "disabled" | "window_expired" | "turn_finished" | "not_cancellable";
+
+export interface ContinuationResult {
+  text: string;
+  joined: boolean;
+  reason: ContinuationReason;
+  /** Tempo desde a fala anterior da sessão (ausente quando não havia). */
+  gapMs?: number;
+  /** Quanto o turno interrompido levou para sair. */
+  settleMs?: number;
+}
+
 export class VoiceContinuation {
   private readonly last = new Map<string, { text: string; at: number }>();
   constructor(private readonly deps: VoiceContinuationDeps) {}
@@ -31,15 +44,19 @@ export class VoiceContinuation {
   }
 
   /** Se `text` continua a fala anterior da sessão, interrompe o turno dela e devolve a fala inteira. */
-  async join(sessionId: string, text: string): Promise<{ text: string; joined: boolean; gapMs?: number }> {
+  async join(sessionId: string, text: string): Promise<ContinuationResult> {
     const prev = this.last.get(sessionId);
-    const gapMs = prev ? this.now() - prev.at : Infinity;
-    if (!prev || !this.deps.windowMs || gapMs > this.deps.windowMs || !this.deps.busy(sessionId)) return { text, joined: false };
-    if (!this.deps.abort(sessionId)) return { text, joined: false };
+    if (!prev) return { text, joined: false, reason: "no_previous" };
+    const gapMs = this.now() - prev.at;
+    if (!this.deps.windowMs) return { text, joined: false, reason: "disabled", gapMs };
+    if (gapMs > this.deps.windowMs) return { text, joined: false, reason: "window_expired", gapMs };
+    if (!this.deps.busy(sessionId)) return { text, joined: false, reason: "turn_finished", gapMs };
+    if (!this.deps.abort(sessionId)) return { text, joined: false, reason: "not_cancellable", gapMs };
     const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-    const until = this.now() + (this.deps.settleMs ?? 8_000);
+    const t0 = this.now();
+    const until = t0 + (this.deps.settleMs ?? 8_000);
     while (this.deps.busy(sessionId) && this.now() < until) await sleep(150);
-    return { text: `${prev.text} ${text}`, joined: true, gapMs };
+    return { text: `${prev.text} ${text}`, joined: true, reason: "joined", gapMs, settleMs: this.now() - t0 };
   }
 
   private now(): number { return this.deps.now ? this.deps.now() : Date.now(); }

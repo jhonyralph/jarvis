@@ -22,7 +22,7 @@ test("voltar a falar logo depois, com o turno rodando: interrompe e manda a fala
   running.add("s1");
   tick(4_000); // gole d'água
   const r = await c.join("s1", "e depois mande para o financeiro.");
-  assert.deepEqual(r, { text: "Quero que você revise o relatório de vendas e depois mande para o financeiro.", joined: true, gapMs: 4_000 });
+  assert.deepEqual(r, { text: "Quero que você revise o relatório de vendas e depois mande para o financeiro.", joined: true, reason: "joined", gapMs: 4_000, settleMs: 0 });
   assert.deepEqual(aborted, ["s1"]);
 });
 
@@ -44,7 +44,7 @@ test("depois da janela é mensagem nova (não interrompe)", async () => {
   c.note("s1", "primeiro pedido");
   running.add("s1");
   tick(10_001);
-  assert.deepEqual(await c.join("s1", "outro assunto"), { text: "outro assunto", joined: false });
+  assert.deepEqual(await c.join("s1", "outro assunto"), { text: "outro assunto", joined: false, reason: "window_expired", gapMs: 10_001 });
   assert.deepEqual(aborted, []);
 });
 
@@ -52,7 +52,7 @@ test("turno já terminou: a fala segue normal, sem juntar", async () => {
   const { c, aborted, tick } = setup();
   c.note("s1", "que horas são?");
   tick(3_000);
-  assert.equal((await c.join("s1", "e o clima?")).joined, false);
+  assert.equal((await c.join("s1", "e o clima?")).reason, "turn_finished");
   assert.deepEqual(aborted, []);
 });
 
@@ -60,15 +60,15 @@ test("outra sessão, turno não cancelável ou janela desligada: nada muda", asy
   const a = setup();
   a.c.note("s1", "x");
   a.running.add("s2");
-  assert.equal((await a.c.join("s2", "y")).joined, false, "nenhuma fala anterior em s2");
+  assert.equal((await a.c.join("s2", "y")).reason, "no_previous", "nenhuma fala anterior em s2");
 
   const b = setup({ cancellable: false });
   b.c.note("s1", "x");
   b.running.add("s1");
-  assert.equal((await b.c.join("s1", "y")).joined, false);
+  assert.equal((await b.c.join("s1", "y")).reason, "not_cancellable");
 
   const off = setup({ windowMs: 0 });
   off.c.note("s1", "x");
   off.running.add("s1");
-  assert.equal((await off.c.join("s1", "y")).joined, false);
+  assert.equal((await off.c.join("s1", "y")).reason, "disabled");
 });

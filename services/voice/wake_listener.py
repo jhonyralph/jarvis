@@ -99,6 +99,13 @@ STREAM_CHUNK_FRAMES = 3
 # Acima disto (base64) a fala vai como texto transcrito aqui: o Hub recusa mensagem maior que
 # JARVIS_MAX_PAYLOAD_MB (20 MB por padrao).
 MAX_AUDIO_B64 = 18 * 1024 * 1024
+# Continua ouvindo (2026-10-27): o pedido vai para a IA no fim normal da fala (ate 3,5 s de pausa), mas
+# o microfone NAO volta para o "Hey Jarvis" — segue aberto e o que o dono falar em seguida (depois de um
+# gole d'agua, uma tosse, mais um detalhe) vai para a mesma sessao como continuacao, que o Hub junta ao
+# pedido em andamento. Para de ouvir quando ninguem fala (aviso do Hub "sem fala", ~6 s), quando a
+# resposta comeca a tocar (o microfone ouviria a propria voz do Jarvis) ou no limite de continuacoes.
+FOLLOW_UP = os.environ.get("JARVIS_WAKE_FOLLOW_UP", "1") != "0"
+MAX_FOLLOW_UPS = 20
 # Entradas que NAO sao microfone: loopback do som do PC (o Jarvis se acordaria com um video dizendo
 # "Hey Jarvis") e os "mapeadores" virtuais do Windows. Nunca viram reserva automatica.
 _NOT_A_MIC = ("mapeador", "mapper", "driver de captura", "primary sound capture", "mixagem", "stereo mix",
@@ -408,6 +415,7 @@ def _stream_event(m):
         return
     t = m.get("t")
     if t == "voice_stream_ready":
+        _rec["readyAt"] = time.time()
         _rec["ready"].set()
     elif t == "voice_endpoint":
         _rec["spoke"] = bool(m.get("spoke", True))
@@ -427,7 +435,19 @@ def _hub_send(ws, obj) -> bool:
         return False
 
 
-def capture_with_hub(stream, ws):
+# Monitoramento do fluxo (2026-10-27): cada "Hey Jarvis" ganha um id (`flow`) e cada etapa vira um
+# `wake_event` para o Hub, que grava no log estruturado (evento `wake_flow`) — junto dos eventos do
+# proprio Hub sobre a mesma fala (fim de fala, juncao, fila de fala, `voice_turn`). Nunca o texto falado.
+_flow = {"id": None}
+# Como terminou a ultima captura (preenchido por capture_with_hub).
+_last_capture = {}
+
+
+def wake_log(ws, phase, **fields):
+    _hub_send(ws, {"t": "wake_event", "phase": phase, "flow": _flow["id"], **fields})
+
+
+def capture_with_hub(stream, ws, follow_up=False):
     """Grava mandando o audio ao Hub, que decide o fim da fala. Sem resposta do Hub em
     STREAM_READY_SECS (ou se ele falhar no meio), segue decidindo aqui pela pausa (END_SILENCE).
     Devolve (pcm, hub_ok, spoke): hub_ok = o Hub acompanhou a gravacao (e aceita o audio)."""
@@ -442,8 +462,13 @@ def capture_with_hub(stream, ws):
     end_frames = int(END_SILENCE * SR / FRAME)
     max_frames = int(MAX_UTTERANCE * SR / FRAME)
     no_speech_frames = int(6 * SR / FRAME)
+    interrupted = False
     for i in range(max_frames):
         block, _ = stream.read(FRAME)
+        if follow_up and state["speaking"]:
+            # A resposta comecou a tocar: o que entrasse daqui em diante seria a voz do proprio Jarvis.
+            interrupted = True
+            break
         pcm = (block[:, 0] if block.ndim > 1 else block).copy()
         frames.append(pcm)
         if int(np.abs(pcm.astype(np.int32)).mean()) > 220:
@@ -469,13 +494,57 @@ def capture_with_hub(stream, ws):
     _hub_send(ws, {"t": "voice_stream_close", "streamId": sid})
     hub_ok = _rec["ready"].is_set() and not _rec["failed"].is_set()
     by_hub_end = hub_ok and _rec["end"].is_set()
-    if by_hub_end:
-        print(f"[wake] fim da fala pelo Hub ({_rec['reason']})", flush=True)
+    if interrupted:
+        end = "resposta_tocou"
+    elif by_hub_end:
+        end = _rec["reason"] or "hub"
+        print(f"[wake] fim da fala pelo Hub ({end})", flush=True)
     elif len(frames) >= max_frames:
+        end = "teto"
         print(f"[wake] teto de {MAX_UTTERANCE:.0f} s atingido", flush=True)
+    elif spoke:
+        end = "pausa_local"
+    else:
+        end = "sem_fala_local"
     _rec["id"] = None
     pcm_all = np.concatenate(frames) if frames else np.zeros(0, dtype=np.int16)
-    return pcm_all, hub_ok, (_rec["spoke"] if by_hub_end else spoke)
+    if interrupted and not (by_hub_end and _rec["spoke"]):
+        result_spoke = False
+    else:
+        result_spoke = _rec["spoke"] if by_hub_end else spoke
+    _last_capture.clear()
+    _last_capture.update(streamId=sid, end=end)
+    wake_log(ws, "capture", streamId=sid, followUp=follow_up, secs=round(pcm_all.size / SR, 1), end=end,
+             hubOk=hub_ok, hubFailed=_rec["failed"].is_set(), spoke=bool(result_spoke),
+             readyMs=int((_rec["readyAt"] - t0) * 1000) if _rec["ready"].is_set() and _rec.get("readyAt") else None)
+    return pcm_all, hub_ok, result_spoke
+
+
+def send_utterance(ws, pcm, hub_ok):
+    """Manda a fala ao Hub (audio, se ele acompanhou a gravacao; senao texto transcrito aqui).
+    Devolve False quando a fala foi recusada aqui mesmo (voz nao reconhecida)."""
+    wav_path = pcm_to_wav(pcm)
+    speaker = identify_speaker(wav_path)  # None if unknown / no one enrolled
+    if GATE and speaker is None:
+        print("[wake] voice not recognized -> ignoring", flush=True)
+        wake_log(ws, "rejected", reason="voz_nao_reconhecida")
+        return False
+    audio = flac_b64(pcm) if hub_ok else ""
+    if audio and len(audio) <= MAX_AUDIO_B64:
+        # O Hub transcreve (como a fala do app): uma transcricao so, no mesmo servico.
+        print(f"[wake] fala de {pcm.size / SR:.1f} s enviada ao Hub ({speaker or '?'})", flush=True)
+        _hub_send(ws, {"t": "voice", "audio": audio, "ext": "flac", "speak": True, "sessionId": SESSION, "handsFree": False,
+                       "vtid": _last_capture.get("streamId"), "endpointReason": _last_capture.get("end")})
+    else:
+        # Hub antigo (nao aceita audio do listener) ou fala grande demais: transcreve aqui.
+        t0 = time.time()
+        text = transcribe(wav_path, LANG).strip()
+        print(f"[wake] heard ({speaker or '?'}): {text!r}", flush=True)
+        wake_log(ws, "local_stt", sttMs=int((time.time() - t0) * 1000), chars=len(text),
+                 why="audio_grande" if audio else "hub_sem_gravacao")
+        if text:
+            _hub_send(ws, {"t": "send", "text": text, "speak": True, "sessionId": SESSION, "speaker": speaker})
+    return True
 
 
 def flac_b64(pcm: np.ndarray) -> str:
@@ -598,34 +667,45 @@ def main():
                 if scores.get(key, 0.0) < THRESHOLD:
                     continue
                 print(f"[wake] detected (score {scores.get(key, 0.0):.2f}) -> capturing", flush=True)
-                if ws.ws:
-                    try:
-                        ws.ws.send(json.dumps({"t": "wake_event", "phase": "capturing", "wakeToken": _wake_token()}))
-                    except Exception:
-                        pass
+                _flow["id"] = "wf" + os.urandom(6).hex()
+                wake_log(ws, "capturing", score=round(float(scores.get(key, 0.0)), 3), device=(current.get("name") or "")[:60])
                 model.reset()
                 chime(CHIME_LISTEN, stream)
                 pcm, hub_ok, spoke = capture_with_hub(stream, ws)
                 if not spoke or pcm.size < SR // 2:  # ninguem falou / < 0.5 s -> ruido
                     chime(CHIME_MISS)
+                    wake_log(ws, "miss", secs=round(pcm.size / SR, 1))
                     continue
-                chime(CHIME_GOT)
-                wav_path = pcm_to_wav(pcm)
-                speaker = identify_speaker(wav_path)  # None if unknown / no one enrolled
-                if GATE and speaker is None:
-                    print("[wake] voice not recognized -> ignoring", flush=True)
+                chime(CHIME_GOT, stream)
+                if not send_utterance(ws, pcm, hub_ok):
                     continue
-                audio = flac_b64(pcm) if hub_ok else ""
-                if audio and len(audio) <= MAX_AUDIO_B64:
-                    # O Hub transcreve (como a fala do app): uma transcricao so, no mesmo servico.
-                    print(f"[wake] fala de {pcm.size / SR:.1f} s enviada ao Hub ({speaker or '?'})", flush=True)
-                    _hub_send(ws, {"t": "voice", "audio": audio, "ext": "flac", "speak": True, "sessionId": SESSION, "handsFree": False})
-                else:
-                    # Hub antigo (nao aceita audio do listener) ou fala grande demais: transcreve aqui.
-                    text = transcribe(wav_path, LANG).strip()
-                    print(f"[wake] heard ({speaker or '?'}): {text!r}", flush=True)
-                    if text:
-                        _hub_send(ws, {"t": "send", "text": text, "speak": True, "sessionId": SESSION, "speaker": speaker})
+                # Continua ouvindo: o que vier logo depois vai como continuacao do mesmo pedido.
+                follow, stop = 0, "desligado" if not FOLLOW_UP else ("hub_sem_gravacao" if not hub_ok else "")
+                while not stop:
+                    if follow >= MAX_FOLLOW_UPS:
+                        stop = "limite"
+                    elif state["speaking"]:
+                        stop = "resposta_tocou"
+                    elif not state["armed"]:
+                        stop = "desarmado"
+                    if stop:
+                        break
+                    pcm, hub_ok, spoke = capture_with_hub(stream, ws, follow_up=True)
+                    if not spoke or pcm.size < SR // 2:
+                        # ninguem falou (ou a resposta comecou a tocar): volta a esperar o "Hey Jarvis"
+                        stop = "resposta_tocou" if _last_capture.get("end") == "resposta_tocou" else "silencio"
+                        break
+                    chime(CHIME_GOT, stream)
+                    print(f"[wake] continuacao {follow + 1}", flush=True)
+                    if not send_utterance(ws, pcm, hub_ok):
+                        stop = "recusada"
+                        break
+                    follow += 1
+                    if not hub_ok:
+                        stop = "hub_sem_gravacao"
+                wake_log(ws, "follow_end", follows=follow, reason=stop)
+                _flow["id"] = None
+                model.reset()
             except Exception as e:
                 report_cycle_error(e)
     except KeyboardInterrupt:
