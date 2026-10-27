@@ -80,6 +80,10 @@ SILENT_SECS = float(os.environ.get("JARVIS_WAKE_SILENT_SECS", "10"))
 # 120 s (nao 20) da tempo de a pessoa ler e responder a pergunta: com prazo curto, cada relance
 # abria uma pergunta NOVA, em ciclo.
 OPEN_TIMEOUT = float(os.environ.get("JARVIS_WAKE_OPEN_TIMEOUT", "120"))
+# Sinal sonoro do "Hey Jarvis" (2026-10-27): antes a deteccao era muda — das 3 de 27/10 so 1 virou
+# conversa, e o dono nao tinha como saber se tinha sido ouvido. Dois tons subindo = "estou ouvindo";
+# descendo = "entendi, processando"; um tom grave = "nao ouvi nada".
+CHIME = os.environ.get("JARVIS_WAKE_CHIME", "1") != "0"
 # Entradas que NAO sao microfone: loopback do som do PC (o Jarvis se acordaria com um video dizendo
 # "Hey Jarvis") e os "mapeadores" virtuais do Windows. Nunca viram reserva automatica.
 _NOT_A_MIC = ("mapeador", "mapper", "driver de captura", "primary sound capture", "mixagem", "stereo mix",
@@ -342,6 +346,41 @@ def play_wav_b64(b64: str):
 
 
 # ----------------------------- utterance capture ---------------------------
+def _tone(freqs, ms=110, sr=24000, vol=0.22):
+    parts = []
+    for f in freqs:
+        n = int(sr * ms / 1000)
+        wave_ = np.sin(2 * np.pi * f * np.arange(n) / sr)
+        fade = max(1, int(sr * 0.012))
+        env = np.ones(n)
+        env[:fade] = np.linspace(0, 1, fade)
+        env[-fade:] = np.linspace(1, 0, fade)
+        parts.append(wave_ * env)
+    return (np.concatenate(parts) * vol * 32767).astype(np.int16), sr
+
+
+CHIME_LISTEN = _tone([660, 880])
+CHIME_GOT = _tone([880, 660])
+CHIME_MISS = _tone([330], ms=180)
+
+
+def chime(sound, stream=None):
+    """Toca o sinal e espera terminar. Com `stream`, descarta o que o microfone gravou enquanto o
+    sinal tocava — senao o proprio bip entraria no comeco da fala capturada."""
+    if not CHIME:
+        return
+    try:
+        pcm, sr = sound
+        sd.play(pcm, sr)
+        sd.wait()
+        if stream is not None:
+            n = stream.read_available
+            if n > 0:
+                stream.read(n)
+    except Exception as e:
+        print("[wake] chime error:", e, flush=True)
+
+
 def capture_utterance(stream) -> np.ndarray:
     """Read frames until ~700 ms trailing silence or ~12 s cap; return int16 PCM."""
     frames, silent, spoke = [], 0, False
@@ -479,9 +518,12 @@ def main():
                     except Exception:
                         pass
                 model.reset()
+                chime(CHIME_LISTEN, stream)
                 pcm = capture_utterance(stream)
                 if pcm.size < SR // 2:  # < 0.5 s -> noise, ignore
+                    chime(CHIME_MISS)
                     continue
+                chime(CHIME_GOT)
                 wav_path = pcm_to_wav(pcm)
                 speaker = identify_speaker(wav_path)  # None if unknown / no one enrolled
                 if GATE and speaker is None:
