@@ -14,7 +14,7 @@ links:
   roadmap: "Continuação da VOZ-00 (UC-16 em diante; regras L em diante — a K da VOZ-00 é Observabilidade)"
   design: "Conversa de 2026-10-27: decisões do dono sobre destino, acompanhamento, fila de fala e vários aparelhos ouvindo"
   adr: "N/A — decisões na seção 6"
-approval_evidence: "Decisões DEC-09..13 e confirmações I-1..I-3 (com o pedido de tempo e o encerramento da voz) dadas pelo dono em 2026-10-27 (conversa); nada implementado"
+approval_evidence: "Decisões DEC-09..13 e confirmações I-1..I-3 (com o pedido de tempo e o encerramento da voz) e a RN-O12 dadas pelo dono em 2026-10-27 (conversa); nada implementado"
 ---
 
 # Executable spec
@@ -286,6 +286,8 @@ de cada vez.
   pouco" (UC-25, RN-O10…RN-O12).
 - **I-3 — Fala interrompida pelo "Hey Jarvis"** não volta a tocar do início; o texto segue na sessão.
 - **Encerrar a voz** esvazia a fila e desliga a voz até ela ser religada (UC-26, RN-O13).
+- **Espera sem resposta** (RN-O12): vai uma vez para o fim da fila e depois fica só em texto — regra
+  proposta e aprovada pelo dono.
 
 ## 7) Plano em fases
 | Fase | Entrega | Por que nessa ordem |
