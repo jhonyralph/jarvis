@@ -31,6 +31,7 @@ import { warmUp as warmUpEmbed } from "./embed.js";
 import { pythonDiagnostics } from "./python.js";
 import { log, isLogLevel } from "./logger.js";
 import { startStallForensics } from "./stallForensics.js";
+import { LoopStallPolicy } from "./loopStallPolicy.js";
 import { VoiceTurnTracker, normalizeListenConfig, listenLanguages, normalizeGateLevel, voiceGateDecision, speechChunks, normalizeAudioRetention, replyLanguage, parseLanguageCommand, practiceInstruction, languageSwitchConfirmation, LANGUAGE_NAMES_PT, type ListenLanguage } from "@jarvis/core";
 import { VoiceAudioStore } from "./voiceAudio.js";
 import { updateStalled } from "./update-watchdog.js";
@@ -9520,12 +9521,26 @@ async function reconcileNativeAfterBoot(): Promise<void> {
  *    se ele vencer a corrida, voltamos ao zumbi.
  *  - UM TIQUE SÓ: se o loop está travado, este timer não dispara; o atraso é medido no tique
  *    SEGUINTE. Logo o processo só sai depois de a trava já ter passado — nunca durante.
+ *
+ * REVISÃO de 2026-10-26: justamente por causa do "um tique só", sair aqui NÃO ganha corrida nenhuma do
+ * watchdog — quando este código roda, a trava acabou e o /health já responde. Encerrar um Hub que já
+ * voltou só somava um boot (15–229 s) e cortava os turnos: 3 das 6 quedas de 26/10 foram isso. Agora
+ * trava longa isolada só é registrada (o stall forensics grava ONDE travou) e o Hub segue; reiniciar
+ * fica para travas longas que se REPETEM (./loopStallPolicy.ts). Trava sem fim continua com o watchdog.
  */
 const LOOP_SAMPLE_MS = 1_000;
 const LOOP_STALL_EXIT_MS = Math.max(20_000, Number(process.env.JARVIS_HUB_STALL_EXIT_MS) || 45_000);
 let loopStallArmed = false;
 let loopLastTick = Date.now();
 let loopWorstLagMs = 0;
+// Trava longa isolada NÃO reinicia mais o Hub — quando o guarda decide, ele já voltou (ver
+// ./loopStallPolicy.ts). Só a repetição (JARVIS_HUB_STALL_REPEAT travas em JARVIS_HUB_STALL_WINDOW_MS)
+// reinicia. JARVIS_HUB_STALL_REPEAT=1 volta ao comportamento antigo.
+const loopStallPolicy = new LoopStallPolicy({
+  limitMs: LOOP_STALL_EXIT_MS,
+  repeat: Math.max(1, Math.floor(Number(process.env.JARVIS_HUB_STALL_REPEAT) || 3)),
+  windowMs: Math.max(60_000, Number(process.env.JARVIS_HUB_STALL_WINDOW_MS) || 30 * 60_000),
+});
 /** Armado só quando o boot termina: antes disso uma pausa longa é esperada, não defeito. */
 function armLoopStallExit(reason: string): void {
   if (loopStallArmed) return;
@@ -9553,10 +9568,18 @@ setInterval(() => {
   const lag = now - loopLastTick - LOOP_SAMPLE_MS;   // o quanto o tique atrasou ALÉM do intervalo
   loopLastTick = now;
   if (lag > loopWorstLagMs) loopWorstLagMs = lag;
-  if (!loopStallArmed || lag < LOOP_STALL_EXIT_MS) return;
-  hubExitReason = `loop_stall_${Math.round(lag / 1000)}s`;
+  if (!loopStallArmed) return;
+  const { verdict, recent } = loopStallPolicy.record(now, lag);
+  if (verdict === "ignore") return;
+  const { repeat, windowMs } = loopStallPolicy.opts;
+  if (verdict === "recovered") {
+    log.warn("hub_loop_stall_recovered", { lagMs: lag, limitMs: LOOP_STALL_EXIT_MS, recent, repeat, windowMs, uptimeS: Math.round(process.uptime()) });
+    console.error(`[hub] event loop travou ${Math.round(lag / 1000)}s e voltou — seguindo no ar (${recent}/${repeat} travas longas em ${Math.round(windowMs / 60_000)} min; a pilha está em ~/.jarvis/logs/stall-traces.jsonl)`);
+    return;
+  }
+  hubExitReason = `loop_stall_${Math.round(lag / 1000)}s_x${recent}`;
   // Síncrono de propósito: o logger grava com appendFileSync e, saindo aqui, não existe "depois".
-  try { log.error("hub_loop_stall_exit", { lagMs: lag, limitMs: LOOP_STALL_EXIT_MS, uptimeS: Math.round(process.uptime()) }); } catch { /* best effort */ }
+  try { log.error("hub_loop_stall_exit", { lagMs: lag, limitMs: LOOP_STALL_EXIT_MS, recent, repeat, windowMs, uptimeS: Math.round(process.uptime()) }); } catch { /* best effort */ }
   console.error(`[hub] event loop travado ${Math.round(lag / 1000)}s (teto ${Math.round(LOOP_STALL_EXIT_MS / 1000)}s) — encerrando LIMPO para o supervisor religar. Morrer à força aqui é o que vira zumbi segurando a porta.`);
   process.exit(1);
 }, LOOP_SAMPLE_MS).unref?.();
