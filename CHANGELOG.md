@@ -1,3 +1,10 @@
+# [0.48.0](https://github.com/jhonyralph/jarvis/compare/v0.47.0...v0.48.0) (2026-10-27)
+
+
+### Features
+
+* **voz:** fala longa tolera gole d'agua e tosse; continuacao cortada vira um pedido so ([1723707](https://github.com/jhonyralph/jarvis/commit/17237074a460ff74007b5a683c21e0dc80ce5e44))
+
 # [0.47.0](https://github.com/jhonyralph/jarvis/compare/v0.46.0...v0.47.0) (2026-10-27)
 
 
