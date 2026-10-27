@@ -1,3 +1,10 @@
+# [0.46.0](https://github.com/jhonyralph/jarvis/compare/v0.45.0...v0.46.0) (2026-10-27)
+
+
+### Features
+
+* **voz:** sinal sonoro quando o "Hey Jarvis" e ouvido ([8ad0d18](https://github.com/jhonyralph/jarvis/commit/8ad0d18d5a49d49edbf9a337a9bfc211dba69518))
+
 # [0.45.0](https://github.com/jhonyralph/jarvis/compare/v0.44.1...v0.45.0) (2026-10-27)
 
 
