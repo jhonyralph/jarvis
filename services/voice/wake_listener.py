@@ -84,6 +84,21 @@ OPEN_TIMEOUT = float(os.environ.get("JARVIS_WAKE_OPEN_TIMEOUT", "120"))
 # conversa, e o dono nao tinha como saber se tinha sido ouvido. Dois tons subindo = "estou ouvindo";
 # descendo = "entendi, processando"; um tom grave = "nao ouvi nada".
 CHIME = os.environ.get("JARVIS_WAKE_CHIME", "1") != "0"
+# Fim da fala (2026-10-27): quem decide e o HUB, como no app (VOZ-00 DEC-01 C+D) — detector de voz
+# mais a transcricao parcial: frase que soa completa encerra rapido, frase que termina em "e",
+# "porque", virgula espera mais. Assim um pedido de 5 s, de 30 s ou de 5 min termina sozinho. Antes
+# 0,7 s de pausa cortava no meio da frase e 12 s cortavam pedido longo.
+# END_SILENCE e so a RESERVA, para quando o Hub nao acompanha a gravacao (versao antiga, falha).
+# MAX_UTTERANCE e teto de seguranca (TV ligada nao grava para sempre), nao o fim normal da fala.
+END_SILENCE = max(0.4, float(os.environ.get("JARVIS_WAKE_END_SILENCE", "1.5")))
+MAX_UTTERANCE = max(5.0, float(os.environ.get("JARVIS_WAKE_MAX_SECS", "600")))
+# Quanto esperar o Hub aceitar a gravacao antes de decidir aqui mesmo.
+STREAM_READY_SECS = 2.0
+# Pedaco mandado ao Hub: 3 quadros de 80 ms = 240 ms (o Hub aceita ate ~1,5 s por pedaco).
+STREAM_CHUNK_FRAMES = 3
+# Acima disto (base64) a fala vai como texto transcrito aqui: o Hub recusa mensagem maior que
+# JARVIS_MAX_PAYLOAD_MB (20 MB por padrao).
+MAX_AUDIO_B64 = 18 * 1024 * 1024
 # Entradas que NAO sao microfone: loopback do som do PC (o Jarvis se acordaria com um video dizendo
 # "Hey Jarvis") e os "mapeadores" virtuais do Windows. Nunca viram reserva automatica.
 _NOT_A_MIC = ("mapeador", "mapper", "driver de captura", "primary sound capture", "mixagem", "stereo mix",
@@ -137,6 +152,8 @@ def start_ws():
             # Fila + thread propria: tocar aqui (sd.wait) bloqueava a thread do WebSocket — sem ping,
             # sem receber nada — durante toda a fala.
             _play_q.put(m["audio"])
+        elif t in ("voice_stream_ready", "voice_endpoint", "voice_stream_failed", "unauth"):
+            _stream_event(m)
         elif t == "wake_state":
             armed = bool(m.get("enabled", True))
             if armed != state["armed"]:
@@ -381,23 +398,92 @@ def chime(sound, stream=None):
         print("[wake] chime error:", e, flush=True)
 
 
-def capture_utterance(stream) -> np.ndarray:
-    """Read frames until ~700 ms trailing silence or ~12 s cap; return int16 PCM."""
-    frames, silent, spoke = [], 0, False
-    max_frames = int(12 * SR / FRAME)
-    for _ in range(max_frames):
+# Gravacao acompanhada pelo Hub (uma por vez: o listener so captura uma fala de cada vez).
+_rec = {"id": None, "ready": threading.Event(), "end": threading.Event(), "failed": threading.Event(), "spoke": True, "reason": ""}
+
+
+def _stream_event(m):
+    sid = _rec["id"]
+    if not sid or m.get("streamId") not in (None, sid):
+        return
+    t = m.get("t")
+    if t == "voice_stream_ready":
+        _rec["ready"].set()
+    elif t == "voice_endpoint":
+        _rec["spoke"] = bool(m.get("spoke", True))
+        _rec["reason"] = str(m.get("reason") or "")
+        _rec["end"].set()
+    else:  # voice_stream_failed, ou "unauth" de um Hub que ainda nao aceita gravacao do listener
+        _rec["failed"].set()
+
+
+def _hub_send(ws, obj) -> bool:
+    if not ws.ws:
+        return False
+    try:
+        ws.ws.send(json.dumps({**obj, "wakeToken": _wake_token()}))
+        return True
+    except Exception:
+        return False
+
+
+def capture_with_hub(stream, ws):
+    """Grava mandando o audio ao Hub, que decide o fim da fala. Sem resposta do Hub em
+    STREAM_READY_SECS (ou se ele falhar no meio), segue decidindo aqui pela pausa (END_SILENCE).
+    Devolve (pcm, hub_ok, spoke): hub_ok = o Hub acompanhou a gravacao (e aceita o audio)."""
+    sid = "wk" + os.urandom(8).hex()
+    _rec.update(id=sid, spoke=True, reason="")
+    for e in (_rec["ready"], _rec["end"], _rec["failed"]):
+        e.clear()
+    hub = _hub_send(ws, {"t": "voice_stream_open", "streamId": sid})
+    t0 = time.time()
+    frames, pending = [], []
+    silent, spoke = 0, False
+    end_frames = int(END_SILENCE * SR / FRAME)
+    max_frames = int(MAX_UTTERANCE * SR / FRAME)
+    no_speech_frames = int(6 * SR / FRAME)
+    for i in range(max_frames):
         block, _ = stream.read(FRAME)
-        pcm = block[:, 0] if block.ndim > 1 else block
-        frames.append(pcm.copy())
-        energy = int(np.abs(pcm.astype(np.int32)).mean())
-        if energy > 220:
-            spoke = True
-            silent = 0
+        pcm = (block[:, 0] if block.ndim > 1 else block).copy()
+        frames.append(pcm)
+        if int(np.abs(pcm.astype(np.int32)).mean()) > 220:
+            spoke, silent = True, 0
         elif spoke:
             silent += 1
-            if silent > int(0.7 * SR / FRAME):  # ~700 ms of trailing silence
-                break
-    return np.concatenate(frames) if frames else np.zeros(0, dtype=np.int16)
+        if hub:
+            if _rec["failed"].is_set() or (not _rec["ready"].is_set() and time.time() - t0 > STREAM_READY_SECS):
+                hub = False
+                print("[wake] Hub nao acompanhou a gravacao -> fim da fala pela pausa", flush=True)
+            else:
+                pending.append(pcm)
+                while _rec["ready"].is_set() and len(pending) >= STREAM_CHUNK_FRAMES:
+                    part, pending = pending[:STREAM_CHUNK_FRAMES], pending[STREAM_CHUNK_FRAMES:]
+                    _hub_send(ws, {"t": "voice_stream_chunk", "streamId": sid, "pcm": base64.b64encode(np.concatenate(part).tobytes()).decode("ascii")})
+                if _rec["end"].is_set():
+                    break
+                continue
+        if spoke and silent > end_frames:
+            break
+        if not spoke and i >= no_speech_frames:
+            break
+    _hub_send(ws, {"t": "voice_stream_close", "streamId": sid})
+    hub_ok = _rec["ready"].is_set() and not _rec["failed"].is_set()
+    by_hub_end = hub_ok and _rec["end"].is_set()
+    if by_hub_end:
+        print(f"[wake] fim da fala pelo Hub ({_rec['reason']})", flush=True)
+    elif len(frames) >= max_frames:
+        print(f"[wake] teto de {MAX_UTTERANCE:.0f} s atingido", flush=True)
+    _rec["id"] = None
+    pcm_all = np.concatenate(frames) if frames else np.zeros(0, dtype=np.int16)
+    return pcm_all, hub_ok, (_rec["spoke"] if by_hub_end else spoke)
+
+
+def flac_b64(pcm: np.ndarray) -> str:
+    import soundfile as sf
+
+    buf = io.BytesIO()
+    sf.write(buf, pcm, SR, format="FLAC", subtype="PCM_16")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def pcm_to_wav(pcm: np.ndarray) -> str:
@@ -519,8 +605,8 @@ def main():
                         pass
                 model.reset()
                 chime(CHIME_LISTEN, stream)
-                pcm = capture_utterance(stream)
-                if pcm.size < SR // 2:  # < 0.5 s -> noise, ignore
+                pcm, hub_ok, spoke = capture_with_hub(stream, ws)
+                if not spoke or pcm.size < SR // 2:  # ninguem falou / < 0.5 s -> ruido
                     chime(CHIME_MISS)
                     continue
                 chime(CHIME_GOT)
@@ -529,10 +615,17 @@ def main():
                 if GATE and speaker is None:
                     print("[wake] voice not recognized -> ignoring", flush=True)
                     continue
-                text = transcribe(wav_path, LANG).strip()
-                print(f"[wake] heard ({speaker or '?'}): {text!r}", flush=True)
-                if text and ws.ws:
-                    ws.ws.send(json.dumps({"t": "send", "text": text, "speak": True, "sessionId": SESSION, "speaker": speaker, "wakeToken": _wake_token()}))
+                audio = flac_b64(pcm) if hub_ok else ""
+                if audio and len(audio) <= MAX_AUDIO_B64:
+                    # O Hub transcreve (como a fala do app): uma transcricao so, no mesmo servico.
+                    print(f"[wake] fala de {pcm.size / SR:.1f} s enviada ao Hub ({speaker or '?'})", flush=True)
+                    _hub_send(ws, {"t": "voice", "audio": audio, "ext": "flac", "speak": True, "sessionId": SESSION, "handsFree": False})
+                else:
+                    # Hub antigo (nao aceita audio do listener) ou fala grande demais: transcreve aqui.
+                    text = transcribe(wav_path, LANG).strip()
+                    print(f"[wake] heard ({speaker or '?'}): {text!r}", flush=True)
+                    if text:
+                        _hub_send(ws, {"t": "send", "text": text, "speak": True, "sessionId": SESSION, "speaker": speaker})
             except Exception as e:
                 report_cycle_error(e)
     except KeyboardInterrupt:

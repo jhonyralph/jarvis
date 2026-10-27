@@ -1510,6 +1510,10 @@ function isLocalWakeMsg(ip: string, msg: any): boolean {
   if (!guard.isLoopback(ip)) return false;
   if (!wakeTokenOk(msg?.wakeToken)) return false;
   if (msg.t === "wake_hello" || msg.t === "wake_event" || msg.t === "wake_status") return true;
+  // Gravação acompanhada (2026-10-27): o listener manda o áudio enquanto você fala e o Hub decide o fim
+  // da fala, como no app — antes ele cortava por uma pausa fixa de 0,7 s e num teto de 12 s.
+  if (msg.t === "voice_stream_open" || msg.t === "voice_stream_chunk" || msg.t === "voice_stream_close") return true;
+  if (msg.t === "voice") return msg.sessionId === WAKE_SESSION && msg.speak === true && typeof msg.audio === "string";
   return msg.t === "send" && msg.sessionId === WAKE_SESSION && msg.speak === true && typeof msg.text === "string";
 }
 
@@ -4156,19 +4160,20 @@ function recentContextOf(sid: string): string {
 /** Fast-model relevance gate: true = dispatch to a session, false = ignore (noise / a conversation
  *  with someone else / off-topic). FAIL-OPEN — any error/unparseable verdict returns true, so a glitch
  *  never swallows a real command. Empty/garbage transcripts are dropped without even a model call. */
-async function relevanceGate(text: string, context: string): Promise<boolean> {
+/** Devolve também ONDE e POR QUE decidiu (2026-10-27): um "Hey Jarvis" ouvido e descartado aqui não
+ *  deixava rastro nenhum no log estruturado — só um console.log que nem chegava ao arquivo do serviço. */
+async function relevanceGate(text: string, context: string): Promise<{ relevant: boolean; stage: "regra" | "modelo" | "erro"; reason: string }> {
   const gate = voiceGateDecision({ text, level: voiceGateLevel(), handsFree: true, wakeWord: true, speakerKnown: false, isControl: ABORT_RX.test(text) || CLOSING_RX.test(text) });
-  if (gate.drop) return false;
-  if (!gate.callModel || !gate.modelMayDrop) return true;
+  if (gate.drop) return { relevant: false, stage: "regra", reason: gate.reason };
+  if (!gate.callModel || !gate.modelMayDrop) return { relevant: true, stage: "regra", reason: gate.reason };
   try {
     const agent = summaryAgent();
-    if (!agent?.oneShot) return true;
+    if (!agent?.oneShot) return { relevant: true, stage: "regra", reason: "sem_modelo" };
     const reply = await agent.oneShot(buildRelevancePrompt(text, context), await voiceFastAgentOpts(agent));
     addUsage(WAKE_SESSION, agent.name, reply.usage);
     const v = parseRelevanceVerdict(String(reply?.text ?? ""));
-    if (!v.relevant) console.log(`[voz] descartado (irrelevante${v.reason ? ": " + v.reason : ""}): "${text.slice(0, 60)}"`);
-    return v.relevant;
-  } catch { return true; }
+    return { relevant: v.relevant, stage: "modelo", reason: (v.reason || (v.relevant ? "relevante" : "irrelevante")).slice(0, 200) };
+  } catch { return { relevant: true, stage: "erro", reason: "falha_no_modelo" }; }
 }
 /** ONE fast-model call that corrects the transcript AND judges relevance (vs. two contending CLI
  *  spawns). Returns {text, relevant}. FAIL-OPEN. Empty/garbage → dropped without a model call. */
@@ -4189,7 +4194,10 @@ async function handleVoiceTurn(text: string, speak: boolean, speaker?: string, g
   // utterance must first pass a fast-model check that it's actually meant for Jarvis — not background
   // noise or you talking to someone else. If it fails, ignore it (no session dispatch).
   if (!voiceResolve && !voicePending && !gated) {   // fala gravada no aparelho já passou pelo portão
-    if (!(await relevanceGate(text, voiceTarget ? recentContextOf(voiceTarget) : ""))) {
+    const rel = await relevanceGate(text, voiceTarget ? recentContextOf(voiceTarget) : "");
+    if (!rel.relevant) {
+      // O texto descartado já fica no wake.log do listener ("heard: ..."); aqui ele vem junto do motivo.
+      log.info("voice_ignored", { source: "wake", stage: rel.stage, reason: rel.reason, text: text.slice(0, 120) });
       broadcast(WAKE_SESSION, { t: "voice_ignored", text });
       return;
     }
@@ -6781,7 +6789,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // Local-only ops (execute/read the Hub's OWN store) → require access to the LOCAL machine. Active-
     // machine ops (queue/cancel/summarize) → require access to the selected runner. Owner passes both.
     if (LOCAL_OPS.has(msg.t) && !canUseRunner(ws, LOCAL_ID)) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
-    if (ACTIVE_OPS.has(msg.t) && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
+    if (ACTIVE_OPS.has(msg.t) && !localWakeMsg && !canUseRunner(ws, activeRunner(ws))) { send(ws, { t: "error", message: "sem acesso a esta máquina" }); return; }
     const personalScope = messageSessionScope(ws, msg);
     if (personalScope?.sessionIds.some((sessionId) => !canAccessSession(ws, personalScope.runnerId, sessionId))) {
       send(ws, { t: "error", message: "esta sessão contém contexto pessoal de outro usuário" });
@@ -9185,7 +9193,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       voiceTurns.input(vk, { sttMs, speakerMs: spkMs, preflightMs: preMs, relevant: pre.relevant, sttConf, sttLang, gateLevel, gateReason: gate.reason, endpointReason: typeof msg.endpointReason === "string" ? msg.endpointReason.slice(0, 32) : undefined });
       send(ws, { t: "voice_timing", stt: sttMs, speaker: spkMs, preflight: preMs, gate: gate.reason });
       confirmVoice();
-      if (!pre.relevant) { voiceTurns.end(vk, "ignored"); send(ws, { t: "voice_ignored", sessionId: sid, text: pre.text }); return; }
+      if (!pre.relevant) {
+        log.info("voice_ignored", { source: "app", stage: gate.drop ? "regra" : "modelo", reason: gate.reason, text: pre.text.slice(0, 120) });
+        voiceTurns.end(vk, "ignored"); send(ws, { t: "voice_ignored", sessionId: sid, text: pre.text }); return;
+      }
       text = pre.text;
       if (CLOSING_RX.test(text)) closingTurn.add(sid); else closingTurn.delete(sid);
       // Gap 21: desvio de assunto NO MEIO de uma sessão já ativa. Diferente de `suggestSession`
@@ -9229,7 +9240,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // VOZ-01: fala do dono → vira o aparelho de saída; "espere", "próxima", "encerrar a voz"… são da
     // fila e param aqui; o resto conta como resposta à sessão que tem a vez.
-    const heardByWake = msg.t === "send" && msg.speak === true && wakeClients.has(ws);
+    // Do listener do PC: texto (Hub antigo / fala grande demais) ou o áudio da fala (gravação acompanhada).
+    const heardByWake = (msg.t === "send" || msg.t === "voice") && msg.speak === true && wakeClients.has(ws);
     let wakeFocus = "";
     // Digitou com a voz ligada: a resposta fala neste aparelho, não no último em que falou.
     if (msg.t === "send" && msg.speak === true && !heardByWake) speech.useDevice(ws);
