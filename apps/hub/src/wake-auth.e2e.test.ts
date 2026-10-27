@@ -84,6 +84,31 @@ test("wake_hello sem o segredo local cai no portão de auth; com ele, passa", { 
     const comToken = await askOnce(`ws://127.0.0.1:${port}/`, { t: "wake_hello", wakeToken: token });
     assert.equal(comToken.t, "wake_state", `com o segredo local o wake continua funcionando, veio ${JSON.stringify(comToken)}`);
 
+    // Microfone que abre mas entrega silêncio digital (2026-10-26: headset mudo, "Hey Jarvis" surdo por
+    // 15 h com o listener dizendo "ok"). O listener agora reporta "silent", e o Hub tem que repassar esse
+    // estado aos Ajustes — antes ele reduzia qualquer status desconhecido a "unknown".
+    {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+      try {
+        await new Promise<void>((res, rej) => { ws.once("open", () => res()); ws.once("error", rej); });
+        const states: any[] = [];
+        ws.on("message", (raw) => { try { const m = JSON.parse(raw.toString()); if (m.t === "wake_state") states.push(m); } catch { /* ignore */ } });
+        const until = async (pred: (m: any) => boolean) => {
+          const end = Date.now() + 10_000;
+          while (Date.now() < end) { const hit = states.find(pred); if (hit) return hit; await new Promise((r) => setTimeout(r, 50)); }
+          throw new Error("wake_state esperado não chegou: " + JSON.stringify(states.slice(-3)));
+        };
+        ws.send(JSON.stringify({ t: "wake_hello", wakeToken: token }));
+        await until(() => true);
+        ws.send(JSON.stringify({ t: "wake_status", mic: "silent", error: "sem som ha 10 s: mudo?", device: "Microfone (G933)", wakeToken: token }));
+        const silent = await until((m) => m.listener?.mic === "silent");
+        assert.equal(silent.listener.micError, "sem som ha 10 s: mudo?", "o motivo chega aos Ajustes");
+        assert.equal(silent.listener.device, "Microfone (G933)");
+        ws.send(JSON.stringify({ t: "wake_status", mic: "ok", device: "Microfone (Webcam)", wakeToken: token }));
+        await until((m) => m.listener?.mic === "ok" && m.listener?.device === "Microfone (Webcam)");
+      } finally { try { ws.close(); } catch { /* ignore */ } }
+    }
+
     // Um segredo ERRADO do mesmo tamanho não passa (a comparação é por valor, não por formato).
     const errado = await askOnce(`ws://127.0.0.1:${port}/`, { t: "wake_hello", wakeToken: "f".repeat(token.length) });
     assert.equal(errado.t, "unauth");

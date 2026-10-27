@@ -136,6 +136,9 @@ const CATALOG = [
     ["JARVIS_WAKE_THRESHOLD", { scope: "Python wake listener", configure: "wake", defaultValue: "0.5", format: "floating-point detection threshold", provider: "openWakeWord", description: "Wakeword score threshold.", example: "0.5" }],
     ["JARVIS_WAKE_LANG", { scope: "Python wake listener", configure: "wake", defaultValue: "pt", format: "Whisper language code", provider: "faster-whisper", description: "Language hint for wake-listener transcription.", example: "pt" }],
     ["JARVIS_WAKE_GATE", { scope: "Python wake listener", configure: "wake", defaultValue: "0", format: "1 enables; every other value disables", provider: "Local speaker identification", description: "Drops wake-listener utterances from unknown speakers.", example: "0" }],
+    ["JARVIS_WAKE_DEVICE", { scope: "Python wake listener", configure: "wake", defaultValue: "Windows default input", format: "part of the input device name (case-insensitive) or PortAudio index", provider: "PortAudio (sounddevice)", description: "Microphone the wake listener opens. When set, it never switches to a fallback microphone; when empty, a microphone that stays digitally silent is replaced by another one with signal.", example: "webcam" }],
+    ["JARVIS_WAKE_SILENT_SECS", { scope: "Python wake listener", configure: "wake", defaultValue: "10", format: "seconds", provider: "Jarvis/local", description: "Seconds of digital silence (samples within +-2) before the wake microphone is reported as silent and a fallback is searched.", example: "10" }],
+    ["JARVIS_WAKE_OPEN_TIMEOUT", { scope: "Python wake listener", configure: "wake", defaultValue: "20", format: "seconds", provider: "PortAudio (sounddevice)", description: "Deadline to open the microphone; if the audio driver hangs longer, the listener reports it and exits so the launcher restarts it.", example: "20" }],
   ]),
 
   ...entries("Contexto pessoal e push", {

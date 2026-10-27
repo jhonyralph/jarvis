@@ -1225,7 +1225,7 @@ const wakeClients = new Set<WebSocket>();
 let wakeEnabled = typeof voiceCfg.wake === "boolean" ? voiceCfg.wake : process.env.JARVIS_WAKE !== "0";
 // O que o listener reporta de si (wake_status): sem isto não havia como saber, pela UI, se ele estava
 // conectado, com microfone aberto ou caído — de 25/09 a 28/09 ele reiniciou ~900 vezes sem microfone.
-const wakeListener: { mic: "ok" | "error" | "unknown"; micError?: string; device?: string; lastDetectAt?: number } = { mic: "unknown" };
+const wakeListener: { mic: "ok" | "error" | "silent" | "unknown"; micError?: string; device?: string; lastDetectAt?: number } = { mic: "unknown" };
 function wakeStateMsg() { return { t: "wake_state", enabled: wakeEnabled, listener: { connected: wakeClients.size, ...wakeListener } }; }
 // Só para quem já passou pela autenticação + os próprios listeners locais. NÃO usar broadcastAll: ele
 // alcança sockets ainda não autenticados (o teste wake-auth pegou o estado — com nome do microfone —
@@ -6565,7 +6565,9 @@ async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
   }
   if (msg.t === "wake_status") {
     if (!wakeClients.has(ws)) return true;
-    wakeListener.mic = msg.mic === "ok" ? "ok" : msg.mic === "error" ? "error" : "unknown";
+    // "silent" (2026-10-26): o microfone abre mas entrega silêncio digital — mudo/desligado. Antes o
+    // listener nem distinguia, e esta linha reduziria qualquer status novo a "unknown".
+    wakeListener.mic = msg.mic === "ok" ? "ok" : msg.mic === "error" ? "error" : msg.mic === "silent" ? "silent" : "unknown";
     wakeListener.micError = typeof msg.error === "string" ? msg.error.slice(0, 300) : undefined;
     wakeListener.device = typeof msg.device === "string" ? msg.device.slice(0, 120) : undefined;
     log.info("wake_status", { mic: wakeListener.mic, error: wakeListener.micError, device: wakeListener.device });
