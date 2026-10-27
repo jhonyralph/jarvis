@@ -14,7 +14,7 @@ links:
   roadmap: "Continuação da VOZ-00 (UC-16 em diante; regras L em diante — a K da VOZ-00 é Observabilidade)"
   design: "Conversa de 2026-10-27: decisões do dono sobre destino, acompanhamento, fila de fala e vários aparelhos ouvindo"
   adr: "N/A — decisões na seção 6"
-approval_evidence: "Decisões DEC-09..13 respondidas pelo dono em 2026-10-27 (conversa); interpretações I-1..I-3 a confirmar; nada implementado"
+approval_evidence: "Decisões DEC-09..13 e confirmações I-1..I-3 (com o pedido de tempo e o encerramento da voz) dadas pelo dono em 2026-10-27 (conversa); nada implementado"
 ---
 
 # Executable spec
@@ -148,6 +148,25 @@ de cada vez.
 - **Fluxo:** ouve enquanto o app está aberto; para ao sair dele.
 - **Regras:** RN-Q1, RN-Q2.
 
+### UC-25 — Pedir um tempo para pensar
+- **Gatilho:** na janela de resposta de uma sessão, o dono diz "espere um pouco", "me dá um tempo",
+  "me dá 7 minutos".
+- **Fluxo:**
+  1. O Jarvis pergunta: "Posso trazer atualizações de outras sessões enquanto isso?"
+     - **Sim:** esta sessão vai para o **fim da fila**; as outras tocam em forma curta, cada uma com a
+       sua janela de resposta.
+     - **Não:** a fila fica parada, em silêncio, durante a espera.
+  2. Passado o tempo (padrão 2 min, ou o que o dono pediu), a sessão volta e pergunta se ele conseguiu
+     pensar, abrindo a janela de resposta de novo.
+  3. Pediu mais tempo outra vez → 5 min; de novo → 10 min (ou o tempo que ele disser).
+- **Regras:** RN-O10…RN-O12.
+
+### UC-26 — Encerrar a voz
+- **Gatilho:** o dono encerra a voz ("encerrar", "chega por hoje", botão de desligar a voz).
+- **Fluxo:** a fila inteira é esvaziada, nada mais fala e o microfone não reabre sozinho, até o dono
+  religar a voz; religada, tudo volta ao fluxo normal.
+- **Regras:** RN-O13.
+
 ## 4) Regras de negócio
 
 ### L. Destino e roteamento por voz
@@ -205,6 +224,19 @@ de cada vez.
   saber a quem está respondendo.
 - **RN-O9 — O listener do PC deixa de ter fila própria:** toca pela fila do Hub como qualquer
   aparelho (hoje é a principal fonte de sobreposição).
+- **RN-O10 — "Espere um pouco" segura a sessão, não a resposta.** A espera tem degraus: 2 min (padrão,
+  configurável) → 5 min → 10 min; um tempo dito pelo dono ("me dá 7 minutos") vale no lugar do
+  degrau. Ao fim de cada espera a sessão pergunta se ele conseguiu pensar e reabre a janela de
+  resposta.
+- **RN-O11 — Durante a espera, o Jarvis pergunta se pode trazer outras sessões.** Sim → a sessão em
+  espera vai para o fim da fila e as outras tocam em forma curta, cada uma com a sua janela de
+  resposta; não → a fila fica parada até a espera acabar.
+- **RN-O12 — Espera sem resposta não insiste:** se a pergunta "conseguiu pensar?" ficar sem resposta,
+  a sessão volta para o fim da fila uma vez; sem resposta de novo, fica pendente em texto até o dono
+  chamar ("Jarvis, como estava a sessão X?").
+- **RN-O13 — Encerrar a voz esvazia tudo:** todas as falas pendentes saem da fila (o texto continua nas
+  sessões), nada mais fala e o microfone não reabre sozinho (segue a RN-E4 da VOZ-00) até o dono
+  religar a voz. Religada, a fila volta ao fluxo normal com o que chegar dali em diante.
 
 ### P. Vários aparelhos
 - **RN-P1 — Cada aparelho opta:** "Hey Jarvis neste aparelho" é configuração local de cada máquina e
@@ -246,18 +278,19 @@ de cada vez.
 - **DEC-12 — Arbitragem automática na primeira entrega** de vários aparelhos.
 - **DEC-13 — Rede e localização:** as duas quando todos têm as duas; só rede quando falta uma.
 
-### 6.1) Interpretações a confirmar com o dono antes da F1
-- **I-1 — Empilhar vale para a mesma sessão.** "Chegou voz durante a fala → toca logo depois" foi lido
-  como fala **da sessão que está falando** (coerente com o agrupamento). Fala de outra sessão segue a
-  fila e espera a janela de resposta.
-- **I-2 — A janela de resposta é o tempo de continuação que já existe** (`continueSec`, Ajustes de
-  voz), não um prazo novo.
+### 6.1) Confirmações do dono (2026-10-27)
+- **I-1 — Empilhar vale só para a mesma sessão.** Fala nova da sessão que está falando toca assim que
+  a fala atual termina; fala de outra sessão espera a janela de resposta fechar e só então toca.
+- **I-2 — A janela de resposta é curta**, o tempo de continuação que já existe (`continueSec`): o
+  suficiente para refletir e responder, nunca minutos. Para pensar com calma existe o "espere um
+  pouco" (UC-25, RN-O10…RN-O12).
 - **I-3 — Fala interrompida pelo "Hey Jarvis"** não volta a tocar do início; o texto segue na sessão.
+- **Encerrar a voz** esvazia a fila e desliga a voz até ela ser religada (UC-26, RN-O13).
 
 ## 7) Plano em fases
 | Fase | Entrega | Por que nessa ordem |
 |---|---|---|
-| **F1** | Fila única de fala no Hub com agrupamento por sessão, janela de resposta e empilhamento (RN-O1…RN-O9), listener do PC tocando pela fila | É a dor que já existe hoje e a base de tudo o que vai falar mais |
+| **F1** | Fila única de fala no Hub com agrupamento por sessão, janela de resposta, empilhamento, "espere um pouco" e encerrar a voz (RN-O1…RN-O13, UC-25, UC-26), listener do PC tocando pela fila | É a dor que já existe hoje e a base de tudo o que vai falar mais |
 | **F2** | Botão "Falar com o Jarvis" global + voice com tópico (UC-16, UC-17) | Barato, usa o caminho da voice que já existe |
 | **F3** | Acompanhamento por sessão + verbosidade (UC-19, UC-20), comandos de voz | Precisa da F1 para não virar barulho |
 | **F4** | Falar SOBRE outra sessão (UC-18) | Depende do roteamento por nome/tópico |
@@ -266,8 +299,10 @@ de cada vez.
 
 ## 8) Validação
 - F1 tem teste automático (fila 1 → 2 → 1 tocando 1+1 e depois 2; fala da sessão 1 chegando durante
-  a fala dela entra logo depois; a fila não avança com a janela de resposta aberta; "próxima" avança;
-  prioridades; expiração) e e2e com dois clientes falsos; o resto exige o dono com aparelhos reais.
+  a fala dela entra logo depois; fala da sessão 2 chegando nesse momento espera a janela; a fila não
+  avança com a janela de resposta aberta; "próxima" avança; "espere" com degraus 2 → 5 → 10 min e
+  tempo dito pelo dono; "sim, traga as outras" manda a sessão para o fim da fila; encerrar esvazia a
+  fila e não reabre o microfone; prioridades; expiração) e e2e com dois clientes falsos; o resto exige o dono com aparelhos reais.
 - Cada fase registra no log o que decidiu (quem falou, o que foi descartado e por quê).
 
 ## 9) Fora de escopo
