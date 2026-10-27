@@ -72,11 +72,14 @@ DEVICE = os.environ.get("JARVIS_WAKE_DEVICE", "").strip()
 # mediu pico ~2900 numa sala quieta; o G933 mudo, pico 1). Nao e "sala silenciosa", e microfone morto.
 SILENT_PEAK = 2
 SILENT_SECS = float(os.environ.get("JARVIS_WAKE_SILENT_SECS", "10"))
-# Abrir microfone pelo PortAudio TRAVA as vezes dentro do driver nesta maquina (2026-10-26: 4 de 9
-# processos novos, tanto no G933 quanto na webcam, >20 s parados no waveInOpen). Travado ali o
-# listener nunca escutaria e o launcher nao o relancaria (o processo nao morre). Com prazo: avisa o
-# Hub e sai — o launcher (start-wake.ps1) relanca em 3 s, com uma tentativa nova.
-OPEN_TIMEOUT = float(os.environ.get("JARVIS_WAKE_OPEN_TIMEOUT", "20"))
+# Abrir o microfone pode ficar SEM RESPOSTA: em 2026-10-26/27, 4 de 9 processos novos ficaram >20 s
+# parados no waveInOpen, e o registro de 27/10 08:32 mostrou o motivo provavel — o antivirus (Kaspersky)
+# segura a abertura enquanto pergunta ao dono se este app pode usar o microfone. Driver travado de
+# verdade continua possivel. Travado ali o listener nunca escutaria e o launcher nao o relancaria (o
+# processo nao morre). Com prazo: avisa o Hub e sai — o launcher (start-wake.ps1) relanca em 3 s.
+# 120 s (nao 20) da tempo de a pessoa ler e responder a pergunta: com prazo curto, cada relance
+# abria uma pergunta NOVA, em ciclo.
+OPEN_TIMEOUT = float(os.environ.get("JARVIS_WAKE_OPEN_TIMEOUT", "120"))
 # Entradas que NAO sao microfone: loopback do som do PC (o Jarvis se acordaria com um video dizendo
 # "Hey Jarvis") e os "mapeadores" virtuais do Windows. Nunca viram reserva automatica.
 _NOT_A_MIC = ("mapeador", "mapper", "driver de captura", "primary sound capture", "mixagem", "stereo mix",
@@ -250,7 +253,7 @@ def open_mic():
             th.start()
             th.join(OPEN_TIMEOUT)
             if th.is_alive():
-                set_mic("error", error=f"abrir o microfone travou no driver (>{OPEN_TIMEOUT:.0f} s); reiniciando o listener", device=name or None)
+                set_mic("error", error=f"o microfone nao respondeu em {OPEN_TIMEOUT:.0f} s (permissao do antivirus pendente? driver travado?); reiniciando o listener", device=name or None)
                 time.sleep(1.0)  # da tempo do wake_status chegar ao Hub
                 os._exit(3)
             if "error" in box:

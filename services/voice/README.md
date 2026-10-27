@@ -99,8 +99,9 @@ device name, e.g. `webcam`, or its index) pins one — set it in `~/.jarvis/hub.
 reads. A microphone that opens but delivers **digital silence** for `JARVIS_WAKE_SILENT_SECS` (=10) is
 reported as *no sound* in Configurações (it used to show "ok" while deaf — a muted headset, 2026-10-26);
 unless one is pinned, the listener then switches to another microphone with signal, never to a
-loopback/"stereo mix" input. Opening the mic has a `JARVIS_WAKE_OPEN_TIMEOUT` (=20 s) deadline: if the
-audio driver hangs, the listener reports it and exits so the launcher restarts it.
+loopback/"stereo mix" input. Opening the mic has a `JARVIS_WAKE_OPEN_TIMEOUT` (=120 s) deadline: an antivirus asking whether
+the app may use the microphone (Kaspersky does this — tick *remember my choice* and allow) or a hung
+audio driver blocks the open; past the deadline the listener reports it and exits so the launcher restarts it.
 
 > The pretrained phrase is "Hey Jarvis". A bare "Jarvis" needs a custom-trained
 > `.onnx` (openWakeWord's training notebook) pointed at via `JARVIS_WAKE_MODEL_FILE`.
