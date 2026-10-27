@@ -1,3 +1,16 @@
+# [0.44.0](https://github.com/jhonyralph/jarvis/compare/v0.43.3...v0.44.0) (2026-10-27)
+
+
+### Bug Fixes
+
+* **hub:** guarda deixa de reiniciar um Hub que ja se recuperou da trava ([bad9f0a](https://github.com/jhonyralph/jarvis/commit/bad9f0a65a7560114d864025a16be64c343efe89))
+* **voz:** "Hey Jarvis" deixa de ficar surdo com microfone mudo e de travar no driver ([ff0352e](https://github.com/jhonyralph/jarvis/commit/ff0352e90e6ae69011f644108e81cfbfc89a92c8))
+
+
+### Features
+
+* **hub:** flagra onde o event loop trava, com a pilha da thread principal ([ee7a406](https://github.com/jhonyralph/jarvis/commit/ee7a40662ff02a342be59c77f05ba0e8edeaabd9))
+
 ## [0.43.3](https://github.com/jhonyralph/jarvis/compare/v0.43.2...v0.43.3) (2026-10-26)
 
 
