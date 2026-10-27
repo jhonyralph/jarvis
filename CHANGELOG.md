@@ -1,3 +1,10 @@
+# [0.45.0](https://github.com/jhonyralph/jarvis/compare/v0.44.1...v0.45.0) (2026-10-27)
+
+
+### Features
+
+* **voz:** fila unica de fala - uma fala por vez, no aparelho certo (VOZ-01 F1) ([f007d95](https://github.com/jhonyralph/jarvis/commit/f007d9592e0100f5a56ea3fc9699afaefcbf9c70))
+
 ## [0.44.1](https://github.com/jhonyralph/jarvis/compare/v0.44.0...v0.44.1) (2026-10-27)
 
 
