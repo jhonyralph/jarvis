@@ -45,7 +45,10 @@ async function stop(child?: ReturnType<typeof spawn>): Promise<void> {
     await Promise.race([exited, new Promise<void>((res) => setTimeout(res, 3_000))]);
   }
 }
-async function waitHealth(port: number): Promise<void> { const end = Date.now() + 45_000; while (Date.now() < end) { try { const r = await fetch(`http://127.0.0.1:${port}/health`); if (r.ok) return; } catch { /* booting */ } await new Promise((r) => setTimeout(r, 100)); } throw new Error("Hub did not become healthy"); }
+// 120 s, nao 45: na suite completa dezenas de arquivos rodam em paralelo e este teste sobe o Hub TRES
+// vezes; isolado o teste inteiro leva ~23 s, sob carga cada boot demora mais. (A falha do pre-push de
+// 28/10 era outra: porta reaproveitada, ver `start`.) Um Hub que nunca sobe continua falhando.
+async function waitHealth(port: number): Promise<void> { const end = Date.now() + 120_000; while (Date.now() < end) { try { const r = await fetch(`http://127.0.0.1:${port}/health`); if (r.ok) return; } catch { /* booting */ } await new Promise((r) => setTimeout(r, 100)); } throw new Error("Hub did not become healthy"); }
 
 function inbox(ws: WebSocket) {
   const frames: any[] = [], waiters: Array<() => void> = [];
@@ -60,10 +63,14 @@ async function connectRunner(port: number, info: Record<string, unknown>): Promi
   const box = inbox(ws); box.send({ t: "register", token: "", info }); return { ws, box };
 }
 
-test("old/offline runners retain an update until restart and commit verification", { timeout: 120_000 }, async () => {
+test("old/offline runners retain an update until restart and commit verification", { timeout: 300_000 }, async () => {
   const root = resolve(import.meta.dirname, "../../.."), home = mkdtempSync(join(tmpdir(), "jarvis-update-hub-"));
-  const [port, adminPort] = await freePorts(2); let hub: ReturnType<typeof spawn> | undefined, hubPid: number | undefined;
+  let port = 0, adminPort = 0, hub: ReturnType<typeof spawn> | undefined, hubPid: number | undefined;
+  // Portas NOVAS a cada inicio: o que precisa sobreviver ao reinicio e a pasta de dados (JARVIS_HOME),
+  // nao a porta. Na mesma porta, o Hub recem-morto ainda a segurava por instantes sob carga, o seguinte
+  // saia com EADDRINUSE e o teste esperava 120 s por um Hub que ja tinha desistido (pre-push, 28/10).
   const start = async () => {
+    [port, adminPort] = await freePorts(2);
     hub = spawn(process.execPath, ["--import", "tsx", "apps/hub/src/index.ts"], { cwd: root, detached: process.platform !== "win32", stdio: "ignore",
       env: { ...process.env, JARVIS_PORT: String(port), JARVIS_ADMIN_PORT: String(adminPort), JARVIS_HOME: home, JARVIS_AUTH: "off", JARVIS_AGENT: "mock", JARVIS_ENABLE_MOCK: "1" } });
     hubPid = hub.pid;

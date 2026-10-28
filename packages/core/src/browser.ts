@@ -469,7 +469,15 @@ export async function reapProfileProcesses(userDataDir: string, opts: { exeName?
   // O Windows demora um pouco para soltar o lock do perfil depois do taskkill.
   const deadline = Date.now() + 5000;
   while (victims.some((v) => pidAlive(v.pid)) && Date.now() < deadline) await sleep(100);
-  return victims.map((v) => v.pid);
+  // Segunda passada: o Chrome pode ter aberto um filho ENTRE a listagem e o kill (visto na suíte sob
+  // carga em 2026-10-28: dois processos do perfil vivos depois do recolhimento). Esse filho não estava
+  // em `victims` e seguraria o lock do perfil para o próximo Chrome.
+  const again = victims.length ? await listProcesses(opts.exeName, platform) : null;
+  const late = (again ?? []).filter((r) => r.pid !== (opts.selfPid ?? process.pid) && !pids.has(r.pid) && matchesProfileCmdline(r.cmdline, userDataDir, platform));
+  for (const r of late) if (pidAlive(r.pid)) await killProcessTree(r.pid, platform);
+  const lateDeadline = Date.now() + 5000;
+  while (late.some((v) => pidAlive(v.pid)) && Date.now() < lateDeadline) await sleep(100);
+  return [...victims, ...late].map((v) => v.pid);
 }
 
 // ============================================================================== conexão CDP
