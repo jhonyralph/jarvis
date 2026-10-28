@@ -2634,6 +2634,27 @@ function tempTextFile(prefix: string, text: string): { path: string; cleanup: ()
  *  janela é curta e fixa — ela não espera o agente, espera bytes. */
 const STDIO_DRAIN_MS = 2_000;
 
+/**
+ * Quanto o Claude espera os agentes em SEGUNDO PLANO antes de encerrá-los (2026-10-28).
+ *
+ * No modo `-p` (o que o Jarvis usa) o próprio Claude Code tem um teto: passado esse tempo depois de o
+ * agente principal parar de falar, ele interrompe todos os subagentes ainda rodando — "Background
+ * tasks still running after …s; terminating". O padrão bate com 10 min, e foi exatamente o que apagou
+ * o trabalho do SyNous em 28/10: 13 dos 22 agentes de um ultracode (US$ 70) cortados juntos às 15:48:43, dez
+ * minutos depois da última fala do principal, com "Ainda faltam os resultados dos 4 agentes".
+ * Aqui o teto sobe para 3 h (JARVIS_CLAUDE_BG_WAIT_MIN). Não fica infinito de propósito: um agente
+ * travado prenderia a sessão para sempre. Quem já definiu CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS manda.
+ * Vale para todo `claude` que o Hub e o runner iniciam (o ambiente do processo é herdado).
+ */
+export const CLAUDE_BG_WAIT_DEFAULT_MIN = 180;
+export function claudeBackgroundWaitMs(env: NodeJS.ProcessEnv = process.env): number {
+  const min = Number(env.JARVIS_CLAUDE_BG_WAIT_MIN);
+  return Math.round((Number.isFinite(min) && min > 0 ? min : CLAUDE_BG_WAIT_DEFAULT_MIN) * 60_000);
+}
+if (process.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS === undefined) {
+  process.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = String(claudeBackgroundWaitMs());
+}
+
 /** Tempo que o CLI ainda tem para sair sozinho DEPOIS de anunciar que o turno acabou.
  *
  *  O `close`/`exit` é o sinal do sistema operacional; este é o sinal do PROTOCOLO (o `turn.completed`
