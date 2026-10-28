@@ -1,3 +1,11 @@
+## [0.49.3](https://github.com/jhonyralph/jarvis/compare/v0.49.2...v0.49.3) (2026-10-28)
+
+
+### Bug Fixes
+
+* **claude:** agentes em segundo plano nao sao mais cortados aos 10 minutos ([05a4e85](https://github.com/jhonyralph/jarvis/commit/05a4e8594bcee4a1c0f2c1aae5d53fb4779fd8ec))
+* **hub:** lista de sessoes nativas nao trava mais o Hub (relida em segundo plano) ([69715db](https://github.com/jhonyralph/jarvis/commit/69715db1725762908518cc591133b95fd5bc0693))
+
 ## [0.49.2](https://github.com/jhonyralph/jarvis/compare/v0.49.1...v0.49.2) (2026-10-28)
 
 
