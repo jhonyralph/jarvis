@@ -1,3 +1,10 @@
+## [0.49.4](https://github.com/jhonyralph/jarvis/compare/v0.49.3...v0.49.4) (2026-10-28)
+
+
+### Bug Fixes
+
+* **hub:** boot nao abre mais os ~4.400 journals de execucao (indice de boot) ([e031112](https://github.com/jhonyralph/jarvis/commit/e0311120d4993a8d408d1629d9ebe8f31620fa10))
+
 ## [0.49.3](https://github.com/jhonyralph/jarvis/compare/v0.49.2...v0.49.3) (2026-10-28)
 
 
