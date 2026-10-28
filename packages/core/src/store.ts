@@ -56,6 +56,39 @@ export interface SessionMeta {
   permissionMode?: PermissionMode;
 }
 
+/**
+ * Resumo das mensagens de uma sessão, guardado JUNTO dos metadados (2026-10-28).
+ *
+ * O boot lia o histórico inteiro de TODAS as sessões (279 arquivos, 271 MB) só para a lista mostrar
+ * contagem, última mensagem e custo: ~51 s a frio, com o antivírus examinando cada arquivo. Agora a lista
+ * usa este resumo e as mensagens de uma sessão só são lidas quando alguém precisa delas.
+ */
+interface MessageStats {
+  count: number;
+  /** Última mensagem (60 caracteres) — `SessionMeta.lastMessage`. */
+  last: string;
+  cost: number;
+  /** Última fala do usuário e da IA (220 caracteres) — `digest`. */
+  lastUser: string;
+  lastAssistant: string;
+}
+const DIGEST_CAP = 220;
+function computeStats(messages: StoredMessage[]): MessageStats {
+  let cost = 0, lastUser = "", lastAssistant = "";
+  for (const m of messages) {
+    cost += m.usage?.costUsd ?? 0;
+    if (m.role === "user") lastUser = m.text;
+    else if (m.role === "assistant") lastAssistant = m.text;
+  }
+  return { count: messages.length, last: messages.at(-1)?.text.slice(0, 60) ?? "", cost,
+    lastUser: (lastUser || "").slice(0, DIGEST_CAP), lastAssistant: (lastAssistant || "").slice(0, DIGEST_CAP) };
+}
+function validStats(v: unknown): v is MessageStats {
+  const s = v as MessageStats | undefined;
+  return !!s && typeof s.count === "number" && typeof s.last === "string" && typeof s.cost === "number"
+    && typeof s.lastUser === "string" && typeof s.lastAssistant === "string";
+}
+
 interface SessionData {
   id: string;
   title: string;
@@ -79,6 +112,8 @@ interface SessionData {
   /** Permission mode chosen for this session. Unlike agent/cwd this is NOT locked — the user can
    *  switch it mid-conversation via the picker; the latest value is what new sessions inherit. */
   permissionMode?: PermissionMode;
+  /** Resumo das mensagens (ver MessageStats) — mantido por este módulo, persistido com os metadados. */
+  stats?: MessageStats;
 }
 
 function titleFromMessage(text: string, cap = 240): string {
@@ -114,28 +149,58 @@ export class Store {
       // ONCE (idempotent: a full overwrite, so a re-run after a crash can't duplicate lines). New
       // format has no inline messages → load them from the JSONL.
       const inline = Array.isArray(s.messages) ? (s.messages as StoredMessage[]) : null;
-      const messages = inline && inline.length ? inline : this.readMessages(id);
-      this.data[id] = {
+      // Sob demanda: com o resumo salvo, o histórico NÃO é lido no boot. Sem resumo (sessions.json de
+      // antes desta versão), lê UMA vez para calculá-lo e solta — o próximo boot já não lê.
+      let preload: StoredMessage[] | undefined = inline && inline.length ? inline : undefined;
+      let stats = validStats(s.stats) ? s.stats : undefined;
+      if (!stats) { stats = computeStats(preload ?? this.readMessages(id)); migrated = true; }
+      const record: SessionData = {
         id,
         title: s.title || "Conversa",
         agent: s.agent || defaults.agent,
         cwd: s.cwd || defaults.cwd,
         createdAt: s.createdAt ?? Date.now(),
         updatedAt: s.updatedAt ?? Date.now(),
-        messages,
+        messages: [],
         hidden: s.hidden === true,
         archived: s.archived === true,
         rootExecutionId: typeof s.rootExecutionId === "string" ? s.rootExecutionId : undefined,
         executionId: typeof s.executionId === "string" ? s.executionId : undefined,
         parentSessionId: typeof s.parentSessionId === "string" ? s.parentSessionId : undefined,
         permissionMode: typeof s.permissionMode === "string" ? (s.permissionMode as PermissionMode) : undefined,
+        stats,
       };
-      if (inline && inline.length) { this.rewriteMessages(id, messages); migrated = true; }
+      this.data[id] = this.bindMessages(record, preload);
+      if (preload) { this.rewriteMessages(id, preload); migrated = true; }
+      preload = undefined;
     }
     // Persist the stripped, metadata-only sessions.json once. writeJsonAtomic copies the previous
     // (possibly ~50MB) file to sessions.json.bak first, so the pre-migration data is preserved.
     if (migrated) this.flush();
   }
+
+  /** Sessões cujo histórico já está em memória. */
+  private readonly loaded = new Set<string>();
+  /** `messages` passa a ser lido do JSONL no primeiro acesso (e fica em memória daí em diante). */
+  private bindMessages(s: SessionData, preload?: StoredMessage[]): SessionData {
+    let messages = preload;
+    if (messages) this.loaded.add(s.id);
+    const store = this;
+    Object.defineProperty(s, "messages", {
+      configurable: true, enumerable: true,
+      get(): StoredMessage[] {
+        if (!messages) { messages = store.readMessages(s.id); store.loaded.add(s.id); }
+        return messages;
+      },
+      set(value: StoredMessage[]) { messages = value; store.loaded.add(s.id); },
+    });
+    return s;
+  }
+  private statsOf(s: SessionData): MessageStats {
+    return s.stats ?? (s.stats = computeStats(s.messages));
+  }
+  /** Histórico desta sessão já está em memória? (diagnóstico / testes) */
+  isLoaded(id: string): boolean { return this.loaded.has(id); }
 
   private msgFile(id: string): string {
     // ids are UUIDs or fixed constants; sanitize defensively so nothing escapes msgDir.
@@ -191,7 +256,9 @@ export class Store {
         // re-chamar com outra mãe NÃO reescreve o vínculo — reescrever apagaria a origem real.
         parentSessionId: opts?.parentSessionId,
         permissionMode: opts?.permissionMode,
+        stats: computeStats([]),
       };
+      this.bindMessages(s, []);
       this.flush();
     }
     return s;
@@ -221,7 +288,7 @@ export class Store {
    *  mode. Returns undefined when the project has no prior started session (a genuinely new project). */
   inheritForCwd(cwd: string): { agent?: string; model?: string; effort?: string; permissionMode?: PermissionMode } | undefined {
     const s = Object.values(this.data)
-      .filter((x) => !x.hidden && x.cwd === cwd && x.messages.length > 0)
+      .filter((x) => !x.hidden && x.cwd === cwd && this.statsOf(x).count > 0)
       .sort((a, b) => b.updatedAt - a.updatedAt)[0];
     if (!s) return undefined;
     const lastUsage = [...s.messages].reverse().find((m) => m.usage)?.usage;
@@ -249,6 +316,7 @@ export class Store {
   reset(id: string, opts?: { agent?: string; cwd?: string; title?: string }): SessionData {
     const s = this.ensure(id);
     s.messages = [];
+    s.stats = computeStats([]);
     this.rewriteMessages(id, []);
     if (opts?.agent) s.agent = opts.agent;
     if (opts?.cwd) s.cwd = opts.cwd;
@@ -263,7 +331,7 @@ export class Store {
    *  agent and folder are frozen; only model/effort vary per message. */
   reconfigure(id: string, opts: { agent?: string; cwd?: string }): boolean {
     const s = this.data[id];
-    if (!s || s.messages.length > 0) return false;
+    if (!s || this.statsOf(s).count > 0) return false;
     if (opts.agent) s.agent = opts.agent;
     if (opts.cwd) s.cwd = opts.cwd;
     this.flush();
@@ -274,6 +342,7 @@ export class Store {
   delete(id: string): boolean {
     if (!this.data[id]) return false;
     delete this.data[id];
+    this.loaded.delete(id);
     try { rmSync(this.msgFile(id), { force: true }); } catch { /* history file may not exist */ }
     this.flush();
     return true;
@@ -282,6 +351,11 @@ export class Store {
   add(id: string, msg: StoredMessage): void {
     const s = this.ensure(id);
     s.messages.push(msg);
+    // Resumo incremental: somar não exige reler o histórico.
+    const st = this.statsOf(s);
+    s.stats = { count: s.messages.length, last: msg.text.slice(0, 60), cost: st.cost + (msg.usage?.costUsd ?? 0),
+      lastUser: msg.role === "user" ? msg.text.slice(0, DIGEST_CAP) : st.lastUser,
+      lastAssistant: msg.role === "assistant" ? msg.text.slice(0, DIGEST_CAP) : st.lastAssistant };
     s.updatedAt = msg.ts;
     if ((s.title === "Nova conversa" || !s.title) && msg.role === "user") s.title = titleFromMessage(msg.text);
     this.appendMessage(id, msg); // O(1) append — the message does NOT go through the metadata flush
@@ -303,6 +377,7 @@ export class Store {
     if (!s || !messages.length) return 0;
     const restored = messages.map((m) => ({ ...m, restored: true as const }));
     s.messages = [...s.messages, ...restored].sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+    s.stats = computeStats(s.messages);
     s.updatedAt = s.messages.at(-1)?.ts ?? s.updatedAt;
     this.rewriteMessages(id, s.messages);
     this.flush();
@@ -315,6 +390,7 @@ export class Store {
     const s = this.data[id];
     if (!s || !s.messages.length || s.messages[s.messages.length - 1].role !== "user") return false;
     s.messages.pop();
+    s.stats = computeStats(s.messages);
     s.updatedAt = s.messages.at(-1)?.ts ?? s.updatedAt;
     this.rewriteMessages(id, s.messages);
     this.flush();
@@ -333,8 +409,8 @@ export class Store {
         cwd: s.cwd,
         title: s.title,
         updatedAt: s.updatedAt,
-        lastUser: [...s.messages].reverse().find((m) => m.role === "user")?.text.slice(0, cap) ?? "",
-        lastAssistant: [...s.messages].reverse().find((m) => m.role === "assistant")?.text.slice(0, cap) ?? "",
+        lastUser: this.statsOf(s).lastUser.slice(0, cap),
+        lastAssistant: this.statsOf(s).lastAssistant.slice(0, cap),
       }));
   }
 
@@ -348,11 +424,11 @@ export class Store {
         cwd: s.cwd,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
-        lastMessage: s.messages.at(-1)?.text.slice(0, 60) ?? "",
-        count: s.messages.length,
+        lastMessage: this.statsOf(s).last,
+        count: this.statsOf(s).count,
         archived: s.archived === true,
         parentSessionId: s.parentSessionId,
-        cost: s.messages.reduce((sum, m) => sum + (m.usage?.costUsd ?? 0), 0),
+        cost: this.statsOf(s).cost,
         permissionMode: s.permissionMode,
       }));
   }
@@ -364,9 +440,10 @@ export class Store {
     // that is what removed the multi-second event-loop stalls on every message.
     const meta: Record<string, Omit<SessionData, "messages">> = {};
     for (const [id, s] of Object.entries(this.data)) {
-      const { messages: _messages, ...rest } = s;
-      void _messages;
-      meta[id] = rest;
+      // Copia campo a campo SEM tocar em `messages`: lê-lo carregaria o histórico de toda sessão.
+      const rest: Record<string, unknown> = {};
+      for (const key of Object.keys(s)) if (key !== "messages") rest[key] = (s as unknown as Record<string, unknown>)[key];
+      meta[id] = rest as Omit<SessionData, "messages">;
     }
     writeJsonAtomic(this.file, meta, { pretty: true });
   }

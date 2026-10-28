@@ -9638,8 +9638,12 @@ bootMark("maintenance");
 async function reconcileNativeAfterBoot(): Promise<void> {
   const yieldLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
   const t0 = Date.now(); let replies = 0, executions = 0;
+  // Só as sessões mexidas na última semana: a varredura lê o histórico de cada uma, e o histórico agora
+  // é lido sob demanda (store) — varrer as ~280 traria tudo de volta para a memória. Uma sessão antiga
+  // é reconciliada mesmo assim quando for aberta (o "open" chama reconcileFromNative).
+  const since = Date.now() - 7 * 24 * 60 * 60_000;
   try {
-    for (const meta of store.list()) {
+    for (const meta of store.list().filter((m) => m.updatedAt >= since)) {
       const s = store.get(meta.id); // get, não ensure: a sessão pode ter sido apagada durante a varredura
       if (!s) continue;
       const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) replies++;

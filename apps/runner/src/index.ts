@@ -2003,7 +2003,10 @@ try { const purged = purgeProbeJunk(); if (purged) console.log(`[runner] limpei 
 try { const s = purgeScratch(); if (s) console.log(`[runner] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
 try {
   let n = 0;
-  for (const meta of store.list()) {
+  // Só a última semana: o histórico agora é lido sob demanda (store) e varrer todas as sessões o traria
+  // de volta para a memória. A sessão antiga é reconciliada quando for aberta (doHistory faz isso).
+  const since = Date.now() - 7 * 24 * 60 * 60_000;
+  for (const meta of store.list().filter((m) => m.updatedAt >= since)) {
     const s = store.ensure(meta.id);
     const before = s.messages.length;
     reconcileFromNative(s);
