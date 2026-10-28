@@ -4157,13 +4157,27 @@ const voiceContinuation = new VoiceContinuation({
     ctrl.abort();
     return true;
   },
+  // Entrega no meio do turno (VOZ-01 "A"): a IA da sessão aceita mensagem agora? (Claude com entrada
+  // viva até anunciar o fim.) Só turno rodando AQUI — `activeRuns` — e nunca o de outra máquina.
+  inject: (sid, text) => {
+    const agentName = sessionAgent(sid);
+    if (!agentName || !activeRuns.has(sid)) return false;
+    try { return agents.get(agentName).inject?.(sid, text) === true; } catch { return false; }
+  },
 });
 function noteVoiceDispatch(sid: string, text: string): void { voiceContinuation.note(sid, text); }
-async function joinVoiceContinuation(sid: string, text: string): Promise<string> {
+/** Continuação de fala: devolve o texto a despachar, ou null quando a fala já entrou no turno em
+ *  andamento (aí ninguém abre turno novo — a resposta daquele turno já vai considerar o resto). */
+async function joinVoiceContinuation(sid: string, text: string, speaker?: string): Promise<string | null> {
   const r = await voiceContinuation.join(sid, text);
   // "no_previous" é o caso comum (primeira fala da sessão): só barulho no log.
   if (r.reason !== "no_previous") log.info("voice_continuation", { sessionId: sid, joined: r.joined, reason: r.reason, gapMs: r.gapMs, settleMs: r.settleMs });
-  return r.text;
+  if (!r.injected) return r.text;
+  // A fala entra no histórico e na tela como mensagem do dono, como num turno normal.
+  const ts = Date.now();
+  if (!isNativeId(sid)) store.add(sid, { role: "user", text, ts, agent: "jarvis", speaker });
+  broadcast(sid, { t: "message", message: { sessionId: sid, role: "user", text, ts, agent: "jarvis", speaker } });
+  return null;
 }
 /** VOZ-01 RN-O7: resposta por "Hey Jarvis" à sessão que acabou de falar (vale só para esta fala). */
 let voiceFocusOnce = "";
@@ -9424,7 +9438,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       if (heardByWake) {
         const target = wakeFocus && store.get(wakeFocus) ? wakeFocus : (voiceTarget || WAKE_SESSION);
         log.info("voice_route", { source: "wake", sessionId: target, via: wakeFocus && store.get(wakeFocus) ? "vez_da_sessao" : voiceTarget ? "voice_vinculada" : "voice", chars: text.length });
-        const joined = await joinVoiceContinuation(target, text);
+        const joined = await joinVoiceContinuation(target, text, speaker);
+        if (joined === null) return; // entrou no turno em andamento
         if (joined !== text) {
           voiceFocusOnce = target;
           try { await runVoiceTask(joined, !!msg.speak, speaker); } finally { voiceFocusOnce = ""; }
@@ -9535,7 +9550,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // queue list itself already updated via broadcastQueue above).
       send(ws, { t: "queued", runnerId: LOCAL_ID, sessionId: sid, text, voice: msg.t === "voice" });
     };
-    if (msg.t === "voice") text = await joinVoiceContinuation(sid, text);
+    if (msg.t === "voice") {
+      const joined = await joinVoiceContinuation(sid, text, speaker);
+      if (joined === null) { clearPendingInboundTurn(inboundKey); return; } // entrou no turno em andamento
+      text = joined;
+    }
     if (sessionDispatchBusy(LOCAL_ID, sid)) {
       queueLocalTurn();
       return;

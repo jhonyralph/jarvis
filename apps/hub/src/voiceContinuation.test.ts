@@ -72,3 +72,27 @@ test("outra sessão, turno não cancelável ou janela desligada: nada muda", asy
   off.running.add("s1");
   assert.equal((await off.c.join("s1", "y")).reason, "disabled");
 });
+
+test("IA que aceita mensagem no meio do turno: a continuação é entregue, nada é interrompido", async () => {
+  let now = 0;
+  const running = new Set(["s1"]), aborted: string[] = [], injected: string[] = [];
+  let accepts = true;
+  const c = new VoiceContinuation({
+    windowMs: 10_000, busy: (s) => running.has(s),
+    abort: (s) => { aborted.push(s); running.delete(s); return true; },
+    inject: (_s, text) => { if (accepts) injected.push(text); return accepts; },
+    now: () => now, sleep: async (ms) => { now += ms; },
+  });
+  c.note("s1", "Revise o relatório");
+  now += 3_000;
+  assert.deepEqual(await c.join("s1", "e mande ao financeiro."), { text: "e mande ao financeiro.", joined: false, injected: true, reason: "injected", gapMs: 3_000 });
+  assert.deepEqual(injected, ["e mande ao financeiro."]);
+  assert.deepEqual(aborted, [], "o turno segue rodando");
+  // O turno já não aceita (anunciou o fim): volta ao interromper e juntar, com o pedido INTEIRO.
+  accepts = false;
+  now += 3_000;
+  const r = await c.join("s1", "Com cópia para mim.");
+  assert.equal(r.reason, "joined");
+  assert.equal(r.text, "Revise o relatório e mande ao financeiro. Com cópia para mim.");
+  assert.equal(r.gapMs, 3_000, "a janela conta a partir da fala entregue");
+});

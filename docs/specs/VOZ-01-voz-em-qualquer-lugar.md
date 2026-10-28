@@ -309,11 +309,21 @@ teste em aparelho.
   quem vê a sessão; sem ninguém vendo, o listener do PC.
 - **App:** toca fala da fila mesmo de sessão fora da tela, avisa "terminei", abre a janela de resposta
   na sessão que falou (abrindo-a) e avisa quando a janela fecha sem fala.
+- **Passo 5 (2026-10-28, sem teste em aparelho):** o listener do PC declara que entende a fila, avisa
+  "terminei" e abre a janela de resposta sozinho (`JARVIS_WAKE_WINDOW_SECS`, 8 s, com um tom curto):
+  responder sem "Hey Jarvis" vai para a sessão que falou; sem fala, a fila segue. "Hey Jarvis" no meio
+  da fala interrompe na hora (limiar mais alto enquanto o Jarvis fala, `JARVIS_WAKE_BARGE_THRESHOLD`)
+  e o resto daquela resposta não toca (I-3). `JARVIS_WAKE_WINDOW=0` volta ao jeito antigo.
+- **"Hey Jarvis" para sessão de outra máquina (2026-10-28):** na vez de uma sessão remota, a fala vai
+  para ela pela fila de turnos (dono, permissão, máquina ocupada/offline) e a resposta é falada.
+- **Entrega no meio do turno — "A" (2026-10-28):** continuação de fala com turno do Claude rodando entra
+  NO turno (entrada `stream-json` aberta até o fim do turno; testado no CLI: lida na próxima pausa entre
+  ferramentas, uma resposta só) em vez de interromper e refazer. Outras IAs, turno já encerrando e sessão
+  de outra máquina seguem como antes. `JARVIS_CLAUDE_MIDTURN=0` desliga.
 - **Limites conhecidos:**
-  - o listener do PC ainda não avisa "terminei" nem tem janela: a fila usa a duração do áudio e segura
-    a vez por `JARVIS_VOICE_WINDOW_MS` (8 s) para o "Hey Jarvis" seguinte cair na sessão que falou;
-  - esse redirecionamento do "Hey Jarvis" vale só para sessões desta máquina; de outra máquina, a fala
-    vai para a voice;
+  - continuação de fala (juntar ou entregar no meio do turno) só vale para sessões desta máquina;
+  - fora da janela de continuação (`JARVIS_VOICE_MERGE_MS`), fala nova com turno rodando continua indo
+    para a fila — entregá-la no turno é decisão do dono, não foi feito;
   - falar por cima no app continua indo para o refino da sessão que está na tela (VOZ-00);
   - a fila vive na memória do Hub: um reinício perde as falas pendentes (o texto fica nas sessões);
   - nada foi validado em aparelho real.

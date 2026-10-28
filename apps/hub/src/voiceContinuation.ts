@@ -7,6 +7,10 @@
  * trabalhava na primeira metade (às vezes agindo com a instrução incompleta) e só depois via o resto.
  *
  * Interromper não apaga o que a IA já fez: o Hub preserva o parcial do turno cancelado.
+ *
+ * Melhor ainda (2026-10-28): quando a IA aceita mensagem no meio do turno (Claude com entrada viva),
+ * a continuação é ENTREGUE ao turno em andamento — nada é interrompido nem refeito; a IA lê o resto do
+ * pedido na próxima pausa entre ferramentas. Interromper e juntar fica para quem não aceita.
  */
 export interface VoiceContinuationDeps {
   /** Tempo, depois de a fala ir para a sessão, em que voltar a falar conta como continuação (0 desliga). */
@@ -15,6 +19,8 @@ export interface VoiceContinuationDeps {
   busy(sessionId: string): boolean;
   /** Interrompe o turno em andamento; false = nada cancelável (aí a fala segue como mensagem nova). */
   abort(sessionId: string): boolean;
+  /** Entrega a continuação ao turno em andamento sem interrompê-lo; false = a IA não aceita agora. */
+  inject?(sessionId: string, text: string): boolean;
   now?(): number;
   sleep?(ms: number): Promise<void>;
   /** Teto da espera pelo turno interrompido sair. */
@@ -22,11 +28,13 @@ export interface VoiceContinuationDeps {
 }
 
 /** Por que a fala foi (ou não) juntada à anterior — para o monitoramento calibrar a janela. */
-export type ContinuationReason = "joined" | "no_previous" | "disabled" | "window_expired" | "turn_finished" | "not_cancellable";
+export type ContinuationReason = "joined" | "injected" | "no_previous" | "disabled" | "window_expired" | "turn_finished" | "not_cancellable";
 
 export interface ContinuationResult {
   text: string;
   joined: boolean;
+  /** A fala já foi entregue ao turno em andamento: quem chamou NÃO abre turno novo. */
+  injected?: boolean;
   reason: ContinuationReason;
   /** Tempo desde a fala anterior da sessão (ausente quando não havia). */
   gapMs?: number;
@@ -51,6 +59,11 @@ export class VoiceContinuation {
     if (!this.deps.windowMs) return { text, joined: false, reason: "disabled", gapMs };
     if (gapMs > this.deps.windowMs) return { text, joined: false, reason: "window_expired", gapMs };
     if (!this.deps.busy(sessionId)) return { text, joined: false, reason: "turn_finished", gapMs };
+    if (this.deps.inject?.(sessionId, text)) {
+      // A próxima continuação ainda junta com o pedido inteiro, contada a partir desta fala.
+      this.last.set(sessionId, { text: `${prev.text} ${text}`, at: this.now() });
+      return { text, joined: false, injected: true, reason: "injected", gapMs };
+    }
     if (!this.deps.abort(sessionId)) return { text, joined: false, reason: "not_cancellable", gapMs };
     const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const t0 = this.now();

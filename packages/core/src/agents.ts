@@ -808,6 +808,10 @@ export interface AgentAdapter {
   oneShot?(text: string, opts?: SendOpts): Promise<AgentReply>;
   /** The underlying native session id (e.g. the real claude session), if bound. */
   nativeSessionId?(sessionId: string): string | undefined;
+  /** Entrega `text` ao turno que ESTÁ rodando nesta sessão, sem interrompê-lo (a IA lê na próxima
+   *  pausa entre ferramentas). false = não há turno aceitando mensagem agora — quem chamou segue o
+   *  caminho de sempre (fila ou interromper e juntar). */
+  inject?(sessionId: string, text: string): boolean;
   /** Synchronous declaration used by per-turn context manifests. */
   sessionContinuity?(): SessionContinuity;
   /** Persisted managed->native bindings, used to detect accidental shared provider threads. */
@@ -1006,6 +1010,16 @@ export class MockAgentAdapter implements AgentAdapter {
   }
 }
 
+/** Linha de entrada do `claude --input-format stream-json`: uma mensagem do usuário. */
+export function claudeUserLine(text: string): string {
+  return JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text }] } }) + "\n";
+}
+/** Turno com entrada viva? Desligável (JARVIS_CLAUDE_MIDTURN=0). Comando "/..." segue como texto puro:
+ *  o tratamento de comandos e skills pela entrada JSON não foi verificado. */
+export function claudeMidTurnInput(text: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.JARVIS_CLAUDE_MIDTURN !== "0" && !text.trimStart().startsWith("/");
+}
+
 /** Native Claude Code, headless. Requires `claude` logged in. */
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly name = "claude-code";
@@ -1014,6 +1028,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // shows up under `claude --resume`).
   private sessionsFile = join(homedir(), ".jarvis", "claude-sessions.json");
   private sessions = this.loadSessions();
+  /** Turnos rodando que ainda aceitam mensagem (entrada aberta até o primeiro `result`). */
+  private live = new Map<string, LiveInput>();
+  /** Fala nova do dono entra no turno em andamento (VOZ-01 "A"): ver claudeMidTurnInput. */
+  inject(sessionId: string, text: string): boolean {
+    const input = this.live.get(sessionId);
+    if (!input || !text.trim()) return false;
+    try { input.write(claudeUserLine(text)); return true; } catch { return false; }
+  }
   private loadSessions(): Map<string, string> {
     try { return new Map(Object.entries(JSON.parse(readFileSync(this.sessionsFile, "utf8")))); } catch { return new Map(); }
   }
@@ -1161,6 +1183,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // silently discards, so every tool-using turn would come back empty. Stdin has neither problem,
     // and as a bonus removes the CLI's own "no stdin data received in 3s" wait on every turn.
     const args = ["-p", ...fmt];
+    // Entrada viva (VOZ-01 "A"): o prompt vai como mensagem JSON e a entrada fica aberta até o turno
+    // anunciar o fim, para `inject` entregar uma fala nova no meio do turno. Testado no CLI (28/10): a
+    // mensagem entra na próxima pausa entre ferramentas, no MESMO turno (um `result` só).
+    const midTurn = !!onEvent && claudeMidTurnInput(text);
+    if (midTurn) args.push("--input-format", "stream-json");
     // Cleanup for a per-turn temp mcp-config (manual-mode approval bridge); no-op otherwise.
     let permCleanup: (() => void) | undefined;
     if (opts?.managed) args.push(...managedAdapterSecurityArgs(this.name, opts.managed));
@@ -1239,11 +1266,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // instead of guesses.
       const tSpawn = Date.now();
       let tFirstLine = 0, tResult = 0;
-      await runStream(this.bin, args, cwd, text, (line) => {
+      let liveInput: LiveInput | undefined;
+      const closeLive = (): void => {
+        if (!liveInput) return;
+        if (this.live.get(sessionId) === liveInput) this.live.delete(sessionId);
+        liveInput.end();
+        liveInput = undefined;
+      };
+      try {
+      await runStream(this.bin, args, cwd, midTurn ? claudeUserLine(text) : text, (line) => {
         if (!tFirstLine) tFirstLine = Date.now();
         let o: any;
         try { o = JSON.parse(line); } catch { return; }
         const signal = account.line(o);
+        // O turno anunciou o fim: fecha a entrada (senão o CLI esperaria mais mensagens). Fala que
+        // chegar depois disto vai pelo caminho de sempre (`inject` devolve false).
+        if (signal === true) closeLive();
         if (o.type === "system" && o.subtype === "task_started" && o.is_backgrounded && taskIds.has(String(o.tool_use_id || ""))) {
           asyncTaskIds.add(String(o.tool_use_id));
         }
@@ -1308,7 +1346,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         // `"resumed"` quando a CLI abre OUTRO turno depois de um `result`: aquele `result` não era o
         // fim (o mini-turno do aviso velho no `--resume`), e o prazo armado por ele mataria o real.
         return signal;
-      }, opts?.signal);
+      }, opts?.signal, undefined, midTurn ? (input) => { liveInput = input; this.live.set(sessionId, input); } : undefined);
+      } finally { closeLive(); }
       // The turn ended while async subagents were still unresolved. The tracker will mark them
       // `unknown`; say WHY, since Claude keeps their transcript and they can be resumed.
       for (const providerId of asyncTaskIds) {
@@ -2756,7 +2795,11 @@ export type StreamLineSignal = boolean | "resumed" | void;
 /** Like run(), but calls onLine for each complete stdout line as it arrives (NDJSON stream).
  *  Ver StreamLineSignal para o que `onLine` pode devolver. `finishedGraceMs` só existe para os testes
  *  exercitarem o prazo de verdade (com processo real) sem esperar um minuto. */
-export function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => StreamLineSignal, signal?: AbortSignal, finishedGraceMs = FINISHED_EXIT_GRACE_MS): Promise<string> {
+/** Entrada que continua aberta depois do prompt (claude `--input-format stream-json`): quem recebe
+ *  escreve mensagens novas e FECHA quando o turno acaba — sem fechar, o CLI espera mais entrada para sempre. */
+export interface LiveInput { write(data: string): void; end(): void }
+
+export function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => StreamLineSignal, signal?: AbortSignal, finishedGraceMs = FINISHED_EXIT_GRACE_MS, liveInput?: (input: LiveInput) => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawnCli(cmd, args, cwd);
     const wasAborted = wireAbort(p, signal);
@@ -2799,8 +2842,15 @@ export function runStream(cmd: string, args: string[], cwd: string, stdin: strin
     });
     p.stderr!.on("data", (d) => (err += d.toString()));
     p.on("error", reject);
+    p.stdin!.on("error", () => { /* processo saiu com a entrada aberta: o settle trata */ });
     if (stdin) p.stdin!.write(stdin);
-    p.stdin!.end();
+    if (liveInput) {
+      let ended = false;
+      liveInput({
+        write: (data) => { if (!ended) p.stdin!.write(data); },
+        end: () => { if (!ended) { ended = true; p.stdin!.end(); } },
+      });
+    } else p.stdin!.end();
     settleOnExit(p, p, (code, drained) => {
       if (finishedTimer) clearTimeout(finishedTimer);
       if (wasAborted()) { reject(new Error(ABORTED)); return; }
