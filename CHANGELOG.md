@@ -1,3 +1,12 @@
+# [0.51.0](https://github.com/jhonyralph/jarvis/compare/v0.50.0...v0.51.0) (2026-10-28)
+
+
+### Features
+
+* **voz:** "Hey Jarvis" na vez de uma sessao de outra maquina responde a ela ([e2a911e](https://github.com/jhonyralph/jarvis/commit/e2a911eaebcb0da9d437e99fe0111d4c201ea8e0))
+* **voz:** continuacao da fala entra no turno do Claude em andamento, sem interromper ([7f02988](https://github.com/jhonyralph/jarvis/commit/7f029883f6e50810b786b16e3c09d9f56791dc53))
+* **voz:** listener do PC entra na fila de fala - janela de resposta e "Hey Jarvis" interrompendo ([efd19e0](https://github.com/jhonyralph/jarvis/commit/efd19e05064245bb9a5743d86c09420568969f6c))
+
 # [0.50.0](https://github.com/jhonyralph/jarvis/compare/v0.49.4...v0.50.0) (2026-10-28)
 
 
