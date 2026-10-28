@@ -11,6 +11,7 @@
  * session UUIDs and the open handler can route them here. Nothing is written back.
  */
 import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { open as openAsync, readdir as readdirAsync, stat as statAsync } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, basename, dirname } from "node:path";
 import { writeJsonAtomic, readJson } from "./persist.js";
@@ -103,6 +104,41 @@ function readTail(path: string, bytes = 131072): string {
   }
 }
 
+// Versões ASSÍNCRONAS para a lista de sessões (2026-10-28). A lista rodava as leituras acima no
+// event loop do Hub: com ~30 agentes escrevendo transcripts ao mesmo tempo, cada atualização relia
+// dezenas de arquivos e travava o Hub 10 s+ (stall forensics: readHead < parseClaude < listNative),
+// e os aparelhos davam o Hub como fora do ar. A leitura assíncrona roda fora do event loop.
+async function readHeadAsync(path: string, bytes = HEAD_BYTES): Promise<string> {
+  let fh: Awaited<ReturnType<typeof openAsync>> | undefined;
+  try {
+    fh = await openAsync(path, "r");
+    const b = Buffer.alloc(bytes);
+    const { bytesRead } = await fh.read(b, 0, bytes, 0);
+    return b.subarray(0, bytesRead).toString("utf8");
+  } catch {
+    return "";
+  } finally {
+    await fh?.close().catch(() => undefined);
+  }
+}
+async function readTailAsync(path: string, bytes = 131072): Promise<string> {
+  let fh: Awaited<ReturnType<typeof openAsync>> | undefined;
+  try {
+    fh = await openAsync(path, "r");
+    const { size } = await fh.stat();
+    if (size <= 0) return "";
+    const start = Math.max(0, size - bytes);
+    const len = Math.min(bytes, size);
+    const b = Buffer.alloc(len);
+    const { bytesRead } = await fh.read(b, 0, len, start);
+    return b.subarray(0, bytesRead).toString("utf8");
+  } catch {
+    return "";
+  } finally {
+    await fh?.close().catch(() => undefined);
+  }
+}
+
 function eachLine(text: string, fn: (o: any) => void): void {
   for (const line of text.split(/\r?\n/)) {
     if (!line) continue;
@@ -145,6 +181,40 @@ function claudeFiles(includeScratch = false): Array<{ path: string; mtime: numbe
       }
     }
   }
+  return out;
+}
+
+async function claudeFilesAsync(): Promise<Array<{ path: string; mtime: number }>> {
+  const out: Array<{ path: string; mtime: number }> = [];
+  let dirs;
+  try { dirs = await readdirAsync(CLAUDE_DIR, { withFileTypes: true }); } catch { return out; }
+  for (const dir of dirs) {
+    if (!dir.isDirectory() || SCRATCH_DIR.test(dir.name)) continue;
+    const p = join(CLAUDE_DIR, dir.name);
+    let files: string[];
+    try { files = await readdirAsync(p); } catch { continue; }
+    const stats = await Promise.all(files.filter((f) => f.endsWith(".jsonl")).map(async (f) => {
+      try { return { path: join(p, f), mtime: (await statAsync(join(p, f))).mtimeMs }; } catch { return null; }
+    }));
+    for (const s of stats) if (s) out.push(s);
+  }
+  return out;
+}
+
+async function codexFilesAsync(): Promise<Array<{ path: string; mtime: number }>> {
+  const out: Array<{ path: string; mtime: number }> = [];
+  const walk = async (d: string, depth: number): Promise<void> => {
+    let ents;
+    try { ents = await readdirAsync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const p = join(d, e.name);
+      if (e.isDirectory() && depth < 3) await walk(p, depth + 1);
+      else if (e.isFile() && e.name.startsWith("rollout-") && e.name.endsWith(".jsonl")) {
+        try { out.push({ path: p, mtime: (await statAsync(p)).mtimeMs }); } catch { /* ignore */ }
+      }
+    }
+  };
+  await walk(CODEX_DIR, 0);
   return out;
 }
 
@@ -269,7 +339,15 @@ export function resolveNativeCwd(first: string, last: string): string {
 }
 
 function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
-  const head = readHead(path);
+  return parseClaudeWith(path, readHead(path), () => readTail(path));
+}
+async function parseClaudeAsync(path: string): Promise<Omit<NativeMeta, "updatedAt"> | null> {
+  const head = await readHeadAsync(path);
+  if (!head || isClaudeSidechainOnlyHead(head)) return null;
+  const tail = await readTailAsync(path);
+  return parseClaudeWith(path, head, () => tail);
+}
+function parseClaudeWith(path: string, head: string, tail: () => string): Omit<NativeMeta, "updatedAt"> | null {
   if (!head) return null;
   if (isClaudeSidechainOnlyHead(head)) return null;
   const id = basename(path).replace(/\.jsonl$/i, "");
@@ -287,7 +365,7 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
   // Título CORRETO = o ai-title MAIS RECENTE (o Claude Code o reescreve a cada turno; fica descritivo
   // e no idioma da conversa). Ele vive no FIM do arquivo, então lemos a cauda. O último vence.
   let aiTitle = "", customTitle = "";
-  eachLine(readTail(path), (o) => {
+  eachLine(tail(), (o) => {
     if (o.type === "ai-title" && o.aiTitle) aiTitle = o.aiTitle;
     else if (o.type === "custom-title" && o.customTitle) customTitle = o.customTitle;
     // O `cwd` mais recente vive na mesma cauda que o título — ler os dois da mesma passada evita que
@@ -299,7 +377,15 @@ function parseClaude(path: string): Omit<NativeMeta, "updatedAt"> | null {
 }
 
 function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
-  const head = readHead(path);
+  return parseCodexWith(path, readHead(path), () => readTail(path));
+}
+async function parseCodexAsync(path: string): Promise<Omit<NativeMeta, "updatedAt"> | null> {
+  const head = await readHeadAsync(path);
+  if (!head) return null;
+  const tail = await readTailAsync(path);
+  return parseCodexWith(path, head, () => tail);
+}
+function parseCodexWith(path: string, head: string, tail: () => string): Omit<NativeMeta, "updatedAt"> | null {
   if (!head) return null;
   let id = "", cwd = "", title = "";
   let internalSubagent = false;
@@ -318,7 +404,7 @@ function parseCodex(path: string): Omit<NativeMeta, "updatedAt"> | null {
   // Mesma regra do Claude: o Codex grava o `cwd` no `session_meta` (nascimento) e, em versões novas,
   // também em `turn_context` a cada turno. Retomada em outro projeto tem que mudar o projeto.
   let lastCwd = "";
-  eachLine(readTail(path), (o) => {
+  eachLine(tail(), (o) => {
     const c = o?.payload?.cwd;
     if (typeof c === "string" && c) lastCwd = c;
   });
@@ -347,24 +433,80 @@ function cachedParse(path: string, mtime: number, fn: (p: string) => Omit<Native
   return meta;
 }
 
-let listCache: { at: number; list: NativeMeta[] } | null = null;
+async function cachedParseAsync(path: string, mtime: number, fn: (p: string) => Promise<Omit<NativeMeta, "updatedAt"> | null>) {
+  const c = pcache.get(path);
+  if (c && c.mtime === mtime) return c.meta;
+  // Cede a vez entre um arquivo e outro: o parse (JSON das linhas) roda no event loop, e assim cada
+  // fatia é curta — nenhum cliente espera a lista inteira ser relida.
+  await new Promise<void>((r) => setImmediate(r));
+  const meta = await fn(path);
+  if (pcache.size >= PCACHE_LIMIT) pcache.delete(pcache.keys().next().value as string);
+  pcache.set(path, { mtime, meta });
+  return meta;
+}
 
-/** Recent native sessions across Claude + Codex, newest first, agent-tagged. */
-export function listNative(limit = Number(process.env.JARVIS_NATIVE_LIMIT || 40)): NativeMeta[] {
-  if (listCache && Date.now() - listCache.at < 15000) return listCache.list;
-  const metas: NativeMeta[] = [];
-  for (const { path, mtime } of claudeFiles().sort((a, b) => b.mtime - a.mtime).slice(0, limit)) {
-    const m = cachedParse(path, mtime, parseClaude);
-    if (m) metas.push({ ...m, updatedAt: mtime });
+/**
+ * Lista de sessões nativas — SEM bloquear (2026-10-28).
+ *
+ * Antes cada chamada vencida (15 s) relia, no event loop, o começo e o fim dos 40 transcripts mais
+ * recentes que tinham mudado. Com muitos agentes escrevendo, quase todos mudavam a cada vez e a
+ * releitura levava 10 s+ — o Hub inteiro parado (stall forensics de 28/10, 8 travas em 2 h).
+ * Agora `listNative` devolve na hora o que já foi lido e dispara a releitura em segundo plano
+ * (`refreshNativeList`, leitura assíncrona, uma de cada vez); quem precisa saber que mudou assina
+ * `onNativeListChange`. Na primeira chamada depois do boot a lista vem vazia até a releitura terminar.
+ */
+const NATIVE_TTL_MS = 15_000;
+let listCache: { at: number; list: NativeMeta[] } | null = null;
+let refreshing: Promise<NativeMeta[]> | null = null;
+const listListeners = new Set<(list: NativeMeta[]) => void>();
+const nativeLimit = (): number => Math.max(1, Number(process.env.JARVIS_NATIVE_LIMIT || 40));
+
+/** Recent native sessions across Claude + Codex, newest first, agent-tagged. Never blocks. */
+export function listNative(limit = nativeLimit()): NativeMeta[] {
+  if (!listCache || Date.now() - listCache.at >= NATIVE_TTL_MS) void refreshNativeList();
+  return (listCache?.list ?? []).slice(0, limit);
+}
+
+/** Avisa quando a lista nativa mudou (sessão nova, título novo, atividade). Devolve o cancelamento. */
+export function onNativeListChange(cb: (list: NativeMeta[]) => void): () => void {
+  listListeners.add(cb);
+  return () => { listListeners.delete(cb); };
+}
+
+/** Relê a lista agora, em segundo plano (uma releitura por vez; chamadas simultâneas esperam a mesma). */
+export function refreshNativeList(): Promise<NativeMeta[]> {
+  if (!refreshing) refreshing = rebuildNativeList().finally(() => { refreshing = null; });
+  return refreshing;
+}
+
+async function rebuildNativeList(): Promise<NativeMeta[]> {
+  const prev = listCache?.list;
+  const limit = nativeLimit();
+  try {
+    const metas: NativeMeta[] = [];
+    for (const { path, mtime } of (await claudeFilesAsync()).sort((a, b) => b.mtime - a.mtime).slice(0, limit)) {
+      const m = await cachedParseAsync(path, mtime, parseClaudeAsync);
+      if (m) metas.push({ ...m, updatedAt: mtime });
+    }
+    for (const { path, mtime } of (await codexFilesAsync()).sort((a, b) => b.mtime - a.mtime).slice(0, limit)) {
+      const m = await cachedParseAsync(path, mtime, parseCodexAsync);
+      if (m) metas.push({ ...m, updatedAt: mtime });
+    }
+    metas.sort((a, b) => b.updatedAt - a.updatedAt);
+    const list = metas.slice(0, limit);
+    listCache = { at: Date.now(), list };
+    if (!sameNativeList(prev, list)) for (const cb of listListeners) { try { cb(list); } catch { /* ouvinte não derruba a lista */ } }
+    return list;
+  } catch {
+    // Falha de leitura não pode virar laço: guarda o que havia e tenta de novo depois do TTL.
+    listCache = { at: Date.now(), list: prev ?? [] };
+    return listCache.list;
   }
-  for (const { path, mtime } of codexFiles().sort((a, b) => b.mtime - a.mtime).slice(0, limit)) {
-    const m = cachedParse(path, mtime, parseCodex);
-    if (m) metas.push({ ...m, updatedAt: mtime });
-  }
-  metas.sort((a, b) => b.updatedAt - a.updatedAt);
-  const list = metas.slice(0, limit);
-  listCache = { at: Date.now(), list };
-  return list;
+}
+
+function sameNativeList(a: NativeMeta[] | undefined, b: NativeMeta[]): boolean {
+  if (!a || a.length !== b.length) return false;
+  return a.every((x, i) => x.id === b[i].id && x.updatedAt === b[i].updatedAt && x.title === b[i].title && x.cwd === b[i].cwd);
 }
 
 // ------------------------------- full-text search -------------------------------

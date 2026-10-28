@@ -22,7 +22,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import {
   AgentRegistry, MockAgentAdapter, ClaudeCodeAdapter, CodexAdapter, AiderAdapter, GeminiCliAdapter, CursorAgentAdapter, CopilotCliAdapter, OpenCodeAdapter, ClineCliAdapter, QwenCodeAdapter, ContinueCliAdapter, KiroCliAdapter, AntigravityCliAdapter, ABORTED, attachPartialTurn, turnProducedWork,
-  listNative, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
+  listNative, refreshNativeList, nativeHistory, nativeInfo, isNativeId, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, Store,
   updateCheck, updateApply, restartService, runnerSelfUpdateDecision, updatePreflight, autonomousUpdateAttempt, resolveCommit, readProjectFile, writeProjectFile, searchProjectFiles, repoCommit, repoVersion, createSeenSet, VERSION, Outbox,
   listCommandsPublic, expandCommand, cmdAgentOf, listMentionFiles, expandBang, detectPreviewCandidates,
   previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest,
@@ -2011,7 +2011,9 @@ try {
   }
   if (n) console.log(`[runner] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`);
 } catch { /* ignore */ }
-try { let n = 0; for (const meta of listNative()) n += reconcileNativeExecutions(meta.id); if (n) console.log(`[runner] reconciliei ${n} execução(ões) nativas sem terminal observado`); } catch { /* ignore */ }
+// A lista nativa agora é lida em segundo plano (2026-10-28): no boot ela ainda está vazia, então a
+// reconciliação espera a primeira leitura em vez de varrer uma lista vazia.
+void refreshNativeList().then((list) => { let n = 0; for (const meta of list) n += reconcileNativeExecutions(meta.id); if (n) console.log(`[runner] reconciliei ${n} execução(ões) nativas sem terminal observado`); }).catch(() => { /* ignore */ });
 connect();
 // keep native/managed session list fresh (native sessions can change out-of-band)
 setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) pushSessions(); }, 6000);

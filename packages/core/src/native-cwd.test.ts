@@ -25,7 +25,7 @@ process.env.JARVIS_CLAUDE_DIR = CLAUDE;
 process.env.JARVIS_CODEX_DIR = CODEX;
 process.env.JARVIS_HOME = HOME;
 
-const { listNative, nativeInfo, resolveNativeCwd } = await import("./native.js");
+const { listNative, refreshNativeList, nativeInfo, resolveNativeCwd } = await import("./native.js");
 
 const jsonl = (rows: unknown[]): string => rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
 const turn = (cwd: string, text: string, i: number) => ([
@@ -67,6 +67,8 @@ writeFileSync(join(CODEX, "2026", "08", "20", `rollout-2026-08-20T12-00-00-${COD
 
 process.on("exit", () => { try { rmSync(HOME, { recursive: true, force: true }); } catch { /* fixture descartável */ } });
 
+// A lista é lida em segundo plano (não bloqueia o Hub): os testes esperam a leitura das fixtures.
+await refreshNativeList();
 const porId = (id: string) => listNative(50).find((s) => s.id === id);
 
 /* ── a regra pura ─────────────────────────────────────────────────────────────────────────────── */
