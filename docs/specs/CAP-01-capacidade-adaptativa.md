@@ -122,6 +122,23 @@ nível do turno/processo.
 | **F5** | Leque do Claude por turno (R9) | Usa a folga da F3 |
 | **F6** | Runner e várias máquinas (R12) | Mesma lógica na outra ponta |
 
+### 6.1 Estado (2026-10-28)
+- **F1 implementada, sem commit ainda.** `packages/core/src/machine-capacity.ts` mede a cada 5 s (memória
+  física, memória comprometida via `GlobalMemoryStatusEx` num PowerShell que fica aberto, CPU, atraso do
+  event loop) e o Hub grava um `capacity_sample` por minuto. Relatório: `node scripts/capacity-report.mjs`
+  (mostra, por reserva, quantos minutos do dia ficariam sem folga). Variáveis:
+  `JARVIS_CAPACITY_SAMPLE_MS` (0 desliga), `JARVIS_CAPACITY_SUMMARY_MS`, `JARVIS_CAPACITY_RESERVE_PCT`.
+- **Achado 1 — a reserva de 20% na memória física já zera a folga no uso normal desta máquina.** Na
+  primeira medição: 32,5 GB de memória física, ~6,3–6,7 GB disponíveis, reserva de 6,5 GB → folga entre
+  −180 e +240 MB, com nenhum turno do Jarvis rodando. A memória comprometida tinha ~8 GB de folga. Antes
+  da F3, o relatório de alguns dias precisa dizer se a regra deve olhar só a comprometida (o que de
+  fato derruba a máquina), ou medir a física de outro jeito. **Decisão pendente do dono, com os dados.**
+- **Achado 2 — os serviços de voz reservavam ~3 GB de memória comprometida à toa.** O OpenBLAS do
+  numpy/scipy reserva um buffer por núcleo ao ser importado (28 threads aqui): listener 1.638 → 158 MB,
+  Whisper −740 MB, Piper 763 → 24 MB, com a mesma latência medida (transcrição 9,0 s nos dois casos no
+  CPU, síntese ~135 ms, detecção do "Hey Jarvis" 2,4 → 1,0 ms por quadro). Corrigido com
+  `OPENBLAS_NUM_THREADS=1` no topo de cada serviço (vale no próximo reinício dos serviços de voz).
+
 ## 7) Validação
 - Unidades puras (folga, admissão, prioridade, aprendizado) com relógio e medições falsas.
 - E2E com turnos falsos que "pesam" X GB: o terceiro espera; liberar um faz o terceiro começar.

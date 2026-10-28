@@ -25,6 +25,7 @@ export * from "./history-gaps.js";
 export * from "./attachments.js";
 export * from "./usage-ledger.js";
 export * from "./execution-store.js";
+export * from "./machine-capacity.js";
 export * from "./background-jobs.js";
 export * from "./background-runner.js";
 export * from "./codex-executions.js";
