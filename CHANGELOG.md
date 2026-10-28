@@ -1,3 +1,10 @@
+## [0.49.1](https://github.com/jhonyralph/jarvis/compare/v0.49.0...v0.49.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **voz:** tela nao fica "ouvindo" para sempre depois do "Hey Jarvis" ([fe7265f](https://github.com/jhonyralph/jarvis/commit/fe7265f8225bebd81f327a89858e9907bdf28663))
+
 # [0.49.0](https://github.com/jhonyralph/jarvis/compare/v0.48.0...v0.49.0) (2026-10-27)
 
 
