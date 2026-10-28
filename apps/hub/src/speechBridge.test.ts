@@ -159,3 +159,22 @@ test("falar por cima no app (refino) para a voz no aparelho", () => {
   assert.deepEqual(phone.last("tts_stop"), { t: "tts_stop" });
   bridge.dispose();
 });
+
+test("listener que entende a fila (passo 5): recebe a janela de resposta e o \"Hey Jarvis\" no meio da fala responde à sessão de outra máquina", () => {
+  const listener = new Device("pc");
+  const { bridge } = setup([listener]);
+  bridge.markCapable(listener);
+  bridge.enqueue("pc2", "s9", { audio: wav(300), text: "build pronto" }, []);
+  // "Hey Jarvis" no meio da fala: para a voz e segura a vez desta sessão.
+  bridge.bargeIn(listener, "wake");
+  assert.equal(listener.last("tts_stop")?.t, "tts_stop");
+  const heard = bridge.heard(listener, "local", "voice", "e os testes?", true);
+  assert.deepEqual(heard.target, { runnerId: "pc2", sessionId: "s9" }, "a fala vai para a sessão que falava, mesmo de outra máquina");
+  // Resposta dela tocou até o fim: o listener recebe a janela (não a regra de tempo) e a fecha sem fala.
+  bridge.enqueue("pc2", "s9", { audio: wav(300), text: "passaram" }, []);
+  bridge.played(String(listener.tts().at(-1)?.qid));
+  assert.deepEqual(listener.last("voice_window"), { t: "voice_window", runnerId: "pc2", sessionId: "s9" });
+  bridge.windowClosed("pc2", "s9");
+  assert.equal(bridge.queue.focus(), null, "janela fechada sem fala: ninguém mais tem a vez");
+  bridge.dispose();
+});

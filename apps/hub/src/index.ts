@@ -1530,6 +1530,9 @@ function isLocalWakeMsg(ip: string, msg: any): boolean {
   // Gravação acompanhada (2026-10-27): o listener manda o áudio enquanto você fala e o Hub decide o fim
   // da fala, como no app — antes ele cortava por uma pausa fixa de 0,7 s e num teto de 12 s.
   if (msg.t === "voice_stream_open" || msg.t === "voice_stream_chunk" || msg.t === "voice_stream_close") return true;
+  // Fila de fala (VOZ-01 F1, passo 5): o listener avisa "terminei", fecha a janela de resposta sem fala
+  // e interrompe a fala quando ouve "Hey Jarvis" no meio dela.
+  if (msg.t === "speech_caps" || msg.t === "tts_played" || msg.t === "tts_window_closed" || msg.t === "wake_barge_in") return true;
   if (msg.t === "voice") return msg.sessionId === WAKE_SESSION && msg.speak === true && typeof msg.audio === "string";
   return msg.t === "send" && msg.sessionId === WAKE_SESSION && msg.speak === true && typeof msg.text === "string";
 }
@@ -6652,6 +6655,8 @@ async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
     speech.windowClosed(typeof msg.runnerId === "string" && msg.runnerId ? msg.runnerId : LOCAL_ID, msg.sessionId);
     return true;
   }
+  // "Hey Jarvis" no meio de uma fala tocada pelo listener: para a fila já, antes de a fala do dono chegar.
+  if (msg.t === "wake_barge_in") { if (wakeClients.has(ws)) speech.bargeIn(ws, "wake"); return true; }
   if (msg.t === "wake_hello") { clearUnauthTimer(ws); wakeClients.add(ws); broadcastWakeState(); return true; }
   if (msg.t === "wake") {
     if (!requireOwner(ws)) return true;

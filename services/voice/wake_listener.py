@@ -112,6 +112,19 @@ MAX_AUDIO_B64 = 18 * 1024 * 1024
 # resposta comeca a tocar (o microfone ouviria a propria voz do Jarvis) ou no limite de continuacoes.
 FOLLOW_UP = os.environ.get("JARVIS_WAKE_FOLLOW_UP", "1") != "0"
 MAX_FOLLOW_UPS = 20
+# Fila de fala do Hub (VOZ-01 F1, passo 5). Este listener toca o que o Hub manda, avisa quando terminou
+# (tts_played) e, quando o Hub abre a JANELA DE RESPOSTA de uma sessao (voice_window), escuta sem
+# "Hey Jarvis" por WINDOW_SECS: o que o dono disser vai para a sessao que acabou de falar. Sem fala,
+# avisa (tts_window_closed) e a fila segue para a proxima sessao. JARVIS_WAKE_WINDOW=0 volta ao jeito
+# antigo (o Hub segura a vez por tempo e so o "Hey Jarvis" responde).
+WINDOW = os.environ.get("JARVIS_WAKE_WINDOW", "1") != "0"
+WINDOW_SECS = max(3.0, float(os.environ.get("JARVIS_WAKE_WINDOW_SECS", "8")))
+# Janela que chegou enquanto o microfone estava ocupado (outra captura): vale ate este atraso.
+WINDOW_STALE_SECS = 3.0
+# "Hey Jarvis" no meio da fala do Jarvis interrompe a fala e ouve (RN-O7). O microfone tambem ouve a
+# propria voz do Jarvis pelo alto-falante, entao enquanto ele fala o limiar e mais alto.
+BARGE_IN = os.environ.get("JARVIS_WAKE_BARGE_IN", "1") != "0"
+BARGE_THRESHOLD = float(os.environ.get("JARVIS_WAKE_BARGE_THRESHOLD", str(max(THRESHOLD, 0.7))))
 # Entradas que NAO sao microfone: loopback do som do PC (o Jarvis se acordaria com um video dizendo
 # "Hey Jarvis") e os "mapeadores" virtuais do Windows. Nunca viram reserva automatica.
 _NOT_A_MIC = ("mapeador", "mapper", "driver de captura", "primary sound capture", "mixagem", "stereo mix",
@@ -123,7 +136,14 @@ mic = {"status": "unknown", "error": None, "device": None}
 # Dispositivo aberto agora (indice do PortAudio; None = padrao do Windows) e o nome dele.
 current = {"idx": None, "name": None}
 _ws_holder = {"ws": None}
-_play_q: "queue.Queue[str]" = queue.Queue()
+# Falas recebidas do Hub ({audio, qid, rid, ...}), tocadas em ordem pela thread `player`.
+_play_q: "queue.Queue[dict]" = queue.Queue()
+# O que esta tocando agora; `cut` = interrompida (barge-in ou tts_stop) -> nao avisa "terminei".
+_play = {"qid": None, "rid": None, "cut": False}
+# Respostas interrompidas: trechos delas que ainda chegarem nao tocam (o Hub so precisa do "terminei").
+_stopped_rids: "list[str]" = []
+# Janela de resposta pedida pelo Hub, aguardando o microfone ({runnerId, sessionId, at}).
+_window = {"pending": None, "lock": threading.Lock()}
 
 
 def send_status():
@@ -152,6 +172,8 @@ def start_ws():
     def on_open(ws):
         _ws_holder["ws"] = ws
         ws.send(json.dumps({"t": "wake_hello", "wakeToken": _wake_token()}))
+        if WINDOW:
+            ws.send(json.dumps({"t": "speech_caps", "queue": 1, "wakeToken": _wake_token()}))
         print("[wake] connected to hub", flush=True)
         send_status()
 
@@ -164,7 +186,17 @@ def start_ws():
         if t == "tts" and m.get("audio"):
             # Fila + thread propria: tocar aqui (sd.wait) bloqueava a thread do WebSocket — sem ping,
             # sem receber nada — durante toda a fala.
-            _play_q.put(m["audio"])
+            _play_q.put(m)
+        elif t == "tts" and m.get("qid"):
+            _ack_played(m["qid"])  # trecho sem audio (sintese falhou): so nao pode prender a fila
+        elif t == "voice_window":
+            with _window["lock"]:
+                _window["pending"] = {"runnerId": m.get("runnerId") or "", "sessionId": m.get("sessionId") or "", "at": time.time()}
+        elif t == "tts_stop":
+            stop_playback()
+            if m.get("off"):
+                with _window["lock"]:
+                    _window["pending"] = None
         elif t in ("voice_stream_ready", "voice_endpoint", "voice_stream_failed", "unauth"):
             _stream_event(m)
         elif t == "wake_state":
@@ -189,7 +221,7 @@ def start_ws():
 
     def player():
         while True:
-            play_wav_b64(_play_q.get())
+            play_one(_play_q.get())
 
     run.ws = None
     threading.Thread(target=run, daemon=True).start()
@@ -359,6 +391,62 @@ def take_fallback():
     return r
 
 
+def _ack_played(qid):
+    """Avisa o Hub que a fala `qid` terminou (so falas da fila trazem qid)."""
+    if qid and _ws_holder["ws"]:
+        try:
+            _ws_holder["ws"].send(json.dumps({"t": "tts_played", "qid": qid, "wakeToken": _wake_token()}))
+        except Exception:
+            pass
+
+
+def play_one(m):
+    """Toca uma fala do Hub e avisa "terminei" - salvo se foi interrompida."""
+    qid, rid = m.get("qid"), m.get("rid")
+    if rid and rid in _stopped_rids:
+        _ack_played(qid)  # trecho de resposta interrompida: nao toca, mas libera a fila
+        return
+    _play.update(qid=qid, rid=rid, cut=False)
+    play_wav_b64(m["audio"])
+    cut = _play["cut"]
+    _play.update(qid=None, rid=None, cut=False)
+    if not cut:
+        _ack_played(qid)
+
+
+def stop_playback():
+    """Para a fala atual e descarta as pendentes. O resto da resposta interrompida nao toca (I-3)."""
+    if _play["qid"] or _play["rid"] or state["speaking"]:
+        _play["cut"] = True
+    if _play["rid"]:
+        _stopped_rids.append(_play["rid"])
+        del _stopped_rids[:-20]
+    while True:
+        try:
+            m = _play_q.get_nowait()
+        except queue.Empty:
+            break
+        if m.get("rid"):
+            _stopped_rids.append(m["rid"])
+            del _stopped_rids[:-20]
+    try:
+        sd.stop()
+    except Exception:
+        pass
+
+
+def take_window():
+    with _window["lock"]:
+        w, _window["pending"] = _window["pending"], None
+    return w
+
+
+def close_window(ws, w, reason):
+    """Janela de resposta fechada sem fala: a fila do Hub segue para a proxima sessao."""
+    _hub_send(ws, {"t": "tts_window_closed", "runnerId": w.get("runnerId") or "", "sessionId": w.get("sessionId") or ""})
+    wake_log(ws, "window_end", reason=reason)
+
+
 def play_wav_b64(b64: str):
     try:
         data = base64.b64decode(b64)
@@ -392,6 +480,8 @@ def _tone(freqs, ms=110, sr=24000, vol=0.22):
 CHIME_LISTEN = _tone([660, 880])
 CHIME_GOT = _tone([880, 660])
 CHIME_MISS = _tone([330], ms=180)
+# Janela de resposta aberta (pode responder sem "Hey Jarvis"): um tom curto e baixo.
+CHIME_WINDOW = _tone([660], ms=90, vol=0.12)
 
 
 def chime(sound, stream=None):
@@ -453,7 +543,7 @@ def wake_log(ws, phase, **fields):
     _hub_send(ws, {"t": "wake_event", "phase": phase, "flow": _flow["id"], **fields})
 
 
-def capture_with_hub(stream, ws, follow_up=False):
+def capture_with_hub(stream, ws, follow_up=False, no_speech_secs=6.0):
     """Grava mandando o audio ao Hub, que decide o fim da fala. Sem resposta do Hub em
     STREAM_READY_SECS (ou se ele falhar no meio), segue decidindo aqui pela pausa (END_SILENCE).
     Devolve (pcm, hub_ok, spoke): hub_ok = o Hub acompanhou a gravacao (e aceita o audio)."""
@@ -467,7 +557,7 @@ def capture_with_hub(stream, ws, follow_up=False):
     silent, spoke = 0, False
     end_frames = int(END_SILENCE * SR / FRAME)
     max_frames = int(MAX_UTTERANCE * SR / FRAME)
-    no_speech_frames = int(6 * SR / FRAME)
+    no_speech_frames = int(no_speech_secs * SR / FRAME)
     interrupted = False
     for i in range(max_frames):
         block, _ = stream.read(FRAME)
@@ -609,6 +699,70 @@ def report_cycle_error(e: BaseException):
         _cycle_err.update(count=0, at=now)
 
 
+def follow_ups(stream, ws, hub_ok):
+    """Continua ouvindo depois de um pedido: o que vier logo depois vai como continuacao dele."""
+    follow, stop = 0, "desligado" if not FOLLOW_UP else ("hub_sem_gravacao" if not hub_ok else "")
+    while not stop:
+        if follow >= MAX_FOLLOW_UPS:
+            stop = "limite"
+        elif state["speaking"]:
+            stop = "resposta_tocou"
+        elif not state["armed"]:
+            stop = "desarmado"
+        if stop:
+            break
+        pcm, hub_ok, spoke = capture_with_hub(stream, ws, follow_up=True)
+        if not spoke or pcm.size < SR // 2:
+            # ninguem falou (ou a resposta comecou a tocar): volta a esperar o "Hey Jarvis"
+            stop = "resposta_tocou" if _last_capture.get("end") == "resposta_tocou" else "silencio"
+            break
+        chime(CHIME_GOT, stream)
+        print(f"[wake] continuacao {follow + 1}", flush=True)
+        if not send_utterance(ws, pcm, hub_ok):
+            stop = "recusada"
+            break
+        follow += 1
+        if not hub_ok:
+            stop = "hub_sem_gravacao"
+    wake_log(ws, "follow_end", follows=follow, reason=stop)
+
+
+def listen_and_send(stream, ws):
+    """Depois do "Hey Jarvis": sinal, grava, manda ao Hub e segue ouvindo as continuacoes."""
+    chime(CHIME_LISTEN, stream)
+    pcm, hub_ok, spoke = capture_with_hub(stream, ws)
+    if not spoke or pcm.size < SR // 2:  # ninguem falou / < 0.5 s -> ruido
+        chime(CHIME_MISS)
+        wake_log(ws, "miss", secs=round(pcm.size / SR, 1))
+        return
+    chime(CHIME_GOT, stream)
+    if not send_utterance(ws, pcm, hub_ok):
+        return
+    follow_ups(stream, ws, hub_ok)
+
+
+def run_window(stream, ws, w):
+    """Janela de resposta: escuta sem "Hey Jarvis"; a fala vai para a sessao que acabou de falar (o Hub
+    sabe qual e: a que tem a vez). Sem fala, fecha a janela e a fila segue."""
+    _flow["id"] = "wf" + os.urandom(6).hex()
+    wake_log(ws, "window", reason="aberta")
+    chime(CHIME_WINDOW, stream)
+    pcm, hub_ok, spoke = capture_with_hub(stream, ws, follow_up=True, no_speech_secs=WINDOW_SECS)
+    end = _last_capture.get("end") or ""
+    if not spoke or pcm.size < SR // 2:
+        if end == "resposta_tocou":
+            # Outra fala da mesma sessao comecou a tocar: a janela dela abre de novo depois.
+            wake_log(ws, "window_end", reason="resposta_tocou")
+        else:
+            close_window(ws, w, "silencio")
+        return
+    chime(CHIME_GOT, stream)
+    if send_utterance(ws, pcm, hub_ok):
+        follow_ups(stream, ws, hub_ok)
+    else:
+        close_window(ws, w, "recusada")
+
+
 def main():
     from openwakeword.model import Model
 
@@ -665,51 +819,49 @@ def main():
                 if mic["status"] == "silent":
                     set_mic("ok", device=current["name"])
                 dead = 0
-            if state["speaking"] or not state["armed"]:
+            if not state["armed"]:
+                w = take_window()
+                if w:
+                    close_window(ws, w, "desarmado")  # sem microfone: a fila nao pode ficar esperando
                 continue
             # Um erro num ciclo (transcricao, rede, speaker-id) nao pode derrubar o listener inteiro.
             try:
+                if not state["speaking"]:
+                    w = take_window()
+                    if w:
+                        if time.time() - w["at"] > WINDOW_STALE_SECS:
+                            close_window(ws, w, "atrasada")
+                        else:
+                            run_window(stream, ws, w)
+                            _flow["id"] = None
+                            model.reset()
+                        continue
+                elif not BARGE_IN:
+                    continue
                 scores = model.predict(frame)
-                if scores.get(key, 0.0) < THRESHOLD:
+                score = scores.get(key, 0.0)
+                barge = state["speaking"]
+                if score < (BARGE_THRESHOLD if barge else THRESHOLD):
                     continue
-                print(f"[wake] detected (score {scores.get(key, 0.0):.2f}) -> capturing", flush=True)
                 _flow["id"] = "wf" + os.urandom(6).hex()
-                wake_log(ws, "capturing", score=round(float(scores.get(key, 0.0)), 3), device=(current.get("name") or "")[:60])
+                if barge:
+                    # "Hey Jarvis" no meio da fala: cala ja e avisa o Hub, que segura a vez da sessao
+                    # que falava; o que o dono disser vai para ela (RN-O7).
+                    print(f"[wake] barge-in (score {score:.2f}) -> parando a fala", flush=True)
+                    stop_playback()
+                    _hub_send(ws, {"t": "wake_barge_in"})
+                    wake_log(ws, "barge_in", score=round(float(score), 3))
+                    deadline = time.time() + 2.0
+                    while state["speaking"] and time.time() < deadline:
+                        time.sleep(0.05)
+                    n = stream.read_available
+                    if n > 0:
+                        stream.read(n)  # o que entrou enquanto a fala parava e a voz do proprio Jarvis
+                else:
+                    print(f"[wake] detected (score {score:.2f}) -> capturing", flush=True)
+                wake_log(ws, "capturing", score=round(float(score), 3), device=(current.get("name") or "")[:60])
                 model.reset()
-                chime(CHIME_LISTEN, stream)
-                pcm, hub_ok, spoke = capture_with_hub(stream, ws)
-                if not spoke or pcm.size < SR // 2:  # ninguem falou / < 0.5 s -> ruido
-                    chime(CHIME_MISS)
-                    wake_log(ws, "miss", secs=round(pcm.size / SR, 1))
-                    continue
-                chime(CHIME_GOT, stream)
-                if not send_utterance(ws, pcm, hub_ok):
-                    continue
-                # Continua ouvindo: o que vier logo depois vai como continuacao do mesmo pedido.
-                follow, stop = 0, "desligado" if not FOLLOW_UP else ("hub_sem_gravacao" if not hub_ok else "")
-                while not stop:
-                    if follow >= MAX_FOLLOW_UPS:
-                        stop = "limite"
-                    elif state["speaking"]:
-                        stop = "resposta_tocou"
-                    elif not state["armed"]:
-                        stop = "desarmado"
-                    if stop:
-                        break
-                    pcm, hub_ok, spoke = capture_with_hub(stream, ws, follow_up=True)
-                    if not spoke or pcm.size < SR // 2:
-                        # ninguem falou (ou a resposta comecou a tocar): volta a esperar o "Hey Jarvis"
-                        stop = "resposta_tocou" if _last_capture.get("end") == "resposta_tocou" else "silencio"
-                        break
-                    chime(CHIME_GOT, stream)
-                    print(f"[wake] continuacao {follow + 1}", flush=True)
-                    if not send_utterance(ws, pcm, hub_ok):
-                        stop = "recusada"
-                        break
-                    follow += 1
-                    if not hub_ok:
-                        stop = "hub_sem_gravacao"
-                wake_log(ws, "follow_end", follows=follow, reason=stop)
+                listen_and_send(stream, ws)
                 _flow["id"] = None
                 model.reset()
             except Exception as e:

@@ -95,11 +95,12 @@ export class SpeechBridge<W extends SpeechSocket> {
     this.deps.log("speech_window_closed", { sessionId, by: "aparelho" });
     this.run(this.queue.windowClosed(this.key(runnerId, sessionId), this.now()));
   }
-  /** Falou por cima do agente no app (refino): para a voz e espera a resposta desta sessão. */
-  bargeIn(ws: W): void {
+  /** Falou por cima do agente no app (refino), ou "Hey Jarvis" no meio da fala do listener: para a voz
+   *  e espera a resposta desta sessão. */
+  bargeIn(ws: W, via: "app" | "wake" = "app"): void {
     this.device = ws;
     const b = this.queue.bargeIn(this.now());
-    if (b.session) this.deps.log("speech_barge_in", { sessionId: this.target(b.session).sessionId, via: "app" });
+    if (b.session) this.deps.log("speech_barge_in", { sessionId: this.target(b.session).sessionId, via });
     this.run(b.commands);
   }
 
