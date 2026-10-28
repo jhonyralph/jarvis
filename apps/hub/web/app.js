@@ -711,10 +711,24 @@
       try{
         const clone=table.cloneNode(true);
         clone.querySelectorAll('a').forEach(a=>{ const s=document.createElement('span'); s.textContent=a.textContent||a.href||''; a.replaceWith(s); });
-        const w=Math.ceil(Math.max(table.scrollWidth, table.getBoundingClientRect().width, 320));
-        const h=Math.ceil(Math.max(table.scrollHeight, table.getBoundingClientRect().height, 80));
-        const css='table{border-collapse:collapse;width:max-content;min-width:max-content;background:#151b21;color:#e6e9ec;font:14px system-ui,-apple-system,Segoe UI,sans-serif}th,td{border:1px solid #34404c;padding:7px 11px;text-align:left;vertical-align:top;min-width:120px;max-width:380px;word-break:normal;overflow-wrap:normal}th{background:#252c34;font-weight:700}code{background:#ffffff1a;border-radius:5px;padding:1px 5px;font:13px ui-monospace,Consolas,monospace;white-space:nowrap}';
-        const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml"><style>${css}</style>${clone.outerHTML}</div></foreignObject></svg>`;
+        // O tamanho da imagem é medido na PRÓPRIA tabela já com o estilo da imagem. Antes media a
+        // tabela do chat (outra fonte, outro espaçamento, cortada pela rolagem): o texto quebrava
+        // diferente na imagem, ela ficava maior que a moldura e saía cortada à direita e embaixo.
+        // Estilo escopado em .jx-export e completo (fonte, altura de linha, borda), para a medição
+        // aqui fora e o desenho dentro do SVG (que não herda nada da página) darem o mesmo resultado.
+        const css='.jx-export{display:inline-block;padding:12px;background:#151b21;color:#e6e9ec;font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}'
+          +'.jx-export table{border-collapse:collapse;width:max-content;min-width:max-content;margin:0;background:#151b21;color:#e6e9ec;font:inherit}'
+          +'.jx-export th,.jx-export td{border:1px solid #34404c;padding:7px 11px;text-align:left;vertical-align:top;min-width:120px;max-width:380px;word-break:normal;overflow-wrap:break-word;font:inherit}'
+          +'.jx-export th{background:#252c34;font-weight:700}'
+          +'.jx-export code{background:#ffffff1a;border-radius:5px;padding:1px 5px;font:13px/1.45 ui-monospace,Consolas,monospace;white-space:normal;overflow-wrap:anywhere}';
+        const host=document.createElement('div');
+        host.style.cssText='position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none;contain:layout';
+        host.innerHTML=`<style>${css}</style><div class="jx-export"></div>`;
+        const box=host.querySelector('.jx-export'); box.appendChild(clone); document.body.appendChild(host);
+        const rect=box.getBoundingClientRect();
+        const w=Math.ceil(Math.max(rect.width, box.scrollWidth))+2, h=Math.ceil(Math.max(rect.height, box.scrollHeight))+2;
+        host.remove();
+        const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml"><style>${css}</style><div class="jx-export">${clone.outerHTML}</div></div></foreignObject></svg>`;
         const img=new Image(), url='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
         await new Promise((res,rej)=>{ img.onload=res; img.onerror=rej; img.src=url; });
         const scale=Math.min(2,Math.max(1,window.devicePixelRatio||1)), canvas=document.createElement('canvas');
