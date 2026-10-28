@@ -12,7 +12,7 @@ schema_required: false
 links:
   design: "Conversa de 2026-10-28: SyNous com ~30 agentes, Hub 'offline', trabalho perdido"
   incidente: "memória hub-stalls-native-list-2026-10-28"
-approval_evidence: "Rascunho. Decidido pelo dono em 2026-10-28: nada fixo (aprender do hardware e do consumo do dia a dia), D2 e D3; D1 em aberto"
+approval_evidence: "Rascunho. Decidido pelo dono em 2026-10-28: nada fixo (aprender do hardware e do consumo do dia a dia), D1, D2 e D3"
 ---
 
 # Executable spec
@@ -106,7 +106,8 @@ nível do turno/processo.
   estruturado, para calibrar com dados.
 
 ## 5) Decisões
-- **D1 — Reserva do dono:** 20% da memória (sugerido) ou outro valor. *Em aberto.*
+- **D1 — Reserva do dono:** 20% da memória (física e comprometida), proporcional ao hardware — fica
+  sempre livre para o dono; não é um teto do Jarvis. *Decidido em 2026-10-28.*
 - **D2 — "Começar mesmo assim":** só o dono, sem confirmação extra. *Decidido em 2026-10-28.*
 - **D3 — Leque do ultracode:** automático pela folga **e** um teto manual nos ajustes; vale o menor
   dos dois. *Decidido em 2026-10-28.*
