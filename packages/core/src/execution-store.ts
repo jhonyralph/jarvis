@@ -14,7 +14,7 @@ import {
   type ExecutionSnapshot,
   type ExecutionState,
 } from "@jarvis/protocol";
-import { writeJsonAtomic } from "./persist.js";
+import { readJson, writeJsonAtomic } from "./persist.js";
 
 const TERMINAL = new Set<ExecutionState>(["succeeded", "failed", "cancelled"]);
 const TRANSITIONS: Record<ExecutionState, ReadonlySet<ExecutionState>> = {
@@ -38,7 +38,17 @@ interface Projection {
   truncated: boolean;
   updatedAt: number;
   connection?: ExecutionSnapshot["connection"];
+  /** O journal já foi compactado pela retenção (tem o marcador `truncated`/"retention"). Guardado à parte
+   *  porque uma projeção carregada do índice de boot não traz os eventos — e é por eles que a compactação
+   *  sabia que não precisava rodar de novo. */
+  retention?: boolean;
 }
+
+/** Índice de boot (2026-10-28): o estado de cada execução, para o boot não abrir os ~4.400 journals.
+ *  Cada entrada vale só enquanto o journal tiver o mesmo tamanho e a mesma data — senão ele é relido. */
+interface BootIndexEntry { size: number; mtimeMs: number; updatedAt: number; retention: boolean; snapshot: ExecutionSnapshot }
+interface BootIndex { version: 1; entries: Record<string, BootIndexEntry> }
+const BOOT_INDEX_FILE = "boot-index.json";
 
 export type ExecutionApplyResult =
   | { status: "applied"; event: ExecutionEvent }
@@ -151,6 +161,7 @@ export function applyExecutionEvent(projection: Projection, event: ExecutionEven
       node.dependsOn = next.dependsOn;
     } else if (event.kind === "truncated") {
       node.truncated = true; projection.truncated = true;
+      if (event.reason === "retention") projection.retention = true;
     }
   }
   projection.lastSeq = event.seq;
@@ -176,25 +187,87 @@ export class ExecutionStore {
   private snapshotPath(rootExecutionId: string): string { return join(this.options.root, `${this.key(rootExecutionId)}.snapshot.json`); }
   private blank(event: ExecutionEvent): Projection { return { journalId: event.journalId, rootExecutionId: event.rootExecutionId, rootTurnId: event.rootTurnId, lastSeq: 0, nodes: new Map(), artifacts: new Map(), pendingInputs: new Map(), events: [], truncated: false, updatedAt: event.at }; }
 
+  /**
+   * Boot (2026-10-28): antes cada um dos ~4.400 journals era aberto e reaplicado evento a evento. Com o
+   * disco frio e o antivírus examinando cada abertura, isso custava ~30 ms por arquivo — 131 s em que o
+   * Hub não respondia (o "reiniciar não reinicia"). Agora o estado de cada execução vem de UM arquivo,
+   * o índice de boot; só o journal que mudou desde o último boot (tamanho ou data diferentes — `stat`,
+   * sem abrir) é relido. Os eventos detalhados ficam no journal e são lidos quando alguém pede.
+   */
   private load(): void {
     let files: string[] = [];
     try { files = readdirSync(this.options.root).filter((f) => f.endsWith(".jsonl")); } catch { return; }
+    const index = this.readBootIndex();
+    const next: BootIndex = { version: 1, entries: {} };
+    let replayed = 0;
     for (const file of files) {
-      const path = join(this.options.root, file); let projection: Projection | undefined;
-      let lines: string[] = []; try { lines = readFileSync(path, "utf8").split(/\r?\n/); } catch { continue; }
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let event: unknown; try { event = JSON.parse(line); } catch { break; }
-        if (!isExecutionEvent(event)) continue;
-        projection ||= this.blank(event);
-        if (event.journalId !== projection.journalId || event.seq !== projection.lastSeq + 1) break;
-        try { applyExecutionEvent(projection, event); projection.events.push(event); } catch { break; }
+      const path = join(this.options.root, file), key = file.slice(0, -".jsonl".length);
+      let st: { size: number; mtimeMs: number } | undefined;
+      try { const s = statSync(path); st = { size: s.size, mtimeMs: s.mtimeMs }; } catch { continue; }
+      const cached = index.entries[key];
+      if (cached && cached.size === st.size && cached.mtimeMs === st.mtimeMs && cached.snapshot?.nodes?.length) {
+        const projection = this.fromSnapshot(cached);
+        if (projection) { this.install(projection); next.entries[key] = cached; continue; }
       }
-      if (projection && projection.events.length > this.maxEvents) {
-        projection.events.splice(0, projection.events.length - this.maxEvents); projection.truncated = true;
+      const projection = this.replayJournal(path);
+      replayed++;
+      if (projection?.nodes.size) {
+        this.install(projection);
+        next.entries[key] = { ...st, updatedAt: projection.updatedAt, retention: !!projection.retention, snapshot: projectionSnapshot(projection, this.now()) };
       }
-      if (projection?.nodes.size) this.install(projection);
     }
+    // Reescreve o índice quando algo foi relido ou sumiu (sessão apagada, journal compactado).
+    if (replayed || Object.keys(index.entries).length !== Object.keys(next.entries).length) this.writeBootIndex(next);
+  }
+
+  private bootIndexPath(): string { return join(this.options.root, BOOT_INDEX_FILE); }
+  private readBootIndex(): BootIndex {
+    const raw = readJson<BootIndex | undefined>(this.bootIndexPath(), undefined);
+    return raw && raw.version === 1 && raw.entries && typeof raw.entries === "object" ? raw : { version: 1, entries: {} };
+  }
+  private writeBootIndex(index: BootIndex): void {
+    try { writeJsonAtomic(this.bootIndexPath(), index); } catch { /* sem índice o próximo boot só fica mais lento */ }
+  }
+  /** Atualiza o índice com o estado atual (ex.: depois da compactação, que reescreve journals). */
+  saveBootIndex(): void {
+    const next: BootIndex = { version: 1, entries: {} };
+    for (const projection of this.roots.values()) {
+      const key = this.key(projection.rootExecutionId), path = this.journalPath(projection.rootExecutionId);
+      try {
+        const s = statSync(path);
+        next.entries[key] = { size: s.size, mtimeMs: s.mtimeMs, updatedAt: projection.updatedAt, retention: !!projection.retention, snapshot: projectionSnapshot(projection, this.now()) };
+      } catch { /* journal sumiu: fica de fora */ }
+    }
+    this.writeBootIndex(next);
+  }
+
+  private fromSnapshot(entry: BootIndexEntry): Projection | undefined {
+    const s = entry.snapshot;
+    if (!s || s.schemaVersion !== EXECUTION_SCHEMA_VERSION || !s.journalId || !s.rootExecutionId || !Array.isArray(s.nodes)) return undefined;
+    return {
+      journalId: s.journalId, rootExecutionId: s.rootExecutionId, rootTurnId: s.rootTurnId, lastSeq: s.lastSeq,
+      nodes: new Map(s.nodes.map((node) => [node.executionId, cloneNode(node)])),
+      artifacts: new Map((s.artifacts || []).map((artifact) => [artifact.artifactId, { ...artifact }])),
+      pendingInputs: new Map((s.pendingInputs || []).map((input) => [input.inputId, { ...input, choices: input.choices ? [...input.choices] : undefined }])),
+      events: [], truncated: !!s.truncated, updatedAt: entry.updatedAt, connection: s.connection, retention: !!entry.retention,
+    };
+  }
+
+  private replayJournal(path: string): Projection | undefined {
+    let projection: Projection | undefined;
+    let lines: string[] = []; try { lines = readFileSync(path, "utf8").split(/\r?\n/); } catch { return undefined; }
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let event: unknown; try { event = JSON.parse(line); } catch { break; }
+      if (!isExecutionEvent(event)) continue;
+      projection ||= this.blank(event);
+      if (event.journalId !== projection.journalId || event.seq !== projection.lastSeq + 1) break;
+      try { applyExecutionEvent(projection, event); projection.events.push(event); } catch { break; }
+    }
+    if (projection && projection.events.length > this.maxEvents) {
+      projection.events.splice(0, projection.events.length - this.maxEvents); projection.truncated = true;
+    }
+    return projection;
   }
 
   private install(projection: Projection): void {
@@ -279,7 +352,8 @@ export class ExecutionStore {
     // serve the retained journal prefix as well. Read the append-only source when the requested
     // cursor predates the memory window; malformed crash tails are ignored like they are on load.
     let source = p.events;
-    if ((source[0]?.seq || 1) > afterSeq + 1) {
+    // Projeção vinda do índice de boot não traz eventos em memória: nesse caso o journal é a fonte.
+    if (source.length ? source[0].seq > afterSeq + 1 : p.lastSeq > afterSeq) {
       try {
         source = readFileSync(this.journalPath(rootExecutionId), "utf8").split(/\r?\n/).flatMap((line) => {
           if (!line.trim()) return [];
@@ -324,7 +398,7 @@ export class ExecutionStore {
     for (const projection of [...this.roots.values()]) {
       const root = projection.nodes.get(projection.rootExecutionId);
       if (!root || !TERMINAL.has(root.state) || projection.updatedAt >= cutoff) continue;
-      if (projection.events.some((event) => event.kind === "truncated" && event.reason === "retention")) continue;
+      if (projection.retention || projection.events.some((event) => event.kind === "truncated" && event.reason === "retention")) continue;
 
       const journalId = randomUUID(), at = projection.updatedAt;
       const blankEvent = { journalId, rootExecutionId: projection.rootExecutionId, rootTurnId: projection.rootTurnId, at } as ExecutionEvent;
@@ -367,6 +441,7 @@ export class ExecutionStore {
         // intentionally harmless and never loaded; cleanup can remove it on a later maintenance pass.
       }
     }
+    if (roots) this.saveBootIndex(); // os journals compactados mudaram: o índice acompanha
     return { roots, droppedEvents };
   }
 
