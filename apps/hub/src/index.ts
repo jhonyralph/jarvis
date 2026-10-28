@@ -4321,7 +4321,7 @@ const activityBuf = new Map<string, any[]>();
 // Fila POR MÁQUINA + SESSÃO, dona no HUB (não mais só no navegador): toda web vendo a sessão enxerga a MESMA
 // fila, e o flush roda no servidor quando o turno termina — sobrevive mesmo que o dispositivo que
 // enfileirou saia. Cada item guarda texto + anexos (+ model/effort do envio original).
-type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; model?: string; effort?: string; fastMode?: boolean; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor; queuedAt?: number };
+type QueueItem = { text: string; atts: Array<{ name: string; content: string; image?: boolean; binary?: boolean; mime?: string; size?: number }>; model?: string; effort?: string; fastMode?: boolean; auto?: AutoRouteFlags; runnerId?: string; msgId?: string; actor?: ContextActor; queuedAt?: number; /** Resposta falada (fala do "Hey Jarvis" para sessão de outra máquina, VOZ-01). */ speak?: boolean };
 const queues = new Map<string, QueueItem[]>();
 // msgIds of queue items the user removed. A dequeue can land WHILE a flush is already mid-air: the
 // flush captures the items and clears the queue, then spends SECONDS in async routing (a CLI spawn)
@@ -5830,8 +5830,12 @@ async function flushQueue(runnerId: string, sid: string): Promise<void> {
         if (!sessionDispatchAuthorized(lease, undefined, rc)) throw new Error("a autorização da sessão mudou durante o contexto pessoal");
         if (abortIfCancelled()) return; // usuário removeu o item durante o preflight — não despacha
         const turnId = (items.find((q) => q.msgId)?.msgId) || randomUUID();
+        // Algum item pediu resposta falada (fala do "Hey Jarvis" na vez desta sessão): a resposta do
+        // turno combinado entra na fila de fala, como num envio por voz direto.
+        const speakKey = items.some((q) => q.speak) ? rid + "\0" + sid : "";
+        if (speakKey) remoteSpeak.add(speakKey);
         const ok = sendOwnedRunnerTurn(rc, sid, turnId, actorPrincipalId(actor), { t: "send", text, contextPrefix: personal?.contextPrefix, agent: decision.agent, attachments: atts, model: decision.model, effort: decision.effort, fastMode: fastMode && supportsFastMode(decision.agent), opts: { permissionMode: remoteSessionModes.get(rc.id + " " + sid) }, actor });
-        if (!ok) throw new Error("não foi possível enviar a fila para a máquina");
+        if (!ok) { if (speakKey) remoteSpeak.delete(speakKey); throw new Error("não foi possível enviar a fila para a máquina"); }
         dispatched = true;
         markRunnerSessionActive(rid, sid);
       }
@@ -9310,6 +9314,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // Do listener do PC: texto (Hub antigo / fala grande demais) ou o áudio da fala (gravação acompanhada).
     const heardByWake = (msg.t === "send" || msg.t === "voice") && msg.speak === true && wakeClients.has(ws);
     let wakeFocus = "";
+    let wakeRemoteFocus: { runnerId: string; sessionId: string } | null = null;
     // Digitou com a voz ligada: a resposta fala neste aparelho, não no último em que falou.
     if (msg.t === "send" && msg.speak === true && !heardByWake) speech.useDevice(ws);
     if (msg.t === "voice" || heardByWake) {
@@ -9322,6 +9327,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       }
       // "Hey Jarvis" logo depois de uma sessão falar responde a ELA, não à voice (RN-O7).
       if (heardByWake && sid === WAKE_SESSION && heard.target.runnerId === LOCAL_ID && heard.target.sessionId !== WAKE_SESSION) wakeFocus = heard.target.sessionId;
+      // Mesma regra para sessão de OUTRA máquina (antes a fala caía na voice): vai pela fila de turnos.
+      if (heardByWake && sid === WAKE_SESSION && heard.target.runnerId !== LOCAL_ID) wakeRemoteFocus = heard.target;
     }
 
     const approvalCommand = adaptiveApprovalVoiceCommand(text);
@@ -9400,6 +9407,20 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     // folder by speech, and asks new-vs-continue when a conversation is already going.
     if (sid === WAKE_SESSION) {
       clearPendingInboundTurn(inboundKey);
+      if (wakeRemoteFocus) {
+        // "Hey Jarvis" na vez de uma sessão de outra máquina (RN-O7): o pedido vai para ELA. Pela fila de
+        // turnos, que já cuida de dono, permissão, roteamento e máquina ocupada/offline; a resposta é
+        // falada (remoteSpeak) e o turno de voz passa a responder pela sessão de lá. A continuação de
+        // fala (gole d'água) não se aplica aqui: o turno de outra máquina não é cancelável daqui.
+        const { runnerId: rr, sessionId: rs } = wakeRemoteFocus;
+        const online = !!runners.get(rr)?.ws;
+        log.info("voice_route", { source: "wake", sessionId: rs, runnerId: rr, via: "vez_da_sessao_remota", online, chars: text.length });
+        if (msg.t === "voice") voiceTurns.alias(voiceKey(LOCAL_ID, sid), voiceKey(rr, rs));
+        enqueueChatTurn(rr, rs, { text, atts: [], runnerId: rr, msgId: randomUUID(), speak: msg.speak === true, actor: actorOf(ws, "user") });
+        if (!online) await voiceSay("A máquina dessa sessão está offline. O pedido ficou na fila e vai quando ela voltar.");
+        void maybeFlushQueue(rr, rs, false);
+        return;
+      }
       if (heardByWake) {
         const target = wakeFocus && store.get(wakeFocus) ? wakeFocus : (voiceTarget || WAKE_SESSION);
         log.info("voice_route", { source: "wake", sessionId: target, via: wakeFocus && store.get(wakeFocus) ? "vez_da_sessao" : voiceTarget ? "voice_vinculada" : "voice", chars: text.length });
