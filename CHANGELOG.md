@@ -1,3 +1,21 @@
+# [0.50.0](https://github.com/jhonyralph/jarvis/compare/v0.49.4...v0.50.0) (2026-10-28)
+
+
+### Bug Fixes
+
+* **testes:** e2e de atualizacao usa portas novas a cada inicio; recolhimento do Chrome pega filhos tardios ([f7ec7b7](https://github.com/jhonyralph/jarvis/commit/f7ec7b763f49c9ce679d79a6e9f832d5e342eac2))
+
+
+### Features
+
+* **capacidade:** CAP-01 F1 - medicao continua da maquina, sem mudar comportamento ([484e40b](https://github.com/jhonyralph/jarvis/commit/484e40b8a58c2665bbaf40a196967e1da8ab698c))
+
+
+### Performance Improvements
+
+* **store:** historico das sessoes lido sob demanda (boot ~51 s -> 2 ms) ([354f63c](https://github.com/jhonyralph/jarvis/commit/354f63c20c375aae8d57710e11b292356c61f92d))
+* **voz:** servicos de voz deixam de reservar ~3 GB de memoria comprometida ([b3c4a0f](https://github.com/jhonyralph/jarvis/commit/b3c4a0f9a3268007792c3544c423bf9f968658de))
+
 ## [0.49.4](https://github.com/jhonyralph/jarvis/compare/v0.49.3...v0.49.4) (2026-10-28)
 
 
