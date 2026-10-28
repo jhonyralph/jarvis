@@ -1,3 +1,10 @@
+## [0.49.2](https://github.com/jhonyralph/jarvis/compare/v0.49.1...v0.49.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* **web:** PNG da tabela sai inteira, sem cortar a direita e embaixo ([51a0958](https://github.com/jhonyralph/jarvis/commit/51a0958877fb8961065ebf6c6ca009d28744e19a))
+
 ## [0.49.1](https://github.com/jhonyralph/jarvis/compare/v0.49.0...v0.49.1) (2026-10-28)
 
 
