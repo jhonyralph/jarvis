@@ -6678,7 +6678,14 @@ async function handleVoiceDeviceMsg(ws: WebSocket, msg: any): Promise<boolean> {
     }
     if (typeof msg.phase === "string" && wakeClients.has(ws)) log.info("wake_flow", { phase: msg.phase.slice(0, 24), ...flowFields });
     if (msg.phase === "capturing") { wakeListener.lastDetectAt = Date.now(); log.info("wake_detect", { score: flowFields.score, flow: flowFields.flow }); broadcastWakeState(); }
-    broadcast(WAKE_SESSION, { t: "wake_event", phase: msg.phase }); return true;
+    // O app só entende "capturing" (e "detected"/"mic_error"); qualquer outra fase ele mostrava como
+    // "ouvindo" PARA SEMPRE (2026-10-27: as fases de monitoramento — capture, miss, follow_end — deixaram
+    // a voz "ativa eternamente" na tela). Fim do chamado vira "idle"; as fases internas não vão à tela.
+    const uiPhase = msg.phase === "capturing" || msg.phase === "detected" || msg.phase === "mic_error" ? msg.phase
+      : msg.phase === "miss" || msg.phase === "follow_end" || msg.phase === "rejected" ? "idle"
+      : "";
+    if (uiPhase) broadcast(WAKE_SESSION, { t: "wake_event", phase: uiPhase });
+    return true;
   }
   if (msg.t === "speakers") { await sendVoiceState(ws); return true; }
   if (msg.t === "voicecfg") {

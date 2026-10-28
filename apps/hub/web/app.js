@@ -5757,8 +5757,8 @@
         else if(m.t==='wake_event'){
           if(m.phase==='capturing') status('listening',t('spThinking'));
           else if(m.phase==='detected') status('listening',t('wakeDetected'));
-          else if(m.phase==='mic_error') status('');
-          else status('listening','Jarvis');
+          else if(m.phase==='mic_error'||m.phase==='idle') status('');   // "idle": o chamado terminou (ninguém falou / fim da continuação)
+          // fase desconhecida: ignora — antes virava "ouvindo" e a tela ficava ativa para sempre
         }
         else if(m.t==='voice_state'){ speakers=m.speakers||[]; cfg.voiceGate=!!m.gate; saveCfg(); if(E.setGate)E.setGate.checked=cfg.voiceGate; renderSpk(); }
         else if(m.t==='voices'){ voiceList=m.voices||[]; voiceCur=m.current||''; renderVoiceCatalog(); }   // catálogo de vozes (Gap 6)
