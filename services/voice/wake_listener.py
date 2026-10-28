@@ -27,6 +27,12 @@ import time
 import traceback
 import wave
 
+# OpenBLAS (numpy/scipy) reserva um buffer POR NUCLEO ao ser importado: ~750 MB de memoria
+# comprometida por copia numa CPU de 28 threads, sem uso nenhum - o trabalho pesado aqui roda no
+# ONNX/CTranslate2, com threads proprias. Memoria comprometida e o que esgota e derruba a maquina
+# (CAP-01). Medido em 2026-10-28: 1638 -> 158 MB (e o 'Hey Jarvis' de 2,4 para 1,0 ms por quadro). Tem de vir ANTES de importar numpy.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 import numpy as np
 import sounddevice as sd
 

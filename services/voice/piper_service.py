@@ -24,6 +24,12 @@ import os
 import sys
 import wave
 
+# OpenBLAS (numpy/scipy) reserva um buffer POR NUCLEO ao ser importado: ~750 MB de memoria
+# comprometida por copia numa CPU de 28 threads, sem uso nenhum - o trabalho pesado aqui roda no
+# ONNX/CTranslate2, com threads proprias. Memoria comprometida e o que esgota e derruba a maquina
+# (CAP-01). Medido em 2026-10-28: 763 -> 24 MB no import, mesma latencia. Tem de vir ANTES de importar numpy.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 from piper import PiperVoice
 from piper.config import SynthesisConfig
 

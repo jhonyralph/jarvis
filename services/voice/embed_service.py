@@ -22,6 +22,12 @@ import json
 import os
 import sys
 
+# OpenBLAS (numpy/scipy) reserva um buffer POR NUCLEO ao ser importado: ~750 MB de memoria
+# comprometida por copia numa CPU de 28 threads, sem uso nenhum - o trabalho pesado aqui roda no
+# ONNX/CTranslate2, com threads proprias. Memoria comprometida e o que esgota e derruba a maquina
+# (CAP-01). Mesmo ajuste dos servicos de voz (2026-10-28). Tem de vir ANTES de importar numpy.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 
 def _emit(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj) + "\n")
