@@ -1,3 +1,10 @@
+## [0.51.2](https://github.com/jhonyralph/jarvis/compare/v0.51.1...v0.51.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* **update:** aviso do git no stderr nao derruba mais o update das maquinas Windows ([ba3c6f7](https://github.com/jhonyralph/jarvis/commit/ba3c6f703011fbf9d026fe9219185e3758b40cee))
+
 ## [0.51.1](https://github.com/jhonyralph/jarvis/compare/v0.51.0...v0.51.1) (2026-10-29)
 
 
