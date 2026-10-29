@@ -433,7 +433,19 @@ export interface AgentUsage {
   extra?: Array<{ label: string } & UsageWindow>;
   label?: string;
   source?: string;
+  /** Valor da última consulta que deu certo, servido porque a de agora falhou (ver `fetchedAt`). */
+  stale?: boolean;
+  /** Quando estes números foram lidos do provedor (ISO). */
+  fetchedAt?: string;
+  /** Por que não há número fresco (só com `stale`). */
+  staleReason?: string;
 }
+
+/** Quanto tempo o limite do plano do Claude fica em cache. As janelas (5 h, semana) mudam devagar, e
+ *  o endpoint é MUITO restrito: medido em 28/10, ~6 consultas próximas = 429 com bloqueio de 5 min. */
+export const CLAUDE_USAGE_TTL_MS = 120_000;
+/** Até quando um valor antigo ainda serve no lugar de "erro" (com a idade à mostra). */
+export const CLAUDE_USAGE_STALE_MAX_MS = 6 * 60 * 60_000;
 
 function usageWindowFromUsed(usedPercent: unknown, resetsAt?: string): UsageWindow | undefined {
   const raw = Number(usedPercent);
@@ -1020,6 +1032,19 @@ export function claudeMidTurnInput(text: string, env: NodeJS.ProcessEnv = proces
   return env.JARVIS_CLAUDE_MIDTURN !== "0" && !text.trimStart().startsWith("/");
 }
 
+/** Token OAuth do Claude Code. O CLI regrava o arquivo ao renovar o token: lido no meio da escrita, o
+ *  JSON vem cortado — uma segunda leitura logo depois pega o arquivo inteiro. */
+async function readClaudeOauthToken(): Promise<string | undefined> {
+  const file = join(homedir(), ".claude", ".credentials.json");
+  for (let attempt = 0; ; attempt++) {
+    try { return JSON.parse(readFileSync(file, "utf8"))?.claudeAiOauth?.accessToken; }
+    catch (e) {
+      if (attempt >= 2 || (e as NodeJS.ErrnoException)?.code === "ENOENT") throw new Error(`claude: não consegui ler ~/.claude/.credentials.json — ${String((e as Error)?.message || e)}`);
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+}
+
 /** Native Claude Code, headless. Requires `claude` logged in. */
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly name = "claude-code";
@@ -1058,15 +1083,43 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
   private usageCache?: { at: number; data: AgentUsage | null };
   /** Plan usage (5h / weekly windows) from the Claude OAuth usage endpoint. Cached ~30s. */
+  /** Última consulta boa, para servir no lugar de "erro" quando o provedor recusa (429, rede). */
+  private usageLastGood?: { at: number; data: AgentUsage };
+  /** O provedor mandou esperar (429 + retry-after): até aqui, nem tenta — cada tentativa estende o bloqueio. */
+  private usageBlockedUntil = 0;
+  /** Vários aparelhos abrindo o painel juntos fazem UMA consulta. */
+  private usageInflight?: Promise<AgentUsage | null>;
+
   async usage(): Promise<AgentUsage | null> {
-    if (this.usageCache && Date.now() - this.usageCache.at < 30_000) return this.usageCache.data;
+    if (this.usageCache && Date.now() - this.usageCache.at < CLAUDE_USAGE_TTL_MS) return this.usageCache.data;
+    if (!this.usageInflight) this.usageInflight = this.fetchUsage().finally(() => { this.usageInflight = undefined; });
+    return this.usageInflight;
+  }
+
+  /** Falhou agora: devolve o último valor bom (marcado `stale`, com a idade) ou repassa o erro. */
+  private usageStaleOr(error: Error): AgentUsage {
+    const good = this.usageLastGood;
+    if (good && Date.now() - good.at < CLAUDE_USAGE_STALE_MAX_MS) return { ...good.data, stale: true, fetchedAt: new Date(good.at).toISOString(), staleReason: error.message };
+    throw error;
+  }
+
+  private async fetchUsage(): Promise<AgentUsage | null> {
+    if (Date.now() < this.usageBlockedUntil) {
+      const min = Math.max(1, Math.ceil((this.usageBlockedUntil - Date.now()) / 60_000));
+      return this.usageStaleOr(new Error(`claude: o provedor limitou as consultas de limites — nova tentativa em ${min} min`));
+    }
+    try { return await this.fetchUsageNow(); }
+    catch (e: any) { return this.usageStaleOr(e instanceof Error ? e : new Error(String(e))); }
+  }
+
+  private async fetchUsageNow(): Promise<AgentUsage | null> {
     // Falha NÃO é cacheada e NÃO vira `null` silencioso: quem chama distingue "o provedor respondeu
     // e não tem limite a informar" de "não consegui perguntar". Engolir os dois no mesmo `null`
     // fazia o painel afirmar "nenhum limite foi reportado pelo provedor" quando a verdade era um
     // token vencido, uma rede fora ou — medido nesta máquina — um proxy de TLS com certificado
     // auto-assinado. A mensagem errada mandava procurar o problema no lugar errado.
     let data: AgentUsage | null = null;
-    const token = JSON.parse(readFileSync(join(homedir(), ".claude", ".credentials.json"), "utf8"))?.claudeAiOauth?.accessToken;
+    const token = await readClaudeOauthToken();
     if (!token) throw new Error("claude: sem token OAuth em ~/.claude/.credentials.json (faça login no Claude Code)");
     let res: Response;
     try {
@@ -1077,6 +1130,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // `fetch failed` sozinho não diz nada; a causa (DNS, TLS, recusa) é que orienta o conserto.
       throw new Error(`claude: falha ao consultar limites — ${String(e?.cause?.message || e?.message || e)}`);
     }
+    if (res.status === 429) {
+      // Bloqueio do provedor (medido: retry-after=300). Respeitar evita estender o bloqueio a cada abertura do painel.
+      const after = Number(res.headers.get("retry-after"));
+      this.usageBlockedUntil = Date.now() + Math.min(30 * 60_000, (Number.isFinite(after) && after > 0 ? after : 300) * 1000);
+      throw new Error(`claude: o provedor limitou as consultas de limites — nova tentativa em ${Math.ceil((this.usageBlockedUntil - Date.now()) / 60_000)} min`);
+    }
+    if (res.status === 401) throw new Error("claude: token do Claude vencido — renova sozinho no próximo uso do Claude Code");
     if (!res.ok) throw new Error(`claude: provedor respondeu ${res.status} ao consultar limites`);
     const j: any = await res.json();
     const win = (w: any): UsageWindow | undefined => w ? usageWindowFromUsed(w.utilization, w.resets_at) : undefined;
@@ -1087,6 +1147,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // Resposta válida porém sem nenhuma janela é ausência de informação, não "plano zerado".
     if (!data.fiveHour && !data.sevenDay && !data.extra?.length) data = null;
     this.usageCache = { at: Date.now(), data };
+    if (data) this.usageLastGood = { at: Date.now(), data };
     return data;
   }
   private capsCache?: { at: number; caps: AgentCaps };

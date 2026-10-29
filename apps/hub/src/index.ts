@@ -7363,22 +7363,29 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "get_usage") {
       const name = typeof msg.agent === "string" && agents.names().includes(msg.agent) ? msg.agent : agents.default;
       const requestedRunner = typeof msg.runnerId === "string" ? msg.runnerId : LOCAL_ID;
-      let plan = null; const a = agents.get(name); let supportsUsage = !!a.usage;
+      let plan = null; const a = agents.get(name); let supportsUsage = !!a.usage; let planError: string | undefined;
       let planStatus: "available" | "not_reported" | "unsupported" | "error" = supportsUsage ? "not_reported" : "unsupported";
       if (requestedRunner !== LOCAL_ID) {
         const rc = runners.get(requestedRunner), snapHas = Object.prototype.hasOwnProperty.call(rc?.info.agentUsage || {}, name);
         const fallback: { agent: string; plan: any; planStatus: "available" | "not_reported" | "unsupported" | "error" } = { agent: name, plan: (rc?.info.agentUsage?.[name] as any) || null, planStatus: !snapHas ? "unsupported" : (rc?.info.agentUsage?.[name] ? "available" : "not_reported") };
         if (rc?.ws && rc.ws.readyState === WebSocket.OPEN) {
           const live = await runnerUsage(rc, name, fallback);
-          plan = live?.plan || null; planStatus = live?.planStatus || fallback.planStatus;
+          plan = live?.plan || null; planStatus = live?.planStatus || fallback.planStatus; planError = typeof live?.planError === "string" ? live.planError.slice(0, 240) : undefined;
         } else { plan = fallback.plan; planStatus = fallback.planStatus; }
         supportsUsage = planStatus !== "unsupported";
       }
-      else try { plan = a.usage ? await a.usage() : null; planStatus = supportsUsage ? (plan ? "available" : "not_reported") : "unsupported"; } catch { plan = null; planStatus = "error"; }
+      else try { plan = a.usage ? await a.usage() : null; planStatus = supportsUsage ? (plan ? "available" : "not_reported") : "unsupported"; }
+      catch (e: any) {
+        // A causa vai ao painel e ao log: antes o "erro ao consultar o provedor" não dizia nada, e era
+        // o 429 do endpoint de limites do Claude (bloqueio de 5 min depois de ~6 consultas próximas).
+        plan = null; planStatus = "error"; planError = String(e?.message ?? e).slice(0, 240);
+        log.warn("plan_usage_error", { agent: name, error: planError });
+      }
+      if ((plan as any)?.stale) log.info("plan_usage_stale", { agent: name, fetchedAt: (plan as any).fetchedAt, reason: String((plan as any).staleReason || "").slice(0, 160) });
       // total accumulated across all sessions, so the client can show THIS session as a share of it
       // (a raw $ on a plan has no baseline to compare against — a % does).
       const costTotal = usageLedger.total().costUsd;
-      send(ws, { t: "usage_info", agent: name, runnerId: requestedRunner, plan, planStatus, total: costTotal });
+      send(ws, { t: "usage_info", agent: name, runnerId: requestedRunner, plan, planStatus, planError, total: costTotal });
       return;
     }
     // wake-word + speaker-id/voice-gate → handleVoiceDeviceMsg (extração verbatim, mesma ordem)

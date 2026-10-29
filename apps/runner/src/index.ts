@@ -1811,8 +1811,8 @@ function connect(): void {
         try {
           const plan = await adapter.usage();
           send({ t: "usage_info", reqId: m.reqId, agent: name, plan, planStatus: plan ? "available" : "not_reported" });
-        } catch {
-          send({ t: "usage_info", reqId: m.reqId, agent: name, plan: null, planStatus: "error" });
+        } catch (e: any) {
+          send({ t: "usage_info", reqId: m.reqId, agent: name, plan: null, planStatus: "error", planError: String(e?.message ?? e).slice(0, 240) });
         }
         return;
       }

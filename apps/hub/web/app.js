@@ -3678,7 +3678,7 @@
     E.modelBtn.onclick=()=>togglePop(E.modelBtn,buildModelPop);
     E.effortBtn.onclick=()=>togglePop(E.effortBtn,buildEffortPop);
     // ---- usage indicator: context window (per turn) + plan limits (5h/weekly) ----
-    let lastInputTokens=0, lastContextWindow=0, planUsage=null, planStatus=null, planKey='', sessCost=0, sessUsage=null, costTotalAll=0;
+    let lastInputTokens=0, lastContextWindow=0, planUsage=null, planStatus=null, planError='', planKey='', sessCost=0, sessUsage=null, costTotalAll=0;
     function applyUsageMeter(usage){
       if(!usage)return;
       const rawContext=usage.contextTokens??usage.inputTokens;
@@ -3728,11 +3728,13 @@
       const usageRunner=currentMachine==='all'?routedMachine:currentMachine, usageAgent=currentAgent||availableMachineCaps()[0]?.name||caps[0]?.name||'';
       p.innerHTML=h; if(planKey===usageRunner+'\0'+usageAgent) renderPlan(planUsage); tx({t:'get_usage',agent:usageAgent,runnerId:usageRunner}); }
     function renderPlan(plan){ const el=document.getElementById('uplan'); if(!el)return;
-      if(!plan){ el.className='umut'; el.textContent=planStatus==='unsupported'?'o CLI desta IA não publica limites de conta':planStatus==='error'?'erro ao consultar o provedor':'nenhum limite foi reportado pelo provedor'; requestAnimationFrame(placePop); return; }
+      if(!plan){ el.className='umut'; el.textContent=planStatus==='unsupported'?'o CLI desta IA não publica limites de conta':planStatus==='error'?('erro ao consultar o provedor'+(planError?' — '+planError.replace(/^[a-z-]+: /,''):'')):'nenhum limite foi reportado pelo provedor'; requestAnimationFrame(placePop); return; }
       const w=(lbl,x,color)=> x?`<div class="urow"><span>${esc(lbl)}</span><b>${planPctText(x)}</b></div>`+ubar(planUsed(x),color)+(x.resetsAt?`<div class="umut ureset">reinicia ${fmtReset(x.resetsAt)}</div>`:''):'';
       let h=w('Limite de 5 horas',plan.fiveHour,'#2563eb')+w('Semanal · todos os modelos',plan.sevenDay,'#7c3aed');
       (plan.extra||[]).forEach(e=>h+=w(e.label,e,'#7c3aed'));
       if(plan.source) h+=`<div class="umut">fonte: ${esc(plan.source)}</div>`;
+      // Valor da última consulta boa (o provedor recusou a de agora, ex.: limite de consultas): mostra a idade.
+      if(plan.stale&&plan.fetchedAt){ const min=Math.max(1,Math.round((Date.now()-Date.parse(plan.fetchedAt))/60000)); h+=`<div class="umut">atualizado há ${min} min${plan.staleReason?' · '+esc(String(plan.staleReason).replace(/^[a-z-]+: /,'')):''}</div>`; }
       el.className=''; el.innerHTML=h||'<span class="umut">sem dados</span>'; requestAnimationFrame(placePop); }
     E.usageBtn.onclick=()=>togglePop(E.usageBtn,buildUsagePop);
 
@@ -5721,7 +5723,7 @@
           if(m.path) touchFile(m.path, /Edit$|^Write$/.test(m.name)?(m.name==='Write'?'write':'edit'):'read', m.adds, m.dels);
           autoScroll(); }
         else if(m.t==='usage'){ if(currentFrame(m)&&m.usage){ E.usage.textContent=usageSummary(m.usage); applyUsageMeter(m.usage); } }
-        else if(m.t==='usage_info'){ planUsage=m.plan||null; planStatus=m.planStatus||null; planKey=(m.runnerId||'local')+'\0'+(m.agent||''); if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
+        else if(m.t==='usage_info'){ planUsage=m.plan||null; planStatus=m.planStatus||null; planError=m.planError||''; planKey=(m.runnerId||'local')+'\0'+(m.agent||''); if(typeof m.total==='number') costTotalAll=m.total; if(popMode==='usage'){ renderPlan(planUsage); const sc=document.getElementById('usessc'); if(sc) sc.innerHTML=sessCostRow(); } }
         else if(m.t==='session'){ if(currentFrame(m) && m.nativeId && !curNative){ curNativeId=m.nativeId; renderNativeChip(); } }
         else if(m.t==='deleted'){ const deleted=Array.isArray(m.ids)?m.ids:[], inCur=deleted.includes(currentSession);
           if(inCur){ currentSession=null; clearQueue(); resetUsageMeter(); E.log.innerHTML=''; E.title.textContent='—'; refreshTitleInfo(); curNativeId=''; renderNativeChip(); setHash(''); }

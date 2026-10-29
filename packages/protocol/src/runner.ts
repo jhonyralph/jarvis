@@ -406,7 +406,7 @@ export type RunnerToHub =
   /** "@" file-mention matches under a session's cwd (reply to Hub->Runner "mention") */
   | { t: "mention_list"; reqId?: string; files: string[] }
   /** Live account-plan snapshot for one adapter (reply to Hub->Runner "usage"). */
-  | { t: "usage_info"; reqId: string; agent: string; plan: unknown | null; planStatus: "available" | "not_reported" | "unsupported" | "error" }
+  | { t: "usage_info"; reqId: string; agent: string; plan: unknown | null; planStatus: "available" | "not_reported" | "unsupported" | "error"; /** Causa da falha (planStatus "error"). */ planError?: string }
   | { t: "memory_preview"; reqId: string; sessionId?: string; token: string; target: string; note: string; appendText: string; beforeHash: string; exists: boolean; expiresAt: number }
   | { t: "memory_applied"; reqId: string; token: string; sessionId?: string; ok: boolean; target?: string; beforeHash?: string; afterHash?: string; error?: string }
   /** Result of materializing a published Framework Jarvis on this machine (reply to framework_publish). */
