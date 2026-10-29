@@ -1,3 +1,10 @@
+## [0.51.1](https://github.com/jhonyralph/jarvis/compare/v0.51.0...v0.51.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **uso:** limites do plano do Claude param de dar "erro ao consultar o provedor" ([883d72a](https://github.com/jhonyralph/jarvis/commit/883d72a11f5bed39547b4216439f0301b27959ee))
+
 # [0.51.0](https://github.com/jhonyralph/jarvis/compare/v0.50.0...v0.51.0) (2026-10-28)
 
 
