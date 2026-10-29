@@ -95,6 +95,10 @@ function Run-Step([string]$Exe, [string[]]$CmdArgs) {
   if (-not $CmdArgs -or $CmdArgs.Count -eq 0) { throw ("bug de geração do updater: " + $Exe + " sem argumentos") }
   $cmd = $Exe + " " + ($CmdArgs -join " ")
   Add-Progress ("> " + $cmd)
+  # PowerShell 5.1 + 'Stop' + 2>&1: cada linha que o executável escreve no stderr vira erro FATAL — e o
+  # git escreve progresso e avisos lá ("Updating files: 92%"), saindo com 0. Foi assim que o update da
+  # Luby caiu e foi desfeito em 28/10. Aqui quem decide é o código de saída; a preferência é local à função.
+  $ErrorActionPreference = 'Continue'
   $out = & $Exe @CmdArgs 2>&1
   $code = $LASTEXITCODE
   foreach ($line in $out) { Add-Log ([string]$line) }
@@ -120,10 +124,12 @@ function Invoke-Git([string[]]$CmdArgs) { Run-Step "git" $CmdArgs }
 function Npm([string[]]$CmdArgs) { Run-Step "npm.cmd" $CmdArgs }
 function Git-Out([string[]]$CmdArgs) {
   if (-not $CmdArgs -or $CmdArgs.Count -eq 0) { throw "bug de geração do updater: git sem argumentos" }
+  $ErrorActionPreference = 'Continue'  # ver Run-Step: stderr com saída 0 não é erro
   $out = & git @CmdArgs 2>&1
   $code = $LASTEXITCODE
   if ($code -ne 0) { foreach ($line in $out) { Add-Log ([string]$line) }; throw ("git " + ($CmdArgs -join " ") + " saiu com código " + $code + ": " + (Detail-Of $out)) }
-  return (($out | Out-String).Trim())
+  # Só o stdout vira valor (é um hash, um nome de branch): aviso do git no stderr não pode contaminá-lo.
+  return ((@($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Out-String).Trim())
 }
 function Dependency-Manifests-Changed([string]$From, [string]$To) {
   $files = & git diff --name-only $From $To -- package.json package-lock.json npm-shrinkwrap.json 'apps/*/package.json' 'packages/*/package.json'

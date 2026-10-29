@@ -149,3 +149,36 @@ test("um corpo trocado muda o hash — que é o ponto da conferência", async ()
 
   assert.notEqual(sha(windowsUpdaterBody()), sha(windowsUpdaterBody() + "\n# alterado"));
 });
+
+test("PowerShell real: aviso do git no stderr com saída 0 não é erro (o update da Luby caiu por isso)", { skip: skipReal }, () => {
+  // 28/10: `git merge --ff-only` escreveu o progresso "Updating files: 92% (23/25)" no stderr e saiu
+  // com 0. Com $ErrorActionPreference='Stop' e `2>&1`, o PowerShell 5.1 transforma cada linha do stderr
+  // em erro FATAL — o update foi desfeito e a máquina ficou na versão velha. Quem decide é o código de saída.
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-updater-"));
+  const file = join(dir, "stderr.ps1");
+  try {
+    const prelude = script.slice(script.indexOf("function Run-Step"), script.indexOf("function Dependency-Manifests-Changed"));
+    const harness = [
+      "$ErrorActionPreference = 'Stop'",
+      "$Log = New-Object System.Collections.Generic.List[string]",
+      "function Add-Log([string]$Text) { $script:Log.Add($Text) }",
+      "function Add-Progress([string]$Text) { Add-Log $Text }",
+      prelude,
+      "Run-Step 'cmd.exe' @('/c', 'echo Updating files: 92% (23/25) 1>&2')",
+      "if (-not ($Log -join ' ').Contains('Updating files')) { throw 'a saída do stderr devia ir para o log' }",
+      "$failed = $false",
+      "try { Run-Step 'cmd.exe' @('/c', 'echo fatal: algo 1>&2 & exit 3') } catch { $failed = $true; if (-not \"$_\".Contains('código 3')) { throw ('mensagem sem o código: ' + $_) } }",
+      "if (-not $failed) { throw 'saída 3 devia falhar' }",
+      "if ($ErrorActionPreference -ne 'Stop') { throw 'o helper não pode mudar a preferência de quem chamou' }",
+      // Git-Out devolve o VALOR (hash, branch): um aviso no stderr não pode entrar nele.
+      "$sha = Git-Out @('rev-parse', 'HEAD')",
+      "if ($sha -notmatch '^[0-9a-f]{40}$') { throw ('valor contaminado: ' + $sha) }",
+      "Write-Output 'OK-STDERR'",
+    ].join("\n");
+    writeFileSync(file, "﻿" + harness, "utf8");
+    const out = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file], {
+      cwd: process.cwd(), encoding: "utf8", timeout: 60_000, windowsHide: true,
+    });
+    assert.match(out, /OK-STDERR/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
