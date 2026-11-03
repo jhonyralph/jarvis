@@ -186,13 +186,35 @@
     .msg.bot ul,.msg.bot ol { margin:.4em 0; padding-left:1.3em; }
     .msg.bot code { background:#ffffff1a; padding:1px 5px; border-radius:5px; font:13px ui-monospace,monospace; overflow-wrap:anywhere; }
     .msg.bot pre { position:relative; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; max-width:100%; min-width:0; }
-    .msg.bot pre code { overflow-wrap:normal; white-space:pre; }
+    .msg.bot pre code { white-space:pre-wrap; overflow-wrap:anywhere; }
+    .msg.bot .codewrap.nowrap pre code { white-space:pre; overflow-wrap:normal; }
     .msg.bot pre code { background:none; padding:0; display:block; }
     /* Copy button pinned to the visible top-right corner via a NON-scrolling wrapper, so horizontal
        code scroll never drags it over the text (it used to float+sticky inside the scrolling <pre>). */
     .msg.bot .codewrap { position:relative; }
-    .msg.bot .codewrap .copy { position:absolute; top:8px; right:8px; z-index:2; padding:3px 8px; font-size:11px; line-height:1.2; background:#0d1117f2; border:1px solid var(--line); border-radius:7px; }
-    .msg.bot .codewrap .copy:hover { background:#161b22; border-color:#ffffff33; }
+    .msg.bot .codewrap .codeacts { position:absolute; top:6px; right:6px; z-index:2; display:flex; gap:4px; }
+    .msg.bot .codewrap .codeacts button { padding:3px 8px; font-size:11px; line-height:1.2; background:#0d1117f2; border:1px solid var(--line); border-radius:7px; }
+    .msg.bot .codewrap .codeacts button:hover { background:#161b22; border-color:#ffffff33; }
+    .msg.bot .codewrap pre { padding-top:36px; }
+    /* Janela de expandir (bloco de código / texto / tabela) */
+    .modal .card.xpandcard { width:min(1400px,100%); height:min(92dvh,calc(var(--safe-height) - 24px)); max-height:none; padding:12px; gap:8px; }
+    .xpandbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+    .xpandbar b { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .xpandbody { flex:1; min-height:0; overflow:auto; background:var(--code); border:1px solid var(--line); border-radius:10px; padding:12px; -webkit-overflow-scrolling:touch; }
+    .xpandbody pre { margin:0; font:13.5px/1.55 ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .xpandbody.nowrap pre { white-space:pre; overflow-wrap:normal; }
+    .xpandbody table { border-collapse:collapse; width:100%; }
+    .xpandbody th,.xpandbody td { border:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top; font-size:13.5px; min-width:80px; white-space:normal; overflow-wrap:break-word; }
+    .xpandbody th { background:#ffffff0d; position:sticky; top:0; }
+    .xpandbody.nowrap table { width:max-content; } .xpandbody.nowrap th,.xpandbody.nowrap td { white-space:nowrap; }
+    /* Tabela como cartões (tela estreita / muitas colunas): uma linha da tabela por cartão, "coluna: valor" */
+    .xpandbody .xcards { display:flex; flex-direction:column; gap:10px; }
+    .xpandbody .xcard { border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:#ffffff06; }
+    .xpandbody .xcard .xf { display:grid; grid-template-columns:minmax(90px,32%) 1fr; gap:8px; padding:5px 0; border-top:1px solid #ffffff10; font-size:13.5px; }
+    .xpandbody .xcard .xf:first-child { border-top:0; }
+    .xpandbody .xcard .xk { color:var(--mut); font-weight:600; overflow-wrap:anywhere; }
+    .xpandbody .xcard .xv { min-width:0; overflow-wrap:anywhere; }
+    @media (max-width:520px){ .xpandbody .xcard .xf { grid-template-columns:1fr; gap:2px; } }
     .msg.bot .mdtable-wrap { max-width:100%; margin:.6em 0; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#151b21; scrollbar-gutter:stable; -webkit-overflow-scrolling:touch; }
     .msg.bot .mdtable-actions { position:sticky; left:0; top:0; z-index:1; display:flex; justify-content:flex-end; gap:6px; padding:6px; border-bottom:1px solid var(--line); background:#151b21f2; }
     .msg.bot .mdtable-actions button { min-height:28px; padding:3px 8px; font-size:11.5px; border-radius:6px; }
@@ -1863,6 +1885,15 @@
     <div id="fwDiffBody" class="filebody fwdiffbody"></div>
   </div></div>
 
+  <div id="xpandModal" class="modal hidden"><div class="card xpandcard" role="dialog" aria-modal="true" aria-labelledby="xpandTitle">
+    <div class="xpandbar">
+      <b id="xpandTitle"></b>
+      <button type="button" id="xpandWrap" class="ghost" title="Alternar entre quebrar as linhas e rolar de lado"></button>
+      <button type="button" id="xpandCopy" class="ghost">Copiar</button>
+      <button type="button" id="xpandClose" class="ghost" title="Fechar">✕</button>
+    </div>
+    <div id="xpandBody" class="xpandbody"></div>
+  </div></div>
   <div id="fileModal" class="modal hidden"><div class="card filemodalcard">
     <div class="row" style="justify-content:space-between;align-items:center">
       <b id="fileModalName"></b>

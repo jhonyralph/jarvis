@@ -702,7 +702,39 @@
       .replace(/~~([^~]+)~~/g,'<del>$1</del>'); }
     function tableHtml(rows){ const cells=r=>r.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(c=>inl(esc(c.trim())));
       const head=cells(rows[0]),body=rows.slice(2).map(cells);
-      return `<div class="mdtable-wrap"><div class="mdtable-actions"><button type="button" class="ghost mdtable-copy" title="Copiar tabela como texto">Copiar</button><button type="button" class="ghost mdtable-png" title="Baixar tabela como PNG">PNG</button></div><table><thead><tr>${head.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${body.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; }
+      return `<div class="mdtable-wrap"><div class="mdtable-actions"><button type="button" class="ghost mdtable-expand" title="Abrir a tabela em tela grande, com o texto das células quebrando">Expandir</button><button type="button" class="ghost mdtable-copy" title="Copiar tabela como texto">Copiar</button><button type="button" class="ghost mdtable-png" title="Baixar tabela como PNG">PNG</button></div><table><thead><tr>${head.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${body.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; }
+    // Janela de expandir: bloco de código/texto ou tabela em tela grande (texto quebrando por padrão).
+    let xpandCopyText=null, xpandTable=null, xpandCards=false;
+    function openExpand(title, node, copyText){
+      const M=document.getElementById('xpandModal'), B=document.getElementById('xpandBody');
+      document.getElementById('xpandTitle').textContent=title;
+      B.classList.remove('nowrap'); B.scrollTop=0; B.scrollLeft=0;
+      xpandCopyText=copyText;
+      // Tabela: em tela estreita ou com muitas colunas vira cartões (uma linha por cartão) — rolar de lado
+      // num celular com 8 colunas mostrava uma coluna e meia por vez.
+      xpandTable=node.tagName==='TABLE'?node:null;
+      xpandCards=!!xpandTable && (window.innerWidth<720 || xpandTable.querySelectorAll('thead th').length>5 && window.innerWidth<1100);
+      renderXpand(); M.classList.remove('hidden'); document.getElementById('xpandClose').focus();
+      if(!xpandTable) B.replaceChildren(node);
+    }
+    function tableCards(table){
+      const heads=[...table.querySelectorAll('thead th')].map(th=>th.innerHTML);
+      const wrap=document.createElement('div'); wrap.className='xcards';
+      for(const tr of table.querySelectorAll('tbody tr')){
+        const card=document.createElement('div'); card.className='xcard';
+        [...tr.children].forEach((td,i)=>{ const f=document.createElement('div'); f.className='xf'; f.innerHTML=`<div class="xk">${heads[i]??''}</div><div class="xv">${td.innerHTML}</div>`; card.appendChild(f); });
+        wrap.appendChild(card);
+      }
+      return wrap;
+    }
+    function renderXpand(){ const B=document.getElementById('xpandBody'); if(xpandTable) B.replaceChildren(xpandCards?tableCards(xpandTable):xpandTable); syncXpandWrap(); }
+    function syncXpandWrap(){ const b=document.getElementById('xpandWrap'); if(xpandTable){ b.textContent=xpandCards?'Ver como tabela':'Ver como cartões'; return; } const on=document.getElementById('xpandBody').classList.contains('nowrap'); b.textContent=on?'Quebrar linhas':'Rolar de lado'; }
+    function closeExpand(){ const M=document.getElementById('xpandModal'); if(M.classList.contains('hidden')) return; M.classList.add('hidden'); document.getElementById('xpandBody').replaceChildren(); xpandCopyText=null; xpandTable=null; if(typeof restoreFocusAfterModal==='function') restoreFocusAfterModal(M); }
+    document.getElementById('xpandModal').onclick=(e)=>{ if(e.target.id==='xpandModal') closeExpand(); };
+    document.getElementById('xpandClose').onclick=closeExpand;
+    document.getElementById('xpandWrap').onclick=()=>{ if(xpandTable){ xpandCards=!xpandCards; renderXpand(); return; } document.getElementById('xpandBody').classList.toggle('nowrap'); syncXpandWrap(); };
+    document.getElementById('xpandCopy').onclick=(e)=>{ if(!xpandCopyText) return; navigator.clipboard.writeText(xpandCopyText()); const b=e.currentTarget; b.textContent='Copiado'; setTimeout(()=>{ b.textContent='Copiar'; },1200); };
+    document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!document.getElementById('xpandModal').classList.contains('hidden')){ e.stopPropagation(); closeExpand(); } });
     function tableText(table){ return [...table.querySelectorAll('tr')].map(tr=>[...tr.children].map(td=>(td.textContent||'').replace(/\s+/g,' ').trim()).join('\t')).join('\n'); }
     function tableDownloadName(){ const d=new Date(), pad=n=>String(n).padStart(2,'0'); return `jarvis-tabela-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.png`; }
     async function exportTablePng(table, btn){
@@ -741,7 +773,7 @@
     }
     function md(text){ const codes=[]; text=text.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>{codes.push(c);return ` C${codes.length-1} `;});
       const L=text.split(/\r?\n/); let h='',i=0,m; while(i<L.length){ const line=L[i];
-        if(m=line.match(/^ C(\d+) $/)){ h+=`<div class="codewrap"><button type="button" class="copy ghost">copiar</button><pre><code>${esc(codes[+m[1]])}</code></pre></div>`; i++; continue; }
+        if(m=line.match(/^ C(\d+) $/)){ h+=`<div class="codewrap"><div class="codeacts"><button type="button" class="ghost cwrap" title="Rolar de lado em vez de quebrar as linhas">↔</button><button type="button" class="ghost cexpand" title="Abrir em tela grande">expandir</button><button type="button" class="copy ghost">copiar</button></div><pre><code>${esc(codes[+m[1]])}</code></pre></div>`; i++; continue; }
         if(/\|/.test(line)&&i+1<L.length&&/^\s*\|?[\s:|-]+\|/.test(L[i+1])){ const r=[]; while(i<L.length&&/\|/.test(L[i])){r.push(L[i]);i++;} h+=tableHtml(r); continue; }
         if(m=line.match(/^\s*(#{1,6})\s+(.*)/)){ h+=`<h4>${inl(esc(m[2]))}</h4>`; i++; continue; }
         if(/^\s*>\s?/.test(line)){ h+=`<blockquote>${inl(esc(line.replace(/^\s*>\s?/,'')))}</blockquote>`; i++; continue; }
@@ -5995,7 +6027,10 @@
       return {path:h,line};
     }
     E.log.addEventListener('click',(e)=>{
-      if(e.target.classList.contains('copy')){ navigator.clipboard.writeText(e.target.nextElementSibling.textContent); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
+      if(e.target.classList.contains('copy')){ const pre=e.target.closest('.codewrap')?.querySelector('pre'); navigator.clipboard.writeText(pre?pre.textContent:''); e.target.textContent='copiado'; setTimeout(()=>e.target.textContent='copiar',1200); return; }
+      const cwrap=e.target.closest&&e.target.closest('.cwrap'); if(cwrap){ const w=cwrap.closest('.codewrap'); const on=w.classList.toggle('nowrap'); cwrap.title=on?'Quebrar as linhas para caber na tela':'Rolar de lado em vez de quebrar as linhas'; cwrap.textContent=on?'↵':'↔'; return; }
+      const cexpand=e.target.closest&&e.target.closest('.cexpand'); if(cexpand){ const pre=cexpand.closest('.codewrap')?.querySelector('pre'); if(pre) openExpand('Texto', pre.cloneNode(true), ()=>pre.textContent); return; }
+      const tableExpand=e.target.closest&&e.target.closest('.mdtable-expand'); if(tableExpand){ const table=tableExpand.closest('.mdtable-wrap')?.querySelector('table'); if(table) openExpand('Tabela', table.cloneNode(true), ()=>tableText(table)); return; }
       const tableCopy=e.target.closest&&e.target.closest('.mdtable-copy'); if(tableCopy){ const table=tableCopy.closest('.mdtable-wrap')?.querySelector('table'); if(table){ navigator.clipboard.writeText(tableText(table)); const old=tableCopy.textContent; tableCopy.textContent='copiado'; setTimeout(()=>tableCopy.textContent=old,1200); } return; }
       const tablePng=e.target.closest&&e.target.closest('.mdtable-png'); if(tablePng){ exportTablePng(tablePng.closest('.mdtable-wrap')?.querySelector('table'), tablePng); return; }
       const dbgWork=e.target.closest('.dbg-work'); if(dbgWork){ e.stopPropagation(); const root=dbgWork.dataset.root; if(root){ openWorkPanel(); openWorkNode(root); } return; }
