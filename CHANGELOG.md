@@ -1,3 +1,11 @@
+# [0.53.0](https://github.com/jhonyralph/jarvis/compare/v0.52.0...v0.53.0) (2026-11-03)
+
+
+### Features
+
+* **editor:** editar Markdown no formato de visualizacao (pre-visualizacao ao vivo) ([324c1a1](https://github.com/jhonyralph/jarvis/commit/324c1a1ec4b25967e75051a67e601e47be8b6840))
+* **web:** botao PNG da tabela copia a imagem para a area de transferencia ([b289ac3](https://github.com/jhonyralph/jarvis/commit/b289ac3fdf5d754e40acbaf62129dd7e93179d50))
+
 # [0.52.0](https://github.com/jhonyralph/jarvis/compare/v0.51.3...v0.52.0) (2026-11-03)
 
 
