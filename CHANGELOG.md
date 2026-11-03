@@ -1,3 +1,10 @@
+## [0.51.3](https://github.com/jhonyralph/jarvis/compare/v0.51.2...v0.51.3) (2026-11-03)
+
+
+### Bug Fixes
+
+* **hub:** busca e abrir sessao nativa nao congelam mais o Hub ([d5ba0e2](https://github.com/jhonyralph/jarvis/commit/d5ba0e2cb045888c378b3eed2d90a73a2c5273d2))
+
 ## [0.51.2](https://github.com/jhonyralph/jarvis/compare/v0.51.1...v0.51.2) (2026-10-29)
 
 
