@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { buildContextManifest, ContextManifestStore, discoverInstructionFiles } from "./context.js";
 
 test("context manifest exposes candidates and counts without persisting prompt text", () => {
@@ -11,7 +11,10 @@ test("context manifest exposes candidates and counts without persisting prompt t
     const cwd = join(root, "apps", "hub"); mkdirSync(cwd, { recursive: true });
     writeFileSync(join(root, "AGENTS.md"), "root instructions");
     writeFileSync(join(cwd, "AGENTS.md"), "cwd instructions");
-    const candidates = discoverInstructionFiles(cwd, "mock");
+    // Só o que está DENTRO do fixture: a busca sobe pelas pastas-pai de verdade, e um AGENTS.md solto
+    // numa pasta acima do %TEMP% (apareceu um em 03/11, de outro projeto) entrava na conta e quebrava o teste.
+    const inside = (p: string) => resolve(p).toLowerCase().startsWith(resolve(root).toLowerCase());
+    const candidates = discoverInstructionFiles(cwd, "mock").filter((entry) => inside(entry.path));
     assert.deepEqual(candidates.map((entry) => entry.scope), ["cwd", "ancestor"]);
     assert.ok(candidates.every((entry) => entry.providerLoad === "candidate" && entry.sha256.length === 64));
 
