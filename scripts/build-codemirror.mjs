@@ -32,7 +32,8 @@ const run = (cmd, args) => {
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} falhou (${r.status})`);
 };
 try {
-  for (const f of ["package.json", "entry.js"]) cpSync(join(src, f), join(scratch, f));
+  // package.json + todo .js da pasta (entry.js importa módulos vizinhos, ex.: livePreview.js).
+  for (const f of ["package.json", ...readdirSync(src).filter((n) => n.endsWith(".js"))]) cpSync(join(src, f), join(scratch, f));
   const lock = join(src, "package-lock.json");
   if (existsSync(lock) && !updateLock) { cpSync(lock, join(scratch, "package-lock.json")); run("npm", ["ci", "--no-audit", "--no-fund"]); }
   else { run("npm", ["install", "--no-audit", "--no-fund"]); cpSync(join(scratch, "package-lock.json"), lock); console.log("[cm] lock atualizado"); }

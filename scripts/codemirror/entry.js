@@ -20,9 +20,10 @@ import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
-import { markdown } from "@codemirror/lang-markdown";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
 import { yaml } from "@codemirror/lang-yaml";
+import { livePreview } from "./livePreview.js";
 
 // Mesmas cores do realce do visualizador (classes .hl-* do index.html, paleta One Dark).
 const jarvisHighlight = HighlightStyle.define([
@@ -100,7 +101,8 @@ function languageFor(filename) {
     case "json": case "jsonc": case "json5": case "webmanifest": return [json(), "JSON"];
     case "css": case "scss": case "less": return [css(), "CSS"];
     case "html": case "htm": case "xhtml": return [html(), "HTML"];
-    case "md": case "markdown": case "mdx": return [markdown(), "Markdown"];
+    // GFM (tabelas, tarefas, riscado): é o que a pré-visualização ao vivo desenha.
+    case "md": case "markdown": case "mdx": return [markdown({ base: markdownLanguage }), "Markdown"];
     case "py": case "pyw": case "pyi": return [python(), "Python"];
     case "yml": case "yaml": return [yaml(), "YAML"];
     default: return null;
@@ -109,12 +111,16 @@ function languageFor(filename) {
 
 /**
  * Cria um editor em `parent`.
- * opts: { text, filename, onChange(handle), onSave(handle), readOnly }
+ * opts: { text, filename, onChange(handle), onSave(handle), readOnly, livePreview }
+ * livePreview (só Markdown; padrão true): edita no formato de visualização — ver ./livePreview.js.
  * Devolve um handle; o app.js nunca toca em EditorView diretamente.
  */
 function create(parent, opts = {}) {
   const lang = languageFor(opts.filename);
   const readOnly = new Compartment();
+  const live = new Compartment();
+  const isMarkdown = !!lang && lang[1] === "Markdown";
+  let liveOn = isMarkdown && opts.livePreview !== false;
   const saveKey = { key: "Mod-s", preventDefault: true, run: () => { if (opts.onSave) opts.onSave(handle); return true; } };
   const state = EditorState.create({
     doc: String(opts.text ?? ""),
@@ -128,6 +134,7 @@ function create(parent, opts = {}) {
       readOnly.of(EditorState.readOnly.of(!!opts.readOnly)),
       EditorView.updateListener.of((u) => { if (u.docChanged && opts.onChange) opts.onChange(handle); }),
       ...(lang ? [lang[0]] : []),
+      live.of(liveOn ? livePreview() : []),
     ],
   });
   const view = new EditorView({ state, parent });
@@ -148,6 +155,11 @@ function create(parent, opts = {}) {
       view.dispatch({ selection: EditorSelection.cursor(line.from), effects: EditorView.scrollIntoView(line.from, { y: "center" }) });
     },
     setReadOnly: (on) => view.dispatch({ effects: readOnly.reconfigure(EditorState.readOnly.of(!!on)) }),
+    isMarkdown,
+    /** Pré-visualização ao vivo ligada? (só Markdown) */
+    livePreview: () => liveOn,
+    /** Liga/desliga a pré-visualização ao vivo sem mexer no texto nem no desfazer. */
+    setLivePreview: (on) => { if (!isMarkdown) return; liveOn = !!on; view.dispatch({ effects: live.reconfigure(liveOn ? livePreview() : []) }); },
     openSearch: () => openSearchPanel(view),
     focus: () => view.focus(),
     destroy: () => view.destroy(),

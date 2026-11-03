@@ -2265,11 +2265,13 @@
     // Editar e buscar são do DONO (o Hub recusa e audita membro); aqui só se esconde o que não vai funcionar.
     const ED_MIN_PROTO=18; // RUNNER_CAPABILITY_SINCE.fileWrite / fileSearch
     const ED_MAX_TABS=12;
-    const EDX={ edit:$('fileEdit'), save:$('fileSave'), done:$('fileEditDone'), tabs:$('edTabs'), host:$('fileEditor'), banner:$('edBanner'),
+    const EDX={ edit:$('fileEdit'), save:$('fileSave'), done:$('fileEditDone'), live:$('fileLive'), tabs:$('edTabs'), host:$('fileEditor'), banner:$('edBanner'),
       sForm:$('treeSearch'), sQ:$('treeSearchQ'), sCase:$('treeSearchCase'), sRx:$('treeSearchRx'), sRes:$('treeSearchRes') };
     const edTabs=[]; let edActiveId=null, edSeq=0, edConf=null, edSearchReq=null;
     const edPending=new Map(), edWaiters=[];
     function edOwner(){ return !authUser || authUser.role==='owner'; }
+    const CM_BUNDLE_VERSION='lp1'; // trocar ao regenerar vendor/codemirror (fura o cache do service worker)
+    if($('fileLive')) $('fileLive').onclick=()=>{ const tab=edActive(); if(!tab||!tab.cm||!tab.cm.isMarkdown)return; const on=!tab.cm.livePreview(); tab.cm.setLivePreview(on); cfg.mdLive=on; saveCfg(); edRenderButtons(); tab.cm.focus(); };
     function edMachineOk(rid){ const id=rid||'local', m=machines.find(x=>x.id===id); if(!m) return id==='local'; return (m.protocolVersion||1)>=ED_MIN_PROTO && m.online!==false; }
     function edSamePath(a,b){ const x=fileNorm(a), y=fileNorm(b); return !!x && !!y && (x===y || x.endsWith('/'+y) || y.endsWith('/'+x)); }
     function edActive(){ return edTabs.find(t=>t.id===edActiveId)||null; }
@@ -2331,7 +2333,9 @@
     function edRenderButtons(){ const tab=edActive(), editing=!!(tab&&tab.mode==='edit');
       if(EDX.edit){ EDX.edit.classList.toggle('hidden', !tab||editing); const why=tab&&!editing?edEditBlock(tab):''; EDX.edit.classList.toggle('off',!!why); EDX.edit.title=why?('Não dá para editar: '+why):'Editar este arquivo (Ctrl+S salva)'; EDX.edit.setAttribute('aria-disabled',why?'true':'false'); }
       if(EDX.save){ EDX.save.classList.toggle('hidden',!editing); EDX.save.disabled=!!(tab&&tab.saving); EDX.save.classList.toggle('dirty',!!(tab&&tab.dirty)); EDX.save.innerHTML=tab&&tab.saving?'⏳<span class="lbl"> Salvando…</span>':'💾<span class="lbl"> Salvar</span>'; }
-      if(EDX.done) EDX.done.classList.toggle('hidden',!editing); }
+      if(EDX.done) EDX.done.classList.toggle('hidden',!editing);
+      if(EDX.live){ const md=!!(editing&&tab.cm&&tab.cm.isMarkdown&&typeof tab.cm.setLivePreview==='function'); EDX.live.classList.toggle('hidden',!md);
+        if(md){ const on=tab.cm.livePreview(); EDX.live.innerHTML=on?'¶<span class="lbl"> Texto puro</span>':'Aa<span class="lbl"> Visual</span>'; EDX.live.title=on?'Ver e editar o texto puro do Markdown (com # ** - visíveis)':'Editar no formato de visualização (títulos, negrito, listas e tabelas formatados)'; } } }
     function edRenderTabs(){ const el=EDX.tabs; if(!el)return; el.innerHTML='';
       const show=edTabs.length>1||edTabs.some(t=>t.mode==='edit'); el.classList.toggle('hidden',!show); if(!show)return;
       edTabs.forEach(t=>{ const b=document.createElement('div'); b.className='edtab'+(t.id===edActiveId?' on':'')+(t.dirty?' dirty':''); b.title=(t.abs||t.path)+(t.dirty?' — alterações não salvas':'');
@@ -2353,7 +2357,7 @@
       if(EDX.edit){ EDX.edit.classList.add('off'); EDX.edit.innerHTML='⏳<span class="lbl"> Abrindo…</span>'; }
       try{
         // versão FRESCA (o mtime dela é a base do conflito) + o editor, em paralelo
-        const [m]=await Promise.all([edFetch(tab), loadScriptOnce('/vendor/codemirror/codemirror.js')]);
+        const [m]=await Promise.all([edFetch(tab), loadScriptOnce('/vendor/codemirror/codemirror.js?v='+CM_BUNDLE_VERSION)]);
         if(edActive()!==tab||tab.mode==='edit')return;
         if(!m){ toast('A máquina não respondeu — tente de novo.'); return; }
         const block=m.error||(m.image?'imagem não é editável aqui':'')||(m.truncated?'arquivo maior que 512 KB — só dá para ver o começo':'')||m.readOnlyReason||'';
@@ -2362,7 +2366,9 @@
         const text=edDetectText(tab,m.content);
         tab.abs=m.path||tab.abs; tab.mtimeMs=m.mtimeMs; tab.size=m.size; tab.diskChanged=null;
         const host=document.createElement('div'); host.className='edhost'; EDX.host.appendChild(host); tab.host=host;
-        tab.cm=window.JarvisCM.create(host,{text, filename:tab.name, onChange:()=>edDirtySoon(tab), onSave:()=>edSave(tab)});
+        // Markdown abre no modo visual (pré-visualização ao vivo); o botão "Texto puro" volta ao cru. O arquivo
+        // salvo é sempre o texto exato — o modo visual só muda a aparência.
+        tab.cm=window.JarvisCM.create(host,{text, filename:tab.name, livePreview:cfg.mdLive!==false, onChange:()=>edDirtySoon(tab), onSave:()=>edSave(tab)});
         tab.savedDoc=tab.cm.doc(); tab.mode='edit'; tab.dirty=false;
         edShowEditor(tab); if(curFileLine) tab.cm.gotoLine(curFileLine); tab.cm.focus();
       }catch(e){ toast('Não foi possível abrir o editor: '+(e&&e.message||'falha ao carregar')); }
