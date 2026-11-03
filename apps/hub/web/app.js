@@ -702,7 +702,7 @@
       .replace(/~~([^~]+)~~/g,'<del>$1</del>'); }
     function tableHtml(rows){ const cells=r=>r.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(c=>inl(esc(c.trim())));
       const head=cells(rows[0]),body=rows.slice(2).map(cells);
-      return `<div class="mdtable-wrap"><div class="mdtable-actions"><button type="button" class="ghost mdtable-expand" title="Abrir a tabela em tela grande, com o texto das células quebrando">Expandir</button><button type="button" class="ghost mdtable-copy" title="Copiar tabela como texto">Copiar</button><button type="button" class="ghost mdtable-png" title="Baixar tabela como PNG">PNG</button></div><table><thead><tr>${head.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${body.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; }
+      return `<div class="mdtable-wrap"><div class="mdtable-actions"><button type="button" class="ghost mdtable-expand" title="Abrir a tabela em tela grande, com o texto das células quebrando">Expandir</button><button type="button" class="ghost mdtable-copy" title="Copiar tabela como texto">Copiar</button><button type="button" class="ghost mdtable-png" title="Copiar a tabela como imagem (PNG) para a área de transferência">PNG</button></div><table><thead><tr>${head.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${body.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; }
     // Janela de expandir: bloco de código/texto ou tabela em tela grande (texto quebrando por padrão).
     let xpandCopyText=null, xpandTable=null, xpandCards=false;
     function openExpand(title, node, copyText){
@@ -736,11 +736,23 @@
     document.getElementById('xpandCopy').onclick=(e)=>{ if(!xpandCopyText) return; navigator.clipboard.writeText(xpandCopyText()); const b=e.currentTarget; b.textContent='Copiado'; setTimeout(()=>{ b.textContent='Copiar'; },1200); };
     document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!document.getElementById('xpandModal').classList.contains('hidden')){ e.stopPropagation(); closeExpand(); } });
     function tableText(table){ return [...table.querySelectorAll('tr')].map(tr=>[...tr.children].map(td=>(td.textContent||'').replace(/\s+/g,' ').trim()).join('\t')).join('\n'); }
-    function tableDownloadName(){ const d=new Date(), pad=n=>String(n).padStart(2,'0'); return `jarvis-tabela-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.png`; }
+    // "PNG" copia a imagem da tabela para a área de transferência — não baixa arquivo (pedido do dono, 03/11).
+    // O ClipboardItem recebe a PROMESSA da imagem já no clique: o navegador exige o gesto do usuário, e a
+    // imagem leva alguns ms para ficar pronta. Só funciona em endereço seguro (https ou localhost).
     async function exportTablePng(table, btn){
       if(!table)return;
-      const old=btn&&btn.textContent; if(btn){ btn.disabled=true; btn.textContent='gerando'; }
+      const old=btn&&btn.textContent;
+      if(!window.isSecureContext||!navigator.clipboard||typeof navigator.clipboard.write!=='function'||typeof ClipboardItem==='undefined'){
+        toast(window.isSecureContext?'Este navegador não permite copiar imagem.':'Copiar imagem só funciona pelo endereço https do Jarvis.'); return;
+      }
+      if(btn){ btn.disabled=true; btn.textContent='gerando'; }
       try{
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': tablePngBlob(table) })]);
+        if(btn){ btn.textContent='copiado'; setTimeout(()=>btn.textContent=old,1200); }
+      }catch(e){ toast('Não foi possível copiar a imagem da tabela.'); if(btn)btn.textContent=old; }
+      finally{ if(btn)btn.disabled=false; }
+    }
+    async function tablePngBlob(table){
         const clone=table.cloneNode(true);
         clone.querySelectorAll('a').forEach(a=>{ const s=document.createElement('span'); s.textContent=a.textContent||a.href||''; a.replaceWith(s); });
         // O tamanho da imagem é medido na PRÓPRIA tabela já com o estilo da imagem. Antes media a
@@ -766,10 +778,7 @@
         const scale=Math.min(2,Math.max(1,window.devicePixelRatio||1)), canvas=document.createElement('canvas');
         canvas.width=Math.ceil(w*scale); canvas.height=Math.ceil(h*scale);
         const ctx=canvas.getContext('2d'); ctx.scale(scale,scale); ctx.fillStyle='#151b21'; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0);
-        const a=document.createElement('a'); a.download=tableDownloadName(); a.href=canvas.toDataURL('image/png'); a.click();
-        if(btn){ btn.textContent='baixado'; setTimeout(()=>btn.textContent=old,1200); }
-      }catch(e){ toast('Não foi possível exportar a tabela como PNG.'); if(btn)btn.textContent=old; }
-      finally{ if(btn)btn.disabled=false; }
+        return await new Promise((res,rej)=>canvas.toBlob((b)=>b?res(b):rej(new Error('imagem vazia')),'image/png'));
     }
     function md(text){ const codes=[]; text=text.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>{codes.push(c);return ` C${codes.length-1} `;});
       const L=text.split(/\r?\n/); let h='',i=0,m; while(i<L.length){ const line=L[i];
