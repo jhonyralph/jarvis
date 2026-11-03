@@ -228,6 +228,9 @@ test("the steering prompt teaches exactly the directive the Hub parses back", ()
   // the command runs in cmd.exe on Windows: warn against Unix-only idioms (the `| tail` that broke jobs)
   assert.match(BACKGROUND_JOB_STEERING, /cmd\.exe/);
   assert.match(BACKGROUND_JOB_STEERING, /tail/);
+  // Windows: `find /` no Git Bash varre o Registro inteiro (incidente de 2026-11-03)
+  assert.match(BACKGROUND_JOB_STEERING, /NUNCA rode `find \/`/);
+  assert.match(BACKGROUND_JOB_STEERING, /\/proc\/registry/);
   // round-trip: an agent that followed the instruction verbatim yields a parseable command
   const sample = "Vou rodar em segundo plano:\n```jarvis-run\nnpm run build\n```";
   assert.deepEqual(parseBackgroundRunDirectives(sample), ["npm run build"]);

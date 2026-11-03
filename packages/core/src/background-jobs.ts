@@ -110,7 +110,9 @@ export const BACKGROUND_JOB_STEERING =
   + "O Jarvis executa esse comando de forma durável FORA deste turno e, quando terminar, abre um NOVO turno com o resultado. Após emitir o bloco, encerre o turno em vez de esperar. "
   + "IMPORTANTE: você NÃO recebe confirmação de que o bloco virou job — então NÃO afirme ao usuário que vai avisar/continuar como se fosse garantido. Diga que PEDIU a execução ao Jarvis e que o job aparece no painel de tarefas em segundo plano. Se o turno seguinte não trouxer o resultado, o job falhou em ser criado ou em continuar, e o usuário precisa saber disso em vez de ficar esperando. "
   + "Use isso só para tarefas realmente demoradas; comandos rápidos rode normalmente. "
-  + "O comando roda no shell nativo da máquina (no Windows é o cmd.exe, NÃO o bash): use comandos portáveis e NÃO use ferramentas só-Unix (tail/grep/head/sed) nem `2>/dev/null`. Não pagine a saída (nada de `| tail`) — o Jarvis já devolve o final do log automaticamente.";
+  + "O comando roda no shell nativo da máquina (no Windows é o cmd.exe, NÃO o bash): use comandos portáveis e NÃO use ferramentas só-Unix (tail/grep/head/sed) nem `2>/dev/null`. Não pagine a saída (nada de `| tail`) — o Jarvis já devolve o final do log automaticamente."
+  // Incidente de 2026-11-03: três `find /` órfãos varreram /proc/registry por 9 h e derrubaram a máquina.
+  + " No Windows (Git Bash), NUNCA rode `find /` nem busca recursiva a partir da raiz: ali `/` inclui `/proc/registry`, o Registro inteiro, e a busca fica horas presa no kernel deixando a máquina lenta. Procure numa pasta específica (o projeto, `.venv/Lib/site-packages`) ou pergunte ao gerenciador de pacotes (`pip show`, `npm ls`). E parar um shell em segundo plano no Windows NÃO mata os processos filhos: confira que o comando terminou ou encerre os filhos pelo PID.";
 
 export interface ContinuationPlan {
   /** Whether the Hub should inject a continuation turn for this job. */
