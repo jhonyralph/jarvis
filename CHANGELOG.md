@@ -1,3 +1,10 @@
+# [0.52.0](https://github.com/jhonyralph/jarvis/compare/v0.51.3...v0.52.0) (2026-11-03)
+
+
+### Features
+
+* **web:** texto quebra a linha e blocos/tabelas ganham "expandir" ([35f96e8](https://github.com/jhonyralph/jarvis/commit/35f96e86dc387150b926ee5c755683113b6ada15))
+
 ## [0.51.3](https://github.com/jhonyralph/jarvis/compare/v0.51.2...v0.51.3) (2026-11-03)
 
 
