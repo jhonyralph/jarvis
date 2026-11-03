@@ -45,7 +45,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, refreshNativeList, onNativeListChange, nativeHistory, nativeTitleCached, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, listDirectory, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, tournamentCandidateResults, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, listProviderTasks, listProviderStates, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, runDebate, mergeActiveRunSessions, trimMessageActivity, attachPartialTurn, turnProducedWork, findHistoryGaps, ACTIVITY_PAGE_DEFAULT, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution, MachineSampler } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, listDirectory, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, tournamentCandidateResults, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, listProviderTasks, listProviderStates, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, runDebate, mergeActiveRunSessions, trimMessageActivity, attachPartialTurn, turnProducedWork, findHistoryGaps, ACTIVITY_PAGE_DEFAULT, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution, MachineSampler, nativeHistoryAsync, searchNativeAsync } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, RUNNER_CAPABILITY_SINCE, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -373,7 +373,8 @@ let semanticBackfilled = false;
 function backfillLocalSemanticIndex(): void {
   if (semanticBackfilled) return;
   semanticBackfilled = true;
-  for (const s of store.list()) void indexSession(s.id);
+  // Uma de cada vez: em paralelo, as ~280 leituras de histórico entravam na memória ao mesmo tempo.
+  void (async () => { for (const s of store.list()) await indexSession(s.id); })();
 }
 const staging = new StagingStore();
 // Live turn telemetry (latency + error rate per machine) for the fleet dashboard. In-memory rolling
@@ -403,13 +404,14 @@ function trackVoiceFrame(obj: unknown, runnerId: string): unknown {
 async function indexSession(sid: string): Promise<void> {
   if (!semanticMemoryActive) return;
   try {
+    // Sem `s.messages`: o 1º uso indexa TODAS as sessões, e ler o histórico de cada uma de forma síncrona
+    // prendia o Hub (histórico sob demanda, 2026-10-30). Contagem pelo resumo, falas por leitura assíncrona.
     const s = store.get(sid);
-    if (!s || !s.messages.length) return;
+    if (!s || !store.messageCount(sid)) return;
     const ownerGeneration = captureSessionOwnerGeneration(LOCAL_ID, sid);
     if (ownerGeneration.conflicted) return;
     const updatedAt = s.updatedAt;
-    const lastUser = [...s.messages].reverse().find((m) => m.role === "user")?.text || "";
-    const lastAsst = [...s.messages].reverse().find((m) => m.role === "assistant")?.text || "";
+    const { lastUser, lastAssistant: lastAsst } = await store.lastTurnTexts(sid);
     const text = `${s.title}\n${lastUser}\n${lastAsst}`.slice(0, 2000);
     const vec = await embedOne(text);
     const current = store.get(sid);
@@ -6168,6 +6170,8 @@ function sortHits(hits: SessionHit[]): SessionHit[] {
   return hits.sort((a, b) => (a.where === b.where ? b.updatedAt - a.updatedAt : a.where === "title" ? -1 : 1));
 }
 /** Managed (Jarvis-owned) sessions whose title/conversation contains ALL query tokens — from memory. */
+/** Busca em andamento por aparelho (uma nova cancela a anterior). */
+const searchAborts = new WeakMap<WebSocket, AbortController>();
 function searchManaged(query: string, ws?: WebSocket): SessionHit[] {
   const tokens = query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean);
   if (!tokens.length) return [];
@@ -6180,6 +6184,34 @@ function searchManaged(query: string, ws?: WebSocket): SessionHit[] {
     if (!tokens.every((t) => hl.includes(t))) continue;
     const titleL = meta.title.toLowerCase();
     const primary = tokens.find((t) => !titleL.includes(t)) || tokens[0];
+    const idx = hl.indexOf(primary);
+    const inContent = idx >= meta.title.length + 1;
+    own.push({ id: meta.id, title: meta.title, agent: meta.agent, cwd: meta.cwd, updatedAt: meta.updatedAt, where: inContent ? "content" : "title", snippet: inContent ? snippetAround(hay, idx, primary.length) : meta.title });
+  }
+  return own;
+}
+/**
+ * searchManaged sem prender o Hub (2026-10-30): a busca lia o histórico de TODAS as sessões de forma
+ * síncrona (store.history) — com o histórico sob demanda isso virou ~270 MB lidos com o Hub parado,
+ * 61 s de "Hub caiu" numa busca. Lê o texto de cada sessão assíncrono e devolve a vez entre sessões.
+ */
+async function searchManagedAsync(query: string, ws?: WebSocket, signal?: { aborted: boolean }): Promise<SessionHit[]> {
+  const tokens = query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean);
+  if (!tokens.length) return [];
+  const own: SessionHit[] = [];
+  for (const meta of store.list()) {
+    if (signal?.aborted) break;
+    if (ws && !canAccessSession(ws, LOCAL_ID, meta.id)) continue;
+    // Título bate em todos os termos: nem precisa ler o histórico.
+    const titleL = meta.title.toLowerCase();
+    let hay = meta.title, hl = titleL;
+    if (!tokens.every((tk) => titleL.includes(tk))) {
+      await new Promise<void>((r) => setImmediate(r));
+      hay = meta.title + "\n" + await store.searchText(meta.id);
+      hl = hay.toLowerCase();
+      if (!tokens.every((tk) => hl.includes(tk))) continue;
+    }
+    const primary = tokens.find((tk) => !titleL.includes(tk)) || tokens[0];
     const idx = hl.indexOf(primary);
     const inContent = idx >= meta.title.length + 1;
     own.push({ id: meta.id, title: meta.title, agent: meta.agent, cwd: meta.cwd, updatedAt: meta.updatedAt, where: inContent ? "content" : "title", snippet: inContent ? snippetAround(hay, idx, primary.length) : meta.title });
@@ -7412,6 +7444,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     if (msg.t === "open" && typeof msg.sessionId === "string" && isNativeId(msg.sessionId)) {
       subs.set(ws, msg.sessionId);
       syncTails();
+      // Lê o transcript sem prender o Hub e deixa no cache: as leituras síncronas abaixo o reaproveitam.
+      // Antes, abrir uma sessão nativa grande travava o Hub por 10–16 s (nativeHistory, 29–30/10).
+      await nativeHistoryAsync(msg.sessionId).catch(() => null);
       reconcileNativeExecutions(msg.sessionId);
       const h = nativeHistory(msg.sessionId);
       if (!h) { send(ws, { t: "error", message: "sessão nativa não encontrada" }); return; }
@@ -7436,6 +7471,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       const s = store.ensure(msg.sessionId);
       try { synchronizePersonalSessionAliases(LOCAL_ID, s.id); }
       catch { send(ws, { t: "error", message: "conflito de propriedade entre a sessão e seu transcript nativo" }); return; }
+      { // mesmo aquecimento sem travar, para o transcript nativo por trás da sessão gerenciada
+        const warmNid = agents.get(s.agent).nativeSessionId?.(s.id), warmKey = warmNid ? nativeIdForAgent(s.agent, warmNid) : null;
+        if (warmKey) await nativeHistoryAsync(warmKey).catch(() => null);
+      }
       reconcileFromNative(s); // backfill a reply an orphaned turn (killed by a prior hub restart) already wrote natively
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
       const nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null;
@@ -7506,21 +7545,40 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       // carries the full accumulated set + a `done` flag, so the client just replaces + shows
       // "buscando mais…" until done. setImmediate lets each batch paint before the next disk scan.
       {
+        // Tudo assíncrono (2026-10-30): antes as sessões e os transcripts eram lidos com o Hub parado — uma
+        // busca o derrubava por um minuto. Uma busca nova deste aparelho cancela a anterior.
         const q = msg.query;
-        const managed = searchManaged(q, ws);
-        const exclude = nativeExcludeIds();
-        const NAT = Number(process.env.JARVIS_NATIVE_LIMIT) || 40;
-        send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done: false });
-        const stage = async (limit: number, includeRemote: boolean, done: boolean): Promise<void> => {
-          if (ws.readyState !== WebSocket.OPEN) return;
+        searchAborts.get(ws)?.abort();
+        const ctrl = new AbortController();
+        searchAborts.set(ws, ctrl);
+        const signal = ctrl.signal;
+        const live = (): boolean => !signal.aborted && ws.readyState === WebSocket.OPEN;
+        const t0 = Date.now();
+        void (async () => {
+          let managed: SessionHit[] = [];
           try {
-            const nat = searchNative(q, limit).filter((h) => !exclude.has(h.id) && canAccessSession(ws, LOCAL_ID, h.id));
-            const remote = includeRemote ? await searchRunnerSessions(ws, q) : [];
-            send(ws, { t: "searchResult", query: q, hits: sortHits([...managed, ...nat, ...remote]), done });
-          } catch { send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done }); }
-        };
-        // most-recent 10 native first (quick), then the full sweep — or straight to full if the cap is ≤10.
-        setImmediate(() => { if (NAT > 10) { void stage(10, false, false); setImmediate(() => { void stage(NAT, true, true); }); } else void stage(NAT, true, true); });
+            managed = await searchManagedAsync(q, ws, signal);
+            if (!live()) return;
+            send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done: false });
+            const exclude = nativeExcludeIds();
+            const NAT = Number(process.env.JARVIS_NATIVE_LIMIT) || 40;
+            // Os 10 transcripts mais recentes primeiro (rápido), depois a varredura completa e as outras máquinas.
+            if (NAT > 10) {
+              const quick = (await searchNativeAsync(q, 10, signal)).filter((h) => !exclude.has(h.id) && canAccessSession(ws, LOCAL_ID, h.id));
+              if (!live()) return;
+              send(ws, { t: "searchResult", query: q, hits: sortHits([...managed, ...quick]), done: false });
+            }
+            const nat = (await searchNativeAsync(q, NAT, signal)).filter((h) => !exclude.has(h.id) && canAccessSession(ws, LOCAL_ID, h.id));
+            if (!live()) return;
+            const remote = await searchRunnerSessions(ws, q);
+            if (!live()) return;
+            send(ws, { t: "searchResult", query: q, hits: sortHits([...managed, ...nat, ...remote]), done: true });
+            log.info("session_search", { ms: Date.now() - t0, managed: managed.length, native: nat.length, remote: remote.length });
+          } catch (e) {
+            log.warn("session_search_error", { error: String((e as Error)?.message ?? e).slice(0, 200) });
+            if (live()) send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done: true });
+          } finally { if (searchAborts.get(ws) === ctrl) searchAborts.delete(ws); }
+        })();
       }
       return;
     }
@@ -8949,9 +9007,8 @@ wss.on("connection", (ws: WebSocket, req: any) => {
           for (const summary of store.list()) {
             const full = store.get(summary.id);
             const ownerGeneration = captureSessionOwnerGeneration(LOCAL_ID, summary.id);
-            if (!full || !full.messages.length || ownerGeneration.conflicted) continue;
-            const lastUser = [...full.messages].reverse().find((message) => message.role === "user")?.text || "";
-            const lastAssistant = [...full.messages].reverse().find((message) => message.role === "assistant")?.text || "";
+            if (!full || !store.messageCount(summary.id) || ownerGeneration.conflicted) continue;
+            const { lastUser, lastAssistant } = await store.lastTurnTexts(summary.id); // assíncrono: ver indexSession
             jobs.push({ id: summary.id, sessionId: summary.id, runnerId: LOCAL_ID, ownerGeneration, sourceUpdatedAt: full.updatedAt, agent: summary.agent, cwd: summary.cwd, title: summary.title, updatedAt: full.updatedAt, text: `${summary.title}\n${lastUser}\n${lastAssistant}`.slice(0, 2000) });
           }
           const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUseRunner(ws, r.id));
@@ -9825,6 +9882,11 @@ async function scanFrameworkSourceDrift(): Promise<void> {
   let current: FrameworkFile[];
   try { current = readCanonicalFramework(frameworkRoot()).files; } catch { return; }
   const alerts: FrameworkUpdateAlert[] = [];
+  // UMA varredura de comandos/skills para todas as fontes nativas: antes cada fonte refazia a varredura
+  // inteira, síncrona — trava de 10 s logo depois do boot (stall forensics, 29/10).
+  const nativeIds = frameworkSources.list().filter((s) => s.autoUpdate !== false && s.type === "native" && s.entryId).map((s) => s.entryId as string);
+  let nativeEntries = new Map<string, ReturnType<typeof collectNativeCatalogFiles>["entries"][number]>();
+  if (nativeIds.length) { try { nativeEntries = new Map(collectNativeCatalogFiles(nativeIds).entries.map((e) => [e.id, e])); } catch { /* fonte sumiu: próximo ciclo */ } }
   for (const s of frameworkSources.list()) {
     if (s.autoUpdate === false) continue;
     try {
@@ -9833,8 +9895,7 @@ async function scanFrameworkSourceDrift(): Promise<void> {
         const preview = buildImportPreview(fetched.files, [], current);
         if (preview.hash !== s.hash) alerts.push({ id: s.id, type: "github", label: s.label || `${s.owner}/${s.repo}${s.subdir ? "/" + s.subdir : ""}`, scanBlocked: preview.scan.blocked, changed: preview.files.length, at: Date.now() });
       } else if (s.type === "native" && s.entryId) {
-        const { entries } = collectNativeCatalogFiles([s.entryId]);
-        const e = entries[0];
+        const e = nativeEntries.get(s.entryId);
         if (e && e.hash !== s.hash) { const preview = buildImportPreview(e.files, [], current); alerts.push({ id: s.id, type: "native", label: s.label || e.name, provider: e.provider, scanBlocked: preview.scan.blocked, changed: preview.files.length, at: Date.now() }); }
       }
       // zip: no remote origin to re-fetch — cannot auto-check.

@@ -11,7 +11,7 @@
  * session UUIDs and the open handler can route them here. Nothing is written back.
  */
 import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
-import { open as openAsync, readdir as readdirAsync, stat as statAsync } from "node:fs/promises";
+import { open as openAsync, readdir as readdirAsync, readFile as readFileAsync, stat as statAsync } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, basename, dirname } from "node:path";
 import { writeJsonAtomic, readJson } from "./persist.js";
@@ -86,6 +86,16 @@ function readTranscriptCapped(path: string): { text: string; truncated: boolean 
   }
   // readTail já trata a primeira linha cortada (o parser de linha descarta JSON inválido).
   return { text: readTail(path, TRANSCRIPT_READ_CAP_BYTES), truncated: true };
+}
+
+/** Mesmo que readTranscriptCapped, sem prender o event loop durante a leitura do disco (2026-10-30). */
+async function readTranscriptCappedAsync(path: string, cap = TRANSCRIPT_READ_CAP_BYTES): Promise<{ text: string; truncated: boolean }> {
+  let size = 0;
+  try { size = (await statAsync(path)).size; } catch { return { text: "", truncated: false }; }
+  if (size <= cap) {
+    try { return { text: await readFileAsync(path, "utf8"), truncated: false }; } catch { return { text: "", truncated: false }; }
+  }
+  return { text: await readTailAsync(path, cap), truncated: true };
 }
 
 function readTail(path: string, bytes = 131072): string {
@@ -196,7 +206,7 @@ async function claudeFilesAsync(): Promise<Array<{ path: string; mtime: number }
     const stats = await Promise.all(files.filter((f) => f.endsWith(".jsonl")).map(async (f) => {
       try { return { path: join(p, f), mtime: (await statAsync(join(p, f))).mtimeMs }; } catch { return null; }
     }));
-    for (const s of stats) if (s) out.push(s);
+    for (const s of stats) if (s) { out.push(s); fileById.set("claude:" + basename(s.path, ".jsonl"), { path: s.path, claude: true }); }
   }
   return out;
 }
@@ -533,9 +543,13 @@ function searchDoc(path: string, mtime: number, claude: boolean, title: string):
   const key = String(mtime);
   const hit = searchDocCache.get(path);
   if (hit && hit.key === key) return hit;
-  let raw = "";
-  raw = readTranscriptCapped(path).text;
-  if (!raw) return { title, hay: title };
+  return buildSearchDoc(path, mtime, claude, title, readTranscriptCapped(path).text);
+}
+
+/** Texto pesquisável de um transcript já lido (síncrono ou não) — e guardado no cache por mtime. */
+function buildSearchDoc(path: string, mtime: number, claude: boolean, title: string, raw: string): { key: string; title: string; hay: string } {
+  const key = String(mtime);
+  if (!raw) return { key, title, hay: title };
   const parts: string[] = [title];
   let total = title.length;
   eachLine(raw, (o) => {
@@ -561,6 +575,44 @@ function searchDoc(path: string, mtime: number, claude: boolean, title: string):
 }
 
 /** Native sessions whose title OR conversation contains ALL query tokens (case-insensitive). */
+/** Teto de leitura por transcript na BUSCA: o texto pesquisável já é cortado em SEARCH_CAP; ler 32 MB
+ *  para isso só custava tempo de interpretação. */
+const SEARCH_READ_CAP_BYTES = 8 * 1024 * 1024;
+
+/**
+ * searchNative sem prender o Hub (2026-10-30): a busca de "texto em todas as sessões" travou o Hub por
+ * 61 s — lista, leitura e interpretação de dezenas de transcripts, tudo síncrono. Aqui a lista e a
+ * leitura são assíncronas e a vez é devolvida ao Hub entre um arquivo e outro.
+ */
+export async function searchNativeAsync(query: string, limit = Number(process.env.JARVIS_NATIVE_LIMIT || 40), signal?: { aborted: boolean }): Promise<SessionHit[]> {
+  const tokens = query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean);
+  if (!tokens.length) return [];
+  const [cf, xf] = await Promise.all([claudeFilesAsync(), codexFilesAsync()]);
+  const cand = [...cf.map((f) => ({ ...f, claude: true })), ...xf.map((f) => ({ ...f, claude: false }))]
+    .sort((a, b) => b.mtime - a.mtime).slice(0, limit);
+  const hits: SessionHit[] = [];
+  for (const { path, mtime, claude } of cand) {
+    if (signal?.aborted) break;
+    await new Promise<void>((r) => setImmediate(r));
+    const meta = await cachedParseAsync(path, mtime, claude ? parseClaudeAsync : parseCodexAsync);
+    if (!meta) continue;
+    let doc = searchDocCache.get(path);
+    if (!doc || doc.key !== String(mtime)) {
+      const raw = (await readTranscriptCappedAsync(path, SEARCH_READ_CAP_BYTES)).text;
+      await new Promise<void>((r) => setImmediate(r));
+      doc = buildSearchDoc(path, mtime, claude, meta.title, raw);
+    }
+    const hl = doc.hay.toLowerCase();
+    if (!tokens.every((tk) => hl.includes(tk))) continue;
+    const titleL = doc.title.toLowerCase();
+    const primary = tokens.find((tk) => !titleL.includes(tk)) || tokens[0];
+    const idx = hl.indexOf(primary);
+    const inContent = idx >= doc.title.length + 1;
+    hits.push({ id: meta.id, title: meta.title, agent: meta.agent, cwd: meta.cwd, updatedAt: mtime, where: inContent ? "content" : "title", snippet: inContent ? snippetAround(doc.hay, idx, primary.length) : meta.title });
+  }
+  return hits;
+}
+
 export function searchNative(query: string, limit = Number(process.env.JARVIS_NATIVE_LIMIT || 40)): SessionHit[] {
   const tokens = query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean);
   if (!tokens.length) return [];
@@ -918,12 +970,43 @@ export function nativeInfo(id: string): { agent: string; cwd: string } | null {
   return meta ? { agent: meta.agent, cwd: meta.cwd } : null;
 }
 
+/** id nativo -> arquivo. Antes cada abertura de sessão nativa fazia `stat` em TODOS os transcripts
+ *  (milhares, com antivírus = segundos de Hub parado) só para achar um arquivo pelo nome (2026-10-30). */
+const fileById = new Map<string, { path: string; claude: boolean }>();
 function findFileById(id: string): { path: string; claude: boolean } | null {
   const claude = id.startsWith("claude:");
   const uuid = id.slice(id.indexOf(":") + 1);
-  const files = claude ? claudeFiles() : codexFiles();
-  const hit = files.find((f) => basename(f.path).includes(uuid));
-  return hit ? { path: hit.path, claude } : null;
+  if (!uuid) return null;
+  const known = fileById.get(id);
+  if (known && existsSync(known.path)) return known;
+  let path = "";
+  if (claude) {
+    // <projects>/<pasta>/<uuid>.jsonl — basta perguntar por nome em cada pasta, sem listar arquivos.
+    try {
+      for (const dir of readdirSync(CLAUDE_DIR, { withFileTypes: true })) {
+        if (!dir.isDirectory()) continue;
+        const candidate = join(CLAUDE_DIR, dir.name, uuid + ".jsonl");
+        if (existsSync(candidate)) { path = candidate; break; }
+      }
+    } catch { /* sem pasta do claude */ }
+  } else {
+    // rollouts do codex: só nomes (readdir), nunca stat.
+    const walk = (d: string, depth: number): void => {
+      let ents;
+      try { ents = readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const e of ents) {
+        if (path) return;
+        const full = join(d, e.name);
+        if (e.isDirectory() && depth < 3) walk(full, depth + 1);
+        else if (e.isFile() && e.name.endsWith(".jsonl") && e.name.includes(uuid)) path = full;
+      }
+    };
+    walk(CODEX_DIR, 0);
+  }
+  if (!path) return null;
+  const hit = { path, claude };
+  fileById.set(id, hit);
+  return hit;
 }
 
 /** One activity event grouped under an assistant turn (same shape the live stream / a managed
@@ -982,10 +1065,27 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   if (!f) return null;
   let stamp = "";
   try { const s = statSync(f.path); stamp = `${diffLimit}:${s.mtimeMs}:${s.size}`; } catch { /* fall through */ }
-  const ckey = f.path;
-  const hit = histCache.get(ckey);
+  const hit = histCache.get(f.path);
   if (hit && stamp && hit.key === stamp) return hit.data;
-  const raw = readTranscriptCapped(f.path).text;
+  return parseNativeHistory(id, f, readTranscriptCapped(f.path).text, stamp, diffLimit);
+}
+
+/** nativeHistory sem prender o Hub na leitura do disco: a interpretação usa o mesmo código e deixa o
+ *  resultado no MESMO cache — quem chamar a versão síncrona logo depois não relê nada (2026-10-30). */
+export async function nativeHistoryAsync(id: string, diffLimit = 120): Promise<NativeHist | null> {
+  if (!isNativeId(id)) return null;
+  const f = findFileById(id);
+  if (!f) return null;
+  let stamp = "";
+  try { const s = await statAsync(f.path); stamp = `${diffLimit}:${s.mtimeMs}:${s.size}`; } catch { /* fall through */ }
+  const hit = histCache.get(f.path);
+  if (hit && stamp && hit.key === stamp) return hit.data;
+  const raw = (await readTranscriptCappedAsync(f.path)).text;
+  return parseNativeHistory(id, f, raw, stamp, diffLimit);
+}
+
+function parseNativeHistory(id: string, f: { path: string; claude: boolean }, raw: string, stamp: string, diffLimit: number): NativeHist | null {
+  const ckey = f.path;
   if (!raw) return null;
   const messages: HistMsg[] = [];
   const toolRefs: Array<{ ev: HistEvent; name: string; input: unknown }> = [];

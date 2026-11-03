@@ -4,6 +4,7 @@
  * model/effort change per message). All data lives on the Hub machine.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { readFile as readFileAsync, stat as statAsync } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ContextManifest, PermissionMode } from "@jarvis/protocol";
@@ -205,6 +206,72 @@ export class Store {
   private msgFile(id: string): string {
     // ids are UUIDs or fixed constants; sanitize defensively so nothing escapes msgDir.
     return join(this.msgDir, `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.jsonl`);
+  }
+
+  /** Texto pesquisável por sessão, guardado pela assinatura do arquivo (tamanho+data). */
+  private readonly searchTexts = new Map<string, { sig: string; text: string }>();
+  private searchTextChars = 0;
+  /**
+   * Texto de TODAS as mensagens de uma sessão, para a busca (2026-10-30). A busca chamava `history()`
+   * em cada sessão: com o histórico sob demanda isso lia ~270 MB SÍNCRONO e travou o Hub por 61 s — e
+   * ainda deixava todo o histórico preso na memória. Aqui a leitura é assíncrona, nada fica em
+   * `messages`, e o texto (bem menor que o JSONL, que carrega atividade) é reaproveitado até o arquivo mudar.
+   */
+  async searchText(id: string): Promise<string> {
+    const s = this.data[id];
+    if (!s) return "";
+    if (this.loaded.has(id)) return s.messages.map((m) => m.text || "").join("\n");
+    const f = this.msgFile(id);
+    let sig = "";
+    try { const st = await statAsync(f); sig = `${st.size}:${st.mtimeMs}`; } catch { return ""; }
+    const hit = this.searchTexts.get(id);
+    if (hit && hit.sig === sig) return hit.text;
+    let raw = "";
+    try { raw = await readFileAsync(f, "utf8"); } catch { return ""; }
+    const parts: string[] = [];
+    for (const line of raw.split("\n")) {
+      if (!line) continue;
+      try { const m = JSON.parse(line) as StoredMessage; if (m.text) parts.push(m.text); } catch { /* linha cortada */ }
+    }
+    const text = parts.join("\n");
+    if (hit) this.searchTextChars -= hit.text.length;
+    // Teto do cache (~64 M caracteres): passou, recomeça — a próxima busca relê sem travar nada.
+    if (this.searchTextChars + text.length > 64_000_000) { this.searchTexts.clear(); this.searchTextChars = 0; }
+    this.searchTexts.set(id, { sig, text });
+    this.searchTextChars += text.length;
+    return text;
+  }
+
+  /** Quantas mensagens a sessão tem — do resumo, sem ler o histórico. */
+  messageCount(id: string): number {
+    const s = this.data[id];
+    return s ? this.statsOf(s).count : 0;
+  }
+
+  /** Última fala do dono e da IA, por inteiro, sem prender o Hub nem guardar o histórico em memória
+   *  (índice semântico: antes ele lia o histórico de todas as sessões de uma vez, síncrono). */
+  async lastTurnTexts(id: string): Promise<{ lastUser: string; lastAssistant: string }> {
+    const s = this.data[id];
+    if (!s) return { lastUser: "", lastAssistant: "" };
+    const msgs = this.loaded.has(id) ? s.messages : await this.readMessagesAsync(id);
+    let lastUser = "", lastAssistant = "";
+    for (let i = msgs.length - 1; i >= 0 && (!lastUser || !lastAssistant); i--) {
+      const m = msgs[i];
+      if (!lastUser && m.role === "user") lastUser = m.text || "";
+      else if (!lastAssistant && m.role === "assistant") lastAssistant = m.text || "";
+    }
+    return { lastUser, lastAssistant };
+  }
+
+  private async readMessagesAsync(id: string): Promise<StoredMessage[]> {
+    let raw = "";
+    try { raw = await readFileAsync(this.msgFile(id), "utf8"); } catch { return []; }
+    const out: StoredMessage[] = [];
+    for (const line of raw.split("\n")) {
+      if (!line) continue;
+      try { out.push(JSON.parse(line) as StoredMessage); } catch { /* linha cortada */ }
+    }
+    return out;
   }
 
   /** Load a session's messages from its append-only JSONL, tolerating a torn trailing line. */
