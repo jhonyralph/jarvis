@@ -1,3 +1,10 @@
+## [0.53.1](https://github.com/jhonyralph/jarvis/compare/v0.53.0...v0.53.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **agentes:** instrucao proibe `find /` no Git Bash do Windows ([344263f](https://github.com/jhonyralph/jarvis/commit/344263f5a3716356edee70f5dfc0b9b3b3601c9b))
+
 # [0.53.0](https://github.com/jhonyralph/jarvis/compare/v0.52.0...v0.53.0) (2026-11-03)
 
 
