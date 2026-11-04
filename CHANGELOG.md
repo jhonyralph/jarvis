@@ -1,3 +1,11 @@
+## [0.53.2](https://github.com/jhonyralph/jarvis/compare/v0.53.1...v0.53.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **claude:** instrucao injetada nao diz mais que tarefas em 2o plano morrem ao fim do turno ([5023065](https://github.com/jhonyralph/jarvis/commit/5023065edd17c7d9dd831c71b37ad82a53ce154d))
+* **claude:** workflow, Monitor e comando em 2o plano nao sao mais derrubados 60 s apos a resposta ([e1ffa22](https://github.com/jhonyralph/jarvis/commit/e1ffa221a6bddcebd5d0b1c611baac5bf18a55ba))
+
 ## [0.53.1](https://github.com/jhonyralph/jarvis/compare/v0.53.0...v0.53.1) (2026-11-03)
 
 
