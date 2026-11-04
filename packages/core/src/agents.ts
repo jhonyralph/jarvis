@@ -1468,11 +1468,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     validateModelSelection(await this.capabilities(), opts);
     const args = ["-p", "--output-format", "json"]; // prompt via stdin — see send()
     if (opts?.fastMode) args.push("--bare");
-    args.push(...permissionArgs("claude-code", effectivePermissionMode(opts)));
+    args.push(...(opts?.managed ? managedAdapterSecurityArgs("claude-code", opts.managed) : permissionArgs("claude-code", effectivePermissionMode(opts))));
     if (opts?.noMcp && !opts?.fastMode) args.push("--strict-mcp-config"); // no --mcp-config ⇒ load zero MCP servers
     if (opts?.model) args.push("--model", opts.model);
     if (opts?.effort) args.push("--effort", opts.effort === "ultracode" ? "xhigh" : opts.effort);
-    const raw = await run(this.bin, args, ONESHOT_CWD, text); // stateless + isolated cwd (excluded from native list)
+    opts?.signal?.throwIfAborted();
+    const raw = await run(this.bin, args, ONESHOT_CWD, text, opts?.signal); // stateless + isolated cwd
     const json = JSON.parse(raw);
     if (json.is_error) throw new Error(cliErrorMessage(json.result, "claude error"));
     return { text: json.result ?? "", usage: usageWithFast({ costUsd: json.total_cost_usd, inputTokens: claudeInputContext(json.usage), contextTokens: claudeInputContext(json.usage), outputTokens: json.usage?.output_tokens, costKind: "estimated_api_equivalent", source: "Claude Code result.total_cost_usd (one-shot: sessão nova, o total é o turno)", model: opts?.model }, opts) };
@@ -2159,12 +2160,20 @@ export class CodexAdapter implements AgentAdapter {
     validateModelSelection(await this.capabilities(), opts);
     // run in ONESHOT_CWD (excluded from the native list) so throwaway prompts don't litter the sidebar
     const args = ["exec", "--cd", ONESHOT_CWD, "--json"];
-    args.push(...permissionArgs("codex", effectivePermissionMode(opts)));
+    if (opts?.noMcp) {
+      // Stateless analysis must not inherit the owner's MCP servers, apps, hooks or UI control.
+      // These flags are a required capability: an older CLI rejects them, rather than silently
+      // falling back to a tool-enabled invocation. Auth still uses the existing CODEX_HOME.
+      args.push("--ignore-user-config");
+      for (const feature of ["apps", "plugins", "hooks", "browser_use", "computer_use", "shell_tool", "unified_exec"]) args.push("--disable", feature);
+    }
+    args.push(...(opts?.managed ? managedAdapterSecurityArgs("codex", opts.managed) : permissionArgs("codex", effectivePermissionMode(opts))));
     args.push(...codexFastModeArgs(opts));
     const model = safeIdent(opts?.model), effort = safeIdent(opts?.effort);
     if (model) args.push("-m", model);
     if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
-    const out = await run("codex", args, ONESHOT_CWD, text); // stateless: no this.started
+    opts?.signal?.throwIfAborted();
+    const out = await run("codex", args, ONESHOT_CWD, text, opts?.signal); // stateless: no this.started
     const textParts: string[] = []; let usage: AgentReply["usage"];
     for (const line of out.split(/\r?\n/)) {
       let o: any; try { o = JSON.parse(line); } catch { continue; }

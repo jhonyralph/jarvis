@@ -27,7 +27,8 @@ const FAKE = `import { readFileSync, writeFileSync } from "node:fs";
 const argv = process.argv.slice(2);
 const i = argv.indexOf("--mcp-config");
 let mcp = null; try { if (i >= 0) mcp = JSON.parse(readFileSync(argv[i + 1], "utf8")); } catch {}
-writeFileSync(process.env.FAKE_OUT, JSON.stringify({ argv, mcp }));
+writeFileSync(process.env.FAKE_OUT, JSON.stringify({ argv, mcp, pid: process.pid }));
+if (process.env.FAKE_WAIT === "1") await new Promise(r => setTimeout(r, 60000));
 if (process.env.FAKE_KIND === "codex") {
   process.stdout.write(JSON.stringify({ type: "item.completed", item: { id: "i1", type: "agent_message", text: "ok" } }) + "\\n");
   process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }) + "\\n");
@@ -49,6 +50,42 @@ function fakeCli(name: string): string {
 }
 const NO_CAPS = { at: Date.now(), caps: { models: [], defaultModel: undefined } };
 const access = { url: "http://127.0.0.1:65000/internal/browser", token: "tok-abc123" };
+
+test("stateless conversation adapters enforce read-only tool boundaries and actually stop on abort", { timeout: 15000 }, async () => {
+  for (const kind of ["claude", "codex"]) {
+    const bin = fakeCli(kind), out = join(HOME, kind + "-oneshot.json");
+    process.env.PATH = join(bin, "..") + (process.platform === "win32" ? ";" : ":") + process.env.PATH;
+    process.env.FAKE_OUT = out; process.env.FAKE_KIND = kind;
+    const adapter = (kind === "claude" ? new ClaudeCodeAdapter() : new CodexAdapter()) as any;
+    adapter.bin = bin; adapter.capsCache = NO_CAPS;
+    const opts = { noMcp: true, managed: { workspaceAccess: "read_only", preventCommits: true } };
+    assert.equal((await adapter.oneShot("status only", opts)).text, "ok");
+    const got = JSON.parse(readFileSync(out, "utf8"));
+    assert.equal(got.mcp, null);
+    if (kind === "claude") {
+      assert.ok(got.argv.includes("--safe-mode"));
+      assert.doesNotMatch(got.argv[got.argv.indexOf("--tools") + 1], /Bash|Write|Edit|Agent|Task/);
+    } else {
+      assert.equal(got.argv[got.argv.indexOf("--sandbox") + 1], "read-only");
+      assert.ok(got.argv.includes("--ignore-user-config"));
+      const disabled = got.argv.filter((_: string, i: number) => got.argv[i - 1] === "--disable");
+      for (const tool of ["apps", "plugins", "hooks", "browser_use", "computer_use", "shell_tool", "unified_exec"]) assert.ok(disabled.includes(tool));
+    }
+    rmSync(out); process.env.FAKE_WAIT = "1";
+    const controller = new AbortController();
+    const pending = assert.rejects(adapter.oneShot("wait", { ...opts, signal: controller.signal }), /aborted/i);
+    let pid = 0;
+    try {
+      const until = Date.now() + 4000;
+      while (Date.now() < until && !pid) { try { pid = JSON.parse(readFileSync(out, "utf8")).pid; } catch {} await new Promise(r => setTimeout(r, 20)); }
+      assert.ok(pid, "the fake CLI actually started before cancellation");
+    } finally { controller.abort(); delete process.env.FAKE_WAIT; }
+    await pending;
+    let alive = true;
+    for (let i = 0; i < 100 && alive; i++) { try { process.kill(pid, 0); } catch { alive = false; } if (alive) await new Promise(r => setTimeout(r, 20)); }
+    assert.equal(alive, false, "aborting leaves no owned CLI process behind");
+  }
+});
 
 test("Claude Code: --mcp-config do turno leva o jarvisbrowser com URL+token; --allowedTools fora do modo manual", async () => {
   const bin = fakeCli("claude");

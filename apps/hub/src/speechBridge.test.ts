@@ -36,6 +36,39 @@ function setup(wake: Device[] = []) {
 }
 const tick = () => new Promise((r) => setImmediate(r));
 
+test("private playback keeps its reply window on its recipient; another user cannot interrupt or follow it", () => {
+  const owner = new Device("owner"), guest = new Device("guest");
+  const bridge = new SpeechBridge<Device>({ send: (w,f) => { w.frames.push(f); }, synthesize: async () => Buffer.alloc(0), wakeClients: () => [], postMessage() {}, sessionTitle: () => "", log() {}, canHear: (w,_r,s) => s !== "private" || w === owner });
+  bridge.markCapable(owner); bridge.markCapable(guest); bridge.useDevice(owner);
+  bridge.enqueue("local", "private", { audio: wav(500) }, []);
+  bridge.bargeIn(guest);
+  assert.equal(owner.last("tts_stop"), undefined);
+  const heard = bridge.heard(guest, "local", "public", "next", true);
+  assert.equal(heard.target.sessionId, "public");
+  bridge.useDevice(guest); // another device became preferred while audio was playing
+  bridge.played(String(owner.tts()[0].qid), "completed", owner);
+  assert.equal(owner.last("voice_window")?.sessionId, "private");
+  assert.equal(guest.frames.length, 0);
+  bridge.dispose();
+});
+
+test("erro de audio libera fila, fica visivel e recibo de outro aparelho nao interfere", () => {
+  const phone = new Device("phone"), stranger = new Device("other");
+  const { bridge, messages } = setup();
+  bridge.useDevice(phone);
+  bridge.markCapable(phone);
+  bridge.enqueue("local", "s1", { audio: wav(300) }, []);
+  const id = String(phone.tts()[0].qid);
+  assert.equal(bridge.started(id, stranger), false);
+  bridge.played(id, "error", stranger);
+  assert.equal(messages.length, 0);
+  assert.equal(bridge.started(id, phone), true);
+  bridge.played(id, "error", phone, "output unavailable");
+  assert.equal(messages.length, 1);
+  assert.equal(phone.last("voice_window")?.sessionId, "s1");
+  bridge.dispose();
+});
+
 test("o aparelho onde o dono falou é o único que fala — sem a duplicação app + listener", () => {
   const listener = new Device("pc");
   const phone = new Device("phone");

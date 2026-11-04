@@ -2,9 +2,8 @@
 Machine-side wake word for Jarvis — 100% local, native, zero phone battery.
 
 Listens on the machine mic for "Hey Jarvis" (openWakeWord, pretrained), captures
-the following utterance, transcribes it locally (warm faster-whisper), and injects
-it into a dedicated "voice" session on the Hub over WebSocket — exactly as if a
-client had sent {t:"send", speak:true}. The Hub's reply {t:"tts"} is played on the
+the following utterance and journals it until the Hub durably acknowledges it.
+The Hub transcribes and routes it to conversation or a durable task. Its reply is played on the
 machine speakers. Detection is suppressed while speaking (no self-trigger).
 
 Run:  python wake_listener.py         (Hub must be running on ws://127.0.0.1:4577)
@@ -37,7 +36,7 @@ import numpy as np
 import sounddevice as sd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from whisper_stt import transcribe  # noqa: E402  (warm, in-process)
+from delivery import DeliveryJournal, clean_processing_audio  # noqa: E402
 
 HUB_WS = os.environ.get("JARVIS_HUB_WS", "ws://127.0.0.1:4577")
 
@@ -102,8 +101,8 @@ MAX_UTTERANCE = max(5.0, float(os.environ.get("JARVIS_WAKE_MAX_SECS", "600")))
 STREAM_READY_SECS = 2.0
 # Pedaco mandado ao Hub: 3 quadros de 80 ms = 240 ms (o Hub aceita ate ~1,5 s por pedaco).
 STREAM_CHUNK_FRAMES = 3
-# Acima disto (base64) a fala vai como texto transcrito aqui: o Hub recusa mensagem maior que
-# JARVIS_MAX_PAYLOAD_MB (20 MB por padrao).
+# Limite de entrega (base64): acima dele, pedir uma fala menor; nao trocar por texto sem ACK.
+# O Hub recusa mensagem maior que JARVIS_MAX_PAYLOAD_MB (20 MB por padrao).
 MAX_AUDIO_B64 = 18 * 1024 * 1024
 # Continua ouvindo (2026-10-27): o pedido vai para a IA no fim normal da fala (ate 3,5 s de pausa), mas
 # o microfone NAO volta para o "Hey Jarvis" — segue aberto e o que o dono falar em seguida (depois de um
@@ -136,6 +135,12 @@ mic = {"status": "unknown", "error": None, "device": None}
 # Dispositivo aberto agora (indice do PortAudio; None = padrao do Windows) e o nome dele.
 current = {"idx": None, "name": None}
 _ws_holder = {"ws": None}
+_delivery = None  # initialized by main, never writes files merely by importing this module
+_output = {"status": "unknown", "error": None}
+_client_timings = {}
+_devices = []
+_device_change = False
+_output_device = None
 # Falas recebidas do Hub ({audio, qid, rid, ...}), tocadas em ordem pela thread `player`.
 _play_q: "queue.Queue[dict]" = queue.Queue()
 # O que esta tocando agora; `cut` = interrompida (barge-in ou tts_stop) -> nao avisa "terminei".
@@ -152,7 +157,8 @@ def send_status():
     if not ws:
         return
     try:
-        ws.send(json.dumps({"t": "wake_status", "mic": mic["status"], "error": mic["error"], "device": mic["device"], "wakeToken": _wake_token()}))
+        ws.send(json.dumps({"t": "wake_status", "mic": mic["status"], "error": mic["error"], "device": mic["device"],
+                            "output": _output, "devices": _devices, "delivery": _delivery.status() if _delivery else {}, "wakeToken": _wake_token()}))
     except Exception:
         pass
 
@@ -178,6 +184,7 @@ def start_ws():
         send_status()
 
     def on_message(ws, raw):
+        global DEVICE, _device_change, _output_device
         try:
             m = json.loads(raw)
         except Exception:
@@ -188,13 +195,43 @@ def start_ws():
             # sem receber nada — durante toda a fala.
             _play_q.put(m)
         elif t == "tts" and m.get("qid"):
-            _ack_played(m["qid"])  # trecho sem audio (sintese falhou): so nao pode prender a fila
+            _ack_played(m["qid"], "skipped")  # marcador de fim, nao prova reproducao
+        elif t in ("voice_ack", "voice_failed"):
+            if _delivery:
+                _delivery.received(m)
+            if t == "voice_failed":
+                print("[wake] fala nao concluida: " + str(m.get("message") or "erro de voz"), flush=True)
+            else:
+                print("[wake] fala confirmada pelo Hub: " + str(m.get("vtid")), flush=True)
+            send_status()
+        elif t == "wake_retry_delivery" and _delivery:
+            _delivery.retry_failed()
+            _delivery.flush(lambda item: _hub_send(run, item))
+            send_status()
+        elif t == "voice_cfg" and _delivery:
+            _delivery.configure((m.get("cfg") or {}).get("audio") or {})
+            devices = (m.get("cfg") or {}).get("devices")
+            if isinstance(devices, dict):
+                chosen = str(devices.get("input") or "")
+                if chosen != DEVICE:
+                    DEVICE = chosen
+                    _device_change = True  # applied between captures, never while writing a clip
+                _output_device = str(devices.get("output") or "") or None
         elif t == "voice_window":
+            if state.get("conversationEnded"):
+                _hub_send(run, {"t": "tts_window_closed", "runnerId": m.get("runnerId"), "sessionId": m.get("sessionId")})
+                return
             with _window["lock"]:
                 _window["pending"] = {"runnerId": m.get("runnerId") or "", "sessionId": m.get("sessionId") or "", "at": time.time()}
         elif t == "tts_stop":
             stop_playback()
             if m.get("off"):
+                with _window["lock"]:
+                    _window["pending"] = None
+        elif t == "conversation_stopped":
+            stop_playback()
+            if m.get("ended"):
+                state["conversationEnded"] = True
                 with _window["lock"]:
                     _window["pending"] = None
         elif t in ("voice_stream_ready", "voice_endpoint", "voice_stream_failed", "unauth"):
@@ -223,9 +260,20 @@ def start_ws():
         while True:
             play_one(_play_q.get())
 
+    def retry_delivery():
+        while True:
+            if _delivery:
+                try:
+                    _delivery.flush(lambda message: _hub_send(run, message))
+                except Exception as e:
+                    print("[wake] erro na entrega: " + str(e), flush=True)
+                send_status()
+            time.sleep(5)
+
     run.ws = None
     threading.Thread(target=run, daemon=True).start()
     threading.Thread(target=player, daemon=True).start()
+    threading.Thread(target=retry_delivery, daemon=True).start()
     return run
 
 
@@ -391,11 +439,11 @@ def take_fallback():
     return r
 
 
-def _ack_played(qid):
+def _ack_played(qid, status="completed", error=None):
     """Avisa o Hub que a fala `qid` terminou (so falas da fila trazem qid)."""
     if qid and _ws_holder["ws"]:
         try:
-            _ws_holder["ws"].send(json.dumps({"t": "tts_played", "qid": qid, "wakeToken": _wake_token()}))
+            _ws_holder["ws"].send(json.dumps({"t": "tts_played", "qid": qid, "status": status, "error": error, "wakeToken": _wake_token()}))
         except Exception:
             pass
 
@@ -404,14 +452,35 @@ def play_one(m):
     """Toca uma fala do Hub e avisa "terminei" - salvo se foi interrompida."""
     qid, rid = m.get("qid"), m.get("rid")
     if rid and rid in _stopped_rids:
-        _ack_played(qid)  # trecho de resposta interrompida: nao toca, mas libera a fila
+        _ack_played(qid, "skipped")
         return
     _play.update(qid=qid, rid=rid, cut=False)
-    play_wav_b64(m["audio"])
+    def started():
+        _output.update(status="playing", error=None)
+        if _ws_holder["ws"]:
+            try:
+                _ws_holder["ws"].send(json.dumps({"t": "tts_started", "qid": qid, "vtid": m.get("vtid"), "wakeToken": _wake_token()}))
+                timing = _client_timings.pop(m.get("vtid"), None)
+                if timing:
+                    _ws_holder["ws"].send(json.dumps({"t": "voice_client", "vtid": m["vtid"], "recMs": timing["recMs"],
+                                                    "encodeMs": timing.get("encodeMs", 0),
+                                                    "stopToFirstAudioMs": round((time.time() - timing["stopAt"]) * 1000), "wakeToken": _wake_token()}))
+            except Exception:
+                pass
+    error = None
+    try:
+        play_wav_b64(m["audio"], started)
+    except Exception as e:
+        error = str(e)[:300]
+        _output.update(status="error", error=error)
+        print("[wake] falha na saida de audio: " + error, flush=True)
     cut = _play["cut"]
     _play.update(qid=None, rid=None, cut=False)
     if not cut:
-        _ack_played(qid)
+        _ack_played(qid, "error" if error else "completed", error)
+    if not error:
+        _output.update(status="idle", error=None)
+    send_status()
 
 
 def stop_playback():
@@ -447,17 +516,17 @@ def close_window(ws, w, reason):
     wake_log(ws, "window_end", reason=reason)
 
 
-def play_wav_b64(b64: str):
+def play_wav_b64(b64: str, on_started=None):
     try:
         data = base64.b64decode(b64)
         with wave.open(io.BytesIO(data), "rb") as w:
             sr = w.getframerate()
             pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
         state["speaking"] = True
-        sd.play(pcm, sr)
+        sd.play(pcm, sr, **({"device": _output_device} if _output_device else {}))
+        if on_started:
+            on_started()
         sd.wait()
-    except Exception as e:
-        print("[wake] play error:", e, flush=True)
     finally:
         time.sleep(0.4)  # refractory: let the tail fade before re-arming detection
         state["speaking"] = False
@@ -561,7 +630,7 @@ def capture_with_hub(stream, ws, follow_up=False, no_speech_secs=6.0):
     interrupted = False
     for i in range(max_frames):
         block, _ = stream.read(FRAME)
-        if follow_up and state["speaking"]:
+        if follow_up and (state["speaking"] or state.get("conversationEnded")):
             # A resposta comecou a tocar: o que entrasse daqui em diante seria a voz do proprio Jarvis.
             interrupted = True
             break
@@ -609,7 +678,7 @@ def capture_with_hub(stream, ws, follow_up=False, no_speech_secs=6.0):
     else:
         result_spoke = _rec["spoke"] if by_hub_end else spoke
     _last_capture.clear()
-    _last_capture.update(streamId=sid, end=end)
+    _last_capture.update(streamId=sid, end=end, stopAt=time.time(), recMs=round(pcm_all.size / SR * 1000))
     wake_log(ws, "capture", streamId=sid, followUp=follow_up, secs=round(pcm_all.size / SR, 1), end=end,
              hubOk=hub_ok, hubFailed=_rec["failed"].is_set(), spoke=bool(result_spoke),
              readyMs=int((_rec["readyAt"] - t0) * 1000) if _rec["ready"].is_set() and _rec.get("readyAt") else None)
@@ -617,30 +686,41 @@ def capture_with_hub(stream, ws, follow_up=False, no_speech_secs=6.0):
 
 
 def send_utterance(ws, pcm, hub_ok):
-    """Manda a fala ao Hub (audio, se ele acompanhou a gravacao; senao texto transcrito aqui).
-    Devolve False quando a fala foi recusada aqui mesmo (voz nao reconhecida)."""
+    """Registra para entrega; so o ACK do Hub confirma recebimento. Sem fallback sem identidade."""
     wav_path = pcm_to_wav(pcm)
-    speaker = identify_speaker(wav_path)  # None if unknown / no one enrolled
-    if GATE and speaker is None:
-        print("[wake] voice not recognized -> ignoring", flush=True)
-        wake_log(ws, "rejected", reason="voz_nao_reconhecida")
+    try:
+        if GATE and identify_speaker(wav_path) is None:
+            wake_log(ws, "rejected", reason="voz_nao_reconhecida")
+            return False
+        # Falha do acompanhamento/VAD nao implica que o endpoint de audio esteja indisponivel.
+        # Enviar texto local sem ACK contornava o contrato de entrega e o portao do Hub.
+        audio = flac_b64(pcm)
+        if len(audio) > MAX_AUDIO_B64:
+            raise RuntimeError("gravacao excede o limite de envio; divida o pedido em falas menores")
+        message = {"t": "voice", "audio": audio, "ext": "flac", "speak": True, "sessionId": SESSION,
+                   "handsFree": False, "conversation": True, "vtid": _last_capture.get("streamId") or "wk" + os.urandom(8).hex(),
+                   "endpointReason": _last_capture.get("end")}
+        if _delivery is None:
+            raise RuntimeError("fila de entrega nao inicializada")
+        _delivery.put(message)
+        _client_timings[message["vtid"]] = {"recMs": _last_capture.get("recMs", 0), "stopAt": _last_capture.get("stopAt", time.time()),
+                                           "encodeMs": round((time.time() - _last_capture.get("stopAt", time.time())) * 1000)}
+        while len(_client_timings) > 100:
+            _client_timings.pop(next(iter(_client_timings)))
+        _delivery.flush(lambda item: _hub_send(ws, item))
+        print("[wake] fala registrada; aguardando confirmacao do Hub", flush=True)
+        send_status()
+        return True
+    except Exception as e:
+        print("[wake] fala nao enviada: " + str(e), flush=True)
+        wake_log(ws, "send_failed", reason=str(e)[:200])
+        chime(CHIME_MISS)
         return False
-    audio = flac_b64(pcm) if hub_ok else ""
-    if audio and len(audio) <= MAX_AUDIO_B64:
-        # O Hub transcreve (como a fala do app): uma transcricao so, no mesmo servico.
-        print(f"[wake] fala de {pcm.size / SR:.1f} s enviada ao Hub ({speaker or '?'})", flush=True)
-        _hub_send(ws, {"t": "voice", "audio": audio, "ext": "flac", "speak": True, "sessionId": SESSION, "handsFree": False,
-                       "vtid": _last_capture.get("streamId"), "endpointReason": _last_capture.get("end")})
-    else:
-        # Hub antigo (nao aceita audio do listener) ou fala grande demais: transcreve aqui.
-        t0 = time.time()
-        text = transcribe(wav_path, LANG).strip()
-        print(f"[wake] heard ({speaker or '?'}): {text!r}", flush=True)
-        wake_log(ws, "local_stt", sttMs=int((time.time() - t0) * 1000), chars=len(text),
-                 why="audio_grande" if audio else "hub_sem_gravacao")
-        if text:
-            _hub_send(ws, {"t": "send", "text": text, "speak": True, "sessionId": SESSION, "speaker": speaker})
-    return True
+    finally:
+        try:
+            os.unlink(wav_path)
+        except OSError:
+            pass
 
 
 def flac_b64(pcm: np.ndarray) -> str:
@@ -652,7 +732,7 @@ def flac_b64(pcm: np.ndarray) -> str:
 
 
 def pcm_to_wav(pcm: np.ndarray) -> str:
-    path = os.path.join(tempfile.gettempdir(), f"jarvis_wake_{int(time.time()*1000)}.wav")
+    path = os.path.join(tempfile.gettempdir(), f"jarvis_wake_{os.getpid()}_{os.urandom(8).hex()}.wav")
     with wave.open(path, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -709,6 +789,8 @@ def follow_ups(stream, ws, hub_ok):
             stop = "resposta_tocou"
         elif not state["armed"]:
             stop = "desarmado"
+        elif state.get("conversationEnded"):
+            stop = "conversa_encerrada"
         if stop:
             break
         pcm, hub_ok, spoke = capture_with_hub(stream, ws, follow_up=True)
@@ -729,6 +811,7 @@ def follow_ups(stream, ws, hub_ok):
 
 def listen_and_send(stream, ws):
     """Depois do "Hey Jarvis": sinal, grava, manda ao Hub e segue ouvindo as continuacoes."""
+    state["conversationEnded"] = False
     chime(CHIME_LISTEN, stream)
     pcm, hub_ok, spoke = capture_with_hub(stream, ws)
     if not spoke or pcm.size < SR // 2:  # ninguem falou / < 0.5 s -> ruido
@@ -764,7 +847,15 @@ def run_window(stream, ws, w):
 
 
 def main():
+    global _delivery, _devices, _device_change
     from openwakeword.model import Model
+
+    clean_processing_audio(tempfile.gettempdir())
+    _delivery = DeliveryJournal(os.path.join(os.environ.get("JARVIS_HOME") or os.path.expanduser("~"), ".jarvis", "voice-listener-delivery.json"))
+    try:
+        _devices = [{"name": str(d["name"])[:120], "input": d["max_input_channels"] > 0, "output": d["max_output_channels"] > 0} for d in sd.query_devices()][:100]
+    except Exception as error:
+        print("[wake] nao consegui listar dispositivos: " + str(error), flush=True)
 
     kwargs = {"inference_framework": "onnx"}
     model = Model(wakeword_models=[WAKE_FILE] if WAKE_FILE else [WAKE_NAME], **kwargs)
@@ -778,6 +869,10 @@ def main():
     dead = 0
     try:
         while True:
+            if _device_change:
+                _device_change = False
+                stream.close()
+                stream = open_mic()
             try:
                 block, _ = stream.read(FRAME)
             except Exception as e:  # microfone sumiu (fone desconectado, troca de dispositivo padrao)

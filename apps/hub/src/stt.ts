@@ -17,6 +17,8 @@ import { fileURLToPath } from "node:url";
 import { createInterface, Interface } from "node:readline";
 import { log } from "./logger.js";
 import { pythonBin } from "./python.js";
+import { voiceDeadline } from "./voiceDeadline.js";
+import { cleanVoiceTemps } from "./voiceTemps.js";
 
 const SERVICE = fileURLToPath(new URL("../../../services/voice/whisper_service.py", import.meta.url));
 
@@ -44,6 +46,7 @@ let rl: Interface | null = null;
 let ready: Promise<void> | null = null;
 const pending = new Map<number, Pending>();
 let seq = 0;
+let generation = 0;
 
 /** Evento de uma gravação em andamento (VOZ-00 F4/F5): detector de voz e transcrição parcial. */
 export interface StreamEvent {
@@ -54,6 +57,7 @@ export interface StreamEvent {
 const streamListeners = new Map<string, (ev: StreamEvent) => void>();
 
 function killProc(err: Error): void {
+  generation++;
   for (const [, p] of pending) { clearTimeout(p.timer); p.reject(err); }
   pending.clear();
   // Gravações em andamento perdem o serviço: avisa, e o aparelho volta ao fim de fala local.
@@ -75,7 +79,7 @@ let starting: Promise<void> | null = null;
 
 function ensureProc(): Promise<void> {
   if (proc && ready) return ready;
-  starting ??= spawnProc().finally(() => { starting = null; });
+  starting ??= voiceDeadline(spawnProc(), 30_000, "STT: inicialização indisponível", () => killProc(new Error("STT: inicialização indisponível"))).finally(() => { starting = null; });
   return starting;
 }
 
@@ -83,7 +87,9 @@ async function spawnProc(): Promise<void> {
   // Timing: separates "cold spawn + model load" (this fn) from "decode of one clip" (transcribe's
   // own timer), so a slow voice reply can be diagnosed as one or the other instead of one lump sum.
   const tSpawn = Date.now();
-  const child = spawn(await pythonBin(), [SERVICE], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
+  const epoch = generation, python = await pythonBin();
+  if (epoch !== generation) throw new Error("STT: inicialização cancelada");
+  const child = spawn(python, [SERVICE], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
   proc = child;
   let readyResolve!: () => void, readyReject!: (e: Error) => void;
   ready = new Promise<void>((res, rej) => { readyResolve = res; readyReject = rej; });
@@ -95,7 +101,7 @@ async function spawnProc(): Promise<void> {
     if (!started && ("ready" in o)) {
       started = true;
       if (o.ready) { log.debug("stt_cold_start", { ms: Date.now() - tSpawn, device: o.device, compute: o.compute, model: o.model }); readyResolve(); }
-      else killProc(new Error("STT: " + (o.error || "modelo não carregou")));
+      else { const error = new Error("STT: " + (o.error || "modelo não carregou")); readyReject(error); if (proc === child) killProc(error); }
       return;
     }
     if (typeof o.sid === "string" && typeof o.event === "string") { streamListeners.get(o.sid)?.(o as StreamEvent); return; }
@@ -119,8 +125,9 @@ async function spawnProc(): Promise<void> {
       log.info("stt_service", { line });
     }
   });
-  child.on("error", (e) => { if (!started) readyReject(e); killProc(e instanceof Error ? e : new Error(String(e))); });
-  child.on("close", () => { if (!started) readyReject(new Error("STT: serviço encerrou antes de ficar pronto")); killProc(new Error("STT: serviço encerrou")); });
+  child.on("error", (e) => { if (!started) readyReject(e); if (proc === child) killProc(e instanceof Error ? e : new Error(String(e))); });
+  child.on("close", () => { if (!started) readyReject(new Error("STT: serviço encerrou antes de ficar pronto")); if (proc === child) killProc(new Error("STT: serviço encerrou")); });
+  ready = voiceDeadline(ready, 30_000, "STT: inicialização excedeu 30 segundos", () => { if (proc === child) killProc(new Error("STT: inicialização sem resposta")); });
   return ready;
 }
 
@@ -128,6 +135,7 @@ async function spawnProc(): Promise<void> {
  *  Fire-and-forget: failure just means the first real transcribe() call pays the cost inline, same
  *  as before this existed — voice stays fully functional either way. */
 export function warmUp(): void {
+  try { cleanVoiceTemps(tmpdir()); } catch { /* best effort; a temp failure must not block boot */ }
   ensureProc().catch((e) => console.warn("[stt] pré-aquecimento falhou (seguirá sob demanda no 1º uso):", String((e as Error)?.message || e)));
 }
 
@@ -162,7 +170,7 @@ export async function transcribeDetailed(audio: Buffer, opts: { lang?: string; l
   writeFileSync(path, audio);
   try {
     const tEnsure = Date.now();
-    await ensureProc();
+    await voiceDeadline(ensureProc(), 30_000, "STT: serviço indisponível", () => killProc(new Error("STT: serviço indisponível")));
     const ensureMs = Date.now() - tEnsure; // ~0 when already warm; the cold-start log above fires only on a real spawn
     const tDecode = Date.now();
     const id = ++seq;
@@ -173,7 +181,7 @@ export async function transcribeDetailed(audio: Buffer, opts: { lang?: string; l
       // qualquer pedido subsequente ficaria preso atrás dele e estouraria o mesmo timeout, um a
       // um, indefinidamente. Tratamos o timeout como sinal de processo travado: mata + respawna
       // limpo (killProc rejeita todos os pendentes de uma vez, incluindo este).
-      const timer = setTimeout(() => { killProc(new Error("STT: tempo esgotado")); }, 60000);
+      const timer = setTimeout(() => { killProc(new Error("STT: tempo esgotado; tente novamente ou digite o pedido")); }, Math.max(1, 45_000 - ensureMs));
       pending.set(id, {
         resolve: (result) => { log.debug("stt_transcribe", { ensureMs, decodeMs: Date.now() - tDecode }); resolve(result); },
         reject, timer,

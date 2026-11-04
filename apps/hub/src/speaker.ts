@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { pythonBin } from "./python.js";
+import { voiceDeadline } from "./voiceDeadline.js";
 
 const SCRIPT = fileURLToPath(new URL("../../../services/voice/voice_cli.py", import.meta.url));
 
@@ -25,15 +26,21 @@ export interface SpeakerId {
 async function run(args: string[]): Promise<string> {
   // Resolve o interpretador ANTES de montar a Promise: pythonBin() é assíncrono (sonda candidatos)
   // e não pode ser esperado dentro do executor de um `new Promise`.
-  const bin = await pythonBin();
+  const bin = await voiceDeadline(pythonBin(), 5_000, "Identificação de voz: Python indisponível", () => {});
   return new Promise((resolve, reject) => {
     const p = spawn(bin, [SCRIPT, ...args], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
+    const timer = setTimeout(() => {
+      // Decoding may spawn ffmpeg: terminate the owned process tree on Windows.
+      if (process.platform === "win32" && p.pid) spawn("taskkill", ["/PID", String(p.pid), "/T", "/F"], { windowsHide: true }).on("error", () => p.kill());
+      else p.kill();
+      reject(new Error("Identificação de voz: tempo esgotado"));
+    }, args[0] === "enroll" ? 60_000 : 8_000);
     let out = "";
     let err = "";
     p.stdout.on("data", (d) => (out += d.toString()));
     p.stderr.on("data", (d) => (err += d.toString()));
-    p.on("error", reject);
-    p.on("close", (code) => (code === 0 ? resolve(out) : reject(new Error(err.trim() || `voice_cli exited ${code}`))));
+    p.on("error", (error) => { clearTimeout(timer); reject(error); });
+    p.on("close", (code) => { clearTimeout(timer); code === 0 ? resolve(out) : reject(new Error(err.trim() || `voice_cli exited ${code}`)); });
   });
 }
 

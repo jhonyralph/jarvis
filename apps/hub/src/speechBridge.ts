@@ -23,6 +23,7 @@ export interface SpeechBridgeDeps<W extends SpeechSocket> {
   /** Mostra uma fala da própria fila como mensagem na sessão (quem a estiver vendo). */
   postMessage(runnerId: string, sessionId: string, text: string): void;
   sessionTitle(runnerId: string, sessionId: string): string;
+  canHear?(ws: W, runnerId: string, sessionId: string): boolean;
   log(event: string, data: Record<string, unknown>): void;
   now?(): number;
 }
@@ -43,8 +44,9 @@ export class SpeechBridge<W extends SpeechSocket> {
   private capable = new WeakSet<W>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   /** Falas tocando agora (monitoramento: quanto tocaram de verdade). */
-  private playing = new Map<string, { at: number; sessionId: string; durationMs?: number }>();
+  private playing = new Map<string, { at: number; startedAt?: number; runnerId: string; sessionId: string; durationMs?: number; devices: W[] }>();
   private windowTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastDelivery: { key: string; devices: W[] } | null = null;
   private readonly deviceWindowMs: number;
   private readonly localId: string;
 
@@ -83,11 +85,22 @@ export class SpeechBridge<W extends SpeechSocket> {
     this.run(this.queue.enqueue(item, this.now()));
   }
 
-  played(qid: string): void {
+  started(qid: string, ws: W): boolean {
     const p = this.playing.get(qid);
+    if (!p || !p.devices.includes(ws) || p.startedAt !== undefined) return false;
+    p.startedAt = this.now();
+    this.deps.log("speech_started", { sessionId: p.sessionId, deliveryMs: p.startedAt - p.at, by: "aparelho" });
+    return true;
+  }
+
+  played(qid: string, status: "completed" | "error" | "skipped" = "completed", ws?: W, error?: string): void {
+    const p = this.playing.get(qid);
+    if (!p || (ws && !p.devices.includes(ws))) return;
     if (p) {
       this.playing.delete(qid);
-      this.deps.log("speech_played", { sessionId: p.sessionId, playMs: this.now() - p.at, durationMs: p.durationMs, by: "aparelho" });
+      this.deps.log(status === "completed" ? "speech_played" : "speech_failed", { sessionId: p.sessionId, status,
+        playMs: p.startedAt === undefined ? undefined : this.now() - p.startedAt, durationMs: p.durationMs, by: "aparelho", error });
+      if (status === "error") this.deps.postMessage(p.runnerId, p.sessionId, "Não consegui reproduzir a resposta. O texto continua disponível; verifique a saída de áudio.");
     }
     this.run(this.queue.played(qid, this.now()));
   }
@@ -98,6 +111,8 @@ export class SpeechBridge<W extends SpeechSocket> {
   /** Falou por cima do agente no app (refino), ou "Hey Jarvis" no meio da fala do listener: para a voz
    *  e espera a resposta desta sessão. */
   bargeIn(ws: W, via: "app" | "wake" = "app"): void {
+    const focus = this.queue.focus();
+    if (focus && !this.allowed(ws, focus)) return;
     this.device = ws;
     const b = this.queue.bargeIn(this.now());
     if (b.session) this.deps.log("speech_barge_in", { sessionId: this.target(b.session).sessionId, via });
@@ -115,6 +130,7 @@ export class SpeechBridge<W extends SpeechSocket> {
     const now = this.now();
     let key = this.key(runnerId, sessionId);
     const focus = this.queue.focus();
+    if (focus && !this.allowed(ws, focus)) return { handled: false, target: { runnerId, sessionId } };
     if (followFocus && focus) key = focus;
     const cmd = parseSpeechCommand(text, { expectingBring: this.queue.awaitingBring(key) });
     if (cmd) {
@@ -158,6 +174,10 @@ export class SpeechBridge<W extends SpeechSocket> {
   // ------------------------------------------------------------------ internos
 
   private now(): number { return this.deps.now ? this.deps.now() : Date.now(); }
+  private allowed(ws: W, key: string): boolean {
+    const { runnerId, sessionId } = this.target(key);
+    return ws.readyState === ws.OPEN && (!this.deps.canHear || this.deps.canHear(ws, runnerId, sessionId));
+  }
   private output(): W | null { return this.device && this.device.readyState === this.device.OPEN ? this.device : null; }
   private isWake(ws: W): boolean {
     for (const w of this.deps.wakeClients()) if (w === ws) return true;
@@ -185,22 +205,27 @@ export class SpeechBridge<W extends SpeechSocket> {
         const f = { ...frame, qid: c.item.id };
         // Sem aparelho de saída (ninguém falou desde o boot, ou ele desconectou): quem vê a sessão,
         // como antes; sem ninguém vendo, o listener do PC.
-        const out = this.output();
-        const alive = fallback.filter((w) => w.readyState === w.OPEN);
-        const wake = this.firstWake();
+        const target = this.target(c.item.session);
+        const allowed = (w: W | null): w is W => !!w && (!this.deps.canHear || this.deps.canHear(w, target.runnerId, target.sessionId));
+        const preferred = this.output(), listener = this.firstWake();
+        const out = allowed(preferred) ? preferred : null;
+        const alive = fallback.filter((w) => w.readyState === w.OPEN && allowed(w));
+        const wake = allowed(listener) ? listener : null;
         let device = "ninguem";
         if (out) { this.deps.send(out, f); device = this.isWake(out) ? "listener" : "saida"; }
         else if (alive.length) { for (const w of alive) this.deps.send(w, f); device = "quem_ve"; }
         else if (wake) { this.deps.send(wake, f); device = "listener"; }
-        const target = this.target(c.item.session);
-        this.playing.set(c.item.id, { at: this.now(), sessionId: target.sessionId, durationMs: c.item.durationMs });
+        this.playing.set(c.item.id, { at: this.now(), runnerId: target.runnerId, sessionId: target.sessionId, durationMs: c.item.durationMs,
+          devices: out ? [out] : alive.length ? alive : wake ? [wake] : [] });
+        this.lastDelivery = { key: c.item.session, devices: this.playing.get(c.item.id)!.devices };
         if (this.playing.size > 200) this.playing.delete(this.playing.keys().next().value as string);
         this.deps.log("speech_play", {
           sessionId: target.sessionId, runnerId: target.runnerId, kind: c.item.kind, device,
           queuedMs: this.now() - (c.item.payload as Payload<W>).enqueuedAt, durationMs: c.item.durationMs, more: c.item.more || undefined,
         });
       } else if (c.type === "window") {
-        const out = this.output() || this.firstWake();
+        const candidates = this.lastDelivery?.key === c.session ? this.lastDelivery.devices : [this.output(), this.firstWake()];
+        const out = candidates.find((w): w is W => !!w && this.allowed(w, c.session));
         const { runnerId, sessionId } = this.target(c.session);
         this.deps.log("speech_window", { sessionId, mode: out && this.capable.has(out) ? "aparelho" : "tempo" });
         if (out && this.capable.has(out)) this.deps.send(out, { t: "voice_window", runnerId, sessionId });
@@ -216,8 +241,9 @@ export class SpeechBridge<W extends SpeechSocket> {
           this.windowTimer.unref?.();
         }
       } else if (c.type === "stop") {
-        const out = this.output() || this.firstWake();
-        if (out) this.deps.send(out, { t: "tts_stop", ...(this.queue.isOff() ? { off: true } : {}) });
+        const devices = new Set([...this.playing.values()].flatMap((p) => p.devices));
+        for (const out of devices) if (out.readyState === out.OPEN) this.deps.send(out, { t: "tts_stop", ...(this.queue.isOff() ? { off: true } : {}) });
+        this.playing.clear();
       } else if (c.type === "ask_bring_others") {
         const min = c.minutes === 1 ? "1 minuto" : `${c.minutes} minutos`;
         void this.say(c.session, `Tudo bem, espero ${min}. Posso trazer atualizações de outras sessões enquanto isso?`);

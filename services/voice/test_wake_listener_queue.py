@@ -12,6 +12,8 @@ import json
 import os
 import sys
 import unittest
+import tempfile
+from unittest.mock import patch
 import wave
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -103,6 +105,20 @@ class ListenerQueueTest(unittest.TestCase):
         self.assertEqual(self.sound.played, 1)
         self.assertEqual(self.acks(), ["q1"])
         self.assertFalse(wl.state["speaking"])
+        self.assertEqual([m["t"] for m in self.socket.sent], ["tts_started", "tts_played", "wake_status"])
+
+    def test_saida_indisponivel_libera_fila_sem_sucesso_falso(self):
+        def broken():
+            raise RuntimeError("output unavailable")
+        self.sound.on_play = broken
+        wl.play_one({"audio": _wav_b64(), "qid": "q1", "rid": "r1"})
+        receipts = [m for m in self.socket.sent if m["t"] == "tts_played"]
+        self.assertEqual(receipts[0]["status"], "error")
+        self.assertFalse([m for m in self.socket.sent if m["t"] == "tts_started"])
+        self.assertFalse(wl.state["speaking"])
+        self.sound.on_play = None
+        wl.play_one({"audio": _wav_b64(), "qid": "q2", "rid": "r2"})
+        self.assertEqual([m for m in self.socket.sent if m["t"] == "tts_played"][-1]["status"], "completed")
 
     def test_fala_interrompida_nao_avisa_e_o_resto_dela_nao_toca(self):
         # A interrupcao chega enquanto a fala toca (barge-in ou tts_stop do Hub).
@@ -125,6 +141,34 @@ class ListenerQueueTest(unittest.TestCase):
         self.assertTrue(wl._play_q.empty())
         self.assertIn("r9", wl._stopped_rids)
         self.assertEqual(self.sound.stopped, 1)
+
+    def test_encerrar_conversa_nao_reabre_captura(self):
+        prior = dict(wl.state)
+        try:
+            wl.state.update(conversationEnded=True, speaking=False, armed=True)
+            with patch.object(wl, "FOLLOW_UP", True), patch.object(wl, "capture_with_hub", side_effect=AssertionError("capture reopened")):
+                self._orig["follow_ups"](object(), FakeHub(), True)
+        finally:
+            wl.state.clear()
+            wl.state.update(prior)
+
+    def test_captura_offline_fica_no_journal_e_temporario_e_removido(self):
+        from delivery import DeliveryJournal
+        with tempfile.TemporaryDirectory(prefix="jarvis-capture-test-") as directory:
+            journal = DeliveryJournal(os.path.join(directory, "journal.json"))
+            journal.configure({"mode": "until_done", "days": 7, "deviceMb": 50})
+            path = os.path.join(directory, "capture.wav")
+            with open(path, "wb") as f:
+                f.write(b"test")
+            with patch.object(wl, "_delivery", journal), patch.object(wl, "GATE", False), patch.object(wl, "pcm_to_wav", return_value=path), patch.object(wl, "flac_b64", return_value="YWJj"), patch.object(wl, "_hub_send", return_value=False):
+                self.assertTrue(self._orig["send_utterance"](FakeHub(), np.ones(wl.SR, dtype=np.int16), False))
+            self.assertFalse(os.path.exists(path))
+            self.assertEqual(journal.status()["pending"], 1)
+            sent = []
+            journal.flush(lambda msg: sent.append(msg) or True)
+            self.assertEqual(sent[0]["t"], "voice")
+            self.assertTrue(sent[0]["conversation"])
+            self.assertTrue(sent[0]["vtid"])
 
     def _window(self, capture):
         hub = FakeHub()

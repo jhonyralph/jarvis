@@ -114,7 +114,7 @@ function fakeEl(tag = "div"): any {
       const value = String(markup ?? "");
       el.innerHTML = position === "afterbegin" ? value + el.innerHTML : el.innerHTML + value;
     },
-    append() {}, remove() {}, focus() {}, blur() {}, click() {}, scrollIntoView() {},
+    append() {}, prepend() {}, before() {}, replaceChildren() {}, remove() {}, focus() {}, blur() {}, click() {}, scrollIntoView() {},
     setAttribute() {}, removeAttribute() {}, getAttribute: () => null, hasAttribute: () => false,
     // Listeners DELEGADOS ficam guardados: a faixa do fluxo trata quase tudo por delegação
     // (`E.wfRun.addEventListener('click', …)`), e um stub que engole o registro deixa metade dos
@@ -185,7 +185,8 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
   window.window = window;
 
   // The epilogue is what makes the internals observable — app.js exports nothing by design.
-  const src = readFileSync(APP_JS, "utf8") + `
+  const src = readFileSync(fileURLToPath(new URL("../web/conversation.js", import.meta.url)), "utf8") +
+    "\nconst {createJarvisConversation, installJarvisVoiceDiagnostics} = window;\n" + readFileSync(APP_JS, "utf8") + `
 ;return {
   get currentMachine(){ return currentMachine; },
   get routedMachine(){ return routedMachine; },
@@ -254,7 +255,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
     "getComputedStyle", "innerWidth", "innerHeight",
     // O painel de trabalhos monta seletores com `CSS.escape` para achar o cartão inline do subagente.
     // Sem este global, QUALQUER snapshot de execução estoura ReferenceError dentro do teste.
-    "CSS",
+    "CSS", "globalThis",
     src,
   );
   // app.js installs pollers/pagers that would hold the event loop open forever and hang the runner.
@@ -274,6 +275,7 @@ function loadClient(opts: { machine?: string } = {}): ClientHandle {
     () => {}, () => {}, unrefInterval, unrefTimer,
     () => ({ getPropertyValue: () => "0" }), window.innerWidth, window.innerHeight,
     { escape: (value: string) => String(value).replace(/["\\]/g, "\\$&") },
+    window,
   );
   return Object.assign(api, { store, socket: () => sockets[sockets.length - 1] }) as ClientHandle;
 }

@@ -54,7 +54,7 @@ test("sem relato do aparelho, o evento sai mesmo assim depois do prazo", () => {
   tracker.audioSent("L\0s1");
   advance(999); assert.equal(emitted.length, 0);
   advance(1); assert.equal(emitted.length, 1);
-  assert.equal(emitted[0].outcome, "spoken");
+  assert.equal(emitted[0].outcome, "sent_unconfirmed");
   assert.equal(emitted[0].stopToFirstAudioMs, undefined);
 });
 
@@ -130,7 +130,7 @@ test("só o primeiro áudio e a primeira síntese contam", () => {
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0].synthMs, 50);
   assert.equal(emitted[0].firstAudioMs, 100);
-  assert.equal(emitted[0].outcome, "spoken", "erro depois de falar não apaga que houve resposta");
+  assert.equal(emitted[0].outcome, "sent_unconfirmed", "envio nao comprova que o aparelho reproduziu");
 });
 
 test("medidas do aparelho fora do plausível são descartadas", () => {

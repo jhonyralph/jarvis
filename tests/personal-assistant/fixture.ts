@@ -195,7 +195,7 @@ export interface FixtureAudit {
   pageErrors: string[];
 }
 
-export async function installPersonalAssistantFixture(page: Page): Promise<FixtureAudit> {
+export async function installPersonalAssistantFixture(page: Page, options: { conversation?: boolean } = {}): Promise<FixtureAudit> {
   const audit: FixtureAudit = { externalRequests: [], pageErrors: [] };
   page.on("pageerror", (error) => audit.pageErrors.push(error.message));
   await page.route("**/*", async (route) => {
@@ -209,7 +209,7 @@ export async function installPersonalAssistantFixture(page: Page): Promise<Fixtu
   });
 
   await page.addInitScript(
-    ({ fixtureState, fixtureSuggestions }) => {
+    ({ fixtureState, fixtureSuggestions, conversation }) => {
       type Frame = Record<string, unknown> & { t?: string; requestId?: string };
       type FixtureApi = {
         mode: "results" | "empty" | "error";
@@ -217,6 +217,7 @@ export async function installPersonalAssistantFixture(page: Page): Promise<Fixtu
         sent: Frame[];
         popup?: { href: string; closed: boolean };
         popupBlocked: boolean;
+        emit?: (frame: Frame) => void;
       };
 
       const fixtureApi: FixtureApi = { mode: "results", receivedState: 0, sent: [], popupBlocked: false };
@@ -262,6 +263,16 @@ export async function installPersonalAssistantFixture(page: Page): Promise<Fixtu
         }
 
         send(data: string) {
+          fixtureApi.emit = (frame) => this.respond(frame);
+          const message = JSON.parse(data);
+          if (conversation && message.t?.startsWith('conversation_')) {
+            fixtureApi.sent.push(message);
+            const tasks = [{id:'task-live',runnerId:'local',sessionId:'session-live',title:'Backend em andamento',state:'running',updatedAt:Date.now(),origin:'Projeto A',needsInput:false,canCancel:true},
+              {id:'task-gap',runnerId:'local',sessionId:'session-gap',title:'Pedido antes da queda',state:'interrupted',updatedAt:Date.now(),origin:'Projeto B',needsInput:true,canCancel:false}];
+            if(message.t==='conversation_request'){this.respond({t:'conversation_ack',requestId:message.msgId});this.respond({t:'conversation_reply',requestId:message.msgId,text:'Resposta curta; o trabalho continua.'});return;}
+            if(message.t==='conversation_memory'){this.respond({t:'conversation_memory_result',ok:true,message:'Guardado com a tarefa de origem.'});return;}
+            this.respond({t:'conversation_inbox',tasks,preferences:{seen:{},quiet:!!message.quiet,task:message.taskId?{runnerId:'local',sessionId:'session-live'}:undefined},updates:[],...(message.history?{history:[{role:'assistant',text:'Conversa anterior recuperada.'}],historySession:'conversation-owner',historyRunner:'local'}:{})});return;
+          }
           const frame = JSON.parse(String(data)) as Frame;
           fixtureApi.sent.push(frame);
           if (frame.t === "auth") {
@@ -382,7 +393,7 @@ export async function installPersonalAssistantFixture(page: Page): Promise<Fixtu
 
       window.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
     },
-    { fixtureState: state, fixtureSuggestions: suggestions },
+    { fixtureState: state, fixtureSuggestions: suggestions, conversation: options.conversation === true },
   );
 
   return audit;

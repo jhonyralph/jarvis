@@ -16,8 +16,8 @@
  * Sem I/O e sem texto da fala: o evento carrega tempos e tamanhos, nunca o que foi dito.
  */
 
-/** Como o turno terminou. `spoken` = houve resposta falada. */
-export type VoiceTurnOutcome = "spoken" | "ignored" | "denied" | "error" | "queued" | "no_audio" | "superseded";
+/** `spoken` requires a device report; sending bytes alone is `sent_unconfirmed`. */
+export type VoiceTurnOutcome = "spoken" | "sent_unconfirmed" | "ignored" | "denied" | "error" | "queued" | "no_audio" | "superseded";
 
 /** Por onde o turno foi despachado. Só os caminhos instrumentados aparecem; os demais ficam sem. */
 export type VoiceTurnPath = "local" | "native" | "remote";
@@ -186,7 +186,7 @@ export class VoiceTurnTracker {
     const turn = this.byKey.get(key); if (!turn) return undefined;
     if (!turn.audioSent) {
       turn.audioSent = true;
-      turn.ev.outcome = "spoken";
+      turn.ev.outcome = "sent_unconfirmed";
       turn.ev.firstAudioMs = this.now() - turn.t0;
       // Daqui em diante só falta o relato do aparelho; sem ele, o evento sai assim mesmo.
       this.arm(turn, this.clientWaitMs);
@@ -218,7 +218,7 @@ export class VoiceTurnTracker {
 
   private arm(turn: Turn, ms: number): void {
     if (turn.timer !== undefined) this.clearTimer(turn.timer);
-    turn.timer = this.setTimer(() => { turn.timer = undefined; this.finish(turn, turn.audioSent ? "spoken" : "no_audio"); }, ms);
+    turn.timer = this.setTimer(() => { turn.timer = undefined; this.finish(turn, turn.audioSent ? "sent_unconfirmed" : "no_audio"); }, ms);
   }
 
   private finish(turn: Turn, outcome: VoiceTurnOutcome): void {

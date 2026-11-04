@@ -9,8 +9,8 @@
 // straight through, untouched.
 // Bumped v1 → v2 when the app JS moved out of index.html into /app.js: the shell now MUST cache the
 // external script or an offline open would render an empty page.
-const CACHE = "jarvis-shell-v5";
-const SHELL = ["/", "/app.js", "/manifest.webmanifest", "/icon.svg", "/vendor/xterm/xterm.css", "/vendor/xterm/xterm.js", "/vendor/xterm/addon-fit.js", "/vendor/context/maplibre-gl.css", "/vendor/context/maplibre-gl.mjs", "/vendor/context/maplibre-gl-shared.mjs", "/vendor/context/maplibre-gl-worker.mjs", "/vendor/context/pmtiles.js"];
+const CACHE = "jarvis-shell-v6";
+const SHELL = ["/", "/app.js", "/conversation.js", "/manifest.webmanifest", "/icon.svg", "/vendor/xterm/xterm.css", "/vendor/xterm/xterm.js", "/vendor/xterm/addon-fit.js", "/vendor/context/maplibre-gl.css", "/vendor/context/maplibre-gl.mjs", "/vendor/context/maplibre-gl-shared.mjs", "/vendor/context/maplibre-gl-worker.mjs", "/vendor/context/pmtiles.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
@@ -70,7 +70,7 @@ self.addEventListener("fetch", (event) => {
   // app.js is the app CODE (the deploy artifact), not a static asset — same network-first-with-timeout
   // as the HTML so a normal online reload still ships the latest client, but a slow mobile link gets
   // the cached script instantly instead of hanging on the 287KB download.
-  if (url.pathname === "/app.js") {
+  if (url.pathname === "/app.js" || url.pathname === "/conversation.js") {
     event.respondWith(networkFirstWithTimeout(req, req));
     return;
   }

@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface, Interface } from "node:readline";
 import { log } from "./logger.js";
 import { pythonBin } from "./python.js";
+import { voiceDeadline } from "./voiceDeadline.js";
 
 const SERVICE = fileURLToPath(new URL("../../../services/voice/piper_service.py", import.meta.url));
 const VOICES = join(homedir(), ".jarvis", "voices");
@@ -431,10 +432,12 @@ let rl: Interface | null = null;
 let ready: Promise<void> | null = null;
 const pending = new Map<number, Pending>();
 let seq = 0;
+let generation = 0;
 
 // Mirrors stt.ts: se um pedido travar (processo Piper morto-vivo), matar + respawnar limpo em vez
 // de deixar cada pedido seguinte enfileirar atrás dele até o próximo restart manual do hub.
 function killProc(err: Error): void {
+  generation++;
   for (const [, p] of pending) { clearTimeout(p.timer); p.reject(err); }
   pending.clear();
   try { rl?.close(); } catch { /* ignore */ }
@@ -453,13 +456,15 @@ let starting: Promise<void> | null = null;
 
 function ensureProc(): Promise<void> {
   if (proc && ready) return ready;
-  starting ??= spawnProc().finally(() => { starting = null; });
+  starting ??= voiceDeadline(spawnProc(), 20_000, "TTS: inicialização indisponível", () => killProc(new Error("TTS: inicialização indisponível"))).finally(() => { starting = null; });
   return starting;
 }
 
 async function spawnProc(): Promise<void> {
   const tSpawn = Date.now();
-  const child = spawn(await pythonBin(), [SERVICE], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
+  const epoch = generation, python = await pythonBin();
+  if (epoch !== generation) throw new Error("TTS: inicialização cancelada");
+  const child = spawn(python, [SERVICE], { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
   proc = child;
   let readyResolve!: () => void, readyReject!: (e: Error) => void;
   ready = new Promise<void>((res, rej) => { readyResolve = res; readyReject = rej; });
@@ -471,7 +476,7 @@ async function spawnProc(): Promise<void> {
     if (!started && ("ready" in o)) {
       started = true;
       if (o.ready) { log.debug("tts_cold_start", { ms: Date.now() - tSpawn }); readyResolve(); }
-      else killProc(new Error("TTS: " + (o.error || "serviço não iniciou")));
+      else { const error = new Error("TTS: " + (o.error || "serviço não iniciou")); readyReject(error); if (proc === child) killProc(error); }
       return;
     }
     const id = o.id; if (id == null) return;
@@ -493,8 +498,9 @@ async function spawnProc(): Promise<void> {
       log.info("tts_service", { line });
     }
   });
-  child.on("error", (e) => { if (!started) readyReject(e); killProc(e instanceof Error ? e : new Error(String(e))); });
-  child.on("close", () => { if (!started) readyReject(new Error("TTS: serviço encerrou antes de ficar pronto")); killProc(new Error("TTS: serviço encerrou")); });
+  child.on("error", (e) => { if (!started) readyReject(e); if (proc === child) killProc(e instanceof Error ? e : new Error(String(e))); });
+  child.on("close", () => { if (!started) readyReject(new Error("TTS: serviço encerrou antes de ficar pronto")); if (proc === child) killProc(new Error("TTS: serviço encerrou")); });
+  ready = voiceDeadline(ready, 20_000, "TTS: inicialização excedeu 20 segundos", () => { if (proc === child) killProc(new Error("TTS: inicialização sem resposta")); });
   return ready;
 }
 
@@ -540,7 +546,7 @@ async function synthesizePiper(text: string, voice = "en_GB-alan-medium"): Promi
   const id = ++seq;
   const req = JSON.stringify({ id, text, voice, length_scale: LENGTH, sentence_silence: SILENCE, noise_w_scale: NOISEW }) + "\n";
   return await new Promise<Buffer>((resolve, reject) => {
-    const timer = setTimeout(() => { killProc(new Error("TTS: tempo esgotado")); }, 60000);
+    const timer = setTimeout(() => { killProc(new Error("TTS: tempo esgotado; resposta disponível em texto")); }, Math.max(1, 25_000 - ensureMs));
     pending.set(id, {
       resolve: (wav) => { log.debug("tts_synthesize", { ensureMs, synthMs: Date.now() - tSynth }); resolve(wav); },
       reject, timer,
@@ -554,6 +560,7 @@ async function synthesizeOpenAi(text: string, voice: string, lang?: string): Pro
   if (!profile) throw new Error(`voz OpenAI desconhecida: ${voice}`);
   if (!CLOUD_TTS_READY) throw new Error("OPENAI_API_KEY nao configurada para OpenAI TTS (ou defina JARVIS_TTS_URL)");
   const response = await fetch(CLOUD_TTS_URL, {
+    signal: AbortSignal.timeout(12_000),
     method: "POST",
     headers: {
       ...(CLOUD_TTS_KEY ? { "Authorization": `Bearer ${CLOUD_TTS_KEY}` } : {}),

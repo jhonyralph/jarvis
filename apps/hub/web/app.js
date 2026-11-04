@@ -1654,14 +1654,16 @@
     const audioMgr=(()=>{ let queue=[], cur=null, curItem=null;
       function decode(b64){ const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return URL.createObjectURL(new Blob([u],{type:'audio/wav'})); }
       function next(){ if(cur) return; const item=queue.shift(); if(!item){ curItem=null; ttsPlaying=false; curTtsAudio=null; return; }
-        curItem=item; let url; try{ url=decode(item.b64); }catch(e){ curItem=null; item.resolve(); next(); return; }
+        curItem=item; let url; try{ url=decode(item.b64); }catch(e){ curItem=null; item.onError?.(e); item.resolve(); next(); return; }
         const a=new Audio(url); cur=a; ttsPlaying=true; curTtsAudio=a;
-        const fin=()=>{ if(cur!==a) return; try{ URL.revokeObjectURL(url); }catch(e){} cur=null; curItem=null; try{ if(item.onEnd) item.onEnd(); }catch(e){} item.resolve(); next(); };
+        item.url=url;
+        const fin=(error)=>{ if(cur!==a) return; try{ URL.revokeObjectURL(url); }catch(e){} cur=null; curItem=null; try{ if(error) item.onError?.(error); else item.onEnd?.(); }catch(e){} item.resolve(); next(); };
         if(item.onStart){ a.onplaying=()=>{ const f=item.onStart; item.onStart=null; if(f){ try{ f(); }catch(e){} } }; }
-        a.onended=fin; a.onerror=fin; a.play().catch(fin); }
-      function flush(){ const pend=queue.slice(); queue=[]; const ci=curItem; curItem=null; if(cur){ try{ cur.pause(); }catch(e){} cur=null; } ttsPlaying=false; curTtsAudio=null; if(ci) ci.resolve(); pend.forEach(it=>it.resolve()); }
+        a.onended=()=>fin(); a.onerror=()=>fin(new Error('Saída de áudio indisponível'));
+        Promise.resolve(cfg.outputDevice && typeof a.setSinkId==='function' ? a.setSinkId(cfg.outputDevice) : undefined).then(()=>a.play()).catch(fin); }
+      function flush(){ const pend=queue.slice(); queue=[]; const ci=curItem; curItem=null; if(cur){ try{ cur.pause(); }catch(e){} cur=null; } ttsPlaying=false; curTtsAudio=null; if(ci){if(ci.url)URL.revokeObjectURL(ci.url);ci.onStop?.();ci.resolve();} pend.forEach(it=>{it.onStop?.();it.resolve();}); }
       return {
-        play(b64,opts){ opts=opts||{}; return new Promise(res=>{ const item={b64,onEnd:opts.onEnd,onStart:opts.onStart,resolve:res}; if(opts.jump) flush(); queue.push(item); next(); }); },
+        play(b64,opts){ opts=opts||{}; return new Promise(res=>{ const item={b64,onEnd:opts.onEnd,onStart:opts.onStart,onError:opts.onError,onStop:opts.onStop,resolve:res}; if(opts.jump) flush(); queue.push(item); next(); }); },
         stop(){ flush(); },
         get active(){ return !!cur || queue.length>0; } }; })();
     // VOZ-00 F2: a resposta chega em trechos. `replyInProgress` = ainda vem trecho (conta como "falando"
@@ -5474,7 +5476,7 @@
       ws.binaryType='arraybuffer'; // frames do browser remoto (BRW-IDE-00) chegam binários
       ws.onopen=()=>{ E.dot.classList.add('on'); workConnected=true; renderWorkConnection(); enteredConn=false; if(authToken) tx({t:'auth',token:authToken}); else tx({t:'authinfo'}); }; // autentica antes de tudo
       ws.onclose=()=>{ E.dot.classList.remove('on'); workConnected=false; renderWorkConnection(); scheduleReconnect(); };
-      ws.onmessage=(e)=>{ if(typeof e.data!=='string'){ brwOnBinary(e.data); return; } const m=JSON.parse(e.data); if(brwHandleFrame(m)) return;
+      ws.onmessage=(e)=>{ if(typeof e.data!=='string'){ brwOnBinary(e.data); return; } const m=JSON.parse(e.data); voiceDiagnostics?.handle(m); if(conversationUI.handle(m)||brwHandleFrame(m)) return;
         // Auto-recarregar quando a UI muda no servidor: guarda a 1ª versão recebida (a do HTML que
         // esta pagina carregou); se depois chegar outra, o arquivo mudou -> esta pagina esta velha.
         // Espera o turno atual terminar pra nao recarregar no meio de uma resposta.
@@ -5576,7 +5578,8 @@
           if(Array.isArray(m.results)){ m.results.forEach(r=>{ fwMachineStatus[r.runnerId]={label:r.label||r.runnerId,state:r.state}; }); if(typeof m.version==='number')E.fwVersion.textContent='Versão atual: '+m.version; renderFwStatus(); tx({t:'framework_inventory'}); fwLog('✓ publicado v'+m.version+' — '+m.results.map(r=>esc(r.label||r.runnerId)+': '+esc(fwStateLabel(r.state))).join(' · '),'#4ade80'); }
           else if(m.runnerId){ fwMachineStatus[m.runnerId]={label:m.machine||m.runnerId,state:m.state}; renderFwStatus(); fwLog(esc(m.machine||m.runnerId)+': '+esc(fwStateLabel(m.state))); } }
         else if(m.t==='voice_cfg'){ renderVoiceCfg(m.cfg||{}); }
-        else if(m.t==='voice_ack'){ voiceStore.del(m.vtid); }
+        else if(m.t==='voice_ack'){ if(audioKeepPolicy().mode==='days')voiceStore.get(m.vtid).then(it=>{if(it)voiceStore.put({...it,status:'done'});});else voiceStore.del(m.vtid); }
+        else if(m.t==='voice_progress'){ status('busy',m.message||'Processando fala…'); }
         else if(m.t==='voice_stream_ready'||m.t==='voice_stream_failed'||m.t==='voice_partial'||m.t==='voice_endpoint'){ onVoiceStreamFrame(m); }
         else if(m.t==='voice_failed'){ showVoiceFailed(m); }
         else if(m.t==='voice_retry_missing'){ voiceStore.get(m.vtid).then(it=>{ if(it&&it.msg) tx(it.msg); else toast(t('voiceGone')); }); }
@@ -5837,16 +5840,32 @@
       async function run(mode,fn){ try{ const d=await db(); return await new Promise((res,rej)=>{ const tr=d.transaction('falas',mode); const rq=fn(tr.objectStore('falas')); tr.oncomplete=()=>res(rq?rq.result:undefined); tr.onerror=()=>rej(tr.error); }); }catch(e){ return undefined; } }
       return { put:it=>run('readwrite',st=>st.put(it)), del:id=>run('readwrite',st=>st.delete(id)), get:id=>run('readonly',st=>st.get(id)), all:()=>run('readonly',st=>st.getAll()) }; })();
     function audioKeepPolicy(){ return (currentVoiceCfg&&currentVoiceCfg.audio)||{}; }
-    function sendVoice(vmsg){ if(audioKeepPolicy().mode!=='off') voiceStore.put({vtid:vmsg.vtid,at:Date.now(),msg:vmsg}); tx(vmsg); }
+    async function sendVoice(vmsg){
+      if(audioKeepPolicy().mode!=='off'){
+        await pruneVoiceStore();
+        const rows=(await voiceStore.all())||[], bytes=rows.reduce((n,it)=>n+((it.msg&&it.msg.audio)||'').length*0.75,0)+vmsg.audio.length*0.75;
+        if(bytes>(Number(audioKeepPolicy().deviceMb)||50)*1048576 || !await voiceStore.put({vtid:vmsg.vtid,at:Date.now(),status:'pending',msg:vmsg})){status('');toast('Não consegui guardar a fala neste aparelho. Verifique espaço e permissões ou use texto.');return;}
+      }
+      if(vmsg.runnerId && vmsg.runnerId!==sessionRunner()){toast(audioKeepPolicy().mode==='off'?'Você mudou de máquina durante a gravação. A fala não foi enviada; retenção desligada.':'A fala ficou guardada para a máquina de origem. Volte a ela para reenviar.');return;}
+      voiceSentAt.set(vmsg.vtid,Date.now());
+      if(!tx(vmsg)){status('');toast(audioKeepPolicy().mode==='off'?'Sem conexão e retenção desligada: esta fala não foi enviada.':'Sem conexão: fala guardada neste aparelho para reenviar.');}
+    }
     async function pruneVoiceStore(){ const pol=audioKeepPolicy(), days=Number(pol.days)||7, capMb=Number(pol.deviceMb)||50, now=Date.now();
       const items=((await voiceStore.all())||[]).sort((a,b)=>a.at-b.at); let total=0; const keep=[];
       for(const it of items){ if(pol.mode==='off'||now-it.at>days*864e5) await voiceStore.del(it.vtid); else { keep.push(it); total+=((it.msg&&it.msg.audio)||'').length*0.75; } }
       for(const it of keep){ if(total<=capMb*1048576) break; await voiceStore.del(it.vtid); total-=((it.msg&&it.msg.audio)||'').length*0.75; } }
-    async function resendPendingVoice(){ await pruneVoiceStore(); const items=(await voiceStore.all())||[], now=Date.now(); const old=[];
-      for(const it of items){ if(!it.msg) continue; if(now-it.at<5*60*1000) tx(it.msg); else old.push(it); }   // recentes: reenvio automático; antigas: o usuário decide
+    const voiceSentAt=new Map();let voiceRetrying=false;
+    async function resendPendingVoice(quiet=false){ if(voiceRetrying)return;voiceRetrying=true;try{await pruneVoiceStore(); const items=(await voiceStore.all())||[], now=Date.now(); const old=[];
+      for(const it of items){ if(!it.msg||it.status==='done'||it.status==='failed'||(it.msg.runnerId&&it.msg.runnerId!==sessionRunner())||now-(voiceSentAt.get(it.vtid)||0)<10000) continue; if(now-it.at<5*60*1000){if(tx(it.msg))voiceSentAt.set(it.vtid,now);}else if(!quiet)old.push(it); }
+      for(const [id,at] of voiceSentAt)if(now-at>600000)voiceSentAt.delete(id);
       if(old.length) toast(old.length+' '+t('voicePendingOld'),{duration:20000,onClick:()=>old.forEach(it=>tx(it.msg))}); }
+      finally{voiceRetrying=false;}}
+    const voiceRetryTimer=setInterval(()=>{if(authed&&ws&&ws.readyState===1)void resendPendingVoice(true);},10000);
+    window.addEventListener('pagehide',()=>clearInterval(voiceRetryTimer),{once:true});
     function showVoiceFailed(m){ status(''); const d=document.createElement('div'); d.className='msg err'; d.appendChild(errorBoxEl((m.kept?t('voiceKept'):t('voiceNotKept'))+(m.message?' '+m.message:''),{title:t('voiceFailTitle'),summary:m.kept?t('voiceKept'):t('voiceNotKept')}));
-      const b=document.createElement('button'); b.type='button'; b.className='ghost'; b.textContent=t('voiceRetry'); b.onclick=()=>{ b.disabled=true; tx({t:'voice_retry',vtid:m.vtid}); }; d.appendChild(b); E.log.appendChild(d); autoScroll(); }
+      voiceStore.get(m.vtid).then(it=>{if(it)voiceStore.put({...it,status:'failed'});});
+      const b=document.createElement('button'); b.type='button'; b.className='ghost'; b.textContent=t('voiceRetry'); b.onclick=()=>{ if(tx({t:'voice_retry',vtid:m.vtid,audioId:m.audioId}))b.disabled=true; }; d.appendChild(b);
+      const edit=document.createElement('button');edit.type='button';edit.textContent='Digitar / corrigir pedido';edit.onclick=()=>{E.input.value=m.text||'';E.input.focus();};d.appendChild(edit); E.log.appendChild(d); autoScroll(); }
     // VOZ-00 F0: medidas do turno de voz que só o aparelho tem (pausa esperada até encerrar a
     // gravação, codificação, tempo até o primeiro som). Ficam aqui até a resposta começar a tocar e
     // vão ao Hub com o id do turno — só durações, nunca texto. Pendentes velhos são descartados.
@@ -5887,11 +5906,11 @@
     // janela de resposta, escuta para a sessão QUE FALOU (abrindo-a se for preciso).
     let speechWin=null;
     function playQueuedTTS(m){
-      const done=()=>tx({t:'tts_played',qid:m.qid});
-      if(m.rid && stoppedReplies.includes(m.rid)){ done(); return; }
+      const done=(status='completed',error)=>tx({t:'tts_played',qid:m.qid,status,error});
+      if(!m.audio || (m.rid && stoppedReplies.includes(m.rid))){ done('skipped'); return; }
       if(m.rid){ replyInProgress=m.more?m.rid:(replyInProgress===m.rid?null:replyInProgress); clearTimeout(replyStaleTimer); if(m.more) replyStaleTimer=setTimeout(()=>{ replyInProgress=null; },20000); }
       status('speaking',t('spSpeaking'));
-      audioMgr.play(m.audio||'',{ onStart:m.vtid?()=>voiceTurnStarted(m.vtid):undefined, onEnd:()=>{ done(); if(!audioMgr.active) status(''); } });
+      audioMgr.play(m.audio,{ onStart:()=>{tx({t:'tts_started',qid:m.qid});if(m.vtid)voiceTurnStarted(m.vtid);}, onEnd:()=>{ done(); if(!audioMgr.active) status(''); }, onError:e=>{done('error',String(e?.message||e));status('');toast('Não consegui reproduzir a resposta. Verifique a saída de áudio.');},onStop:()=>done('skipped') });
     }
     function speechWinClosed(){ if(!speechWin) return; const w=speechWin; speechWin=null; tx({t:'tts_window_closed',runnerId:w.runnerId,sessionId:w.sessionId}); }
     function onVoiceWindow(m){
@@ -5900,7 +5919,7 @@
       if(askPendingVoice){ askPendingVoice=false; startAskVoice(); speechWinClosed(); return; }   // decisão pendente → wizard de voz
       if(askActive || !(cfg.continue || lastWasVoice)){ speechWinClosed(); return; }             // sem conversa por voz: não escuta sozinho
       const here=currentFrame(m);
-      if(!here) openSession(m.sessionId,m.runnerId);                            // a resposta vai para a sessão que falou
+      if(!here && conversationUI.mode()==='session') openSession(m.sessionId,m.runnerId);
       setTimeout(()=>{ if(!recording && speechWin) startRec(true); },here?0:350);
     }
     function onSpeechStop(m){
@@ -5985,8 +6004,10 @@
       return msg||'não consegui abrir o microfone';
     }
     async function startRec(auto){ if(recording) return;
+      const captureMode=conversationUI.mode(), captureSession=currentSession, captureRunner=sessionRunner();
+      if(captureMode==='conversation') stopTTS();
       let wakePaused=false;
-      try{ wakePaused=await pauseWakeForRecording(); const st=await navigator.mediaDevices.getUserMedia({audio:{noiseSuppression:cfg.noise,echoCancellation:true,autoGainControl:true}}); rec=voiceRecorder(st); chunks=[]; recording=true; const recStartAt=performance.now();
+      try{ wakePaused=await pauseWakeForRecording(); const st=await navigator.mediaDevices.getUserMedia({audio:{...(cfg.inputDevice?{deviceId:{exact:cfg.inputDevice}}:{}),noiseSuppression:cfg.noise,echoCancellation:true,autoGainControl:true}}); rec=voiceRecorder(st); chunks=[]; recording=true; const recStartAt=performance.now();
         // VAD: detecta fala e fim de fala (silêncio após falar) para não gravar o tempo todo
         const ac=new AudioContext(); const src=ac.createMediaStreamSource(st); const an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
         const buf=new Uint8Array(an.fftSize); let spoke=false,silence=0,elapsed=0; const TH=cfg.noise?10:6;
@@ -6009,16 +6030,19 @@
         rec.onstop=async()=>{ const stopAt=performance.now(), byHub=!!(vs&&vs.reason), endpointMs=byHub?vs.endpointMs:(spoke?silence:undefined), endpointReason=byHub?vs.reason:(auto?'volume':'toque'); if(vs){ vs.close(); if(liveStream===vs) liveStream=null; } if(byHub) spoke=vs.reason!=='sem_fala'; clearInterval(poll); clearTimeout(contTimer); ac.close(); st.getTracks().forEach(t=>t.stop()); resumeWakeAfterRecording(wakePaused); recording=false; E.mic.classList.remove('on'); E.mic.innerHTML=MIC_ICON; syncComposerActions(); if(E.micCancel)E.micCancel.classList.add('hidden'); status('');
           if(discardRec){ discardRec=false; speechWinClosed(); return; }   // descartado pelo usuário -> nao envia
           if(auto && !spoke){ toast('🎤 Parei de ouvir (silêncio).'); speechWinClosed(); return; } // Gap 5: avisa que encerrou de propósito — não fica ambíguo com travamento
-          const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(new Blob(chunks,{type:'audio/webm'}));});
+          const mime=rec.mimeType||chunks[0]?.type||'audio/webm',ext=/mp4/i.test(mime)?'mp4':/ogg/i.test(mime)?'ogg':'webm';
+          let b64;try{b64=await new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(String(fr.result).split(',')[1]);fr.onerror=()=>reject(fr.error||new Error('Falha ao codificar áudio'));fr.readAsDataURL(new Blob(chunks,{type:mime}));});}catch(e){addErr('Não consegui preparar a gravação: '+String(e.message||e));speechWinClosed();return;}
           // barge-in: falar POR CIMA do agente (ou já em refino) → vai para o staging (refino), não pro chat
-          if(ttsPlaying || stagingActive || replyInProgress){ stopTTS(); stagingActive=true; showStage({say:'refinando…'}); status('speaking',t('spRefining')); tx({t:'stage_voice',audio:b64,ext:'webm',sessionId:currentSession}); return; }
+          if(captureMode==='session' && (ttsPlaying || stagingActive || replyInProgress)){ stopTTS(); stagingActive=true; showStage({say:'refinando…'}); status('speaking',t('spRefining')); tx({t:'stage_voice',audio:b64,ext,sessionId:captureSession}); return; }
           // Sessão ocupada NÃO bloqueia mais a voz. O Hub transcreve e ENFILEIRA o texto resultante
           // (queueLocalTurn → responde {t:'queued', voice:true} e faz broadcastQueue), igual ao texto.
           // O usuário grava, vê "transcrevendo…" e a mensagem entra na fila para rodar no próximo turno.
           const sessionBusy=busy(currentSession);
           status('busy', sessionBusy ? '🎧 transcrevendo para a fila…' : '🎧 transcrevendo…');   // Gap 5: feedback claro durante o STT
           const vtid=newVoiceTurnId(); rememberVoiceTurn(vtid,{stopAt,recMs:Math.round(stopAt-recStartAt),endpointMs,encodeMs:Math.round(performance.now()-stopAt)});
-          speechWin=null; lastWasVoice=true; stick=true; bumpSession(currentSession); markJustSent(currentSession); sendVoice({t:'voice',vtid,handsFree:!!auto,endpointReason,audio:b64,ext:'webm',speak,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(currentSession),sessionId:currentSession}); showPending(); refreshComposer(); };
+          speechWin=null; lastWasVoice=captureMode!=='dictation'; stick=true;
+          const message={t:'voice',vtid,handsFree:!!auto,endpointReason,audio:b64,ext,speak:captureMode==='dictation'?false:speak,model:curModel,effort:curEffort,fastMode:curFastMode,permissionMode:curMode||undefined,auto:routeAutoFor(captureSession),sessionId:captureSession,runnerId:captureRunner,conversation:captureMode==='conversation',dictation:captureMode==='dictation'};
+          await sendVoice(message); if(captureMode==='session'){bumpSession(captureSession);markJustSent(captureSession);showPending();} refreshComposer(); };
         discardRec=false; rec.start(); E.mic.classList.add('on'); E.mic.textContent='⏺'; syncComposerActions(); if(E.micCancel && !auto)E.micCancel.classList.remove('hidden'); status('listening', auto?t('spListeningAns'):t('spListening')); if(auto)tx({t:'wake_event',phase:'capturing',sessionId:currentSession});
         if(auto) contTimer=setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, Math.max(6,cfg.continueSec)*1000); // teto de segurança
       }catch(e){ speechWinClosed(); resumeWakeAfterRecording(wakePaused); const msg=t('wakeMicError')+': '+micErrorText(e); addErr(msg); toast(msg); tx({t:'wake_event',phase:'mic_error',sessionId:currentSession,error:String((e&&e.message)||e)}); recording=false; status(''); } }
@@ -7505,4 +7529,11 @@
     document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ stashDraft(); return; }   // vai esconder (lock/background) → salva o draft ANTES de um possível descarte da aba
       if(document.visibilityState==='visible' && (!ws||ws.readyState>1)){ if(reconnectT){clearTimeout(reconnectT);reconnectT=null;} connect(); } });
     window.addEventListener('pagehide', ()=>{ stashDraft(); });   // último recurso antes do unload/descarte
+    const conversationUI=createJarvisConversation({host:E.composer,tx,session:()=>currentSession,runner:sessionRunner,speak:()=>speak,online:()=>!!ws&&ws.readyState===1&&enteredConn,
+      open:openSession,record:()=>startRec(false),stop:()=>{stopTTS();lastWasVoice=false;speechWinClosed();},
+      settings:()=>{E.settingsBtn.click();settingsGoto('voz');},
+      notify:(text,onClick)=>toast(text,{duration:12000,onClick}),
+      dictate:(text,sid,rid)=>{status('');if(sid!==currentSession||(rid&&rid!==sessionRunner())){toast('Ditado concluído em outra sessão. Abra a sessão de origem para revisar.');const key=sessionStateKey(sid,rid||sessionRunner());draftBySession[key]=[draftBySession[key],text].filter(Boolean).join('\n');saveDrafts();return;}E.input.value+=(E.input.value?'\n':'')+text;E.input.dispatchEvent(new Event('input'));stashDraft();E.input.focus();}
+    });
+    const voiceDiagnostics=installJarvisVoiceDiagnostics({cfg,save:saveCfg,tx,pause:pauseWakeForRecording,resume:resumeWakeAfterRecording,preview:()=>tx({t:'preview_voice',voice:voiceCur})});
     setSpeakBtn(); connect();
