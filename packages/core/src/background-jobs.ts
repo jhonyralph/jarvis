@@ -97,15 +97,17 @@ export const DEFAULT_MAX_AUTO_CONTINUE_DEPTH = 8;
  * `jarvis-run` block from the reply (parseBackgroundRunDirectives), runs it durably, and opens a new
  * turn with the result. Keep it short — it costs prompt tokens on every turn.
  *
- * O que morre e o que não morre foi MEDIDO no Claude Code 2.1.288 em modo `-p` (JRV-42): shell em
- * segundo plano (Bash `run_in_background`) e vigia do Monitor são mortos ~5 s depois do fim do turno,
- * e no `--resume` seguinte voltam como aviso velho ("didn't finish before the previous session
- * ended"); subagente em segundo plano NÃO morre — a CLI espera ele terminar antes de encerrar.
+ * O que vive e o que morre foi MEDIDO de novo no Claude Code 2.1.312 em modo `-p` (2026-11-04): shell em
+ * segundo plano (Bash `run_in_background`), Monitor e Workflow continuam vivos depois da resposta — a CLI
+ * espera por eles (até o teto de JARVIS_CLAUDE_BG_WAIT_MIN, 3 h) e abre um turno novo quando cada um
+ * termina; o Jarvis também espera (sinal "held" em agents.ts). Na 2.1.288 (JRV-42) eles morriam ~5 s
+ * depois do fim do turno, e era isso que esta instrução dizia. Continuam morrendo num reinício do Hub —
+ * por isso o job durável (`jarvis-run`) segue sendo o caminho para tarefa longa que precisa sobreviver.
  */
 export const BACKGROUND_JOB_STEERING =
-  "Ambiente Jarvis: você roda como UM processo não-interativo por turno. Ao fim do turno, shells em segundo plano (run_in_background no Bash) e vigias do Monitor são MORTOS e você NÃO será reinvocado quando terminariam — nunca encerre o turno com eles pendentes: espere o resultado ou pare-os (TaskStop). Subagentes (Agent) não morrem: o turno só acaba quando todos terminam. "
+  "Ambiente Jarvis: você roda como UM processo não-interativo por turno. Tarefas em segundo plano (Bash com run_in_background, Monitor, Workflow, subagentes Agent) continuam vivas depois da sua resposta: o processo espera por elas (até ~3 h) e você é chamado de novo, num turno novo, quando cada uma termina — então pode usá-las e relatar o resultado nesse turno. Elas morrem se o Jarvis reiniciar ou se passarem de ~3 h. "
   + "Um aviso de tarefa que \"didn't finish before the previous session ended\" é resto do turno anterior: não responda a ele, atenda a mensagem do usuário. "
-  + "Para uma tarefa LONGA cujo resultado você precisa (build, testes, typecheck, script demorado), não use background nativo: emita um bloco cercado exatamente assim, um comando de shell por bloco:\n"
+  + "Para uma tarefa LONGA que precisa sobreviver a um reinício do Jarvis (build, testes, typecheck, script demorado), prefira o job durável ao run_in_background: emita um bloco cercado exatamente assim, um comando de shell por bloco:\n"
   + "```jarvis-run\n<comando>\n```\n"
   + "O Jarvis executa esse comando de forma durável FORA deste turno e, quando terminar, abre um NOVO turno com o resultado. Após emitir o bloco, encerre o turno em vez de esperar. "
   + "IMPORTANTE: você NÃO recebe confirmação de que o bloco virou job — então NÃO afirme ao usuário que vai avisar/continuar como se fosse garantido. Diga que PEDIU a execução ao Jarvis e que o job aparece no painel de tarefas em segundo plano. Se o turno seguinte não trouxer o resultado, o job falhou em ser criado ou em continuar, e o usuário precisa saber disso em vez de ficar esperando. "
