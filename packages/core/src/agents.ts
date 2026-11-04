@@ -10,8 +10,8 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { platform, homedir, tmpdir } from "node:os";
-import { closeSync, existsSync, openSync, readFileSync, readSync, writeFileSync, mkdirSync, unlinkSync, readdirSync, statSync } from "node:fs";
-import { open as openAsync, readdir as readdirAsync, access as accessAsync } from "node:fs/promises";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { open as openAsync, readdir as readdirAsync, access as accessAsync, stat as statAsync } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -33,7 +33,7 @@ import {
   type SessionContinuity,
   type SupportLevel,
 } from "./agent-contract.js";
-import { codexChildRollouts, codexChildRolloutsAsync, type CodexChildRollout } from "./codex-executions.js";
+import { codexChildRolloutsAsync, type CodexChildRollout } from "./codex-executions.js";
 import { estimateCodexCost } from "./codex-pricing.js";
 import { BACKGROUND_JOB_STEERING } from "./background-jobs.js";
 import { ensurePermissionBridge } from "./permission-bridge.js";
@@ -1540,8 +1540,13 @@ export interface CodexTelemetry {
 
 /** Extract the latest effective model, context and rate-limit snapshot from a Codex rollout. */
 export function codexTelemetryFromLines(lines: string[]): CodexTelemetry | undefined {
-  const out: CodexTelemetry = {};
+  return applyCodexTelemetry({}, lines);
+}
+
+function applyCodexTelemetry(out: CodexTelemetry, lines: string[]): CodexTelemetry | undefined {
   for (const line of lines) {
+    // Tool output/images can dwarf the metadata. Do not deserialize them just to discard them.
+    if (!line.includes('"token_count"') && !line.includes('"turn_context"')) continue;
     let row: any; try { row = JSON.parse(line); } catch { continue; }
     if (row?.type === "turn_context" && row.payload?.model) out.model = String(row.payload.model);
     const p = row?.type === "event_msg" ? row.payload : undefined;
@@ -1559,14 +1564,27 @@ export function codexTelemetryFromLines(lines: string[]): CodexTelemetry | undef
   return out.total || out.model || out.rateLimits ? out : undefined;
 }
 
-function codexRolloutFiles(dir = join(homedir(), ".codex", "sessions")): string[] {
-  const found: string[] = [];
-  const walk = (d: string): void => { let entries: any[] = []; try { entries = readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of entries) { const p = join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.jsonl$/i.test(e.name)) found.push(p); } };
-  walk(dir); return found.sort((a, b) => { try { return statSync(b).mtimeMs - statSync(a).mtimeMs; } catch { return 0; } });
+export async function codexRolloutFiles(dir = join(homedir(), ".codex", "sessions")): Promise<string[]> {
+  const found: Array<{ path: string; mtime: number }> = [];
+  const walk = async (d: string): Promise<void> => {
+    let entries;
+    try { entries = await readdirAsync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const path = join(d, e.name);
+      if (e.isDirectory()) await walk(path);
+      else if (/\.jsonl$/i.test(e.name)) {
+        // Stat ONCE per file, outside sort. The former comparator did synchronous disk I/O
+        // O(n log n) times on the same thread that serves HTTP and WebSocket heartbeats.
+        try { found.push({ path, mtime: (await statAsync(path)).mtimeMs }); } catch { /* removed during scan */ }
+      }
+    }
+  };
+  await walk(dir);
+  return found.sort((a, b) => b.mtime - a.mtime).map((f) => f.path);
 }
 
-function codexThreadFile(threadId?: string): string | undefined {
-  const files = codexRolloutFiles(); return threadId ? files.find((p) => p.includes(threadId)) : files[0];
+async function codexThreadFile(threadId?: string): Promise<string | undefined> {
+  const files = await codexRolloutFiles(); return threadId ? files.find((p) => p.includes(threadId)) : files[0];
 }
 
 /**
@@ -1599,30 +1617,29 @@ const THREAD_TELEMETRY_TAIL_BYTES = 2 * 1024 * 1024;
 const CODEX_ROLLOUT_ROTATE_BYTES = Math.max(32 * 1024 * 1024, Number(process.env.JARVIS_CODEX_ROLLOUT_ROTATE_BYTES) || 256 * 1024 * 1024);
 /** Rollout da thread quando ele já passou do teto de aposentadoria; `undefined` = segue utilizável.
  *  `resolve` é injetável só para teste — em produção é sempre o catálogo real de rollouts. */
-export function codexRolloutOversized(
+export async function codexRolloutOversized(
   threadId?: string,
   capBytes = CODEX_ROLLOUT_ROTATE_BYTES,
-  resolve: (id: string) => string | undefined = codexThreadFile,
-): { path: string; size: number } | undefined {
+  resolve: (id: string) => string | undefined | Promise<string | undefined> = codexThreadFile,
+): Promise<{ path: string; size: number } | undefined> {
   if (!threadId) return undefined;
-  const path = resolve(threadId);
+  const path = await resolve(threadId);
   if (!path) return undefined;
   try {
-    const size = statSync(path).size;
+    const size = (await statAsync(path)).size;
     return size > capBytes ? { path, size } : undefined;
   } catch { return undefined; }
 }
 
-function codexThreadTelemetry(threadId?: string): CodexTelemetry | undefined {
-  const file = codexThreadFile(threadId);
+export async function codexThreadTelemetry(threadId?: string, file?: string): Promise<CodexTelemetry | undefined> {
+  file ||= await codexThreadFile(threadId);
   if (!file) return undefined;
   try {
     let size = 0;
-    try { size = statSync(file).size; } catch { return undefined; }
-    const lines = size > THREAD_TELEMETRY_FULL_READ_MAX_BYTES
-      ? readTailLines(file, THREAD_TELEMETRY_TAIL_BYTES)
-      : readFileSync(file, "utf8").split(/\r?\n/);
-    return codexTelemetryFromLines(lines);
+    try { size = (await statAsync(file)).size; } catch { return undefined; }
+    const lines = await readTailLines(file, size > THREAD_TELEMETRY_FULL_READ_MAX_BYTES
+      ? THREAD_TELEMETRY_TAIL_BYTES : THREAD_TELEMETRY_FULL_READ_MAX_BYTES);
+    return await codexTelemetryFromLinesAsync(lines);
   } catch { return undefined; }
 }
 
@@ -1650,28 +1667,43 @@ const PLAN_TAIL_BYTES = 256 * 1024;
  *  de duas semanas atrás como se fosse hoje é pior que não mostrar nada. */
 const PLAN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 
-function readTailLines(path: string, bytes = PLAN_TAIL_BYTES): string[] {
-  let fd: number | undefined;
+async function readTailLines(path: string, bytes = PLAN_TAIL_BYTES): Promise<string[]> {
+  let fd: Awaited<ReturnType<typeof openAsync>> | undefined;
   try {
-    const size = statSync(path).size;
+    fd = await openAsync(path, "r");
+    const size = (await fd.stat()).size;
     const len = Math.min(size, bytes);
     if (!len) return [];
-    fd = openSync(path, "r");
-    const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
+    const buf = Buffer.allocUnsafe(len);
+    let read = 0;
+    while (read < len) {
+      const { bytesRead } = await fd.read(buf, read, len - read, size - len + read);
+      if (!bytesRead) break;
+      read += bytesRead;
+    }
     // A primeira linha pode estar cortada ao meio quando não lemos o arquivo inteiro.
-    const lines = buf.toString("utf8").split(/\r?\n/);
+    const lines = buf.subarray(0, read).toString("utf8").split(/\r?\n/);
     return len < size ? lines.slice(1) : lines;
   } catch { return []; }
-  finally { if (fd !== undefined) try { closeSync(fd); } catch { /* já fechado */ } }
+  finally { if (fd !== undefined) try { await fd.close(); } catch { /* já fechado */ } }
 }
 
-function codexPlanTelemetry(files = codexRolloutFiles(), now = Date.now()): CodexTelemetry | undefined {
+async function codexTelemetryFromLinesAsync(lines: string[]): Promise<CodexTelemetry | undefined> {
+  let out: CodexTelemetry | undefined;
+  for (let i = 0; i < lines.length; i += 128) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    out = applyCodexTelemetry(out || {}, lines.slice(i, i + 128));
+  }
+  return out;
+}
+
+export async function codexPlanTelemetry(files?: string[], now = Date.now()): Promise<CodexTelemetry | undefined> {
+  files ||= await codexRolloutFiles();
   for (const file of files.slice(0, PLAN_SCAN_MAX_FILES)) {
     let mtime = 0;
-    try { mtime = statSync(file).mtimeMs; } catch { continue; }
+    try { mtime = (await statAsync(file)).mtimeMs; } catch { continue; }
     if (now - mtime > PLAN_MAX_AGE_MS) break;   // a lista vem ordenada: daqui para trás só piora
-    const t = codexTelemetryFromLines(readTailLines(file));
+    const t = await codexTelemetryFromLinesAsync(await readTailLines(file));
     if (codexHasPlanWindow(t?.rateLimits)) return t;
   }
   return undefined;
@@ -1681,6 +1713,7 @@ function codexPlanTelemetry(files = codexRolloutFiles(), now = Date.now()): Code
 export function codexPatchEventsFromLines(lines: string[], sinceMs?: number): StreamEvent[] {
   const events: StreamEvent[] = [];
   for (const line of lines) {
+    if (!line.includes('"patch_apply_end"')) continue;
     let row: any; try { row = JSON.parse(line); } catch { continue; }
     const at = Date.parse(String(row?.timestamp || ""));
     if (sinceMs && Number.isFinite(at) && at < sinceMs) continue;
@@ -1740,10 +1773,11 @@ export const ROLLOUT_APPEND_MAX_BYTES = 8 * 1024 * 1024;
 
 /** Exportada para o teste de regressão: a aritmética de `offset`/`reset` aqui é o que decide se um
  *  evento de patch aparece, duplica ou desaparece — e o salto de janela é novo. */
-export function codexRolloutAppend(path: string, offset: number): { data: Buffer; offset: number; reset: boolean } {
-  let fd: number | undefined;
+export async function codexRolloutAppend(path: string, offset: number): Promise<{ data: Buffer; offset: number; reset: boolean }> {
+  let fd: Awaited<ReturnType<typeof openAsync>> | undefined;
   try {
-    const size = statSync(path).size;
+    fd = await openAsync(path, "r");
+    const size = (await fd.stat()).size;
     const shrank = size < offset;
     let start = shrank ? 0 : offset;
     const skipped = size - start > ROLLOUT_APPEND_MAX_BYTES;
@@ -1751,16 +1785,15 @@ export function codexRolloutAppend(path: string, offset: number): { data: Buffer
     const reset = shrank || skipped;
     if (size <= start) return { data: Buffer.alloc(0), offset: size, reset };
     const buf = Buffer.allocUnsafe(size - start);
-    fd = openSync(path, "r");
     let read = 0;
     while (read < buf.length) {
-      const n = readSync(fd, buf, read, buf.length - read, start + read);
+      const { bytesRead: n } = await fd.read(buf, read, buf.length - read, start + read);
       if (!n) break;
       read += n;
     }
     return { data: buf.subarray(0, read), offset: start + read, reset };
   } catch { return { data: Buffer.alloc(0), offset, reset: false }; }
-  finally { if (fd !== undefined) try { closeSync(fd); } catch { /* best-effort telemetry */ } }
+  finally { if (fd !== undefined) try { await fd.close(); } catch { /* best-effort telemetry */ } }
 }
 
 export function codexPlanUsage(t?: CodexTelemetry): AgentUsage | null {
@@ -1926,11 +1959,18 @@ export class CodexAdapter implements AgentAdapter {
   // Cache curto pelo mesmo motivo do ClaudeCodeAdapter: o popover de uso reabre a cada clique e a
   // busca ordena TODOS os rollouts por mtime (milhares nesta instalação) antes de ler qualquer um.
   private planCache?: { at: number; data: AgentUsage | null };
+  private planPending?: Promise<AgentUsage | null>;
   async usage(): Promise<AgentUsage | null> {
     if (this.planCache && Date.now() - this.planCache.at < 30_000) return this.planCache.data;
-    const data = codexPlanUsage(codexPlanTelemetry());
-    this.planCache = { at: Date.now(), data };
-    return data;
+    // UI and periodic refresh can arrive together while disk I/O is pending. Share one scan.
+    if (this.planPending) return this.planPending;
+    this.planPending = (async () => {
+      const data = codexPlanUsage(await codexPlanTelemetry());
+      this.planCache = { at: Date.now(), data };
+      return data;
+    })();
+    try { return await this.planPending; }
+    finally { this.planPending = undefined; }
   }
 
   async descriptor(): Promise<AgentDescriptor> {
@@ -1965,7 +2005,8 @@ export class CodexAdapter implements AgentAdapter {
     // O arquivo antigo fica INTACTO — ele é o histórico da conversa, e mover/apagar quebra o resume
     // (aprendido na prática: arquivar um rollout vinculado derrubou uma sessão com
     // "no rollout found for thread id"). O vínculo passa a apontar para a thread nova quando ela nasce.
-    const retired = codexRolloutOversized(prev);
+    const previousRollout = prev ? await codexThreadFile(prev) : undefined;
+    const retired = await codexRolloutOversized(prev, CODEX_ROLLOUT_ROTATE_BYTES, () => previousRollout);
     const resumeId = retired ? undefined : prev;
     if (retired) {
       console.warn(`[codex] thread ${prev} aposentada: rollout com ${Math.round(retired.size / 1048576)} MB passou do teto — abrindo thread nova com resumo (arquivo antigo preservado em ${retired.path})`);
@@ -1997,31 +2038,37 @@ export class CodexAdapter implements AgentAdapter {
     const finalParts: string[] = [];   // agent_message texts, in order (preâmbulo + resposta final)
     let usage: AgentReply["usage"];
     let rawUsage: any;
-    const beforeTelemetry = resumeId ? codexThreadTelemetry(resumeId) : undefined;
-    const beforeRollout = resumeId ? codexThreadFile(resumeId) : undefined;
+    const beforeRollout = resumeId ? previousRollout : undefined;
+    const beforeTelemetry = resumeId ? await codexThreadTelemetry(resumeId, beforeRollout) : undefined;
     let streamError = "";
     const seen = new Map<string, string>(); // allow started -> completed/failed; reject duplicate frames
     const childSeen = new Map<string, { activities: number; state: string; usage: string }>();
     const scanStartedAt = Date.now() - 5_000;
     let patchFile = beforeRollout;
-    let patchOffset = beforeRollout ? (() => { try { return statSync(beforeRollout).size; } catch { return 0; } })() : 0;
+    let patchOffset = beforeRollout ? await statAsync(beforeRollout).then((st) => st.size, () => 0) : 0;
     let patchCarry = "";
     let patchDecoder = new StringDecoder("utf8");
     const patchSeen = new Set<string>();
-    const emitPatches = (flush = false): void => {
+    const emitPatches = async (flush = false): Promise<void> => {
       if (!onEvent || !(threadId || resumeId)) return;
-      const candidate = patchFile || codexThreadFile(threadId || resumeId);
+      const candidate = patchFile || await codexThreadFile(threadId || resumeId);
       if (!candidate) return;
       if (!patchFile) { patchFile = candidate; patchOffset = 0; patchCarry = ""; patchDecoder = new StringDecoder("utf8"); }
-      const appended = codexRolloutAppend(candidate, patchOffset); patchOffset = appended.offset;
+      const appended = await codexRolloutAppend(candidate, patchOffset); patchOffset = appended.offset;
       if (appended.reset) { patchCarry = ""; patchDecoder = new StringDecoder("utf8"); }
       const combined = patchCarry + patchDecoder.write(appended.data) + (flush ? patchDecoder.end() : "");
       const lines = combined.split(/\r?\n/);
       patchCarry = flush ? "" : (lines.pop() || "");
-      for (const ev of codexPatchEventsFromLines(lines, scanStartedAt)) {
-        const key = String(ev.toolId || `${ev.path}:${ev.adds || 0}:${ev.dels || 0}`);
-        if (patchSeen.has(key)) continue;
-        patchSeen.add(key); onEvent(ev);
+      // Even bounded reads can contain thousands of rows. Yield between batches so parsing
+      // cannot monopolize the Hub, and cap an unterminated tool-output line across ticks.
+      if (patchCarry.length > ROLLOUT_APPEND_MAX_BYTES) patchCarry = "";
+      for (let i = 0; i < lines.length; i += 128) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        for (const ev of codexPatchEventsFromLines(lines.slice(i, i + 128), scanStartedAt)) {
+          const key = String(ev.toolId || `${ev.path}:${ev.adds || 0}:${ev.dels || 0}`);
+          if (patchSeen.has(key)) continue;
+          patchSeen.add(key); onEvent(ev);
+        }
       }
     };
     const projectChildren = (children: CodexChildRollout[]): void => {
@@ -2036,15 +2083,12 @@ export class CodexAdapter implements AgentAdapter {
         childSeen.set(child.id, { activities: child.activities.length, state: child.state, usage: usageKey });
       }
     };
-    const emitChildren = (): void => {
-      if (!onEvent || !(threadId || resumeId)) return;
-      projectChildren(codexChildRollouts(threadId || resumeId!, { sinceMs: scanStartedAt }));
-    };
     const emitChildrenAsync = async (): Promise<void> => {
       if (!onEvent || !(threadId || resumeId)) return;
       projectChildren(await codexChildRolloutsAsync(threadId || resumeId!, { sinceMs: scanStartedAt }));
     };
     let activityTimer: ReturnType<typeof setTimeout> | undefined;
+    let activityInFlight: Promise<void> | undefined;
     let activityStarted = false, activityStopped = false;
     // Tique que NAO empilha: so reagenda DEPOIS de terminar. Com setInterval, um tique mais lento
     // que o intervalo enfileirava o proximo e o event loop nunca abria uma janela — foi assim que
@@ -2053,11 +2097,11 @@ export class CodexAdapter implements AgentAdapter {
     const scheduleActivity = (delay = 750): void => {
       if (activityStopped) return;
       activityTimer = setTimeout(() => {
-        void (async () => {
+        activityInFlight = (async () => {
           try {
             if (activityStopped) return;
             await emitChildrenAsync();
-            if (!activityStopped) emitPatches();
+            if (!activityStopped) await emitPatches();
           } catch { /* atividade e best-effort: nunca derruba o turno */ }
           finally { scheduleActivity(); }
         })();
@@ -2125,16 +2169,16 @@ export class CodexAdapter implements AgentAdapter {
         ? await runStream("codex", args, cwd, effectiveText, handleLine, opts?.signal)
         : await run("codex", args, cwd, effectiveText, opts?.signal);
     } finally {
-      // O flush final continua SINCRONO de proposito: com o cache quente ele le so os bytes novos,
-      // e assim os ultimos eventos da crianca saem antes de a funcao retornar.
+      // Stop scheduling, drain the current tick, THEN flush. Async I/O must not race two readers
+      // on the same offset/decoder or emit late activity after the final reply.
       activityStopped = true;
       if (activityTimer) clearTimeout(activityTimer);
-      emitChildren();
-      emitPatches(true);
+      await activityInFlight;
+      try { await emitChildrenAsync(); await emitPatches(true); } catch { /* best-effort activity */ }
     }
     if (!onEvent) for (const line of out.split("\n")) { const t = line.trim(); if (t) handleLine(t); }
 
-    const afterTelemetry = codexThreadTelemetry(threadId || resumeId);
+    const afterTelemetry = await codexThreadTelemetry(threadId || resumeId);
     if (rawUsage) usage = codexUsage(rawUsage, beforeTelemetry?.total, afterTelemetry, opts);
     if (usage) usage = usageWithFast({ ...usage, spawnMs: tFirstLine ? tFirstLine - tSpawn : undefined, workMs: tFirstLine ? (tResult || Date.now()) - tFirstLine : undefined }, opts);
     this.started.add(sessionId);

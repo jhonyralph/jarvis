@@ -29,7 +29,7 @@
 #>
 param(
   [switch]$Uninstall,
-  [int]$IntervaloMin = 3,
+  [ValidateRange(1, 1440)][int]$IntervaloMin = 3,
   [string]$StateDir,
   [string]$TaskName = 'JarvisHubRetrier'
 )
@@ -74,15 +74,12 @@ $act = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
 # lockout que atravessasse um reboot ficaria sem ninguem para religar o Hub.
 $gBoot = New-ScheduledTaskTrigger -AtStartup
 $intervalo = New-TimeSpan -Minutes $IntervaloMin
-try {
-  # MaxValue = "indefinidamente" no Agendador. Algumas builds recusam, por isso o fallback.
-  $gLoop = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
-             -RepetitionInterval $intervalo -RepetitionDuration ([TimeSpan]::MaxValue)
-} catch {
-  Write-Host 'esta build recusou duracao indefinida - usando 3650 dias' -ForegroundColor Yellow
-  $gLoop = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
-             -RepetitionInterval $intervalo -RepetitionDuration (New-TimeSpan -Days 3650)
-}
+# Ausencia de Duration = repeticao indefinida no schema do Agendador.
+# TimeSpan.MaxValue gerava P99999999DT23H59M59S: New-ScheduledTaskTrigger aceitava,
+# mas Register-ScheduledTask recusava o XML, fora do antigo catch. O retrier nunca era instalado.
+# https://learn.microsoft.com/en-us/windows/win32/taskschd/repetitionpattern-duration
+$gLoop = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval $intervalo
+$gLoop.Repetition.StopAtDurationEnd = $false
 
 $prin = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 
@@ -94,11 +91,11 @@ $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnB
 
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
   Write-Host "tarefa $TaskName ja existia - substituindo"
-  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
+# -Force atualiza a definicao existente sem remove-la antes: XML invalido nao apaga a protecao.
 Register-ScheduledTask -TaskName $TaskName -Action $act -Trigger @($gBoot, $gLoop) `
-  -Principal $prin -Settings $set `
+  -Principal $prin -Settings $set -Force -ErrorAction Stop `
   -Description 'Jarvis - religa o servico JarvisHub quando o SCM desiste (tipicamente lockout da conta; INC-04).' | Out-Null
 
 # ---------------------------------------------------------------- confirmar

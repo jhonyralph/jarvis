@@ -656,7 +656,7 @@ test("janelas todas nulas sao AUSENCIA de dado, nao plano zerado", () => {
  * caminhos era este: `codexRolloutAppend` com `offset = 0` (primeira adocao do arquivo no turno) ou
  * com o arquivo encolhido pedia o rollout INTEIRO numa alocacao unica. Havia um rollout de 718 MB
  * aqui: alocava 718 MB, falhava na decodificacao, jogava fora e repetia a cada tique de 750 ms. */
-test("codexRolloutAppend limita UMA leitura e nunca materializa o rollout inteiro", () => {
+test("codexRolloutAppend limita UMA leitura e nunca materializa o rollout inteiro", async () => {
   const dir = mkdtempSync(join(tmpdir(), "jarvis-rollout-"));
   const file = join(dir, "rollout.jsonl");
 
@@ -665,7 +665,7 @@ test("codexRolloutAppend limita UMA leitura e nunca materializa o rollout inteir
   const big = line.repeat(Math.ceil((ROLLOUT_APPEND_MAX_BYTES + 1_000_000) / line.length));
   writeFileSync(file, big);
 
-  const first = codexRolloutAppend(file, 0);
+  const first = await codexRolloutAppend(file, 0);
   assert.ok(first.data.length <= ROLLOUT_APPEND_MAX_BYTES, `leu ${first.data.length} B; o teto e ${ROLLOUT_APPEND_MAX_BYTES} B`);
   assert.ok(first.data.length > 0, "a janela tem de trazer a cauda, nao vir vazia");
   assert.equal(first.reset, true, "saltar a janela precisa sinalizar reset: o chamador tem de descartar o carry e recriar o StringDecoder");
@@ -674,20 +674,20 @@ test("codexRolloutAppend limita UMA leitura e nunca materializa o rollout inteir
   // A partir dai volta a ser incremental: so o que foi anexado, sem reset.
   const appended = JSON.stringify({ type: "turn_context", payload: { model: "gpt-5" } }) + "\n";
   appendFileSync(file, appended);
-  const second = codexRolloutAppend(file, first.offset);
+  const second = await codexRolloutAppend(file, first.offset);
   assert.equal(second.data.toString("utf8"), appended, "a leitura seguinte traz exatamente o apendice");
   assert.equal(second.reset, false, "apendice normal nao e reset");
 
   // Arquivo que encolhe (rotacionado) continua sendo reparseado do zero — e tambem limitado.
   truncateSync(file, 10);
-  const shrunk = codexRolloutAppend(file, 10_000_000);
+  const shrunk = await codexRolloutAppend(file, 10_000_000);
   assert.equal(shrunk.reset, true, "arquivo menor que o offset = reset");
   assert.equal(shrunk.data.length, 10, "le o arquivo encolhido inteiro quando ele cabe no teto");
 
   // Arquivo pequeno segue com o comportamento antigo, byte a byte.
   const small = join(dir, "small.jsonl");
   writeFileSync(small, appended);
-  const whole = codexRolloutAppend(small, 0);
+  const whole = await codexRolloutAppend(small, 0);
   assert.equal(whole.data.toString("utf8"), appended, "arquivo pequeno e lido inteiro, sem salto");
   assert.equal(whole.reset, false, "sem salto, sem reset");
 });
@@ -759,7 +759,7 @@ test("historico gerenciado usa a janela real do modelo e avisa o que foi cortado
 
 /* INC-03: compactar NAO encolhe o rollout do Codex — ele e append-only, e o arquivo desta instalacao
  * chegou a 733 MB COM 101 eventos `compacted` dentro. O que encolhe e aposentar a thread. */
-test("thread do codex e aposentada so quando o rollout passa do teto", () => {
+test("thread do codex e aposentada so quando o rollout passa do teto", async () => {
   const dir = mkdtempSync(join(tmpdir(), "jarvis-rotate-"));
   const pequeno = join(dir, "pequeno.jsonl");
   const grande = join(dir, "grande.jsonl");
@@ -767,21 +767,21 @@ test("thread do codex e aposentada so quando o rollout passa do teto", () => {
   writeFileSync(grande, "x".repeat(4096));
   const resolve = (id: string) => (id === "t-grande" ? grande : id === "t-pequeno" ? pequeno : undefined);
 
-  assert.equal(codexRolloutOversized("t-pequeno", 2048, resolve), undefined, "abaixo do teto nao aposenta");
-  const ret = codexRolloutOversized("t-grande", 2048, resolve);
+  assert.equal(await codexRolloutOversized("t-pequeno", 2048, resolve), undefined, "abaixo do teto nao aposenta");
+  const ret = await codexRolloutOversized("t-grande", 2048, resolve);
   assert.ok(ret, "acima do teto tem de aposentar");
   assert.equal(ret!.size, 4096);
   assert.equal(ret!.path, grande);
 
   // Casos em que NAO se pode aposentar: sem thread, ou thread cujo rollout nem existe mais.
-  assert.equal(codexRolloutOversized(undefined, 2048, resolve), undefined);
-  assert.equal(codexRolloutOversized("inexistente", 2048, resolve), undefined, "sem arquivo resolvido nao se decide nada");
+  assert.equal(await codexRolloutOversized(undefined, 2048, resolve), undefined);
+  assert.equal(await codexRolloutOversized("inexistente", 2048, resolve), undefined, "sem arquivo resolvido nao se decide nada");
 
   // O teto real nunca pode ser baixo o bastante para aposentar conversa grande e saudavel: um
   // transcript de 28 MB (o maior do Claude nesta maquina) tem de passar longe.
   const normal = join(dir, "normal.jsonl");
   writeFileSync(normal, "x".repeat(4096));
-  assert.equal(codexRolloutOversized("t-normal", 256 * 1024 * 1024, () => normal), undefined,
+  assert.equal(await codexRolloutOversized("t-normal", 256 * 1024 * 1024, () => normal), undefined,
     "o teto de producao nao pode aposentar rollout de tamanho normal");
 });
 

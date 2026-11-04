@@ -24,6 +24,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFile
 import { homedir, platform as osPlatform } from "node:os";
 import { basename, join } from "node:path";
 import type { BrowserInput, BrowserPageInfo, BrowserProfileName, BrowserStateInfo } from "@jarvis/protocol";
+import { prepareBrowserProfile } from "./browser-profile.js";
 
 // ================================================================================ descoberta (pura)
 
@@ -645,6 +646,7 @@ class ProfileBrowser {
     mkdirSync(this.dir, { recursive: true });
     const reaped = await reapProfileProcesses(this.dir, { exeName: basename(this.exe), pidfile: this.pidfile });
     if (reaped.length) this.log("browser_reaped", { pids: reaped });
+    await prepareBrowserProfile(this.dir);
     const portFile = join(this.dir, "DevToolsActivePort");
     // Perfil persistente: o DevToolsActivePort da última execução continua no disco e apontaria
     // para uma porta morta.
