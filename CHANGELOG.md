@@ -1,3 +1,12 @@
+## [0.53.3](https://github.com/jhonyralph/jarvis/compare/v0.53.2...v0.53.3) (2026-11-04)
+
+
+### Bug Fixes
+
+* **codex:** restore file activity from current rollout events ([eee7bf5](https://github.com/jhonyralph/jarvis/commit/eee7bf50e911ebb52a20afebba78490f57163b5b))
+* **history:** recover interrupted Codex and Claude turns ([21592d2](https://github.com/jhonyralph/jarvis/commit/21592d26f3544052659ec2c478cf48e6cf92ae62))
+* **stability:** prevent Chromium logon failures and unblock Hub I/O ([534f9d9](https://github.com/jhonyralph/jarvis/commit/534f9d908b976f46aaf0d63813fa2d8c563059a8))
+
 ## [0.53.2](https://github.com/jhonyralph/jarvis/compare/v0.53.1...v0.53.2) (2026-11-04)
 
 
