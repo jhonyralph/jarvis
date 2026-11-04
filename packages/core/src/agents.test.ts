@@ -944,12 +944,12 @@ test("claudeRestoredCost acha o transcript pelo nome que a CLI da ao cwd, e proc
 const nodeScript = (body: string) => [process.execPath, ["-e", body]] as const;
 const emit = (o: unknown) => `process.stdout.write(${JSON.stringify(JSON.stringify(o) + "\n")});`;
 
-async function runClaudeLike(body: string, graceMs = 300) {
+async function runClaudeLike(body: string, graceMs = 300, heldGraceMs?: number) {
   const { runStream, ClaudeTurnAccount } = await import("./agents.js");
   const account = new ClaudeTurnAccount();
   const [cmd, args] = nodeScript(body);
   const t0 = Date.now();
-  const out = await runStream(cmd, [...args], tmpdir(), "", (line) => { try { return account.line(JSON.parse(line)); } catch { return; } }, undefined, graceMs);
+  const out = await runStream(cmd, [...args], tmpdir(), "", (line) => { try { return account.line(JSON.parse(line)); } catch { return; } }, undefined, graceMs, undefined, heldGraceMs);
   return { out, account, ms: Date.now() - t0 };
 }
 
@@ -977,4 +977,51 @@ test("JRV-42 (d) processo real: depois do result REAL, CLI pendurada com neto no
   assert.ok(ms < 10_000, `derrubado pelo prazo, nao pendurado (${ms} ms)`);
   assert.match(out, /pronto/, "a resposta que ja tinha chegado e entregue, nao descartada");
   assert.equal(account.text, "pronto");
+});
+
+/* ── Tarefas em segundo plano (workflow, Monitor, Bash em 2º plano) — 2026-11-04 ─────────────────────
+ * A CLI publica o `result` NA HORA e segue viva esperando as tarefas. O Jarvis tratava esse `result`
+ * como fim e derrubava o processo 60 s depois: uma revisão em 14 etapas morreu no meio, com os agentes
+ * do workflow ainda gravando. Sequência real medida no CLI: tarefa em background_tasks_changed, result,
+ * (espera), background_tasks_changed vazio, init do turno da notificação, result, saída. */
+const bgTasks = (n: number) => ({ type: "system", subtype: "background_tasks_changed", tasks: Array.from({ length: n }, (_, i) => ({ task_id: "bt" + i, task_type: "local_workflow" })) });
+
+test("result com tarefa em segundo plano não é o fim: o processo espera a tarefa (sem cair no prazo de 300 ms)", async () => {
+  const { out, account, ms } = await runClaudeLike(
+    emit(cl.init()) + emit(bgTasks(1)) + emit(cl.say("LANCEI")) + emit(cl.result("LANCEI", 1.0, 3))
+    + `setTimeout(() => { ${emit(bgTasks(0))}${emit(cl.init())}${emit(cl.say("TERMINOU"))}${emit(cl.result("TERMINOU", 1.1, 4))} setTimeout(() => process.exit(0), 20); }, 900);`,
+  );
+  assert.ok(ms >= 900, `esperou a tarefa (${ms} ms), muito além do prazo de 300 ms`);
+  assert.match(out, /TERMINOU/);
+  assert.equal(account.text, "LANCEI\n\nTERMINOU");
+});
+
+test("tarefas acabaram e a CLI ficou pendurada sem abrir turno: volta o prazo normal", async () => {
+  const { ms, out } = await runClaudeLike(
+    emit(cl.init()) + emit(bgTasks(1)) + emit(cl.say("LANCEI")) + emit(cl.result("LANCEI", 1.0, 3))
+    + `setTimeout(() => { ${emit(bgTasks(0))} }, 200); setInterval(() => {}, 1000);`,
+    300, 60_000,
+  );
+  assert.ok(ms < 5_000, `derrubado pelo prazo normal depois que as tarefas acabaram (${ms} ms), não pelo longo`);
+  assert.match(out, /LANCEI/, "a resposta que já tinha chegado não se perde");
+});
+
+test("esperando tarefa para sempre: o teto longo ainda derruba (nunca pendura o turno)", async () => {
+  const { ms, out } = await runClaudeLike(
+    emit(cl.init()) + emit(bgTasks(2)) + emit(cl.say("LANCEI")) + emit(cl.result("LANCEI", 1.0, 3)) + "setInterval(() => {}, 1000);",
+    300, 700,
+  );
+  assert.ok(ms >= 700 && ms < 6_000, `derrubado no teto longo (${ms} ms)`);
+  assert.match(out, /LANCEI/);
+});
+
+test("conta: result com tarefa pendente devolve held; sem tarefa, true", async () => {
+  const { ClaudeTurnAccount } = await import("./agents.js");
+  const a = new ClaudeTurnAccount();
+  a.line(cl.init()); a.line(bgTasks(1));
+  assert.equal(a.line(cl.result("x", 1, 1)), "held");
+  assert.equal(a.line(bgTasks(0)), true, "as tarefas acabaram depois do fim anunciado");
+  const b = new ClaudeTurnAccount();
+  b.line(cl.init());
+  assert.equal(b.line(cl.result("x", 1, 1)), true);
 });

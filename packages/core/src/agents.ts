@@ -251,11 +251,21 @@ export class ClaudeTurnAccount {
   totalCost?: number;
   /** Erro do ÚLTIMO `result` (um turno posterior que deu certo apaga o erro de um anterior). */
   error = "";
+  /** Tarefas em segundo plano ainda vivas (workflow, Monitor, comando em 2º plano), pela lista que a CLI
+   *  publica em `background_tasks_changed`. Com elas, o `result` NÃO é o fim do processo (ver "held"). */
+  backgroundTasks = 0;
 
   line(o: any): StreamLineSignal {
     if (!o || typeof o !== "object") return;
     let signal: StreamLineSignal = undefined;
     if (this.ended && isClaudeTurnStartLine(o)) { this.ended = false; signal = "resumed"; }
+    if (o.type === "system" && o.subtype === "background_tasks_changed") {
+      const before = this.backgroundTasks;
+      this.backgroundTasks = Array.isArray(o.tasks) ? o.tasks.length : 0;
+      // Acabaram as tarefas depois do fim anunciado: volta o prazo normal (a CLI deve abrir o turno
+      // da notificação ou sair; se não fizer nenhum dos dois, aí sim está pendurada).
+      if (before > 0 && this.backgroundTasks === 0 && this.ended) signal = true;
+    }
     // Cada `init` abre um turno da CLI. Com subagente em segundo plano a CLI segura os `result` e
     // solta todos juntos no fim (medido) — então a fronteira entre os textos é o `init`, não o `result`.
     if (o.type === "system" && o.subtype === "init" && this.current) { this.parts.push(this.current); this.current = ""; }
@@ -287,7 +297,10 @@ export class ClaudeTurnAccount {
       if (o.result) this.lastResultText = String(o.result);
       this.error = o.is_error ? cliErrorMessage(o.result, "claude error") : "";
       this.ended = true;
-      return true;
+      // Workflow/Monitor/comando em 2º plano: a CLI publica o `result` NA HORA e segue viva esperando
+      // essas tarefas (medido 04/11: result aos 7,5 s, tarefa terminou aos 80,8 s, novo turno e saída
+      // sozinha aos 83,4 s). Tratar como fim derrubava o processo 60 s depois — e o workflow junto.
+      return this.backgroundTasks > 0 ? "held" : true;
     }
     return signal;
   }
@@ -1342,7 +1355,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         const signal = account.line(o);
         // O turno anunciou o fim: fecha a entrada (senão o CLI esperaria mais mensagens). Fala que
         // chegar depois disto vai pelo caminho de sempre (`inject` devolve false).
-        if (signal === true) closeLive();
+        if (signal === true || signal === "held") closeLive();
         if (o.type === "system" && o.subtype === "task_started" && o.is_backgrounded && taskIds.has(String(o.tool_use_id || ""))) {
           asyncTaskIds.add(String(o.tool_use_id));
         }
@@ -2850,8 +2863,11 @@ function run(cmd: string, args: string[], cwd: string, stdin: string, signal?: A
  *    é desarmado — o anúncio anterior não era o fim. Ver JRV-42: no `--resume` o claude processa um
  *    `task_notification` velho como mini-turno, emite um `result` vazio e só ENTÃO roda o pedido real;
  *    tratar aquele primeiro `result` como fim matava o trabalho real 60 s depois.
+ *  - `"held"`: fim anunciado, mas o CLI ainda tem tarefas em SEGUNDO PLANO (workflow, Monitor) e segue
+ *    vivo esperando por elas. O prazo vira `heldGraceMs` (o teto do próprio CLI para essa espera + folga),
+ *    não os 60 s — derrubar ali matava o trabalho em andamento (04/11, revisão em 14 etapas).
  *  - nada: linha comum, não muda o prazo. */
-export type StreamLineSignal = boolean | "resumed" | void;
+export type StreamLineSignal = boolean | "resumed" | "held" | void;
 
 /** Like run(), but calls onLine for each complete stdout line as it arrives (NDJSON stream).
  *  Ver StreamLineSignal para o que `onLine` pode devolver. `finishedGraceMs` só existe para os testes
@@ -2860,7 +2876,7 @@ export type StreamLineSignal = boolean | "resumed" | void;
  *  escreve mensagens novas e FECHA quando o turno acaba — sem fechar, o CLI espera mais entrada para sempre. */
 export interface LiveInput { write(data: string): void; end(): void }
 
-export function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => StreamLineSignal, signal?: AbortSignal, finishedGraceMs = FINISHED_EXIT_GRACE_MS, liveInput?: (input: LiveInput) => void): Promise<string> {
+export function runStream(cmd: string, args: string[], cwd: string, stdin: string, onLine: (line: string) => StreamLineSignal, signal?: AbortSignal, finishedGraceMs = FINISHED_EXIT_GRACE_MS, liveInput?: (input: LiveInput) => void, heldGraceMs = claudeBackgroundWaitMs() + 10 * 60_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawnCli(cmd, args, cwd);
     const wasAborted = wireAbort(p, signal);
@@ -2875,20 +2891,25 @@ export function runStream(cmd: string, args: string[], cwd: string, stdin: strin
     // `announcedEnd` é separado do timer de propósito: é ele que decide, no fim, se um processo
     // derrubado tinha terminado o turno (resolve com o que já veio) ou não (falha).
     let finishedTimer: ReturnType<typeof setTimeout> | undefined;
+    let timerKind: "finished" | "held" | null = null;
     let announcedEnd = false;
-    const noteFinished = (): void => {
+    // Um `true` repetido não estende o prazo; trocar de tipo (esperando tarefas <-> fim de verdade) troca.
+    const arm = (kind: "finished" | "held"): void => {
       announcedEnd = true;
-      if (finishedTimer) return;
-      finishedTimer = setTimeout(() => killTree(p), finishedGraceMs);
+      if (finishedTimer && timerKind === kind) return;
+      if (finishedTimer) clearTimeout(finishedTimer);
+      timerKind = kind;
+      finishedTimer = setTimeout(() => killTree(p), kind === "held" ? heldGraceMs : finishedGraceMs);
       finishedTimer.unref?.();
     };
     const noteResumed = (): void => {
       announcedEnd = false;
-      if (finishedTimer) { clearTimeout(finishedTimer); finishedTimer = undefined; }
+      if (finishedTimer) { clearTimeout(finishedTimer); finishedTimer = undefined; timerKind = null; }
     };
     const signalOf = (line: string): void => {
       const s = onLine(line);
-      if (s === true) noteFinished();
+      if (s === true) arm("finished");
+      else if (s === "held") arm("held");
       else if (s === "resumed") noteResumed();
     };
     p.stdout!.on("data", (d) => {
