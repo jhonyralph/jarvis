@@ -7,13 +7,11 @@
  * de um turno que a IA tinha trabalhado) e pode acontecer de novo por qualquer motivo — Hub morto no
  * meio, disco cheio, projeção que falha.
  *
- * `reconcileFromNative` no Hub/runner já cobre o caso da CAUDA: última mensagem é `user`, a resposta
- * existe no transcript, backfill. O que falta — e é o formato do incidente de 2026-09-23 — é o
- * buraco no MEIO: o turno inteiro (pergunta + resposta) sumiu, então não sobra nem a âncora que
- * aquele mecanismo exige.
+ * Este módulo encontra pares inteiros ausentes (incidente de 2026-09-23). history-recovery.ts
+ * também recupera respostas cujo usuário continua no store e projeções nativas incompletas.
  */
 
-export interface GapMessage { role: "user" | "assistant"; text: string; ts: number; activity?: unknown[] }
+export interface GapMessage { role: "user" | "assistant"; text: string; ts: number; activity?: unknown[]; interrupted?: boolean }
 export interface HistoryGap { user: GapMessage; assistant: GapMessage }
 
 /**
@@ -109,7 +107,7 @@ function matchesAnyStored(nativeText: string, stored: string[]): boolean {
  */
 export function findHistoryGaps(
   storeMessages: ReadonlyArray<{ role?: string; text?: string; ts?: number }>,
-  nativeMessages: ReadonlyArray<{ role?: string; text?: string; ts?: number; activity?: unknown[] }>,
+  nativeMessages: ReadonlyArray<{ role?: string; text?: string; ts?: number; activity?: unknown[]; completion?: string }>,
   limit = MAX_GAPS_PER_SESSION,
 ): HistoryGap[] {
   const stored = storeMessages.filter((m) => m?.role === "user").map((m) => normalizePrompt(m.text));
@@ -126,8 +124,8 @@ export function findHistoryGaps(
     // pertence a outra pergunta.
     let reply: typeof natives[number] | undefined;
     for (let j = i + 1; j < natives.length; j++) {
-      if (natives[j].role === "user" && !isInjectedPrompt(natives[j].text)) break;
-      if (natives[j].role === "assistant" && normalizePrompt(natives[j].text)) { reply = natives[j]; break; }
+      if (natives[j].role === "user") break; // even "Continue" starts another turn
+      if (natives[j].role === "assistant" && (normalizePrompt(natives[j].text) || natives[j].activity?.length)) { reply = natives[j]; break; }
     }
     if (!reply) continue;
 
@@ -136,7 +134,7 @@ export function findHistoryGaps(
 
     gaps.push({
       user: { role: "user", text: String(m.text ?? ""), ts: userTs },
-      assistant: { role: "assistant", text: String(reply.text ?? ""), ts: replyTs, activity: reply.activity },
+      assistant: { role: "assistant", text: String(reply.text ?? ""), ts: replyTs, activity: reply.activity, interrupted: reply.completion !== "completed" },
     });
     if (gaps.length >= limit) break;
   }

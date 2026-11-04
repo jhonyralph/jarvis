@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "./store.js";
@@ -248,5 +248,27 @@ test("insertRestored reinsere turno no MEIO do historico e sobrevive ao reload",
 
     assert.equal(s.insertRestored("s1", []), 0);
     assert.equal(s.insertRestored("inexistente", [{ role: "user", text: "x", ts: 1 }]), 0);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("recovery replacement is durable, idempotent and refuses stale objects or failed writes", () => {
+  const d = dir();
+  try {
+    const store = new Store(DEF, d);
+    store.add("s", { role: "user", text: "continue", ts: 1 });
+    const before = { role: "assistant" as const, text: "tail", ts: 3 };
+    store.add("s", before);
+    const after = { ...before, text: "full tail", ts: 2, interrupted: true };
+    mkdirSync(join(d, "sessions", "s.jsonl.tmp"));
+    assert.throws(() => store.applyHistoryRecovery("s", [], [{ before, after }]));
+    assert.equal(store.history("s")[1], before, "failed persistence must not publish success in memory");
+    rmSync(join(d, "sessions", "s.jsonl.tmp"), { recursive: true });
+    assert.equal(store.applyHistoryRecovery("s", [], [{ before, after }]), 1);
+    assert.equal(store.applyHistoryRecovery("s", [], [{ before, after }]), 0, "stale replacement cannot run again");
+    assert.equal(store.insertRestored("s", [after]), 0, "duplicate recovery cannot add another row");
+    const reopened = new Store(DEF, d);
+    assert.equal(reopened.history("s")[1].text, "full tail");
+    assert.equal(reopened.history("s")[1].restored, true);
+    assert.match(readFileSync(join(d, "sessions", "s.jsonl.bak"), "utf8"), /"text":"tail"/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

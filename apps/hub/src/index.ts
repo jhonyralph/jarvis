@@ -45,7 +45,7 @@ import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, refreshNativeList, onNativeListChange, nativeHistory, nativeTitleCached, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
-import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, listDirectory, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, tournamentCandidateResults, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, listProviderTasks, listProviderStates, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, runDebate, mergeActiveRunSessions, trimMessageActivity, attachPartialTurn, turnProducedWork, findHistoryGaps, ACTIVITY_PAGE_DEFAULT, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution, MachineSampler, nativeHistoryAsync, searchNativeAsync } from "@jarvis/core";
+import { Store, updateCheck, updateApply, updateRollback, restartService, repoRemoteUrl, repoCommit, repoVersion, runnerUpdateDeliveryDecision, runnerUpdateTargetDecision, commitContains, readProjectFile, listDirectory, writeJsonAtomic, readJson, cleanupOrphanBackups, RoutineStore, scheduleLabel, validateCron, createSeenSet, filterForDispatch, MemoryStore, classifyMemoryText, projectMemoryKey, StagingStore, buildRefinePrompt, parseRefine, Metrics, VERSION, AGENT_EVENT_SCHEMA_VERSION, buildRelevancePrompt, parseRelevanceVerdict, buildVoicePreflightPrompt, parseVoicePreflight, listCommandsPublic, expandCommand, cmdAgentOf, listNativeCatalog, collectNativeCatalogFiles, nativeSourceId, listMentionFiles, expandBang, previewMemoryAppend, applyMemoryAppend, MemoryProvenanceStore, ContextManifestStore, buildContextManifest, buildTurnAttachments, touchedFilesFromMessages, fileDiffFromMessages, UsageLedger, ExecutionStore, ExecutionTracker, ManagedWorktreeManager, isProviderExecutionEvent, redactProviderExecutionActivity, EXECUTION_ADAPTER_PROFILES, loadAdaptivePolicyDocument, saveAdaptivePolicyDocument, normalizeAdaptivePolicyDocument, resolveAdaptivePolicy, decideMemoryWrite, decideAdaptiveRun, mergeAdaptiveManagedPolicy, adaptiveApprovalVoiceCommand, createAdaptiveApprovalRequest, explainAdaptivePolicy, upsertAdaptivePolicyScope, removeAdaptivePolicyScope, pendingActivityReplay, buildCouncilPlan, COUNCIL_MODES, SOLUTION_WORKSPACE_MODES, formatCouncilFinalMessage, formatCouncilRequestMessage, managedChildExecutionId, managedPhaseExecutionId, buildTournamentPlan, parseJudgeScores, selectTournamentWinner, formatTournamentFinalMessage, tournamentCandidateResults, parseWorkflowFromSkill, normalizeWorkflowDefinition, workflowToFile, workflowFromFile, dedupeWorkflowsById, WorkflowRunStore, ProjectTaskBindingStore, TaskMetaStore, parseTaskInput, parseFeatureTask, projectKeyFor, resolveTaskSource, resolveFeaturesRoot, listTasksFromMcp, loadTaskMcpConfig, taskMcpConfigFile, LocalTaskCache, formatParallelRunsLine, createTaskViaMcp, listProviderTasks, listProviderStates, windowsUpdaterBody, featureFileContent, featureFileName, validateTaskMcpServerInput, writeTaskMcpConfig, describeTaskMcpServers, TASK_MCP_SCHEMA_VERSION, TaskConnectionStore, resolveTaskConnection, publicTaskConnections, remoteMismatchWarning, remoteCheckApplies, fetchProviderIdentity, searchProviderTasks, getProviderTask, createProviderTask, TASK_PROVIDERS, SecretVault, secretNameFor, createRun, markStep, advanceRun, jumpToStep, focusStep, attachEvidence, setRunTask, linkSession, summarizeRun, normalizeTaskRef, taskLabel, parseStepDirectives, applyStepDirectives, buildWorkflowSteering, type WorkflowRun, type RunStepState, type MarkedBy, runDebate, mergeActiveRunSessions, trimMessageActivity, attachPartialTurn, turnProducedWork, ACTIVITY_PAGE_DEFAULT, clampDebateRounds, buildDebateOpeningPrompt, buildDebateRebuttalPrompt, buildDebateJudgePrompt, buildDebateSynthesisPrompt, parseDebateVerdict, formatDebateRoundMessage, formatDebateFinalMessage, DEBATE_INTERJECTION_MAX_CHARS, buildSessionBriefingBlock, pruneStoredBriefings, SESSION_BRIEFING_MAX_CHARS, SESSION_BRIEFING_MAX_PER_SESSION, SESSION_BRIEFING_TTL_MS, type StoredSessionBriefing, resolveEffortLevel, normalizeEffortLevel, type EffortLevel, type DebateDebater, type DebaterResponse, type DebateVerdict, TerminalManager, type TournamentCompetitor, type TournamentCandidateResult, type ManagedTaskState, readCanonicalFramework, materializeFramework, pruneFrameworkResidue, writeFrameworkFile, deleteFrameworkFile, deleteFrameworkFolder, importFrameworkFromNative, installFrameworkStarterPack, starterFrameworkFiles, collectNativeFrameworkFiles, frameworkRoot, normalizeFrameworkPreference, FrameworkProvenanceStore, type FrameworkPreference, type FrameworkManifest, type CouncilMode, type SolutionWorkspaceMode, type ExecutionAdapterId, type ManagedExecutionPlan, type ManagedExecutionPolicyInput, type Routine, type AdaptivePolicyDocument, type AdaptiveApprovalRequest, type PolicyScope, type MemoryAppendPreview, parseTaskSourceCommand, planTaskSourceCommand, formatTaskSourceConfirmation, resolveFanoutTasks, fanoutConfirmText, fanoutSeedMessage, fanoutParentMessage, type FanoutResolution, MachineSampler, nativeHistoryAsync, searchNativeAsync } from "@jarvis/core";
 import { QueueBlockRegistry, readPackDir, packDirLabel, pendingInstructions, buildInstructionsSteering, buildInventory, scanFramework, validateFramework, unzip, extractFrameworkFiles, buildImportPreview, applyFrameworkImport, parseGithubSpec, fetchGithubFramework, FrameworkSourceStore, githubSourceId, zipSourceId, hashFrameworkFiles, AgentAvailabilityStore, nextLocalMidnight, buildPackIndex, packTemplateFiles, zipStore, checkConformance, PACK_TEMPLATE_FILENAME, type FrameworkFile, type GithubSpec, type FrameworkSourceType, type PackManifest, type PackRef } from "@jarvis/core";
 import { embed, embedOne } from "./embed.js";
 import { RUNNER_PROTOCOL_VERSION, RUNNER_CAPABILITY_SINCE, isExecutionState, isPersonalClientMessage, type ContextActor, type ContextManifest, type RunnerInfo, type ExecutionEvent, type ExecutionNode, type ExecutionState, type ExecutionManifestEntry } from "@jarvis/protocol";
@@ -55,6 +55,7 @@ import { createFileEditRouter, type FileEditPendingMeta } from "./fileEdit.js";
 import * as guard from "./guard.js";
 import { startAdminApi } from "./adminApi.js";
 import { runManagedTurn, type ManagedTurnInput, type TurnCtx } from "./turn.js";
+import { recoverSessionHistory } from "@jarvis/core";
 import { autoRouteFallback, buildAutoRoutePrompt, normalizeAutoRouteAgents, parseAutoRouteDecision, type AutoRouteDecision, type AutoRouteFlags } from "./autoRoute.js";
 import { buildCouncilRoutePrompt, councilRouteFallback, parseCouncilRouteDecision, type CouncilRouteDecision } from "./councilRoute.js";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
@@ -3902,7 +3903,9 @@ const turnCtx: TurnCtx = {
   onLimit: (agent, message) => onLimitHit(agent, message),
   notice: (sid, message) => broadcast(sid, { t: "notice", message }),
 };
-function runOwnedManagedTurn(sid: string, input: ManagedTurnInput): Promise<void> {
+async function runOwnedManagedTurn(sid: string, input: ManagedTurnInput): Promise<void> {
+  // The caller owns the dispatch reservation; activeRuns may already mark this preflight.
+  await reconcileFromNative(store.ensure(sid), true);
   const principalId = input.actor?.userId ? actorPrincipalId(input.actor) : captureSessionOwnerGeneration(LOCAL_ID, sid).principalId || auth.OWNER_IDENTITY;
   return executionPrincipalContext.run(principalId, () => runManagedTurn(turnCtx, sid, input));
 }
@@ -5449,51 +5452,14 @@ async function startRemoteTournament(ws: WebSocket, rc: RunnerConn, input: {
   }
   send(ws, { t: "tournament_started", runnerId: rc.id, sessionId: input.sessionId, rootExecutionId: built.rootExecutionId, mode: input.mode });
 }
-/** Reconcile a hub session against its bound NATIVE transcript. If the hub was killed mid-turn
- *  (restart, crash), the provider CLI child can keep running as an orphan
- *  (Windows doesn't kill children when the parent is force-killed) and finish writing the reply
- *  straight into its native transcript — but the in-memory `await agent.send()` that would call store.add()
- *  never resumes (the whole Node process died), so the reply is invisible in Jarvis even though
- *  `claude --resume` has it. If the store's last message is a user turn with no reply, and the
- *  native transcript has a NEWER assistant reply, backfill it. Never touches a session that's
- *  currently running (a live turn's own store.add will land normally when it finishes). */
-function reconcileFromNative(s: ReturnType<typeof store.ensure>): void {
-  if (activeRuns.has(s.id)) return;
-  const last = store.history(s.id).at(-1);
-  if (!last || last.role !== "user") return; // already answered, or nothing sent yet — nothing to reconcile
-  const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-  if (!nid) return;
-  const nativeKey = nativeIdForAgent(s.agent, nid); if (!nativeKey) return;
-  const h = nativeHistory(nativeKey);
-  if (!h) return;
-  const nativeReply = [...h.messages].reverse().find((m) => m.role === "assistant" && m.ts > last.ts);
-  if (nativeReply?.text) store.add(s.id, { role: "assistant", text: nativeReply.text, ts: nativeReply.ts, agent: s.agent, activity: nativeReply.activity });
-}
-
-/** Reconstroi no store os turnos que existem no transcript nativo e sumiram daqui — ver
- *  `history-gaps.ts` para o porque e para o filtro de falso positivo. Diferente de
- *  `reconcileFromNative`, que so completa a CAUDA, este preenche buraco no meio: e o formato do
- *  incidente em que um cancelamento apagou pergunta e resposta de um turno inteiro.
- *
- *  Silencioso por escolha: nao levanta erro nem avisa quando nao ha nada a fazer (o caso comum).
- *  O que restaura fica marcado com `restored`, entao a origem nunca vira adivinhacao. */
-function backfillHistoryGaps(s: ReturnType<typeof store.ensure>, nh: { messages: Array<{ role: string; text: string; ts: number; activity?: unknown[] }> } | null): number {
-  if (!nh || activeRuns.has(s.id) || isNativeId(s.id)) return 0;
+/** Recover unanswered turns and native partials through the shared durable-history path. */
+async function reconcileFromNative(s: ReturnType<typeof store.ensure>, beforeTurn = false): Promise<void> {
   try {
-    const gaps = findHistoryGaps(store.history(s.id), nh.messages);
-    if (!gaps.length) return 0;
-    const restored = gaps.flatMap((g) => [
-      { role: "user" as const, text: g.user.text, ts: g.user.ts, agent: s.agent },
-      { role: "assistant" as const, text: g.assistant.text, ts: g.assistant.ts, agent: s.agent, activity: g.assistant.activity as unknown[] | undefined },
-    ]);
-    const n = store.insertRestored(s.id, restored);
-    if (n) { log.info("history_backfill", { sessionId: s.id, agent: s.agent, turns: gaps.length, messages: n }); pushSessions(); }
-    return n;
-  } catch (e) {
-    // Recuperacao e um bonus: ela nunca pode impedir a conversa de abrir.
-    log.warn("history_backfill_failed", { sessionId: s.id, error: String((e as any)?.message ?? e) });
-    return 0;
-  }
+    const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+    const n = await recoverSessionHistory({ store, sessionId: s.id, executions: localExecutionStore,
+      nativeKey: nid ? nativeIdForAgent(s.agent, nid) : null, isBusy: () => !beforeTurn && activeRuns.has(s.id) });
+    if (n) { activityBuf.delete(scopedSessionKey(LOCAL_ID, s.id)); pushSessions(); }
+  } catch (error) { log.warn("history_recovery_failed", { sessionId: s.id, error: String(error) }); }
 }
 
 const LIVE_EXECUTION_STATES = new Set(["queued", "running", "waiting_input"]);
@@ -5503,7 +5469,7 @@ function reconcileNativeExecutions(sid: string): number {
   const h = nativeHistory(sid);
   if (!h) return 0;
   let changed = 0;
-  const assistants = h.messages.filter((m) => m.role === "assistant" && m.text);
+  const assistants = h.messages.filter((m) => m.role === "assistant" && m.text && m.completion === "completed");
   for (const snapshot of localExecutionStore.rootsForSession(sid)) {
     const root = snapshot.nodes.find((node) => node.executionId === snapshot.rootExecutionId);
     if (!root || !LIVE_EXECUTION_STATES.has(root.state)) continue;
@@ -7455,7 +7421,7 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         sessionId: msg.sessionId,
         session: { agent: h.agent, cwd: h.cwd, title: h.title, native: true, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, sessionCost: costOf(msg.sessionId), sessionUsage: sessionUsage(msg.sessionId), model: h.model, effort: h.effort, permissionMode: sessionPermissionMode(msg.sessionId) },
         total: h.messages.length,
-        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })),
+        messages: h.messages.slice(-HISTORY_CAP).map((m) => ({ sessionId: msg.sessionId, role: m.role, text: m.text, ts: m.ts, agent: h.agent, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity, interrupted: m.interrupted })),
         files: sessionFiles(msg.sessionId),
       });
       replayActivity(ws, LOCAL_ID, msg.sessionId);
@@ -7475,13 +7441,9 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const warmNid = agents.get(s.agent).nativeSessionId?.(s.id), warmKey = warmNid ? nativeIdForAgent(s.agent, warmNid) : null;
         if (warmKey) await nativeHistoryAsync(warmKey).catch(() => null);
       }
-      reconcileFromNative(s); // backfill a reply an orphaned turn (killed by a prior hub restart) already wrote natively
+      await reconcileFromNative(s);
       const nid = agents.get(s.agent).nativeSessionId?.(s.id);
       const nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null;
-      // Turno que sumiu do MEIO do historico volta aqui (reconcileFromNative so cobre a cauda). Roda
-      // no OPEN, nao no boot: o transcript ja foi lido logo acima para esta sessao, entao o custo e
-      // zero — varrer todas as sessoes no boot e exatamente o que ja travou o event loop deste Hub.
-      backfillHistoryGaps(s, nh);
       const all = store.history(s.id);
       const su = sessionUsage(s.id), lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
       const nativeFiles = nativeKey ? sessionFiles(nativeKey) : [], derivedFiles = touchedFilesFromMessages(all), paths = new Set(nativeFiles.map((f) => f.path));
@@ -9755,7 +9717,7 @@ async function reconcileNativeAfterBoot(): Promise<void> {
     for (const meta of store.list().filter((m) => m.updatedAt >= since)) {
       const s = store.get(meta.id); // get, não ensure: a sessão pode ter sido apagada durante a varredura
       if (!s) continue;
-      const before = s.messages.length; reconcileFromNative(s); if (s.messages.length > before) replies++;
+      const before = s.messages.length; await reconcileFromNative(s); if (s.messages.length > before) replies++;
       await yieldLoop();
     }
   } catch { /* ignore */ }

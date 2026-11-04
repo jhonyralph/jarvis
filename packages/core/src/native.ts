@@ -10,7 +10,7 @@
  * Ids are prefixed ("claude:"/"codex:") so they never collide with Jarvis's own
  * session UUIDs and the open handler can route them here. Nothing is written back.
  */
-import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { createReadStream, readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { open as openAsync, readdir as readdirAsync, readFile as readFileAsync, stat as statAsync } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, basename, dirname } from "node:path";
@@ -996,8 +996,8 @@ function findFileById(id: string): { path: string; claude: boolean } | null {
 /** One activity event grouped under an assistant turn (same shape the live stream / a managed
  *  session's `activity` uses), so the client renders native history with the identical grouped +
  *  sub-agent-nested flow it shows live. `toolId`/`parentId` drive the sub-agent (Task) nesting. */
-export interface HistEvent { kind: "tool" | "text" | "thinking"; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; toolId?: string; parentId?: string; text?: string; background?: boolean; status?: "started" | "completed" | "failed"; error?: string; }
-export interface HistMsg { role: MsgRole; text: string; ts: number; name?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; activity?: HistEvent[]; }
+export interface HistEvent { kind: "tool" | "text" | "thinking"; name?: string; summary?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; toolId?: string; parentId?: string; text?: string; background?: boolean; status?: "started" | "completed" | "failed"; error?: string; at?: number; }
+export interface HistMsg { role: MsgRole; text: string; ts: number; name?: string; detail?: string; path?: string; adds?: number; dels?: number; rows?: DiffRow[]; activity?: HistEvent[]; completion?: "completed" | "interrupted"; completedAt?: number; interrupted?: boolean; textParts?: Array<{ text: string; ts: number }>; }
 /** Full read-only history of one native session — text turns AND tool activity (role:"tool"),
  *  interleaved in order, so the "editando/criando arquivo" blocks survive a page refresh. */
 // `diffLimit` bounds how many tool items get their file stats computed. Each Edit stat runs an
@@ -1009,7 +1009,7 @@ export interface HistMsg { role: MsgRole; text: string; ts: number; name?: strin
 // response, which is why "os arquivos demoram a aparecer"). Cache the PARSED VIEW keyed on the
 // jsonl's mtime+size (not the file bytes): an idle session re-opens instantly, a live one whose
 // jsonl just grew re-parses. Bounded so memory can't run away.
-type NativeHist = { agent: string; cwd: string; title: string; messages: HistMsg[]; inputTokens?: number; contextWindowTokens?: number; model?: string; effort?: string };
+type NativeHist = { agent: string; cwd: string; title: string; messages: HistMsg[]; truncated?: boolean; inputTokens?: number; contextWindowTokens?: number; model?: string; effort?: string };
 const histCache = new Map<string, { key: string; data: NativeHist }>();
 // Contexto de entrada (fresh + cache) do último turno do thread principal — pro medidor de consumo
 // aparecer JÁ ao abrir a sessão, não só depois da 1ª mensagem nova. Mesma conta de agents.ts.
@@ -1051,7 +1051,8 @@ export function nativeHistory(id: string, diffLimit = 120): NativeHist | null {
   try { const s = statSync(f.path); stamp = `${diffLimit}:${s.mtimeMs}:${s.size}`; } catch { /* fall through */ }
   const hit = histCache.get(f.path);
   if (hit && stamp && hit.key === stamp) return hit.data;
-  return parseNativeHistory(id, f, readTranscriptCapped(f.path).text, stamp, diffLimit);
+  const raw = readTranscriptCapped(f.path);
+  return parseNativeHistory(id, f, raw.text, stamp, diffLimit, raw.truncated);
 }
 
 /** nativeHistory sem prender o Hub na leitura do disco: a interpretação usa o mesmo código e deixa o
@@ -1064,13 +1065,60 @@ export async function nativeHistoryAsync(id: string, diffLimit = 120): Promise<N
   try { const s = await statAsync(f.path); stamp = `${diffLimit}:${s.mtimeMs}:${s.size}`; } catch { /* fall through */ }
   const hit = histCache.get(f.path);
   if (hit && stamp && hit.key === stamp) return hit.data;
-  const raw = (await readTranscriptCappedAsync(f.path)).text;
-  return parseNativeHistory(id, f, raw, stamp, diffLimit);
+  const raw = await readTranscriptCappedAsync(f.path);
+  return parseNativeHistory(id, f, raw.text, stamp, diffLimit, raw.truncated);
 }
 
-function parseNativeHistory(id: string, f: { path: string; claude: boolean }, raw: string, stamp: string, diffLimit: number): NativeHist | null {
-  const ckey = f.path;
+/** Recovery needs the user boundary even when ONE turn exceeds the display reader's byte cap.
+ * Stream a fixed snapshot, yielding between batches; never allocate the whole rollout string.
+ * The cached projection is shared with normal opens, so an idle session is scanned only once. */
+export async function nativeHistoryForRecovery(id: string, diffLimit = 120): Promise<NativeHist | null> {
+  if (!isNativeId(id)) return null;
+  const f = findFileById(id);
+  if (!f) return null;
+  const stat = await statAsync(f.path);
+  if (!stat.size) return null;
+  const stamp = `${diffLimit}:${stat.mtimeMs}:${stat.size}`;
+  const hit = histCache.get(f.path);
+  if (hit?.key === stamp && !hit.data.truncated) return hit.data;
+  const parser = nativeHistoryParser(id, f, stamp, diffLimit);
+  const stream = createReadStream(f.path, { encoding: "utf8", end: stat.size - 1, highWaterMark: 64 * 1024 });
+  let pending = "", skipping = false, truncated = false, count = 0;
+  try {
+    for await (const chunk of stream) {
+      const parts = String(chunk).split("\n");
+      for (let i = 0; i < parts.length; i++) {
+        if (!skipping) {
+          pending += parts[i];
+          if (pending.length > TRANSCRIPT_READ_CAP_BYTES) { pending = ""; skipping = true; truncated = true; }
+        }
+        if (i === parts.length - 1) continue;
+        if (!skipping && pending.trim()) {
+          let value;
+          try { value = JSON.parse(pending); } catch { truncated = true; }
+          if (value) parser.accept(value);
+        }
+        pending = ""; skipping = false;
+        if (++count % 64 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    if (pending.trim() && !skipping) {
+      try { parser.accept(JSON.parse(pending)); } catch { truncated = true; }
+    }
+    return parser.finish(stat.size, truncated);
+  } finally { stream.destroy(); }
+}
+
+function parseNativeHistory(id: string, f: { path: string; claude: boolean }, raw: string, stamp: string, diffLimit: number, truncated: boolean): NativeHist | null {
   if (!raw) return null;
+  const parser = nativeHistoryParser(id, f, stamp, diffLimit);
+  eachLine(raw, parser.accept);
+  return parser.finish(raw.length, truncated);
+}
+
+function nativeHistoryParser(id: string, f: { path: string; claude: boolean }, stamp: string, diffLimit: number) {
+  const ckey = f.path;
   const messages: HistMsg[] = [];
   const toolRefs: Array<{ ev: HistEvent; name: string; input: unknown }> = [];
   const codexToolsSeen = new Set<string>();
@@ -1085,12 +1133,12 @@ function parseNativeHistory(id: string, f: { path: string; claude: boolean }, ra
   // Group each assistant TURN's activity (tools + sub-agent text) into ONE assistant message's
   // `activity` array — the SAME shape a managed session stores — so the client renders native history
   // with the identical grouped/nested flow it shows live, not a flat list of separate tool rows.
-  let pend: { text: string; activity: HistEvent[]; ts: number } | null = null;
+  let pend: { text: string; activity: HistEvent[]; ts: number; completion?: "completed" | "interrupted"; completedAt?: number; textParts?: Array<{ text: string; ts: number }> } | null = null;
   const flushPend = (): void => {
     if (!pend) return;
     const t = cleanText(pend.text);
     const text = isNoopAssistantText(t) ? "" : t;
-    if (text || pend.activity.length) messages.push({ role: "assistant", text, ts: pend.ts, activity: pend.activity.length ? pend.activity : undefined });
+    if (text || pend.activity.length) messages.push({ role: "assistant", text, ts: pend.ts, activity: pend.activity.length ? pend.activity : undefined, completion: pend.completion, completedAt: pend.completedAt, textParts: pend.textParts, interrupted: pend.completion === "interrupted" || undefined });
     pend = null;
   };
   // Sub-agent nesting: a main-thread Task/Agent tool_use spawns a sidechain; map the sidechain back to
@@ -1098,7 +1146,7 @@ function parseNativeHistory(id: string, f: { path: string; claude: boolean }, ra
   // flat-within-group tool when the transcript doesn't carry the link (e.g. background agents).
   const taskOfEntry = new Map<string, string>();
   const taskOfSide = new Map<string, string>();
-  eachLine(raw, (o) => {
+  const accept = (o: any): void => {
     if (f.claude) {
       if (o.type === "custom-title" && o.customTitle) lastCustom = o.customTitle;   // último vence
       else if (o.type === "ai-title" && o.aiTitle) lastAi = o.aiTitle;              // título CORRETO = ai-title mais recente
@@ -1113,7 +1161,7 @@ function parseNativeHistory(id: string, f: { path: string; claude: boolean }, ra
           // A REAL user message closes the current assistant turn and opens the next one. Injected
           // tool-results/notifications (also type:"user") are mid-turn — skip, never split on them.
           const t = cleanText(contentText(content));
-          if (!t || isInjected(t)) return;
+          if (!t || isInjected(t) || isSide || o.isMeta || o.isCompactSummary) return;
           flushPend();
           messages.push({ role: "user", text: t, ts });
           return;
@@ -1125,25 +1173,31 @@ function parseNativeHistory(id: string, f: { path: string; claude: boolean }, ra
           if (parentId && typeof o.uuid === "string") taskOfSide.set(o.uuid, parentId); // propagate down the sidechain chain
         }
         if (!pend) pend = { text: "", activity: [], ts };
+        if (!isSide) {
+          pend.completion = o.message?.stop_reason === "end_turn" ? "completed" : undefined;
+          pend.completedAt = pend.completion ? ts : undefined;
+        }
         if (Array.isArray(content)) {
           for (const b of content) {
             if (b.type === "text" && b.text) {
               const text = cleanText(b.text);
               if (!text || isNoopAssistantText(text)) continue;
-              if (isSide) pend.activity.push({ kind: "text", text, parentId });             // sub-agent reasoning → nested preview
-              else pend.text += text;                                                       // main answer (accumulated across the turn, like a managed reply)
+              if (isSide) pend.activity.push({ kind: "text", text, parentId, at: ts });
+              else { pend.text += text; (pend.textParts ??= []).push({ text, ts }); }
             } else if (b.type === "tool_use") {
-              const ev: HistEvent = { kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), toolId: b.id, parentId, background: isBackgroundTool(b.name, b.input) };
+              const ev: HistEvent = { kind: "tool", name: b.name, summary: toolSummary(b.name, b.input), detail: toolDetail(b.name, b.input), toolId: b.id, parentId, background: isBackgroundTool(b.name, b.input), at: ts };
+              ev.path = b.input?.file_path || b.input?.notebook_path;
               pend.activity.push(ev);
               toolRefs.push({ ev, name: b.name, input: b.input });
+              if (toolRefs.length > diffLimit) toolRefs.shift(); // release large historical tool inputs while streaming
               if (!isSide && b.id && (b.name === "Task" || b.name === "Agent") && typeof o.uuid === "string") taskOfEntry.set(o.uuid, b.id); // this entry spawned a sub-agent
             } else if (b.type === "thinking") {
-              pend.activity.push({ kind: "thinking", parentId });
+              pend.activity.push({ kind: "thinking", parentId, at: ts });
             }
           }
         } else {
           const t = cleanText(contentText(content));
-          if (t && !isNoopAssistantText(t)) { if (isSide) pend.activity.push({ kind: "text", text: t, parentId }); else pend.text += t; }
+          if (t && !isNoopAssistantText(t)) { if (isSide) pend.activity.push({ kind: "text", text: t, parentId, at: ts }); else { pend.text += t; (pend.textParts ??= []).push({ text: t, ts }); } }
         }
       }
     } else {
@@ -1152,15 +1206,20 @@ function parseNativeHistory(id: string, f: { path: string; claude: boolean }, ra
       else if (o.type === "event_msg" && o.payload?.type === "token_count" && o.payload.info) {
         lastUsage = { ...o.payload.info.last_token_usage, model_context_window: o.payload.info.model_context_window };
       }
+      else if (o.type === "event_msg" && o.payload?.type === "task_started") { flushPend(); }
+      else if (o.type === "event_msg" && ["task_complete", "turn_aborted"].includes(o.payload?.type)) {
+        if (pend) { pend.completion = o.payload.type === "task_complete" ? "completed" : "interrupted"; pend.completedAt = Date.parse(o.timestamp) || 0; }
+        flushPend();
+      }
       else if (o.type === "response_item" && o.payload?.type === "message" && (o.payload.role === "user" || o.payload.role === "assistant")) {
         const t = cleanText(contentText(o.payload.content));
         if (!t || (o.payload.role === "user" && isInjected(t)) || (o.payload.role === "assistant" && isNoopAssistantText(t))) return;
         const ts = Date.parse(o.timestamp) || 0;
         if (o.payload.role === "user") { flushPend(); messages.push({ role: "user", text: t, ts }); }
-        else { if (!pend) pend = { text: "", activity: [], ts }; pend.text += t; }
+        else { if (!pend) pend = { text: "", activity: [], ts }; pend.text += t; (pend.textParts ??= []).push({ text: t, ts }); }
       } else if (o.type === "response_item" && o.payload?.type === "reasoning") {
         if (!pend) pend = { text: "", activity: [], ts: Date.parse(o.timestamp) || 0 };
-        pend.activity.push({ kind: "thinking" });
+        pend.activity.push({ kind: "thinking", at: Date.parse(o.timestamp) || 0 });
       } else {
         const tool = o.type === "response_item" ? codexResponseToolEvent(o.payload) : undefined;
         const tools = tool ? [tool] : codexRolloutToolEvents(o);
@@ -1169,22 +1228,25 @@ function parseNativeHistory(id: string, f: { path: string; claude: boolean }, ra
           if (key && codexToolsSeen.has(key)) continue;
           if (key) codexToolsSeen.add(key);
           if (!pend) pend = { text: "", activity: [], ts: Date.parse(o.timestamp) || 0 };
-          pend.activity.push(ev);
+          pend.activity.push({ ...ev, at: Date.parse(o.timestamp) || 0 });
         }
       }
     }
-  });
+  };
+  const finish = (bytes: number, truncated: boolean): NativeHist => {
   flushPend(); // close the final turn
   for (const r of toolRefs.slice(-diffLimit)) {
     const st = toolFileStat(r.name, r.input);
     r.ev.path = st.path; r.ev.adds = st.adds; r.ev.dels = st.dels; r.ev.rows = st.rows;
   }
-  noteParse(f.path, raw.length, messages.length); // format-drift telemetry (non-empty file, 0 msgs)
+  noteParse(f.path, bytes, messages.length); // format-drift telemetry (non-empty file, 0 msgs)
   const codexInput = !f.claude && lastUsage ? Number(lastUsage.input_tokens || 0) || undefined : undefined;
   const title = f.claude
     ? stableTitle(id, lastAi, lastCustom || messages.find((m) => m.role === "user")?.text || "Sessão Claude")
     : (codexTitle || titleText(messages.find((m) => m.role === "user")?.text || "") || "Sessão Codex");
-  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title, messages, inputTokens: f.claude ? inputContextOf(lastUsage) : codexInput, contextWindowTokens: !f.claude ? Number(lastUsage?.model_context_window) || undefined : undefined, model: lastModel || undefined, effort: lastEffort || undefined };
+  const data: NativeHist = { agent: f.claude ? "claude-code" : "codex", cwd, title, messages, truncated, inputTokens: f.claude ? inputContextOf(lastUsage) : codexInput, contextWindowTokens: !f.claude ? Number(lastUsage?.model_context_window) || undefined : undefined, model: lastModel || undefined, effort: lastEffort || undefined };
   if (stamp) { histCache.delete(ckey); if (histCache.size >= 24) histCache.delete(histCache.keys().next().value as string); histCache.set(ckey, { key: stamp, data }); }
   return data;
+  };
+  return { accept, finish };
 }

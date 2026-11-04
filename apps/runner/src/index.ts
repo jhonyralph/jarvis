@@ -29,7 +29,7 @@ import {
   materializeFramework, FrameworkProvenanceStore, listDirectory,
   buildTurnAttachments, imageDataUrl, runManagedTurn, touchedFilesFromMessages, fileDiffFromMessages, createAgentEventBridge, createEventSequencer,
   ExecutionStore, ExecutionTracker, ManagedWorktreeManager, EXECUTION_ADAPTER_PROFILES, isProviderExecutionEvent, redactProviderExecutionActivity, executionRootId, writeJsonAtomic,
-  pendingActivityReplay,
+  pendingActivityReplay, recoverSessionHistory,
   formatCouncilFinalMessage, managedChildExecutionId,
   formatTournamentFinalMessage, parseJudgeScores, selectTournamentWinner, tournamentCandidateResults,
   runDebate, clampDebateRounds, normalizeEffortLevel, resolveEffortLevel, managedPhaseExecutionId,
@@ -673,7 +673,7 @@ function reconcileNativeExecutions(sessionId: string): number {
   const h = nativeHistory(sessionId);
   if (!h) return 0;
   let changed = 0;
-  const assistants = h.messages.filter((m) => m.role === "assistant" && m.text);
+  const assistants = h.messages.filter((m) => m.role === "assistant" && m.text && m.completion === "completed");
   for (const snapshot of executionStore.rootsForSession(sessionId)) {
     const root = snapshot.nodes.find((node) => node.executionId === snapshot.rootExecutionId);
     if (!root || !LIVE_EXECUTION_STATES.has(root.state)) continue;
@@ -697,12 +697,12 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
     const h = nativeHistory(sessionId);
     if (!h) { send({ t: "error", reqId, message: "sessão nativa não encontrada" }); return; }
     const live = pendingActivityReplay(executionStore, sessionId, h.messages);
-    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, model: h.model, effort: h.effort, permissionMode: sessionPermissionMode(sessionId), total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity })), files: sessionFiles(sessionId), liveActivity: live?.events, liveState: live?.state, liveTurnId: live?.turnId, liveUpdatedAt: live?.updatedAt, liveTruncated: live?.truncated });
+    send({ t: "history", reqId, sessionId, title: h.title, agent: h.agent, cwd: h.cwd, writable: h.agent === "claude-code" || h.agent === "codex", inputTokens: h.inputTokens, contextWindowTokens: h.contextWindowTokens, model: h.model, effort: h.effort, permissionMode: sessionPermissionMode(sessionId), total: h.messages.length, messages: h.messages.map((m) => ({ role: m.role, text: m.text, ts: m.ts, name: m.name, detail: m.detail, path: m.path, adds: m.adds, dels: m.dels, rows: m.rows, activity: m.activity, interrupted: m.interrupted })), files: sessionFiles(sessionId), liveActivity: live?.events, liveState: live?.state, liveTurnId: live?.turnId, liveUpdatedAt: live?.updatedAt, liveTruncated: live?.truncated });
     startTail(sessionId); // live-mirror new turns (external CLI) to the Hub
   } else {
     if (store.isHidden(sessionId)) { send({ t: "error", reqId, message: "sessão interna não pode ser aberta pelo chat" }); return; }
     const s = store.ensure(sessionId);
-    reconcileFromNative(s);
+    await reconcileFromNative(s);
     const all = store.history(s.id);
     const nid = agents.get(s.agent).nativeSessionId?.(s.id);
     const nativeKey = nid ? nativeIdForAgent(s.agent, nid) : null, nh = nativeKey ? nativeHistory(nativeKey) : null, lastUsage = [...all].reverse().find((m: any) => m.usage)?.usage;
@@ -713,7 +713,7 @@ async function doHistory(reqId: string, sessionId: string): Promise<void> {
       writable: true, total: all.length, nativeId: nid, inputTokens: nh?.inputTokens, contextWindowTokens: nh?.contextWindowTokens, model: nh?.model || lastUsage?.model, effort: nh?.effort || lastUsage?.effort, permissionMode: sessionPermissionMode(s.id),
       messages: all.map((m: any) => ({
         role: m.role, text: m.text, ts: m.ts, agent: m.agent, speaker: m.speaker,
-        images: m.images, files: m.files, activity: m.activity, usage: m.usage, contextManifest: m.contextManifest, interrupted: m.interrupted,
+        images: m.images, files: m.files, activity: m.activity, usage: m.usage, contextManifest: m.contextManifest, interrupted: m.interrupted, restored: m.restored,
       })),
       files: [...nativeFiles, ...derivedFiles.filter((f) => !paths.has(f.path))],
       liveActivity: live?.events, liveState: live?.state, liveTurnId: live?.turnId,
@@ -1242,17 +1242,12 @@ async function executeRunnerAgentTurn(sessionId: string, selected: AgentAdapter,
   }
 }
 
-function reconcileFromNative(s: ReturnType<typeof store.ensure>): void {
-  if (activeRuns.has(s.id)) return;
-  const last = store.history(s.id).at(-1);
-  if (!last || last.role !== "user") return;
-  const nid = agents.get(s.agent).nativeSessionId?.(s.id);
-  if (!nid) return;
-  const nativeKey = nativeIdForAgent(s.agent, nid); if (!nativeKey) return;
-  const h = nativeHistory(nativeKey);
-  if (!h) return;
-  const nativeReply = [...h.messages].reverse().find((m) => m.role === "assistant" && m.ts > last.ts);
-  if (nativeReply?.text) store.add(s.id, { role: "assistant", text: nativeReply.text, ts: nativeReply.ts, agent: s.agent, activity: nativeReply.activity });
+async function reconcileFromNative(s: ReturnType<typeof store.ensure>, beforeTurn = false): Promise<void> {
+  try {
+    const nid = agents.get(s.agent).nativeSessionId?.(s.id);
+    await recoverSessionHistory({ store, sessionId: s.id, executions: executionStore,
+      nativeKey: nid ? nativeIdForAgent(s.agent, nid) : null, isBusy: () => !beforeTurn && activeRuns.has(s.id) });
+  } catch (error) { console.warn("[runner] history recovery failed", s.id, String(error)); }
 }
 
 async function doSend(
@@ -1328,6 +1323,8 @@ async function doSend(
       // the session is still empty; Store enforces that a started conversation never changes IA.
       if (existing && agentName && existing.agent !== agentName) store.reconfigure(sessionId, { agent: agentName });
       const s = store.ensure(sessionId, agentName ? { agent: agentName, cwd: cwd || CWD } : undefined);
+      // doSend owns the session lock, but the NEW provider turn has not started yet.
+      await reconcileFromNative(s, true);
       agent = agents.get(s.agent); streamAgent = agent.name; useCwd = s.cwd || CWD;
       const built = buildTurnAttachments(attachments, text, {
         inlineMax: 48 * 1024,
@@ -2001,7 +1998,7 @@ if (!TOKEN) {
 }
 try { const purged = purgeProbeJunk(); if (purged) console.log(`[runner] limpei ${purged} sessão(ões) de sondagem "ok"`); } catch { /* ignore */ }
 try { const s = purgeScratch(); if (s) console.log(`[runner] limpei ${s} transcript(s) descartável(is) de one-shot`); } catch { /* ignore */ }
-try {
+void (async () => { try {
   let n = 0;
   // Só a última semana: o histórico agora é lido sob demanda (store) e varrer todas as sessões o traria
   // de volta para a memória. A sessão antiga é reconciliada quando for aberta (doHistory faz isso).
@@ -2009,11 +2006,11 @@ try {
   for (const meta of store.list().filter((m) => m.updatedAt >= since)) {
     const s = store.ensure(meta.id);
     const before = s.messages.length;
-    reconcileFromNative(s);
+    await reconcileFromNative(s);
     if (s.messages.length > before) n++;
   }
   if (n) console.log(`[runner] reconciliei ${n} sessão(ões) com resposta nativa que tinha ficado invisível`);
-} catch { /* ignore */ }
+} catch { /* ignore */ } })();
 // A lista nativa agora é lida em segundo plano (2026-10-28): no boot ela ainda está vazia, então a
 // reconciliação espera a primeira leitura em vez de varrer uma lista vazia.
 void refreshNativeList().then((list) => { let n = 0; for (const meta of list) n += reconcileNativeExecutions(meta.id); if (n) console.log(`[runner] reconciliei ${n} execução(ões) nativas sem terminal observado`); }).catch(() => { /* ignore */ });

@@ -22,6 +22,7 @@ export * from "./triggers.js";
 export * from "./agent-contract.js";
 export * from "./turn.js";
 export * from "./history-gaps.js";
+export * from "./history-recovery.js";
 export * from "./attachments.js";
 export * from "./usage-ledger.js";
 export * from "./execution-store.js";

@@ -440,15 +440,34 @@ export class Store {
    *  enquanto o tempo anda para frente. Nada é substituído; o que já estava no store continua sendo
    *  a verdade e o restaurado apenas preenche o buraco. Devolve quantas mensagens entraram. */
   insertRestored(id: string, messages: StoredMessage[]): number {
+    return this.applyHistoryRecovery(id, messages);
+  }
+
+  /** Recovery may enrich a previously recovered partial. Compare the exact message objects so a
+   * concurrent turn cannot be overwritten; publish the new in-memory view only after fsync/rename. */
+  applyHistoryRecovery(id: string, messages: StoredMessage[], replacements: Array<{ before: StoredMessage; after: StoredMessage }> = []): number {
     const s = this.data[id];
-    if (!s || !messages.length) return 0;
-    const restored = messages.map((m) => ({ ...m, restored: true as const }));
-    s.messages = [...s.messages, ...restored].sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+    if (!s || (!messages.length && !replacements.length)) return 0;
+    if (replacements.some((r) => !s.messages.includes(r.before))) return 0;
+    const keys = new Set(s.messages.map((m) => JSON.stringify([m.role, m.ts, m.text])));
+    const restored = messages.filter((m) => {
+      const key = JSON.stringify([m.role, m.ts, m.text]);
+      if (keys.has(key)) return false;
+      keys.add(key); return true;
+    }).map((m) => ({ ...m, restored: true as const }));
+    if (!restored.length && !replacements.length) return 0;
+    const replaced = s.messages.map((m) => {
+      const replacement = replacements.find((r) => r.before === m);
+      return replacement ? { ...replacement.after, restored: true as const } : m;
+    });
+    const merged = [...replaced, ...restored].sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+    // Recovery must fail visibly and keep the in-memory view unchanged if persistence fails.
+    writeTextAtomic(this.msgFile(id), merged.map((m) => JSON.stringify(m)).join("\n") + "\n");
+    s.messages = merged;
     s.stats = computeStats(s.messages);
     s.updatedAt = s.messages.at(-1)?.ts ?? s.updatedAt;
-    this.rewriteMessages(id, s.messages);
     this.flush();
-    return restored.length;
+    return restored.length + replacements.length;
   }
 
   /** Remove the trailing USER message — a turn the user cancelled before any reply, "taking it back"

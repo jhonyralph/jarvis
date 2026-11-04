@@ -75,6 +75,21 @@ test("a resposta que volta é a do PRÓPRIO turno, não a do turno seguinte", ()
   assert.deepEqual(gaps.map((g) => g.assistant.text), ["RESPOSTA A", "RESPOSTA B"]);
 });
 
+test("short next prompts are boundaries and tool-only work is recoverable", () => {
+  assert.deepEqual(findHistoryGaps([], [
+    { role: "user", text: "Pedido anterior que ficou sem resposta", ts: 1 },
+    { role: "user", text: "Continue", ts: 2 },
+    { role: "assistant", text: "Resposta do Continue", ts: 3 },
+  ]), [], "never assign a later short prompt's answer to the earlier turn");
+  const gaps = findHistoryGaps([], [
+    { role: "user", text: "Leia os arquivos deste projeto", ts: 1 },
+    { role: "assistant", text: "", ts: 2, activity: [{ kind: "tool", name: "Read" }] },
+  ]);
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].assistant.interrupted, true);
+  assert.equal(gaps[0].assistant.activity?.length, 1);
+});
+
 test("restaurar é idempotente: o que voltou casa consigo mesmo na passada seguinte", () => {
   const nativo = [
     { role: "user", text: "pergunta que vai ser restaurada agora", ts: 10 },
