@@ -34,6 +34,8 @@ import {
   type SupportLevel,
 } from "./agent-contract.js";
 import { codexChildRolloutsAsync, type CodexChildRollout } from "./codex-executions.js";
+import { codexRolloutToolEvents, codexToolItemEvents } from "./codex-activity.js";
+export { codexCommandActivity } from "./codex-activity.js";
 import { estimateCodexCost } from "./codex-pricing.js";
 import { BACKGROUND_JOB_STEERING } from "./background-jobs.js";
 import { ensurePermissionBridge } from "./permission-bridge.js";
@@ -1709,47 +1711,22 @@ export async function codexPlanTelemetry(files?: string[], now = Date.now()): Pr
   return undefined;
 }
 
-/** Authoritative file metadata emitted to the native rollout after apply_patch. */
-export function codexPatchEventsFromLines(lines: string[], sinceMs?: number): StreamEvent[] {
+/** Observed tool activity appended to the rollout; I/O and batching belong to the caller. */
+export function codexActivityEventsFromLines(lines: string[], sinceMs?: number): StreamEvent[] {
   const events: StreamEvent[] = [];
   for (const line of lines) {
-    if (!line.includes('"patch_apply_end"')) continue;
+    if (!line.includes('"patch_apply_end"') && !line.includes('"item_completed"') && !line.includes('"web_search_end"')) continue;
     let row: any; try { row = JSON.parse(line); } catch { continue; }
     const at = Date.parse(String(row?.timestamp || ""));
     if (sinceMs && Number.isFinite(at) && at < sinceMs) continue;
-    const p = row?.type === "event_msg" && row.payload?.type === "patch_apply_end" ? row.payload : undefined;
-    if (!p?.changes || typeof p.changes !== "object") continue;
-    for (const [path, change] of Object.entries(p.changes) as Array<[string, any]>) {
-      const raw = String(change?.unified_diff || "");
-      const rows = raw.split(/\r?\n/).filter(Boolean).map((s): { t: " " | "+" | "-" | "@"; s: string } => ({ t: s.startsWith("@@") ? "@" : s.startsWith("+") && !s.startsWith("+++") ? "+" : s.startsWith("-") && !s.startsWith("---") ? "-" : " ", s }));
-      const adds = rows.filter((r) => r.t === "+").length, dels = rows.filter((r) => r.t === "-").length;
-      const write = change?.type === "add";
-      events.push({ kind: "tool", name: write ? "Write" : "Edit", summary: `${write ? "Criando" : "Editando"} ${path.split(/[\\/]/).pop() || path}`, toolId: `${p.call_id || "patch"}:${path}`, status: p.success === false ? "failed" : "completed", error: p.success === false ? String(p.stderr || "patch falhou") : undefined, path, adds, dels, rows: rows.length <= 300 ? rows : undefined, providerEvent: "patch_apply_end" });
-    }
+    events.push(...codexRolloutToolEvents(row));
   }
   return events;
 }
 
-/** Codex exposes file inspection/search/listing as `command_execution`, usually wrapped in
- * PowerShell. Preserve the real command in `detail`, but translate commands with unambiguous
- * semantics to Jarvis' provider-neutral Read/Grep/Glob vocabulary. This is classification of an
- * observed command, never an invented tool call. */
-export function codexCommandActivity(command: string): Pick<StreamEvent, "name" | "summary" | "detail" | "path"> {
-  const cmd = String(command || "").trim();
-  const flat = cmd.replace(/\s+/g, " ");
-  const quotedArg = '(?:"([^"]+)"|\'([^\']+)\'|([^\\s;|]+))';
-  const directRead = new RegExp(`\\bGet-Content\\b(?:\\s+-Raw)?\\s+(?:-(?:LiteralPath|Path)\\s+)?${quotedArg}`, "i").exec(cmd)
-    || new RegExp(`\\b(?:cat|type)\\s+${quotedArg}`, "i").exec(cmd);
-  const candidate = directRead ? String(directRead[1] || directRead[2] || directRead[3] || "").replace(/^["']|["']$/g, "") : "";
-  const path = candidate && !candidate.startsWith("$") && !candidate.startsWith("-") ? candidate : undefined;
-  const base = path ? path.split(/[\\/]/).pop() || path : "arquivo(s)";
-  if (/\bGet-Content\b/i.test(cmd) || /(?:^|[;&|]\s*|-[Cc]ommand\s+["']?)\s*(?:cat|type)\s+/i.test(cmd))
-    return { name: "Read", summary: `Lendo ${base}`, detail: cmd || undefined, path };
-  if (/\b(?:rg|Select-String)\b/i.test(cmd))
-    return { name: "Grep", summary: "Buscando no projeto", detail: cmd || undefined };
-  if (/\bGet-ChildItem\b/i.test(cmd) || /(?:^|[;&|]\s*|-[Cc]ommand\s+["']?)\s*(?:ls|dir|find)\b/i.test(cmd))
-    return { name: "Glob", summary: "Listando arquivos", detail: cmd || undefined };
-  return { name: "Bash", summary: "Bash: " + flat.slice(0, 90), detail: cmd.length > 90 ? cmd : undefined };
+/** Compatibility entry point for consumers requesting only file changes. */
+export function codexPatchEventsFromLines(lines: string[], sinceMs?: number): StreamEvent[] {
+  return codexActivityEventsFromLines(lines, sinceMs).filter(e => e.providerEvent === "patch_apply_end" || e.providerEvent === "codex_rollout.FileChange");
 }
 
 /**
@@ -1763,7 +1740,7 @@ export function codexCommandActivity(command: string): Pick<StreamEvent, "name" 
  * cada tique de 750 ms do acompanhamento de atividade — ~1 GB/s de churn com o event loop travado, que
  * é o que explicava o Hub com ~1 GB de RSS e o congelamento (INC-02).
  *
- * Quem consome isto (`codexPatchEventsFromLines`) só quer o que foi anexado AGORA e filtra por
+ * Quem consome isto (`codexActivityEventsFromLines`) só quer o que foi anexado AGORA e filtra por
  * `sinceMs`, então pular o atraso que não vai ser usado não perde nada. Marcamos `reset` no salto para
  * o chamador descartar o `patchCarry` e recriar o `StringDecoder`: a janela começa num byte arbitrário,
  * possivelmente no meio de um caractere e no meio de uma linha — e a primeira linha parcial morre no
@@ -1830,22 +1807,8 @@ export function codexItemToEvents(it: any, isCompleted: boolean): { events: Stre
     return txt ? { events: [{ kind: "text", text: txt }], text: txt } : { events: [] };
   }
   if (type === "reasoning") return isCompleted ? { events: [{ kind: "thinking" }] } : { events: [] };
-  if (type === "command_execution") {
-    const cmd = String(it.command ?? "");
-    const activity = codexCommandActivity(cmd);
-    return { events: [{ kind: "tool", ...activity, toolId: it.id, status, error: failed ? String(it?.error?.message || it?.error || it?.aggregated_output || "comando falhou") : undefined }] };
-  }
-  if (type === "file_change" || type === "patch" || type === "apply_patch") {
-    const changes = Array.isArray(it.changes) ? it.changes : Array.isArray(it.files) ? it.files : (it.path ? [{ path: it.path, kind: it.kind, unified_diff: it.unified_diff, diff: it.diff, rows: it.rows }] : []);
-    // Codex's stdout item commonly omits the unified diff. In that case wait for the authoritative
-    // patch_apply_end from the rollout instead of rendering a duplicate row without +/- metadata.
-    if (!changes.length || !changes.some((ch: any) => ch?.unified_diff || ch?.diff || ch?.rows)) return { events: [] };
-    return { events: changes.map((ch: any): StreamEvent => {
-      const p = String(ch?.path ?? ch?.file ?? "");
-      const write = /add|create|new/i.test(String(ch?.kind ?? ch?.type ?? ""));
-      return { kind: "tool", name: write ? "Write" : "Edit", summary: (write ? "Criando " : "Editando ") + (p.split(/[\\/]/).pop() || p || "arquivo"), path: p || undefined, toolId: `${it.id || type}:${p}`, status, error: failed ? String(it?.error || "edição falhou") : undefined };
-    }) };
-  }
+  const tools = codexToolItemEvents(it, isCompleted);
+  if (tools.length) return { events: tools };
   if (type === "mcp_tool_call" || type === "custom_tool_call" || type === "tool_call" || type === "function_call") {
     const tn = String(it.name ?? it.tool ?? it.tool_name ?? "ferramenta");
     return { events: [{ kind: "tool", name: tn, summary: "Ferramenta: " + tn.slice(0, 60), toolId: it.id, status, error: failed ? String(it?.error || "ferramenta falhou") : undefined }] };
@@ -2048,7 +2011,13 @@ export class CodexAdapter implements AgentAdapter {
     let patchOffset = beforeRollout ? await statAsync(beforeRollout).then((st) => st.size, () => 0) : 0;
     let patchCarry = "";
     let patchDecoder = new StringDecoder("utf8");
-    const patchSeen = new Set<string>();
+    const emitTool = (ev: StreamEvent): void => {
+      const key = ev.toolId;
+      const value = JSON.stringify([ev.status, ev.name, ev.path, ev.adds, ev.dels]);
+      if (key && seen.get(key) === value) return;
+      if (key) seen.set(key, value);
+      onEvent?.(ev);
+    };
     const emitPatches = async (flush = false): Promise<void> => {
       if (!onEvent || !(threadId || resumeId)) return;
       const candidate = patchFile || await codexThreadFile(threadId || resumeId);
@@ -2064,10 +2033,8 @@ export class CodexAdapter implements AgentAdapter {
       if (patchCarry.length > ROLLOUT_APPEND_MAX_BYTES) patchCarry = "";
       for (let i = 0; i < lines.length; i += 128) {
         await new Promise<void>((resolve) => setImmediate(resolve));
-        for (const ev of codexPatchEventsFromLines(lines.slice(i, i + 128), scanStartedAt)) {
-          const key = String(ev.toolId || `${ev.path}:${ev.adds || 0}:${ev.dels || 0}`);
-          if (patchSeen.has(key)) continue;
-          patchSeen.add(key); onEvent(ev);
+        for (const ev of codexActivityEventsFromLines(lines.slice(i, i + 128), scanStartedAt)) {
+          emitTool(ev);
         }
       }
     };
@@ -2119,10 +2086,11 @@ export class CodexAdapter implements AgentAdapter {
     const emitItem = (it: any, isCompleted: boolean): void => {
       const id = String(it?.id ?? "");
       const isAgentMsg = it?.type === "agent_message";
-      const { events, text } = codexItemToEvents(it, isCompleted);
+      const { events, text } = codexItemToEvents({ ...it, cwd: it?.cwd || cwd }, isCompleted);
       if (!events.length) return;
       if (text) finalParts.push(text);
       for (const e of events) {
+        if (e.kind === "tool") { emitTool(e); continue; }
         const key = String(e.toolId || id || `${it?.type}:${e.path || e.name || ""}`);
         const phase = String(e.status || (isCompleted ? "completed" : "started"));
         if (!isAgentMsg && key && seen.get(key) === phase) continue;

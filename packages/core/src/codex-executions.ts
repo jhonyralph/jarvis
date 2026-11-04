@@ -12,6 +12,7 @@ import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { open as openAsync, readdir as readdirAsync, stat as statAsync } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import type { AgentReply, StreamEvent } from "./agents.js";
+import { codexRolloutToolEvents, codexResponseToolEvent } from "./codex-activity.js";
 
 export type CodexChildState = "running" | "succeeded" | "failed" | "cancelled" | "unknown";
 
@@ -40,24 +41,6 @@ function textContent(content: unknown): string {
     .map((part: any) => part.text)
     .join("\n")
     .trim();
-}
-
-function toolFromResponse(payload: any): StreamEvent | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  if (payload.type !== "function_call" && payload.type !== "custom_tool_call") return undefined;
-  const name = String(payload.name || "Tool");
-  const raw = String(payload.arguments || payload.input || "");
-  let args: any = {};
-  try { args = raw ? JSON.parse(raw) : {}; } catch { args = { input: raw }; }
-  const command = String(args.command || args.cmd || (name === "exec" ? raw : ""));
-  const normalized = /exec|shell|command|terminal|bash/i.test(name) ? "Bash" : name;
-  const path = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : undefined;
-  const summary = normalized === "Bash"
-    ? `Bash: ${command.replace(/\s+/g, " ").slice(0, 90)}`
-    : `${normalized}${path ? `: ${path.split(/[\\/]/).pop()}` : ""}`;
-  return { kind: "tool", name: normalized, summary, detail: command.length > 90 ? command : undefined,
-    toolId: String(payload.call_id || payload.id || "") || undefined, status: "started", path,
-    providerEvent: `codex_rollout.${payload.type}` };
 }
 
 function usageFromTokenCount(payload: any): AgentReply["usage"] | undefined {
@@ -98,14 +81,15 @@ interface ChildProjection {
   usage?: AgentReply["usage"];
   activities: StreamEvent[];
   startedTools: Map<string, StreamEvent>;
+  seenItems: Set<string>;
 }
 
 function emptyProjection(): ChildProjection {
-  return { seenStart: false, state: "unknown", activities: [], startedTools: new Map() };
+  return { seenStart: false, state: "unknown", activities: [], startedTools: new Map(), seenItems: new Set() };
 }
 
 function cloneProjection(p: ChildProjection): ChildProjection {
-  return { ...p, activities: p.activities.slice(), startedTools: new Map(p.startedTools) };
+  return { ...p, activities: p.activities.slice(), startedTools: new Map(p.startedTools), seenItems: new Set(p.seenItems) };
 }
 
 function applyRow(p: ChildProjection, row: any): void {
@@ -114,7 +98,7 @@ function applyRow(p: ChildProjection, row: any): void {
     p.seenStart = true; p.state = "running";
     p.startedAt = Number(payload.started_at) > 0 ? Number(payload.started_at) * 1000 : undefined;
     p.endedAt = undefined; p.summary = undefined; p.usage = undefined;
-    p.activities = []; p.startedTools = new Map();
+    p.activities = []; p.startedTools = new Map(); p.seenItems = new Set();
     return;
   }
   if (!p.seenStart) return;   // histórico do pai antes do turno da criança: ignorado, como antes
@@ -123,16 +107,21 @@ function applyRow(p: ChildProjection, row: any): void {
       const text = textContent(payload.content);
       if (text) p.activities.push({ kind: "text", text, providerEvent: "codex_rollout.message" });
     }
-    const tool = toolFromResponse(payload);
+    const tool = codexResponseToolEvent(payload);
     if (tool) { p.activities.push(tool); if (tool.toolId) p.startedTools.set(tool.toolId, tool); }
     if (payload?.type === "function_call_output" || payload?.type === "custom_tool_call_output") {
       const callId = String(payload.call_id || "");
       const prior = p.startedTools.get(callId);
-      p.activities.push({ kind: "tool", name: prior?.name || "Tool", summary: prior?.summary || "Ferramenta concluída",
+      p.activities.push({ ...prior, kind: "tool", name: prior?.name || "Tool", summary: prior?.summary || "Ferramenta concluída",
         toolId: callId || undefined, status: "completed", providerEvent: `codex_rollout.${payload.type}` });
     }
   }
   if (row?.type !== "event_msg") return;
+  for (const ev of codexRolloutToolEvents(row)) {
+    if (ev.toolId && p.seenItems.has(ev.toolId)) continue;
+    if (ev.toolId) p.seenItems.add(ev.toolId);
+    p.activities.push(ev);
+  }
   if (payload?.type === "token_count") p.usage = usageFromTokenCount(payload) || p.usage;
   if (payload?.type === "task_complete") {
     p.state = "succeeded";

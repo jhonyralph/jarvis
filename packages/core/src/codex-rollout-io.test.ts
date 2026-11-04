@@ -125,6 +125,12 @@ fs.writeFileSync(file, JSON.stringify({type:'turn_context',payload:{model:'test-
 say({type:'thread.started',thread_id:'fixture-thread'});
 setTimeout(() => {
   fs.appendFileSync(file, JSON.stringify({type:'event_msg',payload:{type:'patch_apply_end',call_id:'final-patch',changes:{'final.ts':{type:'add',unified_diff:'+done'}}}})+'\\n');
+  const read = {type:'CommandExecution',id:'shared-read',command:['pwsh.exe','-Command',"Get-Content 'input.ts'"],cwd:__dirname,status:'completed',exit_code:0};
+  const patch = {type:'FileChange',id:'shared-patch',status:'completed',changes:{'current.ts':{type:'add',content:'done\\n'}}};
+  for (const item of [read, patch]) {
+    say({type:'item.completed',item});
+    fs.appendFileSync(file, JSON.stringify({type:'event_msg',payload:{type:'item_completed',item}})+'\\n');
+  }
   say({type:'item.completed',item:{id:'reply',type:'agent_message',text:'finished'}});
   say({type:'turn.completed',usage:{input_tokens:10,output_tokens:2}});
 }, 30);
@@ -138,6 +144,8 @@ setTimeout(() => {
   const reply = await adapter.send("fixture-session", "fixture prompt", dir, { signal: AbortSignal.timeout(10_000) }, (ev) => events.push(ev));
   assert.equal(reply.text, "finished");
   assert.equal(events.filter((ev) => ev.path === "final.ts").length, 1);
+  assert.equal(events.filter((ev) => ev.path === "current.ts").length, 1, "stdout plus rollout does not duplicate the edit");
+  assert.equal(events.filter((ev) => ev.path?.replace(/\\/g, "/").endsWith("/input.ts")).length, 1, "stdout plus rollout does not duplicate the read");
   const finalCount = events.length;
   await new Promise((resolve) => setTimeout(resolve, 850));
   assert.equal(events.length, finalCount, "no polling callback emits activity after send resolves");
