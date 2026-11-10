@@ -95,5 +95,47 @@ test("conversation accepts durable work, stays responsive, and recovers without 
     request("accepted-request", "Nova tarefa: revisar [fixture:slow]", sid);
     assert.equal((await take((m) => m.t === "conversation_reply" && m.requestId === "accepted-request")).duplicate, true);
     assert.equal((await inbox()).tasks.length, count + 2);
+    // Historical data can be huge. Pagination is a wire projection, never a destructive migration.
+    ws!.close(); await stopChild(child); child = undefined;
+    const seeded = new ConversationLedger(join(home, ".jarvis", "hub", "conversation"));
+    await seeded.ready;
+    const huge = "x".repeat(22_350_827), seededIds: string[] = [];
+    for (let i = 0; i < 80; i++) {
+      const clientId = `scale-request-${i}`;
+      seededIds.push(seeded.accept({ principalId: "owner", clientId, runnerId: focus.runnerId, sessionId: sid, text: `Histórico ${i}` }).id);
+      seeded.update("owner", clientId, { status: "failed", error: i === 79 ? huge : "Erro preservado" });
+    }
+    seeded.accept({ principalId: "guest", clientId: "private-request", runnerId: focus.runnerId, sessionId: sid, text: "Não expor este registro" });
+    await start();
+    let serial = 0;
+    async function page(options: Record<string, unknown>) {
+      const requestId = `page-${++serial}`;
+      send({ t: "conversation_list", ...options, requestId });
+      const result = await take(m => m.t === "conversation_inbox" && m.requestId === requestId);
+      assert.ok(Buffer.byteLength(JSON.stringify(result)) < 150_000, "the Hub must not send the historical 22 MB error");
+      return result;
+    }
+    const closed = await page({ summaryOnly: true });
+    assert.equal(closed.tasks, undefined);
+    assert.equal(closed.total, count + 82);
+    assert.equal(closed.preferences.notified, undefined);
+    const first = await page({ offset: 0 });
+    assert.equal(first.tasks.length, 50);
+    const oversized = first.tasks.find((t: any) => t.id === seededIds[79]);
+    assert.equal(oversized.summary.length, 1200);
+    assert.equal(oversized.summaryTruncated, true);
+    const unchanged = await page({ offset: 0, version: first.version });
+    assert.equal(unchanged.unchanged, true); assert.equal(unchanged.tasks, undefined);
+    const second = await page({ offset: 50 });
+    const allIds = new Set([...first.tasks, ...second.tasks].map(t => t.id));
+    assert.equal(allIds.size, closed.total);
+    assert.ok(seededIds.every(id => allIds.has(id)));
+    const offPage = second.tasks[0];
+    send({ t: "conversation_preferences", taskId: offPage.id });
+    await take(m => m.t === "conversation_inbox" && m.selected?.id === offPage.id);
+    assert.equal((await page({ offset: 0 })).selected.id, offPage.id);
+    const persisted = new ConversationLedger(join(home, ".jarvis", "hub", "conversation"));
+    await persisted.ready;
+    assert.equal(persisted.get("owner", "scale-request-79")?.error, huge);
   } finally { ws?.close(); await stopChild(child); rmSync(home, { recursive: true, force: true }); }
 });

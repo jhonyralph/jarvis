@@ -43,7 +43,8 @@ import { conversationHandoff } from "./conversationHandoff.js";
 import { cleanVoiceTemps } from "./voiceTemps.js";
 import { tmpdir as voiceTmpdir } from "node:os";
 import { conversationMemories } from "./conversationMemory.js";
-import { coordinateConversation, conversationBriefing, mergeConversationTasks, taskFromExecution, type ConversationTask } from "./conversation.js";
+import { coordinateConversation, mergeConversationTasks, taskFromExecution, type ConversationTask } from "./conversation.js";
+import { buildConversationInbox, type ConversationListRequest } from "./conversationInbox.js";
 import { voiceDeadline } from "./voiceDeadline.js";
 import { updateStalled } from "./update-watchdog.js";
 import { retargetTarget } from "./update-retarget.js";
@@ -3863,14 +3864,14 @@ const localSeenTurns = createSeenSet();
 // otherwise a reconnect could spend a second routing call even though the main turn is at-most-once.
 const incomingTurns = createSeenSet(1000);
 /** Conversation reads existing execution journals. It never invents completion from an ACK. */
+const conversationListRequests = new WeakMap<WebSocket, ConversationListRequest>();
 function conversationTasks(ws: WebSocket): ConversationTask[] {
   const principal = socketPrincipalId(ws), tasks: ConversationTask[] = [];
   for (const source of executionSources()) {
     if (!(wakeClients.has(ws) && source.runnerId === LOCAL_ID) && !canUseRunner(ws, source.runnerId)) continue;
     for (const entry of source.store.manifest()) {
       if (!entry.sessionId || !executionOwnership.allows(source.runnerId, entry.rootExecutionId, principal) || !canAccessSession(ws, source.runnerId, entry.sessionId)) continue;
-      const snapshot = source.store.snapshot(entry.rootExecutionId);
-      const root = snapshot?.nodes.find((n) => n.executionId === entry.rootExecutionId);
+      const root = source.store.findNode(entry.rootExecutionId)?.node;
       if (root && !executionUiState.archives[root.executionId]) tasks.push({ ...taskFromExecution(root), updatedAt: entry.updatedAt });
     }
   }
@@ -3893,9 +3894,12 @@ function conversationSessionId(principal: string): string { return `conversation
 function sendConversationInbox(ws: WebSocket, includeHistory = false): void {
   const principal = socketPrincipalId(ws), preferences = conversationLedger.preferences(principal), tasks = conversationTasks(ws);
   const updates = preferences.quiet ? [] : tasks.filter((t) => t.updatedAt > (preferences.notified?.[t.id] || 0) && ["succeeded", "failed", "waiting_input", "interrupted", "orphaned", "transcription_failed"].includes(t.state));
-  if (updates.length) conversationLedger.configure(principal, { notified: Object.fromEntries(tasks.map((t) => [t.id, Math.max(preferences.notified?.[t.id] || 0, updates.includes(t) ? t.updatedAt : 0)])) });
+  if (updates.length) {
+    const changed = new Set(updates.map(t => t.id));
+    conversationLedger.configure(principal, { notified: Object.fromEntries(tasks.map(t => [t.id, Math.max(preferences.notified?.[t.id] || 0, changed.has(t.id) ? t.updatedAt : 0)])) });
+  }
   const sid = conversationSessionId(principal);
-  send(ws, { t: "conversation_inbox", tasks, preferences, updates: updates.map((t) => t.id), briefing: conversationBriefing(tasks, preferences.seen),
+  send(ws, { ...buildConversationInbox(tasks, preferences, conversationListRequests.get(ws) || {}, updates.map(t => t.id)),
     ...(includeHistory ? { history: store.get(sid) && canAccessSession(ws, LOCAL_ID, sid) ? store.history(sid).slice(-100) : [], historySession: sid, historyRunner: LOCAL_ID } : {}) });
 }
 const conversationBusy = new Set<string>();
@@ -7084,7 +7088,10 @@ wss.on("connection", (ws: WebSocket, req: any) => {
     }
     if (holdForHubUpdate(ws, msg)) return;
 
-    if (msg.t === "conversation_list") { await conversationLedger.ready; sendConversationInbox(ws, msg.history === true); return; }
+    if (msg.t === "conversation_list") {
+      conversationListRequests.set(ws, { offset: msg.offset, summaryOnly: msg.summaryOnly, version: msg.version, requestId: msg.requestId });
+      await conversationLedger.ready; sendConversationInbox(ws, msg.history === true); return;
+    }
     if (msg.t === "conversation_preferences") {
       const principal = socketPrincipalId(ws), change: Partial<ReturnType<typeof conversationLedger.preferences>> = {};
       if (typeof msg.quiet === "boolean") change.quiet = msg.quiet;

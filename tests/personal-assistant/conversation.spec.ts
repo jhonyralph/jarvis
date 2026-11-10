@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { installPersonalAssistantFixture, type FixtureAudit } from "./fixture";
+import { buildConversationInbox } from "../../apps/hub/src/conversationInbox";
+import type { ConversationTask } from "../../apps/hub/src/conversation";
 let audit: FixtureAudit;
 test.beforeEach(async ({ page }) => { audit = await installPersonalAssistantFixture(page, { conversation: true }); await page.clock.install(); await page.goto("/"); });
 test.afterEach(() => { expect(audit.pageErrors).toEqual([]); expect(audit.externalRequests).toEqual([]); });
@@ -65,4 +67,93 @@ test("lost audio ACK retries the same captured request and stops after durable a
   const count=(await sent()).length;
   await page.clock.runFor(21000);
   expect((await sent()).length).toBe(count);
+});
+
+test("5000 tasks and a 22-million-character legacy summary keep polling, DOM and typing bounded", async ({ page }, testInfo) => {
+  const tasks: ConversationTask[] = Array.from({ length: 5000 }, (_, i) => ({ id: `scale-${i}`, runnerId: 'local', sessionId: `session-${i}`,
+    title: `Escala ${i}`, state: 'succeeded', updatedAt: 5000-i, origin: 'Projeto', needsInput: false, canCancel: false,
+    summary: i===0 ? 'x'.repeat(22_350_827) : 'Resultado preservado' }));
+  let preferences: any = {quiet:false,seen:{}}, lastRequest: any = {}, maxBytes=0;
+  await page.exposeFunction('__scaleInbox', (message: any) => {
+    if(message.t==='conversation_list')lastRequest=message;
+    if(message.taskId){const task=tasks.find(t=>t.id===message.taskId)!;preferences={...preferences,task:{runnerId:task.runnerId,sessionId:task.sessionId}};}
+    const frame=buildConversationInbox(tasks,preferences,lastRequest,[]);
+    maxBytes=Math.max(maxBytes,Buffer.byteLength(JSON.stringify(frame)));
+    return frame;
+  });
+  await page.evaluate(()=>{(window as any).__jarvisTest.conversationResponder=(window as any).__scaleInbox;});
+  await page.clock.runFor(10010);
+  await expect.poll(()=>lastRequest.summaryOnly).toBe(true);
+  await expect(page.locator('.conversation-task')).toHaveCount(0);
+  await page.locator('#input').fill('Meu rascunho continua aqui');
+  await page.clock.runFor(10010);
+  await expect(page.locator('#input')).toHaveValue('Meu rascunho continua aqui');
+  await page.getByRole('button',{name:'Conversa e resultados',exact:true}).click();
+  const panel=page.getByRole('dialog',{name:'Conversar com Jarvis e acompanhar tarefas'});
+  await expect(panel.locator('.conversation-task')).toHaveCount(50);
+  await expect(panel.getByText('1–50 de 5000 tarefas',{exact:true})).toBeVisible();
+  expect(await panel.locator('.conversation-task p').first().textContent()).toHaveLength(1200);
+  await expect(panel.getByText(/Prévia do resultado/).first()).toBeVisible();
+  await expect(panel.getByText(/Prévia do resultado/).nth(1)).toBeHidden();
+  await panel.getByLabel('Mensagem para o Jarvis').fill('Texto sendo digitado');
+  await page.evaluate(()=>{
+    const state=window as any;state.__firstCard=document.querySelector('.conversation-task');state.__cardMutations=0;
+    state.__cardObserver=new MutationObserver(records=>{state.__cardMutations+=records.length;});
+    state.__cardObserver.observe(state.__firstCard.parentElement,{subtree:true,childList:true,characterData:true,attributes:true});
+  });
+  await page.clock.runFor(10010);
+  await expect(panel.getByLabel('Mensagem para o Jarvis')).toBeFocused();
+  await expect(panel.getByLabel('Mensagem para o Jarvis')).toHaveValue('Texto sendo digitado');
+  expect(await page.evaluate(()=>(window as any).__firstCard===document.querySelector('.conversation-task'))).toBe(true);
+  expect(await page.evaluate(()=>(window as any).__cardMutations)).toBe(0);
+  await page.evaluate(()=>(window as any).__cardObserver.disconnect());
+  // A changed card keeps its buttons/focus; an unchanged poll is not a full rebuild.
+  await panel.getByRole('button',{name:'Selecionar',exact:true}).first().focus();
+  tasks[0]={...tasks[0],state:'failed',updatedAt:6000};
+  await page.clock.runFor(10010);
+  await expect(panel.locator('.conversation-task').first()).toContainText('Falhou');
+  await expect(panel.getByRole('button',{name:'Selecionar',exact:true}).first()).toBeFocused();
+  expect(await page.evaluate(()=>(window as any).__firstCard===document.querySelector('.conversation-task'))).toBe(true);
+  await panel.getByRole('button',{name:'Próxima página',exact:true}).click();
+  await expect(panel.getByText('51–100 de 5000 tarefas',{exact:true})).toBeVisible();
+  await expect(panel.locator('.conversation-task').first()).toContainText('Escala 50');
+  await panel.getByRole('button',{name:'Selecionar',exact:true}).first().click();
+  await expect(panel.getByText(/Tarefa em foco: Escala 50/)).toBeVisible();
+  await panel.getByRole('button',{name:'Página anterior',exact:true}).click();
+  await expect(panel.getByText('1–50 de 5000 tarefas',{exact:true})).toBeVisible();
+  await expect(panel.getByText(/Tarefa em foco: Escala 50/)).toBeVisible();
+  // Late replies from an older page must not overwrite the current page.
+  await page.evaluate(()=>(window as any).__jarvisTest.emit({t:'conversation_inbox',requestId:'old-request',tasks:[],total:0,limit:50,offset:0}));
+  await page.clock.runFor(10);
+  await expect(panel.locator('.conversation-task')).toHaveCount(50);
+  await panel.getByRole('button',{name:'Fechar',exact:true}).click();
+  await expect(page.locator('.conversation-task')).toHaveCount(0);
+  await page.clock.runFor(10010);
+  await expect.poll(()=>lastRequest.summaryOnly).toBe(true);
+  await expect(page.locator('#input')).toHaveValue('Meu rascunho continua aqui');
+  await page.getByRole('button',{name:'Conversa e resultados',exact:true}).click();
+  await expect(panel.locator('.conversation-task')).toHaveCount(50);
+  await expect(panel.getByLabel('Mensagem para o Jarvis')).toHaveValue('Texto sendo digitado');
+  await expect(panel.getByText(/Tarefa em foco: Escala 50/)).toBeVisible();
+  await expect.poll(()=>lastRequest.summaryOnly).toBe(false);
+  await page.screenshot({path:testInfo.outputPath('conversation-scale.png'),fullPage:true});
+  expect(maxBytes).toBeLessThan(150_000);
+  await testInfo.attach('bounded-payload.json',{body:JSON.stringify({tasks:5000,legacySummaryChars:22_350_827,maxResponseBytes:maxBytes,maxCards:50}),contentType:'application/json'});
+});
+
+test("legacy inboxes cannot build thousands of hidden cards or unbounded summary text", async ({ page }) => {
+  await page.evaluate(()=>{
+    const tasks=Array.from({length:5000},(_,i)=>({id:'old-'+i,runnerId:'local',sessionId:'s'+i,title:'Legado '+i,state:'failed',updatedAt:1,origin:'Projeto',summary:i===0?'x'.repeat(22_350_827):'ok'}));
+    (window as any).__jarvisTest.emit({t:'conversation_inbox',tasks,preferences:{seen:{}},updates:[]});
+  });
+  await page.clock.runFor(10);
+  await expect(page.locator('.conversation-task')).toHaveCount(0);
+  // Hold the network response to inspect the legacy snapshot already in memory.
+  await page.evaluate(()=>{(window as any).__jarvisTest.conversationResponder=()=>new Promise(()=>{});});
+  await page.getByRole('button',{name:'Conversa e resultados',exact:true}).click();
+  await expect(page.locator('.conversation-task')).toHaveCount(50);
+  await expect(page.getByText('1–50 de 5000 tarefas',{exact:true})).toBeVisible();
+  expect(await page.locator('.conversation-task p').first().textContent()).toHaveLength(1200);
+  await page.getByRole('button',{name:'Próxima página',exact:true}).click();
+  await expect(page.getByText('51–100 de 5000 tarefas',{exact:true})).toBeVisible();
 });

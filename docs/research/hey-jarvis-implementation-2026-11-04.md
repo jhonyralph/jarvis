@@ -95,3 +95,55 @@ somente a identidade necessária para impedir a repetição de uma ação já ac
 Próxima verificação operacional: após os trabalhos ativos encerrarem, carregar Hub e listener,
 validar uma interação real e executar as 100 tentativas previstas no relatório de avaliação,
 registrando falhas e tempos por dispositivo. A aprovação de produto depende dessa evidência.
+
+## Correção de travamentos da interface — 10/11/2026
+
+Estado da validação: implementação testada no worktree `jarvis-input-lag-fix`. Em 10/11/2026,
+o usuário autorizou o commit e a ativação, reiniciando somente o Hub depois dos trabalhos ativos.
+A conclusão operacional deve ser conferida no registro de ativação; autorização não prova reinício.
+
+O diagnóstico anterior encontrou 4.436 tarefas na resposta periódica de `conversation_list`,
+45.838.247 unidades de código UTF-16 no JSON e um resumo isolado com 22.350.827 caracteres.
+O painel fechado mantinha 39.929 elementos no DOM. Na medição A/B/A da janela real, destacar
+temporariamente esse painel reduziu o maior atraso observado de 7.353 ms para 797 ms;
+restaurá-lo trouxe atrasos de até 6.942 ms. O listener permaneceu ativo nas três condições.
+As evidências desse diagnóstico estão em `~/.jarvis/evidence/2026-11-09-input-lag/`.
+
+Alterações:
+
+- `conversationInbox.ts` e integração em `index.ts`: páginas de 50 tarefas, prévias de resumo
+  de até 1.200 caracteres, foco independente da página, contagem completa de notificações e
+  resposta sem cartões quando a página não mudou. Com o painel fechado, só envia metadados.
+- A consulta continua aplicando os controles existentes de usuário, máquina e sessão antes
+  da paginação. Os comandos de voz e a seleção de tarefas continuam consultando a coleção
+  completa. Nenhum histórico, recibo ou resumo persistido é truncado ou excluído.
+- A coleta consulta diretamente o nó raiz, sem copiar o grafo inteiro de cada execução, e a
+  marcação de notificações usa um conjunto de IDs em vez de buscas repetidas em uma lista.
+- `conversation.js`: não monta cartões no painel fechado; reutiliza os cartões visíveis,
+  preserva rascunho/foco, permite navegar pelas páginas e ignora respostas de páginas antigas.
+  Também limita o DOM e as prévias quando conectado a um Hub com o protocolo anterior.
+- Testes adjacentes e Playwright cobrem 5.000 tarefas, resumo de 22 milhões de caracteres,
+  páginas vazias/inválidas, foco fora da página, resposta atrasada, registro legado sem origem,
+  reabertura, ausência de mutações em consulta sem mudanças e preservação do texto digitado.
+
+Validação desta correção em Windows / Node 22.14.0:
+
+| Comando | Resultado |
+|---|---|
+| `npm test` | 1.750 testes: **1.740 aprovados, zero falhas, 10 pulados** pelas condições da suíte. |
+| `npm run typecheck` | Aprovado. |
+| `node --check apps/hub/web/app.js` e `node --check apps/hub/web/conversation.js` | Aprovados. |
+| `node mobile/sync-web.mjs` | Staging aprovado no worktree isolado. |
+| `npx playwright test --config tests/personal-assistant/conversation.config.ts` | **12 aprovados**, desktop e mobile; microfone sintético. |
+| `git diff --check` | Sem erros de whitespace. |
+
+O teste com Hub isolado verificou paginação pelo WebSocket, seleção fora da página, exclusão
+de registros de outro usuário e resumo completo preservado em disco após reinícios de teste.
+Nos cenários de escala, as respostas ficaram abaixo de 150.000 bytes, com zero cartões no
+painel fechado e até 50 no aberto. Os screenshots desktop/mobile e logs ficam em
+`tests/personal-assistant/artifacts/` no worktree; não são arquivos versionados.
+
+Limites da validação automatizada: os testes sintéticos não certificam a latência final na
+janela real. Não foram executados testes acústicos nem uma matriz Linux/macOS nesta etapa.
+A ativação autorizada deve preservar o listener e aguardar os trabalhos ativos, inclusive
+a conversa que aplica a correção quando ela própria é descendente do Hub.

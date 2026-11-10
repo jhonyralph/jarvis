@@ -218,6 +218,7 @@ export async function installPersonalAssistantFixture(page: Page, options: { con
         popup?: { href: string; closed: boolean };
         popupBlocked: boolean;
         emit?: (frame: Frame) => void;
+        conversationResponder?: (frame: Frame) => Promise<Frame>;
       };
 
       const fixtureApi: FixtureApi = { mode: "results", receivedState: 0, sent: [], popupBlocked: false };
@@ -267,6 +268,10 @@ export async function installPersonalAssistantFixture(page: Page, options: { con
           const message = JSON.parse(data);
           if (conversation && message.t?.startsWith('conversation_')) {
             fixtureApi.sent.push(message);
+            if (fixtureApi.conversationResponder && ['conversation_list', 'conversation_preferences'].includes(message.t)) {
+              void fixtureApi.conversationResponder(message).then(frame => this.respond(frame));
+              return;
+            }
             const tasks = [{id:'task-live',runnerId:'local',sessionId:'session-live',title:'Backend em andamento',state:'running',updatedAt:Date.now(),origin:'Projeto A',needsInput:false,canCancel:true},
               {id:'task-gap',runnerId:'local',sessionId:'session-gap',title:'Pedido antes da queda',state:'interrupted',updatedAt:Date.now(),origin:'Projeto B',needsInput:true,canCancel:false}];
             if(message.t==='conversation_request'){this.respond({t:'conversation_ack',requestId:message.msgId});this.respond({t:'conversation_reply',requestId:message.msgId,text:'Resposta curta; o trabalho continua.'});return;}
