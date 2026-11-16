@@ -9704,8 +9704,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
       return;
     }
 
-    // Meta-question about other sessions? -> cross-session search (typed or spoken).
-    if (looksLikeCrossSessionQuery(text)) {
+    // Meta-question about other sessions? -> cross-session search — SÓ na conversa da voz.
+    // Numa sessão de trabalho a mensagem é da IA: o gatilho é por palavra ("buscar entre sessões" é o
+    // nome do próprio botão), então falar DA busca virava uma busca, sem chegar à IA nem ficar no
+    // histórico (2026-11-16). A busca explícita continua no botão 🔎 (`msg.t === "search"`).
+    if (sid === WAKE_SESSION && looksLikeCrossSessionQuery(text)) {
       clearPendingInboundTurn(inboundKey);
       await runAndSendSearch(ws, text, !!msg.speak);
       return;
