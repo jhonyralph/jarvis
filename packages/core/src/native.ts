@@ -195,7 +195,7 @@ function claudeFiles(includeScratch = false): Array<{ path: string; mtime: numbe
   return out;
 }
 
-async function claudeFilesAsync(): Promise<Array<{ path: string; mtime: number }>> {
+export async function claudeFilesAsync(): Promise<Array<{ path: string; mtime: number }>> {
   const out: Array<{ path: string; mtime: number }> = [];
   let dirs;
   try { dirs = await readdirAsync(CLAUDE_DIR, { withFileTypes: true }); } catch { return out; }
@@ -212,7 +212,7 @@ async function claudeFilesAsync(): Promise<Array<{ path: string; mtime: number }
   return out;
 }
 
-async function codexFilesAsync(): Promise<Array<{ path: string; mtime: number }>> {
+export async function codexFilesAsync(): Promise<Array<{ path: string; mtime: number }>> {
   const out: Array<{ path: string; mtime: number }> = [];
   const walk = async (d: string, depth: number): Promise<void> => {
     let ents;
@@ -256,10 +256,10 @@ function codexFiles(): Array<{ path: string; mtime: number }> {
 }
 
 // ------------------------------- parsing -------------------------------
-const isInjected = (t: string) => !t || t.startsWith("<") || t.startsWith("#") || /^\s*\[[^\]]+\]\s*$/.test(t);
-const isNoopAssistantText = (t: string) => /^No response requested\.?$/i.test((t || "").trim());
+export const isInjected = (t: string): boolean => !t || t.startsWith("<") || t.startsWith("#") || /^\s*\[[^\]]+\]\s*$/.test(t);
+export const isNoopAssistantText = (t: string): boolean => /^No response requested\.?$/i.test((t || "").trim());
 /** Strip tooling/system blocks that leak into message text (subagent notifications, usage, reminders). */
-function cleanText(t: string): string {
+export function cleanText(t: string): string {
   return (t || "")
     .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, "")
     .replace(/<usage>[\s\S]*?<\/usage>/g, "")
@@ -268,11 +268,11 @@ function cleanText(t: string): string {
     .trim();
 }
 
-function titleText(t: string, cap = 240): string {
+export function titleText(t: string, cap = 240): string {
   return cleanText(t).replace(/\s+/g, " ").trim().slice(0, cap);
 }
 
-function contentText(c: any): string {
+export function contentText(c: any): string {
   if (typeof c === "string") return c;
   if (Array.isArray(c)) return c.map((p: any) => (typeof p === "string" ? p : p?.text || "")).join("").trim();
   return "";

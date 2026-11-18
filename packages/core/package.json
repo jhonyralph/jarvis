@@ -14,5 +14,8 @@
     "node-pty": "^1.1.0",
     "opening_hours": "^3.14.0",
     "undici": "^7.29.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.11.1"
   }
 }

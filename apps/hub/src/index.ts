@@ -50,6 +50,7 @@ import { updateStalled } from "./update-watchdog.js";
 import { retargetTarget } from "./update-retarget.js";
 import { speechify, speechifyCapped } from "./speechify.js";
 import { runSessionSearch, looksLikeCrossSessionQuery } from "./search.js";
+import { SessionIndex, toSessionSearchHits, compareSessionSearchHits, sessionCwdWithin, buildFtsQuery, type SessionIndexFilters, type SessionSearchHit } from "@jarvis/core";
 import { identifySpeaker, enrollSpeaker, listSpeakers, deleteSpeaker } from "./speaker.js";
 import { listNative, refreshNativeList, onNativeListChange, nativeHistory, nativeTitleCached, isNativeId, nativeInfo, nativeFilePath, nativeIdForAgent, filterUnboundNativeSessions, parseNativeEvents, deleteNative, sessionFiles, sessionFileDiff, purgeProbeJunk, purgeScratch, searchNative, snippetAround, nativeParseHealth, lineDiff, type SessionHit } from "@jarvis/core";
 import { parseVoiceIntent } from "./voiceIntent.js";
@@ -364,6 +365,14 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new MockAgentAdapter());
 const WAKE_SESSION = process.env.JARVIS_WAKE_SESSION || "voice";
 const store = new Store({ agent: agents.default, cwd: CWD });
+// Busca entre sessões com índice FTS5 numa worker (2026-11-16) — ver packages/core/src/session-index.ts.
+// Sem better-sqlite3 (dependência opcional) ou com JARVIS_SESSION_INDEX=0, a busca antiga continua.
+const sessionIndex = new SessionIndex({
+  name: "hub",
+  managedDir: store.messagesDir(),
+  managedMeta: () => store.list().map((s) => ({ key: s.id, agent: s.agent, cwd: s.cwd, title: nativeDisplayTitleForSession(s), updatedAt: s.updatedAt })),
+  native: process.env.JARVIS_SESSION_INDEX_NATIVE !== "0",
+});
 bootMark("store");
 const routines = new RoutineStore();
 const memory = new MemoryStore();
@@ -2733,6 +2742,7 @@ interface PendingRunnerHistory extends RunnerHistoryScope {
 }
 const pendingRunnerHist = new Map<string, PendingRunnerHistory>();
 const pendingRunnerUsage = new Map<string, (u: any) => void>();
+const pendingRunnerSearch = new Map<string, (r: any) => void>();
 interface ExecutionReplayRequest { runnerId: string; rootExecutionId: string; replace: boolean; events: ExecutionEvent[]; }
 const executionReplayRequests = new Map<string, ExecutionReplayRequest>();
 interface ExecutionPrincipalHint { principalId: string; expiresAt: number; }
@@ -2930,6 +2940,11 @@ function relayRunner(rc: RunnerConn, m: any): void {
     if (Array.isArray(m.agents)) rc.info.agents = m.agents.filter((x: unknown) => typeof x === "string");
     if (m.agentUsage && typeof m.agentUsage === "object") rc.info.agentUsage = m.agentUsage;
     broadcastMachines();
+    return;
+  }
+  if (m.t === "session_search_result") {
+    const cb = typeof m.reqId === "string" ? pendingRunnerSearch.get(m.reqId) : undefined;
+    if (cb) { pendingRunnerSearch.delete(m.reqId); cb(m); }
     return;
   }
   if (m.t === "usage_info") {
@@ -4029,7 +4044,7 @@ const executionPrincipalContext = new AsyncLocalStorage<string>();
 const turnCtx: TurnCtx = {
   seen: (turnId) => localSeenTurns.add(turnId),
   afterStored: (sid) => { activityBuf.delete(scopedSessionKey(LOCAL_ID, sid)); },
-  afterTurn: (sid) => { void indexSession(sid); },
+  afterTurn: (sid) => { void indexSession(sid); sessionIndex.requestSync(); },
   ensure: (sid) => store.ensure(sid),
   resolveAgentName: (n) => agents.get(n).name,
   add: (sid, msg) => {
@@ -6383,9 +6398,9 @@ function searchHitFromMessages(query: string, meta: { id: string; title: string;
   const inContent = idx >= meta.title.length + 1;
   return { id: meta.id, title: meta.title, agent: meta.agent, cwd: meta.cwd, updatedAt: meta.updatedAt, runnerId: meta.runnerId, where: inContent ? "content" : "title", snippet: inContent ? snippetAround(hay, idx, primary.length) : meta.title };
 }
-async function searchRunnerSessions(ws: WebSocket, query: string, perRunner = 20): Promise<RoutedSessionHit[]> {
+async function searchRunnerSessions(ws: WebSocket, query: string, perRunner = 20, onlyRunner?: string): Promise<RoutedSessionHit[]> {
   const out: RoutedSessionHit[] = [];
-  const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUseRunner(ws, r.id));
+  const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUseRunner(ws, r.id) && (!onlyRunner || r.id === onlyRunner));
   await Promise.all(remotes.map(async (r) => {
     const sessions = (await runnerSessions(r)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, perRunner);
     for (const s of sessions) {
@@ -6397,6 +6412,73 @@ async function searchRunnerSessions(ws: WebSocket, query: string, perRunner = 20
     }
   }));
   return out;
+}
+// ---- Busca entre sessões com índice (2026-11-16) ----
+type SearchHitOut = RoutedSessionHit & Partial<SessionSearchHit>;
+/** Filtros que o cliente manda (`msg.filters`), validados. `runner`: só aquela máquina. */
+function sessionSearchFilters(raw: any): { index: SessionIndexFilters; runner?: string } {
+  const o = raw && typeof raw === "object" ? raw : {};
+  const index: SessionIndexFilters = {};
+  if (typeof o.agent === "string" && o.agent && o.agent.length <= 40) index.agent = o.agent;
+  const days = Number(o.days);
+  if (Number.isFinite(days) && days > 0) index.since = Date.now() - Math.min(days, 3650) * 86_400_000;
+  if (typeof o.cwd === "string" && o.cwd.trim() && o.cwd.length <= 1000) index.cwd = o.cwd.trim();
+  const runner = typeof o.runner === "string" && o.runner && o.runner.length <= 200 ? o.runner : undefined;
+  return { index, runner };
+}
+/** Os mesmos filtros para resultados que NÃO vieram do índice (varredura antiga, máquina antiga). */
+function applySearchFilters<T extends { agent: string; cwd: string; updatedAt: number }>(hits: T[], f: SessionIndexFilters): T[] {
+  return hits.filter((h) => (!f.agent || h.agent === f.agent) && (!f.since || (h.updatedAt || 0) >= f.since) && (!f.cwd || sessionCwdWithin(h.cwd, f.cwd)));
+}
+function sessionIndexInfo(): { available: boolean; ready: boolean; building: boolean; filesDone: number; filesTotal: number } {
+  const s = sessionIndex.status();
+  return { available: s.available, ready: s.ready, building: s.building, filesDone: s.filesDone, filesTotal: s.filesTotal };
+}
+/** Acertos do índice desta máquina → o que este aparelho pode ver, com título/projeto atuais. */
+function localIndexHits(ws: WebSocket, hits: Parameters<typeof toSessionSearchHits>[0]): SearchHitOut[] {
+  const visible = new Map(store.list().map((s) => [s.id, s] as const));
+  return toSessionSearchHits(hits, {
+    managed: (k) => { const s = visible.get(k); return s ? { key: s.id, agent: s.agent, cwd: s.cwd, title: nativeDisplayTitleForSession(s), updatedAt: s.updatedAt } : null; },
+    excludeNative: nativeExcludeIds(),
+    nativeTitle: (k) => nativeTitleCached(k),
+    allow: (id) => canAccessSession(ws, LOCAL_ID, id) && !isInternalExecutionSession(LOCAL_ID, id),
+  });
+}
+/** A varredura de antes (índice ausente ou ainda montando pela 1ª vez), agora com os filtros. */
+async function legacyLocalSearch(ws: WebSocket, q: string, f: SessionIndexFilters, signal: { aborted: boolean }, onPartial: (hits: SearchHitOut[]) => void): Promise<SearchHitOut[]> {
+  const asOut = (hs: RoutedSessionHit[]): SearchHitOut[] => hs.map((h) => ({ ...h, titleHit: h.where === "title" }));
+  const managed = asOut(applySearchFilters(await searchManagedAsync(q, ws, signal), f));
+  onPartial([...managed].sort(compareSessionSearchHits));
+  const exclude = nativeExcludeIds();
+  const NAT = Number(process.env.JARVIS_NATIVE_LIMIT) || 40;
+  const nat = asOut(applySearchFilters((await searchNativeAsync(q, NAT, signal)).filter((h) => !exclude.has(h.id) && canAccessSession(ws, LOCAL_ID, h.id)), f));
+  return [...managed, ...nat];
+}
+/** Acerto vindo de outra máquina: só os campos esperados, com teto de tamanho. */
+function remoteSearchHit(h: any, runnerId: string): SearchHitOut | null {
+  if (!h || typeof h.id !== "string" || !h.id || h.id.length > 200) return null;
+  const str = (v: unknown, n: number): string => (typeof v === "string" ? v.slice(0, n) : "");
+  const snippets = Array.isArray(h.snippets) ? h.snippets.slice(0, 3).map((x: any) => ({ text: str(x?.text, 800), role: str(x?.role, 20), ts: Number(x?.ts) || 0 })).filter((x: { text: string }) => x.text) : [];
+  return {
+    id: h.id, runnerId, title: str(h.title, 300), agent: str(h.agent, 40), cwd: str(h.cwd, 1000), updatedAt: Number(h.updatedAt) || 0,
+    where: h.where === "title" ? "title" : "content", snippet: str(h.snippet, 800), snippets,
+    matches: Number(h.matches) || 0, score: Number(h.score) || 0, titleHit: h.titleHit === true,
+  };
+}
+/** Outras máquinas: pelo índice delas (`session_search`); máquina antiga ou sem índice, varredura antiga. */
+async function remoteSessionSearch(ws: WebSocket, q: string, f: { index: SessionIndexFilters; runner?: string }): Promise<SearchHitOut[]> {
+  const remotes = [...runners.values()].filter((r) => !r.local && r.ws && r.ws.readyState === WebSocket.OPEN && canUseRunner(ws, r.id) && (f.runner === undefined || f.runner === r.id));
+  const parts = await Promise.all(remotes.map(async (r): Promise<SearchHitOut[]> => {
+    if (r.info.sessionSearch) {
+      const reqId = runnerRequestId("hub-ssearch");
+      const res = await askRunner<any>(pendingRunnerSearch, reqId, () => sendToRunner(r, { t: "session_search", reqId, query: q, filters: f.index, limit: 60 }), null, 8000);
+      if (res && Array.isArray(res.hits)) {
+        return res.hits.map((h: any) => remoteSearchHit(h, r.id)).filter((h: SearchHitOut | null): h is SearchHitOut => !!h && canAccessSession(ws, r.id, h.id));
+      }
+    }
+    return applySearchFilters(await searchRunnerSessions(ws, q, 20, r.id), f.index).map((h) => ({ ...h, titleHit: h.where === "title" }));
+  }));
+  return parts.flat();
 }
 async function runnerSessionExtras(ws: WebSocket, perRunner = 8): Promise<Array<{ id: string; agent: string; cwd: string; title: string; updatedAt: number; lastUser: string; lastAssistant: string; runnerId: string }>> {
   const out: Array<{ id: string; agent: string; cwd: string; title: string; updatedAt: number; lastUser: string; lastAssistant: string; runnerId: string }> = [];
@@ -7744,12 +7826,11 @@ wss.on("connection", (ws: WebSocket, req: any) => {
 
     // cross-session search (explicit) + execute-in-a-specific-session
     if (msg.t === "search" && typeof msg.query === "string") {
-      // Filtro LITERAL sobre título + conteúdo de todas as sessões (como grep). Sem LLM, sem áudio —
-      // a busca semântica/falada continua no caminho de voz (looksLikeCrossSessionQuery).
-      // Staged delivery so results appear FAST and grow: managed sessions (in-memory) render
-      // instantly; then the most-recent native sessions; then the full native sweep. Each message
-      // carries the full accumulated set + a `done` flag, so the client just replaces + shows
-      // "buscando mais…" until done. setImmediate lets each batch paint before the next disk scan.
+      // Busca LITERAL em título + conteúdo de todas as sessões. Sem LLM, sem áudio — a busca
+      // semântica/falada continua no caminho de voz (looksLikeCrossSessionQuery).
+      // 2026-11-16: esta máquina responde pelo ÍNDICE (sessionIndex, milissegundos, todas as sessões);
+      // sem índice pronto, pela varredura antiga. Cada máquina remota responde pelo índice DELA
+      // (`session_search`); máquina antiga, pela varredura antiga. Duas levas: esta máquina, depois o resto.
       {
         // Tudo assíncrono (2026-10-30): antes as sessões e os transcripts eram lidos com o Hub parado — uma
         // busca o derrubava por um minuto. Uma busca nova deste aparelho cancela a anterior.
@@ -7760,29 +7841,39 @@ wss.on("connection", (ws: WebSocket, req: any) => {
         const signal = ctrl.signal;
         const live = (): boolean => !signal.aborted && ws.readyState === WebSocket.OPEN;
         const t0 = Date.now();
+        const f = sessionSearchFilters(msg.filters);
+        // Nada pesquisável (só 1 letra/pontuação): não busca em lugar nenhum — no caminho antigo "a"
+        // varreria tudo para casar quase tudo. Mesma regra do índice (buildFtsQuery).
+        if (!buildFtsQuery(q)) {
+          if (searchAborts.get(ws) === ctrl) searchAborts.delete(ws);
+          send(ws, { t: "searchResult", query: q, hits: [], done: true, tooShort: true, index: sessionIndexInfo() });
+          return;
+        }
+        const wantLocal = f.runner === undefined || f.runner === LOCAL_ID;
         void (async () => {
-          let managed: SessionHit[] = [];
+          let local: SearchHitOut[] = [];
+          let engine = "none";
+          let tooShort = false;
           try {
-            managed = await searchManagedAsync(q, ws, signal);
-            if (!live()) return;
-            send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done: false });
-            const exclude = nativeExcludeIds();
-            const NAT = Number(process.env.JARVIS_NATIVE_LIMIT) || 40;
-            // Os 10 transcripts mais recentes primeiro (rápido), depois a varredura completa e as outras máquinas.
-            if (NAT > 10) {
-              const quick = (await searchNativeAsync(q, 10, signal)).filter((h) => !exclude.has(h.id) && canAccessSession(ws, LOCAL_ID, h.id));
+            if (wantLocal) {
+              const r = await sessionIndex.search(q, f.index, 80);
+              if (r) {
+                engine = "index"; tooShort = !!r.tooShort;
+                local = localIndexHits(ws, r.hits);
+              } else {
+                engine = "scan";
+                local = await legacyLocalSearch(ws, q, f.index, signal, (partial) => { if (live()) send(ws, { t: "searchResult", query: q, hits: partial, done: false, index: sessionIndexInfo() }); });
+              }
               if (!live()) return;
-              send(ws, { t: "searchResult", query: q, hits: sortHits([...managed, ...quick]), done: false });
+              send(ws, { t: "searchResult", query: q, hits: [...local].sort(compareSessionSearchHits), done: false, index: sessionIndexInfo(), tooShort });
             }
-            const nat = (await searchNativeAsync(q, NAT, signal)).filter((h) => !exclude.has(h.id) && canAccessSession(ws, LOCAL_ID, h.id));
+            const remote = tooShort || f.runner === LOCAL_ID ? [] : await remoteSessionSearch(ws, q, f);
             if (!live()) return;
-            const remote = await searchRunnerSessions(ws, q);
-            if (!live()) return;
-            send(ws, { t: "searchResult", query: q, hits: sortHits([...managed, ...nat, ...remote]), done: true });
-            log.info("session_search", { ms: Date.now() - t0, managed: managed.length, native: nat.length, remote: remote.length });
+            send(ws, { t: "searchResult", query: q, hits: [...local, ...remote].sort(compareSessionSearchHits).slice(0, 150), done: true, index: sessionIndexInfo(), tooShort });
+            log.info("session_search", { ms: Date.now() - t0, engine, local: local.length, remote: remote.length, filtered: Object.keys(f.index).length + (f.runner ? 1 : 0) });
           } catch (e) {
             log.warn("session_search_error", { error: String((e as Error)?.message ?? e).slice(0, 200) });
-            if (live()) send(ws, { t: "searchResult", query: q, hits: sortHits([...managed]), done: true });
+            if (live()) send(ws, { t: "searchResult", query: q, hits: [...local].sort(compareSessionSearchHits), done: true, index: sessionIndexInfo() });
           } finally { if (searchAborts.get(ws) === ctrl) searchAborts.delete(ws); }
         })();
       }
@@ -10163,7 +10254,9 @@ async function hubShutdown(sig: string): Promise<void> {
   for (const [, ctrl] of routeAborts) { try { ctrl.abort(); } catch { /* ignore */ } }
   try { localTerminals.closeAll(); } catch { /* ignore */ }
   void localBrowser.shutdown(undefined, sig).catch(() => { /* ignore */ }); // Browser.close: grava cookies
-  await Promise.race([personalAssistant.disposeAll(), new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
+  // O índice de busca fecha o banco na própria worker antes de o processo sair (sair com ela aberta
+  // pode derrubar o processo com erro nativo no encerramento).
+  await Promise.race([Promise.all([personalAssistant.disposeAll(), sessionIndex.close()]), new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
   clearTimeout(forceExit);
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
 }
@@ -10197,6 +10290,7 @@ server.listen(PORT, () => {
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
   console.log(`[hub] guard: rate-limit + conn caps + ${Math.round(guard.MAX_PAYLOAD / 1024 / 1024)}MB payload cap active${/^(on|1|true)$/i.test(process.env.JARVIS_TRUST_PROXY || "") ? " (trust-proxy on)" : ""}`);
   if (process.env.JARVIS_PERSONAL_PROACTIVE !== "0") personalProactiveScheduler.start();
+  sessionIndex.start(); // 1ª montagem ~30 s depois do boot, em worker; depois só o que mudou
   if (process.env.JARVIS_FRAMEWORK_AUTOUPDATE !== "0") {
     setTimeout(() => { void scanFrameworkSourceDrift(); }, 30_000).unref?.();          // shortly after boot
     setInterval(() => { void scanFrameworkSourceDrift(); }, 24 * 60 * 60 * 1000).unref?.(); // daily

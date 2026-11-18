@@ -99,6 +99,10 @@ export interface RunnerInfo {
   /** BRW-IDE-00 F2 — esta máquina serve as ferramentas de browser às IAs dela (`JARVIS_BROWSER_AGENT=0`
    *  desliga). Só vale junto com `browser:true` e protocolo ≥ `RUNNER_CAPABILITY_SINCE.browserAgentTools`. */
   browserAgent?: boolean;
+  /** Busca entre sessões com índice local (2026-11-16): a máquina responde `session_search` com o
+   *  índice FTS5 dela. Ausente/false = máquina antiga ou sem better-sqlite3 → o Hub usa a busca antiga
+   *  (pede o histórico das sessões recentes e procura do lado de cá). */
+  sessionSearch?: boolean;
 }
 
 /** One session as listed by a Runner (managed by Jarvis, or a native CLI session). */
@@ -407,6 +411,9 @@ export type RunnerToHub =
   | { t: "mention_list"; reqId?: string; files: string[] }
   /** Live account-plan snapshot for one adapter (reply to Hub->Runner "usage"). */
   | { t: "usage_info"; reqId: string; agent: string; plan: unknown | null; planStatus: "available" | "not_reported" | "unsupported" | "error"; /** Causa da falha (planStatus "error"). */ planError?: string }
+  /** Busca entre sessões pelo índice desta máquina (reply to Hub->Runner "session_search"). `hits: null` +
+   *  `unavailable`: sem índice pronto aqui — o Hub usa a busca antiga para esta máquina. */
+  | { t: "session_search_result"; reqId: string; hits: unknown[] | null; unavailable?: boolean; tooShort?: boolean }
   | { t: "memory_preview"; reqId: string; sessionId?: string; token: string; target: string; note: string; appendText: string; beforeHash: string; exists: boolean; expiresAt: number }
   | { t: "memory_applied"; reqId: string; token: string; sessionId?: string; ok: boolean; target?: string; beforeHash?: string; afterHash?: string; error?: string }
   /** Result of materializing a published Framework Jarvis on this machine (reply to framework_publish). */
@@ -513,6 +520,8 @@ export type HubToRunner =
   | { t: "caps"; agent?: string }
   /** Query this machine's live account-plan usage for an adapter. */
   | { t: "usage"; reqId: string; agent?: string }
+  /** Busca entre sessões no índice desta máquina (só para Runner com `info.sessionSearch`). */
+  | { t: "session_search"; reqId: string; query: string; filters?: { agent?: string; since?: number; cwd?: string }; limit?: number }
   /** Start a Jarvis Conselho workflow and persist the final synthesis into this managed session. */
   | { t: "council_start"; requestId: string; sessionId: string; requestText: string; mode: "quick" | "technical" | "critical" | "deep"; finalTaskId: string; title?: string; plan: ManagedExecutionPlanWire; policy?: ManagedExecutionPolicyWire }
   // Espaco de Solucoes na maquina da sessao. Mesmo formato do council: o Hub monta o plano (e e

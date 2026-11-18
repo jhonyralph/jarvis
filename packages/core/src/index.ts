@@ -5,6 +5,8 @@ export * from "./store.js";
 export * from "./update.js";
 export * from "./files.js";
 export * from "./file-search.js";
+export * from "./session-index.js";
+export * from "./session-index-query.js";
 export * from "./dir-listing.js";
 export * from "./persist.js";
 export * from "./dedup.js";

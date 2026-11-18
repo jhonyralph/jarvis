@@ -203,6 +203,9 @@ export class Store {
   /** Histórico desta sessão já está em memória? (diagnóstico / testes) */
   isLoaded(id: string): boolean { return this.loaded.has(id); }
 
+  /** Pasta dos JSONL de mensagens (o índice de busca lê daqui, sem passar pelo Store). */
+  messagesDir(): string { return this.msgDir; }
+
   private msgFile(id: string): string {
     // ids are UUIDs or fixed constants; sanitize defensively so nothing escapes msgDir.
     return join(this.msgDir, `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.jsonl`);

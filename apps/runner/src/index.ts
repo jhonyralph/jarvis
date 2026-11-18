@@ -44,6 +44,7 @@ import {
   type DebateDebater, type DebateHost, type DebateRoundOutcome, type DebateVerdict,
 } from "@jarvis/core";
 import { ManagedExecutionService, type ManagedExecutionSecurity } from "@jarvis/core";
+import { SessionIndex, sessionIndexSupported, toSessionSearchHits, nativeTitleCached, type SessionIndexFilters } from "@jarvis/core";
 
 const RUNNER_ROOT = fileURLToPath(new URL("../../../", import.meta.url)); // repo root from apps/runner/src
 import { RUNNER_PROTOCOL_VERSION, type ContextActor, type HubToRunner, type RunnerInfo, type RunnerSession, type RunnerToHub } from "@jarvis/protocol";
@@ -135,6 +136,15 @@ const agents = new AgentRegistry(DEFAULT_AGENT)
   .register(new AntigravityCliAdapter())
   .register(new MockAgentAdapter());
 const store = new Store({ agent: DEFAULT_AGENT, cwd: CWD });
+// Busca entre sessões com índice FTS5 desta máquina (2026-11-16): o Hub pergunta (`session_search`) e a
+// resposta sai daqui, sem o histórico das sessões viajar pela rede. Título: o guardado (barato) — o
+// `nativeDisplayTitleForSession` daqui relê o transcript inteiro e não pode rodar por sessão a cada minuto.
+const sessionIndex = new SessionIndex({
+  name: "runner-" + RUNNER_ID,
+  managedDir: store.messagesDir(),
+  managedMeta: () => store.list().map((s: any) => ({ key: s.id, agent: s.agent, cwd: s.cwd, title: s.title, updatedAt: s.updatedAt })),
+  native: process.env.JARVIS_SESSION_INDEX_NATIVE !== "0",
+});
 // Mesma varredura com cache do Hub (assinatura de pasta, sem LLM) — agora do lado de cá.
 const localTaskCache = new LocalTaskCache();
 const localTaskFs = {
@@ -1456,6 +1466,7 @@ function connect(): void {
       browser: browser.available,
       // F2: a IA daqui recebe as ferramentas de browser (e o perfil "IA" aparece no painel do dono).
       browserAgent: BROWSER_AGENT_ON && browser.available,
+      sessionSearch: sessionIndexSupported(),
     };
     send({ t: "register", token: TOKEN, info });
     void publishAgentCatalog().catch((e) => console.warn("[runner] catálogo de IAs não publicado:", String(e?.message ?? e)));
@@ -1801,6 +1812,28 @@ function connect(): void {
         return;
       }
       if (m.t === "caps") { await publishAgentCatalog(); return; }
+      if (m.t === "session_search" && typeof m.reqId === "string") {
+        const reqId = m.reqId;
+        const raw = m.filters && typeof m.filters === "object" ? m.filters : {};
+        const filters: SessionIndexFilters = {
+          agent: typeof raw.agent === "string" ? raw.agent.slice(0, 40) : undefined,
+          since: Number(raw.since) > 0 ? Number(raw.since) : undefined,
+          cwd: typeof raw.cwd === "string" ? raw.cwd.slice(0, 1000) : undefined,
+        };
+        const r = await sessionIndex.search(String(m.query || "").slice(0, 500), filters, Math.max(1, Math.min(100, Number(m.limit) || 60)));
+        // Sem índice pronto aqui: o Hub cai na busca antiga para esta máquina.
+        if (!r) { send({ t: "session_search_result", reqId, hits: null, unavailable: true }); return; }
+        const own = store.list();
+        const byId = new Map(own.map((s: any) => [s.id, s] as const));
+        const exclude = new Set<string>(own.flatMap((s: any) => nativeSessionKeysForManaged(s)));
+        const hits = toSessionSearchHits(r.hits, {
+          managed: (k) => { const s: any = byId.get(k); if (!s) return null; const nk = nativeSessionKeysForManaged(s)[0]; return { key: s.id, agent: s.agent, cwd: s.cwd, title: (nk && nativeTitleCached(nk)) || s.title, updatedAt: s.updatedAt }; },
+          excludeNative: exclude,
+          nativeTitle: (k) => nativeTitleCached(k),
+        });
+        send({ t: "session_search_result", reqId, hits, tooShort: !!r.tooShort });
+        return;
+      }
       if (m.t === "usage" && typeof m.reqId === "string") {
         const name = typeof m.agent === "string" && agents.names().includes(m.agent) ? m.agent : DEFAULT_AGENT;
         const adapter = agents.get(name);
@@ -1976,6 +2009,7 @@ function shutdown(sig: string): void {
   try { terminals.closeAll(); } catch { /* ignore */ }
   // Browser.close já sai agora (dá chance de o Chrome gravar cookies); o `exit` abaixo mata o que sobrar.
   void browser.shutdown(undefined, sig).catch(() => { /* ignore */ });
+  void sessionIndex.close(); // fecha o banco do índice de busca na worker (leva milissegundos)
   setTimeout(() => process.exit(0), 300); // brief grace so killTree's taskkill can spawn
 }
 // Qualquer saída (inclusive o process.exit do drainAndExit do update) leva o Chrome junto: no Windows
@@ -2015,6 +2049,7 @@ void (async () => { try {
 // reconciliação espera a primeira leitura em vez de varrer uma lista vazia.
 void refreshNativeList().then((list) => { let n = 0; for (const meta of list) n += reconcileNativeExecutions(meta.id); if (n) console.log(`[runner] reconciliei ${n} execução(ões) nativas sem terminal observado`); }).catch(() => { /* ignore */ });
 connect();
+sessionIndex.start(); // 1ª montagem ~30 s depois do boot, em worker; depois só o que mudou
 // keep native/managed session list fresh (native sessions can change out-of-band)
 setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) pushSessions(); }, 6000);
 if (RUNNER_SELF_UPDATE_MS > 0) {
