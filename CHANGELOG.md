@@ -1,3 +1,19 @@
+# [0.55.0](https://github.com/jhonyralph/jarvis/compare/v0.54.0...v0.55.0) (2026-11-18)
+
+
+### Bug Fixes
+
+* **conversation:** bound inbox payloads and avoid hidden panel rendering ([222fc7e](https://github.com/jhonyralph/jarvis/commit/222fc7e6d1291d4335e0d2744b1ef1af4759eb26))
+* **core:** redact GitHub tokens and every private key kind in execution text ([4bf0286](https://github.com/jhonyralph/jarvis/commit/4bf0286f537ca5cfb9965ef9cf282a1701c0a90c)), closes [#2](https://github.com/jhonyralph/jarvis/issues/2)
+* **core:** refuse routine intervals that one cron line cannot express ([74e39c2](https://github.com/jhonyralph/jarvis/commit/74e39c2c5367590de7ed463bd53bde877d454cc4)), closes [#3](https://github.com/jhonyralph/jarvis/issues/3)
+* **hub:** make the auth brute-force lockout escalate and stop trusting a spoofable client IP ([53e73be](https://github.com/jhonyralph/jarvis/commit/53e73be4558580833b359f2c370e977fcce3532b))
+* **hub:** stop cross-session search from hijacking chat messages ([3bde9f7](https://github.com/jhonyralph/jarvis/commit/3bde9f77dd14a8f5b211df056952bfeb17aeb1e2))
+
+
+### Features
+
+* **search:** index cross-session search with SQLite FTS5 in a worker ([5517bf7](https://github.com/jhonyralph/jarvis/commit/5517bf72bbe8f23e1b1232038a411d5ec6fd33fb))
+
 # [0.54.0](https://github.com/jhonyralph/jarvis/compare/v0.53.3...v0.54.0) (2026-11-04)
 
 
