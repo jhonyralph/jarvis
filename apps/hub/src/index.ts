@@ -10288,7 +10288,7 @@ server.listen(PORT, () => {
   bootMark("listen");
   console.log(`[hub] http+ws  http://127.0.0.1:${PORT}  (boot em ${(bootPhases.listen / 1000).toFixed(1)} s)`);
   console.log(`[hub] agents=[${agents.names().join(", ")}]  default=${agents.default}  cwd=${CWD}  voice=${VOICE}`);
-  console.log(`[hub] guard: rate-limit + conn caps + ${Math.round(guard.MAX_PAYLOAD / 1024 / 1024)}MB payload cap active${/^(on|1|true)$/i.test(process.env.JARVIS_TRUST_PROXY || "") ? " (trust-proxy on)" : ""}`);
+  console.log(`[hub] guard: rate-limit + conn caps + ${Math.round(guard.MAX_PAYLOAD / 1024 / 1024)}MB payload cap active${guard.TRUST_PROXY_HOPS ? ` (trust-proxy: ${guard.TRUST_PROXY_HOPS} proxy)` : ""}`);
   if (process.env.JARVIS_PERSONAL_PROACTIVE !== "0") personalProactiveScheduler.start();
   sessionIndex.start(); // 1ª montagem ~30 s depois do boot, em worker; depois só o que mudou
   if (process.env.JARVIS_FRAMEWORK_AUTOUPDATE !== "0") {

@@ -32,7 +32,7 @@ Trust boundaries:
 | WS auth gate | until authed, only `authinfo/claim/redeem/auth` are processed; then a `verify` step if a passphrase is set | `index.ts` |
 | Per-runner authz | owner/member roles; members limited to allow-listed machines | `auth.ts` |
 | Runner token | per-machine token to register a runner; hashed | `auth.ts` |
-| Brute-force throttle | per-IP failed-attempt limiter (10/min → exp backoff, ≤15 min) | `guard.ts` |
+| Brute-force throttle | per-IP failed-attempt limiter (10/min → exp backoff, ≤15 min; the backoff is remembered until a success or 1 h without failures) | `guard.ts` |
 | Scoped `connect-src` | CSP names this Hub's own host instead of `ws: wss:` (which allowed a socket to anywhere) | `index.ts` |
 | Unauth timeout | connections that never authenticate are dropped (20 s) | `index.ts` |
 | Connection caps | per-IP + global concurrent-connection limits | `guard.ts` |
@@ -77,7 +77,10 @@ access to a runner can make the agent do anything on that machine. So:
    travel in cleartext. The hub logs a warning if it sees non-loopback plaintext.
 2. **`JARVIS_TRUST_PROXY=on`** — so the per-IP throttle and connection caps see
    the real client IP (not the proxy's `127.0.0.1`, which would collapse everyone
-   into one bucket).
+   into one bucket). The Hub takes the address your proxy **appended** to
+   `X-Forwarded-For` (the last entry), never the client-supplied left side. With
+   several proxies in a chain (e.g. CDN → nginx), set the count instead:
+   `JARVIS_TRUST_PROXY=2`.
 3. **Keep `JARVIS_AUTH=on`** — obviously. `off` trusts every connection.
 4. **`JARVIS_ALLOWED_ORIGINS`** (optional) — restrict which web origins may open a
    UI socket.
