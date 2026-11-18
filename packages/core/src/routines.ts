@@ -79,7 +79,9 @@ export type CronValidation = { ok: true; expression: string; description: string
 
 function parseCron(raw: string): ({ ok: true; expression: string; fields: CronFields } | { ok: false; error: string }) {
   let expression = String(raw || "").trim().replace(/\s+/g, " ");
-  expression = naturalScheduleToCron(expression) || expression;
+  const natural = naturalScheduleToCron(expression);
+  if (natural && "error" in natural) return { ok: false, error: natural.error };
+  expression = natural?.expression || expression;
   expression = MACROS[expression.toLowerCase()] || expression;
   const parts = expression.split(" ");
   if (parts.length !== 5) return { ok: false, error: "Use 5 campos: minuto hora dia-do-mês mês dia-da-semana." };
@@ -96,9 +98,24 @@ function parseCron(raw: string): ({ ok: true; expression: string; fields: CronFi
   return { ok: true, expression, fields: { minute: values[0], hour: values[1], dom: values[2], month: values[3], dow: values[4], domAny: parts[2] === "*", dowAny: parts[4] === "*" } };
 }
 
-function naturalScheduleToCron(raw: string): string | undefined {
+// Um passo de cron só é intervalo de verdade quando DIVIDE o campo: o campo recomeça (minuto a cada
+// hora, hora à meia-noite, dia todo mês). "*/90" no minuto é só {0} — de hora em hora — e "*/36" na hora
+// é só {0} — uma vez por dia; mesmo rótulo, agenda outra (issue #3, 2026-11-18). A frase que não
+// cabe numa linha de cron é RECUSADA com o que usar no lugar, em vez de virar outra agenda em silêncio.
+const MINUTE_STEPS = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30];
+const HOUR_STEPS = [1, 2, 3, 4, 6, 8, 12];
+type NaturalSchedule = { expression: string } | { error: string };
+
+function hourSchedule(n: number, minute = "0", dom = "*"): NaturalSchedule {
+  if (n === 24) return { expression: `${minute} 0 ${dom} * *` };
+  if (HOUR_STEPS.includes(n)) return { expression: `${minute} */${n} ${dom} * *` };
+  return { error: `“a cada ${n} horas” não cabe numa agenda cron (ela recomeça à meia-noite). Use ${HOUR_STEPS.join(", ")} ou 24 horas, ou dias (“a cada 2 dias às 08:00”).` };
+}
+
+function naturalScheduleToCron(raw: string): NaturalSchedule | undefined {
   const text = String(raw || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
   if (!text) return undefined;
+  const days = (n: number): string | undefined => n >= 1 && n <= 31 ? undefined : `“a cada ${n} dias” não cabe numa agenda cron (ela recomeça todo mês). Use de 1 a 31 dias.`;
   const each = "(?:a\\s+cada|a\\s+casa|cada|every)";
   const at = "(?:as|at)";
   const time = "(\\d{1,2})(?::(\\d{2}))?";
@@ -107,20 +124,34 @@ function naturalScheduleToCron(raw: string): string | undefined {
     return Number.isInteger(hour) && Number.isInteger(minute) && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 ? [hour, minute] : undefined;
   };
   let m = new RegExp(`^${each}\\s+(\\d+)\\s*(?:min|mins|minuto|minutos|minute|minutes)$`).exec(text);
-  if (m) return `*/${Number(m[1])} * * * *`;
+  if (m) {
+    const n = Number(m[1]);
+    if (MINUTE_STEPS.includes(n)) return { expression: `*/${n} * * * *` };
+    // Horas inteiras ditas em minutos ("a cada 120 minutos") valem como horas.
+    if (n > 0 && n % 60 === 0) {
+      const h = hourSchedule(n / 60);
+      if ("expression" in h) return h;
+    }
+    return { error: `“a cada ${n} minutos” não cabe numa agenda cron (ela recomeça a cada hora). Use ${MINUTE_STEPS.join(", ")} minutos, ou horas inteiras (“a cada 2 horas”).` };
+  }
   m = new RegExp(`^${each}\\s+(\\d+)\\s*(?:h|hora|horas|hour|hours)$`).exec(text);
-  if (m) return `0 */${Number(m[1])} * * *`;
+  if (m) return hourSchedule(Number(m[1]));
   m = new RegExp(`^${each}\\s+(\\d+)\\s*(?:dia|dias|day|days)\\s+${each}\\s+(\\d+)\\s*(?:h|hora|horas|hour|hours)$`).exec(text);
-  if (m) return `0 */${Number(m[2])} */${Number(m[1])} * *`;
+  if (m) {
+    const bad = days(Number(m[1]));
+    return bad ? { error: bad } : hourSchedule(Number(m[2]), "0", `*/${Number(m[1])}`);
+  }
   m = new RegExp(`^${each}\\s+(\\d+)\\s*(?:dia|dias|day|days)(?:\\s+${at}\\s+${time})?$`).exec(text);
   if (m) {
+    const bad = days(Number(m[1]));
+    if (bad) return { error: bad };
     const t = fmtTime(m[2] || "8", m[3]);
-    if (t) return `${t[1]} ${t[0]} */${Number(m[1])} * *`;
+    if (t) return { expression: `${t[1]} ${t[0]} */${Number(m[1])} * *` };
   }
   m = new RegExp(`^(?:todo dia|diario|daily|every day)(?:\\s+${at}\\s+${time})$`).exec(text);
   if (m) {
     const t = fmtTime(m[1], m[2]);
-    if (t) return `${t[1]} ${t[0]} * * *`;
+    if (t) return { expression: `${t[1]} ${t[0]} * * *` };
   }
   return undefined;
 }
@@ -141,6 +172,9 @@ function parseCronField(raw: string, min: number, max: number, aliases: Record<s
       start = valueOf(range[0]); end = range.length === 2 ? valueOf(range[1]) : start;
       if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || start > end) return `valor fora de ${min}–${max}: “${base}”`;
     }
+    // Passo maior que o intervalo só sobra o primeiro valor: "*/90" no minuto seria "de hora em hora"
+    // com cara de "a cada 90 minutos". Recusa em vez de agendar outra coisa (issue #3).
+    if (stepRaw !== undefined && (base === "*" || base.includes("-")) && step > end - start + 1) return `passo ${step} maior que o intervalo ${start}–${end} (sobraria só ${start})`;
     for (let n = start; n <= end; n += step) out.add(sunday && n === 7 ? 0 : n);
   }
   return out;
@@ -162,9 +196,26 @@ function describeExpression(e: string): string {
   const p = e.split(" "), hh = /^\d+$/.test(p[1]) ? String(Number(p[1])).padStart(2, "0") : "", mm = /^\d+$/.test(p[0]) ? String(Number(p[0])).padStart(2, "0") : "";
   const step = (s: string) => /^\*\/\d+$/.test(s) ? Number(s.slice(2)) : 0;
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-  if (/^\*\/\d+$/.test(p[0]) && p.slice(1).every((x) => x === "*")) return `A cada ${p[0].slice(2)} minutos`;
-  if (mm && step(p[1]) && p[2] === "*" && p[3] === "*" && p[4] === "*") return `A cada ${plural(step(p[1]), "hora", "horas")}${mm === "00" ? "" : `, no minuto ${mm}`}`;
-  if (mm && step(p[1]) && step(p[2]) && p[3] === "*" && p[4] === "*") return `A cada ${plural(step(p[2]), "dia", "dias")}, a cada ${plural(step(p[1]), "hora", "horas")}${mm === "00" ? "" : `, no minuto ${mm}`}`;
+  // Passo que não divide o campo NÃO é "a cada N": o campo recomeça (minuto a cada hora, hora à
+  // meia-noite). Aí a descrição lista os horários reais — "*/45" dispara em :00 e :45 (issue #3).
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const joinPt = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} e ${xs[xs.length - 1]}`);
+  const stepValues = (n: number, size: number) => Array.from({ length: Math.ceil(size / n) }, (_, i) => i * n);
+  if (/^\*\/\d+$/.test(p[0]) && p.slice(1).every((x) => x === "*")) {
+    const n = step(p[0]);
+    return 60 % n === 0 ? `A cada ${n} minutos` : `Nos minutos ${joinPt(stepValues(n, 60).map(pad))} de cada hora`;
+  }
+  const hoursAt = (n: number) => joinPt(stepValues(n, 24).map((h) => `${pad(h)}:${mm}`));
+  if (mm && step(p[1]) && p[2] === "*" && p[3] === "*" && p[4] === "*") {
+    const n = step(p[1]);
+    if (24 % n !== 0) return `Todo dia às ${hoursAt(n)}`;
+    return `A cada ${plural(n, "hora", "horas")}${mm === "00" ? "" : `, no minuto ${mm}`}`;
+  }
+  if (mm && step(p[1]) && step(p[2]) && p[3] === "*" && p[4] === "*") {
+    const n = step(p[1]);
+    if (24 % n !== 0) return `A cada ${plural(step(p[2]), "dia", "dias")}, às ${hoursAt(n)}`;
+    return `A cada ${plural(step(p[2]), "dia", "dias")}, a cada ${plural(n, "hora", "horas")}${mm === "00" ? "" : `, no minuto ${mm}`}`;
+  }
   if (mm && hh && step(p[2]) && p[3] === "*" && p[4] === "*") return `A cada ${plural(step(p[2]), "dia", "dias")} às ${hh}:${mm}`;
   if (mm && hh && p[2] === "*" && p[3] === "*" && p[4] === "1-5") return `Seg–sex às ${hh}:${mm}`;
   if (mm && hh && p.slice(2).every((x) => x === "*")) return `Todo dia às ${hh}:${mm}`;

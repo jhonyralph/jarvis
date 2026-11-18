@@ -147,3 +147,55 @@ test("RoutineStore rejects invalid cron without partially mutating a routine", (
     assert.equal(s.list().length, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("natural intervals that do not fit one cron line are refused with what to use instead (issue #3)", () => {
+  for (const text of ["every 90 minutes", "a cada 45 minutos", "a cada 7 minutos"]) {
+    const v = validateCron(text);
+    assert.equal(v.ok, false, text);
+    assert.match(v.ok ? "" : v.error, /divida|recomeça a cada hora/, text);
+    assert.match(v.ok ? "" : v.error, /15, 20, 30/, "diz quais valores servem");
+  }
+  for (const text of ["a cada 36 horas", "every 5 hours", "a cada 2 dias a cada 5 horas"]) {
+    const v = validateCron(text);
+    assert.equal(v.ok, false, text);
+    assert.match(v.ok ? "" : v.error, /meia-noite/, text);
+  }
+  const days = validateCron("a cada 45 dias");
+  assert.equal(days.ok, false, "45 dias viraria 'dia 1 de todo mês'");
+  assert.match(days.ok ? "" : days.error, /1 a 31 dias/);
+});
+
+test("natural intervals that DO fit keep working, and whole hours in minutes become hours (issue #3)", () => {
+  assert.deepEqual(validateCron("every 15 minutes"), { ok: true, expression: "*/15 * * * *", description: "A cada 15 minutos" });
+  assert.deepEqual(validateCron("a cada 120 minutos"), { ok: true, expression: "0 */2 * * *", description: "A cada 2 horas" });
+  assert.deepEqual(validateCron("every 60 minutes"), { ok: true, expression: "0 */1 * * *", description: "A cada 1 hora" });
+  assert.deepEqual(validateCron("a cada 24 horas"), { ok: true, expression: "0 0 * * *", description: "Todo dia às 00:00" });
+  assert.deepEqual(validateCron("a cada 8 horas"), { ok: true, expression: "0 */8 * * *", description: "A cada 8 horas" });
+  assert.deepEqual(validateCron("a cada 2 dias a cada 24 horas"), { ok: true, expression: "0 0 */2 * *", description: "A cada 2 dias às 00:00" });
+});
+
+test("hand-typed cron: step larger than the field is refused; a non-dividing step is kept but described honestly (issue #3)", () => {
+  for (const expr of ["*/90 * * * *", "0 */36 * * *", "0 8 */45 * *", "10-20/30 * * * *"]) {
+    const v = validateCron(expr);
+    assert.equal(v.ok, false, expr);
+    assert.match(v.ok ? "" : v.error, /maior que o intervalo/, expr);
+  }
+  assert.equal(validateCron("*/60 * * * *").ok, true, "passo = tamanho do campo ainda é válido (de hora em hora)");
+  assert.deepEqual(validateCron("*/45 * * * *"), { ok: true, expression: "*/45 * * * *", description: "Nos minutos 00 e 45 de cada hora" });
+  assert.deepEqual(validateCron("0 */7 * * *"), { ok: true, expression: "0 */7 * * *", description: "Todo dia às 00:00, 07:00, 14:00 e 21:00" });
+  // O que a descrição diz é o que dispara.
+  const fires = [0, 45, 60, 105].map((min) => isDue(routine({ cron: "*/45 * * * *" }), new Date(2026, 6, 15, 8 + Math.floor(min / 60), min % 60)));
+  assert.deepEqual(fires, [true, true, true, true]);
+  assert.equal(isDue(routine({ cron: "*/90 * * * *" }), new Date(2026, 6, 15, 9, 0)), false, "cron salvo inválido não dispara (e a tela mostra 'Cron inválido')");
+});
+
+test("refusal messages are readable text, not escape sequences (issue #3)", () => {
+  assert.deepEqual(validateCron("a cada 36 horas"), { ok: false, error: "“a cada 36 horas” não cabe numa agenda cron (ela recomeça à meia-noite). Use 1, 2, 3, 4, 6, 8, 12 ou 24 horas, ou dias (“a cada 2 dias às 08:00”)." });
+  assert.deepEqual(validateCron("every 90 minutes"), { ok: false, error: "“a cada 90 minutos” não cabe numa agenda cron (ela recomeça a cada hora). Use 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 minutos, ou horas inteiras (“a cada 2 horas”)." });
+  assert.deepEqual(validateCron("a cada 45 dias"), { ok: false, error: "“a cada 45 dias” não cabe numa agenda cron (ela recomeça todo mês). Use de 1 a 31 dias." });
+  for (const text of ["a cada 36 horas", "every 90 minutes", "a cada 45 dias", "*/90 * * * *"]) {
+    const v = validateCron(text);
+    assert.equal(v.ok, false, text);
+    assert.equal(!v.ok && v.error.includes("\\"), false, "sem barra invertida (escape mal gravado): " + text);
+  }
+});
