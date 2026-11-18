@@ -1,3 +1,10 @@
+# [0.54.0](https://github.com/jhonyralph/jarvis/compare/v0.53.3...v0.54.0) (2026-11-04)
+
+
+### Features
+
+* **voice:** add durable conversation and task recovery ([b364aa1](https://github.com/jhonyralph/jarvis/commit/b364aa19b5ba3c9698d37e5991bdf1f91736dbd6))
+
 ## [0.53.3](https://github.com/jhonyralph/jarvis/compare/v0.53.2...v0.53.3) (2026-11-04)
 
 
