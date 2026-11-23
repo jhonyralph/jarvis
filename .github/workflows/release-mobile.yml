@@ -124,9 +124,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 21 # Jarvis native plugins target JVM 21 (mobile/BUILD.md)
+      # The action's default `packages` is "tools platform-tools"; the legacy `tools` package no longer
+      # exists in current cmdline-tools, so sdkmanager exits 1 and the job dies before building.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      # Match the generated project (Capacitor 8 → compileSdk/targetSdk 36, mobile/android/variables.gradle).
       - name: Install Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       # Root deps (the build script + Capacitor CLI resolve from here); then the mobile package.
       - run: npm ci
