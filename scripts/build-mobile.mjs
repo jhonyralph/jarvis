@@ -1,10 +1,11 @@
 // Mobile build dispatcher used by scripts/run.mjs.
 // Android can build on Windows/macOS/Linux. iOS/Apple builds require macOS + Xcode.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyMergedAndroidManifest } from "../mobile/apply-context-native.mjs";
+import { applyIosSigningToFile, exportOptionsPlist } from "../mobile/apply-ios-signing.mjs";
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SCRIPTS, "..");
@@ -27,12 +28,14 @@ Mobile builds:
   build-android                      Android debug APK
   build-android-release              Android release APK (requires signing config for a real release)
   build-aab                          Android release bundle (Play Store)
-  build-ios / build-apple            iOS sync/open on macOS; --archive creates an Xcode archive
+  build-ios / build-apple            iOS sync/open on macOS; --archive creates an Xcode archive;
+                                     --export signs it and exports a TestFlight/App Store .ipa (CI)
 
 Examples:
   npm run build:android
   npm run build:aab
   npm run build:apple -- --archive
+  npm run build:apple -- --export     (needs APPLE_TEAM_ID, APPLE_PROVISIONING_PROFILE_NAME, JARVIS_IOS_VERSION, JARVIS_IOS_BUILD)
   npm run build:apple -- --spm
   npm run build:apple -- --cocoapods
   npm run build:apple -- --ios-background-mode
@@ -147,12 +150,49 @@ function verifyArchivedPrivacyManifest(archivePath) {
   console.log(`[mobile-build] verified JarvisContext privacy manifest: ${manifests[0]}`);
 }
 
+const IOS_BUNDLE_ID = "chat.jarvis.app"; // keep in sync with mobile/capacitor.config.ts (appId)
+
+function requiredEnv(name) {
+  const value = (process.env[name] || "").trim();
+  if (!value) throw new Error(`--export needs ${name} in the environment`);
+  return value;
+}
+
+function iosSigningOptions() {
+  return {
+    bundleId: IOS_BUNDLE_ID,
+    teamId: requiredEnv("APPLE_TEAM_ID"),
+    profileName: requiredEnv("APPLE_PROVISIONING_PROFILE_NAME"),
+    version: requiredEnv("JARVIS_IOS_VERSION"),
+    build: requiredEnv("JARVIS_IOS_BUILD"),
+  };
+}
+
+// Manual signing + version/build stamped on the App target only (see mobile/apply-ios-signing.mjs).
+function signIosProject() {
+  const options = iosSigningOptions();
+  applyIosSigningToFile(join(MOBILE, "ios", "App", "App.xcodeproj", "project.pbxproj"), options);
+  console.log(`[mobile-build] iOS signing: team ${options.teamId}, profile "${options.profileName}", ${options.version} (${options.build})`);
+}
+
+function exportIosArchive(archivePath) {
+  const { bundleId, teamId, profileName } = iosSigningOptions();
+  const buildDir = join(MOBILE, "build");
+  const optionsPath = join(buildDir, "ExportOptions.plist");
+  const exportPath = join(buildDir, "ipa");
+  writeFileSync(optionsPath, exportOptionsPlist({ bundleId, teamId, profileName }), "utf8");
+  run("xcodebuild", ["-exportArchive", "-archivePath", archivePath, "-exportPath", exportPath, "-exportOptionsPlist", optionsPath]);
+  const ipa = existsSync(exportPath) ? readdirSync(exportPath).find((name) => name.endsWith(".ipa")) : undefined;
+  if (!ipa) throw new Error(`xcodebuild -exportArchive finished but no .ipa was found in ${exportPath}`);
+  console.log(`[mobile-build] ipa: ${join(exportPath, ipa)}`);
+}
+
 function ios() {
   if (process.platform !== "darwin") {
     console.error("iOS/Apple builds require macOS with Xcode. Run this command on a Mac or macOS CI runner.");
     process.exit(1);
   }
-  const allowed = new Set(["--archive", "--spm", "--cocoapods", "--ios-background-mode"]);
+  const allowed = new Set(["--archive", "--export", "--spm", "--cocoapods", "--ios-background-mode"]);
   const unknown = extra.filter((argument) => !allowed.has(argument));
   if (unknown.length) throw new Error(`Unknown Apple build option: ${unknown.join(", ")}`);
   requestedIosPackageManager();
@@ -165,7 +205,9 @@ function ios() {
   if (extra.includes("--ios-background-mode")) transformArgs.push("--ios-background-mode");
   run(node, transformArgs);
   if (packageManager === "CocoaPods") run("pod", ["install"], join(MOBILE, "ios", "App"));
-  if (extra.includes("--archive")) {
+  const exporting = extra.includes("--export");
+  if (exporting) signIosProject();
+  if (extra.includes("--archive") || exporting) {
     const archivePath = join(MOBILE, "build", "Jarvis.xcarchive");
     run("xcodebuild", [
       "archive",
@@ -179,6 +221,7 @@ function ios() {
     ]);
     verifyArchivedPrivacyManifest(archivePath);
     console.log(`[mobile-build] archive: ${archivePath}`);
+    if (exporting) exportIosArchive(archivePath);
   } else {
     run(npx, ["cap", "open", "ios"]);
   }

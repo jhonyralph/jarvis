@@ -69,3 +69,17 @@ jobs:
       contents: write
     with:
       ref: v${{ needs.release.outputs.version }}
+
+  # Mesmo motivo do `desktop`: tag criada com o GITHUB_TOKEN não dispara `on: push: tags`. O app mobile
+  # (Android APK + iOS/TestFlight) só reconstrói quando a impressão digital do app mudou — o portão
+  # `decide` do release-mobile.yml decide; um release sem mudança de app não leva asset mobile.
+  # `secrets: inherit` repassa os segredos APPLE_*/ASC_* ao job de iOS (que só roda com ENABLE_IOS_BUILD).
+  mobile:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    uses: ./.github/workflows/release-mobile.yml
+    permissions:
+      contents: write
+    secrets: inherit
+    with:
+      ref: v${{ needs.release.outputs.version }}

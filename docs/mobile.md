@@ -52,32 +52,56 @@ points it at **their own** Hub:
 
 ## Building & distributing
 
-- **Android (works today):** CI workflow **"Release mobile"** (`.github/workflows/release-mobile.yml`)
-  builds the **sideload-debug APK** (debug-signed → installable via "unknown sources", no release
-  keystore) and uploads it as an artifact / Release asset. Locally: `npm run build:android`.
-- **Manual only, and it skips when nothing changed.** The workflow **never runs on push** — trigger it
-  from **Actions → "Release mobile" → Run workflow** (tick `publish` to attach the APK to the matching
-  Release). Because the app is a **WebView shell**, a first `decide` job fingerprints exactly what ends
-  up in the app (`scripts/mobile-app-hash.mjs` over `apps/hub/web/**`, the `mobile/` shell, and the
-  build scripts — docs/tests/generated dirs excluded) and compares it to the fingerprint saved beside
-  the previous release. **Unchanged → the build is skipped**; changed / first run / `force` → it builds.
-  So editing only the Hub backend or docs won't rebuild the app, but any change to the web UI or shell
-  will. The baseline (`mobile-app-hash.txt`) is uploaded next to the APK on publish. Release builds
-  (`workflow_call` from `release.yml`) always build.
-- **iOS / Apple — needs a paid account (wired but OFF):** the workflow's `ios` job is fully written
-  but **gated**: it only runs when the repo **variable** `ENABLE_IOS_BUILD=true` AND the signing
-  **secrets** exist. To enable:
-  1. **Enroll in the Apple Developer Program — US$99/year** (individual or organization) at
-     <https://developer.apple.com/programs/>. A *free* Apple ID can build & run on **your own device**
-     from Xcode (7-day profile) but **cannot** sign a shareable IPA or a CI build — distribution needs
-     the paid program.
-  2. In the Apple Developer portal create a **Distribution certificate** (export as `.p12`) and a
-     **provisioning profile** for the app id `chat.jarvis.app`.
-  3. Add repo **secrets**: `APPLE_CERT_P12_BASE64` (base64 of the `.p12`), `APPLE_CERT_PASSWORD`,
-     `APPLE_PROVISIONING_PROFILE_BASE64`, `APPLE_TEAM_ID`; then set repo **variable**
-     `ENABLE_IOS_BUILD=true`. The `ios` job then archives on a macOS runner (export-to-IPA options are
-     the operator's final step).
-  - No paid account yet → leave it off; **Android covers testing** in the meantime.
+- **Android:** CI workflow **"Release mobile"** (`.github/workflows/release-mobile.yml`) builds the
+  **sideload-debug APK** (debug-signed → installable via "unknown sources", no release keystore) and
+  attaches it to the GitHub Release as `Jarvis-<tag>-android.apk`. Locally: `npm run build:android`.
+- **When it runs:** `release.yml` calls it after every published release (job `mobile`, next to
+  `desktop`), and you can run it by hand from **Actions → "Release mobile" → Run workflow** (tick
+  `publish` to attach/upload to the latest Release, `force` to ignore the gate below).
+- **It skips when the app did not change.** The app is a **WebView shell**, so a first `decide` job
+  fingerprints exactly what ends up in it (`scripts/mobile-app-hash.mjs` over `apps/hub/web/**`, the
+  `mobile/` shell and the build scripts — docs/tests/generated dirs excluded) and compares it to the
+  fingerprint saved on the most recent release that shipped **that platform**
+  (`mobile-app-hash.txt` for Android, `mobile-app-hash-ios.txt` for iOS — separate on purpose, so
+  enabling iOS later is not blocked by an Android build that already published the same fingerprint).
+  Unchanged → no build and **no mobile asset on that release**; the previous APK/TestFlight build is
+  still current because the shell loads the live UI from the Hub. Changed / never shipped / `force` →
+  it builds. Editing only the Hub backend or docs never rebuilds the app; any web UI or shell change does.
+- **iOS / Apple → TestFlight (needs a paid account; OFF until enabled):** an iPhone/iPad cannot install
+  an APK or a loose `.ipa`; the supported route is **TestFlight**. The `ios` job archives on a macOS
+  runner, signs with **manual** signing (only the App target is patched —
+  `mobile/apply-ios-signing.mjs`), exports an App Store `.ipa` and uploads it with `xcrun altool`.
+  The marketing version is the release version; the build number is a UTC timestamp
+  (`yyMMddHHmm`) so it only grows. **Not yet run end-to-end** (no Apple account in this repo's
+  history) — expect to iterate on the first execution. To enable:
+  1. **Enroll in the Apple Developer Program — US$99/year** at <https://developer.apple.com/programs/>.
+     A *free* Apple ID can run on **your own device** from Xcode (7-day profile) but cannot sign a
+     shareable build or a CI build.
+  2. **Identifiers** → register App ID `chat.jarvis.app` (change `appId` in
+     `mobile/capacitor.config.ts` **and** `IOS_BUNDLE_ID` in `scripts/build-mobile.mjs` if you use
+     your own domain). Enable the Push Notifications capability there if you will use push.
+  3. **Certificates** → create an **Apple Distribution** certificate (CSR from a Mac or `openssl`),
+     export it with its private key as a `.p12` with a password.
+  4. **Profiles** → create an **App Store** distribution profile for that App ID and certificate;
+     download the `.mobileprovision`.
+  5. **App Store Connect → Apps** → create the app with the same bundle id.
+  6. **App Store Connect → Users and Access → Integrations → App Store Connect API** → create a key
+     (role *App Manager* or *Admin*). Note the **Issuer ID** and **Key ID**; download the `.p8` (only
+     once).
+  7. In GitHub → Settings → Secrets and variables → Actions add these **secrets** (files as base64,
+     e.g. `base64 -w0 file` / `[Convert]::ToBase64String([IO.File]::ReadAllBytes("file"))`):
+     `APPLE_CERT_P12_BASE64`, `APPLE_CERT_PASSWORD`, `APPLE_PROVISIONING_PROFILE_BASE64`,
+     `APPLE_TEAM_ID` (10 characters, from the Membership page), `ASC_KEY_ID`, `ASC_ISSUER_ID`,
+     `ASC_KEY_P8_BASE64`; and the **variable** `ENABLE_IOS_BUILD=true`.
+  8. Run **Release mobile** once by hand with `publish` + `force` ticked to prove the signing before
+     relying on the automatic path. From then on every release with an app change uploads a build.
+  9. On the device install **TestFlight**, accept the invitation (add yourself under *TestFlight →
+     Internal Testing*; internal testers need no Apple review) and install Jarvis; each new build arrives
+     as an update. Builds expire after 90 days.
+  - If the first upload sits at "Missing Compliance" in TestFlight, answer the export-compliance
+    question once (or add `ITSAppUsesNonExemptEncryption` to the Info.plist transform).
+  - No paid account yet → leave `ENABLE_IOS_BUILD` unset; the job is skipped and **Android + the PWA
+    ("Add to Home Screen" in Safari) cover testing** in the meantime.
 
 ## The three capabilities (all requested; staged, each device-tested)
 
