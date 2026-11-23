@@ -1,3 +1,10 @@
+# [0.56.0](https://github.com/jhonyralph/jarvis/compare/v0.55.0...v0.56.0) (2026-11-23)
+
+
+### Features
+
+* **mobile:** ship Android and iOS (TestFlight) builds from every release ([5219c9e](https://github.com/jhonyralph/jarvis/commit/5219c9e36135c4faaeff23ac63e0c62565a6090b))
+
 # [0.55.0](https://github.com/jhonyralph/jarvis/compare/v0.54.0...v0.55.0) (2026-11-18)
 
 
