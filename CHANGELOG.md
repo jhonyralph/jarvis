@@ -1,3 +1,10 @@
+## [0.56.1](https://github.com/jhonyralph/jarvis/compare/v0.56.0...v0.56.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **mobile:** make the JarvisContext iOS plugin compile ([868edbe](https://github.com/jhonyralph/jarvis/commit/868edbed00f6c891464934319eaf4b47764a74f9))
+
 # [0.56.0](https://github.com/jhonyralph/jarvis/compare/v0.55.0...v0.56.0) (2026-11-23)
 
 
