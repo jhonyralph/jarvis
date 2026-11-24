@@ -1,3 +1,10 @@
+## [0.56.2](https://github.com/jhonyralph/jarvis/compare/v0.56.1...v0.56.2) (2026-11-24)
+
+
+### Bug Fixes
+
+* **mobile:** unblock the Swift type checker on the busy-intervals result ([fffe599](https://github.com/jhonyralph/jarvis/commit/fffe5991a8a16098d766e2ec78a1773591cb5a48))
+
 ## [0.56.1](https://github.com/jhonyralph/jarvis/compare/v0.56.0...v0.56.1) (2026-11-24)
 
 
