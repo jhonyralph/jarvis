@@ -722,19 +722,20 @@ public class JarvisContextPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManager
         ttlMs: Int64
     ) -> JSObject {
         let observedAt = Int64(Date().timeIntervalSince1970 * 1000)
+        let intervalObjects: [JSObject] = intervals.map { interval in
+            [
+                "startAt": Int(interval.startAt),
+                "endAt": Int(interval.endAt),
+                "allDay": interval.allDay
+            ]
+        }
         return [
             "observedAt": Int(observedAt),
             "expiresAt": Int(observedAt + ttlMs),
             "rangeStartAt": Int(startAt),
             "rangeEndAt": Int(endAt),
             "timeZone": TimeZone.current.identifier,
-            "intervals": intervals.map { interval in
-                [
-                    "startAt": interval.startAt,
-                    "endAt": interval.endAt,
-                    "allDay": interval.allDay
-                ] as JSObject
-            },
+            "intervals": intervalObjects,
             "truncated": truncated,
             "source": "ios"
         ]
