@@ -224,7 +224,7 @@ final class JarvisContextStore {
     func transitionAvailability(now: Int64) throws -> (available: Int, nextLeaseExpiryAt: Int64?) {
         try queue.sync {
             try ensureAvailable()
-            return transitionAvailability(transitions: state.transitions, now: now)
+            return JarvisContext.transitionAvailability(transitions: state.transitions, now: now)
         }
     }
 
@@ -279,7 +279,7 @@ final class JarvisContextStore {
                 next.acknowledgements = mutation.acknowledgements
                 try persist(next)
             }
-            let availability = transitionAvailability(transitions: mutation.transitions, now: now)
+            let availability = JarvisContext.transitionAvailability(transitions: mutation.transitions, now: now)
             return JarvisTransitionAckResult(
                 scope: expectedScope,
                 leaseId: leaseId,

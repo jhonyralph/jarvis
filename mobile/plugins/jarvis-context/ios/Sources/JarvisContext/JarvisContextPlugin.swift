@@ -495,8 +495,8 @@ public class JarvisContextPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManager
             let digits = request.precise ? 6 : 2
             let accuracy = request.precise ? location.horizontalAccuracy : max(1_000, location.horizontalAccuracy)
             let result: JSObject = [
-                "observedAt": observedAt,
-                "expiresAt": observedAt + request.ttlMs,
+                "observedAt": Int(observedAt),
+                "expiresAt": Int(observedAt + request.ttlMs),
                 "point": [
                     "lat": rounded(location.coordinate.latitude, digits: digits),
                     "lng": rounded(location.coordinate.longitude, digits: digits),
@@ -723,10 +723,10 @@ public class JarvisContextPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManager
     ) -> JSObject {
         let observedAt = Int64(Date().timeIntervalSince1970 * 1000)
         return [
-            "observedAt": observedAt,
-            "expiresAt": observedAt + ttlMs,
-            "rangeStartAt": startAt,
-            "rangeEndAt": endAt,
+            "observedAt": Int(observedAt),
+            "expiresAt": Int(observedAt + ttlMs),
+            "rangeStartAt": Int(startAt),
+            "rangeEndAt": Int(endAt),
             "timeZone": TimeZone.current.identifier,
             "intervals": intervals.map { interval in
                 [
@@ -853,7 +853,7 @@ public class JarvisContextPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManager
             "backgroundEnabled": enabled,
             "monitorSignificantChanges": !geofences.isEmpty && snapshot.significantChanges,
             "maxGeofences": jarvisContextMaximumGeofences,
-            "configurationGeneration": snapshot.generation
+            "configurationGeneration": Int(snapshot.generation)
         ]
         if let scope = snapshot.scope { result["scope"] = scopeResult(scope) }
         return result
@@ -868,9 +868,9 @@ public class JarvisContextPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManager
         if legacy { output["remaining"] = result.available }
         if let scope = result.scope { output["scope"] = scopeResult(scope) }
         if let leaseId = result.leaseId { output["leaseId"] = leaseId }
-        if let leasedAt = result.leasedAt { output["leasedAt"] = leasedAt }
-        if let expiresAt = result.expiresAt { output["expiresAt"] = expiresAt }
-        if let nextExpiry = result.nextLeaseExpiryAt { output["nextLeaseExpiryAt"] = nextExpiry }
+        if let leasedAt = result.leasedAt { output["leasedAt"] = Int(leasedAt) }
+        if let expiresAt = result.expiresAt { output["expiresAt"] = Int(expiresAt) }
+        if let nextExpiry = result.nextLeaseExpiryAt { output["nextLeaseExpiryAt"] = Int(nextExpiry) }
         return output
     }
 
@@ -884,7 +884,7 @@ public class JarvisContextPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManager
             "pending": result.pending,
             "available": result.available
         ]
-        if let nextExpiry = result.nextLeaseExpiryAt { output["nextLeaseExpiryAt"] = nextExpiry }
+        if let nextExpiry = result.nextLeaseExpiryAt { output["nextLeaseExpiryAt"] = Int(nextExpiry) }
         return output
     }
 
@@ -893,8 +893,8 @@ public class JarvisContextPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManager
             "id": transition.id,
             "geofenceId": transition.geofenceId,
             "transition": transition.transition,
-            "occurredAt": transition.occurredAt,
-            "recordedAt": transition.recordedAt,
+            "occurredAt": Int(transition.occurredAt),
+            "recordedAt": Int(transition.recordedAt),
             "source": "ios",
             "deliveryAttempt": transition.deliveryAttempt
         ]
@@ -904,7 +904,7 @@ public class JarvisContextPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManager
         [
             "principalId": scope.principalId,
             "deviceId": scope.deviceId,
-            "generation": scope.generation
+            "generation": Int(scope.generation)
         ]
     }
 
@@ -1143,7 +1143,7 @@ public class JarvisContextPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManager
                     "available": availability.available
                 ]
                 if let nextExpiry = availability.nextLeaseExpiryAt {
-                    event["nextLeaseExpiryAt"] = nextExpiry
+                    event["nextLeaseExpiryAt"] = Int(nextExpiry)
                 }
                 notifyListeners("transitionAvailable", data: event, retainUntilConsumed: true)
             }
