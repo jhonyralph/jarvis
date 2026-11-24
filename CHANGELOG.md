@@ -1,3 +1,10 @@
+## [0.56.3](https://github.com/jhonyralph/jarvis/compare/v0.56.2...v0.56.3) (2026-11-24)
+
+
+### Bug Fixes
+
+* **web:** show why an invite/claim code was rejected ([d14125e](https://github.com/jhonyralph/jarvis/commit/d14125e745cd5bd63be242cbc2e7b965dc6c77a1))
+
 ## [0.56.2](https://github.com/jhonyralph/jarvis/compare/v0.56.1...v0.56.2) (2026-11-24)
 
 
